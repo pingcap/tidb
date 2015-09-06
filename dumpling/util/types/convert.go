@@ -139,13 +139,15 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		// TODO: check Flen
 		return x, nil
 	case mysql.TypeYear:
-		var intVal int64
-		var err error
+		var (
+			intVal int64
+			err    error
+		)
 		switch x := val.(type) {
 		case string:
 			intVal, err = StrToInt(x)
 		default:
-			intVal, err = ToInt64(val)
+			intVal, err = ToInt64(x)
 		}
 		if err != nil {
 			return InvConv(val, tp)
