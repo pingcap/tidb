@@ -2,6 +2,7 @@ package expressions
 
 import (
 	"errors"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
@@ -160,7 +161,7 @@ func (s *testHelperSuite) TestGetTimeValue(c *C) {
 		Ret  interface{}
 	}{
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
-		{CurrentTimestamp, "1970-01-01 08:20:34"},
+		{CurrentTimestamp, time.Unix(1234, 0).Format(mysql.TimeFormat)},
 		{ZeroTimestamp, "0000-00-00 00:00:00"},
 		{Value{"2012-12-12 00:00:00"}, "2012-12-12 00:00:00"},
 		{Value{int64(0)}, "0000-00-00 00:00:00"},
