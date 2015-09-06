@@ -15,6 +15,7 @@ package types
 
 import (
 	"strconv"
+	"time"
 	"unicode"
 
 	"github.com/juju/errors"
@@ -149,6 +150,29 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		}
 		// TODO: check Flen
 		return x, nil
+	case mysql.TypeYear:
+		var (
+			intVal int64
+			err    error
+		)
+		switch x := val.(type) {
+		case string:
+			intVal, err = StrToInt(x)
+		case mysql.Time:
+			return int16(x.Year()), nil
+		case mysql.Duration:
+			return int16(time.Now().Year()), nil
+		default:
+			intVal, err = ToInt64(x)
+		}
+		if err != nil {
+			return InvConv(val, tp)
+		}
+		y, err := mysql.AdjustYear(int(intVal))
+		if err != nil {
+			return InvConv(val, tp)
+		}
+		return int16(y), nil
 	default:
 		panic("should never happen")
 	}
