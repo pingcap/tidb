@@ -88,9 +88,9 @@ var (
 
 var (
 	// MinDatetime is the minimum for mysql datetime type.
-	MinDatetime = time.Date(1000, 1, 1, 0, 0, 0, 0, time.UTC)
+	MinDatetime = time.Date(1000, 1, 1, 0, 0, 0, 0, time.Local)
 	// MaxDatetime is the maximum for mysql datetime type.
-	MaxDatetime = time.Date(9999, 12, 31, 23, 59, 59, 999999, time.UTC)
+	MaxDatetime = time.Date(9999, 12, 31, 23, 59, 59, 999999, time.Local)
 
 	// MinTimestamp is the minimum for mysql timestamp type.
 	MinTimestamp = time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC)
