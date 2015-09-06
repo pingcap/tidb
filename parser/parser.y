@@ -1814,6 +1814,7 @@ Function:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
+			IsConvert: true,
 		}	
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
