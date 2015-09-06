@@ -96,13 +96,13 @@ func (r *WhereRset) planBinOp(ctx context.Context, x *expressions.BinaryOperatio
 			out[n-2] = e
 		}
 
-		return &plans.FilterDefaultPlan{p, out[0]}, nil
+		return &plans.FilterDefaultPlan{Plan: p, Expr: out[0]}, nil
 	default:
 		// TODO: better plan for `OR`.
 		log.Warn("TODO: better plan for", x.Op)
 	}
 
-	return &plans.FilterDefaultPlan{p, x}, nil
+	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
 func (r *WhereRset) planIdent(ctx context.Context, x *expressions.Ident) (plan.Plan, error) {
@@ -116,7 +116,7 @@ func (r *WhereRset) planIdent(ctx context.Context, x *expressions.Ident) (plan.P
 		return p2, nil
 	}
 
-	return &plans.FilterDefaultPlan{p, x}, nil
+	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
 func (r *WhereRset) planIsNull(ctx context.Context, x *expressions.IsNull) (plan.Plan, error) {
@@ -124,7 +124,7 @@ func (r *WhereRset) planIsNull(ctx context.Context, x *expressions.IsNull) (plan
 
 	cns := expressions.MentionedColumns(x.Expr)
 	if len(cns) == 0 {
-		return &plans.FilterDefaultPlan{p, x}, nil
+		return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 	}
 
 	p2, filtered, err := p.Filter(ctx, x)
@@ -136,7 +136,7 @@ func (r *WhereRset) planIsNull(ctx context.Context, x *expressions.IsNull) (plan
 		return p2, nil
 	}
 
-	return &plans.FilterDefaultPlan{p, x}, nil
+	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
 func (r *WhereRset) planUnaryOp(ctx context.Context, x *expressions.UnaryOperation) (plan.Plan, error) {
@@ -150,7 +150,7 @@ func (r *WhereRset) planUnaryOp(ctx context.Context, x *expressions.UnaryOperati
 		return p2, nil
 	}
 
-	return &plans.FilterDefaultPlan{p, x}, nil
+	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
 func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (plan.Plan, error) {
@@ -161,7 +161,7 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 
 	if val == nil {
 		// like `select * from t where null`.
-		return &plans.NullPlan{r.Src.GetFields()}, nil
+		return &plans.NullPlan{Fields: r.Src.GetFields()}, nil
 	}
 
 	n, err := types.ToBool(val)
@@ -171,10 +171,10 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 
 	if n == 0 {
 		// like `select * from t where 0`.
-		return &plans.NullPlan{r.Src.GetFields()}, nil
+		return &plans.NullPlan{Fields: r.Src.GetFields()}, nil
 	}
 
-	return &plans.FilterDefaultPlan{r.Src, e}, nil
+	return &plans.FilterDefaultPlan{Plan: r.Src, Expr: e}, nil
 }
 
 // Plan gets NullPlan/FilterDefaultPlan.
@@ -209,5 +209,5 @@ func (r *WhereRset) Plan(ctx context.Context) (plan.Plan, error) {
 		log.Warnf("%v not supported in where rset now", r.Expr)
 	}
 
-	return &plans.FilterDefaultPlan{r.Src, expr}, nil
+	return &plans.FilterDefaultPlan{Plan: r.Src, Expr: expr}, nil
 }

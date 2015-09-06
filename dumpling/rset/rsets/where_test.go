@@ -32,7 +32,7 @@ func (s *testWhereRsetSuite) SetUpSuite(c *C) {
 	names := []string{"id", "name"}
 	tblPlan := newTestTablePlan(testData, names)
 
-	expr := expressions.NewBinaryOperation(opcode.Plus, &expressions.Ident{model.NewCIStr("id")}, expressions.Value{1})
+	expr := expressions.NewBinaryOperation(opcode.Plus, &expressions.Ident{CIStr: model.NewCIStr("id")}, expressions.Value{Val: 1})
 
 	s.r = &WhereRset{Src: tblPlan, Expr: expr}
 }
@@ -46,13 +46,13 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// `select id, name from t where 1`
-	s.r.Expr = expressions.Value{int64(1)}
+	s.r.Expr = expressions.Value{Val: int64(1)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
 	// `select id, name from t where 0`
-	s.r.Expr = expressions.Value{int64(0)}
+	s.r.Expr = expressions.Value{Val: int64(0)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
@@ -64,7 +64,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name from t where id < 10`
-	expr := expressions.NewBinaryOperation(opcode.LT, &expressions.Ident{model.NewCIStr("id")}, expressions.Value{10})
+	expr := expressions.NewBinaryOperation(opcode.LT, &expressions.Ident{CIStr: model.NewCIStr("id")}, expressions.Value{Val: 10})
 
 	s.r.Expr = expr
 
@@ -80,7 +80,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	// `select id, name from t where null && 1`
 	src.SetFilter(false)
 
-	expr = expressions.NewBinaryOperation(opcode.AndAnd, expressions.Value{}, expressions.Value{1})
+	expr = expressions.NewBinaryOperation(opcode.AndAnd, expressions.Value{}, expressions.Value{Val: 1})
 
 	s.r.Expr = expr
 
@@ -88,7 +88,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name from t where id && 1`
-	expr = expressions.NewBinaryOperation(opcode.AndAnd, &expressions.Ident{model.NewCIStr("id")}, expressions.Value{1})
+	expr = expressions.NewBinaryOperation(opcode.AndAnd, &expressions.Ident{CIStr: model.NewCIStr("id")}, expressions.Value{Val: 1})
 
 	s.r.Expr = expr
 
@@ -96,8 +96,8 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name from t where id && (id < 10)`
-	exprx := expressions.NewBinaryOperation(opcode.LT, &expressions.Ident{model.NewCIStr("id")}, expressions.Value{10})
-	expr = expressions.NewBinaryOperation(opcode.AndAnd, &expressions.Ident{model.NewCIStr("id")}, exprx)
+	exprx := expressions.NewBinaryOperation(opcode.LT, &expressions.Ident{CIStr: model.NewCIStr("id")}, expressions.Value{Val: 10})
+	expr = expressions.NewBinaryOperation(opcode.AndAnd, &expressions.Ident{CIStr: model.NewCIStr("id")}, exprx)
 
 	s.r.Expr = expr
 
@@ -112,7 +112,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	// `select id, name from t where abc`
 	src.SetFilter(false)
 
-	expr = &expressions.Ident{model.NewCIStr("abc")}
+	expr = &expressions.Ident{CIStr: model.NewCIStr("abc")}
 
 	s.r.Expr = expr
 
@@ -127,7 +127,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	// `select id, name from t where 1 is null`
 	src.SetFilter(false)
 
-	exprx = expressions.Value{1}
+	exprx = expressions.Value{Val: 1}
 	expr = &expressions.IsNull{Expr: exprx}
 
 	s.r.Expr = expr
@@ -143,7 +143,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	// `select id, name from t where id is null`
 	src.SetFilter(false)
 
-	exprx = &expressions.Ident{model.NewCIStr("id")}
+	exprx = &expressions.Ident{CIStr: model.NewCIStr("id")}
 	expr = &expressions.IsNull{Expr: exprx}
 
 	s.r.Expr = expr
@@ -159,7 +159,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	// `select id, name from t where +id`
 	src.SetFilter(false)
 
-	exprx = &expressions.Ident{model.NewCIStr("id")}
+	exprx = &expressions.Ident{CIStr: model.NewCIStr("id")}
 	expr = expressions.NewUnaryOperation(opcode.Plus, exprx)
 
 	s.r.Expr = expr
@@ -180,7 +180,7 @@ func (s *testWhereRsetSuite) TestShowRsetPlan(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name from t where id like '%s'`
-	expry := expressions.Value{"%s"}
+	expry := expressions.Value{Val: "%s"}
 	expr = &expressions.PatternLike{Expr: exprx, Pattern: expry}
 	s.r.Expr = expr
 

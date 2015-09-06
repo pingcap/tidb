@@ -182,12 +182,12 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	if s := s.Offset; s != nil {
-		if r, err = (&rsets.OffsetRset{s.Count, r}).Plan(ctx); err != nil {
+		if r, err = (&rsets.OffsetRset{Count: s.Count, Src: r}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
 	if s := s.Limit; s != nil {
-		if r, err = (&rsets.LimitRset{s.Count, r}).Plan(ctx); err != nil {
+		if r, err = (&rsets.LimitRset{Count: s.Count, Src: r}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -208,5 +208,5 @@ func (s *SelectStmt) Exec(ctx context.Context) (rs rset.Recordset, err error) {
 		return nil, err
 	}
 
-	return rsets.Recordset{ctx, r}, nil
+	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
 }

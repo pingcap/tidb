@@ -68,7 +68,7 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 			}
 		}
 		if isConst {
-			src = &plans.TableNilPlan{x.T}
+			src = &plans.TableNilPlan{T: x.T}
 		}
 	}
 
