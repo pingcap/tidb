@@ -146,6 +146,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		switch x := val.(type) {
 		case string:
 			intVal, err = StrToInt(x)
+		case mysql.Time:
+			return int16(x.Year()), nil
 		default:
 			intVal, err = ToInt64(x)
 		}

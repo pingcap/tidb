@@ -164,6 +164,10 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, int16(2015))
 	v, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
+	dt, err := mysql.ParseDate("2015-11-11")
+	c.Assert(err, IsNil)
+	v, err = Convert(dt, ft)
+	c.Assert(v, Equals, int16(2015))
 }
 
 func testToInt64(c *C, val interface{}, expect int64) {
