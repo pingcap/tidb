@@ -36,7 +36,7 @@ Read the [Roadmap](./ROADMAP.md).
 
 - __Pre-requirement__  
 ```
-go get github.com/pingcap/tidb
+go get -d github.com/pingcap/tidb
 cd $GOPATH/src/github.com/pingcap/tidb
 make
 ```
