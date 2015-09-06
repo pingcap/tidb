@@ -29,7 +29,7 @@ type testHelperSuite struct {
 
 func (s *testHelperSuite) SetUpSuite(c *C) {
 	fldx := &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("name")}, Name: "a"}
-	expr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{1}}, false)
+	expr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{Val: 1}}, false)
 	c.Assert(err, IsNil)
 	fldy := &field.Field{Expr: expr}
 

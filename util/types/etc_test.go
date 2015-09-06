@@ -163,13 +163,16 @@ func (s *testTypeEtcSuite) TestCompare(c *C) {
 	checkCompare(c, []byte(""), []byte("sff"), -1)
 
 	checkCompare(c, mysql.Time{}, nil, 1)
-	checkCompare(c, mysql.Time{}, mysql.Time{time.Now(), 1, 3}, -1)
-	checkCompare(c, mysql.Time{time.Now(), 1, 3}, "11:11", 1)
+	checkCompare(c, mysql.Time{}, mysql.Time{Time: time.Now(), Type: 1, Fsp: 3}, -1)
+	checkCompare(c, mysql.Time{Time: time.Now(), Type: 1, Fsp: 3}, "11:11", 1)
 
-	checkCompare(c, mysql.Duration{time.Duration(34), 2}, nil, 1)
-	checkCompare(c, mysql.Duration{time.Duration(34), 2}, mysql.Duration{time.Duration(29034), 2}, -1)
-	checkCompare(c, mysql.Duration{time.Duration(3340), 2}, mysql.Duration{time.Duration(34), 2}, 1)
-	checkCompare(c, mysql.Duration{time.Duration(34), 2}, mysql.Duration{time.Duration(34), 2}, 0)
+	checkCompare(c, mysql.Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1)
+	checkCompare(c, mysql.Duration{Duration: time.Duration(34), Fsp: 2},
+		mysql.Duration{Duration: time.Duration(29034), Fsp: 2}, -1)
+	checkCompare(c, mysql.Duration{Duration: time.Duration(3340), Fsp: 2},
+		mysql.Duration{Duration: time.Duration(34), Fsp: 2}, 1)
+	checkCompare(c, mysql.Duration{Duration: time.Duration(34), Fsp: 2},
+		mysql.Duration{Duration: time.Duration(34), Fsp: 2}, 0)
 
 	checkCompare(c, mysql.Decimal{}, mysql.Decimal{}, 0)
 }
@@ -216,9 +219,9 @@ func (s *testTypeEtcSuite) TestClone(c *C) {
 	checkClone(c, "abcd1.c--/+!%^", true)
 	checkClone(c, []byte("aa028*(%^"), true)
 	checkClone(c, []interface{}{1, 2}, true)
-	checkClone(c, mysql.Duration{time.Duration(32), 0}, true)
+	checkClone(c, mysql.Duration{Duration: time.Duration(32), Fsp: 0}, true)
 	checkClone(c, mysql.Decimal{}, true)
-	checkClone(c, mysql.Time{time.Now(), 1, 3}, true)
+	checkClone(c, mysql.Time{Time: time.Now(), Type: 1, Fsp: 3}, true)
 	checkClone(c, make(map[int]string), false)
 }
 
@@ -286,7 +289,7 @@ func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
 
-	_, r, err = IsOrderedType(mysql.Duration{time.Duration(0), 0})
+	_, r, err = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
 }

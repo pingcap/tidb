@@ -166,7 +166,7 @@ func checkDefaultValue(c *column.Col, hasDefaultValue bool) error {
 func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstraint, error) {
 	constraints := []*TableConstraint{}
 	col := &column.Col{
-		model.ColumnInfo{
+		ColumnInfo: model.ColumnInfo{
 			Offset:    offset,
 			Name:      model.NewCIStr(colDef.Name),
 			FieldType: *colDef.Tp,

@@ -42,7 +42,7 @@ type testSuite struct {
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	table.TableFromMeta = tables.TableFromMeta
-	driver := localstore.Driver{goleveldb.MemoryDriver{}}
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Check(err, IsNil)
 	ts.store = store
