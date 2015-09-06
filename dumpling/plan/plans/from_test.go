@@ -172,7 +172,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 	p.tbl.AddIndex(idxCol)
 
 	expr4 := &expressions.Ident{
-		model.NewCIStr("id"),
+		CIStr: model.NewCIStr("id"),
 	}
 	_, filtered, err = pln.FilterForUpdateAndDelete(p, expr4)
 	c.Assert(err, IsNil)

@@ -76,5 +76,5 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		return nil, err
 	}
 
-	return rsets.Recordset{ctx, r}, nil
+	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
 }

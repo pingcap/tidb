@@ -34,7 +34,7 @@ func (s *testHavingRsetSuite) SetUpSuite(c *C) {
 	tblPlan := newTestTablePlan(testData, names)
 
 	// expr `id > 1`
-	expr := expressions.NewBinaryOperation(opcode.GT, &expressions.Ident{model.NewCIStr("id")}, expressions.Value{1})
+	expr := expressions.NewBinaryOperation(opcode.GT, &expressions.Ident{CIStr: model.NewCIStr("id")}, expressions.Value{Val: 1})
 
 	s.r = &HavingRset{Src: tblPlan, Expr: expr}
 }
@@ -64,19 +64,19 @@ func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
 	selectList.ResultFields = selectList.ResultFields[1:]
 	selectList.Fields = selectList.Fields[1:]
 
-	groupBy = []expression.Expression{&expressions.Ident{model.NewCIStr("id")}}
+	groupBy = []expression.Expression{&expressions.Ident{CIStr: model.NewCIStr("id")}}
 	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
 	c.Assert(err, IsNil)
 
 	// `select name from t group by id + 1 having id > 1`
-	expr := expressions.NewBinaryOperation(opcode.Plus, &expressions.Ident{model.NewCIStr("id")}, expressions.Value{1})
+	expr := expressions.NewBinaryOperation(opcode.Plus, &expressions.Ident{CIStr: model.NewCIStr("id")}, expressions.Value{Val: 1})
 
 	groupBy = []expression.Expression{expr}
 	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
 	c.Assert(err, IsNil)
 
 	// `select name from t group by id + 1 having count(1) > 1`
-	aggExpr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{1}}, false)
+	aggExpr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{Val: 1}}, false)
 	c.Assert(err, IsNil)
 
 	s.r.Expr = aggExpr
@@ -85,7 +85,7 @@ func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select name from t group by id + 1 having count(xxx) > 1`
-	aggExpr, err = expressions.NewCall("count", []expression.Expression{&expressions.Ident{model.NewCIStr("xxx")}}, false)
+	aggExpr, err = expressions.NewCall("count", []expression.Expression{&expressions.Ident{CIStr: model.NewCIStr("xxx")}}, false)
 	c.Assert(err, IsNil)
 
 	s.r.Expr = aggExpr
@@ -94,7 +94,7 @@ func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, NotNil)
 
 	// `select name from t group by id having xxx > 1`
-	expr = expressions.NewBinaryOperation(opcode.GT, &expressions.Ident{model.NewCIStr("xxx")}, expressions.Value{1})
+	expr = expressions.NewBinaryOperation(opcode.GT, &expressions.Ident{CIStr: model.NewCIStr("xxx")}, expressions.Value{Val: 1})
 
 	s.r.Expr = expr
 

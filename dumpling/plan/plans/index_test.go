@@ -177,7 +177,7 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 	}
 
 	expr5 := &expressions.Ident{
-		model.NewCIStr("id"),
+		CIStr: model.NewCIStr("id"),
 	}
 
 	np, _, err := pln.Filter(p, expr)

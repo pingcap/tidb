@@ -108,7 +108,7 @@ func (s *testJoinRsetSuite) TestJoinRsetPlan(c *C) {
 
 func (s *testJoinRsetSuite) TestJoinRsetString(c *C) {
 	s.r.Right = s.r.Left
-	s.r.On = expressions.Value{1}
+	s.r.On = expressions.Value{Val: 1}
 	str := s.r.String()
 	c.Assert(len(str), Greater, 0)
 }
