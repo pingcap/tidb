@@ -30,7 +30,7 @@ type testResultFieldSuite struct {
 
 func (*testResultFieldSuite) TestMain(c *C) {
 	col := column.Col{
-		model.ColumnInfo{
+		ColumnInfo: model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeLong),
 			Name:      model.NewCIStr("c1"),
 		},
@@ -53,7 +53,7 @@ func (*testResultFieldSuite) TestMain(c *C) {
 	c.Assert(r.String(), Equals, cr.String())
 
 	col1 := column.Col{
-		model.ColumnInfo{
+		ColumnInfo: model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeLong),
 			Name:      model.NewCIStr("c2"),
 		},
@@ -75,14 +75,14 @@ func (*testResultFieldSuite) TestMain(c *C) {
 	c.Assert(ns[1], Equals, "\"c2\"")
 
 	col2 := column.Col{
-		model.ColumnInfo{
+		ColumnInfo: model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeVarchar),
 			Name:      model.NewCIStr("c3"),
 		},
 	}
 	col2.Flag |= mysql.UnsignedFlag
 	col3 := column.Col{
-		model.ColumnInfo{
+		ColumnInfo: model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeBlob),
 			Name:      model.NewCIStr("c4"),
 		},
@@ -100,7 +100,7 @@ func (*testResultFieldSuite) TestMain(c *C) {
 	c.Assert(err, IsNil)
 
 	col4 := column.Col{
-		model.ColumnInfo{
+		ColumnInfo: model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeVarchar),
 			Name:      model.NewCIStr("c2"),
 		},

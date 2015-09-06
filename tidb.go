@@ -166,7 +166,7 @@ func runExecute(ctx context.Context, es *stmts.ExecuteStmt, args ...interface{})
 	if len(args) > 0 {
 		es.UsingVars = make([]expression.Expression, 0, len(args))
 		for _, v := range args {
-			var exp expression.Expression = &expressions.Value{v}
+			var exp expression.Expression = &expressions.Value{Val: v}
 			es.UsingVars = append(es.UsingVars, exp)
 		}
 	}
@@ -209,7 +209,7 @@ func RegisterStore(name string, driver kv.Driver) error {
 
 // RegisterLocalStore registers a local kv storage with unique name and its associated engine Driver.
 func RegisterLocalStore(name string, driver engine.Driver) error {
-	d := localstore.Driver{driver}
+	d := localstore.Driver{Driver: driver}
 	return RegisterStore(name, d)
 }
 
