@@ -17,8 +17,8 @@ import (
 	"os"
 	"path"
 
-	"github.com/boltdb/bolt"
 	"github.com/juju/errors"
+	"github.com/ngaut/bolt"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/localstore/engine"
 )
