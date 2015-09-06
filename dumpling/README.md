@@ -5,19 +5,19 @@ TiDB is a distributed SQL database.
 Inspired by the design of Google [F1](http://research.google.com/pubs/pub41344.html), TiDB supports the best features of both traditional RDBMS and NoSQL.
 
 - __Horizontal scalability__  
-Grow TiDB as your business grows. You can increase the capacity by simply adding more machines. 
+Grow TiDB as your business grows. You can increase the capacity simply by adding more machines.
 
 - __Asynchronous schema changes__  
-Evolve TiDB schemas as your requirement evolves. You can add new columns and indices without to stop or affect the on-going operations.
+Evolve TiDB schemas as your requirement evolves. You can add new columns and indices without stopping or affecting the on-going operations.
 
 - __Consistent distributed transactions__  
-Think TiDB as a single-machine RDBMS. You can start a transaction that across multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
+Think TiDB as a single-machine RDBMS. You can start a transaction that acrosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
 
 - __Compatible with MySQL protocol__  
 Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
 
 - __Written in Go__  
-Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes you easy to dive into the codebase.
+Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes it easy to dive into the codebase.
 
 - __Multiple storage engine support__  
 Power TiDB with your most favorite engines. TiDB supports most of the popular storage engines in single-machine mode. You can choose from goleveldb, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
