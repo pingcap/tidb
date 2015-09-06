@@ -46,7 +46,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	row.Close()
 
 	fmt.Printf("value is %d\n", val)
 
