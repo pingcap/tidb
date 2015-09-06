@@ -74,6 +74,7 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
+	stores = make(map[string]kv.Driver)
 )
 
 // Compile is safe for concurrent use by multiple goroutines.
@@ -193,8 +194,6 @@ func runPreparedStmt(ctx context.Context, ps *stmts.PreparedStmt) (rset.Recordse
 	return rs, errors.Trace(err)
 }
 
-var stores map[string]kv.Driver
-
 // RegisterStore registers a kv storage with unique name and its associated Driver.
 func RegisterStore(name string, driver kv.Driver) error {
 	name = strings.ToLower(name)
@@ -251,7 +250,6 @@ func IsQuery(sql string) bool {
 }
 
 func init() {
-	stores = make(map[string]kv.Driver)
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
