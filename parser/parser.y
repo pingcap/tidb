@@ -270,7 +270,6 @@ import (
 	ConstraintKeywordOpt	"Constraint Keyword or empty"
 	ConstraintOpt		"optional column value constraint"
 	ConstraintOpts		"optional column value constraints"
-	Conversion		"conversion"
 	CreateDatabase		"Create {DATABASE | SCHEMA}"
 	CreateDatabaseStmt	"Create Database Statement"
 	CreateIndexStmt		"CREATE INDEX statement"
@@ -853,14 +852,6 @@ ConstraintOpts:
 		} else {
 			$$ = $1
 		}
-	}
-
-
-Conversion:
-	Type '(' Expression ')'
-	{
-		t := $1.(*types.FieldType)
-		$$ = &expressions.Conversion{Tp: t.Tp, Val: expressions.Expr($3)}
 	}
 
 CreateIndexStmt:
@@ -1738,7 +1729,6 @@ OrderByOptional:
 	
 PrimaryExpression:
 	Operand
-|	Conversion
 |	Function
 |	SubSelect
 |	'!' PrimaryExpression %prec neg
