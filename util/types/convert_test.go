@@ -153,6 +153,17 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Decimal).String(), Equals, "3.14159")
+
+	// Fot TypeYear
+	ft = NewFieldType(mysql.TypeYear)
+	v, err = Convert("2015-11-11", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int16(2015))
+	v, err = Convert(2015, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int16(2015))
+	v, err = Convert(1800, ft)
+	c.Assert(err, NotNil)
 }
 
 func testToInt64(c *C, val interface{}, expect int64) {
