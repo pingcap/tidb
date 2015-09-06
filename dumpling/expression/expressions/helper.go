@@ -163,8 +163,6 @@ func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression
 		for _, e := range x.Args {
 			mentionedAggregateFuncs(e, m)
 		}
-	case *Conversion:
-		mentionedAggregateFuncs(x.Val, m)
 	case *IsNull:
 		mentionedAggregateFuncs(x.Expr, m)
 	case *PExpr:
@@ -243,8 +241,6 @@ func mentionedColumns(e expression.Expression, m map[string]bool, names *[]strin
 		for _, e := range x.Args {
 			mentionedColumns(e, m, names)
 		}
-	case *Conversion:
-		mentionedColumns(x.Val, m, names)
 	case *Ident:
 		name := x.L
 		if !m[name] {
