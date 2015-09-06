@@ -127,11 +127,11 @@ func (s *testBinOpSuite) TestComparisonOp(c *C) {
 		{"1", float64(2), -1},
 		{"1", uint64(1), 0},
 		{"1", mysql.NewDecimalFromInt(1, 0), 0},
-		{"2011-01-01 11:11:11", mysql.Time{time.Now(), mysql.TypeDatetime, 0}, -1},
+		{"2011-01-01 11:11:11", mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, -1},
 		{"12:00:00", mysql.ZeroDuration, 1},
 		{mysql.ZeroDuration, mysql.ZeroDuration, 0},
-		{mysql.Time{time.Now().Add(time.Second * 10), mysql.TypeDatetime, 0},
-			mysql.Time{time.Now(), mysql.TypeDatetime, 0}, 1},
+		{mysql.Time{Time: time.Now().Add(time.Second * 10), Type: mysql.TypeDatetime, Fsp: 0},
+			mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, 1},
 	}
 
 	for _, t := range cmpTbl {
