@@ -10,10 +10,6 @@
 			"Rev": "2f3b7e71675a8661d1e1e12a655f17ea8ec84430"
 		},
 		{
-			"ImportPath": "github.com/djimenez/iconv-go",
-			"Rev": "5f6a5a4f0011195c0147545149ad54f4adb54757"
-		},
-		{
 			"ImportPath": "github.com/docopt/docopt-go",
 			"Comment": "0.6.1-5-g854c423",
 			"Rev": "854c423c810880e30b9fecdabb12d54f4a92f9bb"
@@ -53,6 +49,22 @@
 		{
 			"ImportPath": "github.com/twinj/uuid",
 			"Rev": "70cac2bcd273ef6a371bb96cde363d28b68734c3"
+		},
+		{
+			"ImportPath": "github.com/golang/snappy",
+			"Rev": "723cc1e459b8eea2dea4583200fd60757d40097a"
+		},
+		{
+			"ImportPath": "golang.org/x/net/html",
+			"Rev": "db8e4de5b2d6653f66aea53094624468caad15d2"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/transform",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
 		}
 	]
 }
