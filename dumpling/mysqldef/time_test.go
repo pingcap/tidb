@@ -368,10 +368,10 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 		{99999999999999, true, zeroDatetimeStr, true, zeroTimestampStr, true, zeroDateStr},
 		{100000000000000, true, zeroDatetimeStr, true, zeroTimestampStr, true, zeroDateStr},
 		{10000102000000, false, "1000-01-02 00:00:00", true, zeroTimestampStr, false, "1000-01-02"},
-		{700101000000, false, "1970-01-01 00:00:00", true, zeroTimestampStr, false, "1970-01-01"},
+		{19690101000000, false, "1969-01-01 00:00:00", true, zeroTimestampStr, false, "1969-01-01"},
 		{991231235959, false, "1999-12-31 23:59:59", false, "1999-12-31 23:59:59", false, "1999-12-31"},
 		{691231235959, false, "2069-12-31 23:59:59", true, zeroTimestampStr, false, "2069-12-31"},
-		{380119031407, false, "2038-01-19 03:14:07", false, "2038-01-19 03:14:07", false, "2038-01-19"},
+		{370119031407, false, "2037-01-19 03:14:07", false, "2037-01-19 03:14:07", false, "2037-01-19"},
 		{380120031407, false, "2038-01-20 03:14:07", true, zeroTimestampStr, false, "2038-01-20"},
 	}
 
