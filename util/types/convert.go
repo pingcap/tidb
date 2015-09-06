@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/util/charset"
 )
 
 // InvConv returns a failed convertion error.
@@ -71,6 +72,10 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		}
 		// TODO: consider target.Charset/Collate
 		x = truncateStr(x, target.Flen)
+		if target.Charset == charset.CharsetBin {
+			bx := []byte(x)
+			return bx, nil
+		}
 		return x, nil
 	case mysql.TypeBlob:
 		x, err := ToString(val)
@@ -78,6 +83,10 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 			return InvConv(val, tp)
 		}
 		x = truncateStr(x, target.Flen)
+		if target.Charset == charset.CharsetBin {
+			bx := []byte(x)
+			return bx, nil
+		}
 		return x, nil
 	case mysql.TypeDuration:
 		fsp := mysql.DefaultFsp
@@ -126,6 +135,10 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		x, err := ToInt64(val)
 		if err != nil {
 			return InvConv(val, tp)
+		}
+		// TODO: We should first convert to uint64 then check unsigned flag.
+		if mysql.HasUnsignedFlag(target.Flag) {
+			return uint64(x), nil
 		}
 		return x, nil
 	case mysql.TypeNewDecimal:

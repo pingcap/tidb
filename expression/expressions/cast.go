@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -76,30 +75,9 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 	if value == nil {
 		return nil, nil
 	}
-
-	// TODO: we need a better function convert between any two types according to FieldType.
-	// Not only check Type, but also consider Flen/Decimal/Charset and so on.
 	nv, err := types.Convert(value, f.Tp)
 	if err != nil {
 		return nil, err
-	}
-	if f.Tp.Tp == mysql.TypeString && f.Tp.Charset == charset.CharsetBin {
-		nv = []byte(nv.(string))
-	}
-	if f.Tp.Flen != types.UnspecifiedLength {
-		switch f.Tp.Tp {
-		case mysql.TypeString:
-			v := nv.(string)
-			if len(v) > int(f.Tp.Flen) {
-				v = v[:f.Tp.Flen]
-			}
-			return v, nil
-		}
-	}
-	if f.Tp.Tp == mysql.TypeLonglong {
-		if mysql.HasUnsignedFlag(f.Tp.Flag) {
-			return uint64(nv.(int64)), nil
-		}
 	}
 	return nv, nil
 }
