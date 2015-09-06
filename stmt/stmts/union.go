@@ -80,5 +80,5 @@ func (s *UnionStmt) Exec(ctx context.Context) (rs rset.Recordset, err error) {
 	if err != nil {
 		return nil, err
 	}
-	return rsets.Recordset{ctx, r}, nil
+	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
 }

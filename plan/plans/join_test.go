@@ -76,7 +76,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "CROSS",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{true},
+		On:     expressions.Value{Val: true},
 	}
 
 	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
@@ -88,7 +88,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "LEFT",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{true},
+		On:     expressions.Value{Val: true},
 	}
 
 	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
@@ -100,7 +100,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "RIGHT",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{true},
+		On:     expressions.Value{Val: true},
 	}
 
 	expr := &expressions.BinaryOperation{
@@ -125,7 +125,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "FULL",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{true},
+		On:     expressions.Value{Val: true},
 	}
 
 	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
