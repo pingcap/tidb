@@ -93,12 +93,13 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		result interface{}
 	}{
 		{mysql.NewDecimalFromInt(1, 0), opcode.Plus, mysql.NewDecimalFromInt(1, 0)},
-		{mysql.Duration{time.Duration(838*3600 + 59*60 + 59), mysql.DefaultFsp}, opcode.Plus, mysql.Duration{time.Duration(838*3600 + 59*60 + 59), mysql.DefaultFsp}},
-		{mysql.Time{time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), mysql.TypeDatetime, 0}, opcode.Plus, mysql.Time{time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), mysql.TypeDatetime, 0}},
+		{mysql.Duration{Duration: time.Duration(838*3600 + 59*60 + 59), Fsp: mysql.DefaultFsp}, opcode.Plus,
+			mysql.Duration{Druation: time.Duration(838*3600 + 59*60 + 59), Fsp: mysql.DefaultFsp}},
+		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Plus, mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}},
 
 		{mysql.NewDecimalFromInt(1, 0), opcode.Minus, mysql.NewDecimalFromInt(-1, 0)},
 		{mysql.ZeroDuration, opcode.Minus, mysql.NewDecimalFromInt(0, 0)},
-		{mysql.Time{time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), mysql.TypeDatetime, 0}, opcode.Minus, mysql.NewDecimalFromInt(-20091110230000, 0)},
+		{mysql.Time{Time: time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC), Type: mysql.TypeDatetime, Fsp: 0}, opcode.Minus, mysql.NewDecimalFromInt(-20091110230000, 0)},
 	}
 
 	for _, t := range tbl {
