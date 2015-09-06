@@ -74,7 +74,7 @@ var (
 		domains: map[string]*domain.Domain{},
 	}
 	stores    = make(map[string]kv.Driver)
-	Debug     = false
+	Debug     = true
 	PprofAddr = "localhost:8888"
 )
 
