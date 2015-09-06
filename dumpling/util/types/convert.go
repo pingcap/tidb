@@ -73,8 +73,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		// TODO: consider target.Charset/Collate
 		x = truncateStr(x, target.Flen)
 		if target.Charset == charset.CharsetBin {
-			bx := []byte(x)
-			return bx, nil
+			return []byte(x), nil
 		}
 		return x, nil
 	case mysql.TypeBlob:
@@ -84,8 +83,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		}
 		x = truncateStr(x, target.Flen)
 		if target.Charset == charset.CharsetBin {
-			bx := []byte(x)
-			return bx, nil
+			return []byte(x), nil
 		}
 		return x, nil
 	case mysql.TypeDuration:
