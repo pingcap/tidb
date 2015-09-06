@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/stmt/stmts"
 )
 
 func TestT(t *testing.T) {
@@ -298,4 +300,15 @@ func (s *testParserSuite) TestParser0(c *C) {
 	ok = yyParse(l) == 0
 	c.Assert(ok, Equals, true)
 	c.Assert(len(l.Stmts()), Equals, 2)
+
+	// Testcase for CONVERT(expr,type)
+	src = "SELECT CONVERT('111', SIGNED);"
+	l = NewLexer(src)
+	ok = yyParse(l) == 0
+	st := l.Stmts()[0]
+	ss, ok := st.(*stmts.SelectStmt)
+	c.Assert(ok, IsTrue)
+	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
+	c.Assert(ok, IsTrue)
+	c.Assert(cv.IsConvert, IsTrue)
 }
