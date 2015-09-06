@@ -36,6 +36,12 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err := Convert("123456", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "1234")
+	ft = NewFieldType(mysql.TypeString)
+	ft.Flen = 4
+	ft.Charset = charset.CharsetBin
+	v, err = Convert("12345", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("1234"))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
@@ -111,6 +117,12 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert("12345", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "123")
+	ft = NewFieldType(mysql.TypeString)
+	ft.Flen = 3
+	ft.Charset = charset.CharsetBin
+	v, err = Convert("12345", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("123"))
 
 	// For TypeDuration
 	ft = NewFieldType(mysql.TypeDuration)
@@ -146,6 +158,11 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(100))
+	ft = NewFieldType(mysql.TypeLonglong)
+	ft.Flag |= mysql.UnsignedFlag
+	v, err = Convert("100", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(100))
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
