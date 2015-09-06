@@ -40,7 +40,7 @@ func (*testSuite) TestT(c *C) {
 		Name: model.NewCIStr("t"),
 	}
 	c.Assert(ident.String(), Not(Equals), "")
-	driver := localstore.Driver{goleveldb.MemoryDriver{}}
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
 	se, err := tidb.CreateSession(store)

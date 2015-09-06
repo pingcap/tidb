@@ -53,7 +53,7 @@ func TableFromMeta(dbname string, alloc autoid.Allocator, tblInfo *model.TableIn
 	t := NewTable(tblInfo.ID, tblInfo.Name.O, dbname, nil, alloc)
 
 	for _, colInfo := range tblInfo.Columns {
-		c := column.Col{*colInfo}
+		c := column.Col{ColumnInfo: *colInfo}
 		t.Columns = append(t.Columns, &c)
 	}
 
