@@ -17,11 +17,12 @@ import (
 	"fmt"
 	"strings"
 
-	iconv "github.com/djimenez/iconv-go"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"golang.org/x/net/html/charset"
+	"golang.org/x/text/transform"
 )
 
 // FunctionConvert provides a way to convert data between different character sets.
@@ -74,7 +75,13 @@ func (f *FunctionConvert) Eval(ctx context.Context, args map[interface{}]interfa
 	} else if strings.ToLower(f.Charset) == "utf8mb4" {
 		return value, nil
 	}
-	target, err := iconv.ConvertString(str, "utf-8", f.Charset)
+
+	encoding, _ := charset.Lookup(f.Charset)
+	if encoding == nil {
+		return nil, fmt.Errorf("unknow char decoder %s", f.Charset)
+	}
+
+	target, _, err := transform.String(encoding.NewDecoder(), str)
 	if err != nil {
 		log.Errorf("Convert %s to %s with error: %v", str, f.Charset, err)
 		return nil, errors.Trace(err)
