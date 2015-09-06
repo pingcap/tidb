@@ -154,7 +154,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Decimal).String(), Equals, "3.14159")
 
-	// Fot TypeYear
+	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
 	v, err = Convert("2015-11-11", ft)
 	c.Assert(err, IsNil)
