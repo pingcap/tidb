@@ -29,6 +29,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close() 
 
 	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (a INT)")
 	if err != nil {
