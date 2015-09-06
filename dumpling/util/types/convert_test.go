@@ -15,6 +15,7 @@ package types
 
 import (
 	"math"
+	"time"
 
 	. "github.com/pingcap/check"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -170,6 +171,23 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Decimal).String(), Equals, "3.14159")
+
+	// For TypeYear
+	ft = NewFieldType(mysql.TypeYear)
+	v, err = Convert("2015-11-11", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int16(2015))
+	v, err = Convert(2015, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int16(2015))
+	v, err = Convert(1800, ft)
+	c.Assert(err, NotNil)
+	dt, err := mysql.ParseDate("2015-11-11")
+	c.Assert(err, IsNil)
+	v, err = Convert(dt, ft)
+	c.Assert(v, Equals, int16(2015))
+	v, err = Convert(mysql.ZeroDuration, ft)
+	c.Assert(v, Equals, int16(time.Now().Year()))
 }
 
 func testToInt64(c *C, val interface{}, expect int64) {
