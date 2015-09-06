@@ -15,10 +15,9 @@ package tidb
 
 import (
 	"net/http"
+	_ "net/http/pprof"
 	"strings"
 	"sync"
-	// For pprof
-	_ "net/http/pprof"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -74,7 +73,9 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	stores = make(map[string]kv.Driver)
+	stores    = make(map[string]kv.Driver)
+	Debug     = false
+	PprofAddr = "localhost:8888"
 )
 
 // Compile is safe for concurrent use by multiple goroutines.
@@ -257,5 +258,8 @@ func init() {
 
 	table.TableFromMeta = tables.TableFromMeta
 
-	go http.ListenAndServe(":8888", nil)
+	// start pprof handlers
+	if Debug {
+		go http.ListenAndServe(PprofAddr, nil)
+	}
 }
