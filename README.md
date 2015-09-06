@@ -1,4 +1,5 @@
 ![logo](./docs/logo_with_text.png)
+[![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 ## What is TiDB?
 
 TiDB is a distributed SQL database.
