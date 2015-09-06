@@ -1808,6 +1808,14 @@ Function:
 			Charset: $5.(string),
 		}	
 	}
+|	"CONVERT" '(' Expression ',' CastType ')' 
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+		$$ = &expressions.FunctionCast{
+			Expr: $3.(expression.Expression), 
+			Tp: $5.(*types.FieldType),
+		}	
+	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
 		$$ = &expressions.FunctionSubstring{
