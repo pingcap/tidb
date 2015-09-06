@@ -143,7 +143,7 @@ func (t Time) Marshal() ([]byte, error) {
 
 	switch t.Type {
 	case TypeDatetime, TypeDate:
-		_, offset := t.Time.Zone()
+		_, offset := time.Now().Zone()
 		// For datetime and date type, we have a trick to marshal.
 		// e.g, if local time is 2010-10-10T10:10:10 UTC+8
 		// we will change this to 2010-10-10T10:10:10 UTC and then marshal.
