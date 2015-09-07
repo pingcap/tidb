@@ -66,11 +66,11 @@ type testLimitSuit struct {
 
 var _ = Suite(&testLimitSuit{
 	data: []*testRowData{
-		&testRowData{1, []interface{}{10, "10"}},
-		&testRowData{2, []interface{}{10, "20"}},
-		&testRowData{3, []interface{}{10, "30"}},
-		&testRowData{4, []interface{}{40, "40"}},
-		&testRowData{6, []interface{}{60, "60"}},
+		{1, []interface{}{10, "10"}},
+		{2, []interface{}{10, "20"}},
+		{3, []interface{}{10, "30"}},
+		{4, []interface{}{40, "40"}},
+		{6, []interface{}{60, "60"}},
 	},
 })
 
