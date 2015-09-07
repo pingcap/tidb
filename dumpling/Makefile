@@ -51,7 +51,7 @@ check:
 	@echo "golint"
 	@! golint ./... | grep -vE 'LastInsertId|NewLexer'
 	@echo "gofmt (simplify)"
-	@! gofmt -s -d -l . 2>&1 | grep -vE 'Godeps'
+	@! gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/parser.go'
 
 deps:
 	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
