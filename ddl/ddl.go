@@ -356,6 +356,11 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	cols := tbl.Cols()
 	position := len(cols)
 	name := spec.Column.Name
+	// Check column name duplicate
+	dc := column.FindCol(cols, name)
+	if dc != nil {
+		return errors.Errorf("Try to add a column with the same name of an already exists column.")
+	}
 	if spec.Position.Type == ColumnPositionFirst {
 		position = 0
 	} else if spec.Position.Type == ColumnPositionAfter {
@@ -367,7 +372,7 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 		// insert position is after the mentioned column
 		position = c.Offset + 1
 	}
-	// TODO: check duplicate and set constraint
+	// TODO: Set constraint
 	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
 	if err != nil {
 		return errors.Trace(err)
