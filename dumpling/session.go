@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Session context
@@ -150,7 +151,14 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 func checkArgs(args ...interface{}) error {
 	for i, v := range args {
 		switch v.(type) {
-		case nil, bool, float32, float64, string,
+		case bool:
+			// We do not handle bool as int8 in tidb.
+			vv, err := types.ToBool(v)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			args[i] = vv
+		case nil, float32, float64, string,
 			int8, int16, int32, int64, int,
 			uint8, uint16, uint32, uint64, uint,
 			[]byte, time.Duration, time.Time:

@@ -392,6 +392,16 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	row, err = rs.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, id, "abc", 1)
+	// Check for pass bool param to tidb prepared statement
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (id tiny)")
+	mustExecSQL(c, se, "insert t values (?)", true)
+	rs = mustExecSQL(c, se, "select * from t")
+	c.Assert(rs, NotNil)
+	row, err = rs.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, int8(1))
+
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
