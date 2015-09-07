@@ -15,7 +15,6 @@ package expressions
 
 import (
 	"errors"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
@@ -106,44 +105,6 @@ func (s *testBinOpSuite) TestComparisonOp(c *C) {
 		c.Assert(v, IsNil)
 	}
 
-	// test evalCompare function
-	cmpTbl := []struct {
-		lhs interface{}
-		rhs interface{}
-		ret int // 0, 1, -1
-	}{
-		{float64(1), float64(1), 0},
-		{float64(1), "1", 0},
-		{int64(1), int64(1), 0},
-		{int64(-1), uint64(1), -1},
-		{int64(-1), "-1", 0},
-		{uint64(1), uint64(1), 0},
-		{uint64(1), int64(-1), 1},
-		{uint64(1), "1", 0},
-		{mysql.NewDecimalFromInt(1, 0), mysql.NewDecimalFromInt(1, 0), 0},
-		{mysql.NewDecimalFromInt(1, 0), "1", 0},
-		{"1", "1", 0},
-		{"1", int64(-1), 1},
-		{"1", float64(2), -1},
-		{"1", uint64(1), 0},
-		{"1", mysql.NewDecimalFromInt(1, 0), 0},
-		{"2011-01-01 11:11:11", mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, -1},
-		{"12:00:00", mysql.ZeroDuration, 1},
-		{mysql.ZeroDuration, mysql.ZeroDuration, 0},
-		{mysql.Time{Time: time.Now().Add(time.Second * 10), Type: mysql.TypeDatetime, Fsp: 0},
-			mysql.Time{Time: time.Now(), Type: mysql.TypeDatetime, Fsp: 0}, 1},
-	}
-
-	for _, t := range cmpTbl {
-		ret, err := evalCompare(t.lhs, t.rhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.ret)
-
-		ret, err = evalCompare(t.rhs, t.lhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, -t.ret)
-	}
-
 	// test error
 	mock := mockExpr{
 		isStatic: false,
@@ -193,9 +154,6 @@ func (s *testBinOpSuite) TestComparisonOp(c *C) {
 
 	expr := BinaryOperation{Op: opcode.Plus, L: Value{1}, R: Value{1}}
 	_, err := expr.evalComparisonOp(nil, nil)
-	c.Assert(err, NotNil)
-
-	_, err = evalCompare(1, 1)
 	c.Assert(err, NotNil)
 }
 
