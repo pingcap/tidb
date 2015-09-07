@@ -118,7 +118,7 @@ func (l *lexer) next() int {
 }
 
 func (l *lexer) err0(ln, c int, s string, args ...interface{}) {
-	err := errors.Errorf(fmt.Sprintf("%d:%d ", ln, c)+s, args...)
+	err := errors.Errorf(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val), args...)
 	l.errs = append(l.errs, err)
 }
 
