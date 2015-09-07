@@ -30,12 +30,12 @@ type testPrinterSuite struct {
 
 func (s *testPrinterSuite) TestPrintResult(c *C) {
 	cols := []string{"col1", "col2", "col3"}
-	datas := [][]string{[]string{"11"}, []string{"21", "22", "23"}}
+	datas := [][]string{{"11"}, {"21", "22", "23"}}
 	result, ok := GetPrintResult(cols, datas)
 	c.Assert(ok, IsFalse)
 	c.Assert(result, Equals, "")
 
-	datas = [][]string{[]string{"11", "12", "13"}, []string{"21", "22", "23"}}
+	datas = [][]string{{"11", "12", "13"}, {"21", "22", "23"}}
 	expect := `
 +------+------+------+
 | col1 | col2 | col3 |

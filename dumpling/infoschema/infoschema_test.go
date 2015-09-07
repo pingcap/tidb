@@ -62,7 +62,7 @@ func (*testSuite) TestT(c *C) {
 		Name:  idxName,
 		Table: tbName,
 		Columns: []*model.IndexColumn{
-			&model.IndexColumn{
+			{
 				Name:   colName,
 				Offset: 0,
 				Length: 10,

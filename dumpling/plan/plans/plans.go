@@ -108,7 +108,7 @@ func (r *selectIndexDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (er
 
 // GetFields implements plan.Plan GetFields interface.
 func (r *selectIndexDefaultPlan) GetFields() []*field.ResultField {
-	return []*field.ResultField{&field.ResultField{Name: r.nm}}
+	return []*field.ResultField{{Name: r.nm}}
 }
 
 // NullPlan is empty plan, if we can affirm that the resultset is empty, we

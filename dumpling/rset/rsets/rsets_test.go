@@ -42,11 +42,11 @@ type testTablePlan struct {
 }
 
 var testData = []*testRowData{
-	&testRowData{1, []interface{}{10, "hello"}},
-	&testRowData{2, []interface{}{10, "hello"}},
-	&testRowData{3, []interface{}{10, "hello"}},
-	&testRowData{4, []interface{}{40, "hello"}},
-	&testRowData{6, []interface{}{60, "hello"}},
+	{1, []interface{}{10, "hello"}},
+	{2, []interface{}{10, "hello"}},
+	{3, []interface{}{10, "hello"}},
+	{4, []interface{}{40, "hello"}},
+	{6, []interface{}{60, "hello"}},
 }
 
 func newTestTablePlan(rows []*testRowData, fields []string) *testTablePlan {

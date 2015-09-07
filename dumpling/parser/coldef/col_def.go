@@ -189,7 +189,7 @@ func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstra
 	hasDefaultValue := false
 	if colDef.Constraints != nil {
 		keys := []*IndexColName{
-			&IndexColName{
+			{
 				colDef.Name,
 				colDef.Tp.Flen,
 			},

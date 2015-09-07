@@ -360,10 +360,10 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 
 func (s *testCodecSuite) TestBytes(c *C) {
 	tblBytes := [][]byte{
-		[]byte{},
-		[]byte{0x00, 0x01},
-		[]byte{0xff, 0xff},
-		[]byte{0x01, 0x00},
+		{},
+		{0x00, 0x01},
+		{0xff, 0xff},
+		{0x01, 0x00},
 		[]byte("abc"),
 		[]byte("hello world"),
 	}
