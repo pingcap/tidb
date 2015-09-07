@@ -59,9 +59,10 @@ func (r *DistinctDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err e
 
 	var rows [][]interface{}
 	if err = r.Src.Do(ctx, func(id interface{}, in []interface{}) (bool, error) {
+		var v []interface{}
 		// get distinct key
 		key := in[0:r.HiddenFieldOffset]
-		v, err := t.Get(key)
+		v, err = t.Get(key)
 		if err != nil {
 			return false, err
 		}

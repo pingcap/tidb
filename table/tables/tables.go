@@ -552,7 +552,8 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		if err != nil {
 			return err
 		}
-		if more, err := fn(h, data, cols); !more || err != nil {
+		more, err := fn(h, data, cols)
+		if !more || err != nil {
 			return err
 		}
 

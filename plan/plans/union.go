@@ -68,7 +68,6 @@ func (p *UnionPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 
 	// Eval the following select statements
 	for i, distinct := range p.Distincts {
-		var err error
 		src = p.Srcs[i+1]
 		// Eval src
 		if len(src.GetFields()) != len(rfs) {
@@ -100,9 +99,9 @@ func (p *UnionPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 			}
 			if distinct {
 				// distinct union, check duplicate
-				v, err := t.Get(in)
-				if err != nil {
-					return false, err
+				v, getErr := t.Get(in)
+				if getErr != nil {
+					return false, getErr
 				}
 				if len(v) > 0 {
 					// Find duplicate, ignore it
