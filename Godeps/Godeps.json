@@ -6,17 +6,8 @@
 	],
 	"Deps": [
 		{
-			"ImportPath": "github.com/ngaut/bolt",
-			"Rev": "430b1ff461fe33eb4655b5116d139c75497ede66"
-		},
-		{
 			"ImportPath": "github.com/djimenez/iconv-go",
 			"Rev": "5f6a5a4f0011195c0147545149ad54f4adb54757"
-		},
-		{
-			"ImportPath": "github.com/docopt/docopt-go",
-			"Comment": "0.6.1-5-g854c423",
-			"Rev": "854c423c810880e30b9fecdabb12d54f4a92f9bb"
 		},
 		{
 			"ImportPath": "github.com/golang/snappy",
@@ -25,6 +16,10 @@
 		{
 			"ImportPath": "github.com/juju/errors",
 			"Rev": "4567a5e69fd3130ca0d89f69478e7ac025b67452"
+		},
+		{
+			"ImportPath": "github.com/ngaut/bolt",
+			"Rev": "430b1ff461fe33eb4655b5116d139c75497ede66"
 		},
 		{
 			"ImportPath": "github.com/ngaut/log",
