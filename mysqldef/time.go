@@ -199,17 +199,12 @@ func (t *Time) UnmarshalInLocation(b []byte, loc *time.Location) error {
 
 	if t.Type == TypeDatetime || t.Type == TypeDate {
 		// e.g, for 2010-10-10T10:10:10 UTC, we will unmarshal to 2010-10-10T10:10:10 location
-		// We must use Date to creates a time to get offset. Why not time.Now directly,
-		// because creating time using Date with time.Local may still have a different zone with time.Now.
-		year, month, day := t.Time.Date()
-		hour, min, sec := t.Time.Clock()
-		nsec := t.Time.Nanosecond()
-		_, offset := time.Date(year, month, day, hour, min, sec, nsec, time.Local).Zone()
+		_, offset := t.Time.In(loc).Zone()
 
 		t.Time = t.Time.Add(-time.Duration(offset) * time.Second).In(loc)
 		if t.Type == TypeDate {
 			// for date type ,we will only use year, month and day.
-			year, month, day = t.Time.Date()
+			year, month, day := t.Time.Date()
 			t.Time = time.Date(year, month, day, 0, 0, 0, 0, loc)
 		}
 	} else if t.Type == TypeTimestamp {
