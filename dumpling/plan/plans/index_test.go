@@ -67,7 +67,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 	p.vars = map[string]interface{}{}
 	p.txn, _ = p.store.Begin()
 	p.cols = []*column.Col{
-		&column.Col{
+		{
 			ColumnInfo: model.ColumnInfo{
 				ID:           0,
 				Name:         model.NewCIStr("id"),
@@ -76,7 +76,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
 			},
 		},
-		&column.Col{
+		{
 			ColumnInfo: model.ColumnInfo{
 				ID:           1,
 				Name:         model.NewCIStr("name"),
@@ -93,7 +93,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 			Name:  model.NewCIStr("id"),
 			Table: model.NewCIStr("t2"),
 			Columns: []*model.IndexColumn{
-				&model.IndexColumn{
+				{
 					Name:   model.NewCIStr("id"),
 					Offset: 0,
 					Length: 0,

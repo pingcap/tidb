@@ -30,18 +30,18 @@ type testUnionSuit struct {
 
 var _ = Suite(&testUnionSuit{
 	data: []*testRowData{
-		&testRowData{1, []interface{}{10, "10"}},
-		&testRowData{2, []interface{}{10, "20"}},
-		&testRowData{3, []interface{}{10, "30"}},
-		&testRowData{4, []interface{}{40, "40"}},
-		&testRowData{6, []interface{}{60, "60"}},
+		{1, []interface{}{10, "10"}},
+		{2, []interface{}{10, "20"}},
+		{3, []interface{}{10, "30"}},
+		{4, []interface{}{40, "40"}},
+		{6, []interface{}{60, "60"}},
 	},
 	data2: []*testRowData{
-		&testRowData{1, []interface{}{10, "10"}},
-		&testRowData{2, []interface{}{10, "20"}},
-		&testRowData{3, []interface{}{10, "30"}},
-		&testRowData{4, []interface{}{40, "40"}},
-		&testRowData{6, []interface{}{70, "60"}},
+		{1, []interface{}{10, "10"}},
+		{2, []interface{}{10, "20"}},
+		{3, []interface{}{10, "30"}},
+		{4, []interface{}{40, "40"}},
+		{6, []interface{}{70, "60"}},
 	},
 })
 
@@ -49,7 +49,7 @@ func (t *testUnionSuit) TestUnion(c *C) {
 	tblPlan := &testTablePlan{t.data, []string{"id", "name"}}
 	tblPlan2 := &testTablePlan{t.data2, []string{"id", "name"}}
 	cols := []*column.Col{
-		&column.Col{
+		{
 			ColumnInfo: model.ColumnInfo{
 				ID:           0,
 				Name:         model.NewCIStr("id"),
@@ -58,7 +58,7 @@ func (t *testUnionSuit) TestUnion(c *C) {
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
 			},
 		},
-		&column.Col{
+		{
 			ColumnInfo: model.ColumnInfo{
 				ID:           1,
 				Name:         model.NewCIStr("name"),
