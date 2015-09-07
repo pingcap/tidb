@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/stmt/stmts"
 )
 
 func TestT(t *testing.T) {
@@ -257,6 +259,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT SUBSTRING('Quadratically' FROM 5);", true},
 		{"SELECT SUBSTRING('Quadratically' FROM 5 FOR 3);", true},
 
+		{"SELECT CONVERT('111', SIGNED);", true},
+
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -284,8 +288,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 	src := "SELECT id+?, id+? from t;"
 	l := NewLexer(src)
 	l.SetPrepare()
-	ok := yyParse(l) == 0
-	c.Assert(ok, Equals, true)
+	c.Assert(yyParse(l), Equals, 0)
 	c.Assert(len(l.ParamList), Equals, 2)
 	c.Assert(len(l.Stmts()), Equals, 1)
 
@@ -293,7 +296,17 @@ func (s *testParserSuite) TestParser0(c *C) {
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,); -- foo\nSelect --1 from foo;"
 	l = NewLexer(src)
 	l.SetPrepare()
-	ok = yyParse(l) == 0
-	c.Assert(ok, Equals, true)
+	c.Assert(yyParse(l), Equals, 0)
 	c.Assert(len(l.Stmts()), Equals, 2)
+
+	// Testcase for CONVERT(expr,type)
+	src = "SELECT CONVERT('111', SIGNED);"
+	l = NewLexer(src)
+	c.Assert(yyParse(l), Equals, 0)
+	st := l.Stmts()[0]
+	ss, ok := st.(*stmts.SelectStmt)
+	c.Assert(ok, IsTrue)
+	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
+	c.Assert(ok, IsTrue)
+	c.Assert(cv.IsConvert, IsTrue)
 }
