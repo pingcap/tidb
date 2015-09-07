@@ -662,6 +662,13 @@ func (o *BinaryOperation) coerceArithmetic(a interface{}) (interface{}, error) {
 	case mysql.Duration:
 		// TODO: if duration has no precision, return int64
 		return x.ToNumber(), nil
+	case []byte:
+		// []byte is the same as string, converted to float for arithmetic operator.
+		f, err := types.StrToFloat(string(x))
+		if err != nil {
+			return nil, err
+		}
+		return f, err
 	default:
 		return x, nil
 	}

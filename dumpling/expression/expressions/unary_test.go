@@ -59,6 +59,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{uint32(1), opcode.Plus, uint32(1)},
 		{uint64(1), opcode.Plus, uint64(1)},
 		{"1.0", opcode.Plus, "1.0"},
+		{[]byte("1.0"), opcode.Plus, []byte("1.0")},
 
 		// test Minus.
 		{nil, opcode.Minus, nil},
@@ -75,6 +76,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{uint32(1), opcode.Minus, -int64(1)},
 		{uint64(1), opcode.Minus, -int64(1)},
 		{"1.0", opcode.Minus, -1.0},
+		{[]byte("1.0"), opcode.Minus, -1.0},
 	}
 
 	for _, t := range tbl {
@@ -85,7 +87,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 
 		result, err := exprc.Eval(nil, nil)
 		c.Assert(err, IsNil)
-		c.Assert(result, Equals, t.result)
+		c.Assert(result, DeepEquals, t.result)
 	}
 
 	tbl = []struct {
