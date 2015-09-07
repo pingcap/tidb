@@ -354,6 +354,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 		var dest Time
 		dest.Type = TypeDatetime
+		dest.Fsp = MaxFsp
 		err = dest.Unmarshal(b)
 		c.Assert(err, IsNil)
 		c.Assert(dest.String(), Equals, test)
