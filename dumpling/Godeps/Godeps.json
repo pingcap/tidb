@@ -7,7 +7,7 @@
 	"Deps": [
 		{
 			"ImportPath": "github.com/ngaut/bolt",
-			"Rev": "2f3b7e71675a8661d1e1e12a655f17ea8ec84430"
+			"Rev": "430b1ff461fe33eb4655b5116d139c75497ede66"
 		},
 		{
 			"ImportPath": "github.com/djimenez/iconv-go",
