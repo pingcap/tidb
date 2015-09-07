@@ -465,11 +465,11 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
-			txn, err := s.s.Begin()
+			mtxn, merr := s.s.Begin()
 			c.Assert(err, IsNil)
-			txn.Set(b, []byte("newValue"))
-			err = txn.Commit()
-			if err == nil {
+			mtxn.Set(b, []byte("newValue"))
+			merr = mtxn.Commit()
+			if merr == nil {
 				atomic.AddInt64(&success, 1)
 			}
 		}()
