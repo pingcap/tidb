@@ -346,105 +346,6 @@ func (o *BinaryOperation) evalLogicOp(ctx context.Context, args map[interface{}]
 	}
 }
 
-func compareFloatString(a float64, s string) (int, error) {
-	// MySQL will convert string to a float point value
-	// MySQL use a very loose conversation, e.g, 123.abc -> 123
-	// we should do a trade off whether supporting this feature or using a strict mode
-	// now we use a strict mode
-	b, err := types.StrToFloat(s)
-	if err != nil {
-		return 0, err
-	}
-	return types.CompareFloat64(a, b), nil
-}
-
-func compareStringFloat(s string, a float64) (int, error) {
-	n, err := compareFloatString(a, s)
-	return -n, err
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/type-conversion.html
-func evalCompare(a interface{}, b interface{}) (int, error) {
-	// TODO: support compare time type with other types
-	switch x := a.(type) {
-	case float64:
-		switch y := b.(type) {
-		case float64:
-			return types.CompareFloat64(x, y), nil
-		case string:
-			return compareFloatString(x, y)
-		}
-	case int64:
-		switch y := b.(type) {
-		case int64:
-			return types.CompareInt64(x, y), nil
-		case uint64:
-			return types.CompareInteger(x, y), nil
-		case string:
-			return compareFloatString(float64(x), y)
-		}
-	case uint64:
-		switch y := b.(type) {
-		case uint64:
-			return types.CompareUint64(x, y), nil
-		case int64:
-			return -types.CompareInteger(y, x), nil
-		case string:
-			return compareFloatString(float64(x), y)
-		}
-	case mysql.Decimal:
-		switch y := b.(type) {
-		case mysql.Decimal:
-			return x.Cmp(y), nil
-		case string:
-			f, err := mysql.ConvertToDecimal(y)
-			if err != nil {
-				return 0, err
-			}
-			return x.Cmp(f), nil
-		}
-	case string:
-		switch y := b.(type) {
-		case string:
-			return types.CompareString(x, y), nil
-		case int64:
-			return compareStringFloat(x, float64(y))
-		case uint64:
-			return compareStringFloat(x, float64(y))
-		case float64:
-			return compareStringFloat(x, y)
-		case mysql.Decimal:
-			f, err := mysql.ConvertToDecimal(x)
-			if err != nil {
-				return 0, err
-			}
-			return f.Cmp(y), nil
-		case mysql.Time:
-			n, err := y.CompareString(x)
-			return -n, err
-		case mysql.Duration:
-			n, err := y.CompareString(x)
-			return -n, err
-		}
-	case mysql.Time:
-		switch y := b.(type) {
-		case mysql.Time:
-			return x.Compare(y), nil
-		case string:
-			return x.CompareString(y)
-		}
-	case mysql.Duration:
-		switch y := b.(type) {
-		case mysql.Duration:
-			return x.Compare(y), nil
-		case string:
-			return x.CompareString(y)
-		}
-	}
-
-	return 0, errors.Errorf("invalid compare type %T cmp %T", a, b)
-}
-
 // operator: >=, >, <=, <, !=, <>, = <=>, etc.
 // see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html
 func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
@@ -459,7 +360,7 @@ func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interfa
 		return nil, nil
 	}
 
-	n, err := evalCompare(a, b)
+	n, err := types.Compare(a, b)
 	if err != nil {
 		return nil, o.traceErr(err)
 	}

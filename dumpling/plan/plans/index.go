@@ -14,6 +14,8 @@
 package plans
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -151,7 +153,13 @@ func indexCompare(a interface{}, b interface{}) int {
 		return -1
 	}
 
-	return types.Compare(a, b)
+	n, err := types.Compare(a, b)
+	if err != nil {
+		// Old compare panics if err, so here we do the same thing now.
+		// TODO: return err instead of panic.
+		panic(fmt.Sprintf("should never happend %v", err))
+	}
+	return n
 }
 
 func (r *indexPlan) doSpan(ctx context.Context, txn kv.Transaction, span *indexSpan, f plan.RowIterFunc) error {

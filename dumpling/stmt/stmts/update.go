@@ -167,7 +167,12 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 			continue
 		}
 		od := oldData[i]
-		if types.Compare(d, od) != 0 {
+		n, err := types.Compare(d, od)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if n != 0 {
 			rowChanged = true
 			break
 		}
