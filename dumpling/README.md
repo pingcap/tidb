@@ -57,8 +57,16 @@ Press `Ctrl+C` to quit.
 - __Run as go library__  
 See [USAGE.md](./docs/USAGE.md) for detailed instructions to use TiDB as library in Go code.
 
-- __Run as MySQL protocol server with single-machine KV storage engine__  
-Comming soon.
+- __Run as MySQL protocol server with local KV storage engine__
+```
+make tidb-server
+cd tidb-server && ./tidb-server
+```
+The default server address is `127.0.0.1:4000`.
+After you started tidb-server, you can use official mysql client to connect to tidb.
+```
+mysql -h 127.0.0.1 -P 4000 -D test
+```
 
 - __Run as MySQL protocol server with distributed transactional KV storage engine__  
 Comming soon.
