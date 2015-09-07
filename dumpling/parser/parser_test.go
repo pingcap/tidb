@@ -288,8 +288,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 	src := "SELECT id+?, id+? from t;"
 	l := NewLexer(src)
 	l.SetPrepare()
-	ok := yyParse(l) == 0
-	c.Assert(ok, Equals, true)
+	c.Assert(yyParse(l), Equals, 0)
 	c.Assert(len(l.ParamList), Equals, 2)
 	c.Assert(len(l.Stmts()), Equals, 1)
 
@@ -297,14 +296,13 @@ func (s *testParserSuite) TestParser0(c *C) {
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,); -- foo\nSelect --1 from foo;"
 	l = NewLexer(src)
 	l.SetPrepare()
-	ok = yyParse(l) == 0
-	c.Assert(ok, Equals, true)
+	c.Assert(yyParse(l), Equals, 0)
 	c.Assert(len(l.Stmts()), Equals, 2)
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
 	l = NewLexer(src)
-	ok = yyParse(l) == 0
+	c.Assert(yyParse(l), Equals, 0)
 	st := l.Stmts()[0]
 	ss, ok := st.(*stmts.SelectStmt)
 	c.Assert(ok, IsTrue)
