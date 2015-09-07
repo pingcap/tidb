@@ -161,9 +161,6 @@ func (t Time) Marshal() ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// append fsp to the end
-	b = append(b, byte(t.Fsp))
-
 	return b, nil
 }
 
@@ -175,20 +172,6 @@ func (t *Time) Unmarshal(b []byte) error {
 // UnmarshalInLocation decodes the binary data
 // into Time with a specific time Location.
 func (t *Time) UnmarshalInLocation(b []byte, loc *time.Location) error {
-	if len(b) < 1 {
-		return errors.Errorf("insufficient bytes to unmarshal time")
-	}
-
-	// Get fsp
-	fsp, err := checkFsp(int(int8(b[len(b)-1])))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	t.Fsp = fsp
-
-	b = b[:len(b)-1]
-
 	if err := t.Time.UnmarshalBinary(b); err != nil {
 		return errors.Trace(err)
 	}
