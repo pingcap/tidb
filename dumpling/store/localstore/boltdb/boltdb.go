@@ -72,16 +72,16 @@ func (d *db) Commit(b engine.Batch) error {
 	}
 	err := d.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketName)
-		var err error
+		var bErr error
 		for _, w := range bt.Writes {
 			if w.Value != nil {
-				err = b.Put(w.Key, w.Value)
+				bErr = b.Put(w.Key, w.Value)
 			} else {
-				err = b.Delete(w.Key)
+				bErr = b.Delete(w.Key)
 			}
 
-			if err != nil {
-				return errors.Trace(err)
+			if bErr != nil {
+				return errors.Trace(bErr)
 			}
 		}
 
