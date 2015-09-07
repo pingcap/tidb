@@ -11,13 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package tokenlimiter
 
-import (
-	. "github.com/pingcap/check"
-)
+type Token struct {
+}
 
-var _ = Suite(&testUtilSuite{})
+type TokenLimiter struct {
+	count int
+	ch    chan *Token
+}
 
-type testUtilSuite struct {
+func (tl *TokenLimiter) Put(tk *Token) {
+	tl.ch <- tk
+}
+
+func (tl *TokenLimiter) Get() *Token {
+	return <-tl.ch
+}
+
+func NewTokenLimiter(count int) *TokenLimiter {
+	tl := &TokenLimiter{count: count, ch: make(chan *Token, count)}
+	for i := 0; i < count; i++ {
+		tl.ch <- &Token{}
+	}
+
+	return tl
 }
