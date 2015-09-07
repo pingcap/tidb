@@ -147,21 +147,17 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 
 		for _, by := range r.By {
-			var (
-				val interface{}
-				err error
-			)
-
-			val, err = by.Eval(ctx, m)
-			if err != nil {
-				return false, err
+			val, evalErr := by.Eval(ctx, m)
+			if evalErr != nil {
+				return false, evalErr
 			}
 
 			if val != nil {
 				var ordered bool
-				val, ordered, err = types.IsOrderedType(val)
-				if err != nil {
-					return false, err
+				var iErr error
+				val, ordered, iErr = types.IsOrderedType(val)
+				if iErr != nil {
+					return false, iErr
 				}
 
 				if !ordered {

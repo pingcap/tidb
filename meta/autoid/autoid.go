@@ -50,9 +50,9 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-			end, err := meta.GenID(txn, []byte(metaKey), step)
-			if err != nil {
-				return errors.Trace(err)
+			end, genIDErr := meta.GenID(txn, []byte(metaKey), step)
+			if genIDErr != nil {
+				return errors.Trace(genIDErr)
 			}
 
 			alloc.end = end
