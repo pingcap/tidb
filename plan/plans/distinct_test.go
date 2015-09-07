@@ -40,11 +40,11 @@ type testTablePlan struct {
 }
 
 var distinctTestData = []*testRowData{
-	&testRowData{1, []interface{}{10, "hello"}},
-	&testRowData{2, []interface{}{10, "hello"}},
-	&testRowData{3, []interface{}{10, "hello"}},
-	&testRowData{4, []interface{}{40, "hello"}},
-	&testRowData{6, []interface{}{60, "hello"}},
+	{1, []interface{}{10, "hello"}},
+	{2, []interface{}{10, "hello"}},
+	{3, []interface{}{10, "hello"}},
+	{4, []interface{}{40, "hello"}},
+	{6, []interface{}{60, "hello"}},
 }
 
 func (p *testTablePlan) Do(ctx context.Context, f plan.RowIterFunc) error {
@@ -94,9 +94,9 @@ func (t *testDistinctSuit) TestDistinct(c *C) {
 	c.Assert(err, IsNil)
 
 	expected := map[int][]interface{}{
-		10: []interface{}{10, "hello"},
-		40: []interface{}{40, "hello"},
-		60: []interface{}{60, "hello"},
+		10: {10, "hello"},
+		40: {40, "hello"},
+		60: {60, "hello"},
 	}
 
 	c.Assert(reflect.DeepEqual(r, expected), Equals, true)

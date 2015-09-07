@@ -25,12 +25,12 @@ type testFieldsSuit struct{}
 var _ = Suite(&testFieldsSuit{})
 
 var selectFieldsTestData = []*testRowData{
-	&testRowData{1, []interface{}{10, "hello"}},
-	&testRowData{2, []interface{}{20, "hello"}},
-	&testRowData{3, []interface{}{30, "hello"}},
-	&testRowData{4, []interface{}{40, "hello"}},
-	&testRowData{5, []interface{}{50, "hello"}},
-	&testRowData{6, []interface{}{60, "hello"}},
+	{1, []interface{}{10, "hello"}},
+	{2, []interface{}{20, "hello"}},
+	{3, []interface{}{30, "hello"}},
+	{4, []interface{}{40, "hello"}},
+	{5, []interface{}{50, "hello"}},
+	{6, []interface{}{60, "hello"}},
 }
 
 func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
@@ -38,7 +38,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 
 	sl1 := &SelectList{
 		Fields: []*field.Field{
-			&field.Field{
+			{
 				Expr: &expressions.Ident{
 					CIStr: model.NewCIStr("name"),
 				},
@@ -60,12 +60,12 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	// test multiple fields
 	sl2 := &SelectList{
 		Fields: []*field.Field{
-			&field.Field{
+			{
 				Expr: &expressions.Ident{
 					CIStr: model.NewCIStr("name"),
 				},
 			},
-			&field.Field{
+			{
 				Expr: &expressions.Ident{
 					CIStr: model.NewCIStr("id"),
 				},
@@ -88,7 +88,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	// test field doesn't exists
 	sl3 := &SelectList{
 		Fields: []*field.Field{
-			&field.Field{
+			{
 				Expr: &expressions.Ident{
 					CIStr: model.NewCIStr("nosuchfield"),
 				},
@@ -108,7 +108,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 func (s *testFieldsSuit) TestSelectExprPlan(c *C) {
 	pln := &SelectEmptyFieldListPlan{
 		Fields: []*field.Field{
-			&field.Field{
+			{
 				Expr: &expressions.Value{
 					Val: "data",
 				},

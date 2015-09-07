@@ -32,7 +32,7 @@ var _ = Suite(&testJoinSuit{})
 
 func (s *testJoinSuit) TestJoin(c *C) {
 	s.cols = []*column.Col{
-		&column.Col{
+		{
 			ColumnInfo: model.ColumnInfo{
 				ID:           0,
 				Name:         model.NewCIStr("id"),
@@ -41,7 +41,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
 			},
 		},
-		&column.Col{
+		{
 			ColumnInfo: model.ColumnInfo{
 				ID:           1,
 				Name:         model.NewCIStr("name"),
@@ -53,19 +53,19 @@ func (s *testJoinSuit) TestJoin(c *C) {
 	}
 
 	var testData1 = []*testRowData{
-		&testRowData{1, []interface{}{10, "10"}},
-		&testRowData{2, []interface{}{10, "20"}},
-		&testRowData{3, []interface{}{10, "30"}},
-		&testRowData{4, []interface{}{40, "40"}},
-		&testRowData{6, []interface{}{60, "60"}},
+		{1, []interface{}{10, "10"}},
+		{2, []interface{}{10, "20"}},
+		{3, []interface{}{10, "30"}},
+		{4, []interface{}{40, "40"}},
+		{6, []interface{}{60, "60"}},
 	}
 
 	var testData2 = []*testRowData{
-		&testRowData{1, []interface{}{10, "10"}},
-		&testRowData{2, []interface{}{10, "20"}},
-		&testRowData{3, []interface{}{10, "30"}},
-		&testRowData{4, []interface{}{40, "40"}},
-		&testRowData{6, []interface{}{60, "60"}},
+		{1, []interface{}{10, "10"}},
+		{2, []interface{}{10, "20"}},
+		{3, []interface{}{10, "30"}},
+		{4, []interface{}{40, "40"}},
+		{6, []interface{}{60, "60"}},
 	}
 
 	tblPlan1 := &testTablePlan{testData1, []string{"id", "name"}}

@@ -27,11 +27,11 @@ type testFinalPlan struct{}
 var _ = Suite(&testFinalPlan{})
 
 var finalTestData = []*testRowData{
-	&testRowData{1, []interface{}{10, "hello", true}},
-	&testRowData{2, []interface{}{10, "hello", true}},
-	&testRowData{3, []interface{}{10, "hello", true}},
-	&testRowData{4, []interface{}{40, "hello", true}},
-	&testRowData{6, []interface{}{60, "hello", false}},
+	{1, []interface{}{10, "hello", true}},
+	{2, []interface{}{10, "hello", true}},
+	{3, []interface{}{10, "hello", true}},
+	{4, []interface{}{40, "hello", true}},
+	{6, []interface{}{60, "hello", false}},
 }
 
 func (t *testFinalPlan) TestFinalPlan(c *C) {

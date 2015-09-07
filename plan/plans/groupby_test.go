@@ -26,11 +26,11 @@ type testGroupBySuite struct{}
 var _ = Suite(&testGroupBySuite{})
 
 var groupByTestData = []*testRowData{
-	&testRowData{1, []interface{}{10, "10"}},
-	&testRowData{2, []interface{}{10, "20"}},
-	&testRowData{3, []interface{}{10, "30"}},
-	&testRowData{4, []interface{}{40, "40"}},
-	&testRowData{6, []interface{}{60, "60"}},
+	{1, []interface{}{10, "10"}},
+	{2, []interface{}{10, "20"}},
+	{3, []interface{}{10, "30"}},
+	{4, []interface{}{40, "40"}},
+	{6, []interface{}{60, "60"}},
 }
 
 func (t *testGroupBySuite) TestGroupBy(c *C) {
@@ -38,17 +38,17 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 	// test multiple fields
 	sl := &SelectList{
 		Fields: []*field.Field{
-			&field.Field{
+			{
 				Expr: &expressions.Ident{
 					CIStr: model.NewCIStr("id"),
 				},
 			},
-			&field.Field{
+			{
 				Expr: &expressions.Ident{
 					CIStr: model.NewCIStr("name"),
 				},
 			},
-			&field.Field{
+			{
 				Expr: &expressions.Call{
 					F: "sum",
 					Args: []expression.Expression{
@@ -59,7 +59,7 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 				},
 			},
 		},
-		AggFields: map[int]struct{}{2: struct{}{}},
+		AggFields: map[int]struct{}{2: {}},
 	}
 
 	groupbyPlan := &GroupByDefaultPlan{

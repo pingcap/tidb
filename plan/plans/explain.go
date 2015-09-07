@@ -57,7 +57,7 @@ func (r *ExplainDefaultPlan) Explain(w format.Formatter) {
 
 // GetFields implements the plan.Plan GetFields interface.
 func (r *ExplainDefaultPlan) GetFields() []*field.ResultField {
-	return []*field.ResultField{&field.ResultField{Name: ""}}
+	return []*field.ResultField{{Name: ""}}
 }
 
 // Filter implements the plan.Plan Filter interface.
