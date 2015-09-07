@@ -110,7 +110,7 @@ func (ts *testSuite) TestT(c *C) {
 	err = dd.AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
-	// Insert a duplicate column will cause error
+	// Inserting a duplicated column will cause error.
 	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = dd.AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
