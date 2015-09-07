@@ -286,7 +286,7 @@ import (
 	DefaultKwdOpt		"optional DEFAULT keyword"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
-	DoStmt			"Do statementCIStr: "
+	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
 	DropTableStmt		"DROP TABLE statement"
