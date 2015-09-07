@@ -252,9 +252,9 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 			// For "insert into t values (default)" Default Eval.
 			m[expressions.ExprEvalDefaultName] = cols[i].Name.O
 
-			val, err := expr.Eval(ctx, m)
-			if err != nil {
-				return nil, errors.Trace(err)
+			val, evalErr := expr.Eval(ctx, m)
+			if evalErr != nil {
+				return nil, errors.Trace(evalErr)
 			}
 			r[cols[i].Offset] = val
 			marked[cols[i].Offset] = struct{}{}

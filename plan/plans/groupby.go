@@ -152,7 +152,8 @@ func (r *GroupByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err er
 
 	if len(outRows) == 0 {
 		// empty table
-		out, err := r.evalEmptyTable(ctx)
+		var out []interface{}
+		out, err = r.evalEmptyTable(ctx)
 		if err != nil || out == nil {
 			return err
 		}

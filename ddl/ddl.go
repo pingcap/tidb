@@ -540,13 +540,17 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 		cols := t.Cols()
 		var vals []interface{}
 		for _, v := range idxInfo.Columns {
+			var (
+				data []byte
+				val  interface{}
+			)
 			col := cols[v.Offset]
 			k := t.RecordKey(h, col)
-			data, err := txn.Get([]byte(k))
+			data, err = txn.Get([]byte(k))
 			if err != nil {
 				return errors.Trace(err)
 			}
-			val, err := t.DecodeValue(data, col)
+			val, err = t.DecodeValue(data, col)
 			if err != nil {
 				return errors.Trace(err)
 			}

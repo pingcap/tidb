@@ -55,8 +55,6 @@ func (s *UnionStmt) SetText(text string) {
 
 // Plan implements the plan.Planner interface.
 func (s *UnionStmt) Plan(ctx context.Context) (plan.Plan, error) {
-	var r plan.Plan
-	var err error
 	srcs := make([]plan.Plan, 0, len(s.Selects))
 	for _, s := range s.Selects {
 		p, err := s.Plan(ctx)
@@ -65,13 +63,12 @@ func (s *UnionStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 		srcs = append(srcs, p)
 	}
-	if r, err = (&rsets.UnionRset{
+
+	r, err := (&rsets.UnionRset{
 		Srcs:      srcs,
 		Distincts: s.Distincts,
-	}).Plan(ctx); err != nil {
-		return nil, err
-	}
-	return r, nil
+	}).Plan(ctx)
+	return r, err
 }
 
 // Exec implements the stmt.Statement Exec interface.
