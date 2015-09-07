@@ -192,6 +192,8 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 			return x, nil
 		case mysql.Decimal:
 			return x, nil
+		case []byte:
+			return x, nil
 		default:
 			return types.UndOp(a, op)
 		}
@@ -236,6 +238,9 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		case mysql.Decimal:
 			f, _ := x.Float64()
 			return mysql.NewDecimalFromFloat(-f), nil
+		case []byte:
+			f, err := types.StrToFloat(string(x))
+			return -f, err
 		default:
 			return types.UndOp(a, op)
 		}

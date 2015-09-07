@@ -395,6 +395,7 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 		{1, opcode.Plus, mysql.NewDecimalFromInt(1, 0), 2},
 		{uint64(1), opcode.Plus, 1, 2},
 		{uint64(1), opcode.Plus, uint64(1), 2},
+		{1, opcode.Plus, []byte("1"), 2},
 
 		// minus
 		{1, opcode.Minus, 1, 0},
@@ -404,6 +405,7 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 		{uint64(1), opcode.Minus, 1, 0},
 		{uint64(1), opcode.Minus, uint64(1), 0},
 		{mysql.NewDecimalFromInt(1, 0), opcode.Minus, 1, 0},
+		{"1", opcode.Minus, []byte("1"), 0},
 
 		// mul
 		{1, opcode.Mul, 1, 1},
@@ -507,6 +509,11 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 	c.Assert(err, NotNil)
 
 	expr.L = Value{"abc"}
+	expr.R = Value{1}
+	_, err = expr.evalArithmeticOp(nil, nil)
+	c.Assert(err, NotNil)
+
+	expr.L = Value{[]byte("abc")}
 	expr.R = Value{1}
 	_, err = expr.evalArithmeticOp(nil, nil)
 	c.Assert(err, NotNil)
