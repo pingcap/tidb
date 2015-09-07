@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	// import table implementation to init table.TableFromMeta
 	_ "github.com/pingcap/tidb/table/tables"
 )
 
