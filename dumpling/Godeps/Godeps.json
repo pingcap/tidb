@@ -19,8 +19,8 @@
 			"Rev": "854c423c810880e30b9fecdabb12d54f4a92f9bb"
 		},
 		{
-			"ImportPath": "github.com/google/go-snappy/snappy",
-			"Rev": "eaa750b9bf4dcb7cb20454be850613b66cda3273"
+			"ImportPath": "github.com/golang/snappy",
+			"Rev": "723cc1e459b8eea2dea4583200fd60757d40097a"
 		},
 		{
 			"ImportPath": "github.com/juju/errors",
@@ -28,15 +28,11 @@
 		},
 		{
 			"ImportPath": "github.com/ngaut/log",
-			"Rev": "5402b7f83e7a5eced8f2ced6d385a1129cce1ad4"
-		},
-		{
-			"ImportPath": "github.com/ngaut/logging",
-			"Rev": "f98f5f4cd523647678af6f1726c5b5a14c9193d0"
+			"Rev": "a0a08fbeee2359177b429b973f61a519e1372bc7"
 		},
 		{
 			"ImportPath": "github.com/ngaut/pool",
-			"Rev": "200b41cb0791ccc2eadb755d898e290e4de087b8"
+			"Rev": "440660161f02291a5f955d3d92dd3dd56b9c47a9"
 		},
 		{
 			"ImportPath": "github.com/peterh/liner",
@@ -48,7 +44,7 @@
 		},
 		{
 			"ImportPath": "github.com/syndtr/goleveldb/leveldb",
-			"Rev": "a06509502ca32565bdf74afc1e573050023f261c"
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
 		},
 		{
 			"ImportPath": "github.com/twinj/uuid",
