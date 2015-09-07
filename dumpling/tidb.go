@@ -37,8 +37,6 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 )
 
 // Engine prefix name
@@ -258,8 +256,6 @@ func init() {
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
 	RegisterLocalStore("boltdb", boltdb.Driver{})
-
-	table.TableFromMeta = tables.TableFromMeta
 
 	// start pprof handlers
 	if Debug {

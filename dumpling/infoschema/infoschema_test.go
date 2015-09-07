@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -37,8 +35,6 @@ type testSuite struct {
 }
 
 func (*testSuite) TestT(c *C) {
-	table.TableFromMeta = tables.TableFromMeta
-
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)

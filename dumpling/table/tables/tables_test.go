@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 )
 
 func TestT(t *testing.T) {
@@ -41,7 +39,6 @@ type testSuite struct {
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
-	table.TableFromMeta = tables.TableFromMeta
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Check(err, IsNil)
