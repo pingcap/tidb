@@ -466,7 +466,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 		go func() {
 			defer wg.Done()
 			mtxn, merr := s.s.Begin()
-			c.Assert(err, IsNil)
+			c.Assert(merr, IsNil)
 			mtxn.Set(b, []byte("newValue"))
 			merr = mtxn.Commit()
 			if merr == nil {
