@@ -120,7 +120,8 @@ func (s *session) String() string {
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 	stmts, err := Compile(sql)
 	if err != nil {
-		log.Errorf("Compile sql error: %s - %s", sql, err)
+		log.Errorf("Syntax error: %s", sql)
+		log.Errorf("Error occurs at %s.", err)
 		return nil, errors.Trace(err)
 	}
 
