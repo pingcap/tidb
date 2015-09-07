@@ -80,3 +80,6 @@ race:
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
+
+server:
+	@cd tidb-server && $(GO) build
