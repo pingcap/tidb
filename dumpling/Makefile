@@ -42,6 +42,17 @@ parser:
 
 	golex -o parser/scanner.go parser/scanner.l
 
+
+check:
+	@echo "vet"	
+	@! go tool vet . 2>&1 | grep -vE 'Godeps|unreachable code'
+	@echo "vet --shadow"	
+	@! go tool vet --shadow . 2>&1 | grep -vE 'Godeps'
+	@echo "golint"
+	@! golint ./... | grep -vE 'LastInsertId|NewLexer'
+	@echo "gofmt (simplify)"
+	@! gofmt -s -d -l . 2>&1 | grep -vE 'Godeps'
+
 deps:
 	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
 		sort | uniq | grep -E '[^/]+\.[^/]+/' |grep -v "pingcap/tidb" | \
