@@ -15,6 +15,7 @@ package mysqldef
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"strconv"
@@ -137,13 +138,17 @@ func (t Time) IsZero() bool {
 // Marshal returns the binary encoding of time.
 func (t Time) Marshal() ([]byte, error) {
 	var (
-		b   []byte
-		err error
+		b      []byte
+		err    error
+		offset int = 0
 	)
 
 	switch t.Type {
 	case TypeDatetime, TypeDate:
-		_, offset := time.Now().Zone()
+		// We must use t's Zone not current Now Zone,
+		// For EDT/EST, even we create the time with time.Local location,
+		// we may still have a different zone with current Now time.
+		_, offset = t.Zone()
 		// For datetime and date type, we have a trick to marshal.
 		// e.g, if local time is 2010-10-10T10:10:10 UTC+8
 		// we will change this to 2010-10-10T10:10:10 UTC and then marshal.
@@ -154,7 +159,19 @@ func (t Time) Marshal() ([]byte, error) {
 		err = errors.Errorf("invalid time type %d", t.Type)
 	}
 
-	return b, err
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// append fsp and offset to the end
+	b = append(b, byte(t.Fsp))
+	b = appendOffset(b, uint32(offset))
+
+	return b, nil
+}
+
+func appendOffset(b []byte, v uint32) []byte {
+	return append(b, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
 }
 
 // Unmarshal decodes the binary data into Time with current local time.
@@ -165,6 +182,22 @@ func (t *Time) Unmarshal(b []byte) error {
 // UnmarshalInLocation decodes the binary data
 // into Time with a specific time Location.
 func (t *Time) UnmarshalInLocation(b []byte, loc *time.Location) error {
+	if len(b) < 5 {
+		return errors.Errorf("insufficient bytes to unmarshal time")
+	}
+
+	// Get fsp
+	fsp, err := checkFsp(int(int8(b[len(b)-5])))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	t.Fsp = fsp
+	// Get offset
+	offset := int32(binary.BigEndian.Uint32(b[len(b)-4:]))
+
+	b = b[:len(b)-5]
+
 	if err := t.Time.UnmarshalBinary(b); err != nil {
 		return errors.Trace(err)
 	}
@@ -175,7 +208,6 @@ func (t *Time) UnmarshalInLocation(b []byte, loc *time.Location) error {
 
 	if t.Type == TypeDatetime || t.Type == TypeDate {
 		// e.g, for 2010-10-10T10:10:10 UTC, we will unmarshal to 2010-10-10T10:10:10 location
-		_, offset := time.Now().In(loc).Zone()
 		t.Time = t.Time.Add(-time.Duration(offset) * time.Second).In(loc)
 		if t.Type == TypeDate {
 			// for date type ,we will only use year, month and day.

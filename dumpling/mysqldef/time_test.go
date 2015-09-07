@@ -337,6 +337,27 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	err = t4.Unmarshal(b)
 	c.Assert(err, IsNil)
 	c.Assert(t.String(), Equals, t4.String())
+
+	tbl := []string{
+		"2000-01-01 00:00:00.000000",
+		"2000-01-01 00:00:00.123456",
+		"0001-01-01 00:00:00.123456",
+		"2000-06-01 00:00:00.999999",
+	}
+
+	for _, test := range tbl {
+		t, err := ParseTime(test, TypeDatetime, MaxFsp)
+		c.Assert(err, IsNil)
+
+		b, err := t.Marshal()
+		c.Assert(err, IsNil)
+
+		var dest Time
+		dest.Type = TypeDatetime
+		err = dest.Unmarshal(b)
+		c.Assert(err, IsNil)
+		c.Assert(dest.String(), Equals, test)
+	}
 }
 
 func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
