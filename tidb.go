@@ -15,6 +15,7 @@ package tidb
 
 import (
 	"net/http"
+	// For pprof
 	_ "net/http/pprof"
 	"strings"
 	"sync"
@@ -73,8 +74,10 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	stores    = make(map[string]kv.Driver)
-	Debug     = true
+	stores = make(map[string]kv.Driver)
+	// Debug is the switch for pprof. If Debug is true, tidb will start with pprof on.
+	Debug = true
+	// PprofAddr is the pprof url.
 	PprofAddr = "localhost:8888"
 )
 
