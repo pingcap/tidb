@@ -2,3 +2,4 @@
 /parser/scanner.go
 /interpreter/interpreter
 /interpreter/test
+coverage.out
