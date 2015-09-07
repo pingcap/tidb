@@ -13,6 +13,8 @@ import (
 var (
 	// ErrCorrupt reports that the input is invalid.
 	ErrCorrupt = errors.New("snappy: corrupt input")
+	// ErrTooLarge reports that the uncompressed length is too large.
+	ErrTooLarge = errors.New("snappy: decoded block is too large")
 	// ErrUnsupported reports that the input isn't supported.
 	ErrUnsupported = errors.New("snappy: unsupported input")
 )
@@ -27,11 +29,13 @@ func DecodedLen(src []byte) (int, error) {
 // that the length header occupied.
 func decodedLen(src []byte) (blockLen, headerLen int, err error) {
 	v, n := binary.Uvarint(src)
-	if n == 0 {
+	if n <= 0 || v > 0xffffffff {
 		return 0, 0, ErrCorrupt
 	}
-	if uint64(int(v)) != v {
-		return 0, 0, errors.New("snappy: decoded block is too large")
+
+	const wordSize = 32 << (^uint(0) >> 32 & 1)
+	if wordSize == 32 && v > 0x7fffffff {
+		return 0, 0, ErrTooLarge
 	}
 	return int(v), n, nil
 }
@@ -56,7 +60,7 @@ func Decode(dst, src []byte) ([]byte, error) {
 			x := uint(src[s] >> 2)
 			switch {
 			case x < 60:
-				s += 1
+				s++
 			case x == 60:
 				s += 2
 				if s > len(src) {
@@ -130,7 +134,7 @@ func Decode(dst, src []byte) ([]byte, error) {
 
 // NewReader returns a new Reader that decompresses from r, using the framing
 // format described at
-// https://code.google.com/p/snappy/source/browse/trunk/framing_format.txt
+// https://github.com/google/snappy/blob/master/framing_format.txt
 func NewReader(r io.Reader) *Reader {
 	return &Reader{
 		r:       r,
@@ -200,7 +204,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 		}
 
 		// The chunk types are specified at
-		// https://code.google.com/p/snappy/source/browse/trunk/framing_format.txt
+		// https://github.com/google/snappy/blob/master/framing_format.txt
 		switch chunkType {
 		case chunkTypeCompressedData:
 			// Section 4.2. Compressed data (chunk type 0x00).
@@ -280,13 +284,11 @@ func (r *Reader) Read(p []byte) (int, error) {
 			// Section 4.5. Reserved unskippable chunks (chunk types 0x02-0x7f).
 			r.err = ErrUnsupported
 			return 0, r.err
-
-		} else {
-			// Section 4.4 Padding (chunk type 0xfe).
-			// Section 4.6. Reserved skippable chunks (chunk types 0x80-0xfd).
-			if !r.readFull(r.buf[:chunkLen]) {
-				return 0, r.err
-			}
+		}
+		// Section 4.4 Padding (chunk type 0xfe).
+		// Section 4.6. Reserved skippable chunks (chunk types 0x80-0xfd).
+		if !r.readFull(r.buf[:chunkLen]) {
+			return 0, r.err
 		}
 	}
 }
