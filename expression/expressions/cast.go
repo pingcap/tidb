@@ -29,6 +29,8 @@ type FunctionCast struct {
 	Expr expression.Expression
 	// Tp is the conversion type.
 	Tp *types.FieldType
+	// Cast and Convert share this struct.
+	IsConvert bool
 }
 
 // Clone implements the Expression Clone interface.
@@ -38,8 +40,9 @@ func (f *FunctionCast) Clone() (expression.Expression, error) {
 		return nil, err
 	}
 	nf := &FunctionCast{
-		Expr: expr,
-		Tp:   f.Tp,
+		Expr:      expr,
+		Tp:        f.Tp,
+		IsConvert: f.IsConvert,
 	}
 	return nf, nil
 }
@@ -60,6 +63,9 @@ func (f *FunctionCast) String() string {
 		}
 	} else {
 		tpStr = f.Tp.String()
+	}
+	if f.IsConvert {
+		return fmt.Sprintf("CONVERT(%s, %s)", f.Expr.String(), tpStr)
 	}
 	return fmt.Sprintf("CAST(%s AS %s)", f.Expr.String(), tpStr)
 }
