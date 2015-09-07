@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	_ "github.com/pingcap/tidb/table/tables"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.

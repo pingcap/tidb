@@ -570,3 +570,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
+
+func init() {
+	table.TableFromMeta = TableFromMeta
+}
