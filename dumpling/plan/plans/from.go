@@ -69,14 +69,15 @@ func (r *TableNilPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	}
 	defer it.Close()
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		var err error
-		id, err := util.DecodeHandleFromRowKey(it.Key())
+		var id int64
+		id, err = util.DecodeHandleFromRowKey(it.Key())
 		if err != nil {
 			return err
 		}
 
 		// do nothing
-		if m, err := f(id, nil); !m || err != nil {
+		var m bool
+		if m, err = f(id, nil); !m || err != nil {
 			return err
 		}
 
@@ -291,7 +292,8 @@ func (r *TableDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 		rks.appendKeys(rke)
 		rec = append(rec, rks)
-		if m, err := f(int64(0), rec); !m || err != nil {
+		m, err := f(int64(0), rec)
+		if !m || err != nil {
 			return err
 		}
 
