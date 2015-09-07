@@ -14,7 +14,6 @@
 package types
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"reflect"
@@ -242,129 +241,6 @@ func compareFloat64With(x float64, b interface{}) int {
 	}
 }
 
-// Compare returns an integer comparing the interface a to b.
-// TODO: compare should return errors instead of panicing.
-func Compare(a, b interface{}) int {
-	switch x := a.(type) {
-	case nil:
-		if b != nil {
-			return -1
-		}
-
-		return 0
-	case bool:
-		switch y := b.(type) {
-		case nil:
-			return 1
-		case bool:
-			if !x && y {
-				return -1
-			}
-
-			if x == y {
-				return 0
-			}
-
-			return 1
-		default:
-			// Make bool collate before anything except nil and
-			// other bool for index seeking first non NULL value.
-			return -1
-		}
-	case float32:
-		return compareFloat64With(float64(x), b)
-	case float64:
-		return compareFloat64With(float64(x), b)
-	case int8:
-		return compareInt64With(int64(x), b)
-	case int16:
-		return compareInt64With(int64(x), b)
-	case int32:
-		return compareInt64With(int64(x), b)
-	case int:
-		return compareInt64With(int64(x), b)
-	case int64:
-		return compareInt64With(int64(x), b)
-	case uint8:
-		return compareUint64With(uint64(x), b)
-	case uint16:
-		return compareUint64With(uint64(x), b)
-	case uint:
-		return compareUint64With(uint64(x), b)
-	case uint32:
-		return compareUint64With(uint64(x), b)
-	case uint64:
-		return compareUint64With(uint64(x), b)
-	case string:
-		switch y := b.(type) {
-		case nil:
-			return 1
-		case string:
-			if x < y {
-				return -1
-			}
-
-			if x == y {
-				return 0
-			}
-
-			return 1
-		default:
-			panic("should never happen")
-		}
-	case []byte:
-		switch y := b.(type) {
-		case nil:
-			return 1
-		case []byte:
-			return bytes.Compare(x, y)
-		default:
-			panic("should never happen")
-		}
-	case mysql.Time:
-		switch y := b.(type) {
-		case nil:
-			return 1
-		case mysql.Time:
-			return x.Compare(y)
-		case string:
-			t, err := mysql.ParseTime(y, x.Type, x.Fsp)
-			if err != nil {
-				log.Warnf("Failed to convert %s to mysql.Time with err %v", y, err)
-				return 1
-			}
-			return x.Compare(t)
-		default:
-			panic("should never happen")
-		}
-	case mysql.Duration:
-		switch y := b.(type) {
-		case nil:
-			return 1
-		case mysql.Duration:
-			if x.Duration < y.Duration {
-				return -1
-			}
-
-			if x.Duration == y.Duration {
-				return 0
-			}
-
-			return 1
-		default:
-			panic("should never happen")
-		}
-	case mysql.Decimal:
-		y, err := ToDecimal(b)
-		if err != nil {
-			panic(fmt.Sprintf("should never happen, err: %v", err))
-		}
-		return x.Cmp(y)
-	default:
-		panic("should never happen")
-	}
-}
-
 // TODO: collate should return errors from Compare.
 func collate(x, y []interface{}) (r int) {
 	nx, ny := len(x), len(y)
@@ -384,7 +260,13 @@ func collate(x, y []interface{}) (r int) {
 	}
 
 	for i, xi := range x {
-		if c := Compare(xi, y[i]); c != 0 {
+		// TODO: we may remove collate later, so here just panic error.
+		c, err := Compare(xi, y[i])
+		if err != nil {
+			panic(fmt.Sprintf("should never happend %v", err))
+		}
+
+		if c != 0 {
 			return c * r
 		}
 	}
