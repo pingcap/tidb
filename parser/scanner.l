@@ -117,13 +117,13 @@ func (l *lexer) next() int {
 	return l.c
 }
 
-func (l *lexer) err0(ln, c int, s string, args ...interface{}) {
-	err := errors.Errorf(fmt.Sprintf("%d:%d ", ln, c)+s, args...)
+func (l *lexer) err0(ln, c int, args ...interface{}) {
+	err := errors.Errorf(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val), args...)
 	l.errs = append(l.errs, err)
 }
 
 func (l *lexer) err(s string, args ...interface{}) {
-	l.err0(l.line, l.col, s, args...)
+	l.err0(l.line, l.col, args...)
 }
 
 func (l *lexer) Error(s string) {
