@@ -353,9 +353,9 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 	go func() {
 		err := io.EOF
 		if e := r.rs.Do(func(data []interface{}) (bool, error) {
-			vv, err := types.Clone(data)
-			if err != nil {
-				return false, errors.Trace(err)
+			vv, cloneErr := types.Clone(data)
+			if cloneErr != nil {
+				return false, errors.Trace(cloneErr)
 			}
 			select {
 			case r.rows <- vv:
