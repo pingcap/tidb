@@ -107,8 +107,13 @@ func (ts *testSuite) TestT(c *C) {
 		}
 	}
 	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
-	dd.AlterTable(ctx, tbIdent, alterStmt.Specs)
+	err = dd.AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, IsNil)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
+	// Insert a duplicate column will cause error
+	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
+	err = dd.AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, NotNil)
 
 	idxStmt := statement("CREATE INDEX idx_c ON t (c)").(*stmts.CreateIndexStmt)
 	idxName := model.NewCIStr(idxStmt.IndexName)
