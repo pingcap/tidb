@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testUnaryOperationSuite{})
@@ -111,7 +112,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		result, err := exprc.Eval(nil, nil)
 		c.Assert(err, IsNil)
 
-		ret, err := evalCompare(result, t.result)
+		ret, err := types.Compare(result, t.result)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, 0)
 	}
