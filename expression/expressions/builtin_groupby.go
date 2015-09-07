@@ -255,7 +255,11 @@ func builtinMax(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	if max == nil {
 		max = y
 	} else {
-		if types.Compare(max, y) < 0 {
+		n, err := types.Compare(max, y)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if n < 0 {
 			max = y
 		}
 	}
@@ -288,7 +292,11 @@ func builtinMin(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	if min == nil {
 		min = y
 	} else {
-		if types.Compare(min, y) > 0 {
+		n, err := types.Compare(min, y)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if n > 0 {
 			min = y
 		}
 	}

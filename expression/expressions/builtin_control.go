@@ -65,10 +65,7 @@ func builtinNullIf(args []interface{}, m map[interface{}]interface{}) (interface
 		return v1, nil
 	}
 
-	// coerce for later eval compare
-	x, y := types.Coerce(v1, v2)
-
-	if n, err := evalCompare(x, y); err != nil || n == 0 {
+	if n, err := types.Compare(v1, v2); err != nil || n == 0 {
 		return nil, err
 	}
 

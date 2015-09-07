@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -102,7 +103,13 @@ func (t *orderByTable) Less(i, j int) bool {
 		v1 := t.Rows[i].Key[index]
 		v2 := t.Rows[j].Key[index]
 
-		ret := types.Compare(v1, v2)
+		ret, err := types.Compare(v1, v2)
+		if err != nil {
+			// we just have to log this error and skip it.
+			// TODO: record this error and handle it out later.
+			log.Errorf("compare %v %v err %v", v1, v2, err)
+		}
+
 		if !asc {
 			ret = -ret
 		}
