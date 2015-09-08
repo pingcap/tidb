@@ -132,7 +132,6 @@ func (s *DeleteStmt) hitWhere(ctx context.Context, t table.Table, data []interfa
 	for _, col := range t.Cols() {
 		m[col.Name.L] = data[col.Offset]
 	}
-
 	ok, err := expressions.EvalBoolExpr(ctx, s.Where, m)
 	if err != nil {
 		return false, errors.Trace(err)

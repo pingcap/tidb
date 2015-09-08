@@ -187,7 +187,7 @@ func newDriverConn(sess *session, d *sqlDriver, schema string) (driver.Conn, err
 
 // Prepare returns a prepared statement, bound to this connection.
 func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
-	stmtID, paramCount, _, err := c.s.PrepareStmt(query)
+	stmtID, paramCount, fields, err := c.s.PrepareStmt(query)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +196,7 @@ func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
 		query:      query,
 		stmtID:     stmtID,
 		paramCount: paramCount,
+		isQuery:    fields != nil,
 	}
 	c.stmts[query] = s
 	return s, nil
@@ -460,6 +461,7 @@ type driverStmt struct {
 	query      string
 	stmtID     uint32
 	paramCount int
+	isQuery    bool
 }
 
 // Close closes the statement.
@@ -504,6 +506,14 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 	rs, err := c.s.ExecutePreparedStmt(s.stmtID, params(args)...)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if rs == nil {
+		if s.isQuery {
+			return nil, errors.Trace(errNoResult)
+		} else {
+			// The statement is not a query.
+			return nil, nil
+		}
 	}
 	return newdriverRows(rs), nil
 }
