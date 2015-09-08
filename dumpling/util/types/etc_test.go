@@ -95,6 +95,7 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeToStr(c, mysql.TypeNewDecimal, true, "decimal")
 	testTypeToStr(c, mysql.TypeDecimal, true, "decimal")
 	testTypeToStr(c, 0xdd, true, "")
+	testTypeToStr(c, mysql.TypeBit, true, "bit")
 }
 
 func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
