@@ -345,6 +345,14 @@ type driverRows struct {
 	rows chan interface{}
 }
 
+func newEmptyDriverRows() *driverRows {
+	r := &driverRows{
+		done: make(chan int, 1),
+	}
+	r.done <- 1
+	return r
+}
+
 func newdriverRows(rs rset.Recordset) *driverRows {
 	r := &driverRows{
 		rs:   rs,
@@ -512,7 +520,7 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 			return nil, errors.Trace(errNoResult)
 		} else {
 			// The statement is not a query.
-			return nil, nil
+			return newEmptyDriverRows(), nil
 		}
 	}
 	return newdriverRows(rs), nil
