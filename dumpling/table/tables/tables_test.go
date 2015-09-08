@@ -14,8 +14,6 @@
 package tables_test
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -27,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util"
 )
 
 func TestT(t *testing.T) {
@@ -49,12 +48,6 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("CREATE DATABASE test")
 	c.Assert(err, IsNil)
-}
-
-func hasPrefix(prefix []byte) kv.FnKeyCmp {
-	return func(k []byte) bool {
-		return bytes.HasPrefix(k, prefix)
-	}
 }
 
 func (ts *testSuite) TestBasic(c *C) {
@@ -118,24 +111,11 @@ func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	bp := []byte(prefix)
-	iter, err := txn.Seek(bp, hasPrefix(bp))
-	if err != nil {
-		return 0, err
-	}
-	defer iter.Close()
 	cnt := 0
-	for {
-		if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
-			iter, err = iter.Next(hasPrefix(bp))
-			if err != nil {
-				return 0, err
-			}
-		} else {
-			break
-		}
+	err = util.ScanMetaWithPrefix(txn, prefix, func(k, v []byte) bool {
 		cnt += 1
-	}
+		return true
+	})
 	return cnt, err
 }
 
