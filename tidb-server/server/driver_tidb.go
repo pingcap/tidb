@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 // TiDBDriver implements IDriver
@@ -58,6 +59,9 @@ func (ts *TiDBStatement) ID() int {
 // Execute implements IStatement Execute method.
 func (ts *TiDBStatement) Execute(args ...interface{}) (rs *ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
+	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		return nil, ts.ctx.session.Retry()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +170,9 @@ func (tc *TiDBContext) WarningCount() uint16 {
 // Execute implements IContext Execute method.
 func (tc *TiDBContext) Execute(sql string) (rs *ResultSet, err error) {
 	qrsList, err := tc.session.Execute(sql)
+	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		return nil, tc.session.Retry()
+	}
 	if err != nil {
 		return
 	}
