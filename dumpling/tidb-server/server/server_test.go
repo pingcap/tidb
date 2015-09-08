@@ -197,3 +197,26 @@ func runTestPreparedString(t *C) {
 		t.Assert(outB, Equals, "abcde")
 	})
 }
+
+func runTestConcurrentUpdate(c *C) {
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create table t (a int, b int)")
+		dbt.mustExec("insert t values (1, 1)")
+		txn1, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+
+		txn2, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+
+		_, err = txn2.Exec("update t set a = a + 1 where b = 1")
+		c.Assert(err, IsNil)
+		err = txn2.Commit()
+		c.Assert(err, IsNil)
+
+		_, err = txn1.Exec("update t set a = a + 1 where b = 1")
+		c.Assert(err, IsNil)
+
+		err = txn1.Commit()
+		c.Assert(err, IsNil)
+	})
+}

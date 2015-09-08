@@ -66,3 +66,7 @@ func (ts *TidbTestSuite) TestSpecialType(c *C) {
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	runTestPreparedString(c)
 }
+
+func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
+	runTestConcurrentUpdate(c)
+}
