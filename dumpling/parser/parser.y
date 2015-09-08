@@ -1511,7 +1511,7 @@ UnReservedKeyword:
 	"AUTO_INCREMENT" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMN" | "COLUMNS" | "DATE" | "DATETIME"
 |	"ENGINE" | "FULL" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" | "QUICK" | "ROLLBACK" | "SESSION" | "GLOBAL" 
 |	"TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "VALUE" | "WARNINGS" | "YEAR" | "NOW"
-|	"SUBSTRING"
+|	"SUBSTRING" | "MODE"
 
 
 /************************************************************************************
