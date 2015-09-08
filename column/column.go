@@ -137,7 +137,7 @@ func (c *Col) CastValue(ctx context.Context, val interface{}) (casted interface{
 		return
 	}
 	switch c.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		intVal, errCode := c.normalizeIntegerValue(val)
 		if errCode == errCodeType {
 			casted = intVal
@@ -488,6 +488,17 @@ func (c *Col) castIntegerValue(val int64, errCode int) (casted interface{}, err 
 			} else {
 				casted = int64(val)
 			}
+		}
+	case mysql.TypeBit:
+		// Convert bit as uint64
+		if errCode == errCodeOverflowUpper {
+			overflow = true
+			casted = uint64(math.MaxUint64)
+		} else if (val < 0 && errCode != errCodeOverflowMaxInt64) || errCode == errCodeOverflowLower {
+			overflow = true
+			casted = uint64(0)
+		} else {
+			casted = uint64(val)
 		}
 	}
 	if overflow {
