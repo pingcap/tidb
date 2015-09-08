@@ -32,13 +32,13 @@ var (
 
 // TODO: use iota + 1 instead?
 const (
-	formatNilFlag    = 'n'
-	formatIntFlag    = 'd'
-	formatUintFlag   = 'u'
-	formatFloatFlag  = 'f'
-	formatStringFlag = 's'
-	formatBytesFlag  = 'b'
-	formatDuration   = 't'
+	formatNilFlag      = 'n'
+	formatIntFlag      = 'd'
+	formatUintFlag     = 'u'
+	formatFloatFlag    = 'f'
+	formatStringFlag   = 's'
+	formatBytesFlag    = 'b'
+	formatDurationFlag = 't'
 )
 
 var sepKey = []byte{0x00, 0x00}
@@ -106,7 +106,7 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 		case mysql.Duration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = EncodeInt(b, int64(v.Duration))
-			format = append(format, formatDuration)
+			format = append(format, formatDurationFlag)
 		case nil:
 			// We will 0x00, 0x00 for nil.
 			// The []byte{} will be encoded as 0x00, 0x01.
@@ -170,7 +170,7 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 			}
 		case formatBytesFlag:
 			b, v[i], err = DecodeBytes(b)
-		case formatDuration:
+		case formatDurationFlag:
 			var r int64
 			b, r, err = DecodeInt(b)
 			if err == nil {
