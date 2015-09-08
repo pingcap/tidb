@@ -953,7 +953,7 @@ CreateDatabaseStmt:
 
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
-			yylex.(*lexer).err("", "get charset error")
+			yylex.(*lexer).err("", "Unknown character set %s or collate %s ", cs, co)
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
