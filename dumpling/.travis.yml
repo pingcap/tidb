@@ -3,3 +3,8 @@ language: go
 go:
   - 1.4.2
   - 1.5
+
+before_script: go get github.com/golang/lint/golint
+    
+script: make check
+

@@ -257,6 +257,26 @@ func (s *testMainSuite) TestDriverPrepare(c *C) {
 	mustExec(c, testDB, s.dropDBSQL)
 }
 
+// Testcase for delete panic
+func (s *testMainSuite) TestDeletePanic(c *C) {
+	db, err := sql.Open("tidb", "memory://test")
+	defer db.Close()
+	_, err = db.Exec("create table t (c int)")
+	c.Assert(err, IsNil)
+	_, err = db.Exec("insert into t values (1), (2), (3)")
+	c.Assert(err, IsNil)
+	_, err = db.Query("delete from `t` where `c` = ?", 1)
+	c.Assert(err, IsNil)
+	rs, err := db.Query("delete from `t` where `c` = ?", 2)
+	c.Assert(err, IsNil)
+	cols, err := rs.Columns()
+	c.Assert(err, IsNil)
+	c.Assert(cols, HasLen, 0)
+	c.Assert(rs.Next(), IsFalse)
+	c.Assert(rs.Next(), IsFalse)
+	c.Assert(rs.Close(), IsNil)
+}
+
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)
@@ -572,6 +592,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	err = se2.Close()
 	c.Assert(err, IsNil)
 }
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
