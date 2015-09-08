@@ -268,6 +268,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
+
+		// For unreserved keywords
+		{"SELECT id, user_id, repo_id, mode FROM access WHERE repo_id=1 AND mode>=1;", true},
 	}
 
 	for _, t := range table {

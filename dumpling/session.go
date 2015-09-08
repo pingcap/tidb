@@ -1,3 +1,7 @@
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,7 +115,11 @@ func (s *session) String() string {
 		"userName":   s.userName,
 		"currDBName": db.GetCurrentSchema(s),
 		"sid":        s.sid,
-		"txn":        s.txn.String(),
+	}
+
+	if s.txn != nil {
+		// if txn is committed or rolled back, txn is nil.
+		data["txn"] = s.txn.String()
 	}
 
 	b, _ := json.MarshalIndent(data, "", "  ")
