@@ -5,11 +5,11 @@ package parser
 import (
 	"fmt"
 	"math"
+	"errors"
 	"strconv"
 	"unicode"
 	"strings"
 	
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/stmt"
@@ -118,7 +118,11 @@ func (l *lexer) next() int {
 }
 
 func (l *lexer) err0(ln, c int, args ...interface{}) {
-	err := errors.Errorf(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val), args...)
+	var argStr string
+	if len(args) > 0 {
+		argStr = fmt.Sprintf(" " + args[0].(string), args[1:]...)
+	}
+	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
 	l.errs = append(l.errs, err)
 }
 
