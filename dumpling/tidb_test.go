@@ -273,6 +273,8 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(cols, HasLen, 0)
 	c.Assert(rs.Next(), IsFalse)
+	c.Assert(rs.Next(), IsFalse)
+	c.Assert(rs.Close(), IsNil)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
