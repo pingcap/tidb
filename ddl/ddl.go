@@ -251,43 +251,44 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 }
 
 func checkDuplicateColumn(colDefs []*coldef.ColumnDef) error {
-	m := map[string]bool{}
+	colNames := map[string]bool{}
 	for _, colDef := range colDefs {
 		nameLower := strings.ToLower(colDef.Name)
-		if m[nameLower] {
+		if colNames[nameLower] {
 			return errors.Errorf("CREATE TABLE: duplicate column %s", colDef.Name)
 		}
-		m[nameLower] = true
+		colNames[nameLower] = true
 	}
 	return nil
 }
 
 func checkConstraintNames(constraints []*coldef.TableConstraint) error {
-	m := map[string]bool{}
+	constrNames := map[string]bool{}
 
-	// check not empty constraint name do not have duplication.
+	// Check not empty constraint name do not have duplication.
 	for _, constr := range constraints {
 		if constr.ConstrName != "" {
 			nameLower := strings.ToLower(constr.ConstrName)
-			if m[nameLower] {
+			if constrNames[nameLower] {
 				return errors.Errorf("CREATE TABLE: duplicate key %s", constr.ConstrName)
 			}
-			m[nameLower] = true
+			constrNames[nameLower] = true
 		}
 	}
 
-	// set empty constraint names.
+	// Set empty constraint names.
 	for _, constr := range constraints {
 		if constr.ConstrName == "" && len(constr.Keys) > 0 {
 			colName := constr.Keys[0].ColumnName
 			constrName := colName
 			i := 2
-			for m[strings.ToLower(constrName)] {
+			for constrNames[strings.ToLower(constrName)] {
+				// We loop forever until we find constrName that haven't been used.
 				constrName = fmt.Sprintf("%s_%d", colName, i)
 				i++
 			}
 			constr.ConstrName = constrName
-			m[constrName] = true
+			constrNames[constrName] = true
 		}
 	}
 	return nil
