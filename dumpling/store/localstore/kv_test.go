@@ -465,11 +465,13 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
-			mtxn, merr := s.s.Begin()
-			c.Assert(merr, IsNil)
-			mtxn.Set(b, []byte("newValue"))
-			merr = mtxn.Commit()
-			if merr == nil {
+			// Use txn1/err1 instead of txn/err is
+			// to pass `go tool vet -shadow` check.
+			txn1, err1 := s.s.Begin()
+			c.Assert(err1, IsNil)
+			txn1.Set(b, []byte("newValue"))
+			err1 = txn1.Commit()
+			if err1 == nil {
 				atomic.AddInt64(&success, 1)
 			}
 		}()
