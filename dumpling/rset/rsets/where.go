@@ -1,6 +1,6 @@
 // Copyright 2014 The ql Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 // Copyright 2015 PingCAP, Inc.
 //
