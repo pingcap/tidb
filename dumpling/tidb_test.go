@@ -267,8 +267,12 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 	c.Assert(err, IsNil)
 	_, err = db.Query("delete from `t` where `c` = ?", 1)
 	c.Assert(err, IsNil)
-	_, err = db.Query("delete from `t` where `c` = ?", 2)
+	rs, err := db.Query("delete from `t` where `c` = ?", 2)
 	c.Assert(err, IsNil)
+	cols, err := rs.Columns()
+	c.Assert(err, IsNil)
+	c.Assert(cols, HasLen, 0)
+	c.Assert(rs.Next(), IsFalse)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {

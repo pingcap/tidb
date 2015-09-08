@@ -388,6 +388,9 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 // result is inferred from the length of the slice.  If a particular column
 // name isn't known, an empty string should be returned for that entry.
 func (r *driverRows) Columns() []string {
+	if r.rs == nil {
+		return make([]string, 0)
+	}
 	fs, _ := r.rs.Fields()
 	names := make([]string, len(fs))
 	for i, f := range fs {
