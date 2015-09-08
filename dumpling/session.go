@@ -32,7 +32,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/reborndb/go/errors2"
 )
 
 // Session context
@@ -51,6 +54,7 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags
 	Close() error
+	Retry() error
 }
 
 var (
@@ -58,14 +62,46 @@ var (
 	sessionID int64
 )
 
+type stmtRecord struct {
+	stmtID uint32
+	st     stmt.Statement
+	params []interface{}
+}
+
+type stmtHistory struct {
+	history []*stmtRecord
+}
+
+func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{}) {
+	s := &stmtRecord{
+		stmtID: stmtID,
+		st:     st,
+		params: append(([]interface{})(nil), params...),
+	}
+
+	h.history = append(h.history, s)
+}
+
+func (h *stmtHistory) reset() {
+	h.history = h.history[:0]
+}
+
+func (h *stmtHistory) clone() *stmtHistory {
+	nh := *h
+	nh.history = make([]*stmtRecord, len(h.history))
+	copy(nh.history, h.history)
+	return &nh
+}
+
 type session struct {
 	txn      kv.Transaction // Current transaction
 	userName string
 	args     []interface{} // Statment execution args, this should be cleaned up after exec
 
-	values map[fmt.Stringer]interface{}
-	store  kv.Storage
-	sid    int64
+	values  map[fmt.Stringer]interface{}
+	store   kv.Storage
+	sid     int64
+	history stmtHistory
 }
 
 func (s *session) Status() uint16 {
@@ -104,9 +140,11 @@ func (s *session) FinishTxn(rollback bool) error {
 	err := s.txn.Commit()
 	if err != nil {
 		log.Errorf("txn:%s, %v", s.txn, err)
+		return errors.Trace(err)
 	}
 
-	return errors.Trace(err)
+	s.history.reset()
+	return nil
 }
 
 func (s *session) String() string {
@@ -126,8 +164,55 @@ func (s *session) String() string {
 	return string(b)
 }
 
+func isPreparedStmt(st stmt.Statement) bool {
+	switch st.(type) {
+	case *stmts.PreparedStmt:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *session) Retry() error {
+	nh := s.history.clone()
+	defer func() {
+		s.history.history = nh.history
+	}()
+
+	var err error
+	for {
+		// Clear history
+		s.history.history = s.history.history[:0]
+		s.FinishTxn(true)
+		// TODO: check if select for update statement
+		success := true
+		for _, sr := range nh.history {
+			st := sr.st
+			// Skip prepare statement
+			if isPreparedStmt(st) {
+				continue
+			}
+			log.Info("Retry %s", st.OriginText())
+			_, err = runStmt(s, st)
+			if err != nil {
+				if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+					success = false
+					break
+				}
+				log.Warnf("session:%v, err:%v", s, err)
+				return errors.Trace(err)
+			}
+		}
+		if success {
+			return nil
+		}
+	}
+
+	return nil
+}
+
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
-	stmts, err := Compile(sql)
+	statements, err := Compile(sql)
 	if err != nil {
 		log.Errorf("Syntax error: %s", sql)
 		log.Errorf("Error occurs at %s.", err)
@@ -136,11 +221,19 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 
 	var rs []rset.Recordset
 
-	for _, si := range stmts {
-		r, err := runStmt(s, si)
+	for _, st := range statements {
+		r, err := runStmt(s, st)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
+		}
+
+		// Record executed query
+		if isPreparedStmt(st) {
+			ps := st.(*stmts.PreparedStmt)
+			s.history.add(ps.ID, st)
+		} else {
+			s.history.add(0, st)
 		}
 
 		if r != nil {
@@ -183,12 +276,10 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 	if err != nil {
 		return nil, err
 	}
-	//convert args to param
-	rs, err := executePreparedStmt(s, stmtID, args...)
-	if err != nil {
-		return nil, err
-	}
-	return rs, nil
+
+	st := &stmts.ExecuteStmt{ID: stmtID}
+	s.history.add(stmtID, st, args...)
+	return runStmt(s, st, args...)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
