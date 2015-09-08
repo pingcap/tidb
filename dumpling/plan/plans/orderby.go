@@ -147,9 +147,10 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 
 		for _, by := range r.By {
-			val, evalErr := by.Eval(ctx, m)
-			if evalErr != nil {
-				return false, evalErr
+			// err1 is used for passing `go tool vet --shadow` check.
+			val, err1 := by.Eval(ctx, m)
+			if err1 != nil {
+				return false, err1
 			}
 
 			if val != nil {
