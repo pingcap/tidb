@@ -525,10 +525,9 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 	if rs == nil {
 		if s.isQuery {
 			return nil, errors.Trace(errNoResult)
-		} else {
-			// The statement is not a query.
-			return newEmptyDriverRows(), nil
 		}
+		// The statement is not a query.
+		return newEmptyDriverRows(), nil
 	}
 	return newdriverRows(rs), nil
 }
