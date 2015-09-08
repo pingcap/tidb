@@ -108,15 +108,17 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 	return nil
 }
 
-func mayExit(err error, line string) {
+func mayExit(err error, l string) bool {
 	if errors2.ErrorEqual(err, liner.ErrPromptAborted) || errors2.ErrorEqual(err, io.EOF) {
 		fmt.Println("\nBye")
 		saveHistory()
-		os.Exit(0)
+		line.Close()
+		return true
 	}
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}
+	return false
 }
 
 func readStatement(prompt string) (string, error) {
@@ -156,7 +158,9 @@ func main() {
 
 	for {
 		l, err := readStatement("tidb> ")
-		mayExit(err, l)
+		if mayExit(err, l) {
+			return
+		}
 		line.AppendHistory(l)
 
 		// if we're in transaction
@@ -168,7 +172,9 @@ func main() {
 			}
 			for {
 				txnLine, err := readStatement(">> ")
-				mayExit(err, txnLine)
+				if mayExit(err, txnLine) {
+					return
+				}
 				line.AppendHistory(txnLine)
 
 				if !strings.HasSuffix(txnLine, ";") {
