@@ -200,20 +200,20 @@ func runTestPreparedString(t *C) {
 
 func runTestConcurrentUpdate(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("create table t (a int, b int)")
-		dbt.mustExec("insert t values (1, 1)")
+		dbt.mustExec("create table test (a int, b int)")
+		dbt.mustExec("insert test values (1, 1)")
 		txn1, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 
 		txn2, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 
-		_, err = txn2.Exec("update t set a = a + 1 where b = 1")
+		_, err = txn2.Exec("update test set a = a + 1 where b = 1")
 		c.Assert(err, IsNil)
 		err = txn2.Commit()
 		c.Assert(err, IsNil)
 
-		_, err = txn1.Exec("update t set a = a + 1 where b = 1")
+		_, err = txn1.Exec("update test set a = a + 1 where b = 1")
 		c.Assert(err, IsNil)
 
 		err = txn1.Commit()
