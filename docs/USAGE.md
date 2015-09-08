@@ -1,6 +1,6 @@
 ## Use TiDB as Go library
 
-When you use TiDB as Go linary with a local storage engine, it works as an embedded database.
+When you use TiDB as Go library with a local storage engine, it works as an embedded database.
 One of the benefits of having an embedded database is that you can have a completely isolated environment to run tests.
 Removing the dependency of a real database for tests means you can run tests anywhere.
 
@@ -29,6 +29,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
 	_, err = db.Exec("CREATE TABLE IF NOT EXISTS t (a INT)")
 	if err != nil {
@@ -46,7 +47,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	row.Close()
 
 	fmt.Printf("value is %d\n", val)
 
