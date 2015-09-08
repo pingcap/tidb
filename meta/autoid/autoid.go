@@ -50,9 +50,10 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
-			end, err := meta.GenID(txn, []byte(metaKey), step)
-			if err != nil {
-				return errors.Trace(err)
+			// err1 is used for passing `go tool vet --shadow` check.
+			end, err1 := meta.GenID(txn, []byte(metaKey), step)
+			if err1 != nil {
+				return errors.Trace(err1)
 			}
 
 			alloc.end = end
