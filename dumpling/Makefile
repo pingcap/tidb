@@ -51,7 +51,7 @@ check:
 	@echo "golint"
 	@ golint ./... 2>&1 | grep -vE 'LastInsertId|NewLexer' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/parser.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 
 deps:
 	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
