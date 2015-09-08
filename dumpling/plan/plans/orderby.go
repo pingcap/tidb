@@ -155,10 +155,11 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 
 			if val != nil {
 				var ordered bool
-				var iErr error
-				val, ordered, iErr = types.IsOrderedType(val)
-				if iErr != nil {
-					return false, iErr
+				// err1 is used for passing `go tool vet --shadow` check.
+				var err1 error
+				val, ordered, err1 = types.IsOrderedType(val)
+				if err1 != nil {
+					return false, err1
 				}
 
 				if !ordered {
