@@ -14,6 +14,8 @@
 package tables_test
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -47,6 +49,12 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("CREATE DATABASE test")
 	c.Assert(err, IsNil)
+}
+
+func hasPrefix(prefix []byte) kv.FnKeyCmp {
+	return func(k []byte) bool {
+		return bytes.HasPrefix(k, prefix)
+	}
 }
 
 func (ts *testSuite) TestBasic(c *C) {
@@ -91,9 +99,44 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.RemoveRowAllIndex(ctx, rid, []interface{}{1, "cba"}), IsNil)
 
 	c.Assert(tb.RemoveRow(ctx, rid), IsNil)
+	// Make sure there is index data in the storage.
+	prefix := tb.IndexPrefix()
+	cnt, err := countEntriesWithPrefix(ctx, prefix)
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Greater, 0)
 	c.Assert(tb.Truncate(ctx), IsNil)
+	// Make sure index data is also removed after tb.Truncate().
+	cnt, err = countEntriesWithPrefix(ctx, prefix)
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Equals, 0)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+}
+
+func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return 0, err
+	}
+	bp := []byte(prefix)
+	iter, err := txn.Seek(bp, hasPrefix(bp))
+	if err != nil {
+		return 0, err
+	}
+	defer iter.Close()
+	cnt := 0
+	for {
+		if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
+			iter, err = iter.Next(hasPrefix(bp))
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			break
+		}
+		cnt += 1
+	}
+	return cnt, err
 }
 
 func (ts *testSuite) TestTypes(c *C) {
