@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -261,6 +262,37 @@ func checkDuplicateColumn(colDefs []*coldef.ColumnDef) error {
 	return nil
 }
 
+func checkConstraintNames(constraints []*coldef.TableConstraint) error {
+	m := map[string]bool{}
+
+	// check not empty constraint name do not have duplication.
+	for _, constr := range constraints {
+		if constr.ConstrName != "" {
+			nameLower := strings.ToLower(constr.ConstrName)
+			if m[nameLower] {
+				return errors.Errorf("CREATE TABLE: duplicate key %s", constr.ConstrName)
+			}
+			m[nameLower] = true
+		}
+	}
+
+	// set empty constraint names.
+	for _, constr := range constraints {
+		if constr.ConstrName == "" && len(constr.Keys) > 0 {
+			colName := constr.Keys[0].ColumnName
+			constrName := colName
+			i := 2
+			for m[strings.ToLower(constrName)] {
+				constrName = fmt.Sprintf("%s_%d", colName, i)
+				i++
+			}
+			constr.ConstrName = constrName
+			m[constrName] = true
+		}
+	}
+	return nil
+}
+
 func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constraints []*coldef.TableConstraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
@@ -317,6 +349,11 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	}
 
 	cols, newConstraints, err := d.buildColumnsAndConstraints(colDefs, constraints)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkConstraintNames(newConstraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
