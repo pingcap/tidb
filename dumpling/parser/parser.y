@@ -859,12 +859,12 @@ CreateIndexStmt:
 	{
 		indexName, tableIdent, colNameList := $4.(string), $6.(table.Ident), $8.([]*coldef.IndexColName)
 		if strings.EqualFold(indexName, tableIdent.Name.O) {
-			yylex.(*lexer).err("index name collision: %s", indexName)
+			yylex.(*lexer).err("", "index name collision: %s", indexName)
 			return 1
 		}
 		for _, colName := range colNameList {
 			if indexName == colName.ColumnName {
-				yylex.(*lexer).err("index name collision: %s", indexName)
+				yylex.(*lexer).err("", "index name collision: %s", indexName)
 				return 1
 			}
 		}
@@ -936,8 +936,7 @@ CreateDatabaseStmt:
 
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
-			//TODO: return error
-			fmt.Println("get charset error")
+			yylex.(*lexer).err("", "get charset error")
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
@@ -979,7 +978,7 @@ CharsetName:
 			if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
-			yylex.(*lexer).err(fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
 			return 1
 		}
 	}
@@ -1030,7 +1029,7 @@ CreateTableStmt:
 			}
 		}
 		if len(columnDefs) == 0 {
-			yylex.(*lexer).err("Column Definition List can't be empty.")
+			yylex.(*lexer).err("", "Column Definition List can't be empty.")
 			return 1
 		}
 
@@ -1360,7 +1359,7 @@ Factor1:
 		var err error
 		$$, err = expressions.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
 		if err != nil {
-			yylex.(*lexer).err("%v", err)
+			yylex.(*lexer).err("", "%v", err)
 			return 1
 		}
 	}
@@ -1675,7 +1674,7 @@ Operand:
 	{
 		l := yylex.(*lexer)
 		if !l.prepare {
-			l.err("Can not accept placeholder when not parsing prepare sql")
+			l.err("", "Can not accept placeholder when not parsing prepare sql")
 		}
 		pm := &expressions.ParamMarker{}	
 		l.ParamList = append(l.ParamList, pm)
@@ -1754,14 +1753,14 @@ Function:
 		x := yylex.(*lexer)
 		f, ok := $1.(*expressions.Ident)
 		if !ok {
-			x.err("expected identifier or qualified identifier")
+			x.err("", "expected identifier or qualified identifier")
 			return 1
 		}
 
 		var err error
 		args := $2.([]interface{})
 		if $$, err = expressions.NewCall(f.O, args[1].([]expression.Expression), args[0].(bool)); err != nil {
-			x.err("%v", err)
+			x.err("", "%v", err)
 			return 1
 		}
 	}
@@ -1772,7 +1771,7 @@ Function:
 		args := $2.([]interface{})
 		$$, err = expressions.NewCall($1.(string), args[1].([]expression.Expression), false)
 		if err != nil {
-			x.err("%v", err)
+			x.err("", "%v", err)
 			return 1
 		}
 	}
