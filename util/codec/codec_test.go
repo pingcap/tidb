@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 func TestT(t *testing.T) {
@@ -162,6 +163,16 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			[]interface{}{1, []byte{}, nil},
 			[]interface{}{1, nil, 123},
 			1,
+		},
+		{
+			[]interface{}{parseTime(c, "2011-11-11 00:00:00"), 1},
+			[]interface{}{parseTime(c, "2011-11-11 00:00:00"), 0},
+			1,
+		},
+		{
+			[]interface{}{parseDuration(c, "00:00:00"), 1},
+			[]interface{}{parseDuration(c, "00:00:01"), 0},
+			-1,
 		},
 	}
 
@@ -405,5 +416,100 @@ func (s *testCodecSuite) TestBytes(c *C) {
 
 		ret = bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, -t.Ret)
+	}
+}
+
+func parseTime(c *C, s string) mysql.Time {
+	m, err := mysql.ParseTime(s, mysql.TypeDatetime, mysql.DefaultFsp)
+	c.Assert(err, IsNil)
+	return m
+}
+
+func parseDuration(c *C, s string) mysql.Duration {
+	m, err := mysql.ParseDuration(s, mysql.DefaultFsp)
+	c.Assert(err, IsNil)
+	return m
+}
+
+func (s *testCodecSuite) TestTime(c *C) {
+	tbl := []string{
+		"2011-01-01 00:00:00",
+		"2011-01-01 00:00:00",
+		"0001-01-01 00:00:00",
+	}
+
+	for _, t := range tbl {
+		m := parseTime(c, t)
+
+		b, err := EncodeKey(m)
+		c.Assert(err, IsNil)
+		v, err := DecodeKey(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, []interface{}{t})
+	}
+
+	tblCmp := []struct {
+		Arg1 string
+		Arg2 string
+		Ret  int
+	}{
+		{"2011-10-10 00:00:00", "2000-12-12 11:11:11", 1},
+		{"2000-10-10 00:00:00", "2001-10-10 00:00:00", -1},
+		{"2000-10-10 00:00:00", "2000-10-10 00:00:00", 0},
+	}
+
+	for _, t := range tblCmp {
+		m1 := parseTime(c, t.Arg1)
+		m2 := parseTime(c, t.Arg2)
+
+		b1, err := EncodeKey(m1)
+		c.Assert(err, IsNil)
+		b2, err := EncodeKey(m2)
+		c.Assert(err, IsNil)
+
+		ret := bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
+	}
+}
+
+func (s *testCodecSuite) TestDuration(c *C) {
+	tbl := []string{
+		"11:11:11",
+		"00:00:00",
+		"1 11:11:11",
+	}
+
+	for _, t := range tbl {
+		m := parseDuration(c, t)
+
+		b, err := EncodeKey(m)
+		c.Assert(err, IsNil)
+		v, err := DecodeKey(b)
+		c.Assert(err, IsNil)
+		m.Fsp = mysql.MaxFsp
+		c.Assert(v, DeepEquals, []interface{}{m})
+	}
+
+	tblCmp := []struct {
+		Arg1 string
+		Arg2 string
+		Ret  int
+	}{
+		{"20:00:00", "11:11:11", 1},
+		{"00:00:00", "00:00:01", -1},
+		{"00:00:00", "00:00:00", 0},
+	}
+
+	for _, t := range tblCmp {
+		m1 := parseDuration(c, t.Arg1)
+		m2 := parseDuration(c, t.Arg2)
+
+		b1, err := EncodeKey(m1)
+		c.Assert(err, IsNil)
+		b2, err := EncodeKey(m2)
+		c.Assert(err, IsNil)
+
+		ret := bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
 	}
 }
