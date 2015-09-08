@@ -191,7 +191,7 @@ func newDriverConn(sess *session, d *sqlDriver, schema string) (driver.Conn, err
 
 // Prepare returns a prepared statement, bound to this connection.
 func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
-	stmtID, paramCount, _, err := c.s.PrepareStmt(query)
+	stmtID, paramCount, fields, err := c.s.PrepareStmt(query)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +200,7 @@ func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
 		query:      query,
 		stmtID:     stmtID,
 		paramCount: paramCount,
+		isQuery:    fields != nil,
 	}
 	c.stmts[query] = s
 	return s, nil
@@ -348,6 +349,14 @@ type driverRows struct {
 	rows chan interface{}
 }
 
+func newEmptyDriverRows() *driverRows {
+	r := &driverRows{
+		done: make(chan int, 1),
+	}
+	r.done <- 1
+	return r
+}
+
 func newdriverRows(rs rset.Recordset) *driverRows {
 	r := &driverRows{
 		rs:   rs,
@@ -383,6 +392,9 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 // result is inferred from the length of the slice.  If a particular column
 // name isn't known, an empty string should be returned for that entry.
 func (r *driverRows) Columns() []string {
+	if r.rs == nil {
+		return []string{}
+	}
 	fs, _ := r.rs.Fields()
 	names := make([]string, len(fs))
 	for i, f := range fs {
@@ -464,6 +476,7 @@ type driverStmt struct {
 	query      string
 	stmtID     uint32
 	paramCount int
+	isQuery    bool
 }
 
 // Close closes the statement.
@@ -508,6 +521,14 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 	rs, err := c.s.ExecutePreparedStmt(s.stmtID, params(args)...)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if rs == nil {
+		if s.isQuery {
+			return nil, errors.Trace(errNoResult)
+		} else {
+			// The statement is not a query.
+			return newEmptyDriverRows(), nil
+		}
 	}
 	return newdriverRows(rs), nil
 }
