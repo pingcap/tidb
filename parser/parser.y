@@ -668,7 +668,7 @@ FunctionCallArgList:
 	/* select count(*) from table */
 |	'*'  
 	{
-		$$ = []expression.Expression{ expressions.Value{expressions.TypeStar("*")} }
+		$$ = []expression.Expression{ expressions.Value{Val: expressions.TypeStar("*")} }
 	}
 |	ExpressionList
 
@@ -822,7 +822,7 @@ DefaultValueExpr:
 NowSym:
 	"CURRENT_TIMESTAMP"
 	{
-		$$ = &expressions.Ident{model.NewCIStr("CURRENT_TIMESTAMP")}
+		$$ = &expressions.Ident{CIStr: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
@@ -831,16 +831,16 @@ NowSym:
 SignedLiteral:
 	Literal
 	{
-		$$ = expressions.Value{$1}
+		$$ = expressions.Value{Val: $1}
 	}
 |	'+' NumLiteral
 	{
-		n := expressions.Value{$2}
+		n := expressions.Value{Val: $2}
 		$$ = expressions.NewUnaryOperation(opcode.Plus, n)
 	}
 |	'-' NumLiteral
 	{
-		n := expressions.Value{$2}
+		n := expressions.Value{Val: $2}
 		$$ = expressions.NewUnaryOperation(opcode.Minus, n)
 	}
 
@@ -1666,11 +1666,11 @@ Literal:
 Operand:
 	Literal
 	{
-		$$ = expressions.Value{$1}
+		$$ = expressions.Value{Val: $1}
 	}
 |	QualifiedIdent
 	{
-		$$ = &expressions.Ident{model.NewCIStr($1.(string))}
+		$$ = &expressions.Ident{CIStr: model.NewCIStr($1.(string))}
 	}
 |	'(' Expression ')'
 	{
@@ -1815,7 +1815,7 @@ Function:
 |	"VALUES" '(' Identifier ')'
 	{
 		// TODO: support qualified identifier for column_name
-		$$ = &expressions.Values{model.NewCIStr($3.(string))}
+		$$ = &expressions.Values{CIStr: model.NewCIStr($3.(string))}
 	}
 |	"CONVERT" '(' Expression "USING" CharsetName ')' 
 	{

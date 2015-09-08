@@ -151,21 +151,17 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 
 		for _, by := range r.By {
-			var (
-				val interface{}
-				err error
-			)
-
-			val, err = by.Eval(ctx, m)
-			if err != nil {
-				return false, err
+			// err1 is used for passing `go tool vet --shadow` check.
+			val, err1 := by.Eval(ctx, m)
+			if err1 != nil {
+				return false, err1
 			}
 
 			if val != nil {
 				var ordered bool
-				val, ordered, err = types.IsOrderedType(val)
-				if err != nil {
-					return false, err
+				val, ordered, err1 = types.IsOrderedType(val)
+				if err1 != nil {
+					return false, err1
 				}
 
 				if !ordered {
