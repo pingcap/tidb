@@ -507,7 +507,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {lock}			return lock
 {low_priority}		return lowPriority
 {mod}			return mod
-{mode}			return mode
+{mode}			lval.item = string(l.val)
+			return mode
 {names}			lval.item = string(l.val)
 			return names
 {not}			return not
