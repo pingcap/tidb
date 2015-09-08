@@ -15,6 +15,7 @@ package codec
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/juju/errors"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -29,13 +30,15 @@ var (
 	SmallestNoneNilValue = []byte{0x00, 0x01}
 )
 
+// TODO: use iota + 1 instead?
 const (
-	formatNilFlag    = 'n'
-	formatIntFlag    = 'd'
-	formatUintFlag   = 'u'
-	formatFloatFlag  = 'f'
-	formatStringFlag = 's'
-	formatBytesFlag  = 'b'
+	formatNilFlag      = 'n'
+	formatIntFlag      = 'd'
+	formatUintFlag     = 'u'
+	formatFloatFlag    = 'f'
+	formatStringFlag   = 's'
+	formatBytesFlag    = 'b'
+	formatDurationFlag = 't'
 )
 
 var sepKey = []byte{0x00, 0x00}
@@ -100,6 +103,10 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 		case mysql.Time:
 			b = EncodeBytes(b, []byte(v.String()))
 			format = append(format, formatStringFlag)
+		case mysql.Duration:
+			// duration may have negative value, so we cannot use String to encode directly.
+			b = EncodeInt(b, int64(v.Duration))
+			format = append(format, formatDurationFlag)
 		case nil:
 			// We will 0x00, 0x00 for nil.
 			// The []byte{} will be encoded as 0x00, 0x01.
@@ -163,6 +170,13 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 			}
 		case formatBytesFlag:
 			b, v[i], err = DecodeBytes(b)
+		case formatDurationFlag:
+			var r int64
+			b, r, err = DecodeInt(b)
+			if err == nil {
+				// use max fsp, let outer to do round manually.
+				v[i] = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+			}
 		case formatNilFlag:
 			if len(b) < 2 || (b[0] != 0x00 && b[1] != 0x00) {
 				return nil, errors.Errorf("malformed encoded nil")
