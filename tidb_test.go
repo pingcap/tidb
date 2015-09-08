@@ -348,6 +348,14 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 }
 
+func (s *testSessionSuite) TestString(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	sessionExec(c, se, "select 1")
+	// here to check the panic bug in String() when txn is nil after committed.
+	c.Log(se.String())
+}
+
 func (s *testSessionSuite) TestResultField(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
