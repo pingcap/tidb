@@ -230,7 +230,11 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 
 // Truncate implements table.Table Truncate interface.
 func (t *Table) Truncate(ctx context.Context) (err error) {
-	return util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+	err = util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+	if err != nil {
+		return
+	}
+	return util.DelKeyWithPrefix(ctx, t.IndexPrefix())
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
