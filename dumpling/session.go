@@ -111,7 +111,11 @@ func (s *session) String() string {
 		"userName":   s.userName,
 		"currDBName": db.GetCurrentSchema(s),
 		"sid":        s.sid,
-		"txn":        s.txn.String(),
+	}
+
+	if s.txn != nil {
+		// if txn is committed or rolled back, txn is nil.
+		data["txn"] = s.txn.String()
 	}
 
 	b, _ := json.MarshalIndent(data, "", "  ")
