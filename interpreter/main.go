@@ -112,7 +112,6 @@ func mayExit(err error, l string) bool {
 	if errors2.ErrorEqual(err, liner.ErrPromptAborted) || errors2.ErrorEqual(err, io.EOF) {
 		fmt.Println("\nBye")
 		saveHistory()
-		line.Close()
 		return true
 	}
 	if err != nil {
