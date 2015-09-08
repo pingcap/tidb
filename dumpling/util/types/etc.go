@@ -145,6 +145,8 @@ func TypeToStr(tp byte, binary bool) string {
 		return "date"
 	case mysql.TypeTimestamp:
 		return "timestamp"
+	case mysql.TypeBit:
+		return "bit"
 	default:
 		log.Errorf("unkown type %d, binary %v", tp, binary)
 	}
