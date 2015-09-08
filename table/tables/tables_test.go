@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util"
 )
 
 func TestT(t *testing.T) {
@@ -91,9 +92,31 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.RemoveRowAllIndex(ctx, rid, []interface{}{1, "cba"}), IsNil)
 
 	c.Assert(tb.RemoveRow(ctx, rid), IsNil)
+	// Make sure there is index data in the storage.
+	prefix := tb.IndexPrefix()
+	cnt, err := countEntriesWithPrefix(ctx, prefix)
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Greater, 0)
 	c.Assert(tb.Truncate(ctx), IsNil)
+	// Make sure index data is also removed after tb.Truncate().
+	cnt, err = countEntriesWithPrefix(ctx, prefix)
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Equals, 0)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+}
+
+func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return 0, err
+	}
+	cnt := 0
+	err = util.ScanMetaWithPrefix(txn, prefix, func(k, v []byte) bool {
+		cnt += 1
+		return true
+	})
+	return cnt, err
 }
 
 func (ts *testSuite) TestTypes(c *C) {
