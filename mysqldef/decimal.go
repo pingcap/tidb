@@ -78,7 +78,9 @@ package mysqldef
 // after the decimal point.
 
 import (
+	"bytes"
 	"database/sql/driver"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"math/big"
@@ -728,4 +730,136 @@ func fracDigitsDiv(x int32) int32 {
 
 func fracDigitsMul(a, b int32) int32 {
 	return min(MaxFractionDigits, a+b)
+}
+
+func encodeExp(expValue int64, expSign int, valSign int) int64 {
+	if expSign == 0 {
+		expValue = -expValue
+	}
+
+	if expSign != valSign {
+		expValue = ^expValue
+	}
+
+	return expValue
+}
+
+func decodeExp(expValue int64, expSign int, valSign int) int64 {
+	if expSign != valSign {
+		expValue = ^expValue
+	}
+
+	if expSign == 0 {
+		expValue = -expValue
+	}
+
+	return expValue
+}
+
+func codecValue(value []byte, valSign int) []byte {
+	if valSign == 0 {
+		for i, _ := range value {
+			value[i] = ^value[i]
+		}
+	}
+
+	return value
+}
+
+// EncodeDecimal encodes a decimal to bytes.
+func EncodeDecimal(d Decimal) []byte {
+	// Value -> 0.Value ^ exp.
+	// If exp is bigger, the value is bigger.
+	// If exp is the same, we can compare 0.Value bytes by bytes.
+
+	// Decimal "0" or "0.00...0" will be encoded "0".
+	if d.Equals(ZeroDecimal) {
+		b := make([]byte, 13)
+		// Value sign is 1.
+		binary.BigEndian.PutUint16(b[:2], uint16(1))
+		// Exp sign is 0.
+		binary.BigEndian.PutUint16(b[2:4], uint16(0))
+		// Exp value is 0.
+		binary.BigEndian.PutUint64(b[4:12], uint64(0))
+		// Value string is "0".
+		b[12] = '0'
+		return b
+	}
+
+	valSign := 1
+	if d.value.Sign() < 0 {
+		valSign = 0
+	}
+
+	absVal := new(big.Int)
+	absVal.Abs(d.value)
+
+	// Trim right side "0", like "12.34000" -> "12.34".
+	value := []byte(strings.TrimRight(absVal.String(), "0"))
+
+	// Get exp and value, format is "value":"exp".
+	// like "12.34" -> "0.1234":"2".
+	// like "-0.01234" -> "-0.1234":"-1".
+	exp := int64(0)
+	div := big.NewInt(10)
+	for ; ; exp++ {
+		if absVal.Sign() == 0 {
+			break
+		}
+		absVal = absVal.Div(absVal, div)
+	}
+
+	expSign := 1
+	expVal := exp + int64(d.exp)
+	if expVal < 0 {
+		expSign = 0
+	}
+
+	// For negtive exp, do bit reverse for exp.
+	// For negtive decimal, do bit reverse for exp and value.
+	encExp := encodeExp(expVal, expSign, valSign)
+	encValue := codecValue(value, valSign)
+
+	// Decimal decoding.
+	// 2 bytes -> value sign
+	// 2 bytes -> exp sign
+	// 8 bytes -> exp value
+	// others  -> abs value bytes
+	b := make([]byte, 12+len(encValue))
+	binary.BigEndian.PutUint16(b[:2], uint16(valSign))
+	binary.BigEndian.PutUint16(b[2:4], uint16(expSign))
+	binary.BigEndian.PutUint64(b[4:12], uint64(encExp))
+	copy(b[12:], []byte(encValue))
+	return b
+}
+
+// DecodeDecimal decodes bytes to decimal.
+func DecodeDecimal(b []byte) (Decimal, error) {
+	valSign := int(binary.BigEndian.Uint16(b[:2]))
+	expSign := int(binary.BigEndian.Uint16(b[2:4]))
+	decExp := int64(binary.BigEndian.Uint64(b[4:12]))
+	expVal := decodeExp(decExp, expSign, valSign)
+	decValue := codecValue(b[12:], valSign)
+
+	// Generate value sign.
+	var decimalStr []byte
+	if valSign == 0 {
+		decimalStr = append(decimalStr, '-')
+	}
+
+	// Generate decimal string value.
+	if expVal <= 0 {
+		// Like decimal "0.1234" or "0.01234".
+		decimalStr = append(decimalStr, '0')
+		decimalStr = append(decimalStr, '.')
+		decimalStr = append(decimalStr, bytes.Repeat([]byte{'0'}, -int(expVal))...)
+		decimalStr = append(decimalStr, decValue...)
+	} else {
+		// Like decimal "12.34".
+		decimalStr = append(decimalStr, decValue[:expVal]...)
+		decimalStr = append(decimalStr, '.')
+		decimalStr = append(decimalStr, decValue[expVal:]...)
+	}
+
+	return ParseDecimal(string(decimalStr))
 }
