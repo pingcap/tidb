@@ -294,10 +294,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
-		fmt.Printf("%s\n", src)
 		l := NewLexer(src)
 		c.Assert(yyParse(l), Equals, 0)
-		c.Assert(l.errs, HasLen, 0)
+		c.Assert(l.errs, HasLen, 0, Commentf("source %s", src))
 	}
 
 	// Testcase for prepared statement
