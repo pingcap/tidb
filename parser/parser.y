@@ -267,7 +267,7 @@ import (
 	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
-	AssignmentList1		"assignment list optional trailing comma"
+	AssignmentListOpt	"assignment list opt"
 	AuthString		"Password string value"
 	BeginTransactionStmt	"BEGIN TRANSACTION statement"
 	CastType		"Cast function target type"
@@ -276,7 +276,7 @@ import (
 	ColumnDef		"table column definition"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
-	ColumnNameList1		"column name list with optional trailing comma"
+	ColumnNameListOpt	"column name list opt"
 	ColumnKeywordOpt	"Column keyword or empty"
 	ColumnSetValue		"insert statement set value by column name"
 	ColumnSetValueList	"insert statement set value by column name list"
@@ -293,6 +293,7 @@ import (
 	CreateIndexStmtUnique	"CREATE INDEX optional UNIQUE clause"
 	CreateSpecification	"CREATE Database specification"
 	CreateSpecificationList	"CREATE Database specification list"
+	CreateSpecListOpt	"CREATE Database specification list opt"
 	CreateTableStmt		"CREATE TABLE statement"
 	CrossOpt		"Cross join option"
 	DBName			"Database Name"
@@ -315,8 +316,8 @@ import (
 	ExplainStmt		"EXPLAIN statement"
 	Expression		"expression"
 	ExpressionList		"expression list"
+	ExpressionListOpt	"expression list opt"
 	ExpressionListList	"expression list list"
-	ExpressionList1		"expression list expression"
 	Factor			"expression factor"
 	Factor1			"binary expression factor"
 	Field			"field expression"
@@ -391,18 +392,21 @@ import (
 	SignedLiteral		"Literal or NumLiteral with sign"
 	Statement		"statement"
 	StatementList		"statement list"
+	ExplainableStmt		"explainable statement"
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
 	SystemVariable		"System defined variable name"
 	TableConstraint		"table constraint definition"
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
+	TableElementListOpt	"table definition element list opt"
 	TableFactor 		"table factor"
 	TableIdent		"Table identifier"
 	TableIdentList		"Table identifier list"
 	TableIdentOpt 		"Table identifier option"
 	TableOpt		"create table option"
-	TableOpts		"create table option list"
+	TableOptList		"create table option list"
+	TableOptListOpt		"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
@@ -501,7 +505,7 @@ AlterTableStmt:
 	}
 
 AlterSpecification:
-	TableOpts
+	TableOptListOpt
 	{
 		$$ = &ddl.AlterSpecification{
 			Action: ddl.AlterTableOpt,
@@ -578,10 +582,7 @@ ColumnPosition:
 
 
 AlterSpecificationList:
-	{
-		$$ = []*ddl.AlterSpecification{}
-	}
-|	AlterSpecification
+	AlterSpecification
 	{
 		$$ = []*ddl.AlterSpecification{$1.(*ddl.AlterSpecification)}
 	}
@@ -614,20 +615,21 @@ Assignment:
 	}
 
 AssignmentList:
-	Assignment AssignmentList1 CommaOpt
+	Assignment
 	{
-		$$ = append([]expressions.Assignment{$1.(expressions.Assignment)}, $2.([]expressions.Assignment)...)
+		$$ = []expressions.Assignment{$1.(expressions.Assignment)}
+	}
+|	AssignmentList ',' Assignment
+	{
+		$$ = append($1.([]expressions.Assignment), $3.(expressions.Assignment))
 	}
 
-AssignmentList1:
+AssignmentListOpt:
 	/* EMPTY */
 	{
 		$$ = []expressions.Assignment{}
 	}
-|	AssignmentList1 ',' Assignment
-	{
-		$$ = append($1.([]expressions.Assignment), $3.(expressions.Assignment))
-	}
+|	AssignmentList
 
 BeginTransactionStmt:
 	"BEGIN"
@@ -682,20 +684,21 @@ ColumnName:
 	Identifier
 
 ColumnNameList:
-	ColumnName ColumnNameList1 CommaOpt
+	ColumnName
 	{
-		$$ = append([]string{$1.(string)}, $2.([]string)...)
+		$$ = []string{$1.(string)}
+	}
+|	ColumnNameList ',' ColumnName
+	{
+		$$ = append($1.([]string), $3.(string))
 	}
 
-ColumnNameList1:
+ColumnNameListOpt:
 	/* EMPTY */
 	{
 		$$ = []string{}
 	}
-|	ColumnNameList1 ',' ColumnName
-	{
-		$$ = append($1.([]string), $3.(string))
-	}
+|	ColumnNameList
 
 CommitStmt:
 	"COMMIT"
@@ -939,7 +942,7 @@ IndexColNameList:
  *    | [DEFAULT] COLLATE [=] collation_name
  *******************************************************************/
 CreateDatabaseStmt:
-	CreateDatabase IfNotExists DBName CreateSpecificationList 
+	CreateDatabase IfNotExists DBName CreateSpecListOpt
 	{
 		opts := $4.([]*coldef.DatabaseOpt)
 		//compose charset from x
@@ -979,11 +982,11 @@ DBName:
 	Identifier
 
 CreateSpecification:
-	DefaultOpt CharsetKw EqOpt CharsetName
+	DefaultKwdOpt CharsetKw EqOpt CharsetName
 	{
 		$$ = &coldef.DatabaseOpt{Tp: coldef.DBOptCollate, Value: $4.(string)}
 	}
-|	DefaultOpt "COLLATE" EqOpt CollationName 
+|	DefaultKwdOpt "COLLATE" EqOpt CollationName
 	{
 		$$ = &coldef.DatabaseOpt{Tp: coldef.DBOptCollate, Value: $4.(string)}
 	} 
@@ -1003,11 +1006,14 @@ CharsetName:
 CollationName:
 	Identifier
 
-CreateSpecificationList:
+CreateSpecListOpt:
 	{
-		$$ = []*coldef.DatabaseOpt{} 
+		$$ = []*coldef.DatabaseOpt{}
 	}
-|	CreateSpecification
+|	CreateSpecificationList
+
+CreateSpecificationList:
+	CreateSpecification
 	{
 		$$ = []*coldef.DatabaseOpt{$1.(*coldef.DatabaseOpt)}
 	}
@@ -1032,7 +1038,7 @@ CreateSpecificationList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementList ')' TableOpts CommaOpt
+	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt CommaOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*coldef.ColumnDef
@@ -1240,7 +1246,7 @@ ExplainStmt:
 			ColumnName: $3.(string)},
 		}
 	}
-|	ExplainSym Statement
+|	ExplainSym ExplainableStmt
 	{
 		$$ = &stmts.ExplainStmt{S:$2.(stmt.Statement)}
 	}
@@ -1312,20 +1318,20 @@ name:
 	Identifier
 
 ExpressionList:
-	Expression ExpressionList1 CommaOpt
+	Expression
 	{
-		$$ = append([]expression.Expression{expressions.Expr($1)}, $2.([]expression.Expression)...)
+		$$ = []expression.Expression{expressions.Expr($1)}
 	}
-
-ExpressionList1:
-	/* EMPTY */
-	{
-		$$ = []expression.Expression(nil)
-	}
-|	ExpressionList1 ',' Expression
+|	ExpressionList ',' Expression
 	{
 		$$ = append($1.([]expression.Expression), expressions.Expr($3))
 	}
+
+ExpressionListOpt:
+	{
+		$$ = []expression.Expression{}
+	}
+|	ExpressionList
 
 Factor:
 	Factor "IS" NotOpt "NULL" %prec is
@@ -1605,14 +1611,7 @@ ExpressionListList:
 	}
 
 ColumnSetValue:
-	ColumnName eq "DEFAULT"
-	{
-		//set columnname = DEFAULT
-		$$ = &expressions.Assignment{
-			ColName:    $1.(string),
-			Expr:       expressions.Expr($3)}
-	}
-|	ColumnName eq Expression
+	ColumnName eq Expression
 	{
 		$$ = &expressions.Assignment{
 			ColName:    $1.(string),
@@ -2312,13 +2311,13 @@ TableIdentOpt:
 
 JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
-	TableRef CrossOpt "JOIN" TableRef %prec tableRefPriority
+	TableRef CrossOpt TableRef %prec tableRefPriority
 	{
-		$$ = &rsets.JoinRset{Left: $1, Right: $4, Type: rsets.CrossJoin}
+		$$ = &rsets.JoinRset{Left: $1, Right: $3, Type: rsets.CrossJoin}
 	}
-|	TableRef CrossOpt "JOIN" TableRef "ON" Expression
+|	TableRef CrossOpt TableRef "ON" Expression
 	{
-		$$ = &rsets.JoinRset{Left: $1, Right: $4, Type: rsets.CrossJoin, On: $6.(expression.Expression)}
+		$$ = &rsets.JoinRset{Left: $1, Right: $3, Type: rsets.CrossJoin, On: $5.(expression.Expression)}
 	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
 	{	
@@ -2348,11 +2347,9 @@ OuterOpt:
 
 
 CrossOpt:
-	{
-
-	}
-|	"CROSS" 
-|	"INNER"
+	"JOIN"
+|	"CROSS" "JOIN"
+|	"INNER" "JOIN"
 
 
 LimitClause:
@@ -2629,12 +2626,6 @@ ShowStmt:
 			Target: stmt.ShowTables,
 			DBName: $3.(string)}
 	}
-|	"SHOW" "TABLES" ShowDatabaseNameOpt
-	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowTables,
-			DBName: $3.(string)}
-	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{
 		$$ = &stmts.ShowStmt{
@@ -2708,6 +2699,12 @@ Statement:
 |	UpdateStmt
 |	UseStmt
 
+ExplainableStmt:
+	SelectStmt
+|	DeleteFromStmt
+|	UpdateStmt
+|	InsertIntoStmt
+
 StatementList:
 	Statement
 	{
@@ -2739,10 +2736,7 @@ TableConstraint:
 	}
 
 TableElement:
-	{
-		$$ = nil
-	}
-|	ColumnDef
+	ColumnDef
 	{
 		$$ = $1.(*coldef.ColumnDef)
 	}
@@ -2752,10 +2746,7 @@ TableElement:
 	}
 
 TableElementList:
-	{
-		$$ = []interface{}{}
-	}
-|	TableElement
+	TableElement
 	{
 		if $1 != nil {
 			$$ = []interface{}{$1.(interface{})}
@@ -2771,6 +2762,12 @@ TableElementList:
 			$$ = $1
 		}
 	}
+
+TableElementListOpt:
+	{
+		$$ = []interface{}{}
+	}
+|	TableElementList
 
 TableOpt:
 	"ENGINE" Identifier
@@ -2794,19 +2791,22 @@ TableOpt:
 		$$ = &coldef.TableOpt{Tp: coldef.TblOptAutoIncrement, UintValue: $3.(uint64)}
 	}
 
-TableOpts:
+TableOptListOpt:
 	{
 		$$ = []*coldef.TableOpt{}
 	}
-|	TableOpt
+|	TableOptList
+
+TableOptList:
+	TableOpt
 	{
 		$$ = []*coldef.TableOpt{$1.(*coldef.TableOpt)}
 	}
-|	TableOpts TableOpt
+|	TableOptList TableOpt
 	{
 		$$ = append($1.([]*coldef.TableOpt), $2.(*coldef.TableOpt))
 	}
-|	TableOpts ','  TableOpt
+|	TableOptList ','  TableOpt
 	{
 		$$ = append($1.([]*coldef.TableOpt), $3.(*coldef.TableOpt))
 	}
