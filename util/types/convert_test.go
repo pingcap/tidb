@@ -176,18 +176,18 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft = NewFieldType(mysql.TypeYear)
 	v, err = Convert("2015-11-11", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int16(2015))
+	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(2015, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int16(2015))
+	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
 	dt, err := mysql.ParseDate("2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
-	c.Assert(v, Equals, int16(2015))
+	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(mysql.ZeroDuration, ft)
-	c.Assert(v, Equals, int16(time.Now().Year()))
+	c.Assert(v, Equals, int64(time.Now().Year()))
 }
 
 func testToInt64(c *C, val interface{}, expect int64) {
@@ -317,44 +317,44 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func testToBool(c *C, val interface{}, expect int8) {
+func testToBool(c *C, val interface{}, expect int64) {
 	b, err := ToBool(val)
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, expect)
 }
 
 func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
-	testToBool(c, false, int8(0))
-	testToBool(c, int(0), int8(0))
-	testToBool(c, int8(0), int8(0))
-	testToBool(c, int16(0), int8(0))
-	testToBool(c, int32(0), int8(0))
-	testToBool(c, int64(0), int8(0))
-	testToBool(c, uint(0), int8(0))
-	testToBool(c, uint8(0), int8(0))
-	testToBool(c, uint16(0), int8(0))
-	testToBool(c, uint32(0), int8(0))
-	testToBool(c, uint64(0), int8(0))
-	testToBool(c, float32(0), int8(0))
-	testToBool(c, float64(0), int8(0))
-	testToBool(c, "", int8(0))
-	testToBool(c, "0", int8(0))
-	testToBool(c, []byte{}, int8(0))
-	testToBool(c, []byte("0"), int8(0))
+	testToBool(c, false, 0)
+	testToBool(c, int(0), 0)
+	testToBool(c, int8(0), 0)
+	testToBool(c, int16(0), 0)
+	testToBool(c, int32(0), 0)
+	testToBool(c, int64(0), 0)
+	testToBool(c, uint(0), 0)
+	testToBool(c, uint8(0), 0)
+	testToBool(c, uint16(0), 0)
+	testToBool(c, uint32(0), 0)
+	testToBool(c, uint64(0), 0)
+	testToBool(c, float32(0), 0)
+	testToBool(c, float64(0), 0)
+	testToBool(c, "", 0)
+	testToBool(c, "0", 0)
+	testToBool(c, []byte{}, 0)
+	testToBool(c, []byte("0"), 0)
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
-	testToBool(c, t, int8(1))
+	testToBool(c, t, 1)
 
 	td, err := mysql.ParseDuration("11:11:11.999999", 6)
 	c.Assert(err, IsNil)
-	testToBool(c, td, int8(1))
+	testToBool(c, td, 1)
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
-	testToBool(c, v, int8(1))
+	testToBool(c, v, 1)
 
 	_, err = ToBool(&invalidMockType{})
 	c.Assert(err, NotNil)

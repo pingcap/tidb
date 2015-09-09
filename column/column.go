@@ -372,98 +372,99 @@ func (c *Col) castIntegerValue(val int64, errCode int) (casted interface{}, err 
 		if unsigned {
 			if val > math.MaxUint8 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = uint8(math.MaxUint8)
+				casted = uint64(math.MaxUint8)
 			} else if val < 0 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = uint8(0)
+				casted = uint64(0)
 			} else {
-				casted = uint8(val)
+				casted = uint64(val)
 			}
 		} else {
 			if val > math.MaxInt8 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = int8(math.MaxInt8)
+				casted = int64(math.MaxInt8)
 			} else if val < math.MinInt8 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = int8(math.MinInt8)
+				casted = int64(math.MinInt8)
 			} else {
-				casted = int8(val)
+				casted = int64(val)
 			}
 		}
 	case mysql.TypeShort:
 		if unsigned {
 			if val > math.MaxUint16 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = uint16(math.MaxUint16)
+				casted = uint64(math.MaxUint16)
 			} else if val < 0 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = uint16(0)
+				casted = uint64(0)
 			} else {
-				casted = uint16(val)
+				casted = uint64(val)
 			}
 		} else {
 			if val > math.MaxInt16 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = int16(math.MaxInt16)
+				casted = int64(math.MaxInt16)
 			} else if val < math.MinInt16 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = int16(math.MinInt16)
+				casted = int64(math.MinInt16)
 			} else {
-				casted = int16(val)
+				casted = int64(val)
 			}
 		}
 	case mysql.TypeYear:
 		if val > int64(mysql.MaxYear) || errCode == errCodeOverflowUpper {
 			overflow = true
-			casted = mysql.MaxYear
+			casted = int64(mysql.MaxYear)
 		} else if val < int64(mysql.MinYear) {
 			overflow = true
-			casted = mysql.MinYear
+			casted = int64(mysql.MinYear)
 		} else {
-			casted, _ = mysql.AdjustYear(int(val))
+			year, _ := mysql.AdjustYear(int(val))
+			casted = int64(year)
 		}
 	case mysql.TypeInt24:
 		if unsigned {
 			if val < 0 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = uint32(0)
+				casted = uint64(0)
 			} else if val > 1<<24-1 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = uint32(1<<24 - 1)
+				casted = uint64(1<<24 - 1)
 			} else {
-				casted = uint32(val)
+				casted = uint64(val)
 			}
 		} else {
 			if val > 1<<23-1 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = int32(1<<23 - 1)
+				casted = int64(1<<23 - 1)
 			} else if val < -1<<23 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = int32(-1 << 23)
+				casted = int64(-1 << 23)
 			} else {
-				casted = int32(val)
+				casted = int64(val)
 			}
 		}
 	case mysql.TypeLong:
 		if unsigned {
 			if val > math.MaxUint32 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = uint32(math.MaxUint32)
+				casted = uint64(math.MaxUint32)
 			} else if (val < 0 && errCode != errCodeOverflowMaxInt64) || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = uint32(0)
+				casted = uint64(0)
 			} else {
-				casted = uint32(val)
+				casted = uint64(val)
 			}
 		} else {
 			if val > math.MaxInt32 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = int32(math.MaxInt32)
+				casted = int64(math.MaxInt32)
 			} else if val < math.MinInt32 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = int32(math.MinInt32)
+				casted = int64(math.MinInt32)
 			} else {
-				casted = int32(val)
+				casted = int64(val)
 			}
 		}
 	case mysql.TypeLonglong:

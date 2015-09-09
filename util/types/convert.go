@@ -163,9 +163,9 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		case string:
 			intVal, err = StrToInt(x)
 		case mysql.Time:
-			return int16(x.Year()), nil
+			return int64(x.Year()), nil
 		case mysql.Duration:
-			return int16(time.Now().Year()), nil
+			return int64(time.Now().Year()), nil
 		default:
 			intVal, err = ToInt64(x)
 		}
@@ -176,7 +176,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return InvConv(val, tp)
 		}
-		return int16(y), nil
+		return int64(y), nil
 	default:
 		panic("should never happen")
 	}
@@ -431,7 +431,7 @@ func ToString(value interface{}) (string, error) {
 
 // ToBool converts a interface to a bool.
 // We will use 1 for true, and 0 for false.
-func ToBool(value interface{}) (int8, error) {
+func ToBool(value interface{}) (int64, error) {
 	isZero := false
 	switch v := value.(type) {
 	case bool:

@@ -185,7 +185,7 @@ func (o *BinaryOperation) evalAndAnd(ctx context.Context, args map[interface{}]i
 	}
 
 	if a != nil {
-		var x int8
+		var x int64
 		x, err = types.ToBool(a)
 		if err != nil {
 			return nil, o.traceErr(err)
@@ -201,7 +201,7 @@ func (o *BinaryOperation) evalAndAnd(ctx context.Context, args map[interface{}]i
 	}
 
 	if b != nil {
-		var y int8
+		var y int64
 		y, err = types.ToBool(b)
 		if err != nil {
 			return nil, o.traceErr(err)
@@ -216,7 +216,7 @@ func (o *BinaryOperation) evalAndAnd(ctx context.Context, args map[interface{}]i
 		return nil, nil
 	}
 
-	return int8(1), nil
+	return int64(1), nil
 }
 
 func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
@@ -226,8 +226,8 @@ func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]int
 	}
 
 	var (
-		x int8
-		y int8
+		x int64
+		y int64
 	)
 
 	if a != nil {
@@ -260,7 +260,7 @@ func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]int
 		return nil, nil
 	}
 
-	return int8(0), nil
+	return int64(0), nil
 }
 
 func (o *BinaryOperation) evalLogicXor(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
@@ -285,10 +285,10 @@ func (o *BinaryOperation) evalLogicXor(ctx context.Context, args map[interface{}
 	}
 
 	if x == y {
-		return int8(0), nil
+		return int64(0), nil
 	}
 
-	return int8(1), nil
+	return int64(1), nil
 }
 
 func (o *BinaryOperation) errorf(format string, args ...interface{}) error {
