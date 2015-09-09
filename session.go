@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
@@ -139,7 +140,7 @@ func (s *session) FinishTxn(rollback bool) error {
 
 	err := s.txn.Commit()
 	if err != nil {
-		log.Errorf("txn:%s, %v", s.txn, err)
+		log.Warnf("txn:%s, %v", s.txn, err)
 		return errors.Trace(err)
 	}
 
@@ -179,6 +180,10 @@ func (s *session) Retry() error {
 		s.history.history = nh.history
 	}()
 
+	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
+		return errors.Errorf("can not retry select for update statement")
+	}
+
 	var err error
 	for {
 		// Clear history
@@ -192,7 +197,7 @@ func (s *session) Retry() error {
 			if isPreparedStmt(st) {
 				continue
 			}
-			log.Info("Retry %s", st.OriginText())
+			log.Warnf("Retry %s", st.OriginText())
 			_, err = runStmt(s, st)
 			if err != nil {
 				if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
