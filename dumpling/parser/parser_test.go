@@ -296,8 +296,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
 		fmt.Printf("%s\n", src)
 		l := NewLexer(src)
-		ok := yyParse(l) == 0
-		c.Assert(ok, IsTrue)
+		c.Assert(yyParse(l), Equals, 0)
 		c.Assert(l.errs, HasLen, 0)
 	}
 
