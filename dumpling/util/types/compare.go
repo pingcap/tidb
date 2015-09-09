@@ -94,20 +94,46 @@ func compareStringFloat(s string, a float64) (int, error) {
 	return -n, err
 }
 
-func coerceCompare(a, b interface{}) (x interface{}, y interface{}) {
+func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
+	rowTypeNum := 0
 	x, y = Coerce(a, b)
 	// change []byte to string for later compare
 	switch v := a.(type) {
 	case []byte:
 		x = string(v)
+	case []interface{}:
+		rowTypeNum++
 	}
 
 	switch v := b.(type) {
 	case []byte:
 		y = string(v)
+	case []interface{}:
+		rowTypeNum++
 	}
 
-	return x, y
+	if rowTypeNum == 1 {
+		// a and b must be all row type or not
+		err = errors.Errorf("invalid comapre type %T cmp %T", a, b)
+	}
+
+	return x, y, err
+}
+
+func compareRow(a, b []interface{}) (int, error) {
+	if len(a) != len(b) {
+		return 0, errors.Errorf("mismatch columns for row %v cmp %v", a, b)
+	}
+
+	for i := range a {
+		n, err := Compare(a[i], b[i])
+		if err != nil {
+			return 0, errors.Trace(err)
+		} else if n != 0 {
+			return n, nil
+		}
+	}
+	return 0, nil
 }
 
 // Compare returns an integer comparing the interface a to b.
@@ -115,7 +141,17 @@ func coerceCompare(a, b interface{}) (x interface{}, y interface{}) {
 // a = b -> 0
 // a < b -> -1
 func Compare(a, b interface{}) (int, error) {
-	a, b = coerceCompare(a, b)
+	var coerceErr error
+	a, b, coerceErr = coerceCompare(a, b)
+	if coerceErr != nil {
+		return 0, errors.Trace(coerceErr)
+	}
+
+	if va, ok := a.([]interface{}); ok {
+		// we guarantee in coerceCompare that a and b are both []interface{}
+		vb := b.([]interface{})
+		return compareRow(va, vb)
+	}
 
 	if a == nil || b == nil {
 		// Check ni first, nil is always less than none nil value.
