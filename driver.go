@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	qerror "github.com/pingcap/tidb/util/errors"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/reborndb/go/errors2"
 )
 
 const (

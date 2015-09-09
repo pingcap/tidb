@@ -28,7 +28,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/reborndb/go/errors2"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")

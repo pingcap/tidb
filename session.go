@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/reborndb/go/errors2"
 )
 
 // Session context
