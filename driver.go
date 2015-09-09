@@ -29,11 +29,13 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	qerror "github.com/pingcap/tidb/util/errors"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -239,8 +241,13 @@ func (c *driverConn) Commit() error {
 	if c.s == nil {
 		return qerror.ErrCommitNotInTransaction
 	}
+	_, err := c.s.Execute(txCommitSQL)
 
-	if _, err := c.s.Execute(txCommitSQL); err != nil {
+	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		return c.s.Retry()
+	}
+
+	if err != nil {
 		return err
 	}
 
