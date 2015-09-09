@@ -58,10 +58,10 @@ func (is *IsNull) String() string {
 
 // Eval implements the Expression Eval interface.
 func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
-	Val, err := is.Expr.Eval(ctx, args)
+	val, err := is.Expr.Eval(ctx, args)
 	if err != nil {
 		return
 	}
 
-	return Val == nil != is.Not, nil
+	return val == nil != is.Not, nil
 }
