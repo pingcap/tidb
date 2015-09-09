@@ -222,6 +222,10 @@ func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression
 		mentionedAggregateFuncs(x.Expr, m)
 		mentionedAggregateFuncs(x.Left, m)
 		mentionedAggregateFuncs(x.Right, m)
+	case *Row:
+		for _, expr := range x.Values {
+			mentionedAggregateFuncs(expr, m)
+		}
 	default:
 		log.Errorf("Unknown Expression: %T", e)
 	}
@@ -306,6 +310,10 @@ func mentionedColumns(e expression.Expression, m map[string]bool, names *[]strin
 		mentionedColumns(x.Expr, m, names)
 		mentionedColumns(x.Left, m, names)
 		mentionedColumns(x.Right, m, names)
+	case *Row:
+		for _, expr := range x.Values {
+			mentionedColumns(expr, m, names)
+		}
 	default:
 		log.Errorf("Unknown Expression: %T", e)
 	}
