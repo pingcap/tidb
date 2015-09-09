@@ -40,6 +40,7 @@ func (s *testHelperSuite) TestContainAggFunc(c *C) {
 		{&WhenClause{Expr: v, Result: v}, false},
 		{&IsTruth{Expr: v}, false},
 		{&Between{Expr: v, Left: v, Right: v}, false},
+		{&Row{Values: []expression.Expression{v, v}}, false},
 	}
 
 	for _, t := range tbl {
@@ -71,6 +72,7 @@ func (s *testHelperSuite) TestMentionedColumns(c *C) {
 		{&WhenClause{Expr: v, Result: v}, 0},
 		{&IsTruth{Expr: v}, 0},
 		{&Between{Expr: v, Left: v, Right: v}, 0},
+		{&Row{Values: []expression.Expression{v, v}}, 0},
 	}
 
 	for _, t := range tbl {
