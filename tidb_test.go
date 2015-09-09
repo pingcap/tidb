@@ -565,6 +565,9 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	_, err = exec(c, se1, "commit")
 	c.Assert(err, NotNil)
+	err = se1.Retry()
+	// retry should fail
+	c.Assert(err, NotNil)
 
 	// not conflict
 	mustExecSQL(c, se1, "begin")

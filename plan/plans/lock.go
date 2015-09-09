@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -48,6 +49,7 @@ func (r *SelectLockPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 			}
 		}
 		if rowKeys != nil && r.Lock == coldef.SelectLockForUpdate {
+			forupdate.SetForUpdate(ctx)
 			txn, err := ctx.GetTxn(false)
 			if err != nil {
 				return false, errors.Trace(err)
