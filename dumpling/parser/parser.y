@@ -471,7 +471,7 @@ import (
 %left 	xor
 %left 	andand and
 %left 	between
-%precedence	lower_than_eq
+%precedence	lowerThanEq
 %left 	eq ge le neq neqSynonym '>' '<' is like in
 %left 	'|'
 %left 	'&'
@@ -1532,7 +1532,7 @@ Identifier:
 UnReservedKeyword:
 	"AUTO_INCREMENT" | "AFTER" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
-|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lower_than_eq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
+|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
 
