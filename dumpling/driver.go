@@ -29,11 +29,13 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	qerror "github.com/pingcap/tidb/util/errors"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -239,8 +241,13 @@ func (c *driverConn) Commit() error {
 	if c.s == nil {
 		return qerror.ErrCommitNotInTransaction
 	}
+	_, err := c.s.Execute(txCommitSQL)
 
-	if _, err := c.s.Execute(txCommitSQL); err != nil {
+	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		return c.s.Retry()
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -347,6 +354,7 @@ type driverRows struct {
 	rs   rset.Recordset
 	done chan int
 	rows chan interface{}
+	wg   sync.WaitGroup
 }
 
 func newEmptyDriverRows() *driverRows {
@@ -363,7 +371,13 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 		done: make(chan int),
 		rows: make(chan interface{}, 500),
 	}
+	r.wg.Add(1)
 	go func() {
+		// TODO: We may change the whole implementation later, so here just using WaitGroup
+		// to solve issue https://github.com/pingcap/tidb/issues/57
+		// But if we forget close rows and do commit later, we may still meet this panic
+		// with very little probability.
+		defer r.wg.Done()
 		err := io.EOF
 		if e := r.rs.Do(func(data []interface{}) (bool, error) {
 			vv, cloneErr := types.Clone(data)
@@ -406,6 +420,7 @@ func (r *driverRows) Columns() []string {
 // Close closes the rows iterator.
 func (r *driverRows) Close() error {
 	close(r.done)
+	r.wg.Wait()
 	return nil
 }
 
