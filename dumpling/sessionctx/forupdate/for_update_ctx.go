@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Record information for "select ... for update" statement
+// Package forupdate record information for "select ... for update" statement
 package forupdate
 
 import "github.com/pingcap/tidb/context"
@@ -27,7 +27,7 @@ func (k forupdateKeyType) String() string {
 // ForUpdateKey is used to retrive "select for update" statement information
 const ForUpdateKey forupdateKeyType = 0
 
-// BindDomain binds domain to context.
+// SetForUpdate set "select for update" flag.
 func SetForUpdate(ctx context.Context) {
 	ctx.SetValue(ForUpdateKey, true)
 }
