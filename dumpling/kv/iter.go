@@ -24,7 +24,7 @@ var (
 	ErrClosed = errors.New("Error: Transaction already closed")
 	// ErrNotExist is used when try to get an entry with an unexist key from KV store.
 	ErrNotExist = errors.New("Error: key not exist")
-	// ErrKeyExist is used when try to put an entry to KV store.
+	// ErrKeyExists is used when try to put an entry to KV store.
 	ErrKeyExists = errors.New("Error: key already exist")
 	// ErrConditionNotMatch is used when condition is not met.
 	ErrConditionNotMatch = errors.New("Error: Condition not match")
