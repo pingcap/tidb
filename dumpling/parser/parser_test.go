@@ -268,9 +268,6 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
-
-		// For unreserved keywords
-		{"SELECT id, user_id, repo_id, mode FROM access WHERE repo_id=1 AND mode>=1;", true},
 	}
 
 	for _, t := range table {
@@ -285,6 +282,23 @@ func (s *testParserSuite) TestParser0(c *C) {
 		case false:
 			c.Assert(len(l.errs), Not(Equals), 0)
 		}
+	}
+
+	// Testcase for unreserved keywords
+	unreservedKws := []string{
+		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
+		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
+		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
+		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
+		"value", "warnings", "year", "now", "substring", "mode",
+	}
+	for _, kw := range unreservedKws {
+		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
+		fmt.Printf("%s\n", src)
+		l := NewLexer(src)
+		ok := yyParse(l) == 0
+		c.Assert(ok, IsTrue)
+		c.Assert(l.errs, HasLen, 0)
 	}
 
 	// Testcase for prepared statement
