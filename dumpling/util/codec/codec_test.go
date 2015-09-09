@@ -513,3 +513,78 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		c.Assert(ret, Equals, t.Ret)
 	}
 }
+
+func (s *testCodecSuite) TestDecimal(c *C) {
+	tbl := []string{
+		"1234.00",
+		"1234",
+		"12.34",
+		"12.340",
+		"0.1234",
+		"0.0",
+		"0",
+		"-0.0",
+		"-0.0000",
+		"-1234.00",
+		"-1234",
+		"-12.34",
+		"-12.340",
+		"-0.1234"}
+
+	for _, t := range tbl {
+		m, err := mysql.ParseDecimal(t)
+		c.Assert(err, IsNil)
+		b, err := EncodeKey(m)
+		c.Assert(err, IsNil)
+		v, err := DecodeKey(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, HasLen, 1)
+		vv, ok := v[0].(mysql.Decimal)
+		c.Assert(ok, IsTrue)
+		c.Assert(vv.Equals(m), IsTrue)
+	}
+
+	tblCmp := []struct {
+		Arg1 string
+		Arg2 string
+		Ret  int
+	}{
+		{"1234", "1234.5", -1},
+		{"1234", "1234.0000", 0},
+		{"1234", "12.34", 1},
+		{"12.34", "12.35", -1},
+		{"0.1234", "12.3400", -1},
+		{"0.1234", "0.1235", -1},
+		{"0.123400", "12.34", -1},
+		{"12.34000", "12.34", 0},
+		{"0.01234", "0.01235", -1},
+		{"0.1234", "0", 1},
+		{"0.0000", "0", 0},
+		{"0.0001", "0", 1},
+		{"0.0001", "0.0000", 1},
+		{"0", "-0.0000", 0},
+		{"-0.0001", "0", -1},
+		{"-0.1234", "0", -1},
+		{"-0.1234", "0.1234", -1},
+		{"-1.234", "-12.34", 1},
+		{"-0.1234", "-12.34", 1},
+		{"-12.34", "1234", -1},
+		{"-12.34", "-12.35", 1},
+		{"-0.01234", "-0.01235", 1},
+	}
+
+	for _, t := range tblCmp {
+		m1, err := mysql.ParseDecimal(t.Arg1)
+		c.Assert(err, IsNil)
+		m2, err := mysql.ParseDecimal(t.Arg2)
+		c.Assert(err, IsNil)
+
+		b1, err := EncodeKey(m1)
+		c.Assert(err, IsNil)
+		b2, err := EncodeKey(m2)
+		c.Assert(err, IsNil)
+
+		ret := bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
+	}
+}
