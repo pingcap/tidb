@@ -366,7 +366,7 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 	}
 	r.wg.Add(1)
 	go func() {
-		// We may change the whole implementation later, so here just using WaitGroup
+		// TODO: We may change the whole implementation later, so here just using WaitGroup
 		// to solve issue https://github.com/pingcap/tidb/issues/57
 		// But if we forget close rows and do commit later, we may still meet this panic
 		// with very little probability.
