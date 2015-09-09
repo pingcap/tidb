@@ -125,7 +125,6 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 
 	for i, r := range bufRecords {
 		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
-
 		if _, err = t.AddRecord(ctx, r); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -284,7 +283,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		if err == nil {
 			continue
 		}
-		if len(s.OnDuplicate) == 0 || !errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		if len(s.OnDuplicate) == 0 || !errors2.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
 		// On duplicate key Update the duplicate row.

@@ -23,8 +23,6 @@ import (
 	"github.com/juju/errors"
 )
 
-// Cockroach sql index implementation
-
 var (
 	_ Index         = (*kvIndex)(nil)
 	_ IndexIterator = (*IndexIter)(nil)
@@ -138,7 +136,7 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 }
 
 // Create creates a new entry in the kvIndex data.
-// If the index is unique and there already exists an entry with the same key, Create will return ErrConditionNotMatch
+// If the index is unique and there already exists an entry with the same key, Create will return ErrKeyExists
 func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) error {
 	keyBuf, err := c.genIndexKey(indexedValues, h)
 	if err != nil {
@@ -157,7 +155,7 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(ErrConditionNotMatch)
+	return errors.Trace(ErrKeyExists)
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.

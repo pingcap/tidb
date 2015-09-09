@@ -348,7 +348,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
-			if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				iter, _, terr := v.X.Seek(txn, colVals)
 				if terr != nil {

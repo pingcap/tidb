@@ -83,8 +83,29 @@ func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{
 	h.history = append(h.history, s)
 }
 
+func (h *stmtHistory) del(stmtID uint32) {
+	pos := -1
+	for i, sr := range h.history {
+		if sr.stmtID == stmtID {
+			pos = i
+			break
+		}
+	}
+
+	if pos == -1 {
+		log.Errorf("statement %d not exist", stmtID)
+		return
+	}
+
+	count := len(h.history)
+	h.history[pos] = h.history[count-1]
+	h.history = h.history[:count-1]
+}
+
 func (h *stmtHistory) reset() {
-	h.history = h.history[:0]
+	if len(h.history) > 0 {
+		h.history = h.history[:0]
+	}
 }
 
 func (h *stmtHistory) clone() *stmtHistory {
@@ -98,11 +119,10 @@ type session struct {
 	txn      kv.Transaction // Current transaction
 	userName string
 	args     []interface{} // Statment execution args, this should be cleaned up after exec
-
-	values  map[fmt.Stringer]interface{}
-	store   kv.Storage
-	sid     int64
-	history stmtHistory
+	values   map[fmt.Stringer]interface{}
+	store    kv.Storage
+	sid      int64
+	history  stmtHistory
 }
 
 func (s *session) Status() uint16 {
@@ -119,6 +139,11 @@ func (s *session) AffectedRows() uint64 {
 
 func (s *session) SetUsername(name string) {
 	s.userName = name
+}
+
+func (s *session) resetHistory() {
+	s.ClearValue(forupdate.ForUpdateKey)
+	s.history.reset()
 }
 
 func (s *session) SetClientCapability(capability uint32) {
@@ -144,7 +169,7 @@ func (s *session) FinishTxn(rollback bool) error {
 		return errors.Trace(err)
 	}
 
-	s.history.reset()
+	s.resetHistory()
 	return nil
 }
 
@@ -163,6 +188,15 @@ func (s *session) String() string {
 
 	b, _ := json.MarshalIndent(data, "", "  ")
 	return string(b)
+}
+
+func needRetry(st stmt.Statement) bool {
+	switch st.(type) {
+	case *stmts.PreparedStmt, *stmts.ShowStmt, *stmts.DoStmt:
+		return false
+	default:
+		return true
+	}
 }
 
 func isPreparedStmt(st stmt.Statement) bool {
@@ -186,15 +220,13 @@ func (s *session) Retry() error {
 
 	var err error
 	for {
-		// Clear history
-		s.history.history = s.history.history[:0]
+		s.resetHistory()
 		s.FinishTxn(true)
-		// TODO: check if select for update statement
 		success := true
 		for _, sr := range nh.history {
 			st := sr.st
 			// Skip prepare statement
-			if isPreparedStmt(st) {
+			if !needRetry(st) {
 				continue
 			}
 			log.Warnf("Retry %s", st.OriginText())
@@ -288,6 +320,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
+	s.history.del(stmtID)
 	return dropPreparedStmt(s, stmtID)
 }
 
@@ -297,7 +330,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 	var err error
 	if s.txn == nil {
-		s.history.reset()
+		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, err
@@ -311,7 +344,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.history.reset()
+		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, err
