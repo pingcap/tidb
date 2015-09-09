@@ -425,7 +425,7 @@ import (
 
 	Identifier		"identifier or unreserved keyword"
 	UnReservedKeyword	"MySQL unreserved keywords"
-	NotKeywordToken		"Tokes not mysql keyword but treate as keyword"
+	NotKeywordToken		"Tokens not mysql keyword but treated specially"
 
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
