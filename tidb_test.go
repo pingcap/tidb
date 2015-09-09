@@ -28,6 +28,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -500,7 +501,6 @@ func (s *testSessionSuite) TestAutoicommit(c *C) {
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
-	c.Skip("Need retry feature")
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
@@ -522,6 +522,11 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 	_, err := exec(c, se1, "commit")
 	// row lock conflict but can still success
+	if errors2.ErrorNotEqual(err, kv.ErrConditionNotMatch) {
+		c.Fail()
+	}
+	// Retry should success
+	err = se.Retry()
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
@@ -559,6 +564,9 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	mustExecSQL(c, se2, "commit")
 
 	_, err = exec(c, se1, "commit")
+	c.Assert(err, NotNil)
+	err = se1.Retry()
+	// retry should fail
 	c.Assert(err, NotNil)
 
 	// not conflict

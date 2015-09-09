@@ -21,11 +21,11 @@ package parser
 import (
 	"fmt"
 	"math"
+	"errors"
 	"strconv"
 	"unicode"
 	"strings"
 	
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/stmt"
@@ -134,7 +134,11 @@ func (l *lexer) next() int {
 }
 
 func (l *lexer) err0(ln, c int, args ...interface{}) {
-	err := errors.Errorf(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val), args...)
+	var argStr string
+	if len(args) > 0 {
+		argStr = fmt.Sprintf(" " + args[0].(string), args[1:]...)
+	}
+	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
 	l.errs = append(l.errs, err)
 }
 
@@ -771,7 +775,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err("integer literal: %v", err)
+		l.err("", "integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -787,7 +791,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err("float literal: %v", err)
+		l.err("", "float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 

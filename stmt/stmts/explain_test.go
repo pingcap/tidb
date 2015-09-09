@@ -16,11 +16,13 @@ package stmts_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testStmtSuite) TestExplain(c *C) {
-	testSQL := "explain do 1"
+	testSQL := "explain select 1"
 
 	stmtList, err := tidb.Compile(testSQL)
 	c.Assert(err, IsNil)
@@ -36,10 +38,12 @@ func (s *testStmtSuite) TestExplain(c *C) {
 	newTestStmt := &stmts.ExplainStmt{S: testStmt, Text: newTestSql}
 
 	mf := newMockFormatter()
-	newTestStmt.Explain(nil, mf)
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	newTestStmt.Explain(ctx, mf)
 	c.Assert(mf.Len(), Greater, 0)
 
-	_, err = testStmt.Exec(nil)
+	_, err = testStmt.Exec(ctx)
 	c.Assert(err, IsNil)
 
 	showColumnSQL := "desc t;"
@@ -58,9 +62,9 @@ func (s *testStmtSuite) TestExplain(c *C) {
 	showStmt.DBName = "test"
 
 	mf = newMockFormatter()
-	testStmt.Explain(nil, mf)
+	testStmt.Explain(ctx, mf)
 	c.Assert(mf.Len(), Greater, 0)
 
-	_, err = testStmt.Exec(nil)
+	_, err = testStmt.Exec(ctx)
 	c.Assert(err, IsNil)
 }
