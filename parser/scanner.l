@@ -761,7 +761,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err("integer literal: %v", err)
+		l.err("", "integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -777,7 +777,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err("float literal: %v", err)
+		l.err("", "float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
