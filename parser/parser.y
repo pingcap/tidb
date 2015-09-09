@@ -323,7 +323,6 @@ import (
 	Field			"field expression"
 	Field1			"field expression optional AS clause"
 	FieldList		"field expression list"
-	ForUserOpt		"Set password for user option"
 	FromClause		"From clause"
 	Function		"function expr"
 	FunctionCall		"function call post part"
@@ -471,6 +470,7 @@ import (
 %left 	xor
 %left 	andand and
 %left 	between
+%precedence	lower_than_eq
 %left 	eq ge le neq neqSynonym '>' '<' is like in
 %left 	'|'
 %left 	'&'
@@ -1531,7 +1531,7 @@ Identifier:
 // TODO: Add Data Type UnReserved Keywords
 UnReservedKeyword:
 	"AUTO_INCREMENT" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMN" | "COLUMNS" | "DATE" | "DATETIME"
-|	"ENGINE" | "FULL" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" | "QUICK" | "ROLLBACK" | "SESSION" | "GLOBAL" 
+|	"ENGINE" | "FULL" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lower_than_eq | "QUICK" | "ROLLBACK" | "SESSION" | "GLOBAL"
 |	"TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "VALUE" | "WARNINGS" | "YEAR" | "NOW"
 |	"SUBSTRING" | "MODE"
 
@@ -2487,9 +2487,13 @@ SetStmt:
 	{
 		$$ = &stmts.SetCharsetStmt{Charset: $3.(string)} 
 	}
-|	"SET" "PASSWORD" ForUserOpt eq PasswordOpt
+|	"SET" "PASSWORD" eq PasswordOpt
 	{
-		$$ = &stmts.SetPwdStmt{User: $3.(string), Password: $5.(string)} 
+		$$ = &stmts.SetPwdStmt{Password: $4.(string)}
+	}
+|	"SET" "PASSWORD" "FOR" Username eq PasswordOpt
+	{
+		$$ = &stmts.SetPwdStmt{User: $4.(string), Password: $6.(string)}
 	}
 
 VariableAssignment:
@@ -2572,16 +2576,6 @@ UserVariable:
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")
 		$$ = &expressions.Variable{Name: v, IsGlobal: false, IsSystem: false}
-	}
-
-
-ForUserOpt:
-	{
-		$$ = "" 
-	}
-|	"FOR" Username
-	{
-		$$ = $2.(string)
 	}
 
 Username:
