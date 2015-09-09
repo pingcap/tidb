@@ -41,6 +41,7 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{uint64(1), "1", 0},
 		{mysql.NewDecimalFromInt(1, 0), mysql.NewDecimalFromInt(1, 0), 0},
 		{mysql.NewDecimalFromInt(1, 0), "1", 0},
+		{mysql.NewDecimalFromInt(1, 0), []byte("1"), 0},
 		{"1", "1", 0},
 		{"1", int64(-1), 1},
 		{"1", float64(2), -1},
@@ -121,6 +122,10 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]byte("abc"), []byte("ab"), 1},
 		{[]byte("123"), 1234, -1},
 		{[]byte{}, nil, 1},
+
+		{[]interface{}{1, 2, 3}, []interface{}{1, 2, 3}, 0},
+		{[]interface{}{1, 3, 3}, []interface{}{1, 2, 3}, 1},
+		{[]interface{}{1, 2, 3}, []interface{}{2, 2, 3}, -1},
 	}
 
 	for _, t := range cmpTbl {
@@ -131,6 +136,25 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		ret, err = Compare(t.rhs, t.lhs)
 		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, -t.ret)
+	}
+
+	cmpError := []struct {
+		lhs interface{}
+		rhs interface{}
+	}{
+		{[]interface{}{1}, 1},
+		{[]interface{}{1}, []interface{}{1, 2}},
+		{mysql.NewDecimalFromInt(1, 0), "++abc"},
+		{float64(1.0), "++abc"},
+		{[]interface{}{1}, []interface{}{"+-abc"}},
+	}
+
+	for _, t := range cmpError {
+		_, err := Compare(t.lhs, t.rhs)
+		c.Assert(err, NotNil)
+
+		_, err = Compare(t.rhs, t.lhs)
+		c.Assert(err, NotNil)
 	}
 
 }
