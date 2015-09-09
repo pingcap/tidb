@@ -347,6 +347,7 @@ type driverRows struct {
 	rs   rset.Recordset
 	done chan int
 	rows chan interface{}
+	wg   sync.WaitGroup
 }
 
 func newEmptyDriverRows() *driverRows {
@@ -363,7 +364,13 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 		done: make(chan int),
 		rows: make(chan interface{}, 500),
 	}
+	r.wg.Add(1)
 	go func() {
+		// TODO: We may change the whole implementation later, so here just using WaitGroup
+		// to solve issue https://github.com/pingcap/tidb/issues/57
+		// But if we forget close rows and do commit later, we may still meet this panic
+		// with very little probability.
+		defer r.wg.Done()
 		err := io.EOF
 		if e := r.rs.Do(func(data []interface{}) (bool, error) {
 			vv, cloneErr := types.Clone(data)
@@ -406,6 +413,7 @@ func (r *driverRows) Columns() []string {
 // Close closes the rows iterator.
 func (r *driverRows) Close() error {
 	close(r.done)
+	r.wg.Wait()
 	return nil
 }
 
