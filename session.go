@@ -83,25 +83,6 @@ func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{
 	h.history = append(h.history, s)
 }
 
-func (h *stmtHistory) del(stmtID uint32) {
-	pos := -1
-	for i, sr := range h.history {
-		if sr.stmtID == stmtID {
-			pos = i
-			break
-		}
-	}
-
-	if pos == -1 {
-		log.Errorf("statement %d not exist", stmtID)
-		return
-	}
-
-	count := len(h.history)
-	h.history[pos] = h.history[count-1]
-	h.history = h.history[:count-1]
-}
-
 func (h *stmtHistory) reset() {
 	if len(h.history) > 0 {
 		h.history = h.history[:0]
@@ -320,7 +301,6 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
-	s.history.del(stmtID)
 	return dropPreparedStmt(s, stmtID)
 }
 
