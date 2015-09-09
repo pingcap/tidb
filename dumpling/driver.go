@@ -347,6 +347,7 @@ type driverRows struct {
 	rs   rset.Recordset
 	done chan int
 	rows chan interface{}
+	wg   sync.WaitGroup
 }
 
 func newEmptyDriverRows() *driverRows {
@@ -363,7 +364,9 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 		done: make(chan int),
 		rows: make(chan interface{}, 500),
 	}
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		err := io.EOF
 		if e := r.rs.Do(func(data []interface{}) (bool, error) {
 			vv, cloneErr := types.Clone(data)
@@ -406,6 +409,7 @@ func (r *driverRows) Columns() []string {
 // Close closes the rows iterator.
 func (r *driverRows) Close() error {
 	close(r.done)
+	r.wg.Wait()
 	return nil
 }
 
