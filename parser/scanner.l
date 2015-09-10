@@ -452,7 +452,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 "?"			return placeholder
 
 {add}			return add
-{after}			return after
+{after}			lval.item = string(l.val)
+			return after
 {all}			return all
 {alter}			return alter
 {and}			return and
@@ -467,20 +468,22 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {case}			return caseKwd
 {cast}			return cast
 {character}		return character
-{charset}		return charsetKwd
+{charset}		lval.item = string(l.val)
+			return charsetKwd
 {collate}		return collation
-{column}		lval.item = string(l.val)
-			return column
+{column}		return column
 {columns}		lval.item = string(l.val)
 			return columns
-{commit}		return commit
+{commit}		lval.item = string(l.val)
+			return commit
 {constraint}		return constraint
 {convert}		return convert
 {create}		return create
 {cross}			return cross
 {database}		return database
 {databases}		return databases
-{deallocate}		return deallocate
+{deallocate}		lval.item = string(l.val)
+			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
 {delete}		return deleteKwd
@@ -489,17 +492,23 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {drop}			return drop
 {distinct}		return distinct
 {div}			return div
-{do}			return do
-{duplicate}		return duplicate
+{do}			lval.item = string(l.val)
+			return do
+{duplicate}		lval.item = string(l.val)
+			return duplicate
 {else}			return elseKwd
-{end}			return end
+{end}			lval.item = string(l.val)
+			return end
 {engine}		lval.item = string(l.val)
 			return engine
-{engines}		return engines
-{execute}		return execute
+{engines}		lval.item = string(l.val)
+			return engines
+{execute}		lval.item = string(l.val)
+			return execute
 {exists}		return exists
 {explain}		return explain
-{first}			return first
+{first}			lval.item = string(l.val)
+			return first
 {for}			return forKwd
 {foreign}		return foreign
 {from}			return from
@@ -540,7 +549,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {outer}			return outer
 {password}		lval.item = string(l.val)
 			return password
-{prepare}		return prepare
+{prepare}		lval.item = string(l.val)
+			return prepare
 {primary}		return primary
 {quick}			lval.item = string(l.val)
 			return quick
@@ -551,7 +561,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
 			return session
-{start}			return start
+{start}			lval.item = string(l.val)
+			return start
 {global}		lval.item = string(l.val)
 			return global
 {regexp}		return regexp
@@ -582,7 +593,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {update}		return update
 {union}			return union
 {unique}		return unique
-{unknown}		return unknown
+{unknown}		lval.item = string(l.val)
+			return unknown
 {use}			return use
 {using}			return using
 {value}			lval.item = string(l.val)
@@ -594,7 +606,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {where}			return where
 {xor}			return xor
 
-{signed}		return signed
+{signed}		lval.item = string(l.val)
+			return signed
 {unsigned}		return unsigned
 {zerofill}		return zerofill
 
@@ -605,7 +618,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 {true}			return trueKwd
 
-{calc_found_rows}	return calcFoundRows
+{calc_found_rows}	lval.item = string(l.val)
+			return calcFoundRows
 
 {current_ts}		return currentTs
 {localtime}		return localTime
