@@ -316,7 +316,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 			return nil, err
 		}
 
-		log.Warnf("New txn:%s in session:%d", s.txn, s.sid)
+		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
 	if forceNew {
