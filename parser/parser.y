@@ -471,6 +471,7 @@ import (
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
+%precedence on
 %left 	oror or
 %left 	xor
 %left 	andand and
