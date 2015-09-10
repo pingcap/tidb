@@ -329,6 +329,7 @@ import (
 	Function		"function expr"
 	FunctionCall		"function call post part"
 	FunctionCallArgList	"function call optional argument list"
+	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
 	HavingClause		"HAVING clause"
@@ -422,7 +423,6 @@ import (
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
 	Variable		"User or system variable"
-	VariableScope		"The scope of variable"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optinal WHERE clause"
 
@@ -2650,34 +2650,36 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowWarnings}
 	}
-|	"SHOW" VariableScope "VARIABLES"
+// See: https://dev.mysql.com/doc/refman/5.7/en/show-variables.html
+// TODO: Support show variables with where clause. 
+|	"SHOW" GlobalScope "VARIABLES"
 	{
 		$$ = &stmts.ShowStmt{
 			Target: stmt.ShowVariables,
-			VarScope: $2.(int),
+			GlobalScope: $2.(bool),
 		}
 	
 	}
-|	"SHOW" VariableScope "VARIABLES" "LIKE" PrimaryExpression
+|	"SHOW" GlobalScope "VARIABLES" "LIKE" PrimaryExpression
 	{
 		$$ = &stmts.ShowStmt{
 			Target: stmt.ShowVariables,
-			VarScope: $2.(int),
+			GlobalScope: $2.(bool),
 			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
 		}
 	}
 
-VariableScope:
+GlobalScope:
 	{
-		$$ = stmt.SessionScope	
+		$$ = false	
 	}
 |	"GLOBAL"
 	{
-		$$ = stmt.GlobalScope	
+		$$ = true	
 	}
 |	"SESSION" 
 	{
-		$$ = stmt.SessionScope	
+		$$ = false	
 	}
 
 OptFull:
