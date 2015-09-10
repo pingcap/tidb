@@ -3177,10 +3177,6 @@ FieldOpts:
 	{
 		$$ = []*field.Opt{}
 	}
-|	FieldOpt
-	{
-		$$ = []*field.Opt{$1.(*field.Opt)}    
-	}
 |	FieldOpts FieldOpt
 	{
 		$$ = append($1.([]*field.Opt), $2.(*field.Opt)) 
