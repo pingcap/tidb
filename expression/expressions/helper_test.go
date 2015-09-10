@@ -81,6 +81,16 @@ func (s *testHelperSuite) TestMentionedColumns(c *C) {
 	}
 }
 
+func newTestRow(v1 interface{}, v2 interface{}, args ...interface{}) *Row {
+	r := &Row{}
+	a := make([]expression.Expression, len(args))
+	for i := range a {
+		a[i] = Value{args[i]}
+	}
+	r.Values = append([]expression.Expression{Value{v1}, Value{v2}}, a...)
+	return r
+}
+
 func (s *testHelperSuite) TestBase(c *C) {
 	e1 := Value{1}
 	e2 := &PExpr{Expr: e1}
@@ -116,6 +126,31 @@ func (s *testHelperSuite) TestBase(c *C) {
 
 	v, err = EvalBoolExpr(nil, mockExpr{err: errors.New("must error")}, nil)
 	c.Assert(err, NotNil)
+
+	err = CheckOneColumn(&Row{})
+	c.Assert(err, NotNil)
+
+	err = CheckOneColumn(Value{nil})
+	c.Assert(err, IsNil)
+
+	columns := []struct {
+		lhs     expression.Expression
+		rhs     expression.Expression
+		checker Checker
+	}{
+		{Value{nil}, Value{nil}, IsNil},
+		{Value{nil}, &Row{}, NotNil},
+		{newTestRow(1, 2), newTestRow(1, 2), IsNil},
+		{newTestRow(1, 2, 3), newTestRow(1, 2), NotNil},
+	}
+
+	for _, t := range columns {
+		err = hasSameColumn(t.lhs, t.rhs)
+		c.Assert(err, t.checker)
+
+		err = hasSameColumn(t.rhs, t.lhs)
+		c.Assert(err, t.checker)
+	}
 }
 
 func (s *testHelperSuite) TestGetTimeValue(c *C) {

@@ -14,6 +14,8 @@
 package expressions
 
 import (
+	"errors"
+
 	. "github.com/pingcap/check"
 )
 
@@ -50,4 +52,19 @@ func (t *testIsNullSuite) TestIsNull(c *C) {
 
 	str = e2.String()
 	c.Assert(len(str), Greater, 0)
+
+	// check error
+	expr := mockExpr{}
+	expr.err = errors.New("must error")
+	e.Expr = expr
+
+	_, err = e.Clone()
+	c.Assert(err, NotNil)
+
+	_, err = e.Eval(nil, nil)
+	c.Assert(err, NotNil)
+
+	e.Expr = newTestRow(1, 2)
+	_, err = e.Eval(nil, nil)
+	c.Assert(err, NotNil)
 }
