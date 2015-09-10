@@ -17,6 +17,7 @@ import (
 	"math"
 	"time"
 
+	"fmt"
 	. "github.com/pingcap/check"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/charset"
@@ -198,17 +199,8 @@ func testToInt64(c *C, val interface{}, expect int64) {
 
 func (s *testTypeConvertSuite) TestConvertToInt64(c *C) {
 	testToInt64(c, "0", int64(0))
-	testToInt64(c, false, int64(0))
-	testToInt64(c, true, int64(1))
 	testToInt64(c, int(0), int64(0))
-	testToInt64(c, int8(0), int64(0))
-	testToInt64(c, int16(0), int64(0))
-	testToInt64(c, int32(0), int64(0))
 	testToInt64(c, int64(0), int64(0))
-	testToInt64(c, uint(0), int64(0))
-	testToInt64(c, uint8(0), int64(0))
-	testToInt64(c, uint16(0), int64(0))
-	testToInt64(c, uint32(0), int64(0))
 	testToInt64(c, uint64(0), int64(0))
 	testToInt64(c, float32(3.1), int64(3))
 	testToInt64(c, float64(3.1), int64(3))
@@ -241,17 +233,8 @@ func testToFloat64(c *C, val interface{}, expect float64) {
 
 func (s *testTypeConvertSuite) TestConvertToFloat64(c *C) {
 	testToFloat64(c, "0", float64(0))
-	testToFloat64(c, false, float64(0))
-	testToFloat64(c, true, float64(1))
 	testToFloat64(c, int(0), float64(0))
-	testToFloat64(c, int8(0), float64(0))
-	testToFloat64(c, int16(0), float64(0))
-	testToFloat64(c, int32(0), float64(0))
 	testToFloat64(c, int64(0), float64(0))
-	testToFloat64(c, uint(0), float64(0))
-	testToFloat64(c, uint8(0), float64(0))
-	testToFloat64(c, uint16(0), float64(0))
-	testToFloat64(c, uint32(0), float64(0))
 	testToFloat64(c, uint64(0), float64(0))
 	// TODO: check this
 	//testToFloat64(c, float32(3.1), float64(3.1))
@@ -286,14 +269,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, true, "1")
 	testToString(c, "false", "false")
 	testToString(c, int(0), "0")
-	testToString(c, int8(0), "0")
-	testToString(c, int16(0), "0")
-	testToString(c, int32(0), "0")
 	testToString(c, int64(0), "0")
-	testToString(c, uint(0), "0")
-	testToString(c, uint8(0), "0")
-	testToString(c, uint16(0), "0")
-	testToString(c, uint32(0), "0")
 	testToString(c, uint64(0), "0")
 	testToString(c, float32(1.6), "1.6")
 	testToString(c, float64(-0.6), "-0.6")
@@ -324,16 +300,8 @@ func testToBool(c *C, val interface{}, expect int64) {
 }
 
 func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
-	testToBool(c, false, 0)
 	testToBool(c, int(0), 0)
-	testToBool(c, int8(0), 0)
-	testToBool(c, int16(0), 0)
-	testToBool(c, int32(0), 0)
 	testToBool(c, int64(0), 0)
-	testToBool(c, uint(0), 0)
-	testToBool(c, uint8(0), 0)
-	testToBool(c, uint16(0), 0)
-	testToBool(c, uint32(0), 0)
 	testToBool(c, uint64(0), 0)
 	testToBool(c, float32(0), 0)
 	testToBool(c, float64(0), 0)
@@ -411,4 +379,162 @@ func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	c.Assert(v, Equals, "BLOB")
 	v = FieldTypeToStr(mysql.TypeString, charset.CharsetBin)
 	c.Assert(v, Equals, "BINARY")
+}
+
+func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
+	ft := NewFieldType(tp)
+	if unsigned {
+		ft.Flag |= mysql.UnsignedFlag
+	}
+	//	casted, err := col.CastValue(nil, value)
+	casted, err := Convert(value, ft)
+	c.Assert(err, IsNil, Commentf("%v", ft))
+	c.Assert(fmt.Sprintf("%v", casted), Equals, expected)
+}
+
+func unsignedAccept(c *C, tp byte, value interface{}, expected string) {
+	accept(c, tp, value, true, expected)
+}
+
+func signedAccept(c *C, tp byte, value interface{}, expected string) {
+	accept(c, tp, value, false, expected)
+}
+
+func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
+	ft := NewFieldType(tp)
+	if unsigned {
+		ft.Flag |= mysql.UnsignedFlag
+	}
+	//	casted, err := col.CastValue(nil, value)
+	casted, err := Convert(value, ft)
+	c.Assert(err, NotNil)
+	switch casted.(type) {
+	case mysql.Duration:
+		c.Assert(casted.(mysql.Duration).String(), Equals, expected)
+	default:
+		c.Assert(fmt.Sprintf("%v", casted), Equals, expected)
+	}
+}
+
+func unsignedDeny(c *C, tp byte, value interface{}, expected string) {
+	deny(c, tp, value, true, expected)
+}
+
+func signedDeny(c *C, tp byte, value interface{}, expected string) {
+	deny(c, tp, value, false, expected)
+}
+
+func strvalue(v interface{}) string {
+	return fmt.Sprintf("%v", v)
+}
+
+func (s *testTypeConvertSuite) TestConvert(c *C) {
+	// integer ranges
+	signedDeny(c, mysql.TypeTiny, -129, "-128")
+	signedAccept(c, mysql.TypeTiny, -128, "-128")
+	signedAccept(c, mysql.TypeTiny, 127, "127")
+	signedDeny(c, mysql.TypeTiny, 128, "127")
+	unsignedDeny(c, mysql.TypeTiny, -1, "0")
+	unsignedAccept(c, mysql.TypeTiny, 0, "0")
+	unsignedAccept(c, mysql.TypeTiny, 255, "255")
+	unsignedDeny(c, mysql.TypeTiny, 256, "255")
+
+	signedDeny(c, mysql.TypeShort, math.MinInt16-1, strvalue(math.MinInt16))
+	signedAccept(c, mysql.TypeShort, math.MinInt16, strvalue(math.MinInt16))
+	signedAccept(c, mysql.TypeShort, math.MaxInt16, strvalue(math.MaxInt16))
+	signedDeny(c, mysql.TypeShort, math.MaxInt16+1, strvalue(math.MaxInt16))
+	unsignedDeny(c, mysql.TypeShort, -1, "0")
+	unsignedAccept(c, mysql.TypeShort, 0, "0")
+	unsignedAccept(c, mysql.TypeShort, math.MaxUint16, strvalue(math.MaxUint16))
+	unsignedDeny(c, mysql.TypeShort, math.MaxUint16+1, strvalue(math.MaxUint16))
+
+	signedDeny(c, mysql.TypeInt24, -1<<23-1, strvalue(-1<<23))
+	signedAccept(c, mysql.TypeInt24, -1<<23, strvalue(-1<<23))
+	signedAccept(c, mysql.TypeInt24, 1<<23-1, strvalue(1<<23-1))
+	signedDeny(c, mysql.TypeInt24, 1<<23, strvalue(1<<23-1))
+	unsignedDeny(c, mysql.TypeInt24, -1, "0")
+	unsignedAccept(c, mysql.TypeInt24, 0, "0")
+	unsignedAccept(c, mysql.TypeInt24, 1<<24-1, strvalue(1<<24-1))
+	unsignedDeny(c, mysql.TypeInt24, 1<<24, strvalue(1<<24-1))
+
+	signedDeny(c, mysql.TypeLong, math.MinInt32-1, strvalue(math.MinInt32))
+	signedAccept(c, mysql.TypeLong, math.MinInt32, strvalue(math.MinInt32))
+	signedAccept(c, mysql.TypeLong, math.MaxInt32, strvalue(math.MaxInt32))
+	signedDeny(c, mysql.TypeLong, uint64(math.MaxUint64), strvalue(uint(math.MaxInt32)))
+	signedDeny(c, mysql.TypeLong, math.MaxInt32+1, strvalue(math.MaxInt32))
+	unsignedDeny(c, mysql.TypeLong, -1, "0")
+	unsignedAccept(c, mysql.TypeLong, 0, "0")
+	unsignedAccept(c, mysql.TypeLong, math.MaxUint32, strvalue(math.MaxUint32))
+	unsignedDeny(c, mysql.TypeLong, math.MaxUint32+1, strvalue(math.MaxUint32))
+
+	signedDeny(c, mysql.TypeLonglong, math.MinInt64*1.1, strvalue(math.MinInt64))
+	signedAccept(c, mysql.TypeLonglong, math.MinInt64, strvalue(math.MinInt64))
+	signedAccept(c, mysql.TypeLonglong, math.MaxInt64, strvalue(math.MaxInt64))
+	signedDeny(c, mysql.TypeLonglong, math.MaxInt64*1.1, strvalue(math.MaxInt64))
+	unsignedDeny(c, mysql.TypeLonglong, -1, "0")
+	unsignedAccept(c, mysql.TypeLonglong, 0, "0")
+	unsignedAccept(c, mysql.TypeLonglong, uint64(math.MaxUint64), strvalue(uint(math.MaxUint64)))
+	unsignedDeny(c, mysql.TypeLonglong, math.MaxUint64*1.1, strvalue(uint(math.MaxUint64)))
+
+	// integer from string
+	signedAccept(c, mysql.TypeLong, "	  234  ", "234")
+	signedAccept(c, mysql.TypeLong, " 2.35e3  ", "2350")
+	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
+	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
+
+	// integer from float
+	signedAccept(c, mysql.TypeLong, 234.5456, "235")
+	signedAccept(c, mysql.TypeLong, -23.45, "-23")
+
+	// float from string
+	signedAccept(c, mysql.TypeFloat, "23.523", "23.523")
+	signedAccept(c, mysql.TypeFloat, int64(123), "123")
+	signedAccept(c, mysql.TypeFloat, uint64(123), "123")
+	signedAccept(c, mysql.TypeFloat, int(123), "123")
+	signedAccept(c, mysql.TypeFloat, float32(123), "123")
+	signedAccept(c, mysql.TypeFloat, float64(123), "123")
+	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
+
+	// year
+	signedDeny(c, mysql.TypeYear, 123, "<nil>")
+	signedDeny(c, mysql.TypeYear, 3000, "<nil>")
+	signedAccept(c, mysql.TypeYear, "2000", "2000")
+
+	// time from string
+	signedAccept(c, mysql.TypeDate, "2012-08-23", "2012-08-23")
+	signedAccept(c, mysql.TypeDatetime, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeDatetime, mysql.ZeroDatetime, "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeDatetime, int64(0), "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeTimestamp, "2012-08-23 12:34:03.123456", "2012-08-23 12:34:03")
+	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
+	signedAccept(c, mysql.TypeDuration, mysql.ZeroDatetime, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, mysql.ZeroDuration, "00:00:00")
+
+	signedDeny(c, mysql.TypeDate, "2012-08-x", "0000-00-00")
+	signedDeny(c, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
+	signedDeny(c, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
+	signedDeny(c, mysql.TypeDuration, "2012-08-x", "00:00:00")
+	signedDeny(c, mysql.TypeDuration, 0, "<nil>")
+
+	// string from string
+	signedAccept(c, mysql.TypeString, "abc", "abc")
+
+	// string from integer
+	signedAccept(c, mysql.TypeString, 5678, "5678")
+	signedAccept(c, mysql.TypeString, mysql.ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeString, mysql.ZeroDatetime, "0000-00-00 00:00:00")
+	signedAccept(c, mysql.TypeString, []byte("123"), "123")
+
+	//TODO add more tests
+	signedAccept(c, mysql.TypeNewDecimal, 123, "123")
+	signedAccept(c, mysql.TypeNewDecimal, int64(123), "123")
+	signedAccept(c, mysql.TypeNewDecimal, uint64(123), "123")
+	signedAccept(c, mysql.TypeNewDecimal, float32(123), "123")
+	signedAccept(c, mysql.TypeNewDecimal, 123.456, "123.456")
+	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
+	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
+	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
+
+	// Test case for TypeBit
+	unsignedAccept(c, mysql.TypeBit, 123, "123")
 }

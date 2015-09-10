@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -92,7 +93,7 @@ func (p *UnionPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 				if srcRf.Flen > rf.Col.Flen {
 					rf.Col.Flen = srcRf.Col.Flen
 				}
-				in[i], err = rf.Col.CastValue(ctx, in[i])
+				in[i], err = types.Convert(in[i], &rf.Col.FieldType)
 				if err != nil {
 					return false, err
 				}

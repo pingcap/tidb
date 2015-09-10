@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -126,7 +127,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expressions.Binar
 		return r, false, nil
 	}
 
-	if rval, err = c.CastValue(ctx, rval); err != nil {
+	if rval, err = types.Convert(rval, &c.FieldType); err != nil {
 		return nil, false, err
 	}
 
