@@ -76,7 +76,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
-	c.Assert(row[0].(int32), Equals, int32(1))
+	c.Assert(row[0].(int64), Equals, int64(1))
 
 	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
 	c.Assert(err, NotNil)
