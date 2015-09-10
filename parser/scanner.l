@@ -558,7 +558,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {right}			return right
 {rollback}		lval.item = string(l.val)
 			return rollback
-{row}			return row
+{row}			lval.item = string(l.val)
+			return row
 {schema}		return schema
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
