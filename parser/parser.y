@@ -275,10 +275,11 @@ import (
 	CharsetName		"Charset Name"
 	CollationName		"Collation Name"
 	ColumnDef		"table column definition"
+	ColumnKeywordOpt	"Column keyword or empty"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
-	ColumnKeywordOpt	"Column keyword or empty"
+	ColumnOptColumnName	"optional COLUMN and column name"
 	ColumnSetValue		"insert statement set value by column name"
 	ColumnSetValueList	"insert statement set value by column name list"
 	CommaOpt		"optional comma"
@@ -533,11 +534,11 @@ AlterSpecification:
 			Constraint: constraint,
 		}
 	}
-|	"DROP" ColumnKeywordOpt ColumnName
+|	"DROP" ColumnOptColumnName
 	{
 		$$ = &ddl.AlterSpecification{
 			Action: ddl.AlterDropColumn,
-			Name: $3.(string),
+			Name: $2.(string),
 		}
 	}
 |	"DROP" "PRIMARY" "KEY"
@@ -561,6 +562,15 @@ AlterSpecification:
 
 KeyOrIndex:
 	"KEY"|"INDEX"
+
+ColumnOptColumnName:
+	"COLUMN"
+|	"COLUMN" "COLUMN"
+|	"COLUMN" identifier
+	{
+		$$ = $2
+	}
+|	identifier
 
 ColumnKeywordOpt:
 	{}
