@@ -359,9 +359,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		unsigned := mysql.HasUnsignedFlag(target.Flag)
 		if unsigned {
 			return convertToUint(val, target)
-		} else {
-			return convertToInt(val, target)
 		}
+		return convertToInt(val, target)
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
 		x, err := ToDecimal(val)
 		if err != nil {
