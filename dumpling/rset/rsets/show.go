@@ -15,6 +15,7 @@ package rsets
 
 import (
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -26,23 +27,27 @@ var (
 
 // ShowRset is record set to show.
 type ShowRset struct {
-	Target     int
-	DBName     string
-	TableName  string
-	ColumnName string
-	Flag       int
-	Full       bool
+	Target      int
+	DBName      string
+	TableName   string
+	ColumnName  string
+	Flag        int
+	Full        bool
+	GlobalScope bool
+	Pattern     expression.Expression
 }
 
 // Plan gets ShowPlan.
 func (r *ShowRset) Plan(ctx context.Context) (plan.Plan, error) {
 	return &plans.ShowPlan{
-		Target:     r.Target,
-		DBName:     r.getDBName(ctx),
-		TableName:  r.TableName,
-		ColumnName: r.ColumnName,
-		Flag:       r.Flag,
-		Full:       r.Full,
+		Target:      r.Target,
+		DBName:      r.getDBName(ctx),
+		TableName:   r.TableName,
+		ColumnName:  r.ColumnName,
+		Flag:        r.Flag,
+		Full:        r.Full,
+		GlobalScope: r.GlobalScope,
+		Pattern:     r.Pattern,
 	}, nil
 }
 
