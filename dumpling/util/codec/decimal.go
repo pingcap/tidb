@@ -33,7 +33,6 @@ package codec
 import (
 	"bytes"
 	"math/big"
-	"strings"
 
 	"github.com/juju/errors"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -100,8 +99,12 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	absVal := new(big.Int)
 	absVal.Abs(d.BigIntValue())
 
-	// Trim right side "0", like "12.34000" -> "12.34".
-	value := []byte(strings.TrimRight(absVal.String(), "0"))
+	value := []byte(absVal.String())
+
+	// Trim right side "0", like "12.34000" -> "12.34" or "0.1234000" -> "0.1234".
+	if d.Exponent() != 0 {
+		value = bytes.TrimRight(value, "0")
+	}
 
 	// Get exp and value, format is "value":"exp".
 	// like "12.34" -> "0.1234":"2".

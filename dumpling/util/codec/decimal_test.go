@@ -27,6 +27,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package codec
 
 import (
@@ -43,12 +44,14 @@ func (s *testDecimalSuite) TestDecimalCodec(c *C) {
 	inputs := []struct {
 		Input float64
 	}{
+		{float64(123400)},
 		{float64(1234)},
 		{float64(12.34)},
 		{float64(0.1234)},
 		{float64(0.01234)},
 		{float64(-0.1234)},
 		{float64(-0.01234)},
+		{float64(12.3400)},
 		{float64(-12.34)},
 		{float64(0.00000)},
 		{float64(0)},
