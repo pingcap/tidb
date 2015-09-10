@@ -425,6 +425,7 @@ import (
 
 	Identifier		"identifier or unreserved keyword"
 	UnReservedKeyword	"MySQL unreserved keywords"
+	NotKeywordToken		"Tokens not mysql keyword but treated specially"
 
 	WhenClause		"When clause"
 	WhenClauseList		"When clause list"
@@ -470,7 +471,7 @@ import (
 %left 	xor
 %left 	andand and
 %left 	between
-%precedence	lower_than_eq
+%precedence	lowerThanEq
 %left 	eq ge le neq neqSynonym '>' '<' is like in
 %left 	'|'
 %left 	'&'
@@ -1526,15 +1527,17 @@ IndexType:
 
 /**********************************Identifier********************************************/
 Identifier:
-	identifier | UnReservedKeyword
+	identifier | UnReservedKeyword | NotKeywordToken
 
-// TODO: Add Data Type UnReserved Keywords
 UnReservedKeyword:
-	"AUTO_INCREMENT" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMN" | "COLUMNS" | "DATE" | "DATETIME"
-|	"ENGINE" | "FULL" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lower_than_eq | "QUICK" | "ROLLBACK" | "SESSION" | "GLOBAL"
-|	"TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "VALUE" | "WARNINGS" | "YEAR" | "NOW"
-|	"SUBSTRING" | "MODE"
+	"AUTO_INCREMENT" | "AFTER" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
+|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
+|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
+|	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
+|	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
 
+NotKeywordToken:
+	"SQL_CALC_FOUND_ROWS" | "SUBSTRING"
 
 /************************************************************************************
  *
