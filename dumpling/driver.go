@@ -135,7 +135,7 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 	// Split the dataSource to uri and dbName
 	i := strings.LastIndex(dataSource, "/")
 	if i == -1 {
-		return nil, errors.Errorf("Wrong format of datasource string: %q", dataSource)
+		return nil, errors.Errorf("Invalid dataSource: %q", dataSource)
 	}
 	uri := dataSource[:i]
 	dbName := dataSource[i+1:]
@@ -146,12 +146,6 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 	}
 
 	driver := &sqlDriver{}
-	switch {
-	case strings.HasPrefix(uri, "file://"):
-		uri = uri[len("file://"):]
-	case strings.HasPrefix(uri, "memory://"):
-		uri = uri[len("memory://"):]
-	}
 	dbName = filepath.Clean(dbName)
 	if dbName == "" || dbName == "." || dbName == string(os.PathSeparator) {
 		return nil, errors.Errorf("invalid DB name %q", dbName)
@@ -171,7 +165,6 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-
 	return newDriverConn(s, driver, DBName.O)
 }
 
