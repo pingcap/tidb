@@ -526,4 +526,19 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 	expr.Op = 0
 	_, err = expr.Eval(nil, nil)
 	c.Assert(err, NotNil)
+
+	expr.L = newTestRow(1, 2)
+	expr.R = Value{nil}
+	expr.Op = opcode.Plus
+
+	_, err = expr.Eval(nil, nil)
+	c.Assert(err, NotNil)
+
+	expr.Op = opcode.LE
+	_, err = expr.Eval(nil, nil)
+	c.Assert(err, NotNil)
+
+	expr.R = newTestRow(1, 2)
+	expr.Op = opcode.Plus
+	c.Assert(err, NotNil)
 }

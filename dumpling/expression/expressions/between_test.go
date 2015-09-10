@@ -93,4 +93,23 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		_, err = b.Eval(nil, nil)
 		c.Assert(err, NotNil)
 	}
+
+	tableError = []struct {
+		Expr  expression.Expression
+		Left  expression.Expression
+		Right expression.Expression
+	}{
+		{newTestRow(1, 2), f(false), f(false)},
+		{f(false), newTestRow(1, 2), f(false)},
+		{f(false), f(false), newTestRow(1, 2)},
+	}
+
+	for _, t := range tableError {
+		_, err := NewBetween(t.Expr, t.Left, t.Right, false)
+		c.Assert(err, NotNil)
+		b := Between{Expr: t.Expr, Left: t.Left, Right: t.Right, Not: false}
+
+		_, err = b.Eval(nil, nil)
+		c.Assert(err, NotNil)
+	}
 }

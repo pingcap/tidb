@@ -17,54 +17,35 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression"
 )
 
-var _ = Suite(&testIsNullSuite{})
+var _ = Suite(&testRowSuite{})
 
-type testIsNullSuite struct {
+type testRowSuite struct {
 }
 
-func (t *testIsNullSuite) TestIsNull(c *C) {
-	e := &IsNull{
-		Expr: Value{1},
-	}
+func (s *testRowSuite) TestRow(c *C) {
+	r := Row{Values: []expression.Expression{Value{1}, Value{2}}}
+	c.Assert(r.IsStatic(), IsTrue)
 
-	v, err := e.Eval(nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v, IsFalse)
-
-	c.Assert(e.IsStatic(), IsTrue)
-
-	str := e.String()
-	c.Assert(len(str), Greater, 0)
-
-	ec, err := e.Clone()
+	_, err := r.Clone()
 	c.Assert(err, IsNil)
 
-	e2, ok := ec.(*IsNull)
-	c.Assert(ok, IsTrue)
+	c.Assert(r.String(), Equals, "ROW(1, 2)")
 
-	e2.Not = true
-
-	vv, err := e2.Eval(nil, nil)
+	_, err = r.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(vv, IsTrue)
 
-	str = e2.String()
-	c.Assert(len(str), Greater, 0)
-
-	// check error
 	expr := mockExpr{}
+	expr.isStatic = false
 	expr.err = errors.New("must error")
-	e.Expr = expr
+	r = Row{Values: []expression.Expression{Value{1}, expr}}
+	c.Assert(r.IsStatic(), IsFalse)
 
-	_, err = e.Clone()
+	_, err = r.Clone()
 	c.Assert(err, NotNil)
 
-	_, err = e.Eval(nil, nil)
-	c.Assert(err, NotNil)
-
-	e.Expr = newTestRow(1, 2)
-	_, err = e.Eval(nil, nil)
+	_, err = r.Eval(nil, nil)
 	c.Assert(err, NotNil)
 }
