@@ -1,15 +1,31 @@
 %{
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package parser
 
 import (
 	"fmt"
 	"math"
+	"errors"
 	"strconv"
 	"unicode"
 	"strings"
 	
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/stmt"
@@ -118,7 +134,11 @@ func (l *lexer) next() int {
 }
 
 func (l *lexer) err0(ln, c int, args ...interface{}) {
-	err := errors.Errorf(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val), args...)
+	var argStr string
+	if len(args) > 0 {
+		argStr = fmt.Sprintf(" " + args[0].(string), args[1:]...)
+	}
+	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
 	l.errs = append(l.errs, err)
 }
 
@@ -432,7 +452,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 "?"			return placeholder
 
 {add}			return add
-{after}			return after
+{after}			lval.item = string(l.val)
+			return after
 {all}			return all
 {alter}			return alter
 {and}			return and
@@ -447,20 +468,22 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {case}			return caseKwd
 {cast}			return cast
 {character}		return character
-{charset}		return charsetKwd
+{charset}		lval.item = string(l.val)
+			return charsetKwd
 {collate}		return collation
-{column}		lval.item = string(l.val)
-			return column
+{column}		return column
 {columns}		lval.item = string(l.val)
 			return columns
-{commit}		return commit
+{commit}		lval.item = string(l.val)
+			return commit
 {constraint}		return constraint
 {convert}		return convert
 {create}		return create
 {cross}			return cross
 {database}		return database
 {databases}		return databases
-{deallocate}		return deallocate
+{deallocate}		lval.item = string(l.val)
+			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
 {delete}		return deleteKwd
@@ -469,17 +492,23 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {drop}			return drop
 {distinct}		return distinct
 {div}			return div
-{do}			return do
-{duplicate}		return duplicate
+{do}			lval.item = string(l.val)
+			return do
+{duplicate}		lval.item = string(l.val)
+			return duplicate
 {else}			return elseKwd
-{end}			return end
+{end}			lval.item = string(l.val)
+			return end
 {engine}		lval.item = string(l.val)
 			return engine
-{engines}		return engines
-{execute}		return execute
+{engines}		lval.item = string(l.val)
+			return engines
+{execute}		lval.item = string(l.val)
+			return execute
 {exists}		return exists
 {explain}		return explain
-{first}			return first
+{first}			lval.item = string(l.val)
+			return first
 {for}			return forKwd
 {foreign}		return foreign
 {from}			return from
@@ -507,7 +536,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {lock}			return lock
 {low_priority}		return lowPriority
 {mod}			return mod
-{mode}			return mode
+{mode}			lval.item = string(l.val)
+			return mode
 {names}			lval.item = string(l.val)
 			return names
 {not}			return not
@@ -519,7 +549,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {outer}			return outer
 {password}		lval.item = string(l.val)
 			return password
-{prepare}		return prepare
+{prepare}		lval.item = string(l.val)
+			return prepare
 {primary}		return primary
 {quick}			lval.item = string(l.val)
 			return quick
@@ -530,7 +561,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
 			return session
-{start}			return start
+{start}			lval.item = string(l.val)
+			return start
 {global}		lval.item = string(l.val)
 			return global
 {regexp}		return regexp
@@ -561,7 +593,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {update}		return update
 {union}			return union
 {unique}		return unique
-{unknown}		return unknown
+{unknown}		lval.item = string(l.val)
+			return unknown
 {use}			return use
 {using}			return using
 {value}			lval.item = string(l.val)
@@ -573,7 +606,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {where}			return where
 {xor}			return xor
 
-{signed}		return signed
+{signed}		lval.item = string(l.val)
+			return signed
 {unsigned}		return unsigned
 {zerofill}		return zerofill
 
@@ -584,7 +618,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 {true}			return trueKwd
 
-{calc_found_rows}	return calcFoundRows
+{calc_found_rows}	lval.item = string(l.val)
+			return calcFoundRows
 
 {current_ts}		return currentTs
 {localtime}		return localTime
@@ -740,7 +775,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err("integer literal: %v", err)
+		l.err("", "integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -756,7 +791,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err("float literal: %v", err)
+		l.err("", "float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 

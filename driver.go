@@ -1,3 +1,7 @@
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,11 +29,13 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	qerror "github.com/pingcap/tidb/util/errors"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -187,7 +193,7 @@ func newDriverConn(sess *session, d *sqlDriver, schema string) (driver.Conn, err
 
 // Prepare returns a prepared statement, bound to this connection.
 func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
-	stmtID, paramCount, _, err := c.s.PrepareStmt(query)
+	stmtID, paramCount, fields, err := c.s.PrepareStmt(query)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +202,7 @@ func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
 		query:      query,
 		stmtID:     stmtID,
 		paramCount: paramCount,
+		isQuery:    fields != nil,
 	}
 	c.stmts[query] = s
 	return s, nil
@@ -234,8 +241,13 @@ func (c *driverConn) Commit() error {
 	if c.s == nil {
 		return qerror.ErrCommitNotInTransaction
 	}
+	_, err := c.s.Execute(txCommitSQL)
 
-	if _, err := c.s.Execute(txCommitSQL); err != nil {
+	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		return c.s.Retry()
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -342,6 +354,15 @@ type driverRows struct {
 	rs   rset.Recordset
 	done chan int
 	rows chan interface{}
+	wg   sync.WaitGroup
+}
+
+func newEmptyDriverRows() *driverRows {
+	r := &driverRows{
+		done: make(chan int, 1),
+	}
+	r.done <- 1
+	return r
 }
 
 func newdriverRows(rs rset.Recordset) *driverRows {
@@ -350,7 +371,13 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 		done: make(chan int),
 		rows: make(chan interface{}, 500),
 	}
+	r.wg.Add(1)
 	go func() {
+		// TODO: We may change the whole implementation later, so here just using WaitGroup
+		// to solve issue https://github.com/pingcap/tidb/issues/57
+		// But if we forget close rows and do commit later, we may still meet this panic
+		// with very little probability.
+		defer r.wg.Done()
 		err := io.EOF
 		if e := r.rs.Do(func(data []interface{}) (bool, error) {
 			vv, cloneErr := types.Clone(data)
@@ -379,6 +406,9 @@ func newdriverRows(rs rset.Recordset) *driverRows {
 // result is inferred from the length of the slice.  If a particular column
 // name isn't known, an empty string should be returned for that entry.
 func (r *driverRows) Columns() []string {
+	if r.rs == nil {
+		return []string{}
+	}
 	fs, _ := r.rs.Fields()
 	names := make([]string, len(fs))
 	for i, f := range fs {
@@ -390,6 +420,7 @@ func (r *driverRows) Columns() []string {
 // Close closes the rows iterator.
 func (r *driverRows) Close() error {
 	close(r.done)
+	r.wg.Wait()
 	return nil
 }
 
@@ -460,6 +491,7 @@ type driverStmt struct {
 	query      string
 	stmtID     uint32
 	paramCount int
+	isQuery    bool
 }
 
 // Close closes the statement.
@@ -504,6 +536,13 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 	rs, err := c.s.ExecutePreparedStmt(s.stmtID, params(args)...)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if rs == nil {
+		if s.isQuery {
+			return nil, errors.Trace(errNoResult)
+		}
+		// The statement is not a query.
+		return newEmptyDriverRows(), nil
 	}
 	return newdriverRows(rs), nil
 }

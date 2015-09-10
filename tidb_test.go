@@ -28,6 +28,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -257,6 +258,26 @@ func (s *testMainSuite) TestDriverPrepare(c *C) {
 	mustExec(c, testDB, s.dropDBSQL)
 }
 
+// Testcase for delete panic
+func (s *testMainSuite) TestDeletePanic(c *C) {
+	db, err := sql.Open("tidb", "memory://test")
+	defer db.Close()
+	_, err = db.Exec("create table t (c int)")
+	c.Assert(err, IsNil)
+	_, err = db.Exec("insert into t values (1), (2), (3)")
+	c.Assert(err, IsNil)
+	_, err = db.Query("delete from `t` where `c` = ?", 1)
+	c.Assert(err, IsNil)
+	rs, err := db.Query("delete from `t` where `c` = ?", 2)
+	c.Assert(err, IsNil)
+	cols, err := rs.Columns()
+	c.Assert(err, IsNil)
+	c.Assert(cols, HasLen, 0)
+	c.Assert(rs.Next(), IsFalse)
+	c.Assert(rs.Next(), IsFalse)
+	c.Assert(rs.Close(), IsNil)
+}
+
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)
@@ -346,6 +367,14 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 	sessionExec(c, se, s.dropDBSQL)
 
+}
+
+func (s *testSessionSuite) TestString(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	sessionExec(c, se, "select 1")
+	// here to check the panic bug in String() when txn is nil after committed.
+	c.Log(se.String())
 }
 
 func (s *testSessionSuite) TestResultField(c *C) {
@@ -472,7 +501,6 @@ func (s *testSessionSuite) TestAutoicommit(c *C) {
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
-	c.Skip("Need retry feature")
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	se1 := newSession(c, store, s.dbName)
@@ -494,6 +522,11 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 	_, err := exec(c, se1, "commit")
 	// row lock conflict but can still success
+	if errors2.ErrorNotEqual(err, kv.ErrConditionNotMatch) {
+		c.Fail()
+	}
+	// Retry should success
+	err = se.Retry()
 	c.Assert(err, IsNil)
 
 	mustExecSQL(c, se1, "begin")
@@ -532,6 +565,9 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 
 	_, err = exec(c, se1, "commit")
 	c.Assert(err, NotNil)
+	err = se1.Retry()
+	// retry should fail
+	c.Assert(err, NotNil)
 
 	// not conflict
 	mustExecSQL(c, se1, "begin")
@@ -564,6 +600,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	err = se2.Close()
 	c.Assert(err, IsNil)
 }
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)

@@ -1,3 +1,7 @@
+// Copyright 2014 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -147,17 +151,17 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 
 		for _, by := range r.By {
-			val, evalErr := by.Eval(ctx, m)
-			if evalErr != nil {
-				return false, evalErr
+			// err1 is used for passing `go tool vet --shadow` check.
+			val, err1 := by.Eval(ctx, m)
+			if err1 != nil {
+				return false, err1
 			}
 
 			if val != nil {
 				var ordered bool
-				var iErr error
-				val, ordered, iErr = types.IsOrderedType(val)
-				if iErr != nil {
-					return false, iErr
+				val, ordered, err1 = types.IsOrderedType(val)
+				if err1 != nil {
+					return false, err1
 				}
 
 				if !ordered {

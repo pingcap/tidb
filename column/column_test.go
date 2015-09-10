@@ -202,6 +202,9 @@ func (s *testColumnSuite) TestCastValue(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
+
+	// Test case for TypeBit
+	unsignedAccept(c, mysql.TypeBit, 123, "123")
 }
 
 func (s *testColumnSuite) TestString(c *C) {

@@ -1,3 +1,7 @@
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -132,7 +136,6 @@ func (s *DeleteStmt) hitWhere(ctx context.Context, t table.Table, data []interfa
 	for _, col := range t.Cols() {
 		m[col.Name.L] = data[col.Offset]
 	}
-
 	ok, err := expressions.EvalBoolExpr(ctx, s.Where, m)
 	if err != nil {
 		return false, errors.Trace(err)

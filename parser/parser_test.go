@@ -75,17 +75,17 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT DISTINCTS * FROM t", false},
 		{"SELECT DISTINCT * FROM t", true},
 		{"INSERT INTO foo (a) VALUES (42)", true},
-		{"INSERT INTO foo (a,) VALUES (42,)", true},
+		{"INSERT INTO foo (a,) VALUES (42,)", false},
 		// 35
 		{"INSERT INTO foo (a,b) VALUES (42,314)", true},
-		{"INSERT INTO foo (a,b,) VALUES (42,314)", true},
-		{"INSERT INTO foo (a,b,) VALUES (42,314,)", true},
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,)", true},
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,) -- foo", true},
+		{"INSERT INTO foo (a,b,) VALUES (42,314)", false},
+		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
+		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED)", true},
+		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) -- foo", true},
 		// 40
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,) // foo", true},
-		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,) /* foo */", true},
-		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED,) /* foo */", true},
+		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
+		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
+		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		/*{`-- Examples
 		ALTER TABLE Stock ADD Qty int;
 
@@ -274,7 +274,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		fmt.Printf("%s\n", t.src)
 		l := NewLexer(t.src)
 		ok := yyParse(l) == 0
-		c.Assert(ok, Equals, t.ok)
+		c.Assert(ok, Equals, t.ok, Commentf("source %v", t.src))
 
 		switch ok {
 		case true:
@@ -282,6 +282,21 @@ func (s *testParserSuite) TestParser0(c *C) {
 		case false:
 			c.Assert(len(l.errs), Not(Equals), 0)
 		}
+	}
+
+	// Testcase for unreserved keywords
+	unreservedKws := []string{
+		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
+		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
+		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
+		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
+		"value", "warnings", "year", "now", "substring", "mode",
+	}
+	for _, kw := range unreservedKws {
+		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
+		l := NewLexer(src)
+		c.Assert(yyParse(l), Equals, 0)
+		c.Assert(l.errs, HasLen, 0, Commentf("source %s", src))
 	}
 
 	// Testcase for prepared statement
@@ -293,7 +308,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 	c.Assert(len(l.Stmts()), Equals, 1)
 
 	// Testcase for -- Comment and unary -- operator
-	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED,); -- foo\nSelect --1 from foo;"
+	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED); -- foo\nSelect --1 from foo;"
 	l = NewLexer(src)
 	l.SetPrepare()
 	c.Assert(yyParse(l), Equals, 0)

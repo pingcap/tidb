@@ -1,3 +1,7 @@
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +19,7 @@ package ddl
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -246,13 +251,45 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 }
 
 func checkDuplicateColumn(colDefs []*coldef.ColumnDef) error {
-	m := map[string]bool{}
+	colNames := map[string]bool{}
 	for _, colDef := range colDefs {
 		nameLower := strings.ToLower(colDef.Name)
-		if m[nameLower] {
+		if colNames[nameLower] {
 			return errors.Errorf("CREATE TABLE: duplicate column %s", colDef.Name)
 		}
-		m[nameLower] = true
+		colNames[nameLower] = true
+	}
+	return nil
+}
+
+func checkConstraintNames(constraints []*coldef.TableConstraint) error {
+	constrNames := map[string]bool{}
+
+	// Check not empty constraint name do not have duplication.
+	for _, constr := range constraints {
+		if constr.ConstrName != "" {
+			nameLower := strings.ToLower(constr.ConstrName)
+			if constrNames[nameLower] {
+				return errors.Errorf("CREATE TABLE: duplicate key %s", constr.ConstrName)
+			}
+			constrNames[nameLower] = true
+		}
+	}
+
+	// Set empty constraint names.
+	for _, constr := range constraints {
+		if constr.ConstrName == "" && len(constr.Keys) > 0 {
+			colName := constr.Keys[0].ColumnName
+			constrName := colName
+			i := 2
+			for constrNames[strings.ToLower(constrName)] {
+				// We loop forever until we find constrName that haven't been used.
+				constrName = fmt.Sprintf("%s_%d", colName, i)
+				i++
+			}
+			constr.ConstrName = constrName
+			constrNames[constrName] = true
+		}
 	}
 	return nil
 }
@@ -313,6 +350,11 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	}
 
 	cols, newConstraints, err := d.buildColumnsAndConstraints(colDefs, constraints)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkConstraintNames(newConstraints)
 	if err != nil {
 		return errors.Trace(err)
 	}

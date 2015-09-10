@@ -1,3 +1,7 @@
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -226,7 +230,11 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 
 // Truncate implements table.Table Truncate interface.
 func (t *Table) Truncate(ctx context.Context) (err error) {
-	return util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+	err = util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+	if err != nil {
+		return
+	}
+	return util.DelKeyWithPrefix(ctx, t.IndexPrefix())
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -340,7 +348,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
-			if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				iter, _, terr := v.X.Seek(txn, colVals)
 				if terr != nil {

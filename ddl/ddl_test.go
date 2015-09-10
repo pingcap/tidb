@@ -134,6 +134,37 @@ func (ts *testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (ts *testSuite) TestConstraintNames(c *C) {
+	handle := infoschema.NewHandle(ts.store)
+	handle.Set(nil)
+	dd := ddl.NewDDL(ts.store, handle)
+	se, _ := tidb.CreateSession(ts.store)
+	ctx := se.(context.Context)
+	schemaName := model.NewCIStr("test")
+	tblName := model.NewCIStr("t")
+	tbIdent := table.Ident{
+		Schema: schemaName,
+		Name:   tblName,
+	}
+	err := dd.CreateSchema(ctx, tbIdent.Schema)
+	c.Assert(err, IsNil)
+	tbStmt := statement("create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
+	err = dd.CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
+	c.Assert(err, NotNil)
+
+	tbStmt = statement("create table t (a int, b int, index A (a, b), index (a))").(*stmts.CreateTableStmt)
+	err = dd.CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
+	c.Assert(err, IsNil)
+	tbl, err := handle.Get().TableByName(schemaName, tblName)
+	indices := tbl.Indices()
+	c.Assert(len(indices), Equals, 2)
+	c.Assert(indices[0].Name.O, Equals, "A")
+	c.Assert(indices[1].Name.O, Equals, "a_2")
+
+	err = dd.DropSchema(ctx, tbIdent.Schema)
+	c.Assert(err, IsNil)
+}
+
 func statement(sql string) stmt.Statement {
 	lexer := parser.NewLexer(sql)
 	parser.YYParse(lexer)
