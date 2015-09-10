@@ -33,7 +33,7 @@ type IsTruth struct {
 	// Not is true, the expression is "is not true/false".
 	Not bool
 	// True indicates checking true or false.
-	True int8
+	True int64
 }
 
 // Clone implements the Expression Clone interface.

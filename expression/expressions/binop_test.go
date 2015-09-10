@@ -37,7 +37,7 @@ func (s *testBinOpSuite) TestComparisonOp(c *C) {
 		lhs    interface{}
 		op     opcode.Op
 		rhs    interface{}
-		result int8 // 0 for false, 1 for true
+		result int64 // 0 for false, 1 for true
 	}{
 		// test EQ
 		{1, opcode.EQ, 2, 0},
@@ -251,7 +251,7 @@ func (s *testBinOpSuite) TestLogicOp(c *C) {
 		case nil:
 			c.Assert(v, IsNil)
 		case int:
-			c.Assert(v, DeepEquals, int8(x))
+			c.Assert(v, DeepEquals, int64(x))
 		}
 
 		_, err = expr.Clone()

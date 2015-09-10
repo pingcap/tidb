@@ -32,7 +32,7 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		Left   int
 		Right  int
 		Not    bool
-		Result int // 0 for false, 1 for true
+		Result int64 // 0 for false, 1 for true
 	}{
 		{Value{1}, 2, 3, false, 0},
 		{Value{1}, 2, 3, true, 1},
@@ -62,7 +62,7 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 
 		val, err := types.ToBool(v)
 		c.Assert(err, IsNil)
-		c.Assert(val, Equals, int8(t.Result))
+		c.Assert(val, Equals, t.Result)
 	}
 
 	f := func(isErr bool) expression.Expression {

@@ -1286,11 +1286,11 @@ Expression:
 	}
 |	Factor "IS" NotOpt trueKwd %prec is
 	{
-		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int8(1)}
+		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(1)}
 	}
 |	Factor "IS" NotOpt falseKwd %prec is
 	{
-		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int8(0)}
+		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(0)}
 	}
 |	Factor "IS" NotOpt "UNKNOWN" %prec is
 	{
