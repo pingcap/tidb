@@ -268,6 +268,13 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
+
+		// For row
+		{"select row(1)", false},
+		{"select row(1, 1,)", false},
+		{"select (1, 1,)", false},
+		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
+		{"Select (1, 1) > (1, 1)", true},
 	}
 
 	for _, t := range table {
