@@ -35,6 +35,10 @@ type HavingRset struct {
 
 // CheckAndUpdateSelectList checks having fields validity and set hidden fields to selectList.
 func (r *HavingRset) CheckAndUpdateSelectList(selectList *plans.SelectList, groupBy []expression.Expression, tableFields []*field.ResultField) error {
+	if err := expressions.CheckOneColumn(r.Expr); err != nil {
+		return errors.Trace(err)
+	}
+
 	if expressions.ContainAggregateFunc(r.Expr) {
 		expr, err := selectList.UpdateAggFields(r.Expr, tableFields)
 		if err != nil {

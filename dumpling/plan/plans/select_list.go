@@ -139,6 +139,10 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 
 	wildcardNum := 0
 	for _, v := range selectFields {
+		if err := expressions.CheckOneColumn(v.Expr); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		// Check metioned field.
 		names := expressions.MentionedColumns(v.Expr)
 		if len(names) == 0 {
