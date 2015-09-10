@@ -120,7 +120,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 	dbName := "test_concurrent_db"
 	defer removeStore(c, dbName)
 
-	testDB, err := sql.Open(DriverName, *store+"://"+dbName)
+	testDB, err := sql.Open(DriverName, *store+"://"+dbName+"/"+dbName)
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
@@ -154,7 +154,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 }
 
 func (s *testMainSuite) TestTableInfoMeta(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName)
+	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
@@ -234,7 +234,7 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 }
 
 func (s *testMainSuite) TestDriverPrepare(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName)
+	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
@@ -260,7 +260,7 @@ func (s *testMainSuite) TestDriverPrepare(c *C) {
 
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
-	db, err := sql.Open("tidb", "memory://test")
+	db, err := sql.Open("tidb", "memory://test/test")
 	defer db.Close()
 	_, err = db.Exec("create table t (c int)")
 	c.Assert(err, IsNil)

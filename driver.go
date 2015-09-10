@@ -131,22 +131,24 @@ func (d *sqlDriver) lock() func() {
 // efficient re-use.
 //
 // The returned connection is only used by one goroutine at a time.
-func (d *sqlDriver) Open(name string) (driver.Conn, error) {
-	store, err := NewStore(name)
+func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
+	// Split the dataSource to uri and dbName
+	i := strings.LastIndex(dataSource, "/")
+	if i == -1 {
+		return nil, errors.Errorf("Invalid dataSource: %q", dataSource)
+	}
+	uri := dataSource[:i]
+	dbName := dataSource[i+1:]
+
+	store, err := NewStore(uri)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	driver := &sqlDriver{}
-	switch {
-	case strings.HasPrefix(name, "file://"):
-		name = name[len("file://"):]
-	case strings.HasPrefix(name, "memory://"):
-		name = name[len("memory://"):]
-	}
-	name = filepath.Clean(name)
-	if name == "" || name == "." || name == string(os.PathSeparator) {
-		return nil, errors.Errorf("invalid DB name %q", name)
+	dbName = filepath.Clean(dbName)
+	if dbName == "" || dbName == "." || dbName == string(os.PathSeparator) {
+		return nil, errors.Errorf("invalid DB name %q", dbName)
 	}
 
 	sess, err := CreateSession(store)
@@ -155,7 +157,7 @@ func (d *sqlDriver) Open(name string) (driver.Conn, error) {
 	}
 	s := sess.(*session)
 	defer d.lock()()
-	DBName := model.NewCIStr(name[strings.LastIndex(name, "/")+1:])
+	DBName := model.NewCIStr(dbName)
 	domain := sessionctx.GetDomain(s)
 	if !domain.InfoSchema().SchemaExists(DBName) {
 		err = domain.DDL().CreateSchema(s, DBName)
@@ -163,7 +165,6 @@ func (d *sqlDriver) Open(name string) (driver.Conn, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-
 	return newDriverConn(s, driver, DBName.O)
 }
 

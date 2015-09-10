@@ -45,7 +45,7 @@ func mustExplain(c *C, currDB *sql.DB, s string) string {
 }
 
 func (t *testExplainSuit) TestExplain(c *C) {
-	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"ex")
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/ex/ex")
 	c.Assert(err, IsNil)
 	mustExec(c, testDB, "create table tt(id int);")
 	mustExec(c, testDB, "create table tt2(id int, KEY i_id(id));")
