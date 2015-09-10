@@ -428,19 +428,19 @@ func (c *Col) castIntegerValue(val int64, errCode int) (casted interface{}, err 
 			if val < 0 || errCode == errCodeOverflowLower {
 				overflow = true
 				casted = uint64(0)
-			} else if val > 1<<24-1 || errCode == errCodeOverflowUpper {
+			} else if val > mysql.MaxUint24 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = uint64(1<<24 - 1)
+				casted = uint64(mysql.MaxUint24)
 			} else {
 				casted = uint64(val)
 			}
 		} else {
-			if val > 1<<23-1 || errCode == errCodeOverflowUpper {
+			if val > mysql.MaxInt24 || errCode == errCodeOverflowUpper {
 				overflow = true
-				casted = int64(1<<23 - 1)
-			} else if val < -1<<23 || errCode == errCodeOverflowLower {
+				casted = int64(mysql.MaxInt24)
+			} else if val < mysql.MinInt24 || errCode == errCodeOverflowLower {
 				overflow = true
-				casted = int64(-1 << 23)
+				casted = int64(mysql.MinInt24)
 			} else {
 				casted = int64(val)
 			}
