@@ -22,10 +22,12 @@ func main() {
 	// Default log level is debug, set it to error to turn off debug log.
 	log.SetLevelByString("error")
 
-	// DriverName is 'tidb', dataSourceName is in the form of "<engine>://<dbPath>".
+	// DriverName is 'tidb', dataSourceName is in the form of "<engine>://<dbPath>/<dbName>".
 	// dbPath is the directory that stores the data files if you use a local storage engine.
+	// dbName is the name of the database which you want to use.
 	dbPath := "/tmp/tidb"
-	db, err := sql.Open("tidb", "goleveldb://" + dbPath)
+	dbName := "tidb"
+	db, err := sql.Open("tidb", "goleveldb://" + dbPath + "/" + dbName)
 	if err != nil {
 		log.Fatal(err)
 	}
