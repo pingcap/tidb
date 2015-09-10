@@ -140,9 +140,8 @@ func (c *Col) CastValue(ctx context.Context, val interface{}) (casted interface{
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeBit:
 		intVal, errCode := c.normalizeIntegerValue(val)
 		if errCode == errCodeType {
-			casted = intVal
 			err = c.TypeError(val)
-			return
+			return intVal, errors.Trace(err)
 		}
 		return c.castIntegerValue(intVal, errCode)
 	case mysql.TypeFloat, mysql.TypeDouble:
@@ -153,25 +152,29 @@ func (c *Col) CastValue(ctx context.Context, val interface{}) (casted interface{
 			casted, err = mysql.ParseTimeFromNum(v, c.Tp, c.Decimal)
 			if err != nil {
 				err = newParseColError(err, c)
+				return casted, errors.Trace(err)
 			}
 		case string:
 			casted, err = mysql.ParseTime(v, c.Tp, c.Decimal)
 			if err != nil {
 				err = newParseColError(err, c)
+				return casted, errors.Trace(err)
 			}
 		case mysql.Time:
 			var t mysql.Time
 			t, err = v.Convert(c.Tp)
 			if err != nil {
 				err = newParseColError(err, c)
-				return
+				return casted, errors.Trace(err)
 			}
 			casted, err = t.RoundFrac(c.Decimal)
 			if err != nil {
 				err = newParseColError(err, c)
+				return casted, errors.Trace(err)
 			}
 		default:
 			err = c.TypeError(val)
+			return casted, errors.Trace(err)
 		}
 	case mysql.TypeDuration:
 		switch v := val.(type) {
@@ -179,22 +182,26 @@ func (c *Col) CastValue(ctx context.Context, val interface{}) (casted interface{
 			casted, err = mysql.ParseDuration(v, c.Decimal)
 			if err != nil {
 				err = newParseColError(err, c)
+				return casted, errors.Trace(err)
 			}
 		case mysql.Time:
 			var t mysql.Duration
 			t, err = v.ConvertToDuration()
 			if err != nil {
 				err = newParseColError(err, c)
-				return
+				return casted, errors.Trace(err)
 			}
 			casted, err = t.RoundFrac(c.Decimal)
 			if err != nil {
 				err = newParseColError(err, c)
+				return casted, errors.Trace(err)
 			}
 		case mysql.Duration:
 			casted, err = v.RoundFrac(c.Decimal)
+			return casted, errors.Trace(err)
 		default:
 			err = c.TypeError(val)
+			return casted, errors.Trace(err)
 		}
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		strV := ""
@@ -222,6 +229,7 @@ func (c *Col) CastValue(ctx context.Context, val interface{}) (casted interface{
 			casted, err = mysql.ParseDecimal(v)
 			if err != nil {
 				err = newParseColError(err, c)
+				return casted, errors.Trace(err)
 			}
 		case int8:
 			casted = mysql.NewDecimalFromInt(int64(v), 0)
@@ -252,6 +260,7 @@ func (c *Col) CastValue(ctx context.Context, val interface{}) (casted interface{
 		}
 	default:
 		err = c.TypeError(val)
+		return casted, errors.Trace(err)
 	}
 	return
 }
@@ -539,10 +548,10 @@ func (c *Col) castFloatValue(x interface{}) (casted interface{}, err error) {
 		v = strings.Trim(v, " \t\r\n")
 		fval, err = strconv.ParseFloat(v, 64)
 		if err != nil {
-			return float64(0), c.TypeError(x)
+			return float64(0), errors.Trace(c.TypeError(x))
 		}
 	default:
-		return nil, c.TypeError(x)
+		return nil, errors.Trace(c.TypeError(x))
 	}
 	switch c.Tp {
 	case mysql.TypeFloat:
@@ -564,10 +573,10 @@ func CastValues(ctx context.Context, rec []interface{}, cols []*Col) (err error)
 	for _, c := range cols {
 		rec[c.Offset], err = c.CastValue(ctx, rec[c.Offset])
 		if err != nil {
-			return
+			return errors.Trace(err)
 		}
 	}
-	return
+	return nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
