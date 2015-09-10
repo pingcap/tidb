@@ -67,12 +67,12 @@ var signedLowerBound = map[byte]int64{
 
 func convertFloatToInt(val float64, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
 	val = RoundFloat(val)
-	if val < math.MinInt64 || int64(val) < lowerBound {
+	if val < float64(lowerBound) {
 		converted = lowerBound
 		err = overflow(val, tp)
 		return
 	}
-	if val > math.MaxInt64 || int64(val) > upperBound {
+	if val > float64(upperBound) {
 		converted = upperBound
 		err = overflow(val, tp)
 		return
@@ -152,7 +152,7 @@ func convertFloatToUint(val float64, upperBound uint64, tp byte) (converted uint
 		err = overflow(val, tp)
 		return
 	}
-	if val > math.MaxUint64 || uint64(val) > upperBound {
+	if val > float64(upperBound) {
 		converted = upperBound
 		err = overflow(val, tp)
 		return
@@ -402,10 +402,10 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 // StrToInt converts a string to an integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToInt(str string) (int64, error) {
+	str = strings.Trim(str, " \t\r\n")
 	if len(str) == 0 {
 		return 0, nil
 	}
-	str = strings.Trim(str, " \t\r\n")
 	negative := false
 	i := 0
 	if str[i] == '-' {
@@ -431,10 +431,10 @@ func StrToInt(str string) (int64, error) {
 // StrToUint converts a string to an unsigned integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToUint(str string) (uint64, error) {
+	str = strings.Trim(str, " \t\r\n")
 	if len(str) == 0 {
 		return uint64(0), nil
 	}
-	str = strings.Trim(str, " \t\r\n")
 	i := 0
 	if str[i] == '-' {
 		// TODO: return an error.
@@ -459,10 +459,10 @@ func StrToUint(str string) (uint64, error) {
 
 // StrToFloat converts a string to a float64 in best effort.
 func StrToFloat(str string) (float64, error) {
+	str = strings.Trim(str, " \t\r\n")
 	if len(str) == 0 {
 		return 0, nil
 	}
-	str = strings.Trim(str, " \t\r\n")
 
 	// MySQL uses a very loose conversation, e.g, 123.abc -> 123
 	// We should do a trade off whether supporting this feature or using a strict mode.
