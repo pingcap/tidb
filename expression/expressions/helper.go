@@ -479,7 +479,7 @@ func EvalBoolExpr(ctx context.Context, expr expression.Expression, m map[interfa
 // CheckOneColumn checks whether expression e has only one column for the evaluation result.
 // Now most of the expressions have one column except Row expression.
 func CheckOneColumn(e expression.Expression) error {
-	n := columnNumber(e)
+	n := columnCount(e)
 	if n != 1 {
 		return errors.Errorf("Operand should contain 1 column(s)")
 	}
@@ -498,7 +498,7 @@ func CheckAllOneColumns(args ...expression.Expression) error {
 	return nil
 }
 
-func columnNumber(e expression.Expression) int {
+func columnCount(e expression.Expression) int {
 	v, ok := e.(*Row)
 	if ok {
 		// TODO: add check, row constructor must have >= 2 columns
@@ -508,10 +508,10 @@ func columnNumber(e expression.Expression) int {
 	return 1
 }
 
-func hasSameColumn(e expression.Expression, args ...expression.Expression) error {
-	l := columnNumber(e)
+func hasSameColumnCount(e expression.Expression, args ...expression.Expression) error {
+	l := columnCount(e)
 	for _, arg := range args {
-		if l != columnNumber(arg) {
+		if l != columnCount(arg) {
 			return errors.Errorf("Operand should contain %d column(s)", l)
 		}
 	}
