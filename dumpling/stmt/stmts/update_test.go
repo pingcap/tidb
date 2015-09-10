@@ -22,7 +22,7 @@ import (
 )
 
 func (s *testStmtSuite) TestUpdate(c *C) {
-	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+s.dbName)
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"tmp/"+s.dbName)
 	c.Assert(err, IsNil)
 
 	s.fillData(testDB, c)
