@@ -145,10 +145,10 @@ func (s *testHelperSuite) TestBase(c *C) {
 	}
 
 	for _, t := range columns {
-		err = hasSameColumn(t.lhs, t.rhs)
+		err = hasSameColumnCount(t.lhs, t.rhs)
 		c.Assert(err, t.checker)
 
-		err = hasSameColumn(t.rhs, t.lhs)
+		err = hasSameColumnCount(t.rhs, t.lhs)
 		c.Assert(err, t.checker)
 	}
 }
