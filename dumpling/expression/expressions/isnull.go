@@ -68,5 +68,5 @@ func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (v
 		return
 	}
 
-	return val == nil != is.Not, nil
+	return (val == nil) != is.Not, nil
 }
