@@ -39,6 +39,7 @@ const (
 	formatStringFlag   = 's'
 	formatBytesFlag    = 'b'
 	formatDurationFlag = 't'
+	formatDecimalFlag  = 'c'
 )
 
 var sepKey = []byte{0x00, 0x00}
@@ -107,6 +108,9 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = EncodeInt(b, int64(v.Duration))
 			format = append(format, formatDurationFlag)
+		case mysql.Decimal:
+			b = EncodeDecimal(b, v)
+			format = append(format, formatDecimalFlag)
 		case nil:
 			// We will 0x00, 0x00 for nil.
 			// The []byte{} will be encoded as 0x00, 0x01.
@@ -177,6 +181,8 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 				// use max fsp, let outer to do round manually.
 				v[i] = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
 			}
+		case formatDecimalFlag:
+			b, v[i], err = DecodeDecimal(b)
 		case formatNilFlag:
 			if len(b) < 2 || (b[0] != 0x00 && b[1] != 0x00) {
 				return nil, errors.Errorf("malformed encoded nil")
