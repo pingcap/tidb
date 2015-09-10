@@ -101,7 +101,7 @@ func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
 	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
 	c.Assert(err, NotNil)
 
-	s.r.Expr = &expressions.Row{Values: []expression.Expression{expressions.Value{1}, expressions.Value{1}}}
+	s.r.Expr = &expressions.Row{Values: []expression.Expression{expressions.Value{Val: 1}, expressions.Value{Val: 1}}}
 	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
 	c.Assert(err, NotNil)
 }

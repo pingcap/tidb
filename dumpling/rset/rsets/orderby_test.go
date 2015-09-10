@@ -106,7 +106,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, NotNil)
 
 	// `select id from t order by row(1, 1)`
-	r.By[0].Expr = &expressions.Row{Values: []expression.Expression{expressions.Value{1}, expressions.Value{1}}}
+	r.By[0].Expr = &expressions.Row{Values: []expression.Expression{expressions.Value{Val: 1}, expressions.Value{Val: 1}}}
 	selectList.Fields[1].Name = "name"
 	selectList.ResultFields[1].Name = "name"
 
