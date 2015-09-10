@@ -58,7 +58,7 @@ func (txn *dbTxn) markOrigin(k []byte) error {
 		return err
 	}
 
-	//log.Debugf("markOrigin, key:%s, value:%s", keystr, val)
+	//log.Debugf("markOrigin, key:%q, value:%q", keystr, val)
 	txn.snapshotVals[keystr] = val
 	return nil
 }
@@ -66,7 +66,7 @@ func (txn *dbTxn) markOrigin(k []byte) error {
 // Implement transaction interface
 
 func (txn *dbTxn) Inc(k []byte, step int64) (int64, error) {
-	log.Debugf("Inc %s, step %d txn:%d", k, step, txn.tID)
+	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tID)
 	k = kv.EncodeKey(k)
 
 	if err := txn.markOrigin(k); err != nil {
@@ -105,7 +105,7 @@ func (txn *dbTxn) String() string {
 }
 
 func (txn *dbTxn) Get(k []byte) ([]byte, error) {
-	log.Debugf("get key:%s, txn:%d", k, txn.tID)
+	log.Debugf("get key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
@@ -129,13 +129,13 @@ func (txn *dbTxn) Set(k []byte, data []byte) error {
 		return ErrCannotSetNilValue
 	}
 
-	log.Debugf("set key:%s, txn:%d", k, txn.tID)
+	log.Debugf("set key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Set(k, data)
 }
 
 func (txn *dbTxn) Seek(k []byte, fnKeyCmp func([]byte) bool) (kv.Iterator, error) {
-	log.Debugf("seek %s txn:%d", k, txn.tID)
+	log.Debugf("seek %q txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 
 	iter, err := txn.UnionStore.Seek(k, txn)
@@ -157,7 +157,7 @@ func (txn *dbTxn) Seek(k []byte, fnKeyCmp func([]byte) bool) (kv.Iterator, error
 }
 
 func (txn *dbTxn) Delete(k []byte) error {
-	log.Debugf("delete %s txn:%d", k, txn.tID)
+	log.Debugf("delete %q txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Delete(k)
 }
