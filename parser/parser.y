@@ -1649,12 +1649,12 @@ OnDuplicateKeyUpdate:
 Literal:
 	"false"
 	{
-		$$ = int8(0)
+		$$ = int64(0)
 	}
 |	"NULL"
 |	"true"
 	{
-		$$ = int8(1)
+		$$ = int64(1)
 	}
 |	floatLit
 |	imaginaryLit
