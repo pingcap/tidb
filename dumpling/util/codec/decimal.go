@@ -81,7 +81,7 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	valSign := codecSign(int64(v.Sign()))
 
 	absVal := new(big.Int)
-	absVal.Abs(d.BigIntValue())
+	absVal.Abs(v)
 
 	value := []byte(absVal.String())
 
