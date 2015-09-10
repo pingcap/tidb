@@ -275,6 +275,13 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select (1, 1,)", false},
 		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
 		{"Select (1, 1) > (1, 1)", true},
+
+		// For SHOW statement
+		{"SHOW VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES", true},
 	}
 
 	for _, t := range table {
