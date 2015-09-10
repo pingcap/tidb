@@ -33,7 +33,7 @@ import (
 var (
 	logLevel = flag.String("L", "error", "log level")
 	store    = flag.String("store", "goleveldb", "the name for the registered storage, e.g. memory, goleveldb, boltdb")
-	dbPath   = flag.String("dbpath", "test", "db path")
+	dbPath   = flag.String("dbpath", "test/test", "db path")
 
 	line        *liner.State
 	historyPath = "/tmp/tidb_interpreter"
