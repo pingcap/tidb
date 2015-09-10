@@ -54,6 +54,13 @@ const (
 	ShowColumns
 	ShowWarnings
 	ShowCharset
+	ShowVariables
+)
+
+const (
+	NoneScope = iota
+	SessionScope
+	GlobalScope
 )
 
 // A dummy type to avoid naming collision in context.

@@ -195,6 +195,7 @@ import (
 	userVar		"USER_VAR"
 	value		"VALUE"
 	values		"VALUES"
+	variables	"VARIABLES"
 	warnings	"WARNINGS"
 	when		"WHEN"
 	where		"WHERE"
@@ -421,6 +422,7 @@ import (
 	VariableAssignment	"set variable value"
 	VariableAssignmentList	"set variable value list"
 	Variable		"User or system variable"
+	VariableScope		"The scope of variable"
 	WhereClause		"WHERE clause"
 	WhereClauseOptional	"Optinal WHERE clause"
 
@@ -2647,6 +2649,35 @@ ShowStmt:
 |	"SHOW" "WARNINGS"
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowWarnings}
+	}
+|	"SHOW" VariableScope "VARIABLES"
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			VarScope: $2.(int),
+		}
+	
+	}
+|	"SHOW" VariableScope "VARIABLES" "LIKE" PrimaryExpression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			VarScope: $2.(int),
+			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
+		}
+	}
+
+VariableScope:
+	{
+		$$ = stmt.SessionScope	
+	}
+|	"GLOBAL"
+	{
+		$$ = stmt.GlobalScope	
+	}
+|	"SESSION" 
+	{
+		$$ = stmt.SessionScope	
 	}
 
 OptFull:

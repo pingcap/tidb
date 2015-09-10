@@ -16,6 +16,7 @@ package stmts
 import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
@@ -34,6 +35,10 @@ type ShowStmt struct {
 	ColumnName string      // Used for `desc table column`.
 	Flag       int         // Some flag parsed from sql, such as FULL.
 	Full       bool
+
+	// Used by show variables
+	VarScope int
+	Pattern  expression.Expression
 
 	Text string
 }
