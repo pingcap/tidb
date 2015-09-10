@@ -147,6 +147,20 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 		}
 	}()
 
+	// all operands must have same column.
+	if err := hasSameColumn(o.L, o.R); err != nil {
+		return nil, o.traceErr(err)
+	}
+
+	// row constructor only supports comparison operation.
+	switch o.Op {
+	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE:
+	default:
+		if err := CheckOneColumn(o.L); err != nil {
+			return nil, o.traceErr(err)
+		}
+	}
+
 	switch o.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
 		return o.evalLogicOp(ctx, args)

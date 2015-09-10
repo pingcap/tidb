@@ -311,6 +311,7 @@ regexp		{r}{e}{g}{e}{x}{p}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
+row 		{r}{o}{w}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 select		{s}{e}{l}{e}{c}{t}
@@ -557,6 +558,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {right}			return right
 {rollback}		lval.item = string(l.val)
 			return rollback
+{row}			lval.item = string(l.val)
+			return row
 {schema}		return schema
 {schemas}		return schemas
 {session}		lval.item = string(l.val)

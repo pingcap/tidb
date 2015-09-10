@@ -222,6 +222,10 @@ func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression
 		mentionedAggregateFuncs(x.Expr, m)
 		mentionedAggregateFuncs(x.Left, m)
 		mentionedAggregateFuncs(x.Right, m)
+	case *Row:
+		for _, expr := range x.Values {
+			mentionedAggregateFuncs(expr, m)
+		}
 	default:
 		log.Errorf("Unknown Expression: %T", e)
 	}
@@ -306,6 +310,10 @@ func mentionedColumns(e expression.Expression, m map[string]bool, names *[]strin
 		mentionedColumns(x.Expr, m, names)
 		mentionedColumns(x.Left, m, names)
 		mentionedColumns(x.Right, m, names)
+	case *Row:
+		for _, expr := range x.Values {
+			mentionedColumns(expr, m, names)
+		}
 	default:
 		log.Errorf("Unknown Expression: %T", e)
 	}
@@ -466,4 +474,46 @@ func EvalBoolExpr(ctx context.Context, expr expression.Expression, m map[interfa
 	}
 
 	return x != 0, nil
+}
+
+// CheckOneColumn checks whether expression e has only one column for the evaluation result.
+// Now most of the expressions have one column except Row expression.
+func CheckOneColumn(e expression.Expression) error {
+	_, ok := e.(*Row)
+	if ok {
+		return errors.Errorf("Operand should contain 1 column(s)")
+	}
+
+	return nil
+}
+
+// CheckAllOneColumns checks all expressions have one column.
+func CheckAllOneColumns(args ...expression.Expression) error {
+	for _, e := range args {
+		if err := CheckOneColumn(e); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func hasSameColumn(lhs expression.Expression, rhs expression.Expression) error {
+	l, okl := lhs.(*Row)
+	r, okr := rhs.(*Row)
+	if okl && okr {
+		if len(l.Values) != len(r.Values) {
+			return errors.Errorf("Operand should contain %d column(s)", len(l.Values))
+		}
+		return nil
+	} else if !okl && !okr {
+		// lhs and rhs are not Row
+		return nil
+	} else if okl {
+		// lhs is row, rhs is not
+		return errors.Errorf("Operand should contain %d column(s)", len(l.Values))
+	}
+
+	// here mean rhs is row, lhs is not
+	return errors.Errorf("Operand should contain 1 column(s)")
 }
