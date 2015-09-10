@@ -591,4 +591,68 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		ret := bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, t.Ret)
 	}
+
+	tblInt64 := []struct {
+		Arg1 int64
+		Arg2 int64
+		Ret  int
+	}{
+		{-1, 1, -1},
+		{math.MaxInt64, math.MinInt64, 1},
+		{math.MaxInt64, math.MaxInt32, 1},
+		{math.MinInt32, math.MaxInt16, -1},
+		{math.MinInt64, math.MaxInt8, -1},
+		{0, math.MaxInt8, -1},
+		{math.MinInt8, 0, -1},
+		{math.MinInt16, math.MaxInt16, -1},
+		{1, -1, 1},
+		{1, 0, 1},
+		{-1, 0, -1},
+		{0, 0, 0},
+		{math.MaxInt16, math.MaxInt16, 0},
+	}
+
+	for _, t := range tblInt64 {
+		m1 := mysql.NewDecimalFromInt(t.Arg1, 0)
+		m2 := mysql.NewDecimalFromInt(t.Arg2, 0)
+
+		b1, err := EncodeKey(m1)
+		c.Assert(err, IsNil)
+		b2, err := EncodeKey(m2)
+		c.Assert(err, IsNil)
+
+		ret := bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
+	}
+
+	tblUint64 := []struct {
+		Arg1 uint64
+		Arg2 uint64
+		Ret  int
+	}{
+		{0, 0, 0},
+		{1, 0, 1},
+		{0, 1, -1},
+		{math.MaxInt8, math.MaxInt16, -1},
+		{math.MaxUint32, math.MaxInt32, 1},
+		{math.MaxUint8, math.MaxInt8, 1},
+		{math.MaxUint16, math.MaxInt32, -1},
+		{math.MaxUint64, math.MaxInt64, 1},
+		{math.MaxInt64, math.MaxUint32, 1},
+		{math.MaxUint64, 0, 1},
+		{0, math.MaxUint64, -1},
+	}
+
+	for _, t := range tblUint64 {
+		m1 := mysql.NewDecimalFromUint(t.Arg1, 0)
+		m2 := mysql.NewDecimalFromUint(t.Arg2, 0)
+
+		b1, err := EncodeKey(m1)
+		c.Assert(err, IsNil)
+		b2, err := EncodeKey(m2)
+		c.Assert(err, IsNil)
+
+		ret := bytes.Compare(b1, b2)
+		c.Assert(ret, Equals, t.Ret)
+	}
 }
