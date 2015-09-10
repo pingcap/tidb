@@ -206,7 +206,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *SelectStmt) Exec(ctx context.Context) (rs rset.Recordset, err error) {
-	log.Info("SelectStmt trx:")
+	log.Info("Exec :", s.OriginText())
 	r, err := s.Plan(ctx)
 	if err != nil {
 		return nil, err
