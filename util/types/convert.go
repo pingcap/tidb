@@ -30,7 +30,7 @@ import (
 )
 
 // InvConv returns a failed convertion error.
-func InvConv(val interface{}, tp byte) (interface{}, error) {
+func invConv(val interface{}, tp byte) (interface{}, error) {
 	return nil, errors.Errorf("cannot convert %v (type %T) to type %s", val, val, TypeStr(tp))
 }
 
@@ -69,12 +69,12 @@ func convertFloatToInt(val float64, lowerBound, upperBound int64, tp byte) (conv
 	val = RoundFloat(val)
 	if val < math.MinInt64 || int64(val) < lowerBound {
 		converted = lowerBound
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	if val > math.MaxInt64 || int64(val) > upperBound {
 		converted = upperBound
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	converted = int64(val)
@@ -84,12 +84,12 @@ func convertFloatToInt(val float64, lowerBound, upperBound int64, tp byte) (conv
 func convertIntToInt(val, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
 	if val < lowerBound {
 		converted = lowerBound
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	if val > upperBound {
 		converted = upperBound
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	converted = val
@@ -104,7 +104,7 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 	case uint64:
 		if v > uint64(upperBound) {
 			converted = upperBound
-			err = Overflow(val, tp)
+			err = overflow(val, tp)
 			return
 		}
 		converted = int64(v)
@@ -127,18 +127,18 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 		fval, _ := v.Float64()
 		return convertFloatToInt(fval, lowerBound, upperBound, tp)
 	}
-	return 0, TypeError(val, target)
+	return 0, typeError(val, target)
 }
 
 func convertIntToUint(val int64, upperBound uint64, tp byte) (converted uint64, err error) {
 	if val < 0 {
 		converted = 0
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	if uint64(val) > upperBound {
 		converted = upperBound
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	converted = uint64(val)
@@ -149,12 +149,12 @@ func convertFloatToUint(val float64, upperBound uint64, tp byte) (converted uint
 	val = RoundFloat(val)
 	if val < 0 {
 		converted = 0
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	if val > math.MaxUint64 || uint64(val) > upperBound {
 		converted = upperBound
-		err = Overflow(val, tp)
+		err = overflow(val, tp)
 		return
 	}
 	converted = uint64(val)
@@ -168,7 +168,7 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 	case uint64:
 		if v > upperBound {
 			converted = upperBound
-			err = Overflow(val, tp)
+			err = overflow(val, tp)
 			return
 		}
 		converted = v
@@ -191,11 +191,11 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 		fval, _ := v.Float64()
 		return convertFloatToUint(fval, upperBound, tp)
 	}
-	return 0, TypeError(val, target)
+	return 0, typeError(val, target)
 }
 
-// TypeError returns error for invalid value type.
-func TypeError(v interface{}, target *FieldType) error {
+// typeError returns error for invalid value type.
+func typeError(v interface{}, target *FieldType) error {
 	return errors.Errorf("cannot use %v (type %T) in assignment to, or comparison with, column type %s)",
 		v, v, target.String())
 }
@@ -277,7 +277,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 	case mysql.TypeFloat:
 		x, err := ToFloat64(val)
 		if err != nil {
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 		if target.Flen != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
@@ -289,7 +289,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 	case mysql.TypeDouble:
 		x, err := ToFloat64(val)
 		if err != nil {
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 		if target.Flen != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
@@ -302,7 +302,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		x, err := ToString(val)
 		if err != nil {
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 		// TODO: consider target.Charset/Collate
 		x = truncateStr(x, target.Flen)
@@ -328,7 +328,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		case string:
 			return mysql.ParseDuration(x, fsp)
 		default:
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
 		fsp := mysql.DefaultFsp
@@ -353,7 +353,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		case int64:
 			return mysql.ParseTimeFromNum(x, tp, fsp)
 		default:
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit:
 		unsigned := mysql.HasUnsignedFlag(target.Flag)
@@ -364,7 +364,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
 		x, err := ToDecimal(val)
 		if err != nil {
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 		if target.Decimal != UnspecifiedLength {
 			x = x.Round(int32(target.Decimal))
@@ -387,11 +387,11 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 			intVal, err = ToInt64(x)
 		}
 		if err != nil {
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 		y, err := mysql.AdjustYear(int(intVal))
 		if err != nil {
-			return InvConv(val, tp)
+			return invConv(val, tp)
 		}
 		return int64(y), nil
 	default:
