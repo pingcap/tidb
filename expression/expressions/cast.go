@@ -81,9 +81,5 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 	if value == nil {
 		return nil, nil
 	}
-	nv, err := types.Convert(value, f.Tp)
-	if err != nil {
-		return nil, err
-	}
-	return nv, nil
+	return types.Cast(value, f.Tp), nil
 }

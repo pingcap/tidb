@@ -142,9 +142,9 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		if err != nil {
 			return types.UndOp(a, op)
 		} else if n == 0 {
-			return int8(1), nil
+			return int64(1), nil
 		}
-		return int8(0), nil
+		return int64(0), nil
 	case opcode.BitNeg:
 		a := Eval(u.V, ctx, args)
 		if a == nil {
