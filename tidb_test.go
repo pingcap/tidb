@@ -601,6 +601,31 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestRow(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	r := mustExecSQL(c, se, "select row(1, 1) in (row(1, 1))")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select row(1, 1) in (row(1, 0))")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 0)
+
+	r = mustExecSQL(c, se, "select row(1, 1) in (select 1, 1)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select row(1, 1) > row(1, 0)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)

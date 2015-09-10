@@ -148,7 +148,7 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	}()
 
 	// all operands must have same column.
-	if err := hasSameColumn(o.L, o.R); err != nil {
+	if err := hasSameColumnCount(o.L, o.R); err != nil {
 		return nil, o.traceErr(err)
 	}
 
