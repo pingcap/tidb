@@ -479,8 +479,8 @@ func EvalBoolExpr(ctx context.Context, expr expression.Expression, m map[interfa
 // CheckOneColumn checks whether expression e has only one column for the evaluation result.
 // Now most of the expressions have one column except Row expression.
 func CheckOneColumn(e expression.Expression) error {
-	_, ok := e.(*Row)
-	if ok {
+	n := columnNumber(e)
+	if n != 1 {
 		return errors.Errorf("Operand should contain 1 column(s)")
 	}
 
@@ -498,22 +498,23 @@ func CheckAllOneColumns(args ...expression.Expression) error {
 	return nil
 }
 
-func hasSameColumn(lhs expression.Expression, rhs expression.Expression) error {
-	l, okl := lhs.(*Row)
-	r, okr := rhs.(*Row)
-	if okl && okr {
-		if len(l.Values) != len(r.Values) {
-			return errors.Errorf("Operand should contain %d column(s)", len(l.Values))
-		}
-		return nil
-	} else if !okl && !okr {
-		// lhs and rhs are not Row
-		return nil
-	} else if okl {
-		// lhs is row, rhs is not
-		return errors.Errorf("Operand should contain %d column(s)", len(l.Values))
+func columnNumber(e expression.Expression) int {
+	v, ok := e.(*Row)
+	if ok {
+		// TODO: add check, row constructor must have >= 2 columns
+		return len(v.Values)
 	}
 
-	// here mean rhs is row, lhs is not
-	return errors.Errorf("Operand should contain 1 column(s)")
+	return 1
+}
+
+func hasSameColumn(e expression.Expression, args ...expression.Expression) error {
+	l := columnNumber(e)
+	for _, arg := range args {
+		if l != columnNumber(arg) {
+			return errors.Errorf("Operand should contain %d column(s)", l)
+		}
+	}
+
+	return nil
 }
