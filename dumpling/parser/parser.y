@@ -164,6 +164,7 @@ import (
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
+	row 		"ROW"
 	rsh		">>"
 	runeType	"rune"
 	schema		"SCHEMA"
@@ -1699,6 +1700,17 @@ Operand:
 		l.ParamList = append(l.ParamList, pm)
 		$$ = pm
 	}
+|	"ROW" '(' Expression ',' ExpressionList ')'
+	{
+		values := append([]expression.Expression{$3.(expression.Expression)}, $5.([]expression.Expression)...)
+		$$ = &expressions.Row{Values: values}
+	}
+|	'(' Expression ',' ExpressionList ')'
+	{
+		values := append([]expression.Expression{$2.(expression.Expression)}, $4.([]expression.Expression)...)
+		$$ = &expressions.Row{Values: values}
+	}
+
 
 OrderBy:
 	"ORDER" "BY" OrderByList
