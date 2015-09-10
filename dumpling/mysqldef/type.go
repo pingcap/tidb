@@ -72,6 +72,7 @@ const (
 	BinCmpFlag         = 131072 /* Intern: Used by sql_yacc */
 )
 
+// TypeInt24 bounds.
 const (
 	MaxUint24 = 1<<24 - 1
 	MaxInt24  = 1<<23 - 1
