@@ -109,7 +109,7 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 			b = EncodeInt(b, int64(v.Duration))
 			format = append(format, formatDurationFlag)
 		case mysql.Decimal:
-			encBytes := mysql.EncodeDecimal(v)
+			encBytes := EncodeDecimal(v)
 			b = EncodeBytes(b, encBytes)
 			format = append(format, formatDecimalFlag)
 		case nil:
@@ -186,7 +186,7 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 			var r []byte
 			b, r, err = DecodeBytes(b)
 			if err == nil {
-				v[i], err = mysql.DecodeDecimal(r)
+				v[i], err = DecodeDecimal(r)
 			}
 		case formatNilFlag:
 			if len(b) < 2 || (b[0] != 0x00 && b[1] != 0x00) {

@@ -65,8 +65,6 @@ import (
 	"math"
 	"strings"
 	"testing"
-
-	. "github.com/pingcap/check"
 )
 
 var testTable = map[float64]string{
@@ -99,11 +97,6 @@ func init() {
 			testTable[-f] = "-" + s
 		}
 	}
-}
-
-var _ = Suite(&testDecimalSuite{})
-
-type testDecimalSuite struct {
 }
 
 func TestNewFromFloat(t *testing.T) {
@@ -875,30 +868,4 @@ func didPanic(f func()) bool {
 	}()
 
 	return ret
-}
-
-func (s *testTimeSuite) TestDecimalCodec(c *C) {
-	inputs := []struct {
-		Input float64
-	}{
-		{float64(1234)},
-		{float64(12.34)},
-		{float64(0.1234)},
-		{float64(0.01234)},
-		{float64(-0.1234)},
-		{float64(-0.01234)},
-		{float64(-12.34)},
-		{float64(0.00000)},
-		{float64(0)},
-		{float64(-0.0)},
-		{float64(-0.000)},
-	}
-
-	for _, input := range inputs {
-		v := NewDecimalFromFloat(input.Input)
-		b := EncodeDecimal(v)
-		d, err := DecodeDecimal(b)
-		c.Assert(err, IsNil)
-		c.Assert(v.Equals(d), IsTrue)
-	}
 }
