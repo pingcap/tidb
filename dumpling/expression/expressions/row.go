@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-var errOperandColumns = errors.Errorf("Operand should contain 1 column(s)")
-
 // Row is the expression for row constructor.
 // See https://dev.mysql.com/doc/refman/5.7/en/row-subqueries.html
 type Row struct {

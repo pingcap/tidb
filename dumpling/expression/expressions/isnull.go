@@ -16,6 +16,7 @@ package expressions
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
@@ -58,6 +59,10 @@ func (is *IsNull) String() string {
 
 // Eval implements the Expression Eval interface.
 func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
+	if err := CheckOneColumn(is.Expr); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	val, err := is.Expr.Eval(ctx, args)
 	if err != nil {
 		return
