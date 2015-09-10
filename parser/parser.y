@@ -465,6 +465,9 @@ import (
 
 %token	tableRefPriority
 
+%precedence lowerThanCalcFoundRows
+%precedence calcFoundRows
+
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
@@ -2417,6 +2420,7 @@ SelectStmtOpts:
 	}
 
 SelectStmtCalcFoundRows:
+	%prec lowerThanCalcFoundRows
 	{
 		$$ = false
 	}
