@@ -863,10 +863,6 @@ ConstraintOpts:
 	{
 		$$ = []*coldef.ConstraintOpt{}
 	}
-|	ConstraintOpt
-	{
-		$$ = []*coldef.ConstraintOpt{$1.(*coldef.ConstraintOpt)} 
-	}
 |	ConstraintOpts ConstraintOpt
 	{
 		if $2 != nil {
