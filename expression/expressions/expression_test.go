@@ -181,7 +181,7 @@ func newMockPlan(rset *mockRecordset) *mockPlan {
 
 func (p *mockPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	for _, data := range p.rset.rows {
-		if more, err := f(nil, data); !more || err != nil {
+		if more, err := f(nil, data[:p.rset.offset]); !more || err != nil {
 			return err
 		}
 	}
@@ -192,7 +192,7 @@ func (p *mockPlan) Explain(w format.Formatter) {}
 
 func (p *mockPlan) GetFields() []*field.ResultField {
 	fields, _ := p.rset.Fields()
-	return fields
+	return fields[:p.rset.offset]
 }
 
 func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
