@@ -37,4 +37,11 @@ func (s *testStmtSuite) TestShow(c *C) {
 	mf := newMockFormatter()
 	testStmt.Explain(nil, mf)
 	c.Assert(mf.Len(), Greater, 0)
+
+	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
+	stmtList, err = tidb.Compile(testSQL)
+	c.Assert(err, IsNil)
+	c.Assert(stmtList, HasLen, 1)
+	testStmt, ok = stmtList[0].(*stmts.ShowStmt)
+	c.Assert(ok, IsTrue)
 }
