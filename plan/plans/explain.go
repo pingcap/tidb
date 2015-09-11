@@ -68,3 +68,8 @@ func (r *ExplainDefaultPlan) GetFields() []*field.ResultField {
 func (r *ExplainDefaultPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return r, false, nil
 }
+
+// Next implements plan.Plan Next interface.
+func (r *ExplainDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

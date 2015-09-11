@@ -189,3 +189,8 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	}
 	return types.EOFAsNil(err)
 }
+
+// Next implements plan.Plan Next interface.
+func (r *OrderByDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

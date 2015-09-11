@@ -139,3 +139,8 @@ func (p *UnionPlan) GetFields() []*field.ResultField {
 func (p *UnionPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return p, false, nil
 }
+
+// Next implements plan.Plan Next interface.
+func (p *UnionPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

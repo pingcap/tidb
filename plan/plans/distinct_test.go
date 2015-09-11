@@ -72,6 +72,10 @@ func (p *testTablePlan) Filter(ctx context.Context, expr expression.Expression) 
 	return p, false, nil
 }
 
+func (p *testTablePlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}
+
 type testDistinctSuit struct{}
 
 var _ = Suite(&testDistinctSuit{})

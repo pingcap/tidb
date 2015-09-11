@@ -223,3 +223,8 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 func (s *ShowPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return s, false, nil
 }
+
+// Next implements plan.Plan Next interface.
+func (s *ShowPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

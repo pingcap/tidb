@@ -322,3 +322,8 @@ func (r *GroupByDefaultPlan) evalEmptyTable(ctx context.Context) ([]interface{},
 	}
 	return out, nil
 }
+
+// Next implements plan.Plan Next interface.
+func (r *GroupByDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}
