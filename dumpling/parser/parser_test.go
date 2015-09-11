@@ -200,6 +200,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true},
 		{"SET @@global.autocommit = 1", true},
+		// SET CHARACTER SET
+		{"SET CHARACTER SET utf8mb4;", true},
+		{"SET CHARACTER SET 'utf8mb4';", true},
 
 		// qualified select
 		{"SELECT a.b.c FROM t", true},
