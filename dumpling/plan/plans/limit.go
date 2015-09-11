@@ -73,6 +73,11 @@ func (r *LimitDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err erro
 	})
 }
 
+// Next implements plan.Plan Next interface.
+func (r *LimitDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}
+
 // OffsetDefaultPlan handles SELECT ... FROM ... OFFSET N, skips N records.
 type OffsetDefaultPlan struct {
 	Count  uint64
@@ -106,4 +111,9 @@ func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 		return f(rid, in)
 	})
+}
+
+// Next implements plan.Plan Next interface.
+func (r *OffsetDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
 }

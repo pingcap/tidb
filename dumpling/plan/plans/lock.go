@@ -85,3 +85,8 @@ func (r *SelectLockPlan) Filter(ctx context.Context, expr expression.Expression)
 	// Do nothing
 	return r, false, nil
 }
+
+// Next implements plan.Plan Next interface.
+func (r *SelectLockPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

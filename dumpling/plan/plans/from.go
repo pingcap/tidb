@@ -94,6 +94,11 @@ func (r *TableNilPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	return nil
 }
 
+// Next implements plan.Plan Next interface.
+func (r *TableNilPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}
+
 // TableDefaultPlan iterates rows from a table, in general case
 // it performs a full table scan, but using Filter function,
 // it will return a new IndexPlan if an index is found in Filter function.
@@ -291,7 +296,7 @@ func (r *TableDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 		// Put rowKey to the tail of record row
 		rks := &RowKeyList{}
-		rke := &RowKeyEntry{
+		rke := &plan.RowKeyEntry{
 			Tbl: t,
 			Key: rowKey,
 		}
@@ -314,4 +319,9 @@ func (r *TableDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 // GetFields implements the plan.Plan GetFields interface.
 func (r *TableDefaultPlan) GetFields() []*field.ResultField {
 	return r.Fields
+}
+
+// Next implements plan.Plan Next interface.
+func (r *TableDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
 }

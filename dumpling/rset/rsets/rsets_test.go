@@ -90,6 +90,10 @@ func (p *testTablePlan) SetRetNil(retNil bool) {
 	p.retNil = retNil
 }
 
+func (r *testTablePlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}
+
 var _ = Suite(&testRsetsSuite{})
 
 type testRsetsSuite struct {

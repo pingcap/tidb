@@ -92,3 +92,8 @@ func (r *DistinctDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err e
 	}
 	return types.EOFAsNil(err)
 }
+
+// Next implements plan.Plan Next interface.
+func (r *DistinctDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

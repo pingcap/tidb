@@ -412,3 +412,8 @@ func buildResultField(tableName, name string, tp byte, size int) *field.ResultFi
 	}
 	return field
 }
+
+// Next implements plan.Plan Next interface.
+func (isp *InfoSchemaPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}

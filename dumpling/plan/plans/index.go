@@ -359,3 +359,8 @@ func toSpans(op opcode.Op, val interface{}) []*indexSpan {
 	}
 	return spans
 }
+
+// Next implements plan.Plan Next interface.
+func (r *indexPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+	return
+}
