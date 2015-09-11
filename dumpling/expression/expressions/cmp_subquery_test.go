@@ -135,7 +135,7 @@ func (s *testCompSubQuerySuite) TestRow(c *C) {
 			rhs = append(rhs, []interface{}{s.convert(v)})
 		}
 
-		sq := newMockSubQuery(rhs, []string{"id"})
+		sq := newMockSubQuery(rhs, []string{"c"})
 		expr := NewCompareSubQuery(t.op, Value{lhs}, sq, t.all)
 
 		c.Assert(expr.IsStatic(), IsFalse)
@@ -155,4 +155,16 @@ func (s *testCompSubQuerySuite) TestRow(c *C) {
 			c.Assert(val, Equals, int64(x))
 		}
 	}
+
+	// Test error.
+	sq := newMockSubQuery([][]interface{}{{1, 2}}, []string{"c1", "c2"})
+	expr := NewCompareSubQuery(opcode.EQ, Value{1}, sq, true)
+
+	_, err := expr.Eval(nil, nil)
+	c.Assert(err, NotNil)
+
+	expr = NewCompareSubQuery(opcode.EQ, Value{1}, sq, false)
+
+	_, err = expr.Eval(nil, nil)
+	c.Assert(err, NotNil)
 }
