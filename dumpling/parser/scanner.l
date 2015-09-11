@@ -332,6 +332,7 @@ unique		{u}{n}{i}{q}{u}{e}
 update		{u}{p}{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
+variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
 warnings	{w}{a}{r}{n}{i}{n}{g}{s}
 where		{w}{h}{e}{r}{e}
 when		{w}{h}{e}{n}
@@ -603,6 +604,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {value}			lval.item = string(l.val)
 			return value
 {values}		return values
+{variables}		lval.item = string(l.val)
+			return variables
 {warnings}		lval.item = string(l.val)
 			return warnings
 {when}			return when

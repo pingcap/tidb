@@ -54,6 +54,14 @@ const (
 	ShowColumns
 	ShowWarnings
 	ShowCharset
+	ShowVariables
+)
+
+const (
+	// SessionScope shows varibales in session scope.
+	SessionScope = iota
+	// GlobalScope shows varibales in global scope.
+	GlobalScope
 )
 
 // A dummy type to avoid naming collision in context.

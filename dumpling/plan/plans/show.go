@@ -22,10 +22,12 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
@@ -43,6 +45,9 @@ type ShowPlan struct {
 	ColumnName string
 	Flag       int
 	Full       bool
+	// Used by SHOW VARIABLES
+	GlobalScope bool
+	Pattern     expression.Expression
 }
 
 func (s *ShowPlan) isColOK(c *column.Col) bool {
@@ -61,8 +66,6 @@ func (s *ShowPlan) isColOK(c *column.Col) bool {
 
 // Do implements plan.Plan Do interface.
 func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	dbName := model.NewCIStr(s.DBName)
 	switch s.Target {
 	case stmt.ShowEngines:
 		f(0, []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"})
@@ -76,7 +79,8 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 			f(0, []interface{}{d})
 		}
 	case stmt.ShowTables:
-
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		dbName := model.NewCIStr(s.DBName)
 		if !is.SchemaExists(dbName) {
 			return errors.Errorf("Can not find DB: %s", dbName)
 		}
@@ -93,6 +97,8 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 			f(0, []interface{}{v})
 		}
 	case stmt.ShowColumns:
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		dbName := model.NewCIStr(s.DBName)
 		if !is.SchemaExists(dbName) {
 			return errors.Errorf("Can not find DB: %s", dbName)
 		}
@@ -144,6 +150,38 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 			row := []interface{}{desc.Name, desc.Desc, desc.DefaultCollation, desc.Maxlen}
 			f(0, row)
 		}
+	case stmt.ShowVariables:
+		sessionVars := variable.GetSessionVars(ctx)
+		for _, v := range variable.SysVars {
+			if s.Pattern != nil {
+				p, ok := s.Pattern.(*expressions.PatternLike)
+				if !ok {
+					return errors.Errorf("Like should be a PatternLike expression")
+				}
+				p.Expr = expressions.Value{Val: v.Name}
+				r, err := p.Eval(ctx, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				match, ok := r.(bool)
+				if !ok {
+					return errors.Errorf("Eval like pattern error")
+				}
+				if !match {
+					continue
+				}
+			}
+			value := v.Value
+			if !s.GlobalScope {
+				// Try to get Session Scope variable value
+				sv, ok := sessionVars.Systems[v.Name]
+				if ok {
+					value = sv
+				}
+			}
+			row := []interface{}{v.Name, value}
+			f(0, row)
+		}
 	}
 	return nil
 }
@@ -170,8 +208,9 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = []string{"Level", "Code", "Message"}
 	case stmt.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
+	case stmt.ShowVariables:
+		names = []string{"Variable_name", "Value"}
 	}
-
 	fields := make([]*field.ResultField, 0, len(names))
 	for _, name := range names {
 		fields = append(fields, &field.ResultField{Name: name})

@@ -195,6 +195,7 @@ import (
 	userVar		"USER_VAR"
 	value		"VALUE"
 	values		"VALUES"
+	variables	"VARIABLES"
 	warnings	"WARNINGS"
 	when		"WHEN"
 	where		"WHERE"
@@ -328,6 +329,7 @@ import (
 	Function		"function expr"
 	FunctionCall		"function call post part"
 	FunctionCallArgList	"function call optional argument list"
+	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
 	HavingClause		"HAVING clause"
@@ -2651,6 +2653,37 @@ ShowStmt:
 |	"SHOW" "WARNINGS"
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowWarnings}
+	}
+// See: https://dev.mysql.com/doc/refman/5.7/en/show-variables.html
+// TODO: Support show variables with where clause. 
+|	"SHOW" GlobalScope "VARIABLES"
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			GlobalScope: $2.(bool),
+		}
+	
+	}
+|	"SHOW" GlobalScope "VARIABLES" "LIKE" PrimaryExpression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			GlobalScope: $2.(bool),
+			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
+		}
+	}
+
+GlobalScope:
+	{
+		$$ = false	
+	}
+|	"GLOBAL"
+	{
+		$$ = true	
+	}
+|	"SESSION" 
+	{
+		$$ = false	
 	}
 
 OptFull:
