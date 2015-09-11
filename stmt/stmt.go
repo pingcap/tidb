@@ -58,8 +58,9 @@ const (
 )
 
 const (
-	NoneScope = iota
-	SessionScope
+	// SessionScope shows varibales in session scope.
+	SessionScope = iota
+	// GlobalScope shows varibales in global scope.
 	GlobalScope
 )
 

@@ -66,8 +66,6 @@ func (s *ShowPlan) isColOK(c *column.Col) bool {
 
 // Do implements plan.Plan Do interface.
 func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	dbName := model.NewCIStr(s.DBName)
 	switch s.Target {
 	case stmt.ShowEngines:
 		f(0, []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"})
@@ -81,7 +79,8 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 			f(0, []interface{}{d})
 		}
 	case stmt.ShowTables:
-
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		dbName := model.NewCIStr(s.DBName)
 		if !is.SchemaExists(dbName) {
 			return errors.Errorf("Can not find DB: %s", dbName)
 		}
@@ -98,6 +97,8 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 			f(0, []interface{}{v})
 		}
 	case stmt.ShowColumns:
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		dbName := model.NewCIStr(s.DBName)
 		if !is.SchemaExists(dbName) {
 			return errors.Errorf("Can not find DB: %s", dbName)
 		}
@@ -150,10 +151,8 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 			f(0, row)
 		}
 	case stmt.ShowVariables:
+		sessionVars := variable.GetSessionVars(ctx)
 		for _, v := range variable.SysVars {
-			if s.GlobalScope != (v.Scope == variable.ScopeGlobal) {
-				continue
-			}
 			if s.Pattern != nil {
 				p, ok := s.Pattern.(*expressions.PatternLike)
 				if !ok {
@@ -172,7 +171,15 @@ func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 					continue
 				}
 			}
-			row := []interface{}{v.Name, v.Value}
+			value := v.Value
+			if !s.GlobalScope {
+				// Try to get Session Scope variable value
+				sv, ok := sessionVars.Systems[v.Name]
+				if ok {
+					value = sv
+				}
+			}
+			row := []interface{}{v.Name, value}
 			f(0, row)
 		}
 	}
