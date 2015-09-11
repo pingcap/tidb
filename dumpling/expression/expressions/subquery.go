@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/stmt"
 )
 
-// SubQueryStatement implements stmt.Statement and plan.Planner interface
+// SubQueryStatement implements stmt.Statement and plan.Planner interface.
 type SubQueryStatement interface {
 	stmt.Statement
 	plan.Planner
