@@ -2103,10 +2103,7 @@ TableIdent:
 	}
 
 TableIdentList:
-	{
-		$$ = []table.Ident{}
-	}
-|	TableIdent
+	TableIdent
 	{
 		tbl := []table.Ident{$1.(table.Ident)}
 		$$ = tbl
