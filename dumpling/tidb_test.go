@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
@@ -276,6 +277,19 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 	c.Assert(rs.Next(), IsFalse)
 	c.Assert(rs.Next(), IsFalse)
 	c.Assert(rs.Close(), IsNil)
+}
+
+// Testcase for arg type.
+func (s *testMainSuite) TestCheckArgs(c *C) {
+	db, err := sql.Open("tidb", "memory://test/test")
+	defer db.Close()
+	c.Assert(err, IsNil)
+	mustExec(c, db, "create table if not exists t (c datetime)")
+	mustExec(c, db, "insert t values (?)", time.Now())
+	mustExec(c, db, "drop table t")
+	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
+		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
+		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
