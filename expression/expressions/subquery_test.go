@@ -13,9 +13,7 @@
 
 package expressions
 
-import (
-	. "github.com/pingcap/check"
-)
+import . "github.com/pingcap/check"
 
 var _ = Suite(&testSubQuerySuite{})
 
@@ -42,13 +40,49 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 	e2, ok := ec.(*SubQuery)
 	c.Assert(ok, IsTrue)
 
-	e2.Value = nil
-	e2.Stmt = newMockStatement()
+	e2 = newMockSubQuery([][]interface{}{{1}}, []string{"id"})
 
 	vv, err := e2.Eval(nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(vv, Equals, 1)
 
+	e2.Value = nil
+	vv, err = e2.Eval(nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(vv, Equals, 1)
+
+	e2 = newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+
+	vv, err = e2.Eval(nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(vv, DeepEquals, []interface{}{1, 2})
+
+	e2 = newMockSubQuery([][]interface{}{{1}, {2}}, []string{"id"})
+
+	_, err = e2.Eval(nil, nil)
+	c.Assert(err, NotNil)
+
 	str = e2.String()
 	c.Assert(len(str), Greater, 0)
+
+	e2 = newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+
+	count, err := e2.ColumnCount(nil)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2)
+
+	count, err = e2.ColumnCount(nil)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2)
+}
+
+func newMockSubQuery(rows [][]interface{}, fields []string) *SubQuery {
+	r := &mockRecordset{
+		rows:   rows,
+		fields: fields,
+		offset: len(fields),
+	}
+	ms := &mockStatement{rset: r}
+	ms.plan = newMockPlan(ms.rset)
+	return &SubQuery{Stmt: ms}
 }

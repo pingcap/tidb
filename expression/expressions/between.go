@@ -76,7 +76,7 @@ func (b *Between) String() string {
 
 // Eval implements the Expression Eval interface.
 func (b *Between) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	if err := CheckAllOneColumns(b.Expr, b.Left, b.Right); err != nil {
+	if err := CheckAllOneColumns(ctx, b.Expr, b.Left, b.Right); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -153,10 +153,6 @@ func (b *Between) convert() expression.Expression {
 //	a between 10 and 15 -> a >= 10 && a <= 15
 //	a not between 10 and 15 -> a < 10 || b > 15
 func NewBetween(expr, lo, hi expression.Expression, not bool) (expression.Expression, error) {
-	if err := CheckAllOneColumns(expr, lo, hi); err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	e, err := staticExpr(expr)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -148,7 +148,7 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	}()
 
 	// all operands must have same column.
-	if err := hasSameColumnCount(o.L, o.R); err != nil {
+	if err := hasSameColumnCount(ctx, o.L, o.R); err != nil {
 		return nil, o.traceErr(err)
 	}
 
@@ -156,7 +156,7 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	switch o.Op {
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE:
 	default:
-		if err := CheckOneColumn(o.L); err != nil {
+		if err := CheckOneColumn(ctx, o.L); err != nil {
 			return nil, o.traceErr(err)
 		}
 	}
