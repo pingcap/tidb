@@ -1002,7 +1002,7 @@ CharsetName:
 	Identifier
 	{
 		c := strings.ToLower($1.(string))
-			if charset.ValidCharsetAndCollation(c, "") {
+		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
 			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
@@ -1012,7 +1012,7 @@ CharsetName:
 |	stringLit
 	{
 		c := strings.ToLower($1.(string))
-			if charset.ValidCharsetAndCollation(c, "") {
+		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
 			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
