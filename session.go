@@ -266,9 +266,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareStmt(s, sql)
 }
 
-// checkArgs make sure all the arguments's type is known and can be handled.
+// checkArgs makes sure all the arguments' types are known and can be handled.
 // integer types are converted to int64 and uint64, time.Time is converted to mysql.Time.
-// time.Duration. is converted to mysql.Duration, other known types is leaved as it is.
+// time.Duration is converted to mysql.Duration, other known types are leaved as it is.
 func checkArgs(args ...interface{}) error {
 	for i, v := range args {
 		switch x := v.(type) {
