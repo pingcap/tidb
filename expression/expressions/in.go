@@ -150,7 +150,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 
 	if n.Sel == nil {
-		if err := hasSameColumnCount(n.Expr, n.List...); err != nil {
+		if err := hasSameColumnCount(ctx, n.Expr, n.List...); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -166,13 +166,13 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	var res []interface{}
 	if ev, ok := args[n]; !ok {
 		// select not yet evaluated
+		if err := hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		r, err := n.Sel.Plan(ctx)
 		if err != nil {
 			return nil, err
-		}
-
-		if g, e := len(r.GetFields()), columnCount(n.Expr); g != e {
-			return false, errors.Errorf("IN (%s): mismatched field count, have %d, need %d", n.Sel, g, e)
 		}
 
 		res = []interface{}{}
