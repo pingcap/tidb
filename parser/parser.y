@@ -1009,6 +1009,16 @@ CharsetName:
 			return 1
 		}
 	}
+|	stringLit
+	{
+		c := strings.ToLower($1.(string))
+			if charset.ValidCharsetAndCollation(c, "") {
+			$$ = c
+		} else {
+			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			return 1
+		}
+	}
 
 CollationName:
 	Identifier
