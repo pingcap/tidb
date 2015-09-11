@@ -113,7 +113,7 @@ func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
 	}
 	cnt := 0
 	err = util.ScanMetaWithPrefix(txn, prefix, func(k, v []byte) bool {
-		cnt += 1
+		cnt++
 		return true
 	})
 	return cnt, err
