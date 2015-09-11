@@ -70,6 +70,10 @@ func (cs *CompareSubQuery) String() string {
 
 // Eval implements the Expression Eval interface.
 func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	if err := hasSameColumnCount(ctx, cs.L, cs.R); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	in, err := cs.L.Eval(ctx, args)
 	if err != nil {
 		return nil, errors.Trace(err)
