@@ -14,12 +14,19 @@
 package expressions
 
 import (
+	"fmt"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // CompareSubQuery is the expression for "expr cmp (select ...)".
+// See: https://dev.mysql.com/doc/refman/5.7/en/comparisons-using-subqueries.html
+// See: https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
+// See: https://dev.mysql.com/doc/refman/5.7/en/all-subqueries.html
 type CompareSubQuery struct {
 	// L is the left expression
 	L expression.Expression
@@ -32,23 +39,133 @@ type CompareSubQuery struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (s *CompareSubQuery) Clone() (expression.Expression, error) {
-	return nil, nil
+func (cs *CompareSubQuery) Clone() (expression.Expression, error) {
+	l, err := cs.L.Clone()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	r, err := cs.R.Clone()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &CompareSubQuery{L: l, Op: cs.Op, R: r.(*SubQuery), All: cs.All}, nil
 }
 
 // IsStatic implements the Expression IsStatic interface.
-func (s *CompareSubQuery) IsStatic() bool {
-	return false
+func (cs *CompareSubQuery) IsStatic() bool {
+	return cs.L.IsStatic() && cs.R.IsStatic()
 }
 
 // String implements the Expression String interface.
-func (s *CompareSubQuery) String() string {
-	return ""
+func (cs *CompareSubQuery) String() string {
+	anyOrAll := "any"
+	if cs.All {
+		anyOrAll = "all"
+	}
+
+	return fmt.Sprintf("%s %s %s %s", cs.L, cs.Op, anyOrAll, cs.R)
 }
 
 // Eval implements the Expression Eval interface.
-func (s *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	return nil, nil
+func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	in, err := cs.L.Eval(ctx, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	p, err := cs.R.Plan(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	res := []interface{}{}
+	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
+		if len(data) == 1 {
+			res = append(res, data[0])
+		} else {
+			res = append(res, data)
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return cs.checkResult(in, res)
+}
+
+func (cs *CompareSubQuery) checkAllResult(in interface{}, result []interface{}) (interface{}, error) {
+	hasNull := false
+	for _, v := range result {
+		if v == nil {
+			hasNull = true
+			continue
+		}
+
+		comRes, err := types.Compare(in, v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		res, err := getCompResult(cs.Op, comRes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !res {
+			return false, nil
+		}
+	}
+
+	if hasNull {
+		// If no matched but we get null, return null.
+		// Like `insert t (c) values (1),(2),(null)`, then
+		// `select 3 > all (select c from t)`, returns null.
+		return nil, nil
+	}
+
+	return true, nil
+}
+
+func (cs *CompareSubQuery) checkAnyResult(in interface{}, result []interface{}) (interface{}, error) {
+	hasNull := false
+	for _, v := range result {
+		if v == nil {
+			hasNull = true
+			continue
+		}
+
+		comRes, err := types.Compare(in, v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		res, err := getCompResult(cs.Op, comRes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if res {
+			return true, nil
+		}
+	}
+
+	if hasNull {
+		// If no matched but we get null, return null.
+		// Like `insert t (c) values (1),(2),(null)`, then
+		// `select 0 > any (select c from t)`, returns null.
+		return nil, nil
+	}
+
+	return false, nil
+}
+
+func (cs *CompareSubQuery) checkResult(in interface{}, result []interface{}) (interface{}, error) {
+	if cs.All {
+		return cs.checkAllResult(in, result)
+	}
+
+	return cs.checkAnyResult(in, result)
 }
 
 // NewCompareSubQuery creates a CompareSubQuery object.
