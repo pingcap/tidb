@@ -36,8 +36,9 @@ Read the [Roadmap](./ROADMAP.md).
 ## Quick start
 
 - __Pre-requirement__  
-```
+
 golang version 1.5 or later
+```
 go get -d github.com/pingcap/tidb
 cd $GOPATH/src/github.com/pingcap/tidb
 make
