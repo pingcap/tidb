@@ -140,5 +140,17 @@ func (s *testStmtSuite) TestSelectErrorRow(c *C) {
 	_, err = tx.Query("select * from test having row(1, 1);")
 	c.Assert(err, NotNil)
 
+	_, err = tx.Query("select (select 1, 1) from test;")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test group by (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test order by (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test having (select 1, 1);")
+	c.Assert(err, NotNil)
+
 	mustCommit(c, tx)
 }
