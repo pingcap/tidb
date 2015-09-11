@@ -44,13 +44,19 @@ type Plan interface {
 
 	// Next returns the next row of data and rowKeys, nil data means there is no more data to return.
 	// Aggregation plan will fetch all the data at the first call.
-	Next(ctx context.Context) (data []interface{}, rowKeys []*RowKeyEntry, err error)
+	Next(ctx context.Context) (row *Row, err error)
 }
 
 // Planner is implemented by any structure that has a Plan method.
 type Planner interface {
 	// Plan function returns Plan.
 	Plan(ctx context.Context) (Plan, error)
+}
+
+// Row represents a record row.
+type Row struct {
+	Data    []interface{}
+	RowKeys []*RowKeyEntry
 }
 
 // RowKeyEntry is designed for Delete statement in multi-table mode,

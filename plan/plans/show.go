@@ -225,6 +225,6 @@ func (s *ShowPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 }
 
 // Next implements plan.Plan Next interface.
-func (s *ShowPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

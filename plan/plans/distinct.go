@@ -94,6 +94,6 @@ func (r *DistinctDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err e
 }
 
 // Next implements plan.Plan Next interface.
-func (r *DistinctDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *DistinctDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

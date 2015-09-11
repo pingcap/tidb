@@ -95,7 +95,7 @@ func (r *TableNilPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *TableNilPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
@@ -322,6 +322,6 @@ func (r *TableDefaultPlan) GetFields() []*field.ResultField {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *TableDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

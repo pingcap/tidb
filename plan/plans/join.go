@@ -344,6 +344,6 @@ func appendRow(prefix []interface{}, in []interface{}) []interface{} {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *JoinPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

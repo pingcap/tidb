@@ -77,6 +77,6 @@ func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err err
 }
 
 // Next implements plan.Plan Next interface.
-func (r *FilterDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

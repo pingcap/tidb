@@ -191,6 +191,6 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *OrderByDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *OrderByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

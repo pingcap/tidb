@@ -74,7 +74,7 @@ func (r *LimitDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err erro
 }
 
 // Next implements plan.Plan Next interface.
-func (r *LimitDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
@@ -114,6 +114,6 @@ func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *OffsetDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

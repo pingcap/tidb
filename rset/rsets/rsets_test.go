@@ -90,7 +90,7 @@ func (p *testTablePlan) SetRetNil(retNil bool) {
 	p.retNil = retNil
 }
 
-func (r *testTablePlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (p *testTablePlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 

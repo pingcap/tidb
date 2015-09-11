@@ -115,7 +115,7 @@ func (r *selectIndexDefaultPlan) GetFields() []*field.ResultField {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *selectIndexDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *selectIndexDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
@@ -145,7 +145,7 @@ func (r *NullPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 }
 
 // Next implements plan.Plan Next interface.
-func (r *NullPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *NullPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 

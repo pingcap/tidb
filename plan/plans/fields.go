@@ -77,7 +77,7 @@ func (r *SelectFieldsDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) er
 }
 
 // Next implements plan.Plan Next interface.
-func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
@@ -122,6 +122,6 @@ func (s *SelectEmptyFieldListPlan) Filter(ctx context.Context, expr expression.E
 }
 
 // Next implements plan.Plan Next interface.
-func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

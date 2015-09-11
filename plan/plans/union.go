@@ -141,6 +141,6 @@ func (p *UnionPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 }
 
 // Next implements plan.Plan Next interface.
-func (p *UnionPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (p *UnionPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
