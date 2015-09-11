@@ -487,6 +487,9 @@ import (
 %left 	'~' neg
 %right 	not
 
+%precedence lowerThanLeftParen
+%precedence '('
+
 %start	Start
 
 %%
@@ -1538,7 +1541,7 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
 
 NotKeywordToken:
-	"SQL_CALC_FOUND_ROWS" | "SUBSTRING"
+	"SQL_CALC_FOUND_ROWS" | "SUBSTRING" %prec lowerThanLeftParen
 
 /************************************************************************************
  *
