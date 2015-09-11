@@ -74,6 +74,9 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if in == nil {
+		return nil, nil
+	}
 
 	p, err := cs.R.Plan(ctx)
 	if err != nil {
