@@ -491,6 +491,8 @@ import (
 
 %precedence lowerThanLeftParen
 %precedence '('
+%precedence lowerThanQuick
+%precedence quick
 
 %start	Start
 
@@ -2115,6 +2117,7 @@ TableIdentList:
 	}
 
 QuickOptional:
+	%prec lowerThanQuick
 	{
 		$$ = false
 	}
