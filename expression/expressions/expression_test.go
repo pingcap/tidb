@@ -97,6 +97,11 @@ func newMockRecordset() *mockRecordset {
 }
 
 func (r *mockRecordset) Do(f func(data []interface{}) (more bool, err error)) error {
+	for i := range r.rows {
+		if more, err := f(r.rows[i]); !more || err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
