@@ -37,7 +37,7 @@ Read the [Roadmap](./ROADMAP.md).
 
 - __Pre-requirement__  
 
-golang version 1.5 or later
+Go environment. Currently a 64-bit version of go >= 1.5 is required.
 ```
 go get -d github.com/pingcap/tidb
 cd $GOPATH/src/github.com/pingcap/tidb
