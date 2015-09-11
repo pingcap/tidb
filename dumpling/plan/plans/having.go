@@ -80,6 +80,6 @@ func (r *HavingPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *HavingPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

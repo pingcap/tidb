@@ -70,6 +70,6 @@ func (r *ExplainDefaultPlan) Filter(ctx context.Context, expr expression.Express
 }
 
 // Next implements plan.Plan Next interface.
-func (r *ExplainDefaultPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *ExplainDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

@@ -204,6 +204,6 @@ func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 	return p, false, nil
 }
 
-func (p *mockPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }

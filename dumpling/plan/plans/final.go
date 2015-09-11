@@ -80,6 +80,6 @@ func (r *SelectFinalPlan) Filter(ctx context.Context, expr expression.Expression
 }
 
 // Next implements plan.Plan Next interface.
-func (r *SelectFinalPlan) Next(ctx context.Context) (data []interface{}, rowKeys []*plan.RowKeyEntry, err error) {
+func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
