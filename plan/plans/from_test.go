@@ -69,11 +69,9 @@ func (p *testFromSuit) ClearValue(key fmt.Stringer) {}
 
 var _ = Suite(&testFromSuit{})
 
-var store kv.Storage
-
 func (p *testFromSuit) SetUpSuite(c *C) {
 	var err error
-	store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	p.vars = map[string]interface{}{}
 	p.txn, _ = store.Begin()

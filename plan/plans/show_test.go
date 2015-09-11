@@ -52,7 +52,7 @@ var _ = Suite(&testShowSuit{})
 
 func (p *testShowSuit) SetUpSuite(c *C) {
 	var err error
-	store, err = tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	p.vars = map[string]interface{}{}
 	p.txn, _ = store.Begin()
