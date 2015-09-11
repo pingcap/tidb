@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -40,8 +39,8 @@ type PatternIn struct {
 	List []expression.Expression
 	// Not is true, the expression is "not in".
 	Not bool
-	// Sel is the select statement.
-	Sel plan.Planner
+	// Sel is the sub query.
+	Sel *SubQuery
 }
 
 // Clone implements the Expression Clone interface.

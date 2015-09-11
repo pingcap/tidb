@@ -17,10 +17,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/stmt"
 )
+
+// SubQueryStatement implements stmt.Statement and plan.Planner interface
+type SubQueryStatement interface {
+	stmt.Statement
+	plan.Planner
+}
 
 var _ expression.Expression = (*SubQuery)(nil)
 
@@ -28,35 +36,53 @@ var _ expression.Expression = (*SubQuery)(nil)
 // TODO: complete according to https://dev.mysql.com/doc/refman/5.7/en/subquery-restrictions.html
 type SubQuery struct {
 	// Stmt is the sub select statement.
-	Stmt stmt.Statement
+	Stmt SubQueryStatement
 	// Value holds the sub select result.
 	Value interface{}
+
+	p plan.Plan
 }
 
 // Clone implements the Expression Clone interface.
 func (sq *SubQuery) Clone() (expression.Expression, error) {
-	// TODO: Statement does not have Clone interface. So we need to check this
-	nsq := &SubQuery{Stmt: sq.Stmt, Value: sq.Value}
+	nsq := &SubQuery{Stmt: sq.Stmt, Value: sq.Value, p: sq.p}
 	return nsq, nil
 }
 
 // Eval implements the Expression Eval interface.
+// Eval doesn't support multi rows return, so we can only get a scalar or a row result.
+// If you want to get multi rows, use Plan to get a execution plan and run Do() directly.
 func (sq *SubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
 	if sq.Value != nil {
 		return sq.Value, nil
 	}
-	rs, err := sq.Stmt.Exec(ctx)
+
+	p, err := sq.Plan(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	// TODO: check row/column number
-	// Output all the data and let the outer caller check the row/column number
-	// This simple implementation is used to pass tpc-c
-	rows, err := rs.Rows(1, 0)
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
-		return nil, err
+
+	count := 0
+	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
+		if count > 0 {
+			return false, errors.Errorf("Subquery returns more than 1 row")
+		}
+
+		if len(p.GetFields()) == 1 {
+			// a scalar value is a single value
+			sq.Value = data[0]
+		} else {
+			// a row value is []interface{}
+			sq.Value = data
+		}
+		count++
+		return true, nil
+	})
+
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	sq.Value = rows[0][0]
+
 	return sq.Value, nil
 }
 
@@ -72,4 +98,24 @@ func (sq *SubQuery) String() string {
 		return fmt.Sprintf("(%s)", stmtStr)
 	}
 	return ""
+}
+
+// ColumnCount returns column count for the sub query.
+func (sq *SubQuery) ColumnCount(ctx context.Context) (int, error) {
+	p, err := sq.Plan(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return len(p.GetFields()), nil
+}
+
+// Plan implements plan.Planner interface.
+func (sq *SubQuery) Plan(ctx context.Context) (plan.Plan, error) {
+	if sq.p != nil {
+		return sq.p, nil
+	}
+
+	var err error
+	sq.p, err = sq.Stmt.Plan(ctx)
+	return sq.p, errors.Trace(err)
 }

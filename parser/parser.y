@@ -1374,9 +1374,9 @@ Factor1:
 	{
 		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
 	}
-|	PrimaryFactor NotOpt "IN" '(' SelectStmt semiOpt ')'
+|	PrimaryFactor NotOpt "IN" SubSelect
 	{
-		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $5.(*stmts.SelectStmt)}
+		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*expressions.SubQuery)}
 	}
 |	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
 	{
@@ -2461,7 +2461,7 @@ SelectStmtOrder:
 SubSelect:
 	'(' SelectStmt ')'
 	{
-		s := $2.(stmt.Statement)
+		s := $2.(*stmts.SelectStmt)
 		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
 		$$ = &expressions.SubQuery{Stmt: s}
 	}
