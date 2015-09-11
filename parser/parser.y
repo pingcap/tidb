@@ -493,6 +493,8 @@ import (
 %precedence '('
 %precedence lowerThanQuick
 %precedence quick
+%precedence lowerThanComma
+%precedence ','
 
 %start	Start
 
@@ -1047,7 +1049,7 @@ CreateSpecificationList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt CommaOpt
+	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*coldef.ColumnDef
@@ -2841,7 +2843,7 @@ TableOptListOpt:
 	{
 		$$ = []*coldef.TableOpt{}
 	}
-|	TableOptList
+|	TableOptList %prec lowerThanComma
 
 TableOptList:
 	TableOpt
