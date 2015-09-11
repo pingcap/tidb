@@ -124,10 +124,6 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)
-
-	s.r.By[0] = &expressions.Row{Values: []expression.Expression{expressions.Value{Val: 1}, expressions.Value{Val: 1}}}
-	_, err = s.r.Plan(nil)
-	c.Assert(err, NotNil)
 }
 
 func (s *testGroupByRsetSuite) TestGroupByHasAmbiguousField(c *C) {

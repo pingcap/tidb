@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/plan"
@@ -79,6 +80,42 @@ func (s *SelectStmt) SetText(text string) {
 	s.Text = text
 }
 
+func (s *SelectStmt) checkOneColumn(ctx context.Context) error {
+	// check select fields
+	for _, f := range s.Fields {
+		if err := expressions.CheckOneColumn(ctx, f.Expr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// check group by
+	if s.GroupBy != nil {
+		for _, f := range s.GroupBy.By {
+			if err := expressions.CheckOneColumn(ctx, f); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	// check order by
+	if s.OrderBy != nil {
+		for _, f := range s.OrderBy.By {
+			if err := expressions.CheckOneColumn(ctx, f.Expr); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	// check having
+	if s.Having != nil {
+		if err := expressions.CheckOneColumn(ctx, s.Having.Expr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 // Plan implements the plan.Planner interface.
 // The whole phase for select is
 // `from -> where -> lock -> group by -> having -> select fields -> distinct -> order by -> limit -> final`
@@ -120,6 +157,10 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	r, err = (&rsets.SelectLockRset{Src: r, Lock: lock}).Plan(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := s.checkOneColumn(ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// Get select list for futher field values evaluation.
