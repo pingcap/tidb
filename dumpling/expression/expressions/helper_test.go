@@ -127,11 +127,14 @@ func (s *testHelperSuite) TestBase(c *C) {
 	v, err = EvalBoolExpr(nil, mockExpr{err: errors.New("must error")}, nil)
 	c.Assert(err, NotNil)
 
-	err = CheckOneColumn(&Row{})
+	err = CheckOneColumn(nil, &Row{})
 	c.Assert(err, NotNil)
 
-	err = CheckOneColumn(Value{nil})
+	err = CheckOneColumn(nil, Value{nil})
 	c.Assert(err, IsNil)
+
+	err = CheckOneColumn(nil, newMockSubQuery([][]interface{}{}, []string{"id", "name"}))
+	c.Assert(err, NotNil)
 
 	columns := []struct {
 		lhs     expression.Expression
@@ -145,10 +148,10 @@ func (s *testHelperSuite) TestBase(c *C) {
 	}
 
 	for _, t := range columns {
-		err = hasSameColumnCount(t.lhs, t.rhs)
+		err = hasSameColumnCount(nil, t.lhs, t.rhs)
 		c.Assert(err, t.checker)
 
-		err = hasSameColumnCount(t.rhs, t.lhs)
+		err = hasSameColumnCount(nil, t.rhs, t.lhs)
 		c.Assert(err, t.checker)
 	}
 }

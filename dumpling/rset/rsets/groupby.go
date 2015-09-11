@@ -71,10 +71,6 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	aggFields := r.SelectList.AggFields
 
 	for i, e := range r.By {
-		if err := expressions.CheckOneColumn(e); err != nil {
-			return nil, errors.Trace(err)
-		}
-
 		if v, ok := e.(expressions.Value); ok {
 			var position int
 			switch u := v.Val.(type) {
