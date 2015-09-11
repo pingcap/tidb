@@ -69,10 +69,6 @@ func (r *OrderByRset) String() string {
 // CheckAndUpdateSelectList checks order by fields validity and set hidden fields to selectList.
 func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tableFields []*field.ResultField) error {
 	for i, v := range r.By {
-		if err := expressions.CheckOneColumn(v.Expr); err != nil {
-			return errors.Trace(err)
-		}
-
 		if expressions.ContainAggregateFunc(v.Expr) {
 			expr, err := selectList.UpdateAggFields(v.Expr, tableFields)
 			if err != nil {
