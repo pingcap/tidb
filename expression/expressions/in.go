@@ -172,9 +172,9 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 			return nil, err
 		}
 
-		count, errCount := columnCount(ctx, n.Expr)
-		if errCount != nil {
-			return nil, errors.Trace(errCount)
+		count, countErr := columnCount(ctx, n.Expr)
+		if countErr != nil {
+			return nil, errors.Trace(countErr)
 		}
 
 		if g, e := len(r.GetFields()), count; g != e {
