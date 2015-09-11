@@ -638,6 +638,21 @@ func (s *testSessionSuite) TestRow(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select row(1, 1) > (select 1, 0)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select 1 > (select 1)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 0)
+
+	r = mustExecSQL(c, se, "select (select 1)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
