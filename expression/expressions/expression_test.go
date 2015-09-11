@@ -186,7 +186,6 @@ func newMockPlan(rset *mockRecordset) *mockPlan {
 
 func (p *mockPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	for _, data := range p.rset.rows {
-
 		if more, err := f(nil, data[:p.rset.offset]); !more || err != nil {
 			return err
 		}
