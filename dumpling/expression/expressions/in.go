@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -40,8 +39,8 @@ type PatternIn struct {
 	List []expression.Expression
 	// Not is true, the expression is "not in".
 	Not bool
-	// Sel is the select statement.
-	Sel plan.Planner
+	// Sel is the sub query.
+	Sel *SubQuery
 }
 
 // Clone implements the Expression Clone interface.
@@ -93,10 +92,10 @@ func (n *PatternIn) String() string {
 	}
 
 	if n.Not {
-		return fmt.Sprintf("%s NOT IN (%s)", n.Expr, n.Sel)
+		return fmt.Sprintf("%s NOT IN %s", n.Expr, n.Sel)
 	}
 
-	return fmt.Sprintf("%s IN (%s)", n.Expr, n.Sel)
+	return fmt.Sprintf("%s IN %s", n.Expr, n.Sel)
 }
 
 func (n *PatternIn) checkInList(in interface{}, list []interface{}) (interface{}, error) {
@@ -166,19 +165,14 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 
 	var res []interface{}
 	if ev, ok := args[n]; !ok {
+		if err := hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		// select not yet evaluated
 		r, err := n.Sel.Plan(ctx)
 		if err != nil {
 			return nil, err
-		}
-
-		count, countErr := columnCount(ctx, n.Expr)
-		if countErr != nil {
-			return nil, errors.Trace(countErr)
-		}
-
-		if g, e := len(r.GetFields()), count; g != e {
-			return false, errors.Errorf("IN (%s): mismatched field count, have %d, need %d", n.Sel, g, e)
 		}
 
 		res = []interface{}{}
