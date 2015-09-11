@@ -1683,7 +1683,7 @@ Operand:
 	{
 		$$ = &expressions.PExpr{Expr: expressions.Expr($2)}
 	}
-|	"DEFAULT"
+|	"DEFAULT" %prec lowerThanLeftParen
 	{
 		$$ = &expressions.Default{}
 	}
