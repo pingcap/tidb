@@ -2461,7 +2461,7 @@ SelectStmtOrder:
 SubSelect:
 	'(' SelectStmt ')'
 	{
-		s := $2.(stmt.Statement)
+		s := $2.(*stmts.SelectStmt)
 		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
 		$$ = &expressions.SubQuery{Stmt: s}
 	}
