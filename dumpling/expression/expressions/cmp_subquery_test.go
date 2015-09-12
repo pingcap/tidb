@@ -35,7 +35,7 @@ func (s *testCompSubQuerySuite) convert(v interface{}) interface{} {
 	return v
 }
 
-func (s *testCompSubQuerySuite) TestRow(c *C) {
+func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 	tbl := []struct {
 		lhs    interface{}
 		op     opcode.Op
