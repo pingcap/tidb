@@ -60,9 +60,9 @@ func (cs *CompareSubQuery) IsStatic() bool {
 
 // String implements the Expression String interface.
 func (cs *CompareSubQuery) String() string {
-	anyOrAll := "any"
+	anyOrAll := "ANY"
 	if cs.All {
-		anyOrAll = "all"
+		anyOrAll = "ALL"
 	}
 
 	return fmt.Sprintf("%s %s %s %s", cs.L, cs.Op, anyOrAll, cs.R)
@@ -87,6 +87,10 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, errors.Trace(err)
 	}
 
+	if cs.R.Value != nil {
+		return cs.checkResult(in, cs.R.Value.([]interface{}))
+	}
+
 	res := []interface{}{}
 	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
 		if len(data) == 1 {
@@ -100,7 +104,8 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, errors.Trace(err)
 	}
 
-	return cs.checkResult(in, res)
+	cs.R.Value = res
+	return cs.checkResult(in, cs.R.Value.([]interface{}))
 }
 
 func (cs *CompareSubQuery) checkAllResult(in interface{}, result []interface{}) (interface{}, error) {
