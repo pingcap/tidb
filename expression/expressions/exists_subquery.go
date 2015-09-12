@@ -66,15 +66,16 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 	}
 
 	count := 0
+	res := []interface{}{}
 	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
 		if count > 0 {
-			return false, nil
+			return true, nil
 		}
 
 		if len(data) == 1 {
-			es.Sel.Value = data[0]
+			res = append(res, data[0])
 		} else {
-			es.Sel.Value = data
+			res = append(res, data)
 		}
 
 		count++
@@ -83,6 +84,8 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	es.Sel.Value = res
 
 	if !es.Not {
 		return es.Sel.Value != nil, nil
