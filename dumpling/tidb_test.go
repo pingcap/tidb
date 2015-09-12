@@ -655,6 +655,19 @@ func (s *testSessionSuite) TestRow(c *C) {
 	match(c, row, 1)
 }
 
+func (s *testSessionSuite) TestIndex(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table if not exists test_index (c1 int, c double, index(c1), index(c))")
+	mustExecSQL(c, se, "insert into test_index values (1, 2), (3, null)")
+	r := mustExecSQL(c, se, "select c1 from test_index where c > 0")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 1)
+	match(c, rows[0], 1)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)

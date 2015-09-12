@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
@@ -104,7 +105,13 @@ type kvIndex struct {
 }
 
 func genIndexPrefix(indexPrefix, indexName string) string {
-	return fmt.Sprintf("%s_%s", indexPrefix, indexName)
+	// Use EncodeBytes to guarantee generating different index prefix.
+	// e.g, two indices c1 and c with index prefix p, if no EncodeBytes,
+	// the index format looks p_c and p_c1, if c has an index value which the first encoded byte is '1',
+	// we will meet an error, because p_c1 is for index c1.
+	// If EncodeBytes, c1 -> c1\x00\x01 and c -> c\x00\x01, the prefixs are different.
+	key := fmt.Sprintf("%s_%s", indexPrefix, indexName)
+	return string(codec.EncodeBytes(nil, []byte(key)))
 }
 
 // NewKVIndex builds a new kvIndex object.
