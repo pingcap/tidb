@@ -14,6 +14,9 @@
 package expressions
 
 import (
+	"fmt"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 )
@@ -29,7 +32,12 @@ type ExistsSubQuery struct {
 
 // Clone implements the Expression Clone interface.
 func (es *ExistsSubQuery) Clone() (expression.Expression, error) {
-	return nil, nil
+	sel, err := es.Sel.Clone()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &ExistsSubQuery{Sel: sel.(*SubQuery), Not: es.Not}, nil
 }
 
 // IsStatic implements the Expression IsStatic interface.
@@ -39,12 +47,48 @@ func (es *ExistsSubQuery) IsStatic() bool {
 
 // String implements the Expression String interface.
 func (es *ExistsSubQuery) String() string {
-	return ""
+	if es.Not {
+		return fmt.Sprintf("NOT EXISTS %s", es.Sel)
+	}
+
+	return fmt.Sprintf("EXISTS %s", es.Sel)
 }
 
 // Eval implements the Expression Eval interface.
 func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	return nil, nil
+	if es.Sel.Value != nil {
+		return !es.Not, nil
+	}
+
+	p, err := es.Sel.Plan(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	count := 0
+	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
+		if count > 0 {
+			return false, nil
+		}
+
+		if len(data) == 1 {
+			es.Sel.Value = data[0]
+		} else {
+			es.Sel.Value = data
+		}
+
+		count++
+		return true, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if !es.Not {
+		return es.Sel.Value != nil, nil
+	}
+
+	return es.Sel.Value == nil, nil
 }
 
 // NewExistsSubQuery creates a ExistsSubQuery object.
