@@ -427,7 +427,10 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 func (r *indexPlan) Close() error {
 	if r.iter != nil {
 		r.iter.Close()
+		r.iter = nil
 	}
+	r.cursor = 0
+	r.skipLowCmp = false
 	return nil
 }
 

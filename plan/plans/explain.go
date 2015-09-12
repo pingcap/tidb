@@ -92,6 +92,8 @@ func (r *ExplainDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 
 // Close implements plan.Plan Close interface.
 func (r *ExplainDefaultPlan) Close() error {
+	r.lines = nil
+	r.cursor = 0
 	return nil
 }
 

@@ -167,6 +167,7 @@ func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err
 
 // Close implements plan.Plan Close interface.
 func (s *SelectEmptyFieldListPlan) Close() error {
+	s.done = false
 	return nil
 }
 

@@ -124,7 +124,10 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 
 // Close implements plan.Plan Close interface.
 func (r *TableNilPlan) Close() error {
-	r.iter.Close()
+	if r.iter != nil {
+		r.iter.Close()
+	}
+	r.iter = nil
 	return nil
 }
 
@@ -411,7 +414,10 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 
 // Close implements plan.Plan Close interface.
 func (r *TableDefaultPlan) Close() error {
-	r.iter.Close()
+	if r.iter != nil {
+		r.iter.Close()
+	}
+	r.iter = nil
 	return nil
 }
 

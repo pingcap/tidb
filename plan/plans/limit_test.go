@@ -73,16 +73,12 @@ func (p *testTablePlan) Next(ctx context.Context) (row *plan.Row, err error) {
 }
 
 func (p *testTablePlan) Close() error {
+	p.cursor = 0
 	return nil
 }
 
 func (p *testTablePlan) UseNext() bool {
 	return true
-}
-
-func (p *testTablePlan) reset() *testTablePlan {
-	p.cursor = 0
-	return p
 }
 
 type testLimitSuit struct {

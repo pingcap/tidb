@@ -107,6 +107,7 @@ func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 
 // Close implements plan.Plan Close interface.
 func (r *SelectFinalPlan) Close() error {
+	r.infered = false
 	return r.Src.Close()
 }
 
