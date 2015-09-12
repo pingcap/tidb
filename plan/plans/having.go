@@ -83,3 +83,8 @@ func (r *HavingPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *HavingPlan) Close() error {
+	return nil
+}

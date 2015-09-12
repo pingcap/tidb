@@ -76,6 +76,10 @@ func (p *testTablePlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
+func (p *testTablePlan) Close() error {
+	return nil
+}
+
 type testDistinctSuit struct{}
 
 var _ = Suite(&testDistinctSuit{})

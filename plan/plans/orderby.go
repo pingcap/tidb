@@ -194,3 +194,8 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 func (r *OrderByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *OrderByDefaultPlan) Close() error {
+	return nil
+}

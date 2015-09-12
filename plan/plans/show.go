@@ -228,3 +228,8 @@ func (s *ShowPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (s *ShowPlan) Close() error {
+	return nil
+}

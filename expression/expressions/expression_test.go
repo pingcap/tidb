@@ -207,3 +207,7 @@ func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+func (p *mockPlan) Close() error {
+	return nil
+}
