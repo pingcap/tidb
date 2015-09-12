@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -112,8 +113,11 @@ func (t *testLimitSuit) TestLimit(c *C) {
 		Src:    tblPlan,
 		Fields: []*field.ResultField{},
 	}
-
-	pln.Do(t.sess.(context.Context), func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Ctx:  t.sess.(context.Context),
+		Plan: pln,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		// TODO check result
 		return true, nil
 	})
@@ -128,7 +132,11 @@ func (t *testLimitSuit) TestOffset(c *C) {
 		Fields: []*field.ResultField{},
 	}
 
-	pln.Do(t.sess.(context.Context), func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Ctx:  t.sess.(context.Context),
+		Plan: pln,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		// TODO check result
 		return true, nil
 	})

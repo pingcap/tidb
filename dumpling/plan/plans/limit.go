@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/reborndb/go/errors"
 )
 
 var (
@@ -35,6 +36,7 @@ var (
 // most N results.
 type LimitDefaultPlan struct {
 	Count  uint64
+	cursor uint64
 	Src    plan.Plan
 	Fields []*field.ResultField
 }
@@ -75,17 +77,30 @@ func (r *LimitDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err erro
 
 // Next implements plan.Plan Next interface.
 func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.cursor == r.Count {
+		return
+	}
+	r.cursor++
+	// TODO: This is a temp solution for pass wordpress
+	variable.GetSessionVars(ctx).AddFoundRows(1)
+	row, err = r.Src.Next(ctx)
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (r *LimitDefaultPlan) Close() error {
-	return nil
+	return r.Src.Close()
+}
+
+// UseNext implements plan.NextPlan interface.
+func (r *LimitDefaultPlan) UseNext() bool {
+	return plan.UseNext(r.Src)
 }
 
 // OffsetDefaultPlan handles SELECT ... FROM ... OFFSET N, skips N records.
 type OffsetDefaultPlan struct {
 	Count  uint64
+	cursor uint64
 	Src    plan.Plan
 	Fields []*field.ResultField
 }
@@ -120,10 +135,22 @@ func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 
 // Next implements plan.Plan Next interface.
 func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	return
+	for r.cursor < r.Count {
+		_, err = r.Src.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.cursor++
+	}
+	return r.Src.Next(ctx)
 }
 
 // Close implements plan.Plan Close interface.
 func (r *OffsetDefaultPlan) Close() error {
-	return nil
+	return r.Src.Close()
+}
+
+// UseNext implements plan.NextPlan interface.
+func (r *OffsetDefaultPlan) UseNext() bool {
+	return plan.UseNext(r.Src)
 }
