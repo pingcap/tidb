@@ -82,13 +82,13 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, nil
 	}
 
+	if cs.R.Value != nil {
+		return cs.checkResult(in, cs.R.Value.([]interface{}))
+	}
+
 	p, err := cs.R.Plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if cs.R.Value != nil {
-		return cs.checkResult(in, cs.R.Value.([]interface{}))
 	}
 
 	res := []interface{}{}
