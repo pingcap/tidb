@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/util/charset"
 )
 
@@ -62,10 +63,10 @@ func (t *testFinalPlan) TestFinalPlan(c *C) {
 		},
 	}
 
-	tblPlan := &testTablePlan{finalTestData, []string{"id", "name", "ok"}}
+	tblPlan := &testTablePlan{finalTestData, []string{"id", "name", "ok"}, 0}
 
-	p := &SelectFinalPlan{
-		SelectList: &SelectList{
+	p := &plans.SelectFinalPlan{
+		SelectList: &plans.SelectList{
 			HiddenFieldOffset: len(tblPlan.GetFields()),
 			ResultFields: []*field.ResultField{
 				field.ColToResultField(col1, "t"),

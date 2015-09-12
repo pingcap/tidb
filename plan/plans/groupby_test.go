@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan/plans"
 )
 
 type testGroupBySuite struct{}
@@ -34,9 +35,9 @@ var groupByTestData = []*testRowData{
 }
 
 func (t *testGroupBySuite) TestGroupBy(c *C) {
-	tblPlan := &testTablePlan{groupByTestData, []string{"id", "name"}}
+	tblPlan := &testTablePlan{groupByTestData, []string{"id", "name"}, 0}
 	// test multiple fields
-	sl := &SelectList{
+	sl := &plans.SelectList{
 		Fields: []*field.Field{
 			{
 				Expr: &expressions.Ident{
@@ -62,7 +63,7 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 		AggFields: map[int]struct{}{2: {}},
 	}
 
-	groupbyPlan := &GroupByDefaultPlan{
+	groupbyPlan := &plans.GroupByDefaultPlan{
 		SelectList: sl,
 		Src:        tblPlan,
 		By: []expression.Expression{
