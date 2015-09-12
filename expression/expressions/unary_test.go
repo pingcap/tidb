@@ -36,8 +36,8 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		result interface{}
 	}{
 		// test NOT.
-		{1, opcode.Not, int8(0)},
-		{0, opcode.Not, int8(1)},
+		{1, opcode.Not, int64(0)},
+		{0, opcode.Not, int64(1)},
 		{nil, opcode.Not, nil},
 
 		// test BitNeg.
@@ -49,14 +49,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{float32(1.0), opcode.Plus, float32(1.0)},
 		{float64(1.0), opcode.Plus, float64(1.0)},
 		{int(1), opcode.Plus, int(1)},
-		{int8(1), opcode.Plus, int8(1)},
-		{int16(1), opcode.Plus, int16(1)},
-		{int32(1), opcode.Plus, int32(1)},
 		{int64(1), opcode.Plus, int64(1)},
-		{uint(1), opcode.Plus, uint(1)},
-		{uint8(1), opcode.Plus, uint8(1)},
-		{uint16(1), opcode.Plus, uint16(1)},
-		{uint32(1), opcode.Plus, uint32(1)},
 		{uint64(1), opcode.Plus, uint64(1)},
 		{"1.0", opcode.Plus, "1.0"},
 		{[]byte("1.0"), opcode.Plus, []byte("1.0")},
@@ -66,9 +59,6 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{float32(1.0), opcode.Minus, float32(-1.0)},
 		{float64(1.0), opcode.Minus, float64(-1.0)},
 		{int(1), opcode.Minus, int(-1)},
-		{int8(1), opcode.Minus, int8(-1)},
-		{int16(1), opcode.Minus, int16(-1)},
-		{int32(1), opcode.Minus, int32(-1)},
 		{int64(1), opcode.Minus, int64(-1)},
 		{uint(1), opcode.Minus, -int64(1)},
 		{uint8(1), opcode.Minus, -int64(1)},

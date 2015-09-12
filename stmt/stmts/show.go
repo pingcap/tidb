@@ -16,6 +16,7 @@ package stmts
 import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
@@ -34,6 +35,10 @@ type ShowStmt struct {
 	ColumnName string      // Used for `desc table column`.
 	Flag       int         // Some flag parsed from sql, such as FULL.
 	Full       bool
+
+	// Used by show variables
+	GlobalScope bool
+	Pattern     expression.Expression
 
 	Text string
 }
@@ -63,12 +68,14 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// TODO: finish this
 	log.Debug("Exec Show Stmt")
 	sr := &rsets.ShowRset{
-		Target:     s.Target,
-		DBName:     s.DBName,
-		TableName:  s.TableIdent.Name.O,
-		ColumnName: s.ColumnName,
-		Flag:       s.Flag,
-		Full:       s.Full,
+		Target:      s.Target,
+		DBName:      s.DBName,
+		TableName:   s.TableIdent.Name.O,
+		ColumnName:  s.ColumnName,
+		Flag:        s.Flag,
+		Full:        s.Full,
+		GlobalScope: s.GlobalScope,
+		Pattern:     s.Pattern,
 	}
 
 	r, err := sr.Plan(ctx)

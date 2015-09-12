@@ -20,6 +20,7 @@ package expressions
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -75,19 +76,23 @@ func (b *Between) String() string {
 
 // Eval implements the Expression Eval interface.
 func (b *Between) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	if err := CheckAllOneColumns(ctx, b.Expr, b.Left, b.Right); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	v, err := b.Expr.Eval(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	lv, err := b.Left.Eval(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	rv, err := b.Right.Eval(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	var l, r expression.Expression
@@ -150,17 +155,17 @@ func (b *Between) convert() expression.Expression {
 func NewBetween(expr, lo, hi expression.Expression, not bool) (expression.Expression, error) {
 	e, err := staticExpr(expr)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	l, err := staticExpr(lo)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	h, err := staticExpr(hi)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	b := &Between{Expr: e, Left: l, Right: h, Not: not}

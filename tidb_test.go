@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
@@ -120,7 +121,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 	dbName := "test_concurrent_db"
 	defer removeStore(c, dbName)
 
-	testDB, err := sql.Open(DriverName, *store+"://"+dbName)
+	testDB, err := sql.Open(DriverName, *store+"://"+dbName+"/"+dbName)
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
@@ -154,7 +155,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 }
 
 func (s *testMainSuite) TestTableInfoMeta(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName)
+	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
@@ -234,7 +235,7 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 }
 
 func (s *testMainSuite) TestDriverPrepare(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName)
+	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
@@ -260,7 +261,7 @@ func (s *testMainSuite) TestDriverPrepare(c *C) {
 
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
-	db, err := sql.Open("tidb", "memory://test")
+	db, err := sql.Open("tidb", "memory://test/test")
 	defer db.Close()
 	_, err = db.Exec("create table t (c int)")
 	c.Assert(err, IsNil)
@@ -276,6 +277,19 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 	c.Assert(rs.Next(), IsFalse)
 	c.Assert(rs.Next(), IsFalse)
 	c.Assert(rs.Close(), IsNil)
+}
+
+// Testcase for arg type.
+func (s *testMainSuite) TestCheckArgs(c *C) {
+	db, err := sql.Open("tidb", "memory://test/test")
+	defer db.Close()
+	c.Assert(err, IsNil)
+	mustExec(c, db, "create table if not exists t (c datetime)")
+	mustExec(c, db, "insert t values (?)", time.Now())
+	mustExec(c, db, "drop table t")
+	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
+		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
+		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
@@ -599,6 +613,59 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	c.Assert(err, IsNil)
 	err = se2.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestRow(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	r := mustExecSQL(c, se, "select row(1, 1) in (row(1, 1))")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select row(1, 1) in (row(1, 0))")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 0)
+
+	r = mustExecSQL(c, se, "select row(1, 1) in (select 1, 1)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select row(1, 1) > row(1, 0)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select row(1, 1) > (select 1, 0)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, "select 1 > (select 1)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 0)
+
+	r = mustExecSQL(c, se, "select (select 1)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+}
+
+func (s *testSessionSuite) TestIndex(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table if not exists test_index (c1 int, c double, index(c1), index(c))")
+	mustExecSQL(c, se, "insert into test_index values (1, 2), (3, null)")
+	r := mustExecSQL(c, se, "select c1 from test_index where c > 0")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 1)
+	match(c, rows[0], 1)
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {

@@ -192,7 +192,7 @@ func UndOp(x interface{}, o opcode.Op) (interface{}, error) {
 }
 
 // Overflow returns an overflowed error.
-func Overflow(v interface{}, tp byte) error {
+func overflow(v interface{}, tp byte) error {
 	return errors.Errorf("constant %v overflows %s", v, TypeStr(tp))
 }
 

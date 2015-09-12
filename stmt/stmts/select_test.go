@@ -125,3 +125,32 @@ func (s *testStmtSuite) TestSelectHaving(c *C) {
 	rows.Close()
 	mustCommit(c, tx)
 }
+
+func (s *testStmtSuite) TestSelectErrorRow(c *C) {
+	tx := mustBegin(c, s.testDB)
+	_, err := tx.Query("select row(1, 1) from test")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test group by row(1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test order by row(1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test having row(1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select (select 1, 1) from test;")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test group by (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test order by (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tx.Query("select * from test having (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	mustCommit(c, tx)
+}

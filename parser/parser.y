@@ -164,6 +164,7 @@ import (
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
+	row 		"ROW"
 	rsh		">>"
 	runeType	"rune"
 	schema		"SCHEMA"
@@ -194,6 +195,7 @@ import (
 	userVar		"USER_VAR"
 	value		"VALUE"
 	values		"VALUES"
+	variables	"VARIABLES"
 	warnings	"WARNINGS"
 	when		"WHEN"
 	where		"WHERE"
@@ -327,6 +329,7 @@ import (
 	Function		"function expr"
 	FunctionCall		"function call post part"
 	FunctionCallArgList	"function call optional argument list"
+	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
 	HavingClause		"HAVING clause"
@@ -464,9 +467,13 @@ import (
 
 %token	tableRefPriority
 
+%precedence lowerThanCalcFoundRows
+%precedence calcFoundRows
+
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
+%precedence on
 %left 	oror or
 %left 	xor
 %left 	andand and
@@ -481,6 +488,13 @@ import (
 %left 	'^'
 %left 	'~' neg
 %right 	not
+
+%precedence lowerThanLeftParen
+%precedence '('
+%precedence lowerThanQuick
+%precedence quick
+%precedence lowerThanComma
+%precedence ','
 
 %start	Start
 
@@ -862,10 +876,6 @@ ConstraintOpts:
 	{
 		$$ = []*coldef.ConstraintOpt{}
 	}
-|	ConstraintOpt
-	{
-		$$ = []*coldef.ConstraintOpt{$1.(*coldef.ConstraintOpt)} 
-	}
 |	ConstraintOpts ConstraintOpt
 	{
 		if $2 != nil {
@@ -996,7 +1006,17 @@ CharsetName:
 	Identifier
 	{
 		c := strings.ToLower($1.(string))
-			if charset.ValidCharsetAndCollation(c, "") {
+		if charset.ValidCharsetAndCollation(c, "") {
+			$$ = c
+		} else {
+			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			return 1
+		}
+	}
+|	stringLit
+	{
+		c := strings.ToLower($1.(string))
+		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
 			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
@@ -1039,7 +1059,7 @@ CreateSpecificationList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt CommaOpt
+	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*coldef.ColumnDef
@@ -1285,11 +1305,11 @@ Expression:
 	}
 |	Factor "IS" NotOpt trueKwd %prec is
 	{
-		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int8(1)}
+		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(1)}
 	}
 |	Factor "IS" NotOpt falseKwd %prec is
 	{
-		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int8(0)}
+		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(0)}
 	}
 |	Factor "IS" NotOpt "UNKNOWN" %prec is
 	{
@@ -1374,9 +1394,9 @@ Factor1:
 	{
 		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
 	}
-|	PrimaryFactor NotOpt "IN" '(' SelectStmt semiOpt ')'
+|	PrimaryFactor NotOpt "IN" SubSelect
 	{
-		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $5.(*stmts.SelectStmt)}
+		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*expressions.SubQuery)}
 	}
 |	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
 	{
@@ -1537,7 +1557,7 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
 
 NotKeywordToken:
-	"SQL_CALC_FOUND_ROWS" | "SUBSTRING"
+	"SQL_CALC_FOUND_ROWS" | "SUBSTRING" %prec lowerThanLeftParen
 
 /************************************************************************************
  *
@@ -1652,12 +1672,12 @@ OnDuplicateKeyUpdate:
 Literal:
 	"false"
 	{
-		$$ = int8(0)
+		$$ = int64(0)
 	}
 |	"NULL"
 |	"true"
 	{
-		$$ = int8(1)
+		$$ = int64(1)
 	}
 |	floatLit
 |	imaginaryLit
@@ -1677,7 +1697,7 @@ Operand:
 	{
 		$$ = &expressions.PExpr{Expr: expressions.Expr($2)}
 	}
-|	"DEFAULT"
+|	"DEFAULT" %prec lowerThanLeftParen
 	{
 		$$ = &expressions.Default{}
 	}
@@ -1699,6 +1719,17 @@ Operand:
 		l.ParamList = append(l.ParamList, pm)
 		$$ = pm
 	}
+|	"ROW" '(' Expression ',' ExpressionList ')'
+	{
+		values := append([]expression.Expression{$3.(expression.Expression)}, $5.([]expression.Expression)...)
+		$$ = &expressions.Row{Values: values}
+	}
+|	'(' Expression ',' ExpressionList ')'
+	{
+		values := append([]expression.Expression{$2.(expression.Expression)}, $4.([]expression.Expression)...)
+		$$ = &expressions.Row{Values: values}
+	}
+
 
 OrderBy:
 	"ORDER" "BY" OrderByList
@@ -2084,10 +2115,7 @@ TableIdent:
 	}
 
 TableIdentList:
-	{
-		$$ = []table.Ident{}
-	}
-|	TableIdent
+	TableIdent
 	{
 		tbl := []table.Ident{$1.(table.Ident)}
 		$$ = tbl
@@ -2098,6 +2126,7 @@ TableIdentList:
 	}
 
 QuickOptional:
+	%prec lowerThanQuick
 	{
 		$$ = false
 	}
@@ -2409,6 +2438,7 @@ SelectStmtOpts:
 	}
 
 SelectStmtCalcFoundRows:
+	%prec lowerThanCalcFoundRows
 	{
 		$$ = false
 	}
@@ -2449,7 +2479,7 @@ SelectStmtOrder:
 SubSelect:
 	'(' SelectStmt ')'
 	{
-		s := $2.(stmt.Statement)
+		s := $2.(*stmts.SelectStmt)
 		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
 		$$ = &expressions.SubQuery{Stmt: s}
 	}
@@ -2636,6 +2666,37 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowWarnings}
 	}
+// See: https://dev.mysql.com/doc/refman/5.7/en/show-variables.html
+// TODO: Support show variables with where clause. 
+|	"SHOW" GlobalScope "VARIABLES"
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			GlobalScope: $2.(bool),
+		}
+	
+	}
+|	"SHOW" GlobalScope "VARIABLES" "LIKE" PrimaryExpression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			GlobalScope: $2.(bool),
+			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
+		}
+	}
+
+GlobalScope:
+	{
+		$$ = false	
+	}
+|	"GLOBAL"
+	{
+		$$ = true	
+	}
+|	"SESSION" 
+	{
+		$$ = false	
+	}
 
 OptFull:
 	{
@@ -2792,7 +2853,7 @@ TableOptListOpt:
 	{
 		$$ = []*coldef.TableOpt{}
 	}
-|	TableOptList
+|	TableOptList %prec lowerThanComma
 
 TableOptList:
 	TableOpt
@@ -3164,10 +3225,6 @@ FieldOpt:
 FieldOpts:
 	{
 		$$ = []*field.Opt{}
-	}
-|	FieldOpt
-	{
-		$$ = []*field.Opt{$1.(*field.Opt)}    
 	}
 |	FieldOpts FieldOpt
 	{

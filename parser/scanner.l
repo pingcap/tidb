@@ -311,6 +311,7 @@ regexp		{r}{e}{g}{e}{x}{p}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
+row 		{r}{o}{w}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 select		{s}{e}{l}{e}{c}{t}
@@ -331,6 +332,7 @@ unique		{u}{n}{i}{q}{u}{e}
 update		{u}{p}{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
+variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
 warnings	{w}{a}{r}{n}{i}{n}{g}{s}
 where		{w}{h}{e}{r}{e}
 when		{w}{h}{e}{n}
@@ -557,6 +559,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {right}			return right
 {rollback}		lval.item = string(l.val)
 			return rollback
+{row}			lval.item = string(l.val)
+			return row
 {schema}		return schema
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
@@ -600,6 +604,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {value}			lval.item = string(l.val)
 			return value
 {values}		return values
+{variables}		lval.item = string(l.val)
+			return variables
 {warnings}		lval.item = string(l.val)
 			return warnings
 {when}			return when

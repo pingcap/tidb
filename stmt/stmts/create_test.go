@@ -45,7 +45,7 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 	log.SetLevelByString("error")
 	s.dbName = "test"
 	var err error
-	s.testDB, err = sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+s.dbName)
+	s.testDB, err = sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/"+s.dbName+"/"+s.dbName)
 	c.Assert(err, IsNil)
 	// create db
 	s.createDBSql = fmt.Sprintf("create database if not exists %s;", s.dbName)

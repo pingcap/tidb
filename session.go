@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/util/errors2"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // Session context
@@ -267,20 +266,45 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareStmt(s, sql)
 }
 
+// checkArgs makes sure all the arguments' types are known and can be handled.
+// integer types are converted to int64 and uint64, time.Time is converted to mysql.Time.
+// time.Duration is converted to mysql.Duration, other known types are leaved as it is.
 func checkArgs(args ...interface{}) error {
 	for i, v := range args {
-		switch v.(type) {
+		switch x := v.(type) {
 		case bool:
-			// We do not handle bool as int8 in tidb.
-			vv, err := types.ToBool(v)
-			if err != nil {
-				return errors.Trace(err)
+			if x {
+				args[i] = int64(1)
+			} else {
+				args[i] = int64(0)
 			}
-			args[i] = vv
-		case nil, float32, float64, string,
-			int8, int16, int32, int64, int,
-			uint8, uint16, uint32, uint64, uint,
-			[]byte, time.Duration, time.Time:
+		case int8:
+			args[i] = int64(x)
+		case int16:
+			args[i] = int64(x)
+		case int32:
+			args[i] = int64(x)
+		case int:
+			args[i] = int64(x)
+		case uint8:
+			args[i] = uint64(x)
+		case uint16:
+			args[i] = uint64(x)
+		case uint32:
+			args[i] = uint64(x)
+		case uint:
+			args[i] = uint64(x)
+		case int64:
+		case uint64:
+		case float32:
+		case float64:
+		case string:
+		case []byte:
+		case time.Duration:
+			args[i] = mysql.Duration{Duration: x}
+		case time.Time:
+			args[i] = mysql.Time{Time: x, Type: mysql.TypeDatetime}
+		case nil:
 		default:
 			return errors.Errorf("cannot use arg[%d] (type %T):unsupported type", i, v)
 		}
@@ -316,7 +340,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 			return nil, err
 		}
 
-		log.Warnf("New txn:%s in session:%d", s.txn, s.sid)
+		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
 	if forceNew {

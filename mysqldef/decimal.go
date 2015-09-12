@@ -598,6 +598,11 @@ func (d Decimal) Value() (driver.Value, error) {
 	return d.String(), nil
 }
 
+// BigIntValue returns the *bit.Int value member of decimal.
+func (d Decimal) BigIntValue() *big.Int {
+	return d.value
+}
+
 // UnmarshalText implements the encoding.TextUnmarshaler interface for XML
 // deserialization.
 func (d *Decimal) UnmarshalText(text []byte) error {

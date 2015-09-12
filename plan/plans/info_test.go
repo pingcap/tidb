@@ -73,7 +73,7 @@ func mustExec(c *C, currDB *sql.DB, sql string) sql.Result {
 }
 
 func (p *testInfoSchemaSuit) TestInfoSchema(c *C) {
-	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"test")
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
 	c.Assert(err, IsNil)
 	mustExec(c, testDB, "create table t (id int);")
 	cnt := mustQuery(c, testDB, "select * from information_schema.schemata")

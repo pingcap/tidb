@@ -24,8 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -41,8 +39,8 @@ type PatternIn struct {
 	List []expression.Expression
 	// Not is true, the expression is "not in".
 	Not bool
-	// Sel is the select statement.
-	Sel plan.Planner
+	// Sel is the sub query.
+	Sel *SubQuery
 }
 
 // Clone implements the Expression Clone interface.
@@ -94,34 +92,26 @@ func (n *PatternIn) String() string {
 	}
 
 	if n.Not {
-		return fmt.Sprintf("%s NOT IN (%s)", n.Expr, n.Sel)
+		return fmt.Sprintf("%s NOT IN %s", n.Expr, n.Sel)
 	}
 
-	return fmt.Sprintf("%s IN (%s)", n.Expr, n.Sel)
+	return fmt.Sprintf("%s IN %s", n.Expr, n.Sel)
 }
 
-func (n *PatternIn) evalInList(ctx context.Context, args map[interface{}]interface{},
-	in interface{}, list []expression.Expression) (interface{}, error) {
+func (n *PatternIn) checkInList(in interface{}, list []interface{}) (interface{}, error) {
 	hasNull := false
 	for _, v := range list {
-		b := NewBinaryOperation(opcode.EQ, Value{in}, v)
-
-		eVal, err := b.Eval(ctx, args)
-		if err != nil {
-			return nil, err
-		}
-
-		if eVal == nil {
+		if v == nil {
 			hasNull = true
 			continue
 		}
 
-		r, err := types.ToBool(eVal)
+		r, err := types.Compare(in, v)
 		if err != nil {
 			return nil, err
 		}
 
-		if r == 1 {
+		if r == 0 {
 			return !n.Not, nil
 		}
 	}
@@ -133,6 +123,19 @@ func (n *PatternIn) evalInList(ctx context.Context, args map[interface{}]interfa
 	}
 
 	return n.Not, nil
+}
+
+func evalExprList(ctx context.Context, args map[interface{}]interface{}, list []expression.Expression) ([]interface{}, error) {
+	var err error
+	values := make([]interface{}, len(list))
+	for i := range values {
+		values[i], err = list[i].Eval(ctx, args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return values, nil
 }
 
 // Eval implements the Expression Eval interface.
@@ -147,25 +150,39 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 
 	if n.Sel == nil {
-		return n.evalInList(ctx, args, lhs, n.List)
+		if err := hasSameColumnCount(ctx, n.Expr, n.List...); err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		var values []interface{}
+		values, err = evalExprList(ctx, args, n.List)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		return n.checkInList(lhs, values)
 	}
 
-	var res []expression.Expression
+	var res []interface{}
 	if ev, ok := args[n]; !ok {
+		if err := hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		// select not yet evaluated
 		r, err := n.Sel.Plan(ctx)
 		if err != nil {
 			return nil, err
 		}
 
-		if g, e := len(r.GetFields()), 1; g != e {
-			return false, errors.Errorf("IN (%s): mismatched field count, have %d, need %d", n.Sel, g, e)
-		}
-
-		res = make([]expression.Expression, 0)
+		res = []interface{}{}
 		// evaluate select and save its result for later in expression check
 		err = r.Do(ctx, func(id interface{}, data []interface{}) (more bool, err error) {
-			res = append(res, Value{data[0]})
+			if len(data) == 1 {
+				res = append(res, data[0])
+			} else {
+				res = append(res, data)
+			}
 			args[n] = res
 			return true, nil
 		})
@@ -175,8 +192,8 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 
 		args[n] = res
 	} else {
-		res = ev.([]expression.Expression)
+		res = ev.([]interface{})
 	}
 
-	return n.evalInList(ctx, args, lhs, res)
+	return n.checkInList(lhs, res)
 }

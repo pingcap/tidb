@@ -200,6 +200,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true},
 		{"SET @@global.autocommit = 1", true},
+		// SET CHARACTER SET
+		{"SET CHARACTER SET utf8mb4;", true},
+		{"SET CHARACTER SET 'utf8mb4';", true},
 
 		// qualified select
 		{"SELECT a.b.c FROM t", true},
@@ -268,6 +271,20 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
+
+		// For row
+		{"select row(1)", false},
+		{"select row(1, 1,)", false},
+		{"select (1, 1,)", false},
+		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
+		{"Select (1, 1) > (1, 1)", true},
+
+		// For SHOW statement
+		{"SHOW VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW GLOBAL VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
+		{"SHOW VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES", true},
 	}
 
 	for _, t := range table {

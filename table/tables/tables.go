@@ -137,29 +137,9 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 	switch col.Tp {
 	case mysql.TypeFloat:
 		return float32(rec.(float64)), nil
-	case mysql.TypeDouble:
-		return rec.(float64), nil
-	case mysql.TypeTiny:
-		if mysql.HasUnsignedFlag(col.Flag) {
-			return uint8(rec.(uint64)), nil
-		}
-		return int8(rec.(int64)), nil
-	case mysql.TypeShort, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(col.Flag) {
-			return uint16(rec.(uint64)), nil
-		}
-		return int16(rec.(int64)), nil
-	case mysql.TypeInt24, mysql.TypeLong:
-		if mysql.HasUnsignedFlag(col.Flag) {
-			return uint32(rec.(uint64)), nil
-		}
-		return int32(rec.(int64)), nil
-	case mysql.TypeLonglong:
-		if mysql.HasUnsignedFlag(col.Flag) {
-			return rec.(uint64), nil
-		}
-		return rec.(int64), nil
-	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob, mysql.TypeVarchar, mysql.TypeString:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob,
+		mysql.TypeVarchar, mysql.TypeString:
 		return rec, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t mysql.Time
@@ -543,7 +523,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 	}
 	defer it.Close()
 
-	log.Debugf("startKey %s, key:%s,value:%s", startKey, it.Key(), it.Value())
+	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
 
 	prefix := t.KeyPrefix()
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {

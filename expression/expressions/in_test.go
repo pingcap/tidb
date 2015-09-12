@@ -84,7 +84,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vvv, IsNil)
 
-	sel := newMockStatement()
+	sel := newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
 	e2.Sel = sel
 
 	str = e2.String()
@@ -101,16 +101,36 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	_, err = e2.Eval(nil, args)
 	c.Assert(err, NotNil)
 
-	sel.SetFieldOffset(1)
-	e2.Sel = sel
+	e2.Sel = newMockSubQuery([][]interface{}{{1}, {2}}, []string{"id"})
 
 	vv, err = e2.Eval(nil, args)
 	c.Assert(err, IsNil)
 	c.Assert(vv, IsTrue)
 
-	args[e2] = []expression.Expression{Value{1}, Value{2}}
+	args[e2] = []interface{}{1, 2}
 
 	vv, err = e2.Eval(nil, args)
 	c.Assert(err, IsNil)
 	c.Assert(vv, IsTrue)
+
+	delete(args, e2)
+	e2.Expr = newTestRow(1, 2)
+	e2.Sel = newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+	_, err = e2.Eval(nil, args)
+	c.Assert(err, IsNil)
+
+	e2.Expr = newTestRow(1, 2, 3)
+
+	_, err = e2.Eval(nil, args)
+	c.Assert(err, NotNil)
+
+	delete(args, e2)
+	e2.Sel = nil
+	e2.List = []expression.Expression{newTestRow(1, 2, 3)}
+	_, err = e2.Eval(nil, args)
+	c.Assert(err, IsNil)
+
+	e2.List = []expression.Expression{Value{1}}
+	_, err = e2.Eval(nil, args)
+	c.Assert(err, NotNil)
 }
