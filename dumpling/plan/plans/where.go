@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/reborndb/go/errors"
 )
 
 var (
@@ -35,7 +36,8 @@ var (
 // expressions.
 type FilterDefaultPlan struct {
 	plan.Plan
-	Expr expression.Expression
+	Expr     expression.Expression
+	evalArgs map[interface{}]interface{}
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -78,10 +80,46 @@ func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err err
 
 // Next implements plan.Plan Next interface.
 func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	return
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
+	for {
+		row, err = r.Plan.Next(ctx)
+		if row == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return getIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
+		}
+		var meet bool
+		meet, err = r.meetRequirement(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if meet {
+			return
+		}
+	}
+}
+
+func (r *FilterDefaultPlan) meetRequirement(ctx context.Context) (bool, error) {
+	val, err := r.Expr.Eval(ctx, r.evalArgs)
+	if val == nil || err != nil {
+		return false, errors.Trace(err)
+	}
+	x, err := types.ToBool(val)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return x == 1, nil
 }
 
 // Close implements plan.Plan Close interface.
 func (r *FilterDefaultPlan) Close() error {
-	return nil
+	return r.Plan.Close()
+}
+
+// UseNext implements plan.NextPlan interface.
+func (r *FilterDefaultPlan) UseNext() bool {
+	return plan.UseNext(r.Plan)
 }
