@@ -18,13 +18,13 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/reborndb/go/errors"
 )
 
 var (
