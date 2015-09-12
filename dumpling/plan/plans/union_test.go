@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -46,8 +47,8 @@ var _ = Suite(&testUnionSuit{
 })
 
 func (t *testUnionSuit) TestUnion(c *C) {
-	tblPlan := &testTablePlan{t.data, []string{"id", "name"}}
-	tblPlan2 := &testTablePlan{t.data2, []string{"id", "name"}}
+	tblPlan := &testTablePlan{t.data, []string{"id", "name"}, 0}
+	tblPlan2 := &testTablePlan{t.data2, []string{"id", "name"}, 0}
 	cols := []*column.Col{
 		{
 			ColumnInfo: model.ColumnInfo{
@@ -69,7 +70,7 @@ func (t *testUnionSuit) TestUnion(c *C) {
 		},
 	}
 
-	pln := &UnionPlan{
+	pln := &plans.UnionPlan{
 		Srcs: []plan.Plan{
 			tblPlan,
 			tblPlan2,

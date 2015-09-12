@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -68,10 +69,10 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		{6, []interface{}{60, "60"}},
 	}
 
-	tblPlan1 := &testTablePlan{testData1, []string{"id", "name"}}
-	tblPlan2 := &testTablePlan{testData2, []string{"id", "name"}}
+	tblPlan1 := &testTablePlan{testData1, []string{"id", "name"}, 0}
+	tblPlan2 := &testTablePlan{testData2, []string{"id", "name"}, 0}
 
-	joinPlan := &JoinPlan{
+	joinPlan := &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
 		Type:   "CROSS",
@@ -83,7 +84,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		return true, nil
 	})
 
-	joinPlan = &JoinPlan{
+	joinPlan = &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
 		Type:   "LEFT",
@@ -95,7 +96,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		return true, nil
 	})
 
-	joinPlan = &JoinPlan{
+	joinPlan = &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
 		Type:   "RIGHT",
@@ -120,7 +121,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		return true, nil
 	})
 
-	joinPlan = &JoinPlan{
+	joinPlan = &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
 		Type:   "FULL",
