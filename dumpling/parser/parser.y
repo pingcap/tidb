@@ -494,6 +494,10 @@ import (
 
 %precedence lowerThanLeftParen
 %precedence '('
+%precedence lowerThanQuick
+%precedence quick
+%precedence lowerThanComma
+%precedence ','
 
 %start	Start
 
@@ -1005,7 +1009,17 @@ CharsetName:
 	Identifier
 	{
 		c := strings.ToLower($1.(string))
-			if charset.ValidCharsetAndCollation(c, "") {
+		if charset.ValidCharsetAndCollation(c, "") {
+			$$ = c
+		} else {
+			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			return 1
+		}
+	}
+|	stringLit
+	{
+		c := strings.ToLower($1.(string))
+		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
 			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
@@ -1048,7 +1062,7 @@ CreateSpecificationList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt CommaOpt
+	"CREATE" "TABLE" IfNotExists TableIdent '(' TableElementListOpt ')' TableOptListOpt
 	{
 		tes := $6.([]interface {})
 		var columnDefs []*coldef.ColumnDef
@@ -1728,7 +1742,7 @@ Operand:
 	{
 		$$ = &expressions.PExpr{Expr: expressions.Expr($2)}
 	}
-|	"DEFAULT"
+|	"DEFAULT" %prec lowerThanLeftParen
 	{
 		$$ = &expressions.Default{}
 	}
@@ -2146,10 +2160,7 @@ TableIdent:
 	}
 
 TableIdentList:
-	{
-		$$ = []table.Ident{}
-	}
-|	TableIdent
+	TableIdent
 	{
 		tbl := []table.Ident{$1.(table.Ident)}
 		$$ = tbl
@@ -2160,6 +2171,7 @@ TableIdentList:
 	}
 
 QuickOptional:
+	%prec lowerThanQuick
 	{
 		$$ = false
 	}
@@ -2886,7 +2898,7 @@ TableOptListOpt:
 	{
 		$$ = []*coldef.TableOpt{}
 	}
-|	TableOptList
+|	TableOptList %prec lowerThanComma
 
 TableOptList:
 	TableOpt
