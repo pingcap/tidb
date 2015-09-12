@@ -1772,7 +1772,10 @@ Operand:
 		values := append([]expression.Expression{$2.(expression.Expression)}, $4.([]expression.Expression)...)
 		$$ = &expressions.Row{Values: values}
 	}
-
+|	NotOpt "EXISTS" SubSelect
+	{
+		$$ = &expressions.ExistsSubQuery{Not: $1.(bool), Sel: $3.(*expressions.SubQuery)}
+	}
 
 OrderBy:
 	"ORDER" "BY" OrderByList
