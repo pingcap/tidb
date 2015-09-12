@@ -16,6 +16,7 @@ package plans
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -119,11 +120,14 @@ func (span *indexSpan) cutOffHigh(val interface{}, exclude bool) *indexSpan {
 }
 
 type indexPlan struct {
-	src     table.Table
-	colName string
-	idxName string
-	idx     kv.Index
-	spans   []*indexSpan // multiple spans are ordered by their values and without overlapping.
+	src        table.Table
+	colName    string
+	idxName    string
+	idx        kv.Index
+	spans      []*indexSpan // multiple spans are ordered by their values and without overlapping.
+	cursor     int
+	skipLowCmp bool
+	iter       kv.IndexIterator
 }
 
 // comparison function that takes minNotNullVal and maxVal into account.
@@ -362,10 +366,72 @@ func toSpans(op opcode.Op, val interface{}) []*indexSpan {
 
 // Next implements plan.Plan Next interface.
 func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	return
+	for {
+		if r.cursor == len(r.spans) {
+			return
+		}
+		span := r.spans[r.cursor]
+		if r.iter == nil {
+			seekVal := span.lowVal
+			if span.lowVal == minNotNullVal {
+				seekVal = []byte{}
+			}
+			var txn kv.Transaction
+			txn, err = ctx.GetTxn(false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			r.iter, _, err = r.idx.Seek(txn, []interface{}{seekVal})
+			if err != nil {
+				return nil, types.EOFAsNil(err)
+			}
+		}
+		var idxKey []interface{}
+		var h int64
+		idxKey, h, err = r.iter.Next()
+		if err != nil {
+			return nil, types.EOFAsNil(err)
+		}
+		val := idxKey[0]
+		if !r.skipLowCmp {
+			if span.lowExclude && indexCompare(span.lowVal, val) == 0 {
+				continue
+			}
+			r.skipLowCmp = true
+		}
+		cmp := indexCompare(val, span.highVal)
+		if cmp > 0 || (cmp == 0 && span.highExclude) {
+			// This span has finished iteration.
+			// Move to the next span.
+			r.iter.Close()
+			r.iter = nil
+			r.cursor++
+			r.skipLowCmp = false
+			continue
+		}
+		row = &plan.Row{}
+		row.Data, err = r.src.Row(ctx, h)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rowKey := &plan.RowKeyEntry{
+			Tbl: r.src,
+			Key: string(r.src.RecordKey(h, nil)),
+		}
+		row.RowKeys = append(row.RowKeys, rowKey)
+		return
+	}
 }
 
 // Close implements plan.Plan Close interface.
 func (r *indexPlan) Close() error {
+	if r.iter != nil {
+		r.iter.Close()
+	}
 	return nil
+}
+
+// UseNext implements NextPlan interface
+func (r *indexPlan) UseNext() bool {
+	return true
 }
