@@ -461,7 +461,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {all}			return all
 {alter}			return alter
 {and}			return and
-{any}			return any
+{any}			lval.item = string(l.val)
+			return any
 {asc}			return asc
 {as}			return as
 {auto_increment}	lval.item = string(l.val)
@@ -568,7 +569,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
 			return session
-{some}			return some
+{some}			lval.item = string(l.val)
+			return some
 {start}			lval.item = string(l.val)
 			return start
 {global}		lval.item = string(l.val)
