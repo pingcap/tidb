@@ -291,6 +291,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT 1 > ANY (select 1)", true},
 		{"SELECT 1 > ALL (select 1)", true},
 		{"SELECT 1 > SOME (select 1)", true},
+
+		// For exists subquery
+		{"SELECT EXISTS (select 1)", true},
 	}
 
 	for _, t := range table {
