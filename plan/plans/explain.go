@@ -95,7 +95,7 @@ func (r *ExplainDefaultPlan) Close() error {
 	return nil
 }
 
-// ImplementedNext implements NextPlan interface.
-func (r *ExplainDefaultPlan) ImplementedNext() bool {
+// UseNext implements NextPlan interface
+func (r *ExplainDefaultPlan) UseNext() bool {
 	return true
 }

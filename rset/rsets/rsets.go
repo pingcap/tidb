@@ -42,7 +42,7 @@ func (r Recordset) GetFields() []interface{} {
 
 // Do implements rset.Recordset.
 func (r Recordset) Do(f func(data []interface{}) (bool, error)) error {
-	if plan.ImplementedNext(r.Plan) {
+	if plan.UseNext(r.Plan) {
 		defer r.Plan.Close()
 		for {
 			row, err := r.Plan.Next(r.Ctx)

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -110,6 +111,7 @@ func (r *TableNilPlan) Close() error {
 type TableDefaultPlan struct {
 	T      table.Table
 	Fields []*field.ResultField
+	iter   kv.Iterator
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -328,10 +330,64 @@ func (r *TableDefaultPlan) GetFields() []*field.ResultField {
 
 // Next implements plan.Plan Next interface.
 func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.iter == nil {
+		var txn kv.Transaction
+		txn, err = ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.iter, err = txn.Seek([]byte(r.T.FirstKey()), nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
+		return
+	}
+	// TODO: check if lock valid
+	// the record layout in storage (key -> value):
+	// r1 -> lock-version
+	// r1_col1 -> r1 col1 value
+	// r1_col2 -> r1 col2 value
+	// r2 -> lock-version
+	// r2_col1 -> r2 col1 value
+	// r2_col2 -> r2 col2 value
+	// ...
+	rowKey := r.iter.Key()
+	h, err := util.DecodeHandleFromRowKey(rowKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// TODO: we could just fetch mentioned columns' values
+	row = &plan.Row{}
+	row.Data, err = r.T.Row(ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Put rowKey to the tail of record row
+	rke := &plan.RowKeyEntry{
+		Tbl: r.T,
+		Key: rowKey,
+	}
+	row.RowKeys = append(row.RowKeys, rke)
+
+	rk := r.T.RecordKey(h, nil)
+	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (r *TableDefaultPlan) Close() error {
+	r.iter.Close()
 	return nil
+}
+
+// UseNext implements NextPlan interface
+func (r *TableDefaultPlan) UseNext() bool {
+	log.Warn("use next")
+	return true
 }

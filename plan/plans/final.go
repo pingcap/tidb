@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/reborndb/go/errors"
 )
 
 var (
@@ -81,10 +82,35 @@ func (r *SelectFinalPlan) Filter(ctx context.Context, expr expression.Expression
 
 // Next implements plan.Plan Next interface.
 func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	row, err = r.Src.Next(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	row.Data = row.Data[:r.HiddenFieldOffset]
+	for i, o := range row.Data {
+		switch v := o.(type) {
+		case bool:
+			// Convert bool field to int
+			if v {
+				row.Data[i] = uint8(1)
+			} else {
+				row.Data[i] = uint8(0)
+			}
+		}
+	}
+	if !r.infered {
+		setResultFieldInfo(r.ResultFields[0:r.HiddenFieldOffset], row.Data)
+		r.infered = true
+	}
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (r *SelectFinalPlan) Close() error {
-	return nil
+	return r.Src.Close()
+}
+
+// UseNext implements NextPlan interface
+func (r *SelectFinalPlan) UseNext() bool {
+	return plan.UseNext(r.Src)
 }

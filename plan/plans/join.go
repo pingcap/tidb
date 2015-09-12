@@ -345,10 +345,15 @@ func appendRow(prefix []interface{}, in []interface{}) []interface{} {
 
 // Next implements plan.Plan Next interface.
 func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	return
+	return r.Left.Next(ctx)
 }
 
 // Close implements plan.Plan Close interface.
 func (r *JoinPlan) Close() error {
-	return nil
+	return r.Left.Close()
+}
+
+// UseNext implements NextPlan interface
+func (r *JoinPlan) UseNext() bool {
+	return r.Right == nil && plan.UseNext(r.Left)
 }
