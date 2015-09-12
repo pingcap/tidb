@@ -43,7 +43,8 @@ var (
 
 // TableNilPlan iterates rows but does nothing, e.g. SELECT 1 FROM t;
 type TableNilPlan struct {
-	T table.Table
+	T    table.Table
+	iter kv.Iterator
 }
 
 // Explain implements the plan.Plan interface.
@@ -97,12 +98,40 @@ func (r *TableNilPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 
 // Next implements plan.Plan Next interface.
 func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.iter == nil {
+		var txn kv.Transaction
+		txn, err = ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.iter, err = txn.Seek([]byte(r.T.FirstKey()), nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
+		return
+	}
+	id, err := util.DecodeHandleFromRowKey(r.iter.Key())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rk := r.T.RecordKey(id, nil)
+	row = &plan.Row{}
+	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (r *TableNilPlan) Close() error {
+	r.iter.Close()
 	return nil
+}
+
+// UseNext implements NextPlan interface
+func (r *TableNilPlan) UseNext() bool {
+	log.Warn("use next")
+	return true
 }
 
 // TableDefaultPlan iterates rows from a table, in general case
