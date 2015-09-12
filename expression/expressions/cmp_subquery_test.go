@@ -24,17 +24,6 @@ var _ = Suite(&testCompSubQuerySuite{})
 type testCompSubQuerySuite struct {
 }
 
-func (s *testCompSubQuerySuite) convert(v interface{}) interface{} {
-	switch x := v.(type) {
-	case nil:
-		return nil
-	case int:
-		return int64(x)
-	}
-
-	return v
-}
-
 func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 	tbl := []struct {
 		lhs    interface{}
@@ -128,11 +117,11 @@ func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 	}
 
 	for _, t := range tbl {
-		lhs := s.convert(t.lhs)
+		lhs := convert(t.lhs)
 
 		rhs := make([][]interface{}, 0, len(t.rhs))
 		for _, v := range t.rhs {
-			rhs = append(rhs, []interface{}{s.convert(v)})
+			rhs = append(rhs, []interface{}{convert(v)})
 		}
 
 		sq := newMockSubQuery(rhs, []string{"c"})

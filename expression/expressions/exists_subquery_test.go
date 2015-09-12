@@ -23,17 +23,6 @@ var _ = Suite(&testExistsSubQuerySuite{})
 type testExistsSubQuerySuite struct {
 }
 
-func (s *testExistsSubQuerySuite) convert(v interface{}) interface{} {
-	switch x := v.(type) {
-	case nil:
-		return nil
-	case int:
-		return int64(x)
-	}
-
-	return v
-}
-
 func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 	tbl := []struct {
 		in     []interface{}
@@ -49,7 +38,7 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 	for _, t := range tbl {
 		in := make([][]interface{}, 0, len(t.in))
 		for _, v := range t.in {
-			in = append(in, []interface{}{s.convert(v)})
+			in = append(in, []interface{}{convert(v)})
 		}
 
 		sq := newMockSubQuery(in, []string{"c"})
