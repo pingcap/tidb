@@ -355,6 +355,7 @@ import (
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	name			"name"
+	NotEmptyTableIdentList	"Not empty TableIdentList"
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
@@ -472,6 +473,12 @@ import (
 
 %precedence lowerThanCalcFoundRows
 %precedence calcFoundRows
+
+%precedence lowerThanQuick
+%precedence quick
+
+%precedence lowerThanComma
+%precedence ','
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -1148,7 +1155,7 @@ DeleteFromStmt:
 			break
 		}
 	}
-|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional TableIdentList "FROM" TableRefs WhereClauseOptional
+|	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional NotEmptyTableIdentList "FROM" TableRefs WhereClauseOptional
 	{
 		// Multiple Table
 		x := &stmts.DeleteStmt{
@@ -1728,7 +1735,7 @@ Operand:
 	{
 		$$ = &expressions.PExpr{Expr: expressions.Expr($2)}
 	}
-|	"DEFAULT"
+|	"DEFAULT" %prec lowerThanLeftParen
 	{
 		$$ = &expressions.Default{}
 	}
@@ -2149,17 +2156,21 @@ TableIdentList:
 	{
 		$$ = []table.Ident{}
 	}
-|	TableIdent
+|	NotEmptyTableIdentList
+
+NotEmptyTableIdentList:
+	TableIdent
 	{
 		tbl := []table.Ident{$1.(table.Ident)}
 		$$ = tbl
 	}
-|	TableIdentList ',' TableIdent
+|	NotEmptyTableIdentList ',' TableIdent
 	{
 		$$ = append($1.([]table.Ident), $3.(table.Ident))
 	}
 
 QuickOptional:
+	%prec lowerThanQuick
 	{
 		$$ = false
 	}
@@ -2886,7 +2897,7 @@ TableOptListOpt:
 	{
 		$$ = []*coldef.TableOpt{}
 	}
-|	TableOptList
+|	TableOptList %prec lowerThanComma
 
 TableOptList:
 	TableOpt
@@ -2901,7 +2912,6 @@ TableOptList:
 	{
 		$$ = append($1.([]*coldef.TableOpt), $3.(*coldef.TableOpt))
 	}
-
 
 TruncateTableStmt:
 	"TRUNCATE" "TABLE" TableIdent
