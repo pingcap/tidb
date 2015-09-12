@@ -11,13 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 type testFieldsSuit struct{}
@@ -34,9 +36,9 @@ var selectFieldsTestData = []*testRowData{
 }
 
 func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
-	tblPlan := &testTablePlan{selectFieldsTestData, []string{"id", "name"}}
+	tblPlan := &testTablePlan{selectFieldsTestData, []string{"id", "name"}, 0}
 
-	sl1 := &SelectList{
+	sl1 := &plans.SelectList{
 		Fields: []*field.Field{
 			{
 				Expr: &expressions.Ident{
@@ -46,19 +48,21 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 		},
 	}
 
-	selFieldsPlan := &SelectFieldsDefaultPlan{
+	selFieldsPlan := &plans.SelectFieldsDefaultPlan{
 		SelectList: sl1,
 		Src:        tblPlan,
 	}
-
-	selFieldsPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Plan: selFieldsPlan,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		c.Assert(len(data), Equals, 1)
 		c.Assert(data[0].(string), Equals, "hello")
 		return true, nil
 	})
 
 	// test multiple fields
-	sl2 := &SelectList{
+	sl2 := &plans.SelectList{
 		Fields: []*field.Field{
 			{
 				Expr: &expressions.Ident{
@@ -73,12 +77,12 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 		},
 	}
 
-	selFieldsPlan = &SelectFieldsDefaultPlan{
+	rset.Plan = &plans.SelectFieldsDefaultPlan{
 		SelectList: sl2,
-		Src:        tblPlan,
+		Src:        tblPlan.reset(),
 	}
 
-	selFieldsPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset.Do(func(data []interface{}) (bool, error) {
 		c.Assert(len(data), Equals, 2)
 		c.Assert(data[0].(string), Equals, "hello")
 		c.Assert(data[1].(int), GreaterEqual, 10)
@@ -86,7 +90,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	})
 
 	// test field doesn't exists
-	sl3 := &SelectList{
+	sl3 := &plans.SelectList{
 		Fields: []*field.Field{
 			{
 				Expr: &expressions.Ident{
@@ -95,18 +99,18 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 			},
 		},
 	}
-	selFieldsPlan = &SelectFieldsDefaultPlan{
+	rset.Plan = &plans.SelectFieldsDefaultPlan{
 		SelectList: sl3,
-		Src:        tblPlan,
+		Src:        tblPlan.reset(),
 	}
-	err := selFieldsPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	err := rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
 	c.Assert(err.Error() == "unknown field nosuchfield", Equals, true)
 }
 
 func (s *testFieldsSuit) TestSelectExprPlan(c *C) {
-	pln := &SelectEmptyFieldListPlan{
+	pln := &plans.SelectEmptyFieldListPlan{
 		Fields: []*field.Field{
 			{
 				Expr: &expressions.Value{
@@ -117,7 +121,8 @@ func (s *testFieldsSuit) TestSelectExprPlan(c *C) {
 	}
 	fields := pln.GetFields()
 	c.Assert(fields, HasLen, 1)
-	pln.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{Plan: pln}
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
 }
