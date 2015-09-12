@@ -373,12 +373,12 @@ func (s *ShowPlan) Close() error {
 }
 
 // UseNext implements NextPlan interface
-func (r *ShowPlan) UseNext() bool {
+func (s *ShowPlan) UseNext() bool {
 	return true
 }
 
 // Reset used for test
-func (r *ShowPlan) Reset() {
-	r.rows = nil
-	r.cursor = 0
+func (s *ShowPlan) Reset() {
+	s.rows = nil
+	s.cursor = 0
 }
