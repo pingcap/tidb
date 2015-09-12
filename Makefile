@@ -11,7 +11,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 .PHONY: deps all build install parser clean todo test tidbtest mysqltest gotest interpreter
 
-all: godep parser build test
+all: godep parser build test check
 
 godep:
 	go get github.com/tools/godep
