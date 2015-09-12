@@ -83,3 +83,8 @@ func (r *SelectFinalPlan) Filter(ctx context.Context, expr expression.Expression
 func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *SelectFinalPlan) Close() error {
+	return nil
+}

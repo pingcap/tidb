@@ -78,6 +78,11 @@ func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	return
 }
 
+// Close implements plan.Plan Close interface.
+func (r *LimitDefaultPlan) Close() error {
+	return nil
+}
+
 // OffsetDefaultPlan handles SELECT ... FROM ... OFFSET N, skips N records.
 type OffsetDefaultPlan struct {
 	Count  uint64
@@ -116,4 +121,9 @@ func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 // Next implements plan.Plan Next interface.
 func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *OffsetDefaultPlan) Close() error {
+	return nil
 }

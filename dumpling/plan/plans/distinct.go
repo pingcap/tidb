@@ -97,3 +97,8 @@ func (r *DistinctDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err e
 func (r *DistinctDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *DistinctDefaultPlan) Close() error {
+	return nil
+}

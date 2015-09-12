@@ -45,6 +45,9 @@ type Plan interface {
 	// Next returns the next row of data and rowKeys, nil data means there is no more data to return.
 	// Aggregation plan will fetch all the data at the first call.
 	Next(ctx context.Context) (row *Row, err error)
+
+	// Close closes the underlying iterator of the plan.
+	Close() error
 }
 
 // Planner is implemented by any structure that has a Plan method.

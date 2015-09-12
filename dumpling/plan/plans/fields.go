@@ -81,6 +81,11 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 	return
 }
 
+// Close implements plan.Plan Close interface.
+func (r *SelectFieldsDefaultPlan) Close() error {
+	return nil
+}
+
 // SelectEmptyFieldListPlan is the plan for "select expr, expr, ..."" with no FROM.
 type SelectEmptyFieldListPlan struct {
 	Fields []*field.Field
@@ -124,4 +129,9 @@ func (s *SelectEmptyFieldListPlan) Filter(ctx context.Context, expr expression.E
 // Next implements plan.Plan Next interface.
 func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
+}
+
+// Close implements plan.Plan Close interface.
+func (s *SelectEmptyFieldListPlan) Close() error {
+	return nil
 }

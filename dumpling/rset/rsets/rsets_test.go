@@ -94,6 +94,10 @@ func (p *testTablePlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
+func (p *testTablePlan) Close() error {
+	return nil
+}
+
 var _ = Suite(&testRsetsSuite{})
 
 type testRsetsSuite struct {

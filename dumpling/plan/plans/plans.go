@@ -119,6 +119,11 @@ func (r *selectIndexDefaultPlan) Next(ctx context.Context) (row *plan.Row, err e
 	return
 }
 
+// Close implements plan.Plan Close interface.
+func (r *selectIndexDefaultPlan) Close() error {
+	return nil
+}
+
 // NullPlan is empty plan, if we can affirm that the resultset is empty, we
 // could just return a NullPlan directly, no need to scan any table. e.g.
 // SELECT * FROM t WHERE i > 0 and i < 0;
@@ -147,6 +152,11 @@ func (r *NullPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 // Next implements plan.Plan Next interface.
 func (r *NullPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *NullPlan) Close() error {
+	return nil
 }
 
 // Set ResultField info according to values

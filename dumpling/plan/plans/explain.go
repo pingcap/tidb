@@ -73,3 +73,8 @@ func (r *ExplainDefaultPlan) Filter(ctx context.Context, expr expression.Express
 func (r *ExplainDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *ExplainDefaultPlan) Close() error {
+	return nil
+}

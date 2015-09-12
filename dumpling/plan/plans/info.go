@@ -417,3 +417,8 @@ func buildResultField(tableName, name string, tp byte, size int) *field.ResultFi
 func (isp *InfoSchemaPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (isp *InfoSchemaPlan) Close() error {
+	return nil
+}

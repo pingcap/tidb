@@ -347,3 +347,8 @@ func appendRow(prefix []interface{}, in []interface{}) []interface{} {
 func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *JoinPlan) Close() error {
+	return nil
+}

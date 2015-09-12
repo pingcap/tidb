@@ -80,3 +80,8 @@ func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err err
 func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *FilterDefaultPlan) Close() error {
+	return nil
+}

@@ -364,3 +364,8 @@ func toSpans(op opcode.Op, val interface{}) []*indexSpan {
 func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *indexPlan) Close() error {
+	return nil
+}

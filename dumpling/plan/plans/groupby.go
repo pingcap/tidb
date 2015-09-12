@@ -327,3 +327,8 @@ func (r *GroupByDefaultPlan) evalEmptyTable(ctx context.Context) ([]interface{},
 func (r *GroupByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
+
+// Close implements plan.Plan Close interface.
+func (r *GroupByDefaultPlan) Close() error {
+	return nil
+}
