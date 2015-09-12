@@ -52,13 +52,13 @@ type Plan interface {
 
 // NextPlan is the interface for plans that has implemented next.
 type NextPlan interface {
-	ImplementedNext() bool
+	UseNext() bool
 }
 
-// ImplementedNext checks if p has implemented Next method.
-func ImplementedNext(p Plan) bool {
+// UseNext checks if p has implemented Next method.
+func UseNext(p Plan) bool {
 	if np, ok := p.(NextPlan); ok {
-		return np.ImplementedNext()
+		return np.UseNext()
 	}
 	return false
 }

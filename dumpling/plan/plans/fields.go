@@ -20,6 +20,7 @@ package plans
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -36,7 +37,8 @@ var (
 // SelectFieldsDefaultPlan extracts specific fields from Src Plan.
 type SelectFieldsDefaultPlan struct {
 	*SelectList
-	Src plan.Plan
+	Src      plan.Plan
+	evalArgs map[interface{}]interface{}
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -78,17 +80,42 @@ func (r *SelectFieldsDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) er
 
 // Next implements plan.Plan Next interface.
 func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
+	srcRow, err := r.Src.Next(ctx)
+	if err != nil || srcRow == nil {
+		return nil, errors.Trace(err)
+	}
+	r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		return getIdentValue(name, r.Src.GetFields(), srcRow.Data, field.DefaultFieldFlag)
+	}
+	row = &plan.Row{
+		Data: make([]interface{}, len(r.Fields)),
+	}
+	for i, fld := range r.Fields {
+		var err error
+		if row.Data[i], err = fld.Expr.Eval(ctx, r.evalArgs); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (r *SelectFieldsDefaultPlan) Close() error {
-	return nil
+	return r.Src.Close()
+}
+
+// UseNext implements NextPlan interface
+func (r *SelectFieldsDefaultPlan) UseNext() bool {
+	return plan.UseNext(r.Src)
 }
 
 // SelectEmptyFieldListPlan is the plan for "select expr, expr, ..."" with no FROM.
 type SelectEmptyFieldListPlan struct {
 	Fields []*field.Field
+	done   bool
 }
 
 // Do implements the plan.Plan Do interface, returns empty row.
@@ -128,10 +155,22 @@ func (s *SelectEmptyFieldListPlan) Filter(ctx context.Context, expr expression.E
 
 // Next implements plan.Plan Next interface.
 func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if s.done {
+		return
+	}
+	row = &plan.Row{
+		Data: make([]interface{}, len(s.Fields)),
+	}
+	s.done = true
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (s *SelectEmptyFieldListPlan) Close() error {
 	return nil
+}
+
+// UseNext implements NextPlan interface.
+func (s *SelectEmptyFieldListPlan) UseNext() bool {
+	return true
 }

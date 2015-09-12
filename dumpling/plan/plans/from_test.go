@@ -27,6 +27,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -125,7 +126,8 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 	}
 
 	ret := map[int64]string{}
-	pln.Do(p, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{Ctx: p, Plan: pln}
+	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(int64)] = data[1].(string)
 		return true, nil
 	})
