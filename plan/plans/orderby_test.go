@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	"github.com/ngaut/log"
@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 type testOrderBySuit struct {
@@ -36,10 +38,10 @@ var _ = Suite(&testOrderBySuit{
 })
 
 func (t *testOrderBySuit) TestOrderBy(c *C) {
-	tblPlan := &testTablePlan{t.data, []string{"id", "name"}}
+	tblPlan := &testTablePlan{t.data, []string{"id", "name"}, 0}
 
-	pln := &OrderByDefaultPlan{
-		SelectList: &SelectList{
+	pln := &plans.OrderByDefaultPlan{
+		SelectList: &plans.SelectList{
 			HiddenFieldOffset: len(tblPlan.GetFields()),
 			ResultFields:      tblPlan.GetFields(),
 		},
@@ -53,7 +55,10 @@ func (t *testOrderBySuit) TestOrderBy(c *C) {
 	}
 
 	prev := 10000
-	err := pln.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Plan: pln,
+	}
+	err := rset.Do(func(data []interface{}) (bool, error) {
 		// DESC
 		if data[0].(int) > prev {
 			c.Error("should no be here", data[0], prev)
