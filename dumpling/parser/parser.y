@@ -1585,7 +1585,7 @@ UnReservedKeyword:
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
-|	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
+|	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE" | "ANY" | "SOME"
 
 NotKeywordToken:
 	"SQL_CALC_FOUND_ROWS" | "SUBSTRING" %prec lowerThanLeftParen
