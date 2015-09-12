@@ -261,6 +261,8 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 
 // Close implements plan.Plan Close interface.
 func (r *OrderByDefaultPlan) Close() error {
+	r.ordTable = nil
+	r.cursor = 0
 	return r.Src.Close()
 }
 

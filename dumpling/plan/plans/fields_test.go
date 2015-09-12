@@ -76,10 +76,10 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 			},
 		},
 	}
-
+	tblPlan.Close()
 	rset.Plan = &plans.SelectFieldsDefaultPlan{
 		SelectList: sl2,
-		Src:        tblPlan.reset(),
+		Src:        tblPlan,
 	}
 
 	rset.Do(func(data []interface{}) (bool, error) {
@@ -99,9 +99,10 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 			},
 		},
 	}
+	tblPlan.Close()
 	rset.Plan = &plans.SelectFieldsDefaultPlan{
 		SelectList: sl3,
-		Src:        tblPlan.reset(),
+		Src:        tblPlan,
 	}
 	err := rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil

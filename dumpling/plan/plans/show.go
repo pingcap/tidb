@@ -369,16 +369,12 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 
 // Close implements plan.Plan Close interface.
 func (s *ShowPlan) Close() error {
+	s.rows = nil
+	s.cursor = 0
 	return nil
 }
 
 // UseNext implements NextPlan interface
 func (s *ShowPlan) UseNext() bool {
 	return true
-}
-
-// Reset used for test
-func (s *ShowPlan) Reset() {
-	s.rows = nil
-	s.cursor = 0
 }

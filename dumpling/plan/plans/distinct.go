@@ -147,6 +147,8 @@ func (r *DistinctDefaultPlan) fetchAll(ctx context.Context) error {
 
 // Close implements plan.Plan Close interface.
 func (r *DistinctDefaultPlan) Close() error {
+	r.rows = nil
+	r.cursor = 0
 	return r.Src.Close()
 }
 

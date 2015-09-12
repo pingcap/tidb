@@ -91,7 +91,7 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(v, Equals, "latin1")
 	// Set session variable to utf8
 	sessionVars.Systems["character_set_results"] = "utf8"
-	pln.Reset()
+	pln.Close()
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil
@@ -103,7 +103,7 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(v, Equals, "latin1")
 
 	pln.GlobalScope = false
-	pln.Reset()
+	pln.Close()
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil

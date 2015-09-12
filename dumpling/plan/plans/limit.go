@@ -89,6 +89,7 @@ func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 
 // Close implements plan.Plan Close interface.
 func (r *LimitDefaultPlan) Close() error {
+	r.cursor = 0
 	return r.Src.Close()
 }
 
@@ -147,6 +148,7 @@ func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 
 // Close implements plan.Plan Close interface.
 func (r *OffsetDefaultPlan) Close() error {
+	r.cursor = 0
 	return r.Src.Close()
 }
 

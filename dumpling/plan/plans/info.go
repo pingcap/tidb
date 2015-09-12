@@ -584,6 +584,8 @@ func (isp *InfoSchemaPlan) fetchCharacterSets() {
 
 // Close implements plan.Plan Close interface.
 func (isp *InfoSchemaPlan) Close() error {
+	isp.rows = nil
+	isp.cursor = 0
 	return nil
 }
 

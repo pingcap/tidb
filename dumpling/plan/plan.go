@@ -47,6 +47,7 @@ type Plan interface {
 	Next(ctx context.Context) (row *Row, err error)
 
 	// Close closes the underlying iterator of the plan.
+	// If you call Next after Close, it will start iteration from beginning.
 	Close() error
 }
 
