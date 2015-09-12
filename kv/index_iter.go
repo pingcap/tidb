@@ -104,7 +104,13 @@ type kvIndex struct {
 }
 
 func genIndexPrefix(indexPrefix, indexName string) string {
-	return fmt.Sprintf("%s_%s", indexPrefix, indexName)
+	// Adding \xFF\xFF seperator to guarantee not iterating same prefix index
+	// e.g, two indices c1 and c with index prefix p, if no \xFF\xFF,
+	// the index format looks p_c and p_c1, if c has a index value which the first encoded byte is '1',
+	// we will meet a error, because p_c1 is for index c1.
+	// Why \xFF\xFF? We guarantee that all the encoded value with util/codec EncodeKey is less than \xFF\xFF.
+	// TODO: check indexName whether has \xFF\xFF suffix?
+	return fmt.Sprintf("%s_%s\xFF\xFF", indexPrefix, indexName)
 }
 
 // NewKVIndex builds a new kvIndex object.
