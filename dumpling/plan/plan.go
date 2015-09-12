@@ -50,6 +50,19 @@ type Plan interface {
 	Close() error
 }
 
+// NextPlan is the interface for plans that has implemented next.
+type NextPlan interface {
+	ImplementedNext() bool
+}
+
+// ImplementedNext checks if p has implemented Next method.
+func ImplementedNext(p Plan) bool {
+	if np, ok := p.(NextPlan); ok {
+		return np.ImplementedNext()
+	}
+	return false
+}
+
 // Planner is implemented by any structure that has a Plan method.
 type Planner interface {
 	// Plan function returns Plan.

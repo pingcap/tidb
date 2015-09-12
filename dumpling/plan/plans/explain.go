@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/format"
+	"strings"
 )
 
 var _ plan.Plan = (*ExplainDefaultPlan)(nil)
@@ -33,7 +34,9 @@ var _ plan.Plan = (*ExplainDefaultPlan)(nil)
 // ExplainDefaultPlan executes the explain statement, and provides debug
 // infomations.
 type ExplainDefaultPlan struct {
-	S stmt.Statement
+	S      stmt.Statement
+	lines  []string
+	cursor int
 }
 
 // Do returns explain result lines.
@@ -71,10 +74,28 @@ func (r *ExplainDefaultPlan) Filter(ctx context.Context, expr expression.Express
 
 // Next implements plan.Plan Next interface.
 func (r *ExplainDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.lines == nil {
+		var buf bytes.Buffer
+		w := format.IndentFormatter(&buf, "│   ")
+		r.S.Explain(ctx, w)
+		r.lines = strings.Split(string(buf.Bytes()), "\n")
+	}
+	if r.cursor >= len(r.lines)-1 {
+		return
+	}
+	row = &plan.Row{
+		Data: []interface{}{r.lines[r.cursor]},
+	}
+	r.cursor++
 	return
 }
 
 // Close implements plan.Plan Close interface.
 func (r *ExplainDefaultPlan) Close() error {
 	return nil
+}
+
+// ImplementedNext implements NextPlan interface.
+func (r *ExplainDefaultPlan) ImplementedNext() bool {
+	return true
 }

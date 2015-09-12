@@ -18,6 +18,7 @@
 package rsets
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
@@ -41,6 +42,23 @@ func (r Recordset) GetFields() []interface{} {
 
 // Do implements rset.Recordset.
 func (r Recordset) Do(f func(data []interface{}) (bool, error)) error {
+	if plan.ImplementedNext(r.Plan) {
+		defer r.Plan.Close()
+		for {
+			row, err := r.Plan.Next(r.Ctx)
+			if row == nil || err != nil {
+				return errors.Trace(err)
+			}
+			more, err := f(row.Data)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !more {
+				return nil
+			}
+		}
+	}
+
 	return r.Plan.Do(r.Ctx, func(ID interface{}, data []interface{}) (bool, error) {
 		return f(data)
 	})
