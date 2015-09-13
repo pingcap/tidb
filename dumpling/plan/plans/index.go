@@ -193,7 +193,15 @@ func (r *indexPlan) doSpan(ctx context.Context, txn kv.Transaction, span *indexS
 		if err != nil {
 			return err
 		}
-
+		// Append RowKeyList
+		rks := &RowKeyList{}
+		rowKey := string(r.src.RecordKey(h, nil))
+		rke := &RowKeyEntry{
+			Tbl: r.src,
+			Key: rowKey,
+		}
+		rks.appendKeys(rke)
+		data = append(data, rks)
 		if more, err := f(h, data); err != nil || !more {
 			return err
 		}

@@ -285,6 +285,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
+
+		// For update statement
+		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
+		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
+		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
 	}
 
 	for _, t := range table {

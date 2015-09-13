@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -41,28 +42,27 @@ var _ stmt.Statement = (*UpdateStmt)(nil)
 // UpdateStmt is a statement to update columns of existing rows in tables with new values.
 // See: https://dev.mysql.com/doc/refman/5.7/en/update.html
 type UpdateStmt struct {
-	TableIdent  table.Ident
-	List        []expressions.Assignment
-	Where       expression.Expression
-	Order       *rsets.OrderByRset
-	Limit       *rsets.LimitRset
-	LowPriority bool
-	Ignore      bool
+	TableRefs     *rsets.JoinRset
+	List          []expressions.Assignment
+	Where         expression.Expression
+	Order         *rsets.OrderByRset
+	Limit         *rsets.LimitRset
+	LowPriority   bool
+	Ignore        bool
+	MultipleTable bool
 
 	Text string
 }
 
 // Explain implements the stmt.Statement Explain interface.
 func (s *UpdateStmt) Explain(ctx context.Context, w format.Formatter) {
-	p, err := s.indexPlan(ctx)
+	p, err := s.plan(ctx)
 	if err != nil {
 		log.Error(err)
 		return
 	}
 	if p != nil {
 		p.Explain(w)
-	} else {
-		w.Format("┌Iterate all rows of table: %s\n", s.TableIdent)
 	}
 	w.Format("└Update fields %v\n", s.List)
 }
@@ -204,103 +204,93 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	return nil
 }
 
-func (s *UpdateStmt) indexPlan(ctx context.Context) (plan.Plan, error) {
-	t, err := getTable(ctx, s.TableIdent)
-	if err != nil {
-		return nil, err
-	}
-
-	p, filtered, err := (&plans.TableDefaultPlan{T: t}).FilterForUpdateAndDelete(ctx, s.Where)
-	if err != nil {
-		return nil, err
-	}
-	if !filtered {
-		return nil, nil
-	}
-	return p, nil
-}
-
-func (s *UpdateStmt) tryUpdateUsingIndex(ctx context.Context, t table.Table) (bool, error) {
-	log.Info("update using index")
-	p, err := s.indexPlan(ctx)
-	if p == nil {
-		return false, err
-	}
-
-	var handles []int64
-	p.Do(ctx, func(id interface{}, _ []interface{}) (more bool, err error) {
-		// Record handle ids for updating.
-		handles = append(handles, id.(int64))
-		return true, nil
-	})
-
-	tcols, err := getUpdateColumns(t, s.List)
-	if err != nil {
-		return false, err
-	}
-	var cnt uint64
-	for _, id := range handles {
-		data, err := t.Row(ctx, id)
+func (s *UpdateStmt) plan(ctx context.Context) (plan.Plan, error) {
+	var (
+		r   plan.Plan
+		err error
+	)
+	if s.TableRefs != nil {
+		r, err = s.TableRefs.Plan(ctx)
 		if err != nil {
-			return false, err
+			return nil, errors.Trace(err)
 		}
-		log.Info("updating ", id)
-		if s.Limit != nil && cnt >= s.Limit.Count {
-			break
-		}
-		err = updateRecord(ctx, id, data, t, tcols, s.List, nil)
-		if err != nil {
-			return false, err
-		}
-		cnt++
 	}
-	return true, nil
+	if s.Where != nil {
+		r, err = (&rsets.WhereRset{Expr: s.Where, Src: r}).Plan(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if s.Order != nil {
+		s.Order.Src = r
+		r, err = s.Order.Plan(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if s.Limit != nil {
+		s.Limit.Src = r
+		r, err = s.Limit.Plan(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return r, nil
 }
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	t, err := getTable(ctx, s.TableIdent)
+	p, err := s.plan(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	var ok bool
-	ok, err = s.tryUpdateUsingIndex(ctx, t)
-	if err != nil {
-		return nil, err
-	}
-	if ok {
-		// Already updated using index, do nothing.
-		return nil, nil
-	}
-
-	tcols, err := getUpdateColumns(t, s.List)
-	if err != nil {
-		return nil, err
-	}
-
-	firstKey := t.FirstKey()
-	var cnt uint64
-	err = t.IterRecords(ctx, firstKey, t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		if s.Limit != nil && cnt >= s.Limit.Count {
-			return false, nil
+	updatedRowKeys := make(map[string]bool)
+	err = p.Do(ctx, func(id interface{}, in []interface{}) (more bool, err error) {
+		// Update rows
+		var rowKeys *plans.RowKeyList
+		if in != nil && len(in) > 0 {
+			t := in[len(in)-1]
+			switch vt := t.(type) {
+			case *plans.RowKeyList:
+				rowKeys = vt
+				in = in[:len(in)-1]
+			}
 		}
-
-		ok, err = s.hitWhere(ctx, t, data)
-		if err != nil {
-			return false, errors.Trace(err)
+		if rowKeys != nil {
+			// Update rows
+			for _, entry := range rowKeys.Keys {
+				tbl := entry.Tbl
+				k := entry.Key
+				_, ok := updatedRowKeys[k]
+				if ok {
+					// Each matching row is updated once, even if it matches the conditions multiple times.
+					continue
+				}
+				// Update row
+				id, uerr := util.DecodeHandleFromRowKey(k)
+				if uerr != nil {
+					return false, errors.Trace(uerr)
+				}
+				data := in
+				tcols, uerr := getUpdateColumns(tbl, s.List)
+				if uerr != nil {
+					return false, errors.Trace(uerr)
+				}
+				uerr = updateRecord(ctx, id, data, tbl, tcols, s.List, nil)
+				if uerr != nil {
+					return false, errors.Trace(uerr)
+				}
+				updatedRowKeys[k] = true
+			}
 		}
-		if !ok {
-			return true, nil
-		}
-		if err := updateRecord(ctx, h, data, t, tcols, s.List, nil); err != nil {
-			return false, err
-		}
-		cnt++
 		return true, nil
+
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return nil, nil
 }
