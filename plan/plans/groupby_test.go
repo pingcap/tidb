@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 type testGroupBySuite struct{}
@@ -74,7 +75,10 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 	}
 
 	ret := map[int]string{}
-	groupbyPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Plan: groupbyPlan,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(int)] = data[1].(string)
 		return true, nil
 	})
@@ -88,9 +92,11 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 
 	// test empty
 	tblPlan.rows = []*testRowData{}
+	tblPlan.Close()
 	groupbyPlan.Src = tblPlan
 	groupbyPlan.By = nil
-	groupbyPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	groupbyPlan.Close()
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
 }
