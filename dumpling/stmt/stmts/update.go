@@ -95,24 +95,6 @@ func getUpdateColumns(t table.Table, assignList []expressions.Assignment) ([]*co
 	return tcols, nil
 }
 
-func (s *UpdateStmt) hitWhere(ctx context.Context, t table.Table, data []interface{}) (bool, error) {
-	if s.Where == nil {
-		return true, nil
-	}
-	m := make(map[interface{}]interface{}, len(t.Cols()))
-
-	// Set parameter for evaluating expression.
-	for _, col := range t.Cols() {
-		m[col.Name.L] = data[col.Offset]
-	}
-
-	ok, err := expressions.EvalBoolExpr(ctx, s.Where, m)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return ok, nil
-}
-
 func getInsertValue(name string, cols []*column.Col, row []interface{}) (interface{}, error) {
 	for i, col := range cols {
 		if col.Name.L == name {
