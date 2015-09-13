@@ -471,7 +471,7 @@ import (
 %precedence calcFoundRows
 
 %precedence lowerThanSetKeyword
-%precedence setKeyword
+%precedence set
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -2297,7 +2297,7 @@ TableRefs:
 	}
 
 EscapedTableRef:
-	TableRef
+	TableRef %prec lowerThanSetKeyword
 	{
 		$$ = $1
 	}

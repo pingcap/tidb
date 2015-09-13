@@ -29,7 +29,7 @@ parser:
 	goyacc -o /dev/null -xegen $$a parser/parser.y; \
 	goyacc -o parser/parser.go -xe $$a parser/parser.y; \
 	rm -f $$a; \
-	rm -f y.output
+	#rm -f y.output
 
 	@if [ $(ARCH) = $(LINUX) ]; \
 	then \
