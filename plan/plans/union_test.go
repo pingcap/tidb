@@ -21,6 +21,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -81,9 +82,9 @@ func (t *testUnionSuit) TestUnion(c *C) {
 			field.ColToResultField(cols[1], "t"),
 		},
 	}
-
+	rset := rsets.Recordset{Plan: pln}
 	cnt := 0
-	pln.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset.Do(func(data []interface{}) (bool, error) {
 		cnt++
 		return true, nil
 	})
