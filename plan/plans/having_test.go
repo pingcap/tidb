@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 type testHavingPlan struct{}
@@ -50,7 +51,10 @@ func (t *testHavingPlan) TestHaving(c *C) {
 
 	// having's behavior just like where
 	cnt := 0
-	havingPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Plan: havingPlan,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		cnt++
 		return true, nil
 	})
