@@ -14,6 +14,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -29,8 +30,9 @@ var (
 // HavingPlan executes the HAVING statement, HavingPlan's behavior is almost the
 // same as FilterDefaultPlan.
 type HavingPlan struct {
-	Src  plan.Plan
-	Expr expression.Expression
+	Src      plan.Plan
+	Expr     expression.Expression
+	evalArgs map[interface{}]interface{}
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -81,10 +83,43 @@ func (r *HavingPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 
 // Next implements plan.Plan Next interface.
 func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	return
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
+	for {
+		var srcRow *plan.Row
+		srcRow, err = r.Src.Next(ctx)
+		if srcRow == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return getIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
+		}
+		r.evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
+			// position is in [1, len(fields)], so we must decrease 1 to get correct index
+			// TODO: check position invalidation
+			return srcRow.Data[position-1], nil
+		}
+		var v bool
+		v, err = expressions.EvalBoolExpr(ctx, r.Expr, r.evalArgs)
+
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if v {
+			row = srcRow
+			return
+		}
+	}
 }
 
 // Close implements plan.Plan Close interface.
 func (r *HavingPlan) Close() error {
-	return nil
+	return r.Src.Close()
+}
+
+// UseNext implements NextPlan interface
+func (r *HavingPlan) UseNext() bool {
+	return plan.UseNext(r.Src)
 }
