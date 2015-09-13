@@ -166,6 +166,12 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
 
+	// For TypeBit
+	ft = NewFieldType(mysql.TypeBit)
+	v, err = Convert("100", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(100))
+
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
