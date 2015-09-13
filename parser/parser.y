@@ -470,6 +470,9 @@ import (
 %precedence lowerThanCalcFoundRows
 %precedence calcFoundRows
 
+%precedence lowerThanSetKeyword
+%precedence setKeyword
+
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
@@ -624,7 +627,7 @@ Symbol:
 
 /*******************************************************************************************/
 Assignment:
-	ColumnName eq Expression
+	QualifiedIdent eq Expression
 	{
 		$$ = expressions.Assignment{ColName: $1.(string), Expr: expressions.Expr($3)}
 	}
@@ -3317,20 +3320,25 @@ UnionOpt:
 	}
 
 
-/************************************************************************************/
+/***********************************************************************************
+ * Update Statement
+ * See: https://dev.mysql.com/doc/refman/5.7/en/update.html
+ ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" LowPriorityOptional IgnoreOptional TableIdent SetOpt AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
+		// Single-table syntax
 		var expr expression.Expression
 		if w := $7; w != nil {
 			expr = w.(*rsets.WhereRset).Expr
 		}
+		r := &rsets.JoinRset{Left: $4, Right: nil}
 		st := &stmts.UpdateStmt{
-			LowPriority:    $2.(bool),
-			TableIdent:     $4.(table.Ident),
-			List:           $6.([]expressions.Assignment), 
-			Where:          expr} 
-	
+			LowPriority:	$2.(bool),
+			TableRefs:	r,
+			List:		$6.([]expressions.Assignment), 
+			Where:		expr,
+		} 
 		if $8 != nil {
 			 st.Order = $8.(*rsets.OrderByRset)
 		}
@@ -3342,7 +3350,25 @@ UpdateStmt:
 			break
 		}
 	}
-
+|	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
+	{
+		// Multiple-table syntax
+		var expr expression.Expression
+		if w := $7; w != nil {
+			expr = w.(*rsets.WhereRset).Expr
+		}
+		st := &stmts.UpdateStmt{
+			LowPriority:	$2.(bool),
+			TableRefs:	$4.(*rsets.JoinRset),
+			List:		$6.([]expressions.Assignment), 
+			Where:		expr,
+			MultipleTable:	true,
+		} 
+		$$ = st
+		if yylex.(*lexer).root {
+			break
+		}
+	}
 
 UseStmt:
 	"USE" DBName
@@ -3366,13 +3392,6 @@ WhereClauseOptional:
 |	WhereClause
 	{
 		$$ = $1
-	}
-
-SetOpt:
-	{
-	}
-|	"SET"
-	{
 	}
 
 CommaOpt:
