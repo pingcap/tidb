@@ -285,6 +285,12 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
+
+		// For compare subquery
+		{"SELECT 1 > (select 1)", true},
+		{"SELECT 1 > ANY (select 1)", true},
+		{"SELECT 1 > ALL (select 1)", true},
+		{"SELECT 1 > SOME (select 1)", true},
 	}
 
 	for _, t := range table {
@@ -307,7 +313,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substring", "mode",
+		"value", "warnings", "year", "now", "substring", "mode", "any", "some",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)

@@ -364,6 +364,25 @@ func (o *BinaryOperation) evalLogicOp(ctx context.Context, args map[interface{}]
 	}
 }
 
+func getCompResult(op opcode.Op, value int) (bool, error) {
+	switch op {
+	case opcode.LT:
+		return value < 0, nil
+	case opcode.LE:
+		return value <= 0, nil
+	case opcode.GE:
+		return value >= 0, nil
+	case opcode.GT:
+		return value > 0, nil
+	case opcode.EQ:
+		return value == 0, nil
+	case opcode.NE:
+		return value != 0, nil
+	default:
+		return false, errors.Errorf("invalid op %v in comparision operation", op)
+	}
+}
+
 // operator: >=, >, <=, <, !=, <>, = <=>, etc.
 // see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html
 func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
@@ -383,22 +402,12 @@ func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interfa
 		return nil, o.traceErr(err)
 	}
 
-	switch o.Op {
-	case opcode.LT:
-		return n < 0, nil
-	case opcode.LE:
-		return n <= 0, nil
-	case opcode.GE:
-		return n >= 0, nil
-	case opcode.GT:
-		return n > 0, nil
-	case opcode.EQ:
-		return n == 0, nil
-	case opcode.NE:
-		return n != 0, nil
-	default:
-		return nil, o.errorf("invalid op %v in comparision operation", o.Op)
+	r, err := getCompResult(o.Op, n)
+	if err != nil {
+		return nil, o.errorf(err.Error())
 	}
+
+	return r, nil
 }
 
 func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, error) {
@@ -407,20 +416,16 @@ func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, e
 	case int64:
 		switch y := b.(type) {
 		case int64:
-			return x + y, nil
+			return types.AddInt64(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return uint64(x) + y, nil
+			return types.AddInteger(y, x)
 		}
 	case uint64:
 		switch y := b.(type) {
 		case int64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x + uint64(y), nil
+			return types.AddInteger(x, y)
 		case uint64:
-			return x + y, nil
+			return types.AddUint64(x, y)
 		}
 	case float64:
 		switch y := b.(type) {
@@ -443,21 +448,16 @@ func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, 
 	case int64:
 		switch y := b.(type) {
 		case int64:
-			return x - y, nil
+			return types.SubInt64(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return uint64(x) - y, nil
+			return types.SubIntWithUint(x, y)
 		}
 	case uint64:
 		switch y := b.(type) {
 		case int64:
-			// TODO: check overflow
-			return x - uint64(y), nil
+			return types.SubUintWithInt(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x - y, nil
+			return types.SubUint64(x, y)
 		}
 	case float64:
 		switch y := b.(type) {
@@ -480,22 +480,16 @@ func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, er
 	case int64:
 		switch y := b.(type) {
 		case int64:
-			return x * y, nil
+			return types.MulInt64(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow and negative number
-			// if a negative int64 * uint64, MySQL may throw "BIGINT UNSIGNED value is out of range" error
-			// we skip it now and handle it later.
-			return uint64(x) * y, nil
+			return types.MulInteger(y, x)
 		}
 	case uint64:
 		switch y := b.(type) {
 		case int64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x * uint64(y), nil
+			return types.MulInteger(x, y)
 		case uint64:
-			return x * y, nil
+			return types.MulUint64(x, y)
 		}
 	case float64:
 		switch y := b.(type) {
@@ -511,8 +505,6 @@ func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, er
 
 	return types.InvOp2(a, b, opcode.Mul)
 }
-
-const precisionIncrement int32 = 4
 
 func (o *BinaryOperation) evalDiv(a interface{}, b interface{}) (interface{}, error) {
 	// MySQL support integer divison Div and division operator /
@@ -675,11 +667,19 @@ func (o *BinaryOperation) coerceArithmetic(a interface{}) (interface{}, error) {
 		}
 		return f, err
 	case mysql.Time:
-		// TODO: if time has no precision, return int64
-		return x.ToNumber(), nil
+		// if time has no precision, return int64
+		v := x.ToNumber()
+		if x.Fsp == 0 {
+			return v.IntPart(), nil
+		}
+		return v, nil
 	case mysql.Duration:
-		// TODO: if duration has no precision, return int64
-		return x.ToNumber(), nil
+		// if duration has no precision, return int64
+		v := x.ToNumber()
+		if x.Fsp == 0 {
+			return v.IntPart(), nil
+		}
+		return v, nil
 	case []byte:
 		// []byte is the same as string, converted to float for arithmetic operator.
 		f, err := types.StrToFloat(string(x))

@@ -58,11 +58,11 @@ import (
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
 	/*yy:token "%c"     */	identifier      "identifier"
-	/*yy:token "%di"    */	imaginaryLit	"imaginary literal"
 	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
 
+	abs		"ABS"
 	add		"ADD"
 	after		"AFTER"
 	all 		"ALL"
@@ -70,9 +70,11 @@ import (
 	and		"AND"
 	andand		"&&"
 	andnot		"&^"
+	any 		"ANY"
 	as		"AS"
 	asc		"ASC"
 	autoIncrement	"AUTO_INCREMENT"
+	avg		"AVG"
 	begin		"BEGIN"
 	between		"BETWEEN"
 	by		"BY"
@@ -81,16 +83,24 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	coalesce	"COALESCE"
 	collation	"COLLATE"
 	column		"COLUMN"
 	columns		"COLUMNS"
 	commit		"COMMIT"
+	concat		"CONCAT"
+	concatWs	"CONCAT_WS"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
+	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
 	database	"DATABASE"
 	databases	"DATABASES"
+	day		"DAY"
+	dayofmonth	"DAYOFMONTH"
+	dayofweek	"DAYOFWEEK"
+	dayofyear	"DAYOFYEAR"
 	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
@@ -102,7 +112,6 @@ import (
 	do		"DO"
 	drop		"DROP"
 	duplicate	"DUPLICATE"
-	durationType	"duration"
 	elseKwd		"ELSE"
 	end		"END"
 	engine		"ENGINE"
@@ -115,16 +124,20 @@ import (
 	first		"FIRST"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
+	foundRows	"FOUND_ROWS"
 	from		"FROM"
 	full		"FULL"
 	fulltext	"FULLTEXT"
 	ge		">="
 	global		"GLOBAL"
 	group		"GROUP"
+	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
+	hour		"HOUR"
 	ignore		"IGNORE"
 	ifKwd		"IF"
+	ifNull		"IFNULL"
 	in		"IN"
 	index		"INDEX"
 	inner 		"INNER"
@@ -135,19 +148,26 @@ import (
 	key		"KEY"
 	le		"<="
 	left		"LEFT"
+	length		"LENGTH"
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
 	lock		"LOCK"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
+	max		"MAX"
+	microsecond	"MICROSECOND"
+	min		"MIN"
+	minute		"MINUTE"
 	mod 		"MOD"
 	mode		"MODE"
+	month		"MONTH"
 	names		"NAMES"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
 	null		"NULL"
+	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
 	or		"OR"
@@ -161,23 +181,26 @@ import (
 	quick		"QUICK"
 	references	"REFERENCES"
 	regexp		"REGEXP"
+	repeat		"REPEAT"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
 	row 		"ROW"
 	rsh		">>"
-	runeType	"rune"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
+	second		"SECOND"
 	selectKwd	"SELECT"
 	session		"SESSION"
 	set		"SET"
 	share		"SHARE"
 	show		"SHOW"
 	signed		"SIGNED"
+	some 		"SOME"
 	start		"START"
 	stringType	"string"
 	substring	"SUBSTRING"
+	sum		"SUM"
 	sysVar		"SYS_VAR"
 	tableKwd	"TABLE"
 	tables		"TABLES"
@@ -197,9 +220,13 @@ import (
 	values		"VALUES"
 	variables	"VARIABLES"
 	warnings	"WARNINGS"
+	week		"WEEK"
+	weekday		"WEEKDAY"
+	weekofyear	"WEEKOFYEAR"
 	when		"WHEN"
 	where		"WHERE"
 	xor 		"XOR"
+	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
 	
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
@@ -255,17 +282,16 @@ import (
 	uint8Type	"uint8",
 	float32Type	"float32"
 	float64Type	"float64"
-	bigRatType	"bigrat"
 	boolType	"BOOL"
 	booleanType	"BOOLEAN"
 
 	parseExpression	"parse expression prefix"
 
 %type   <item>
-	AggAllOpt		"All option in aggregate function"
 	AlterTableStmt		"Alter table statement"
 	AlterSpecification	"Alter table specification"
 	AlterSpecificationList	"Alter table specification list"
+	AnyOrAll		"Any or All for subquery"
 	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
@@ -306,6 +332,7 @@ import (
 	DefaultKwdOpt		"optional DEFAULT keyword"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
+	DistinctOpt		"Distinct option"
 	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
@@ -327,8 +354,11 @@ import (
 	FieldList		"field expression list"
 	FromClause		"From clause"
 	Function		"function expr"
-	FunctionCall		"function call post part"
-	FunctionCallArgList	"function call optional argument list"
+	FunctionCallAgg		"Function call on aggregate data"
+	FunctionCallConflict	"Function call with reserved keyword as function name"
+	FunctionCallKeyword	"Function call with keyword as function name"
+	FunctionCallNonKeyword	"Function call with nonkeyword as function name"
+	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
@@ -462,13 +492,15 @@ import (
 	NUM			"numbers"
 	LengthNum		"Field length num(uint64)"
 
-	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 
 
 %token	tableRefPriority
 
 %precedence lowerThanCalcFoundRows
 %precedence calcFoundRows
+
+%precedence lowerThanInsertValues
+%precedence insertValues
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -655,39 +687,6 @@ BeginTransactionStmt:
 	{
 		$$ = &stmts.BeginStmt{}
 	}
-
-FunctionCall:
-	'(' AggAllOpt FunctionCallArgList ')'
-	{
-		$$ = []interface{}{false, $3}
-	}
-|	'(' "DISTINCT" AggAllOpt ExpressionList')'
-	{
-		/* Distinct must have expression list, can not empty and '*' */
-		$$ = []interface{}{true, $4}
-	}
-
-AggAllOpt:
-	{
-
-	}
-|	"ALL"
-	{
-		/* TODO: not all functions support ALL, so later we will distinguish to handle them */
-		/* ALL has nothing to do. */
-	}
-
-FunctionCallArgList:
-	/* EMPTY */
-	{
-		$$ = []expression.Expression{}
-	}
-	/* select count(*) from table */
-|	'*'  
-	{
-		$$ = []expression.Expression{ expressions.Value{Val: expressions.TypeStar("*")} }
-	}
-|	ExpressionList
 
 ColumnDef:
 	ColumnName Type ConstraintOpts
@@ -1387,7 +1386,49 @@ Factor:
 	{
 		$$ = expressions.NewBinaryOperation(opcode.EQ, $1.(expression.Expression), $3.(expression.Expression))
 	}
+|	Factor ">=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.GE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor '>' AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.GT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "<=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.LE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor '<' AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.LT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "!=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "<>" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.EQ, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
 |	Factor1
+
+AnyOrAll:
+	"ANY"
+	{
+		$$ = false
+	}
+|	"SOME"
+	{
+		$$ = false
+	}
+|	"ALL"
+	{
+		$$ = true
+	}
 
 Factor1:
 	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
@@ -1550,14 +1591,16 @@ Identifier:
 	identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
-	"AUTO_INCREMENT" | "AFTER" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
+	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
-|	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
+|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME"
 
 NotKeywordToken:
-	"SQL_CALC_FOUND_ROWS" | "SUBSTRING" %prec lowerThanLeftParen
+	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
+|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "SECOND" | "SQL_CALC_FOUND_ROWS"
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -1598,7 +1641,7 @@ InsertRest:
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
-|	ValueSym ExpressionListList
+|	ValueSym ExpressionListList %prec insertValues
 	{
 		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
 	}
@@ -1680,7 +1723,6 @@ Literal:
 		$$ = int64(1)
 	}
 |	floatLit
-|	imaginaryLit
 |	intLit
 |	stringLit
 
@@ -1798,30 +1840,51 @@ PrimaryExpression:
 	}
 
 Function:
-	PrimaryExpression FunctionCall 
+	FunctionCallKeyword
+|	FunctionCallNonKeyword
+|	FunctionCallConflict
+|	FunctionCallAgg
+
+FunctionNameConflict:
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT"
+
+FunctionCallConflict:
+	FunctionNameConflict '(' ExpressionList ')' 
 	{
 		x := yylex.(*lexer)
-		f, ok := $1.(*expressions.Ident)
-		if !ok {
-			x.err("", "expected identifier or qualified identifier")
-			return 1
-		}
-
 		var err error
-		args := $2.([]interface{})
-		if $$, err = expressions.NewCall(f.O, args[1].([]expression.Expression), args[0].(bool)); err != nil {
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
 			x.err("", "%v", err)
 			return 1
 		}
 	}
-|	FunctionNameConflict FunctionCall
+
+DistinctOpt:
 	{
-		x := yylex.(*lexer)
+		$$ = false
+	}
+|	"ALL"
+	{
+		$$ = false
+	}
+|	"DISTINCT"
+	{
+		$$ = true
+	}
+|	"DISTINCT" "ALL"
+	{
+		$$ = true
+	}
+
+FunctionCallKeyword:
+	"AVG" '(' DistinctOpt ExpressionList ')'
+	{
 		var err error
-		args := $2.([]interface{})
-		$$, err = expressions.NewCall($1.(string), args[1].([]expression.Expression), false)
+		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
 		if err != nil {
-			x.err("", "%v", err)
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
 			return 1
 		}
 	}
@@ -1844,11 +1907,6 @@ Function:
 		}
 		$$ = x
 	}
-|	"VALUES" '(' Identifier ')'
-	{
-		// TODO: support qualified identifier for column_name
-		$$ = &expressions.Values{CIStr: model.NewCIStr($3.(string))}
-	}
 |	"CONVERT" '(' Expression "USING" CharsetName ')' 
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
@@ -1865,6 +1923,237 @@ Function:
 			Tp: $5.(*types.FieldType),
 			IsConvert: true,
 		}	
+	}
+|	"DATE" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"VALUES" '(' Identifier ')' %prec lowerThanInsertValues
+	{
+		// TODO: support qualified identifier for column_name
+		$$ = &expressions.Values{CIStr: model.NewCIStr($3.(string))}
+	}
+|	"WEEK" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"YEAR" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+
+FunctionCallNonKeyword:
+	"COALESCE" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"ABS" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"CONCAT" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"CONCAT_WS" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"DAY" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"DAYOFWEEK" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"DAYOFMONTH" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"DAYOFYEAR" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"FOUND_ROWS" '(' ')'
+	{
+		args := []expression.Expression{}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"HOUR" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"IFNULL" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"LENGTH" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"MICROSECOND" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"MINUTE" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"MONTH" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"NOW" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression),false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"NULLIF" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"SECOND" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
@@ -1896,7 +2185,104 @@ Function:
 			Len: $7.(expression.Expression),
 		}	
 	}
+|	"WEEKDAY" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"WEEKOFYEAR" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"YEARWEEK" '(' ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression),false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
 
+FunctionCallAgg:
+	"COUNT" '(' DistinctOpt ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"COUNT" '(' DistinctOpt '*' ')'
+	{
+		var err error
+		args := []expression.Expression{ expressions.Value{Val: expressions.TypeStar("*")} }
+		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
+	{
+		var err error
+		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression),$3.(bool))
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"MAX" '(' DistinctOpt Expression ')'
+	{
+		args := []expression.Expression{$4.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"MIN" '(' DistinctOpt Expression ')'
+	{
+		args := []expression.Expression{$4.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
+|	"SUM" '(' DistinctOpt Expression ')'
+	{
+		args := []expression.Expression{$4.(expression.Expression)}
+		var err error
+		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err("", "%v", err)
+			return 1
+		}
+	}
 
 ExpressionOpt:
 	{
@@ -1988,24 +2374,6 @@ CastType:
 		$$ = x
 	}
 
-
-FunctionNameConflict:
-	"DATABASE"
-	{
-		$$ = expressions.BuiltinFuncDatabase 
-	}
-|	"SCHEMA"
-	{
-		$$ = expressions.BuiltinFuncDatabase 
-	}
-|	"IF"
-	{
-		$$ = expressions.BuiltinFuncIf
-	}
-|	"LEFT"
-	{
-		$$ = expressions.BuiltinFuncLeft
-	}
 
 PrimaryFactor:
 	PrimaryFactor '|' PrimaryFactor %prec '|'
@@ -2889,11 +3257,6 @@ Type:
 |	DateAndTimeType
 	{
 		$$ = $1
-	}
-|	"duration"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
 	}
 |	"float32"
 	{

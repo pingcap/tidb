@@ -40,7 +40,6 @@ type dbTxn struct {
 	store        *dbStore // for commit
 	startTs      time.Time
 	tID          int64
-	opCnt        int64
 	valid        bool
 	snapshotVals map[string][]byte // origin version in snapshot
 }
