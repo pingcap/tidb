@@ -68,7 +68,6 @@ var (
 )
 
 var (
-	errDivByZero    = errors.New("division by zero")
 	errDefaultValue = errors.New("invalid default value")
 )
 
@@ -226,6 +225,8 @@ func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression
 		for _, expr := range x.Values {
 			mentionedAggregateFuncs(expr, m)
 		}
+	case *CompareSubQuery:
+		mentionedAggregateFuncs(x.L, m)
 	default:
 		log.Errorf("Unknown Expression: %T", e)
 	}
@@ -314,6 +315,8 @@ func mentionedColumns(e expression.Expression, m map[string]bool, names *[]strin
 		for _, expr := range x.Values {
 			mentionedColumns(expr, m, names)
 		}
+	case *CompareSubQuery:
+		mentionedColumns(x.L, m, names)
 	default:
 		log.Errorf("Unknown Expression: %T", e)
 	}

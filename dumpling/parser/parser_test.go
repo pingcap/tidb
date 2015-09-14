@@ -286,6 +286,12 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
 
+		// For compare subquery
+		{"SELECT 1 > (select 1)", true},
+		{"SELECT 1 > ANY (select 1)", true},
+		{"SELECT 1 > ALL (select 1)", true},
+		{"SELECT 1 > SOME (select 1)", true},
+
 		// For update statement
 		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
