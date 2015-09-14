@@ -109,6 +109,13 @@ func (u *UnaryOperation) String() string {
 	switch u.V.(type) {
 	case *BinaryOperation:
 		return fmt.Sprintf("%s(%s)", u.Op, u.V)
+	case *ExistsSubQuery:
+		switch u.Op {
+		case opcode.Not:
+			return fmt.Sprintf("NOT %s", u.V)
+		default:
+			return fmt.Sprintf("%s", u.V)
+		}
 	default:
 		switch u.Op {
 		case opcode.Not:

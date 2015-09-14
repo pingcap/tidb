@@ -26,13 +26,12 @@ type testExistsSubQuerySuite struct {
 func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 	tbl := []struct {
 		in     []interface{}
-		not    bool
 		result int64 // 0 for false, 1 for true.
 	}{
-		{[]interface{}{1}, true, 0},
-		{[]interface{}{1}, false, 1},
-		{[]interface{}{nil}, true, 0},
-		{[]interface{}{nil}, false, 1},
+		{[]interface{}{1}, 1},
+		{[]interface{}{nil}, 1},
+		{[]interface{}{}, 0},
+		{nil, 0},
 	}
 
 	for _, t := range tbl {
@@ -42,7 +41,7 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 		}
 
 		sq := newMockSubQuery(in, []string{"c"})
-		expr := NewExistsSubQuery(sq, t.not)
+		expr := NewExistsSubQuery(sq)
 
 		c.Assert(expr.IsStatic(), IsFalse)
 

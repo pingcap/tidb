@@ -26,8 +26,6 @@ import (
 type ExistsSubQuery struct {
 	// Sel is the sub query.
 	Sel *SubQuery
-	// Not is true, the expression is "not exists".
-	Not bool
 }
 
 // Clone implements the Expression Clone interface.
@@ -37,7 +35,7 @@ func (es *ExistsSubQuery) Clone() (expression.Expression, error) {
 		return nil, errors.Trace(err)
 	}
 
-	return &ExistsSubQuery{Sel: sel.(*SubQuery), Not: es.Not}, nil
+	return &ExistsSubQuery{Sel: sel.(*SubQuery)}, nil
 }
 
 // IsStatic implements the Expression IsStatic interface.
@@ -47,17 +45,13 @@ func (es *ExistsSubQuery) IsStatic() bool {
 
 // String implements the Expression String interface.
 func (es *ExistsSubQuery) String() string {
-	if es.Not {
-		return fmt.Sprintf("NOT EXISTS %s", es.Sel)
-	}
-
 	return fmt.Sprintf("EXISTS %s", es.Sel)
 }
 
 // Eval implements the Expression Eval interface.
 func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	if es.Sel.Value != nil {
-		return !es.Not, nil
+		return true, nil
 	}
 
 	p, err := es.Sel.Plan(ctx)
@@ -85,16 +79,14 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 		return nil, errors.Trace(err)
 	}
 
-	es.Sel.Value = res
-
-	if !es.Not {
-		return es.Sel.Value != nil, nil
+	if len(res) > 0 {
+		es.Sel.Value = res
 	}
 
-	return es.Sel.Value == nil, nil
+	return es.Sel.Value != nil, nil
 }
 
 // NewExistsSubQuery creates a ExistsSubQuery object.
-func NewExistsSubQuery(sel *SubQuery, not bool) *ExistsSubQuery {
-	return &ExistsSubQuery{Sel: sel, Not: not}
+func NewExistsSubQuery(sel *SubQuery) *ExistsSubQuery {
+	return &ExistsSubQuery{Sel: sel}
 }
