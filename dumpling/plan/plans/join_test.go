@@ -22,6 +22,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -79,23 +80,25 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Fields: []*field.ResultField{},
 		On:     expressions.Value{Val: true},
 	}
+	rset := rsets.Recordset{Plan: joinPlan}
 
-	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
-
-	joinPlan = &plans.JoinPlan{
+	tblPlan1.Close()
+	tblPlan2.Close()
+	rset.Plan = &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
 		Type:   "LEFT",
 		Fields: []*field.ResultField{},
 		On:     expressions.Value{Val: true},
 	}
-
-	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
-
+	tblPlan1.Close()
+	tblPlan2.Close()
 	joinPlan = &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
@@ -116,12 +119,13 @@ func (s *testJoinSuit) TestJoin(c *C) {
 	np, _, err := joinPlan.Filter(nil, expr)
 	c.Assert(np, NotNil)
 	c.Assert(err, IsNil)
-
-	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset.Plan = joinPlan
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
-
-	joinPlan = &plans.JoinPlan{
+	tblPlan1.Close()
+	tblPlan2.Close()
+	rset.Plan = &plans.JoinPlan{
 		Left:   tblPlan1,
 		Right:  tblPlan2,
 		Type:   "FULL",
@@ -129,7 +133,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		On:     expressions.Value{Val: true},
 	}
 
-	joinPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
 
