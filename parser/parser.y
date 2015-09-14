@@ -63,6 +63,7 @@ import (
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
 
+	abs		"ABS"
 	add		"ADD"
 	after		"AFTER"
 	all 		"ALL"
@@ -73,6 +74,7 @@ import (
 	as		"AS"
 	asc		"ASC"
 	autoIncrement	"AUTO_INCREMENT"
+	avg		"AVG"
 	begin		"BEGIN"
 	between		"BETWEEN"
 	by		"BY"
@@ -81,12 +83,14 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	coalesce	"COALESCE"
 	collation	"COLLATE"
 	column		"COLUMN"
 	columns		"COLUMNS"
 	commit		"COMMIT"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
+	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
 	database	"DATABASE"
@@ -121,6 +125,7 @@ import (
 	ge		">="
 	global		"GLOBAL"
 	group		"GROUP"
+	group_concat	"GROUP_CONCAT"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
 	ignore		"IGNORE"
@@ -306,6 +311,7 @@ import (
 	DefaultKwdOpt		"optional DEFAULT keyword"
 	DefaultValueExpr	"DefaultValueExpr(Now or Signed Literal)"
 	DeleteFromStmt		"DELETE FROM statement"
+	DistinctOpt		"Distinct option"
 	DoStmt			"Do statement"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
@@ -329,6 +335,8 @@ import (
 	Function		"function expr"
 	FunctionCall		"function call post part"
 	FunctionCallArgList	"function call optional argument list"
+	FunctionCallKeyword	"function call with keyword as function name"
+	FunctionCallNonKeyword	"function call with nonkeyword as function name"
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
@@ -1550,14 +1558,14 @@ Identifier:
 	identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
-	"AUTO_INCREMENT" | "AFTER" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
+	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" | "NOW" |	"MODE"
 
 NotKeywordToken:
-	"SQL_CALC_FOUND_ROWS" | "SUBSTRING" %prec lowerThanLeftParen
+	"ABS" | "COALESCE" | "COUNT" | "GROUP_CONCAT" |"SQL_CALC_FOUND_ROWS" | "SUBSTRING" %prec lowerThanLeftParen
 
 /************************************************************************************
  *
@@ -1798,6 +1806,10 @@ PrimaryExpression:
 	}
 
 Function:
+	FunctionCallKeyword
+|	FunctionCallNonKeyword
+|	FunctionCallConflict
+/*
 	PrimaryExpression FunctionCall 
 	{
 		x := yylex.(*lexer)
@@ -1814,7 +1826,10 @@ Function:
 			return 1
 		}
 	}
-|	FunctionNameConflict FunctionCall
+*/
+
+FunctionCallConflict:
+	FunctionNameConflict FunctionCall
 	{
 		x := yylex.(*lexer)
 		var err error
@@ -1824,6 +1839,22 @@ Function:
 			x.err("", "%v", err)
 			return 1
 		}
+	}
+
+DistinctOpt:
+	{
+		$$ = false
+	}
+|	"DISTINCT"
+	{
+		$$ = true
+	}
+
+FunctionCallKeyword:
+	"AVG" '(' DistinctOpt Expression ')'
+	{
+		args := []expression.Expression{$4.(expression.Expression)}	
+		$$ = expression.NewCall($1.(string), args, $3.(bool))
 	}
 |	"CAST" '(' Expression "AS" CastType ')'
 	{
@@ -1865,6 +1896,26 @@ Function:
 			Tp: $5.(*types.FieldType),
 			IsConvert: true,
 		}	
+	}
+
+FunctionCallNonKeyword:
+	"COALESCE" '(' ExpressionList ')'
+	{
+		return expressions.NewCall($1.(string), $3.([]expression.Expressions), false)
+	}
+|	"ABS" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		return expressions.NewCall($1.(string), args, false)
+	}
+|	"COUNT" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		return expressions.NewCall($1.(string), args, false)
+	}
+|	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
+	{
+		return expression.NewCall($1.(string), $4.([]expression.Expression),$3.(bool))
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
