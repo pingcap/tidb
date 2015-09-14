@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
@@ -45,7 +44,6 @@ type Table struct {
 	Name    model.CIStr
 	Columns []*column.Col
 
-	opt          *coldef.TableOption
 	indices      []*column.IndexedCol
 	recordPrefix string
 	indexPrefix  string
