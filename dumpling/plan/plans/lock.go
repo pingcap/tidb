@@ -112,8 +112,3 @@ func (r *SelectLockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 func (r *SelectLockPlan) Close() error {
 	return r.Src.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *SelectLockPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}

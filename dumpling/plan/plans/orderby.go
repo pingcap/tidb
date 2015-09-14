@@ -265,8 +265,3 @@ func (r *OrderByDefaultPlan) Close() error {
 	r.cursor = 0
 	return r.Src.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *OrderByDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}

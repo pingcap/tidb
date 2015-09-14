@@ -588,8 +588,3 @@ func (isp *InfoSchemaPlan) Close() error {
 	isp.cursor = 0
 	return nil
 }
-
-// UseNext implements NextPlan interface
-func (isp *InfoSchemaPlan) UseNext() bool {
-	return true
-}

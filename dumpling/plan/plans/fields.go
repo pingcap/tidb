@@ -107,11 +107,6 @@ func (r *SelectFieldsDefaultPlan) Close() error {
 	return r.Src.Close()
 }
 
-// UseNext implements NextPlan interface
-func (r *SelectFieldsDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}
-
 // SelectEmptyFieldListPlan is the plan for "select expr, expr, ..."" with no FROM.
 type SelectEmptyFieldListPlan struct {
 	Fields []*field.Field
@@ -169,9 +164,4 @@ func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err
 func (s *SelectEmptyFieldListPlan) Close() error {
 	s.done = false
 	return nil
-}
-
-// UseNext implements NextPlan interface.
-func (s *SelectEmptyFieldListPlan) UseNext() bool {
-	return true
 }

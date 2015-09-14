@@ -118,8 +118,3 @@ func (r *FilterDefaultPlan) meetRequirement(ctx context.Context) (bool, error) {
 func (r *FilterDefaultPlan) Close() error {
 	return r.Plan.Close()
 }
-
-// UseNext implements plan.NextPlan interface.
-func (r *FilterDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Plan)
-}

@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -129,12 +128,6 @@ func (r *TableNilPlan) Close() error {
 	}
 	r.iter = nil
 	return nil
-}
-
-// UseNext implements NextPlan interface
-func (r *TableNilPlan) UseNext() bool {
-	log.Warn("use next")
-	return true
 }
 
 // TableDefaultPlan iterates rows from a table, in general case
@@ -419,10 +412,4 @@ func (r *TableDefaultPlan) Close() error {
 	}
 	r.iter = nil
 	return nil
-}
-
-// UseNext implements NextPlan interface
-func (r *TableDefaultPlan) UseNext() bool {
-	log.Warn("use next")
-	return true
 }

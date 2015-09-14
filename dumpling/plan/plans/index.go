@@ -433,8 +433,3 @@ func (r *indexPlan) Close() error {
 	r.skipLowCmp = false
 	return nil
 }
-
-// UseNext implements NextPlan interface
-func (r *indexPlan) UseNext() bool {
-	return true
-}

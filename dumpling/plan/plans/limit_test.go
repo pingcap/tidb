@@ -77,10 +77,6 @@ func (p *testTablePlan) Close() error {
 	return nil
 }
 
-func (p *testTablePlan) UseNext() bool {
-	return true
-}
-
 type testLimitSuit struct {
 	data []*testRowData
 	sess tidb.Session

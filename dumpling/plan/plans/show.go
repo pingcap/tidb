@@ -373,8 +373,3 @@ func (s *ShowPlan) Close() error {
 	s.cursor = 0
 	return nil
 }
-
-// UseNext implements NextPlan interface
-func (s *ShowPlan) UseNext() bool {
-	return true
-}

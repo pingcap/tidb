@@ -93,11 +93,6 @@ func (r *LimitDefaultPlan) Close() error {
 	return r.Src.Close()
 }
 
-// UseNext implements plan.NextPlan interface.
-func (r *LimitDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}
-
 // OffsetDefaultPlan handles SELECT ... FROM ... OFFSET N, skips N records.
 type OffsetDefaultPlan struct {
 	Count  uint64
@@ -150,9 +145,4 @@ func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 func (r *OffsetDefaultPlan) Close() error {
 	r.cursor = 0
 	return r.Src.Close()
-}
-
-// UseNext implements plan.NextPlan interface.
-func (r *OffsetDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
 }

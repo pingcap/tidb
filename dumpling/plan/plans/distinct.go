@@ -151,8 +151,3 @@ func (r *DistinctDefaultPlan) Close() error {
 	r.cursor = 0
 	return r.Src.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *DistinctDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}
