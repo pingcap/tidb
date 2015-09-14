@@ -343,11 +343,6 @@ func staticExpr(e expression.Expression) (expression.Expression, error) {
 	return e, nil
 }
 
-type exprTab struct {
-	expr  expression.Expression
-	table string
-}
-
 // IsCurrentTimeExpr returns whether e is CurrentTimeExpr.
 func IsCurrentTimeExpr(e expression.Expression) bool {
 	x, ok := e.(*Ident)
