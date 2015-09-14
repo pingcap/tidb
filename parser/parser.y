@@ -103,7 +103,6 @@ import (
 	do		"DO"
 	drop		"DROP"
 	duplicate	"DUPLICATE"
-	durationType	"duration"
 	elseKwd		"ELSE"
 	end		"END"
 	engine		"ENGINE"
@@ -2934,11 +2933,6 @@ Type:
 |	DateAndTimeType
 	{
 		$$ = $1
-	}
-|	"duration"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
 	}
 |	"float32"
 	{
