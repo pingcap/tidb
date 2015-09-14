@@ -152,8 +152,8 @@ func MulInteger(a uint64, b int64) (uint64, error) {
 	return MulUint64(a, uint64(b))
 }
 
-// DivInt64 divide int64 a with b, returns int64 if no overflow error.
-// DivInt64 just checks overflow, if b is zero, a "divide by zero" panic throws.
+// DivInt64 divides int64 a with b, returns int64 if no overflow error.
+// It just checks overflow, if b is zero, a "divide by zero" panic throws.
 func DivInt64(a int64, b int64) (int64, error) {
 	if a == math.MinInt64 && b == -1 {
 		return 0, errors.Trace(ErrArithOverflow)
@@ -162,7 +162,8 @@ func DivInt64(a int64, b int64) (int64, error) {
 	return a / b, nil
 }
 
-// DivUintWithInt divide uint64 a with int64 b, returns uint64 if no overflow error.
+// DivUintWithInt divides uint64 a with int64 b, returns uint64 if no overflow error.
+// It just checks overflow, if b is zero, a "divide by zero" panic throws.
 func DivUintWithInt(a uint64, b int64) (uint64, error) {
 	if b < 0 {
 		if a != 0 && uint64(-b) <= a {
@@ -175,7 +176,8 @@ func DivUintWithInt(a uint64, b int64) (uint64, error) {
 	return a / uint64(b), nil
 }
 
-// DivIntWithUint divide int64 a with uint64 b, returns uint64 if no overflow error.
+// DivIntWithUint divides int64 a with uint64 b, returns uint64 if no overflow error.
+// It just checks overflow, if b is zero, a "divide by zero" panic throws.
 func DivIntWithUint(a int64, b uint64) (uint64, error) {
 	if a < 0 {
 		if uint64(-a) >= b {
