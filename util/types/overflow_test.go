@@ -323,8 +323,6 @@ func (s *testOverflowSuite) TestDiv(c *C) {
 	}
 
 	for _, t := range tblInt2 {
-		c.Log(t.lsh, t.rsh)
-
 		ret, err := DivIntWithUint(t.lsh, t.rsh)
 		if t.overflow {
 			c.Assert(err, NotNil)
