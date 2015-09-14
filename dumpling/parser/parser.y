@@ -628,7 +628,23 @@ Symbol:
 Assignment:
 	QualifiedIdent eq Expression
 	{
-		$$ = expressions.Assignment{ColName: $1.(string), Expr: expressions.Expr($3)}
+		name := $1.(string)
+		fs := strings.Split(name, ".")
+		var (
+			tn string
+			cn string
+		)
+		if len(fs) == 1 {
+			cn = fs[0]
+		} else if len(fs) == 2 {
+			tn = fs[0]
+			cn = fs[1]
+		}
+		$$ = expressions.Assignment{
+			TableName:	tn,
+			ColName:	cn, 
+			Expr:		expressions.Expr($3),
+		}
 	}
 
 AssignmentList:

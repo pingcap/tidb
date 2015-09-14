@@ -21,6 +21,7 @@ import (
 
 // Assignment is the expression for assignment, like a = 1.
 type Assignment struct {
+	TableName string
 	// ColName is the variable name we want to set.
 	ColName string
 	// Expr is the expression assigning to ColName.
@@ -29,5 +30,8 @@ type Assignment struct {
 
 // String returns Assignment representation.
 func (a *Assignment) String() string {
-	return fmt.Sprintf("%s=%s", a.ColName, a.Expr)
+	if len(a.TableName) == 0 {
+		return fmt.Sprintf("%s=%s", a.ColName, a.Expr)
+	}
+	return fmt.Sprintf("%s.%s=%s", a.TableName, a.ColName, a.Expr)
 }
