@@ -96,8 +96,3 @@ func (r *ExplainDefaultPlan) Close() error {
 	r.cursor = 0
 	return nil
 }
-
-// UseNext implements NextPlan interface
-func (r *ExplainDefaultPlan) UseNext() bool {
-	return true
-}

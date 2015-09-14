@@ -511,11 +511,3 @@ func (r *JoinPlan) Close() error {
 	}
 	return r.Left.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *JoinPlan) UseNext() bool {
-	if r.Right != nil {
-		return plan.UseNext(r.Left) && plan.UseNext(r.Right)
-	}
-	return plan.UseNext(r.Left)
-}

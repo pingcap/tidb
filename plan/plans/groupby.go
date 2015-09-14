@@ -433,8 +433,3 @@ func (r *GroupByDefaultPlan) Close() error {
 	r.cursor = 0
 	return r.Src.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *GroupByDefaultPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}

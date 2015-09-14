@@ -118,8 +118,3 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 func (r *HavingPlan) Close() error {
 	return r.Src.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *HavingPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}

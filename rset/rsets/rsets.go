@@ -42,26 +42,20 @@ func (r Recordset) GetFields() []interface{} {
 
 // Do implements rset.Recordset.
 func (r Recordset) Do(f func(data []interface{}) (bool, error)) error {
-	if plan.UseNext(r.Plan) {
-		defer r.Plan.Close()
-		for {
-			row, err := r.Plan.Next(r.Ctx)
-			if row == nil || err != nil {
-				return errors.Trace(err)
-			}
-			more, err := f(row.Data)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if !more {
-				return nil
-			}
+	defer r.Plan.Close()
+	for {
+		row, err := r.Plan.Next(r.Ctx)
+		if row == nil || err != nil {
+			return errors.Trace(err)
+		}
+		more, err := f(row.Data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !more {
+			return nil
 		}
 	}
-
-	return r.Plan.Do(r.Ctx, func(ID interface{}, data []interface{}) (bool, error) {
-		return f(data)
-	})
 }
 
 // Fields implements rset.Recordset.
@@ -71,16 +65,13 @@ func (r Recordset) Fields() (fields []*field.ResultField, err error) {
 
 // FirstRow implements rset.Recordset.
 func (r Recordset) FirstRow() (row []interface{}, err error) {
-	rows, err := r.Rows(1, 0)
-	if err != nil {
-		return nil, err
+	ro, err := r.Plan.Next(r.Ctx)
+	if ro == nil || err != nil {
+		return nil, errors.Trace(err)
 	}
-
-	if len(rows) != 0 {
-		return rows[0], nil
-	}
-
-	return nil, nil
+	r.Plan.Close()
+	row = ro.Data
+	return
 }
 
 // Rows implements rset.Recordset.

@@ -110,8 +110,3 @@ func (r *SelectFinalPlan) Close() error {
 	r.infered = false
 	return r.Src.Close()
 }
-
-// UseNext implements NextPlan interface
-func (r *SelectFinalPlan) UseNext() bool {
-	return plan.UseNext(r.Src)
-}

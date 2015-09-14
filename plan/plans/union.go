@@ -265,13 +265,3 @@ func (p *UnionPlan) Close() error {
 	p.cursor = 0
 	return nil
 }
-
-// UseNext implements NextPlan interface
-func (p *UnionPlan) UseNext() bool {
-	for _, src := range p.Srcs {
-		if !plan.UseNext(src) {
-			return false
-		}
-	}
-	return true
-}
