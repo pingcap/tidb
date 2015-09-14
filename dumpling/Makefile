@@ -36,8 +36,8 @@ parser:
 		sed -i -e 's|//line.*||' -e 's/yyEofCode/yyEOFCode/' parser/parser.go; \
 	elif [ $(ARCH) = $(MAC) ]; \
 	then \
-		sed -i "" 's|//line.*||' parser/parser.go; \
-		sed -i "" 's/yyEofCode/yyEOFCode/' parser/parser.go; \
+		/usr/bin/sed -i "" 's|//line.*||' parser/parser.go; \
+		/usr/bin/sed -i "" 's/yyEofCode/yyEOFCode/' parser/parser.go; \
 	fi
 
 	golex -o parser/scanner.go parser/scanner.l
