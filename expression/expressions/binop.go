@@ -675,11 +675,21 @@ func (o *BinaryOperation) coerceArithmetic(a interface{}) (interface{}, error) {
 		}
 		return f, err
 	case mysql.Time:
-		// TODO: if time has no precision, return int64
-		return x.ToNumber(), nil
+		// if time has no precision, return int64
+		v := x.ToNumber()
+		if x.Fsp == 0 {
+			// Integer number 20111111101010 can not overflow int64.
+			return v.IntPart(), nil
+		}
+		return v, nil
 	case mysql.Duration:
-		// TODO: if duration has no precision, return int64
-		return x.ToNumber(), nil
+		// if duration has no precision, return int64
+		v := x.ToNumber()
+		if x.Fsp == 0 {
+			// Integer number 111111 can not overflow int64.
+			return v.IntPart(), nil
+		}
+		return v, nil
 	case []byte:
 		// []byte is the same as string, converted to float for arithmetic operator.
 		f, err := types.StrToFloat(string(x))
