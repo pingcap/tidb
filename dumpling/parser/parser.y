@@ -164,7 +164,6 @@ import (
 	rollback	"ROLLBACK"
 	row 		"ROW"
 	rsh		">>"
-	runeType	"rune"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
 	selectKwd	"SELECT"
