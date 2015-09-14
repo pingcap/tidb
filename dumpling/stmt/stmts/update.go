@@ -274,16 +274,12 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		}
 		// Update rows
 		start := 0
-		log.Debug("--------------------Row-------------------------")
-		log.Debug("ZZZZ:", len(rowKeys.Keys))
 		for _, entry := range rowKeys.Keys {
-			log.Debug("ZZZ:", entry.Key)
 			tbl := entry.Tbl
 			k := entry.Key
 			_, ok := updatedRowKeys[k]
 			if ok {
 				// Each matching row is updated once, even if it matches the conditions multiple times.
-				log.Debug("ZZZZ: Updated")
 				continue
 			}
 			// Update row
@@ -292,7 +288,6 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				return false, errors.Trace(uerr)
 			}
 			end := start + len(tbl.Cols())
-			log.Debug("ZZZ:", start, end)
 			data := in[start:end]
 			start = end
 			tcols, uerr := getUpdateColumns(tbl, s.List, s.MultipleTable)

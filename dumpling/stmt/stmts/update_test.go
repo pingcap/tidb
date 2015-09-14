@@ -94,7 +94,7 @@ func (s *testStmtSuite) fillMultiTableForUpdate(currDB *sql.DB, c *C) {
 	mustExec(c, currDB, s.useDBSql)
 	// Create and fill table items
 	mustExec(c, currDB, "CREATE TABLE items (id int, price TEXT);")
-	r := mustExec(c, currDB, `insert into items values (11, "items_price_11"), (12, "items_prices_12"), (13, "items_prices_13");`)
+	r := mustExec(c, currDB, `insert into items values (11, "items_price_11"), (12, "items_price_12"), (13, "items_price_13");`)
 	checkResult(c, r, 3, 0)
 	// Create and fill table month
 	mustExec(c, currDB, "CREATE TABLE month (id int, price TEXT);")
@@ -109,4 +109,23 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 
 	r := mustExec(c, testDB, `UPDATE items, month  SET items.price=month.price WHERE items.id=month.id;`)
 	c.Assert(r, NotNil)
+
+	tx := mustBegin(c, testDB)
+	rows, err := tx.Query("SELECT * FROM items")
+	c.Assert(err, IsNil)
+
+	for rows.Next() {
+		var (
+			id    int
+			price string
+		)
+		rows.Scan(&id, &price)
+		if id == 11 {
+			c.Assert(price, Equals, "month_price_11")
+		} else if id == 12 {
+			c.Assert(price, Equals, "items_price_12")
+		} else if id == 13 {
+			c.Assert(price, Equals, "month_price_13")
+		}
+	}
 }

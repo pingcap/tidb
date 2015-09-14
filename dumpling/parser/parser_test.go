@@ -296,6 +296,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
+		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
 	}
 
 	for _, t := range table {
