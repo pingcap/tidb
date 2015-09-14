@@ -68,7 +68,6 @@ var (
 )
 
 var (
-	errDivByZero    = errors.New("division by zero")
 	errDefaultValue = errors.New("invalid default value")
 )
 

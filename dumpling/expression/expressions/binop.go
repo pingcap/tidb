@@ -512,8 +512,6 @@ func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, er
 	return types.InvOp2(a, b, opcode.Mul)
 }
 
-const precisionIncrement int32 = 4
-
 func (o *BinaryOperation) evalDiv(a interface{}, b interface{}) (interface{}, error) {
 	// MySQL support integer divison Div and division operator /
 	// we use opcode.Div for division operator and will use another for integer division later.
