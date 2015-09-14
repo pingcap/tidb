@@ -678,7 +678,6 @@ func (o *BinaryOperation) coerceArithmetic(a interface{}) (interface{}, error) {
 		// if time has no precision, return int64
 		v := x.ToNumber()
 		if x.Fsp == 0 {
-			// Integer number 20111111101010 can not overflow int64.
 			return v.IntPart(), nil
 		}
 		return v, nil
@@ -686,7 +685,6 @@ func (o *BinaryOperation) coerceArithmetic(a interface{}) (interface{}, error) {
 		// if duration has no precision, return int64
 		v := x.ToNumber()
 		if x.Fsp == 0 {
-			// Integer number 111111 can not overflow int64.
 			return v.IntPart(), nil
 		}
 		return v, nil
