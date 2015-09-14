@@ -224,6 +224,7 @@ x		[xX]
 y		[yY]
 z		[zZ]
 
+abs		{a}{b}{s}
 add		{a}{d}{d}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
@@ -232,6 +233,7 @@ and		{a}{n}{d}
 as		{a}{s}
 asc		{a}{s}{c}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
+avg		{a}{v}{g}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
 by		{b}{y}
@@ -239,12 +241,14 @@ case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
 column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
 commit		{c}{o}{m}{m}{i}{t}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
+count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
@@ -275,6 +279,7 @@ full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
 group		{g}{r}{o}{u}{p}
+group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
 if		{i}{f}
@@ -453,6 +458,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 "?"			return placeholder
 
+{abs}			lval.item = string(l.val)
+			return abs
 {add}			return add
 {after}			lval.item = string(l.val)
 			return after
@@ -463,6 +470,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {as}			return as
 {auto_increment}	lval.item = string(l.val)
 			return autoIncrement
+{avg}			lval.item = string(l.val)
+			return avg
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
@@ -472,6 +481,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{coalesce}		lval.item = string(l.val)
+			return coalesce
 {collate}		return collation
 {column}		return column
 {columns}		lval.item = string(l.val)
@@ -480,6 +491,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return commit
 {constraint}		return constraint
 {convert}		return convert
+{count}			lval.item = string(l.val)
+			return count
 {create}		return create
 {cross}			return cross
 {database}		return database
@@ -518,6 +531,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return full
 {fulltext}		return fulltext
 {group}			return group
+{group_concat}		lval.item = string(l.val)
+			return group_concat
 {having}		return having
 {high_priority}		return highPriority
 {if}			return ifKwd
