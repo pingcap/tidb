@@ -18,6 +18,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -59,8 +60,12 @@ type JoinPlan struct {
 
 	Type string
 
-	Fields []*field.ResultField
-	On     expression.Expression
+	Fields      []*field.ResultField
+	On          expression.Expression
+	curRow      *plan.Row
+	matchedRows []*plan.Row
+	cursor      int
+	evalArgs    map[interface{}]interface{}
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -345,15 +350,172 @@ func appendRow(prefix []interface{}, in []interface{}) []interface{} {
 
 // Next implements plan.Plan Next interface.
 func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	return r.Left.Next(ctx)
+	if r.Right == nil {
+		return r.Left.Next(ctx)
+	}
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
+	switch r.Type {
+	case LeftJoin:
+		return r.nextLeftJoin(ctx)
+	case RightJoin:
+		return r.nextRightJoin(ctx)
+	default:
+		return r.nextCrossJoin(ctx)
+	}
+}
+
+func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) {
+	for {
+		if r.cursor < len(r.matchedRows) {
+			row = r.matchedRows[r.cursor]
+			r.cursor++
+			return
+		}
+		r.cursor = 0
+		var leftRow *plan.Row
+		leftRow, err = r.Left.Next(ctx)
+		if leftRow == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = r.findMatchedRows(ctx, leftRow, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+}
+
+func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error) {
+	for {
+		if r.cursor < len(r.matchedRows) {
+			row = r.matchedRows[r.cursor]
+			r.cursor++
+			return
+		}
+		var rightRow *plan.Row
+		rightRow, err = r.Right.Next(ctx)
+		if rightRow == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = r.findMatchedRows(ctx, rightRow, true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+}
+
+func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right bool) (err error) {
+	var p plan.Plan
+	if right {
+		p = r.Left
+	} else {
+		p = r.Right
+	}
+	r.cursor = 0
+	r.matchedRows = nil
+	p.Close()
+	for {
+		var cmpRow *plan.Row
+		cmpRow, err = p.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cmpRow == nil {
+			break
+		}
+		var joined []interface{}
+		if right {
+			joined = append(cmpRow.Data, row.Data...)
+		} else {
+			joined = append(row.Data, cmpRow.Data...)
+		}
+		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return getIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
+		}
+		var b bool
+		b, err = expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if b {
+			cmpRow.Data = joined
+			cmpRow.RowKeys = append(row.RowKeys, cmpRow.RowKeys...)
+			r.matchedRows = append(r.matchedRows, cmpRow)
+		}
+	}
+	if len(r.matchedRows) == 0 {
+		if right {
+			leftLen := len(r.Fields) - len(r.Right.GetFields())
+			row.Data = append(make([]interface{}, leftLen), row.Data...)
+		} else {
+			rightLen := len(r.Fields) - len(r.Left.GetFields())
+			row.Data = append(row.Data, make([]interface{}, rightLen)...)
+		}
+		r.matchedRows = append(r.matchedRows, row)
+	}
+	return nil
+}
+
+func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error) {
+	for {
+		if r.curRow == nil {
+			r.curRow, err = r.Right.Next(ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if r.curRow == nil {
+				return nil, nil
+			}
+		}
+		var leftRow *plan.Row
+		leftRow, err = r.Left.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if leftRow == nil {
+			r.curRow = nil
+			r.Left.Close()
+			continue
+		}
+		joinedRow := appendRow(leftRow.Data, r.curRow.Data)
+		if r.On != nil {
+			r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				return getIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
+			}
+
+			b, err := expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !b {
+				// If On condition not satisified, drop this row
+				continue
+			}
+		}
+		row = &plan.Row{
+			Data:    joinedRow,
+			RowKeys: append(r.curRow.RowKeys, leftRow.RowKeys...),
+		}
+		return
+	}
 }
 
 // Close implements plan.Plan Close interface.
 func (r *JoinPlan) Close() error {
+	r.curRow = nil
+	r.matchedRows = nil
+	r.cursor = 0
+	if r.Right != nil {
+		r.Right.Close()
+	}
 	return r.Left.Close()
 }
 
 // UseNext implements NextPlan interface
 func (r *JoinPlan) UseNext() bool {
-	return r.Right == nil && plan.UseNext(r.Left)
+	if r.Right != nil {
+		return plan.UseNext(r.Left) && plan.UseNext(r.Right)
+	}
+	return plan.UseNext(r.Left)
 }
