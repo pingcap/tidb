@@ -355,12 +355,14 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		default:
 			return invConv(val, tp)
 		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeBit:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		unsigned := mysql.HasUnsignedFlag(target.Flag)
 		if unsigned {
 			return convertToUint(val, target)
 		}
 		return convertToInt(val, target)
+	case mysql.TypeBit:
+		return convertToUint(val, target)
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
 		x, err := ToDecimal(val)
 		if err != nil {

@@ -58,7 +58,6 @@ import (
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
 	/*yy:token "%c"     */	identifier      "identifier"
-	/*yy:token "%di"    */	imaginaryLit	"imaginary literal"
 	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
@@ -70,6 +69,7 @@ import (
 	and		"AND"
 	andand		"&&"
 	andnot		"&^"
+	any 		"ANY"
 	as		"AS"
 	asc		"ASC"
 	autoIncrement	"AUTO_INCREMENT"
@@ -102,7 +102,6 @@ import (
 	do		"DO"
 	drop		"DROP"
 	duplicate	"DUPLICATE"
-	durationType	"duration"
 	elseKwd		"ELSE"
 	end		"END"
 	engine		"ENGINE"
@@ -166,7 +165,6 @@ import (
 	rollback	"ROLLBACK"
 	row 		"ROW"
 	rsh		">>"
-	runeType	"rune"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
 	selectKwd	"SELECT"
@@ -175,6 +173,7 @@ import (
 	share		"SHARE"
 	show		"SHOW"
 	signed		"SIGNED"
+	some 		"SOME"
 	start		"START"
 	stringType	"string"
 	substring	"SUBSTRING"
@@ -255,7 +254,6 @@ import (
 	uint8Type	"uint8",
 	float32Type	"float32"
 	float64Type	"float64"
-	bigRatType	"bigrat"
 	boolType	"BOOL"
 	booleanType	"BOOLEAN"
 
@@ -266,6 +264,7 @@ import (
 	AlterTableStmt		"Alter table statement"
 	AlterSpecification	"Alter table specification"
 	AlterSpecificationList	"Alter table specification list"
+	AnyOrAll		"Any or All for subquery"
 	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
@@ -1390,7 +1389,49 @@ Factor:
 	{
 		$$ = expressions.NewBinaryOperation(opcode.EQ, $1.(expression.Expression), $3.(expression.Expression))
 	}
+|	Factor ">=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.GE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor '>' AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.GT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "<=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.LE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor '<' AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.LT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "!=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "<>" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
+|	Factor "=" AnyOrAll SubSelect %prec eq
+	{
+		$$ = expressions.NewCompareSubQuery(opcode.EQ, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+	}
 |	Factor1
+
+AnyOrAll:
+	"ANY"
+	{
+		$$ = false
+	}
+|	"SOME"
+	{
+		$$ = false
+	}
+|	"ALL"
+	{
+		$$ = true
+	}
 
 Factor1:
 	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
@@ -1683,7 +1724,6 @@ Literal:
 		$$ = int64(1)
 	}
 |	floatLit
-|	imaginaryLit
 |	intLit
 |	stringLit
 
@@ -2892,11 +2932,6 @@ Type:
 |	DateAndTimeType
 	{
 		$$ = $1
-	}
-|	"duration"
-	{
-		x := types.NewFieldType($1.(byte))
-		$$ = x
 	}
 |	"float32"
 	{
