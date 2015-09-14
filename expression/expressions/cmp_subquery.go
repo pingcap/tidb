@@ -74,16 +74,16 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, errors.Trace(err)
 	}
 
-	in, err := cs.L.Eval(ctx, args)
+	lv, err := cs.L.Eval(ctx, args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if in == nil {
+	if lv == nil {
 		return nil, nil
 	}
 
 	if cs.R.Value != nil {
-		return cs.checkResult(in, cs.R.Value.([]interface{}))
+		return cs.checkResult(lv, cs.R.Value.([]interface{}))
 	}
 
 	p, err := cs.R.Plan(ctx)
@@ -105,7 +105,7 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	}
 
 	cs.R.Value = res
-	return cs.checkResult(in, cs.R.Value.([]interface{}))
+	return cs.checkResult(lv, cs.R.Value.([]interface{}))
 }
 
 func (cs *CompareSubQuery) checkAllResult(in interface{}, result []interface{}) (interface{}, error) {
