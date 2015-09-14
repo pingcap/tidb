@@ -18,12 +18,15 @@
 package stmts
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/field"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
@@ -82,16 +85,24 @@ func (s *UpdateStmt) SetText(text string) {
 	s.Text = text
 }
 
-func getUpdateColumns(t table.Table, assignList []expressions.Assignment) ([]*column.Col, error) {
-	tcols := make([]*column.Col, len(assignList))
-	for i, asgn := range assignList {
+func getUpdateColumns(t table.Table, assignList []expressions.Assignment, multipleTable bool) ([]*column.Col, error) {
+	tcols := make([]*column.Col, 0, len(assignList))
+	tname := t.TableName()
+	for _, asgn := range assignList {
+		if multipleTable {
+			if !strings.EqualFold(tname.O, asgn.TableName) {
+				continue
+			}
+		}
 		col := column.FindCol(t.Cols(), asgn.ColName)
 		if col == nil {
+			if multipleTable {
+				continue
+			}
 			return nil, errors.Errorf("UPDATE: unknown column %s", asgn.ColName)
 		}
-		tcols[i] = col
+		tcols = append(tcols, col)
 	}
-
 	return tcols, nil
 }
 
@@ -104,7 +115,16 @@ func getInsertValue(name string, cols []*column.Col, row []interface{}) (interfa
 	return nil, errors.Errorf("unknown field %s", name)
 }
 
-func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table, tcols []*column.Col, assignList []expressions.Assignment, insertData []interface{}) error {
+func getIdentValue(name string, fields []*field.ResultField, row []interface{}, flag uint32) (interface{}, error) {
+	indices := field.GetResultFieldIndex(name, fields, flag)
+	if len(indices) == 0 {
+		return nil, errors.Errorf("unknown field %s", name)
+	}
+	index := indices[0]
+	return row[index], nil
+}
+
+func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table, tcols []*column.Col, assignList []expressions.Assignment, insertData []interface{}, args map[interface{}]interface{}) error {
 	if err := t.LockRow(ctx, h, true); err != nil {
 		return errors.Trace(err)
 	}
@@ -114,13 +134,14 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	copy(oldData, data)
 
 	// Generate new values
-	m := make(map[interface{}]interface{}, len(t.Cols()))
-
-	// Set parameter for evaluating expression.
-	for _, col := range t.Cols() {
-		m[col.Name.L] = data[col.Offset]
+	m := args
+	if m == nil {
+		m = make(map[interface{}]interface{}, len(t.Cols()))
+		// Set parameter for evaluating expression.
+		for _, col := range t.Cols() {
+			m[col.Name.L] = data[col.Offset]
+		}
 	}
-
 	if insertData != nil {
 		m[expressions.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
 			return getInsertValue(name, t.Cols(), insertData)
@@ -241,32 +262,53 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				in = in[:len(in)-1]
 			}
 		}
-		if rowKeys != nil {
-			// Update rows
-			for _, entry := range rowKeys.Keys {
-				tbl := entry.Tbl
-				k := entry.Key
-				_, ok := updatedRowKeys[k]
-				if ok {
-					// Each matching row is updated once, even if it matches the conditions multiple times.
-					continue
-				}
-				// Update row
-				id, uerr := util.DecodeHandleFromRowKey(k)
-				if uerr != nil {
-					return false, errors.Trace(uerr)
-				}
-				data := in
-				tcols, uerr := getUpdateColumns(tbl, s.List)
-				if uerr != nil {
-					return false, errors.Trace(uerr)
-				}
-				uerr = updateRecord(ctx, id, data, tbl, tcols, s.List, nil)
-				if uerr != nil {
-					return false, errors.Trace(uerr)
-				}
-				updatedRowKeys[k] = true
+		if rowKeys == nil {
+			// Nothing to update
+			return true, nil
+		}
+		// Set EvalIdentFunc
+
+		m := make(map[interface{}]interface{})
+		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return getIdentValue(name, p.GetFields(), in, field.DefaultFieldFlag)
+		}
+		// Update rows
+		start := 0
+		log.Debug("--------------------Row-------------------------")
+		log.Debug("ZZZZ:", len(rowKeys.Keys))
+		for _, entry := range rowKeys.Keys {
+			log.Debug("ZZZ:", entry.Key)
+			tbl := entry.Tbl
+			k := entry.Key
+			_, ok := updatedRowKeys[k]
+			if ok {
+				// Each matching row is updated once, even if it matches the conditions multiple times.
+				log.Debug("ZZZZ: Updated")
+				continue
 			}
+			// Update row
+			id, uerr := util.DecodeHandleFromRowKey(k)
+			if uerr != nil {
+				return false, errors.Trace(uerr)
+			}
+			end := start + len(tbl.Cols())
+			log.Debug("ZZZ:", start, end)
+			data := in[start:end]
+			start = end
+			tcols, uerr := getUpdateColumns(tbl, s.List, s.MultipleTable)
+			if uerr != nil {
+				return false, errors.Trace(uerr)
+			}
+			if len(tcols) == 0 {
+				// Nothing to update for this table.
+				continue
+			}
+			// Get data in the table
+			uerr = updateRecord(ctx, id, data, tbl, tcols, s.List, nil, m)
+			if uerr != nil {
+				return false, errors.Trace(uerr)
+			}
+			updatedRowKeys[k] = true
 		}
 		return true, nil
 

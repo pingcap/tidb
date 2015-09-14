@@ -289,7 +289,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		// On duplicate key Update the duplicate row.
 		// Evaluate the updated value.
 		// TODO: report rows affected and last insert id.
-		toUpdateColumns, err := getUpdateColumns(t, s.OnDuplicate)
+		toUpdateColumns, err := getUpdateColumns(t, s.OnDuplicate, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -297,7 +297,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = updateRecord(ctx, h, data, t, toUpdateColumns, s.OnDuplicate, r)
+		err = updateRecord(ctx, h, data, t, toUpdateColumns, s.OnDuplicate, r, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
