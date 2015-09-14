@@ -108,7 +108,7 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	return cs.checkResult(lv, cs.R.Value.([]interface{}))
 }
 
-func (cs *CompareSubQuery) checkAllResult(in interface{}, result []interface{}) (interface{}, error) {
+func (cs *CompareSubQuery) checkAllResult(lv interface{}, result []interface{}) (interface{}, error) {
 	hasNull := false
 	for _, v := range result {
 		if v == nil {
@@ -116,7 +116,7 @@ func (cs *CompareSubQuery) checkAllResult(in interface{}, result []interface{}) 
 			continue
 		}
 
-		comRes, err := types.Compare(in, v)
+		comRes, err := types.Compare(lv, v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -140,7 +140,7 @@ func (cs *CompareSubQuery) checkAllResult(in interface{}, result []interface{}) 
 	return true, nil
 }
 
-func (cs *CompareSubQuery) checkAnyResult(in interface{}, result []interface{}) (interface{}, error) {
+func (cs *CompareSubQuery) checkAnyResult(lv interface{}, result []interface{}) (interface{}, error) {
 	hasNull := false
 	for _, v := range result {
 		if v == nil {
@@ -148,7 +148,7 @@ func (cs *CompareSubQuery) checkAnyResult(in interface{}, result []interface{}) 
 			continue
 		}
 
-		comRes, err := types.Compare(in, v)
+		comRes, err := types.Compare(lv, v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -172,12 +172,12 @@ func (cs *CompareSubQuery) checkAnyResult(in interface{}, result []interface{}) 
 	return false, nil
 }
 
-func (cs *CompareSubQuery) checkResult(in interface{}, result []interface{}) (interface{}, error) {
+func (cs *CompareSubQuery) checkResult(lv interface{}, result []interface{}) (interface{}, error) {
 	if cs.All {
-		return cs.checkAllResult(in, result)
+		return cs.checkAllResult(lv, result)
 	}
 
-	return cs.checkAnyResult(in, result)
+	return cs.checkAnyResult(lv, result)
 }
 
 // NewCompareSubQuery creates a CompareSubQuery object.
