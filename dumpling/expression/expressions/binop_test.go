@@ -15,6 +15,7 @@ package expressions
 
 import (
 	"errors"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
@@ -416,6 +417,9 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 		{uint64(1), opcode.Mul, uint64(1), 1},
 		{mysql.Time{}, opcode.Mul, 0, 0},
 		{mysql.ZeroDuration, opcode.Mul, 0, 0},
+		{mysql.Time{Time: time.Now(), Fsp: 0, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
+		{mysql.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, opcode.Mul, 0, 0},
+		{mysql.Duration{Duration: 100000000, Fsp: 6}, opcode.Mul, 0, 0},
 
 		// div
 		{1, opcode.Div, float64(1), 1},
@@ -540,5 +544,12 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 
 	expr.R = newTestRow(1, 2)
 	expr.Op = opcode.Plus
+	_, err = expr.Eval(nil, nil)
+	c.Assert(err, NotNil)
+
+	expr.L = newTestRow(1, 2)
+	expr.R = newTestRow(1, 2)
+	expr.Op = opcode.Plus
+	_, err = expr.Eval(nil, nil)
 	c.Assert(err, NotNil)
 }
