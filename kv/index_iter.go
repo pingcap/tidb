@@ -98,8 +98,6 @@ func (c *IndexIter) Next() (k []interface{}, h int64, err error) {
 type kvIndex struct {
 	indexName string
 	unique    bool
-	dbName    string
-	storage   Storage
 	prefix    string
 }
 
