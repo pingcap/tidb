@@ -133,21 +133,26 @@ func (l *lexer) next() int {
 	return l.c
 }
 
-func (l *lexer) err0(ln, c int, args ...interface{}) {
+func (l *lexer) err0(ln, c int, arg interface{}) {
 	var argStr string
-	if len(args) > 0 {
-		argStr = fmt.Sprintf(" " + args[0].(string), args[1:]...)
+	switch x := arg.(type) {
+		case error:
+			argStr = " " + x.Error()
+		case string:
+			argStr = " " + x
 	}
+
 	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
 	l.errs = append(l.errs, err)
 }
 
-func (l *lexer) err(s string, args ...interface{}) {
-	l.err0(l.line, l.col, args...)
+func (l *lexer) err(arg interface{}) {
+	l.err0(l.line, l.col, arg)
 }
 
 func (l *lexer) Error(s string) {
-	l.err(s)
+	// Notice: ignore origin error info.
+	l.err(nil)
 }
 
 func (l *lexer) stmtText() string {
@@ -874,7 +879,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err("", "integer literal: %v", err)
+		l.err(fmt.Sprintf("integer literal: %v", err))
 		return int(unicode.ReplacementChar)
 	}
 
@@ -890,7 +895,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err("", "float literal: %v", err)
+		l.err(fmt.Sprintf("float literal: %v", err))
 		return int(unicode.ReplacementChar)
 	}
 
