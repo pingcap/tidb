@@ -312,12 +312,12 @@ func (r *JoinPlan) doFullJoin(ctx context.Context, f plan.RowIterFunc) error {
  * Append values of prefix/in together and merge RowKeyLists to the tail entry
  */
 func appendRow(prefix []interface{}, in []interface{}) []interface{} {
-	var rks *RowKeyList
+	rks := &RowKeyList{}
 	if prefix != nil && len(prefix) > 0 {
 		t := prefix[len(prefix)-1]
 		switch vt := t.(type) {
 		case *RowKeyList:
-			rks = vt
+			rks.appendKeys(vt.Keys...)
 			prefix = prefix[:len(prefix)-1]
 		}
 	}
@@ -325,20 +325,13 @@ func appendRow(prefix []interface{}, in []interface{}) []interface{} {
 		t := in[len(in)-1]
 		switch vt := t.(type) {
 		case *RowKeyList:
-			if rks == nil {
-				rks = vt
-			} else {
-				rks.appendKeys(vt.Keys...)
-			}
+			rks.appendKeys(vt.Keys...)
 			in = in[:len(in)-1]
 		}
 	}
-	if rks == nil {
-		rks = &RowKeyList{}
-	}
-	in = append(in, rks)
 	row := make([]interface{}, 0, len(prefix)+len(in))
 	row = append(row, prefix...)
 	row = append(row, in...)
+	row = append(row, rks)
 	return row
 }

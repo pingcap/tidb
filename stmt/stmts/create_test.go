@@ -42,7 +42,7 @@ type testStmtSuite struct {
 }
 
 func (s *testStmtSuite) SetUpTest(c *C) {
-	log.SetLevelByString("debug")
+	log.SetLevelByString("error")
 	s.dbName = "test"
 	var err error
 	s.testDB, err = sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/"+s.dbName+"/"+s.dbName)
