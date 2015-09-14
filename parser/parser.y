@@ -1849,7 +1849,7 @@ FunctionNameConflict:
 	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT"
 
 FunctionCallConflict:
-	FunctionNameConflict '(' ExpressionList ')' 
+	FunctionNameConflict '(' ExpressionListOpt ')' 
 	{
 		x := yylex.(*lexer)
 		var err error
