@@ -407,20 +407,16 @@ func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, e
 	case int64:
 		switch y := b.(type) {
 		case int64:
-			return x + y, nil
+			return types.AddInt64(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return uint64(x) + y, nil
+			return types.AddInteger(y, x)
 		}
 	case uint64:
 		switch y := b.(type) {
 		case int64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x + uint64(y), nil
+			return types.AddInteger(x, y)
 		case uint64:
-			return x + y, nil
+			return types.AddUint64(x, y)
 		}
 	case float64:
 		switch y := b.(type) {
@@ -443,21 +439,16 @@ func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, 
 	case int64:
 		switch y := b.(type) {
 		case int64:
-			return x - y, nil
+			return types.SubInt64(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return uint64(x) - y, nil
+			return types.SubIntWithUint(x, y)
 		}
 	case uint64:
 		switch y := b.(type) {
 		case int64:
-			// TODO: check overflow
-			return x - uint64(y), nil
+			return types.SubUintWithInt(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x - y, nil
+			return types.SubUint64(x, y)
 		}
 	case float64:
 		switch y := b.(type) {
@@ -480,22 +471,16 @@ func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, er
 	case int64:
 		switch y := b.(type) {
 		case int64:
-			return x * y, nil
+			return types.MulInt64(x, y)
 		case uint64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow and negative number
-			// if a negative int64 * uint64, MySQL may throw "BIGINT UNSIGNED value is out of range" error
-			// we skip it now and handle it later.
-			return uint64(x) * y, nil
+			return types.MulInteger(y, x)
 		}
 	case uint64:
 		switch y := b.(type) {
 		case int64:
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x * uint64(y), nil
+			return types.MulInteger(x, y)
 		case uint64:
-			return x * y, nil
+			return types.MulUint64(x, y)
 		}
 	case float64:
 		switch y := b.(type) {
