@@ -58,7 +58,6 @@ import (
 
 	/*yy:token "1.%d"   */	floatLit        "floating-point literal"
 	/*yy:token "%c"     */	identifier      "identifier"
-	/*yy:token "%di"    */	imaginaryLit	"imaginary literal"
 	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
 
@@ -166,7 +165,6 @@ import (
 	rollback	"ROLLBACK"
 	row 		"ROW"
 	rsh		">>"
-	runeType	"rune"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
 	selectKwd	"SELECT"
@@ -1723,7 +1721,6 @@ Literal:
 		$$ = int64(1)
 	}
 |	floatLit
-|	imaginaryLit
 |	intLit
 |	stringLit
 
