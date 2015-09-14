@@ -27,15 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
-// Builin functions entry key with name conflict with keywords.
-const (
-	// BuiltinFuncDatabase is the keyword for Database function.
-	BuiltinFuncDatabase = "database"
-	// BuiltinFuncIf is the keyword for If function.
-	BuiltinFuncIf   = "if"
-	BuiltinFuncLeft = "left"
-)
-
 var builtin = map[string]struct {
 	f           func([]interface{}, map[interface{}]interface{}) (interface{}, error)
 	minArgs     int
@@ -44,8 +35,8 @@ var builtin = map[string]struct {
 	isAggregate bool
 }{
 	// common functions
-	BuiltinFuncDatabase: {builtinDatabase, 0, 0, false, false},
-	"coalesce":          {builtinCoalesce, 1, -1, true, false},
+	"database": {builtinDatabase, 0, 0, false, false},
+	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
 	// math functions
 	"abs": {builtinAbs, 1, 1, true, false},
@@ -77,16 +68,16 @@ var builtin = map[string]struct {
 	"yearweek":    {builtinYearWeek, 1, 2, true, false},
 
 	// control functions
-	BuiltinFuncIf: {builtinIf, 3, 3, true, false},
-	"ifnull":      {builtinIfNull, 2, 2, true, false},
-	"nullif":      {builtinNullIf, 2, 2, true, false},
+	"if":     {builtinIf, 3, 3, true, false},
+	"ifnull": {builtinIfNull, 2, 2, true, false},
+	"nullif": {builtinNullIf, 2, 2, true, false},
 
 	// string functions
-	"concat":        {builtinConcat, 1, -1, true, false},
-	"concat_ws":     {builtinConcatWS, 2, -1, true, false},
-	BuiltinFuncLeft: {builtinLeft, 2, 2, true, false},
-	"length":        {builtinLength, 1, 1, true, false},
-	"repeat":        {builtinRepeat, 2, 2, true, false},
+	"concat":    {builtinConcat, 1, -1, true, false},
+	"concat_ws": {builtinConcatWS, 2, -1, true, false},
+	"left":      {builtinLeft, 2, 2, true, false},
+	"length":    {builtinLength, 1, 1, true, false},
+	"repeat":    {builtinRepeat, 2, 2, true, false},
 
 	// information functions
 	"found_rows": {builtinFoundRows, 0, 0, false, false},
