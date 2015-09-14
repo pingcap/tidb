@@ -230,6 +230,7 @@ after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
 and		{a}{n}{d}
+any 		{a}{n}{y}
 as		{a}{s}
 asc		{a}{s}{c}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
@@ -339,6 +340,7 @@ session		{s}{e}{s}{s}{i}{o}{n}
 set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
+some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 sum		{s}{u}{m}
@@ -489,6 +491,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {all}			return all
 {alter}			return alter
 {and}			return and
+{any}			lval.item = string(l.val)
+			return any
 {asc}			return asc
 {as}			return as
 {auto_increment}	lval.item = string(l.val)
@@ -637,6 +641,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
 			return session
+{some}			lval.item = string(l.val)
+			return some
 {start}			lval.item = string(l.val)
 			return start
 {global}		lval.item = string(l.val)
