@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -63,7 +62,6 @@ type DDL interface {
 
 type ddl struct {
 	store      kv.Storage
-	mu         sync.Mutex
 	infoHandle *infoschema.Handle
 }
 
