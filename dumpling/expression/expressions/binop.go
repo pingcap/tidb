@@ -411,7 +411,6 @@ func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interfa
 }
 
 func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, error) {
-	// TODO: check overflow
 	switch x := a.(type) {
 	case int64:
 		switch y := b.(type) {
@@ -443,7 +442,6 @@ func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, e
 }
 
 func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, error) {
-	// TODO: check overflow
 	switch x := a.(type) {
 	case int64:
 		switch y := b.(type) {
@@ -475,7 +473,6 @@ func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, 
 }
 
 func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, error) {
-	// TODO: check overflow
 	switch x := a.(type) {
 	case int64:
 		switch y := b.(type) {
