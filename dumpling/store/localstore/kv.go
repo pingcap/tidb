@@ -28,8 +28,6 @@ import (
 
 var (
 	_ kv.Storage = (*dbStore)(nil)
-
-	errConfilct = errors.New("Conflict found when try to lock key")
 )
 
 type dbStore struct {
@@ -160,7 +158,7 @@ func (s *dbStore) tryConditionLockKey(tID int64, key string, snapshotVal []byte)
 	}
 
 	if !bytes.Equal(currValue, snapshotVal) {
-		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%s, snapshotVal:%s", tID, key, currValue, snapshotVal)
+		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q, snapshotVal:%q", tID, key, currValue, snapshotVal)
 		return errors.Trace(kv.ErrConditionNotMatch)
 	}
 

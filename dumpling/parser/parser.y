@@ -256,7 +256,6 @@ import (
 	uint8Type	"uint8",
 	float32Type	"float32"
 	float64Type	"float64"
-	bigRatType	"bigrat"
 	boolType	"BOOL"
 	booleanType	"BOOLEAN"
 
