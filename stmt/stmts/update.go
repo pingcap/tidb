@@ -86,6 +86,7 @@ func (s *UpdateStmt) SetText(text string) {
 }
 
 func getUpdateColumns(t table.Table, assignList []expressions.Assignment, multipleTable bool) ([]*column.Col, error) {
+	// TODO: We should check the validate if assignList in somewhere else. Maybe in building plan.
 	tcols := make([]*column.Col, 0, len(assignList))
 	tname := t.TableName()
 	for _, asgn := range assignList {
