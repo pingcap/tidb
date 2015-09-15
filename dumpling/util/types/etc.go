@@ -293,18 +293,15 @@ func collateDesc(a, b []interface{}) int {
 
 // IsOrderedType returns a boolean
 // whether the type of y can be used by order by.
-func IsOrderedType(v interface{}) (y interface{}, r bool, err error) {
-	switch x := v.(type) {
-	case float32, float64,
-		int, int8, int16, int32, int64,
+func IsOrderedType(v interface{}) (r bool) {
+	switch v.(type) {
+	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
-		string, mysql.Decimal:
-		return v, true, nil
-	case mysql.Time, mysql.Duration:
-		return x, true, nil
+		float32, float64, string, []byte,
+		mysql.Decimal, mysql.Time, mysql.Duration:
+		return true
 	}
-
-	return v, false, nil
+	return false
 }
 
 // Clone copies a interface to another interface.
