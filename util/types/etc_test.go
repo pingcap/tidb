@@ -205,22 +205,17 @@ func (s *testTypeEtcSuite) TestCoerce(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
-	_, r, err := IsOrderedType(1)
-	c.Assert(err, IsNil)
+	r := IsOrderedType(1)
 	c.Assert(r, IsTrue)
-	_, r, err = IsOrderedType(-1)
-	c.Assert(err, IsNil)
+	r = IsOrderedType(-1)
 	c.Assert(r, IsTrue)
-	_, r, err = IsOrderedType(uint(1))
-	c.Assert(err, IsNil)
+	r = IsOrderedType(uint(1))
 	c.Assert(r, IsTrue)
 
-	_, r, err = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
-	c.Assert(err, IsNil)
+	r = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
 	c.Assert(r, IsTrue)
 
-	_, r, err = IsOrderedType([]byte{1})
-	c.Assert(err, IsNil)
+	r = IsOrderedType([]byte{1})
 	c.Assert(r, IsTrue)
 }
 

@@ -158,13 +158,7 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 			}
 
 			if val != nil {
-				var ordered bool
-				val, ordered, err1 = types.IsOrderedType(val)
-				if err1 != nil {
-					return false, err1
-				}
-
-				if !ordered {
+				if !types.IsOrderedType(val) {
 					return false, errors.Errorf("cannot order by %v (type %T)", val, val)
 				}
 			}
