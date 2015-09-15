@@ -672,6 +672,14 @@ Assignment:
 		} else if len(fs) == 2 {
 			tn = fs[0]
 			cn = fs[1]
+		} else {
+			// TODO: Support db.table.column
+			yylex.(*lexer).err("", "We do not support db.tbl.col in Assignment: %s", name)
+			return 1
+		}
+		if cn == "*" || tn == "*" {
+			yylex.(*lexer).err("", "We do not support use * as table or column name in Assignment: %s", name)
+			return 1
 		}
 		$$ = expressions.Assignment{
 			TableName:	tn,
