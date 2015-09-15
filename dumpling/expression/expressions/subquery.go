@@ -63,11 +63,8 @@ func (sq *SubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 	defer p.Close()
 	row, err := p.Next(ctx)
-	if err != nil {
+	if row == nil || err != nil {
 		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return sq.Value, nil
 	}
 	if len(p.GetFields()) == 1 {
 		// a scalar value is a single value

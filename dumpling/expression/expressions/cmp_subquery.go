@@ -90,7 +90,7 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	defer p.Close()
 	res := []interface{}{}
 	for {
 		row, err1 := p.Next(ctx)

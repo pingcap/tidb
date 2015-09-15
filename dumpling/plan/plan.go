@@ -45,6 +45,7 @@ type Plan interface {
 
 	// Close closes the underlying iterator of the plan.
 	// If you call Next after Close, it will start iteration from the beginning.
+	// If the plan is not returned as Recordset.Plan, it must be Closed to prevent resource leak.
 	Close() error
 }
 

@@ -174,7 +174,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		if err != nil {
 			return nil, err
 		}
-
+		defer r.Close()
 		res = []interface{}{}
 		// evaluate select and save its result for later in expression check
 		for {
