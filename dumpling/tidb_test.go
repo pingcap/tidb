@@ -536,9 +536,9 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "insert t values ()", false, 1)
 	se.Execute("drop table if exists t;")
 	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).Status&mysql.ServerStatusInTrans, Equals, uint16(1))
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, 1)
-	checkInTrans(c, se, "insert t values ()", false, 1)
+	c.Assert(variable.GetSessionVars(se.(*session)).Status&mysql.ServerStatusInTrans, Equals, uint16(0))
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, 0)
+	checkInTrans(c, se, "insert t values ()", false, 0)
 	checkInTrans(c, se, "commit", true, 0)
 	checkInTrans(c, se, "insert t values ()", true, 0)
 
