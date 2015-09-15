@@ -1821,6 +1821,18 @@ PrimaryExpression:
 	{
 		$$ = expressions.NewUnaryOperation(opcode.Plus, $2.(expression.Expression))
 	}
+|	"BINARY" PrimaryExpression %prec neg
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
+		x := types.NewFieldType(mysql.TypeString)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CharsetBin
+		$$ = &expressions.FunctionCast{
+			Expr: $2.(expression.Expression), 
+			Tp: x,
+			FunctionType: expressions.BinaryOperator,
+		}	
+	}
 
 Function:
 	FunctionCallKeyword
@@ -1877,6 +1889,7 @@ FunctionCallKeyword:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
+			FunctionType: expressions.CastFunction,
 		}	
 	}
 |	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
@@ -1904,7 +1917,7 @@ FunctionCallKeyword:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
-			IsConvert: true,
+			FunctionType: expressions.ConvertFunction,
 		}	
 	}
 |	"DATE" '(' Expression ')'
