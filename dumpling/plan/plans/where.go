@@ -92,7 +92,7 @@ func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 			return getIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
 		}
 		var meet bool
-		meet, err = r.meetRequirement(ctx)
+		meet, err = r.meetCondition(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -102,7 +102,7 @@ func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 	}
 }
 
-func (r *FilterDefaultPlan) meetRequirement(ctx context.Context) (bool, error) {
+func (r *FilterDefaultPlan) meetCondition(ctx context.Context) (bool, error) {
 	val, err := r.Expr.Eval(ctx, r.evalArgs)
 	if val == nil || err != nil {
 		return false, errors.Trace(err)
