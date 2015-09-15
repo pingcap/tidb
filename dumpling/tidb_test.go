@@ -463,52 +463,40 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
+func checkAutocommit(c *C, se Session, stmt string, isNil, expect bool) {
+	mustExecSQL(c, se, stmt)
+	if isNil {
+		c.Assert(se.(*session).txn, IsNil)
+	} else {
+		c.Assert(se.(*session).txn, NotNil)
+	}
+	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, expect)
+}
+
 // See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) TestAutoicommit(c *C) {
+func (s *testSessionSuite) TestAutocommit(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, Equals, nil)
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(se.(*session).txn, Equals, nil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	mustExecSQL(c, se, "insert t values ()")
 	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	mustExecSQL(c, se, "begin")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
+	checkAutocommit(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, false)
+	checkAutocommit(c, se, "insert t values ()", true, false)
+	checkAutocommit(c, se, "begin", false, true)
+	checkAutocommit(c, se, "insert t values ()", false, true)
 	se.Execute("drop table if exists t;")
 	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "commit")
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
+	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, IsTrue)
+	checkAutocommit(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, true)
+	checkAutocommit(c, se, "insert t values ()", false, true)
+	checkAutocommit(c, se, "commit", true, false)
+	checkAutocommit(c, se, "insert t values ()", true, false)
 
 	se.Execute("drop table if exists t;")
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	mustExecSQL(c, se, "begin")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "rollback")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
+	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, IsFalse)
+	checkAutocommit(c, se, "begin", false, true)
+	checkAutocommit(c, se, "insert t values ()", false, true)
+	checkAutocommit(c, se, "rollback", true, false)
 
 	mustExecSQL(c, se, s.dropDBSQL)
 }
@@ -521,7 +509,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	se2 := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, Equals, nil)
+	c.Assert(se.(*session).txn, IsNil)
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
 	mustExecSQL(c, se, "insert t values (11, 2, 3)")
 	mustExecSQL(c, se, "insert t values (12, 2, 3)")
@@ -562,7 +550,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	se2 := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, Equals, nil)
+	c.Assert(se.(*session).txn, IsNil)
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
 	mustExecSQL(c, se, "insert t values (11, 2, 3)")
 	mustExecSQL(c, se, "insert t values (12, 2, 3)")
