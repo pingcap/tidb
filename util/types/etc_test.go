@@ -149,6 +149,7 @@ func (s *testTypeEtcSuite) TestClone(c *C) {
 	checkClone(c, mysql.Decimal{}, true)
 	checkClone(c, mysql.Time{Time: time.Now(), Type: 1, Fsp: 3}, true)
 	checkClone(c, make(map[int]string), false)
+	checkClone(c, mysql.Hex{Value: 1}, true)
 }
 
 func checkCoerce(c *C, a, b interface{}) {
