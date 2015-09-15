@@ -26,6 +26,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -197,7 +198,11 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 	c.Assert(np, NotNil)
 
 	ret := map[int64]string{}
-	np.Do(p, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Plan: np,
+		Ctx:  p,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(int64)] = data[1].(string)
 		return true, nil
 	})
