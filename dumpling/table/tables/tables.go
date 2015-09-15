@@ -327,7 +327,26 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
 			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
+				/*
+					See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+					A UNIQUE index creates a constraint such that all values in the index must be distinct.
+					An error occurs if you try to add a new row with a key value that matches an existing row.
+					For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
+				*/
+				// TODO: how to hanle multiple columns not all null?
+				// TODO: should we insert multiple entries for null values?
+				allNilValue := true
+				for _, cv := range colVals {
+					if cv != nil {
+						allNilValue = false
+					}
+				}
+				if allNilValue {
+					continue
+				}
+
 				// Get the duplicate row handle
+				// For insert on duplicate syntax, we should update the row
 				iter, _, terr := v.X.Seek(txn, colVals)
 				if terr != nil {
 					return 0, errors.Trace(terr)
