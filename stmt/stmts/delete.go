@@ -260,6 +260,7 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 	if p == nil {
 		return nil, nil
 	}
+	defer p.Close()
 	tblIDMap := make(map[int64]bool, len(s.TableIdents))
 	// Get table alias map.
 	fs := p.GetFields()

@@ -85,7 +85,9 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 	r, err := s.Sel.Plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
-	} else if len(r.GetFields()) != len(cols) {
+	}
+	defer r.Close()
+	if len(r.GetFields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(r.GetFields()))
 	}
 
