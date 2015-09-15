@@ -114,18 +114,19 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 	rows, err := tx.Query("SELECT * FROM items")
 	c.Assert(err, IsNil)
 
+	expectedResult := map[int]string{
+		11: "month_price_11",
+		12: "items_price_12",
+		13: "month_price_13",
+	}
 	for rows.Next() {
 		var (
 			id    int
 			price string
 		)
 		rows.Scan(&id, &price)
-		if id == 11 {
-			c.Assert(price, Equals, "month_price_11")
-		} else if id == 12 {
-			c.Assert(price, Equals, "items_price_12")
-		} else if id == 13 {
-			c.Assert(price, Equals, "month_price_13")
-		}
+		c.Assert(price, Equals, expectedResult[id])
 	}
+	rows.Close()
+	mustCommit(c, tx)
 }
