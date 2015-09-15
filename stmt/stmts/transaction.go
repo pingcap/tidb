@@ -64,6 +64,7 @@ func (s *BeginStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	variable.GetSessionVars(ctx).DisableAutocommit = true
+	variable.GetSessionVars(ctx).SetStatusInTrans(true)
 	return
 }
 
@@ -97,6 +98,7 @@ func (s *CommitStmt) SetText(text string) {
 func (s *CommitStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	err = ctx.FinishTxn(false)
 	variable.GetSessionVars(ctx).DisableAutocommit = false
+	variable.GetSessionVars(ctx).SetStatusInTrans(false)
 	return
 }
 
@@ -130,5 +132,6 @@ func (s *RollbackStmt) SetText(text string) {
 func (s *RollbackStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	err = ctx.FinishTxn(true)
 	variable.GetSessionVars(ctx).DisableAutocommit = false
+	variable.GetSessionVars(ctx).SetStatusInTrans(false)
 	return
 }
