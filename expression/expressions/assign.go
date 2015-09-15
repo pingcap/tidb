@@ -53,7 +53,7 @@ func NewAssignment(key string, value expression.Expression) (*Assignment, error)
 		colName = strs[1]
 	} else {
 		// TODO: we should support db.tbl.col later.
-		return nil, errors.Errorf("Wrong format of Assignment key: %s", key)
+		return nil, errors.Errorf("Invalid format of Assignment key: %s", key)
 	}
 	return &Assignment{
 		TableName: tblName,
