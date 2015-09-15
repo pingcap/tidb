@@ -234,13 +234,7 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 			}
 
 			if val != nil {
-				var ordered bool
-				val, ordered, err1 = types.IsOrderedType(val)
-				if err1 != nil {
-					return err1
-				}
-
-				if !ordered {
+				if !types.IsOrderedType(val) {
 					return errors.Errorf("cannot order by %v (type %T)", val, val)
 				}
 			}
