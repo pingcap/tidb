@@ -668,6 +668,16 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	match(c, rows[0], 1)
 }
 
+func (s *testSessionSuite) TestHexadecimal(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	r := mustExecSQL(c, se, `select 0x01 + 1, x'4D7953514C' = "MySQL"`)
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 2, 1)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
