@@ -889,12 +889,12 @@ CreateIndexStmt:
 	{
 		indexName, tableIdent, colNameList := $4.(string), $6.(table.Ident), $8.([]*coldef.IndexColName)
 		if strings.EqualFold(indexName, tableIdent.Name.O) {
-			yylex.(*lexer).err(fmt.Sprintf("index name collision: %s", indexName))
+			yylex.(*lexer).errf("index name collision: %s", indexName)
 			return 1
 		}
 		for _, colName := range colNameList {
 			if indexName == colName.ColumnName {
-				yylex.(*lexer).err(fmt.Sprintf("index name collision: %s", indexName))
+				yylex.(*lexer).errf("index name collision: %s", indexName)
 				return 1
 			}
 		}
@@ -966,7 +966,7 @@ CreateDatabaseStmt:
 
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
-			yylex.(*lexer).err(fmt.Sprintf("Unknown character set %s or collate %s ", cs, co))
+			yylex.(*lexer).errf("Unknown character set %s or collate %s ", cs, co)
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
@@ -1008,7 +1008,7 @@ CharsetName:
 		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
-			yylex.(*lexer).err(fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			yylex.(*lexer).errf("Unknown character set: '%s'", $1.(string))
 			return 1
 		}
 	}
@@ -1018,7 +1018,7 @@ CharsetName:
 		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
-			yylex.(*lexer).err(fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			yylex.(*lexer).errf("Unknown character set: '%s'", $1.(string))
 			return 1
 		}
 	}

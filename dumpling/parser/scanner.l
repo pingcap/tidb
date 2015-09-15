@@ -21,7 +21,6 @@ package parser
 import (
 	"fmt"
 	"math"
-	"errors"
 	"strconv"
 	"unicode"
 	"strings"
@@ -135,19 +134,21 @@ func (l *lexer) next() int {
 
 func (l *lexer) err0(ln, c int, arg interface{}) {
 	var argStr string
-	switch x := arg.(type) {
-		case error:
-			argStr = " " + x.Error()
-		case string:
-			argStr = " " + x
+	if arg != nil {
+		argStr = fmt.Sprintf(" %v", arg)
 	}
 
-	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
+	err := fmt.Errorf("line %d column %d near \"%s\"%s", ln, c, l.val, argStr)
 	l.errs = append(l.errs, err)
 }
 
 func (l *lexer) err(arg interface{}) {
 	l.err0(l.line, l.col, arg)
+}
+
+func (l *lexer) errf(format string, args ...interface{}) {
+	s := fmt.Sprintf(format, args...)
+	l.err0(l.line, l.col, s)
 }
 
 func (l *lexer) Error(s string) {
@@ -879,7 +880,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err(fmt.Sprintf("integer literal: %v", err))
+		l.errf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -895,7 +896,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err(fmt.Sprintf("float literal: %v", err))
+		l.errf("float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
