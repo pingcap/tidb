@@ -298,7 +298,7 @@ func IsOrderedType(v interface{}) (r bool) {
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64, string, []byte,
-		mysql.Decimal, mysql.Time, mysql.Duration:
+		mysql.Decimal, mysql.Time, mysql.Duration, mysql.Hex:
 		return true
 	}
 	return false
@@ -333,6 +333,8 @@ func Clone(from interface{}) (interface{}, error) {
 	case mysql.Duration:
 		return x, nil
 	case mysql.Decimal:
+		return x, nil
+	case mysql.Hex:
 		return x, nil
 	default:
 		log.Error(reflect.TypeOf(from))
@@ -406,12 +408,16 @@ func Coerce(a, b interface{}) (x, y interface{}) {
 			x = float64(v)
 		case uint64:
 			x = float64(v)
+		case mysql.Hex:
+			x = v.ToNumber()
 		}
 		switch v := y.(type) {
 		case int64:
 			y = float64(v)
 		case uint64:
 			y = float64(v)
+		case mysql.Hex:
+			y = v.ToNumber()
 		}
 	}
 	return
