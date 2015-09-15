@@ -310,6 +310,7 @@ import (
 	ColumnSetValueList	"insert statement set value by column name list"
 	CommaOpt		"optional comma"
 	CommitStmt		"COMMIT statement"
+	CompareOp		"Compare opcode"
 	Constraint		"column value constraint"
 	ConstraintElem		"table define constraint element"
 	ConstraintKeywordOpt	"Constraint Keyword or empty"
@@ -1358,63 +1359,45 @@ Factor:
 	{
 		$$ = &expressions.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
-|	Factor ">=" Factor1 %prec eq
+|	Factor CompareOp Factor1 %prec eq
 	{
-		$$ = expressions.NewBinaryOperation(opcode.GE, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expressions.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
 	}
-|	Factor '>' Factor1 %prec eq
+|	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
-		$$ = expressions.NewBinaryOperation(opcode.GT, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "<=" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.LE, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor '<' Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.LT, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "!=" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.NE, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "<>" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.NE, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "=" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.EQ, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor ">=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.GE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor '>' AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.GT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "<=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.LE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor '<' AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.LT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "!=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "<>" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.EQ, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+		$$ = expressions.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
 	}
 |	Factor1
+
+CompareOp:
+	">="
+	{
+		$$ = opcode.GE
+	}
+|	'>'
+	{
+		$$ = opcode.GT
+	}
+|	"<="
+	{
+		$$ = opcode.LE
+	}
+|	'<'
+	{
+		$$ = opcode.LT
+	}
+|	"!="
+	{
+		$$ = opcode.NE
+	}
+|	"<>"
+	{
+		$$ = opcode.NE
+	}
+|	"="
+	{
+		$$ = opcode.EQ
+	}
 
 AnyOrAll:
 	"ANY"
@@ -1849,7 +1832,7 @@ FunctionNameConflict:
 	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT"
 
 FunctionCallConflict:
-	FunctionNameConflict '(' ExpressionList ')' 
+	FunctionNameConflict '(' ExpressionListOpt ')' 
 	{
 		x := yylex.(*lexer)
 		var err error
