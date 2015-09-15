@@ -159,45 +159,48 @@ func (s *DeleteStmt) removeRow(ctx context.Context, t table.Table, h int64, data
 func (s *DeleteStmt) tryDeleteUsingIndex(ctx context.Context, t table.Table) (bool, error) {
 	log.Info("try delete with index", ctx)
 	p, err := s.indexPlan(ctx)
-	if err != nil {
-		return false, err
+	if p == nil || err != nil {
+		return false, errors.Trace(err)
 	}
-	if p != nil {
-		var ids []int64
-		err := p.Do(ctx, func(id interface{}, _ []interface{}) (bool, error) {
-			// Generate ids for coming deletion.
-			ids = append(ids, id.(int64))
-			return true, nil
-		})
+	var rowKeys []*plan.RowKeyEntry
+	for {
+		row, err1 := p.Next(ctx)
+		if err1 != nil {
+			return false, errors.Trace(err1)
+		}
+		if row == nil {
+			break
+		}
+		rowKeys = append(rowKeys, row.RowKeys...)
+	}
+	var cnt uint64
+	for _, rowKey := range rowKeys {
+		if s.Limit != nil && cnt >= s.Limit.Count {
+			break
+		}
+		handle, err := util.DecodeHandleFromRowKey(rowKey.Key)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		data, err := t.Row(ctx, handle)
 		if err != nil {
 			return false, err
 		}
-		var cnt uint64
-		for _, id := range ids {
-			if s.Limit != nil && cnt >= s.Limit.Count {
-				break
-			}
-			data, err := t.Row(ctx, id)
-			if err != nil {
-				return false, err
-			}
-			log.Infof("try delete with index id:%d, ctx:%s", id, ctx)
-			ok, err := s.hitWhere(ctx, t, data)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if !ok {
-				return true, nil
-			}
-			err = s.removeRow(ctx, t, id, data)
-			if err != nil {
-				return false, err
-			}
-			cnt++
+		log.Infof("try delete with index id:%d, ctx:%s", handle, ctx)
+		ok, err := s.hitWhere(ctx, t, data)
+		if err != nil {
+			return false, errors.Trace(err)
 		}
-		return true, nil
+		if !ok {
+			return true, nil
+		}
+		err = s.removeRow(ctx, t, handle, data)
+		if err != nil {
+			return false, err
+		}
+		cnt++
 	}
-	return false, nil
+	return true, nil
 }
 
 // Exec implements the stmt.Statement Exec interface.
@@ -283,30 +286,21 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 		tblIDMap[tbl.TableID()] = true
 	}
 	rowKeyMap := make(map[string]table.Table)
-	err = p.Do(ctx, func(_ interface{}, in []interface{}) (bool, error) {
-		// Generate ids for coming deletion.
-		var rowKeys *plans.RowKeyList
-		if in != nil && len(in) > 0 {
-			t := in[len(in)-1]
-			switch vt := t.(type) {
-			case *plans.RowKeyList:
-				rowKeys = vt
-			}
+	for {
+		row, err1 := p.Next(ctx)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
-		if rowKeys != nil {
-			for _, entry := range rowKeys.Keys {
-				tid := entry.Tbl.TableID()
-				if _, ok := tblIDMap[tid]; !ok {
-					continue
-				}
-				rowKeyMap[entry.Key] = entry.Tbl
-			}
+		if row == nil {
+			break
 		}
-		return true, nil
-	})
-
-	if err != nil {
-		return nil, errors.Trace(err)
+		for _, entry := range row.RowKeys {
+			tid := entry.Tbl.TableID()
+			if _, ok := tblIDMap[tid]; !ok {
+				continue
+			}
+			rowKeyMap[entry.Key] = entry.Tbl
+		}
 	}
 	for k, t := range rowKeyMap {
 		id, err := util.DecodeHandleFromRowKey(k)

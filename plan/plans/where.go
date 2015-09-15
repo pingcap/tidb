@@ -47,37 +47,6 @@ func (r *FilterDefaultPlan) Explain(w format.Formatter) {
 	w.Format("└Output field names %v\n", field.RFQNames(r.GetFields()))
 }
 
-// Do implements plan.Plan Do interface.
-func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	m := map[interface{}]interface{}{}
-	fields := r.GetFields()
-	return r.Plan.Do(ctx, func(rid interface{}, data []interface{}) (bool, error) {
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, fields, data, field.DefaultFieldFlag)
-		}
-		val, err := r.Expr.Eval(ctx, m)
-		if err != nil {
-			return false, err
-		}
-
-		if val == nil {
-			return true, nil
-		}
-
-		// Evaluate the expression, if the result is true, go on, otherwise
-		// skip this row.
-		x, err := types.ToBool(val)
-		if err != nil {
-			return false, err
-		}
-
-		if x == 0 {
-			return true, nil
-		}
-		return f(rid, data)
-	})
-}
-
 // Next implements plan.Plan Next interface.
 func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.evalArgs == nil {
