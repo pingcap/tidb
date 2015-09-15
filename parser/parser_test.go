@@ -264,6 +264,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{"SELECT CONVERT('111', SIGNED);", true},
 
+		{"SELECT DATABASE();", true},
+
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -297,6 +299,12 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
 		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
 		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
+
+		// For cast with charset
+		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
+
+		// For binary operator
+		{"SELECT binary 'a';", true},
 	}
 
 	for _, t := range table {
@@ -352,5 +360,5 @@ func (s *testParserSuite) TestParser0(c *C) {
 	c.Assert(ok, IsTrue)
 	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.IsConvert, IsTrue)
+	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
 }

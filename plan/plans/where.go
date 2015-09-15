@@ -18,6 +18,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -35,7 +36,8 @@ var (
 // expressions.
 type FilterDefaultPlan struct {
 	plan.Plan
-	Expr expression.Expression
+	Expr     expression.Expression
+	evalArgs map[interface{}]interface{}
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -51,7 +53,7 @@ func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err err
 	fields := r.GetFields()
 	return r.Plan.Do(ctx, func(rid interface{}, data []interface{}) (bool, error) {
 		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, fields, data, field.DefaultFieldFlag)
+			return GetIdentValue(name, fields, data, field.DefaultFieldFlag)
 		}
 		val, err := r.Expr.Eval(ctx, m)
 		if err != nil {
@@ -74,4 +76,45 @@ func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err err
 		}
 		return f(rid, data)
 	})
+}
+
+// Next implements plan.Plan Next interface.
+func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
+	for {
+		row, err = r.Plan.Next(ctx)
+		if row == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return GetIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
+		}
+		var meet bool
+		meet, err = r.meetCondition(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if meet {
+			return
+		}
+	}
+}
+
+func (r *FilterDefaultPlan) meetCondition(ctx context.Context) (bool, error) {
+	val, err := r.Expr.Eval(ctx, r.evalArgs)
+	if val == nil || err != nil {
+		return false, errors.Trace(err)
+	}
+	x, err := types.ToBool(val)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return x == 1, nil
+}
+
+// Close implements plan.Plan Close interface.
+func (r *FilterDefaultPlan) Close() error {
+	return r.Plan.Close()
 }

@@ -203,3 +203,11 @@ func (p *mockPlan) GetFields() []*field.ResultField {
 func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return p, false, nil
 }
+
+func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	return
+}
+
+func (p *mockPlan) Close() error {
+	return nil
+}

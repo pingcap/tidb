@@ -39,6 +39,8 @@ var _ = (*InfoSchemaPlan)(nil)
 // MySQL.
 type InfoSchemaPlan struct {
 	TableName string
+	rows      []*plan.Row
+	cursor    int
 }
 
 var (
@@ -48,6 +50,8 @@ var (
 	statisticsFields     = buildResultFieldsForStatistics()
 	characterSetsFields  = buildResultFieldsForCharacterSets()
 	characterSetsRecords = buildCharacterSetsRecords()
+	collationsFields     = buildResultFieldsForCollations()
+	collationsRecords    = buildColltionsRecords()
 )
 
 const (
@@ -56,6 +60,7 @@ const (
 	tableColumns       = "COLUMNS"
 	tableStatistics    = "STATISTICS"
 	tableCharacterSets = "CHARACTER_SETS"
+	tableCollations    = "COLLATIONS"
 	catalogVal         = "def"
 )
 
@@ -68,6 +73,7 @@ func NewInfoSchemaPlan(tableName string) (isp *InfoSchemaPlan, err error) {
 	case tableColumns:
 	case tableStatistics:
 	case tableCharacterSets:
+	case tableCollations:
 	default:
 		return nil, errors.Errorf("table INFORMATION_SCHEMA.%s does not exist", tableName)
 	}
@@ -331,8 +337,39 @@ func buildCharacterSetsRecords() (records [][]interface{}) {
 	return records
 }
 
+func buildResultFieldsForCollations() (rfs []*field.ResultField) {
+	tbName := tableCollations
+	rfs = append(rfs, buildResultField(tbName, "COLLATION_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "ID", mysql.TypeLonglong, 11))
+	rfs = append(rfs, buildResultField(tbName, "IS_DEFAULT", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "IS_COMPILED", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "SORTLEN", mysql.TypeLonglong, 3))
+	return rfs
+}
+
+func buildColltionsRecords() (records [][]interface{}) {
+	records = append(records,
+		[]interface{}{"ascii_general_ci", "ascii", 1, "Yes", "Yes", 1},
+		[]interface{}{"binary", "binary", 2, "Yes", "Yes", 1},
+		[]interface{}{"latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1},
+		[]interface{}{"utf8_general_ci", "utf8", 4, "Yes", "Yes", 1},
+		[]interface{}{"utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1},
+	)
+	return records
+}
+
 func (isp *InfoSchemaPlan) doCharacterSets(iterFunc plan.RowIterFunc) error {
 	for _, record := range characterSetsRecords {
+		if more, err := iterFunc(0, record); !more || err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (isp *InfoSchemaPlan) doCollations(iterFunc plan.RowIterFunc) error {
+	for _, record := range collationsRecords {
 		if more, err := iterFunc(0, record); !more || err != nil {
 			return err
 		}
@@ -355,6 +392,8 @@ func (isp *InfoSchemaPlan) Do(ctx context.Context, iterFunc plan.RowIterFunc) er
 		return isp.doStatistics(is, schemas, iterFunc)
 	case tableCharacterSets:
 		return isp.doCharacterSets(iterFunc)
+	case tableCollations:
+		return isp.doCollations(iterFunc)
 	}
 	return nil
 }
@@ -380,6 +419,8 @@ func (isp *InfoSchemaPlan) GetFields() []*field.ResultField {
 		return statisticsFields
 	case tableCharacterSets:
 		return characterSetsFields
+	case tableCollations:
+		return collationsFields
 	}
 	return nil
 }
@@ -411,4 +452,187 @@ func buildResultField(tableName, name string, tp byte, size int) *field.ResultFi
 		Name:      colInfo.Name.O,
 	}
 	return field
+}
+
+// Next implements plan.Plan Next interface.
+func (isp *InfoSchemaPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if isp.rows == nil {
+		isp.fetchAll(ctx)
+	}
+	if isp.cursor == len(isp.rows) {
+		return
+	}
+	row = isp.rows[isp.cursor]
+	isp.cursor++
+	return
+}
+
+func (isp *InfoSchemaPlan) fetchAll(ctx context.Context) {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	schemas := is.AllSchemas()
+	switch isp.TableName {
+	case tableSchemata:
+		isp.fetchSchemata(is.AllSchemaNames())
+	case tableTables:
+		isp.fetchTables(schemas)
+	case tableColumns:
+		isp.fetchColumns(schemas)
+	case tableStatistics:
+		isp.fetchStatistics(is, schemas)
+	case tableCharacterSets:
+		isp.fetchCharacterSets()
+	case tableCollations:
+		isp.fetchCollations()
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchSchemata(schemas []string) {
+	sort.Strings(schemas)
+	for _, schema := range schemas {
+		record := []interface{}{
+			catalogVal,                 // CATALOG_NAME
+			schema,                     // SCHEMA_NAME
+			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
+			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
+			nil,
+		}
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchTables(schemas []*model.DBInfo) {
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			record := []interface{}{
+				catalogVal,          // TABLE_CATALOG
+				schema.Name.O,       // TABLE_SCHEMA
+				table.Name.O,        // TABLE_NAME
+				"BASE_TABLE",        // TABLE_TYPE
+				"InnoDB",            // ENGINE
+				uint64(10),          // VERSION
+				"Compact",           // ROW_FORMAT
+				uint64(0),           // TABLE_ROWS
+				uint64(0),           // AVG_ROW_LENGTH
+				uint64(16384),       // DATA_LENGTH
+				uint64(0),           // MAX_DATA_LENGTH
+				uint64(0),           // INDEX_LENGTH
+				uint64(0),           // DATA_FREE
+				nil,                 // AUTO_INCREMENT
+				nil,                 // CREATE_TIME
+				nil,                 // UPDATE_TIME
+				nil,                 // CHECK_TIME
+				"latin1_swedish_ci", // TABLE_COLLATION
+				nil,                 // CHECKSUM
+				"",                  // CREATE_OPTIONS
+				"",                  // TABLE_COMMENT
+			}
+			isp.rows = append(isp.rows, &plan.Row{Data: record})
+		}
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			for i, col := range table.Columns {
+				colLen := col.Flen
+				if colLen == types.UnspecifiedLength {
+					colLen = mysql.GetDefaultFieldLength(col.Tp)
+				}
+				decimal := col.Decimal
+				if decimal == types.UnspecifiedLength {
+					decimal = 0
+				}
+				dataType := types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin)
+				columnType := fmt.Sprintf("%s(%d)", dataType, colLen)
+				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
+				var columnDefault interface{}
+				if columnDesc.DefaultValue != nil {
+					columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+				}
+				record := []interface{}{
+					catalogVal,                                                 // TABLE_CATALOG
+					schema.Name.O,                                              // TABLE_SCHEMA
+					table.Name.O,                                               // TABLE_NAME
+					col.Name.O,                                                 // COLUMN_NAME
+					i + 1,                                                      // ORIGINAL_POSITION
+					columnDefault,                                              // COLUMN_DEFAULT
+					columnDesc.Null,                                            // IS_NULLABLE
+					types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin), // DATA_TYPE
+					colLen,                            // CHARACTER_MAXIMUM_LENGTH
+					colLen,                            // CHARACTOR_OCTET_LENGTH
+					decimal,                           // NUMERIC_PRECISION
+					0,                                 // NUMERIC_SCALE
+					0,                                 // DATETIME_PRECISION
+					col.Charset,                       // CHARACTER_SET_NAME
+					col.Collate,                       // COLLATION_NAME
+					columnType,                        // COLUMN_TYPE
+					columnDesc.Key,                    // COLUMN_KEY
+					columnDesc.Extra,                  // EXTRA
+					"select,insert,update,references", // PRIVILEGES
+					"", // COLUMN_COMMENT
+				}
+				isp.rows = append(isp.rows, &plan.Row{Data: record})
+			}
+		}
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchStatistics(is infoschema.InfoSchema, schemas []*model.DBInfo) {
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			for _, index := range table.Indices {
+				nonUnique := "1"
+				if index.Unique {
+					nonUnique = "0"
+				}
+				for i, key := range index.Columns {
+					col, _ := is.ColumnByName(schema.Name, table.Name, key.Name)
+					nullable := "YES"
+					if mysql.HasNotNullFlag(col.Flag) {
+						nullable = ""
+					}
+					record := []interface{}{
+						catalogVal,    // TABLE_CATALOG
+						schema.Name.O, // TABLE_SCHEMA
+						table.Name.O,  // TABLE_NAME
+						nonUnique,     // NON_UNIQUE
+						schema.Name.O, // INDEX_SCHEMA
+						index.Name.O,  // INDEX_NAME
+						i + 1,         // SEQ_IN_INDEX
+						key.Name.O,    // COLUMN_NAME
+						"A",           // COLLATION
+						0,             // CARDINALITY
+						nil,           // SUB_PART
+						nil,           // PACKED
+						nullable,      // NULLABLE
+						"BTREE",       // INDEX_TYPE
+						"",            // COMMENT
+						"",            // INDEX_COMMENT
+					}
+					isp.rows = append(isp.rows, &plan.Row{Data: record})
+				}
+			}
+		}
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchCharacterSets() {
+	for _, record := range characterSetsRecords {
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchCollations() error {
+	for _, record := range collationsRecords {
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+	return nil
+}
+
+// Close implements plan.Plan Close interface.
+func (isp *InfoSchemaPlan) Close() error {
+	isp.rows = nil
+	isp.cursor = 0
+	return nil
 }

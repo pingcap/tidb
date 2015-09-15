@@ -18,6 +18,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -35,6 +36,7 @@ var (
 // most N results.
 type LimitDefaultPlan struct {
 	Count  uint64
+	cursor uint64
 	Src    plan.Plan
 	Fields []*field.ResultField
 }
@@ -73,9 +75,28 @@ func (r *LimitDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err erro
 	})
 }
 
+// Next implements plan.Plan Next interface.
+func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.cursor == r.Count {
+		return
+	}
+	r.cursor++
+	// TODO: This is a temp solution for pass wordpress
+	variable.GetSessionVars(ctx).AddFoundRows(1)
+	row, err = r.Src.Next(ctx)
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *LimitDefaultPlan) Close() error {
+	r.cursor = 0
+	return r.Src.Close()
+}
+
 // OffsetDefaultPlan handles SELECT ... FROM ... OFFSET N, skips N records.
 type OffsetDefaultPlan struct {
 	Count  uint64
+	cursor uint64
 	Src    plan.Plan
 	Fields []*field.ResultField
 }
@@ -106,4 +127,22 @@ func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 		return f(rid, in)
 	})
+}
+
+// Next implements plan.Plan Next interface.
+func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	for r.cursor < r.Count {
+		_, err = r.Src.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.cursor++
+	}
+	return r.Src.Next(ctx)
+}
+
+// Close implements plan.Plan Close interface.
+func (r *OffsetDefaultPlan) Close() error {
+	r.cursor = 0
+	return r.Src.Close()
 }

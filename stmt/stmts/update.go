@@ -115,15 +115,6 @@ func getInsertValue(name string, cols []*column.Col, row []interface{}) (interfa
 	return nil, errors.Errorf("unknown field %s", name)
 }
 
-func getIdentValue(name string, fields []*field.ResultField, row []interface{}, flag uint32) (interface{}, error) {
-	indices := field.GetResultFieldIndex(name, fields, flag)
-	if len(indices) == 0 {
-		return nil, errors.Errorf("unknown field %s", name)
-	}
-	index := indices[0]
-	return row[index], nil
-}
-
 func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table, tcols []*column.Col, assignList []expressions.Assignment, insertData []interface{}, args map[interface{}]interface{}) error {
 	if err := t.LockRow(ctx, h, true); err != nil {
 		return errors.Trace(err)
@@ -247,34 +238,28 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err != nil {
-		return nil, err
-	}
 	updatedRowKeys := make(map[string]bool)
-	err = p.Do(ctx, func(id interface{}, in []interface{}) (more bool, err error) {
-		// Update rows
-		var rowKeys *plans.RowKeyList
-		if in != nil && len(in) > 0 {
-			t := in[len(in)-1]
-			switch vt := t.(type) {
-			case *plans.RowKeyList:
-				rowKeys = vt
-				in = in[:len(in)-1]
-			}
+	for {
+		row, err1 := p.Next(ctx)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
-		if rowKeys == nil {
+		if row == nil {
+			break
+		}
+		rowData := row.Data
+		if len(row.RowKeys) == 0 {
 			// Nothing to update
-			return true, nil
+			return nil, nil
 		}
 		// Set EvalIdentFunc
-
 		m := make(map[interface{}]interface{})
 		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, p.GetFields(), in, field.DefaultFieldFlag)
+			return plans.GetIdentValue(name, p.GetFields(), rowData, field.DefaultFieldFlag)
 		}
 		// Update rows
 		start := 0
-		for _, entry := range rowKeys.Keys {
+		for _, entry := range row.RowKeys {
 			tbl := entry.Tbl
 			k := entry.Key
 			_, ok := updatedRowKeys[k]
@@ -283,33 +268,28 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				continue
 			}
 			// Update row
-			id, uerr := util.DecodeHandleFromRowKey(k)
-			if uerr != nil {
-				return false, errors.Trace(uerr)
+			handle, err2 := util.DecodeHandleFromRowKey(k)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
 			}
 			end := start + len(tbl.Cols())
-			data := in[start:end]
+			data := rowData[start:end]
 			start = end
-			tcols, uerr := getUpdateColumns(tbl, s.List, s.MultipleTable)
-			if uerr != nil {
-				return false, errors.Trace(uerr)
+			tcols, err2 := getUpdateColumns(tbl, s.List, s.MultipleTable)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
 			}
 			if len(tcols) == 0 {
 				// Nothing to update for this table.
 				continue
 			}
 			// Get data in the table
-			uerr = updateRecord(ctx, id, data, tbl, tcols, s.List, nil, m)
-			if uerr != nil {
-				return false, errors.Trace(uerr)
+			err2 = updateRecord(ctx, handle, data, tbl, tcols, s.List, nil, m)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
 			}
 			updatedRowKeys[k] = true
 		}
-		return true, nil
-
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	return nil, nil
 }
