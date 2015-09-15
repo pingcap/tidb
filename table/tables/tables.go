@@ -153,7 +153,7 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 	case mysql.TypeNewDecimal, mysql.TypeDecimal:
 		return mysql.ParseDecimal(rec.(string))
 	}
-	log.Error(string(col.Tp), rec, reflect.TypeOf(rec))
+	log.Error(col.Tp, rec, reflect.TypeOf(rec))
 	return nil, nil
 }
 
