@@ -105,10 +105,10 @@ func (s *SessionVars) SetStatus(status uint16) {
 // SetStatusInTrans sets the status flags about ServerStatusInTrans.
 func (s *SessionVars) SetStatusInTrans(isInTrans bool) {
 	if isInTrans {
-		s.Status = s.Status | mysql.ServerStatusInTrans
+		s.Status |= mysql.ServerStatusInTrans
 		return
 	}
-	s.Status = s.Status & (^mysql.ServerStatusInTrans)
+	s.Status &= (^mysql.ServerStatusInTrans)
 }
 
 // GetNextPreparedStmtID generates and return the next session scope prepared statement id
