@@ -323,7 +323,7 @@ func (c *driverConn) driverQuery(query string, args []driver.Value) (driver.Rows
 		if len(rss) == 0 {
 			return nil, errors.Trace(errNoResult)
 		}
-		return newdriverRows(rss[0]), nil
+		return &driverRows{rs: rss[0]}, nil
 	}
 	stmt, err := c.getStmt(query)
 	if err != nil {
@@ -352,17 +352,6 @@ func (r *driverResult) RowsAffected() (int64, error) {
 // driverRows is an iterator over an executed query's results.
 type driverRows struct {
 	rs rset.Recordset
-}
-
-func newEmptyDriverRows() *driverRows {
-	return &driverRows{}
-}
-
-func newdriverRows(rs rset.Recordset) *driverRows {
-	r := &driverRows{
-		rs: rs,
-	}
-	return r
 }
 
 // Columns returns the names of the columns. The number of columns of the
@@ -503,9 +492,9 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 			return nil, errors.Trace(errNoResult)
 		}
 		// The statement is not a query.
-		return newEmptyDriverRows(), nil
+		return &driverRows{}, nil
 	}
-	return newdriverRows(rs), nil
+	return &driverRows{rs: rs}, nil
 }
 
 func init() {
