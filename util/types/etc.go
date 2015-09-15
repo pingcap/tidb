@@ -298,7 +298,7 @@ func IsOrderedType(v interface{}) (y interface{}, r bool, err error) {
 	case float32, float64,
 		int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
-		string, mysql.Decimal:
+		string, mysql.Decimal, []byte:
 		return v, true, nil
 	case mysql.Time, mysql.Duration:
 		return x, true, nil

@@ -218,6 +218,10 @@ func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
 	_, r, err = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
+
+	_, r, err = IsOrderedType([]byte{1})
+	c.Assert(err, IsNil)
+	c.Assert(r, IsTrue)
 }
 
 func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
