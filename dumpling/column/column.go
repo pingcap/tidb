@@ -120,10 +120,6 @@ func FindOnUpdateCols(cols []*Col) []*Col {
 	return rcols
 }
 
-func newParseColError(err error, c *Col) error {
-	return errors.Errorf("parse err %v at column %s (type %s)", err, c.Name, types.FieldTypeToStr(c.Tp, c.Charset))
-}
-
 // TypeError returns error for invalid value type.
 func (c *Col) TypeError(v interface{}) error {
 	return errors.Errorf("cannot use %v (type %T) in assignment to, or comparison with, column %s (type %s)",

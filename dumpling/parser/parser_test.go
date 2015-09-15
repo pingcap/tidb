@@ -308,6 +308,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For binary operator
 		{"SELECT binary 'a';", true},
+
+		// For hexadecimal
+		{"SELECT x'0a', X'11', 0x11", true},
+		{"select x'0xaa'", false},
+		{"select 0X11", false},
 	}
 
 	for _, t := range table {
