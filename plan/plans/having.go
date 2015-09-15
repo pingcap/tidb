@@ -102,11 +102,9 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		}
 		var v bool
 		v, err = expressions.EvalBoolExpr(ctx, r.Expr, r.evalArgs)
-
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
 		if v {
 			row = srcRow
 			return

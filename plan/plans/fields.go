@@ -153,6 +153,8 @@ func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err
 	if s.done {
 		return
 	}
+	// Here we must output an empty row and don't evaluate fields
+	// because we will evaluate fields later in SelectFieldsDefaultPlan or GroupByDefaultPlan.
 	row = &plan.Row{
 		Data: make([]interface{}, len(s.Fields)),
 	}
