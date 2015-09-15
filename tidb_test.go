@@ -678,6 +678,16 @@ func (s *testSessionSuite) TestHexadecimal(c *C) {
 	match(c, row, 2, 1)
 }
 
+func (s *testSessionSuite) TestExpression(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	r := mustExecSQL(c, se, `select + (1 > 0), -(1 >0), + (1 < 0), - (1 < 0)`)
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, -1, 0, 0)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
