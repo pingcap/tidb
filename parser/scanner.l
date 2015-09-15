@@ -21,7 +21,6 @@ package parser
 import (
 	"fmt"
 	"math"
-	"errors"
 	"strconv"
 	"unicode"
 	"strings"
@@ -133,21 +132,28 @@ func (l *lexer) next() int {
 	return l.c
 }
 
-func (l *lexer) err0(ln, c int, args ...interface{}) {
+func (l *lexer) err0(ln, c int, arg interface{}) {
 	var argStr string
-	if len(args) > 0 {
-		argStr = fmt.Sprintf(" " + args[0].(string), args[1:]...)
+	if arg != nil {
+		argStr = fmt.Sprintf(" %v", arg)
 	}
-	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
+
+	err := fmt.Errorf("line %d column %d near \"%s\"%s", ln, c, l.val, argStr)
 	l.errs = append(l.errs, err)
 }
 
-func (l *lexer) err(s string, args ...interface{}) {
-	l.err0(l.line, l.col, args...)
+func (l *lexer) err(arg interface{}) {
+	l.err0(l.line, l.col, arg)
+}
+
+func (l *lexer) errf(format string, args ...interface{}) {
+	s := fmt.Sprintf(format, args...)
+	l.err0(l.line, l.col, s)
 }
 
 func (l *lexer) Error(s string) {
-	l.err(s)
+	// Notice: ignore origin error info.
+	l.err(nil)
 }
 
 func (l *lexer) stmtText() string {
@@ -224,14 +230,17 @@ x		[xX]
 y		[yY]
 z		[zZ]
 
+abs		{a}{b}{s}
 add		{a}{d}{d}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
 and		{a}{n}{d}
+any 		{a}{n}{y}
 as		{a}{s}
 asc		{a}{s}{c}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
+avg		{a}{v}{g}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
 by		{b}{y}
@@ -239,16 +248,24 @@ case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
 column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
 commit		{c}{o}{m}{m}{i}{t}
+concat		{c}{o}{n}{c}{a}{t}
+concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
+count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
+day		{d}{a}{y}
+dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
+dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
+dayofyear	{d}{a}{y}{o}{f}{y}{e}{a}{r}
 deallocate	{d}{e}{a}{l}{l}{o}{c}{a}{t}{e}
 default		{d}{e}{f}{a}{u}{l}{t}
 delayed		{d}{e}{l}{a}{y}{e}{d}
@@ -270,14 +287,18 @@ explain		{e}{x}{p}{l}{a}{i}{n}
 first		{f}{i}{r}{s}{t}
 for		{f}{o}{r}
 foreign		{f}{o}{r}{e}{i}{g}{n}
+found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
 from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
 group		{g}{r}{o}{u}{p}
+group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
+hour		{h}{o}{u}{r}
 if		{i}{f}
+ifnull		{i}{f}{n}{u}{l}{l}
 ignore		{i}{g}{n}{o}{r}{e}
 in		{i}{n}
 index		{i}{n}{d}{e}{x}
@@ -288,13 +309,17 @@ is		{i}{s}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
 left		{l}{e}{f}{t}
+length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
 lock		{l}{o}{c}{k}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
+microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute		{m}{i}{n}{u}{t}{e}
 mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
+month		{m}{o}{n}{t}{h}
 names		{n}{a}{m}{e}{s}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
@@ -306,6 +331,7 @@ password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
 quick		{q}{u}{i}{c}{k}
+repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
 right		{r}{i}{g}{h}{t}
@@ -314,29 +340,39 @@ rollback	{r}{o}{l}{l}{b}{a}{c}{k}
 row 		{r}{o}{w}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
+second		{s}{e}{c}{o}{n}{d}
 select		{s}{e}{l}{e}{c}{t}
 session		{s}{e}{s}{s}{i}{o}{n}
 set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
+some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
+sum		{s}{u}{m}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
+max		{m}{a}{x}
+min		{m}{i}{n}
 unknown		{u}{n}{k}{n}{o}{w}{n}
 union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
+nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
 warnings	{w}{a}{r}{n}{i}{n}{g}{s}
+week		{w}{e}{e}{k}
+weekday		{w}{e}{e}{k}{d}{a}{y}
+weekofyear	{w}{e}{e}{k}{o}{f}{y}{e}{a}{r}
 where		{w}{h}{e}{r}{e}
 when		{w}{h}{e}{n}
 xor		{x}{o}{r}
+yearweek	{y}{e}{a}{r}{w}{e}{e}{k}
 
 null		{n}{u}{l}{l}
 false		{f}{a}{l}{s}{e}
@@ -453,16 +489,22 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 "?"			return placeholder
 
+{abs}			lval.item = string(l.val)
+			return abs
 {add}			return add
 {after}			lval.item = string(l.val)
 			return after
 {all}			return all
 {alter}			return alter
 {and}			return and
+{any}			lval.item = string(l.val)
+			return any
 {asc}			return asc
 {as}			return as
 {auto_increment}	lval.item = string(l.val)
 			return autoIncrement
+{avg}			lval.item = string(l.val)
+			return avg
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
@@ -472,18 +514,35 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{coalesce}		lval.item = string(l.val)
+			return coalesce
 {collate}		return collation
 {column}		return column
 {columns}		lval.item = string(l.val)
 			return columns
 {commit}		lval.item = string(l.val)
 			return commit
+{concat}		lval.item = string(l.val)
+			return concat
+{concat_ws}		lval.item = string(l.val)
+			return concatWs
 {constraint}		return constraint
 {convert}		return convert
+{count}			lval.item = string(l.val)
+			return count
 {create}		return create
 {cross}			return cross
-{database}		return database
+{database}		lval.item = string(l.val)
+			return database
 {databases}		return databases
+{day}			lval.item = string(l.val)
+			return day
+{dayofweek}		lval.item = string(l.val)
+			return dayofweek
+{dayofmonth}		lval.item = string(l.val)
+			return dayofmonth
+{dayofyear}		lval.item = string(l.val)
+			return dayofyear
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd
@@ -513,14 +572,23 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return first
 {for}			return forKwd
 {foreign}		return foreign
+{found_rows}		lval.item = string(l.val)
+			return foundRows
 {from}			return from
 {full}			lval.item = string(l.val)
 			return full
 {fulltext}		return fulltext
 {group}			return group
+{group_concat}		lval.item = string(l.val)
+			return groupConcat
 {having}		return having
 {high_priority}		return highPriority
-{if}			return ifKwd
+{hour}			lval.item = string(l.val)
+			return hour
+{if}			lval.item = string(l.val)
+			return ifKwd
+{ifnull}		lval.item = string(l.val)
+			return ifNull
 {ignore}		return ignore
 {index}			return index
 {inner} 		return inner
@@ -530,16 +598,29 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {is}			return is
 {join}			return join
 {key}			return key
-{left}			return left
+{left}			lval.item = string(l.val)
+			return left
+{length}		lval.item = string(l.val)
+			return length
 {like}			return like
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
 {lock}			return lock
 {low_priority}		return lowPriority
+{max}			lval.item = string(l.val)
+			return max
+{microsecond}		lval.item = string(l.val)
+			return microsecond
+{min}			lval.item = string(l.val)
+			return min
+{minute}		lval.item = string(l.val)
+			return minute
 {mod}			return mod
 {mode}			lval.item = string(l.val)
 			return mode
+{month}			lval.item = string(l.val)
+			return month
 {names}			lval.item = string(l.val)
 			return names
 {not}			return not
@@ -561,14 +642,19 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return rollback
 {row}			lval.item = string(l.val)
 			return row
-{schema}		return schema
+{schema}		lval.item = string(l.val)
+			return schema
 {schemas}		return schemas
 {session}		lval.item = string(l.val)
 			return session
+{some}			lval.item = string(l.val)
+			return some
 {start}			lval.item = string(l.val)
 			return start
 {global}		lval.item = string(l.val)
 			return global
+{repeat}		lval.item = string(l.val)
+			return repeat
 {regexp}		return regexp
 {references}		return references
 {rlike}			return rlike
@@ -578,7 +664,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 {user_var}		lval.item = string(l.val)
 			return userVar
-
+{second}		lval.item = string(l.val)
+			return second
 {select}		return selectKwd
 
 {set}			return set
@@ -586,6 +673,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {show}			return show
 {substring}		lval.item = string(l.val)
 			return substring
+{sum}			lval.item = string(l.val)
+			return sum
 {table}			return tableKwd
 {tables}		lval.item = string(l.val)
 			return tables
@@ -594,11 +683,13 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return transaction
 {truncate}		lval.item = string(l.val)
 			return truncate
-{update}		return update
 {union}			return union
 {unique}		return unique
 {unknown}		lval.item = string(l.val)
 			return unknown
+{nullif}		lval.item = string(l.val)
+			return nullIf
+{update}		return update
 {use}			return use
 {using}			return using
 {value}			lval.item = string(l.val)
@@ -608,10 +699,18 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return variables
 {warnings}		lval.item = string(l.val)
 			return warnings
+{week}			lval.item = string(l.val)
+			return week
+{weekday}		lval.item = string(l.val)
+			return weekday
+{weekofyear}		lval.item = string(l.val)
+			return weekofyear
 {when}			return when
 {where}			return where
 {xor}			return xor
-
+{yearweek}		lval.item = string(l.val)
+			return yearweek
+			
 {signed}		lval.item = string(l.val)
 			return signed
 {unsigned}		return unsigned
@@ -781,7 +880,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err("", "integer literal: %v", err)
+		l.errf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -797,7 +896,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err("", "float literal: %v", err)
+		l.errf("float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 

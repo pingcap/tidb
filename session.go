@@ -221,7 +221,7 @@ func (s *session) Retry() error {
 			}
 		}
 		if success {
-			return nil
+			break
 		}
 	}
 

@@ -44,11 +44,6 @@ type IndexedCol struct {
 	X kv.Index
 }
 
-type indexKey struct {
-	value []interface{}
-	h     int64
-}
-
 func (c *Col) getTypeStr() string {
 	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
 	if c.Flen != -1 {

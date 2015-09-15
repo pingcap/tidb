@@ -264,6 +264,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{"SELECT CONVERT('111', SIGNED);", true},
 
+		{"SELECT DATABASE();", true},
+
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -285,6 +287,15 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
+
+		// For compare subquery
+		{"SELECT 1 > (select 1)", true},
+		{"SELECT 1 > ANY (select 1)", true},
+		{"SELECT 1 > ALL (select 1)", true},
+		{"SELECT 1 > SOME (select 1)", true},
+
+		// For cast with charset
+		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
 	}
 
 	for _, t := range table {
@@ -307,7 +318,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substring", "mode",
+		"value", "warnings", "year", "now", "substring", "mode", "any", "some",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)

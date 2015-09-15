@@ -9,7 +9,7 @@ GO=godep go
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 
-.PHONY: deps all build install parser clean todo test tidbtest mysqltest gotest interpreter
+.PHONY: godep deps all build install parser clean todo test tidbtest mysqltest gotest interpreter
 
 all: godep parser build test check
 
@@ -36,16 +36,15 @@ parser:
 		sed -i -e 's|//line.*||' -e 's/yyEofCode/yyEOFCode/' parser/parser.go; \
 	elif [ $(ARCH) = $(MAC) ]; \
 	then \
-		sed -i "" 's|//line.*||' parser/parser.go; \
-		sed -i "" 's/yyEofCode/yyEOFCode/' parser/parser.go; \
+		/usr/bin/sed -i "" 's|//line.*||' parser/parser.go; \
+		/usr/bin/sed -i "" 's/yyEofCode/yyEOFCode/' parser/parser.go; \
 	fi
 
 	golex -o parser/scanner.go parser/scanner.l
 
-
 check:
 	@echo "vet"
-	@ go tool vet . 2>&1 | grep -vE 'Godeps|unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet . 2>&1 | grep -vE 'Godeps|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "vet --shadow"
 	@ go tool vet --shadow . 2>&1 | grep -vE 'Godeps' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
@@ -67,7 +66,7 @@ clean:
 
 todo:
 	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/scanner.l parser/parser.y || true
-	@grep -n TODO */*.go parser/scanner.l parser/parser.y tidb-test/testdata.ql || true
+	@grep -n TODO */*.go parser/scanner.l parser/parser.y || true
 	@grep -n BUG */*.go parser/scanner.l parser/parser.y || true
 	@grep -n println */*.go parser/scanner.l parser/parser.y || true
 
