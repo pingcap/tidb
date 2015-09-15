@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/stmt"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 type lexer struct {
@@ -907,11 +908,11 @@ func (l *lexer) float(lval *yySymType) int {
 // https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func (l *lexer) hex(lval *yySymType) int {
 	s := string(l.val)
-	// convert x'12' to general 0x12
-	s = strings.Replace(s, "'", "", -1)
-	if s[0] != '0' {
-		s = "0" + s
+	h, err := mysql.ParseHex(s)
+	if err != nil {
+		l.errf("hexadecimal literal: %v", err)
+		return int(unicode.ReplacementChar)
 	}
-	lval.item = s 
-	return stringLit
+	lval.item = h
+	return hexLit
 }
