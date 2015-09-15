@@ -513,6 +513,45 @@ func (s *testSessionSuite) TestAutoicommit(c *C) {
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
+func checkInTrans(c *C, se Session, stmt string, isNil bool, expect uint16) {
+	mustExecSQL(c, se, stmt)
+	if isNil {
+		c.Assert(se.(*session).txn, IsNil)
+	} else {
+		c.Assert(se.(*session).txn, NotNil)
+	}
+	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusInTrans
+	c.Assert(ret, Equals, expect)
+}
+
+// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestInTrans(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	c.Assert(se.(*session).txn, IsNil)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, 0)
+	checkInTrans(c, se, "insert t values ()", true, 0)
+	checkInTrans(c, se, "begin", false, 1)
+	checkInTrans(c, se, "insert t values ()", false, 1)
+	se.Execute("drop table if exists t;")
+	c.Assert(se.(*session).txn, IsNil)
+	c.Assert(variable.GetSessionVars(se.(*session)).Status&mysql.ServerStatusInTrans, Equals, uint16(1))
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, 1)
+	checkInTrans(c, se, "insert t values ()", false, 1)
+	checkInTrans(c, se, "commit", true, 0)
+	checkInTrans(c, se, "insert t values ()", true, 0)
+
+	se.Execute("drop table if exists t;")
+	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
+	c.Assert(variable.GetSessionVars(se.(*session)).Status&mysql.ServerStatusInTrans, Equals, uint16(0))
+	checkInTrans(c, se, "begin", false, 1)
+	checkInTrans(c, se, "insert t values ()", false, 1)
+	checkInTrans(c, se, "rollback", true, 0)
+
+	mustExecSQL(c, se, s.dropDBSQL)
+}
+
 // See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
 	store := newStore(c, s.dbName)
