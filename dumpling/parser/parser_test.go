@@ -293,6 +293,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT 1 > ANY (select 1)", true},
 		{"SELECT 1 > ALL (select 1)", true},
 		{"SELECT 1 > SOME (select 1)", true},
+
+		// For cast with charset
+		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
 	}
 
 	for _, t := range table {
