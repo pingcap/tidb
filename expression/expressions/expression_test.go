@@ -83,6 +83,7 @@ type mockRecordset struct {
 	rows   [][]interface{}
 	fields []string
 	offset int
+	cursor int
 }
 
 func newMockRecordset() *mockRecordset {
@@ -131,6 +132,20 @@ func (r *mockRecordset) Rows(limit, offset int) ([][]interface{}, error) {
 
 func (r *mockRecordset) SetFieldOffset(offset int) {
 	r.offset = offset
+}
+
+func (r *mockRecordset) Next() (row *plan.Row, err error) {
+	if r.cursor == len(r.rows) {
+		return
+	}
+	row = &plan.Row{Data: r.rows[r.cursor]}
+	r.cursor++
+	return
+}
+
+func (r *mockRecordset) Close() error {
+	r.cursor = 0
+	return nil
 }
 
 type mockStatement struct {
