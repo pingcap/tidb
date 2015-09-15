@@ -263,3 +263,71 @@ func (s *testOverflowSuite) TestMul(c *C) {
 		}
 	}
 }
+
+func (s *testOverflowSuite) TestDiv(c *C) {
+	tblInt64 := []struct {
+		lsh      int64
+		rsh      int64
+		ret      int64
+		overflow bool
+	}{
+		{math.MaxInt64, 1, math.MaxInt64, false},
+		{math.MinInt64, 1, math.MinInt64, false},
+		{math.MinInt64, -1, 0, true},
+		{math.MaxInt64, -1, -math.MaxInt64, false},
+		{1, -1, -1, false},
+		{-1, 1, -1, false},
+		{-1, 2, 0, false},
+		{math.MinInt64, 2, math.MinInt64 / 2, false},
+	}
+
+	for _, t := range tblInt64 {
+		ret, err := DivInt64(t.lsh, t.rsh)
+		if t.overflow {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(ret, Equals, t.ret)
+		}
+	}
+
+	tblInt := []struct {
+		lsh      uint64
+		rsh      int64
+		ret      uint64
+		overflow bool
+	}{
+		{0, -1, 0, false},
+		{1, -1, 0, true},
+		{math.MaxInt64, math.MinInt64, 0, false},
+		{math.MaxInt64, -1, 0, true},
+	}
+
+	for _, t := range tblInt {
+		ret, err := DivUintWithInt(t.lsh, t.rsh)
+		if t.overflow {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(ret, Equals, t.ret)
+		}
+	}
+
+	tblInt2 := []struct {
+		lsh      int64
+		rsh      uint64
+		ret      uint64
+		overflow bool
+	}{
+		{math.MinInt64, math.MaxInt64, 0, true},
+		{0, 1, 0, false},
+		{-1, math.MaxInt64, 0, false},
+	}
+
+	for _, t := range tblInt2 {
+		ret, err := DivIntWithUint(t.lsh, t.rsh)
+		if t.overflow {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(ret, Equals, t.ret)
+		}
+	}
+}

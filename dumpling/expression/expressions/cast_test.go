@@ -63,6 +63,12 @@ func (s *testCastSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("1"))
 
+	f.Tp = mysql.TypeString
+	f.Charset = "utf8"
+	v, err = expr.Eval(nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, "1")
+
 	expr.Expr = Value{nil}
 	v, err = expr.Eval(nil, nil)
 	c.Assert(err, IsNil)
@@ -83,7 +89,10 @@ func (s *testCastSuite) TestCast(c *C) {
 	}
 	str := expr.String()
 	c.Assert(str, Equals, "CAST(1 AS SIGNED)")
-	expr.IsConvert = true
+	expr.FunctionType = ConvertFunction
 	str = expr.String()
 	c.Assert(str, Equals, "CONVERT(1, SIGNED)")
+	expr.FunctionType = BinaryOperator
+	str = expr.String()
+	c.Assert(str, Equals, "BINARY 1")
 }

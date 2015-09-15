@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 type testGroupBySuite struct{}
@@ -34,9 +36,9 @@ var groupByTestData = []*testRowData{
 }
 
 func (t *testGroupBySuite) TestGroupBy(c *C) {
-	tblPlan := &testTablePlan{groupByTestData, []string{"id", "name"}}
+	tblPlan := &testTablePlan{groupByTestData, []string{"id", "name"}, 0}
 	// test multiple fields
-	sl := &SelectList{
+	sl := &plans.SelectList{
 		Fields: []*field.Field{
 			{
 				Expr: &expressions.Ident{
@@ -62,7 +64,7 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 		AggFields: map[int]struct{}{2: {}},
 	}
 
-	groupbyPlan := &GroupByDefaultPlan{
+	groupbyPlan := &plans.GroupByDefaultPlan{
 		SelectList: sl,
 		Src:        tblPlan,
 		By: []expression.Expression{
@@ -73,7 +75,10 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 	}
 
 	ret := map[int]string{}
-	groupbyPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Plan: groupbyPlan,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(int)] = data[1].(string)
 		return true, nil
 	})
@@ -87,9 +92,11 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 
 	// test empty
 	tblPlan.rows = []*testRowData{}
+	tblPlan.Close()
 	groupbyPlan.Src = tblPlan
 	groupbyPlan.By = nil
-	groupbyPlan.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	groupbyPlan.Close()
+	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
 }

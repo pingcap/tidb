@@ -18,6 +18,7 @@
 package rsets
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
@@ -41,9 +42,20 @@ func (r Recordset) GetFields() []interface{} {
 
 // Do implements rset.Recordset.
 func (r Recordset) Do(f func(data []interface{}) (bool, error)) error {
-	return r.Plan.Do(r.Ctx, func(ID interface{}, data []interface{}) (bool, error) {
-		return f(data)
-	})
+	defer r.Plan.Close()
+	for {
+		row, err := r.Plan.Next(r.Ctx)
+		if row == nil || err != nil {
+			return errors.Trace(err)
+		}
+		more, err := f(row.Data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !more {
+			return nil
+		}
+	}
 }
 
 // Fields implements rset.Recordset.
@@ -53,16 +65,13 @@ func (r Recordset) Fields() (fields []*field.ResultField, err error) {
 
 // FirstRow implements rset.Recordset.
 func (r Recordset) FirstRow() (row []interface{}, err error) {
-	rows, err := r.Rows(1, 0)
-	if err != nil {
-		return nil, err
+	ro, err := r.Plan.Next(r.Ctx)
+	r.Plan.Close()
+	if ro == nil || err != nil {
+		return nil, errors.Trace(err)
 	}
-
-	if len(rows) != 0 {
-		return rows[0], nil
-	}
-
-	return nil, nil
+	row = ro.Data
+	return
 }
 
 // Rows implements rset.Recordset.

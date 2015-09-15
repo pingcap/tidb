@@ -14,6 +14,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -77,4 +78,36 @@ func (r *SelectFinalPlan) GetFields() []*field.ResultField {
 // Filter implements the plan.Plan Filter interface.
 func (r *SelectFinalPlan) Filter(ctx context.Context, expr expression.Expression) (p plan.Plan, filtered bool, err error) {
 	return r, false, nil
+}
+
+// Next implements plan.Plan Next interface.
+func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	row, err = r.Src.Next(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	// we should not output hidden fields to client.
+	row.Data = row.Data[:r.HiddenFieldOffset]
+	for i, o := range row.Data {
+		switch v := o.(type) {
+		case bool:
+			// Convert bool field to int
+			if v {
+				row.Data[i] = uint8(1)
+			} else {
+				row.Data[i] = uint8(0)
+			}
+		}
+	}
+	if !r.infered {
+		setResultFieldInfo(r.ResultFields[0:r.HiddenFieldOffset], row.Data)
+		r.infered = true
+	}
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *SelectFinalPlan) Close() error {
+	r.infered = false
+	return r.Src.Close()
 }

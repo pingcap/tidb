@@ -85,3 +85,30 @@ func (r *SelectLockPlan) Filter(ctx context.Context, expr expression.Expression)
 	// Do nothing
 	return r, false, nil
 }
+
+// Next implements plan.Plan Next interface.
+func (r *SelectLockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	row, err = r.Src.Next(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(row.RowKeys) != 0 && r.Lock == coldef.SelectLockForUpdate {
+		forupdate.SetForUpdate(ctx)
+		txn, err := ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, k := range row.RowKeys {
+			err = txn.LockKeys([]byte(k.Key))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *SelectLockPlan) Close() error {
+	return r.Src.Close()
+}
