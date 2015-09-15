@@ -295,13 +295,12 @@ func collateDesc(a, b []interface{}) int {
 // whether the type of y can be used by order by.
 func IsOrderedType(v interface{}) (r bool) {
 	switch v.(type) {
-	case float32, float64,
-		int, int8, int16, int32, int64,
+	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
-		string, mysql.Decimal, []byte, mysql.Time, mysql.Duration:
+		float32, float64, string, []byte,
+		mysql.Decimal, mysql.Time, mysql.Duration:
 		return true
 	}
-
 	return false
 }
 
