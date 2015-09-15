@@ -15,6 +15,7 @@ package expressions
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -24,6 +25,7 @@ type testExistsSubQuerySuite struct {
 }
 
 func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
+	// Test exists subquery.
 	tbl := []struct {
 		in     []interface{}
 		result int64 // 0 for false, 1 for true.
@@ -31,7 +33,6 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 		{[]interface{}{1}, 1},
 		{[]interface{}{nil}, 1},
 		{[]interface{}{}, 0},
-		{nil, 0},
 	}
 
 	for _, t := range tbl {
@@ -45,10 +46,52 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 
 		c.Assert(expr.IsStatic(), IsFalse)
 
-		str := expr.String()
+		exprc, err := expr.Clone()
+		c.Assert(err, IsNil)
+
+		str := exprc.String()
 		c.Assert(len(str), Greater, 0)
 
-		v, err := expr.Eval(nil, nil)
+		v, err := exprc.Eval(nil, nil)
+		c.Assert(err, IsNil)
+
+		val, err := types.ToBool(v)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, t.result)
+	}
+
+	// Test not exists subquery.
+	tbl = []struct {
+		in     []interface{}
+		result int64 // 0 for false, 1 for true.
+	}{
+		{[]interface{}{1}, 0},
+		{[]interface{}{nil}, 0},
+		{[]interface{}{}, 1},
+	}
+	for _, t := range tbl {
+		in := make([][]interface{}, 0, len(t.in))
+		for _, v := range t.in {
+			in = append(in, []interface{}{convert(v)})
+		}
+
+		sq := newMockSubQuery(in, []string{"c"})
+		es := NewExistsSubQuery(sq)
+
+		c.Assert(es.IsStatic(), IsFalse)
+
+		str := es.String()
+		c.Assert(len(str), Greater, 0)
+
+		expr := NewUnaryOperation(opcode.Not, es)
+
+		exprc, err := expr.Clone()
+		c.Assert(err, IsNil)
+
+		str = exprc.String()
+		c.Assert(len(str), Greater, 0)
+
+		v, err := exprc.Eval(nil, nil)
 		c.Assert(err, IsNil)
 
 		val, err := types.ToBool(v)
