@@ -89,10 +89,10 @@ func (s *testCastSuite) TestCast(c *C) {
 	}
 	str := expr.String()
 	c.Assert(str, Equals, "CAST(1 AS SIGNED)")
-	expr.FunctionType = CastFunctionConvert
+	expr.FunctionType = ConvertFunction
 	str = expr.String()
 	c.Assert(str, Equals, "CONVERT(1, SIGNED)")
-	expr.FunctionType = CastFunctionBinary
+	expr.FunctionType = BinaryOperator
 	str = expr.String()
 	c.Assert(str, Equals, "BINARY 1")
 }
