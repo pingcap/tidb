@@ -107,21 +107,6 @@ func (us *UnionStore) Set(key []byte, value []byte) error {
 	return us.Dirty.Put(key, value)
 }
 
-// levelDBSnapshot implements the Snapshot interface.
-type levelDBSnapshot struct {
-	*leveldb.Snapshot
-}
-
-// Get implements the Snapshot Get interface.
-func (s *levelDBSnapshot) Get(k []byte) ([]byte, error) {
-	return s.Snapshot.Get(k, nil)
-}
-
-// NewIterator implements the Snapshot NewIterator interface.
-func (s *levelDBSnapshot) NewIterator(param interface{}) Iterator {
-	return nil
-}
-
 // Seek implements the Snapshot Seek interface.
 func (us *UnionStore) Seek(key []byte, txn Transaction) (Iterator, error) {
 	snapshotIt := us.Snapshot.NewIterator(key)
