@@ -460,7 +460,7 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error) {
 	for {
 		if r.curRow == nil {
-			r.curRow, err = r.Right.Next(ctx)
+			r.curRow, err = r.Left.Next(ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -468,17 +468,17 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 				return nil, nil
 			}
 		}
-		var leftRow *plan.Row
-		leftRow, err = r.Left.Next(ctx)
+		var rightRow *plan.Row
+		rightRow, err = r.Right.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if leftRow == nil {
+		if rightRow == nil {
 			r.curRow = nil
-			r.Left.Close()
+			r.Right.Close()
 			continue
 		}
-		joinedRow := appendRow(leftRow.Data, r.curRow.Data)
+		joinedRow := append(r.curRow.Data, rightRow.Data...)
 		if r.On != nil {
 			r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				return getIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
@@ -495,7 +495,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 		}
 		row = &plan.Row{
 			Data:    joinedRow,
-			RowKeys: append(r.curRow.RowKeys, leftRow.RowKeys...),
+			RowKeys: append(r.curRow.RowKeys, rightRow.RowKeys...),
 		}
 		return
 	}
