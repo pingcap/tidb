@@ -61,40 +61,6 @@ func (r *TableNilPlan) Filter(ctx context.Context, expr expression.Expression) (
 	return r, false, nil
 }
 
-// Do implements the plan.Plan interface, iterates rows but does nothing.
-func (r *TableNilPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	h := r.T.FirstKey()
-	prefix := r.T.KeyPrefix()
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return err
-	}
-	it, err := txn.Seek([]byte(h), nil)
-	if err != nil {
-		return err
-	}
-	defer it.Close()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		var id int64
-		id, err = util.DecodeHandleFromRowKey(it.Key())
-		if err != nil {
-			return err
-		}
-
-		// do nothing
-		var m bool
-		if m, err = f(id, nil); !m || err != nil {
-			return err
-		}
-
-		rk := r.T.RecordKey(id, nil)
-		if it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // Next implements plan.Plan Next interface.
 func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.iter == nil {
@@ -289,65 +255,6 @@ func (r *TableDefaultPlan) filter(ctx context.Context, expr expression.Expressio
 		}
 	}
 	return r, false, nil
-}
-
-// Do scans over rows' kv pair in the table, and constructs them into row data.
-func (r *TableDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	t := r.T
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return err
-	}
-	head := t.FirstKey()
-	prefix := t.KeyPrefix()
-
-	it, err := txn.Seek([]byte(head), nil)
-	if err != nil {
-		return err
-	}
-	defer it.Close()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		// TODO: check if lock valid
-		// the record layout in storage (key -> value):
-		// r1 -> lock-version
-		// r1_col1 -> r1 col1 value
-		// r1_col2 -> r1 col2 value
-		// r2 -> lock-version
-		// r2_col1 -> r2 col1 value
-		// r2_col2 -> r2 col2 value
-		// ...
-		var err error
-		rowKey := it.Key()
-		h, err := util.DecodeHandleFromRowKey(rowKey)
-		if err != nil {
-			return err
-		}
-
-		// TODO: we could just fetch mentioned columns' values
-		rec, err := t.Row(ctx, h)
-		if err != nil {
-			return err
-		}
-		// Put rowKey to the tail of record row
-		rks := &RowKeyList{}
-		rke := &plan.RowKeyEntry{
-			Tbl: t,
-			Key: rowKey,
-		}
-		rks.appendKeys(rke)
-		rec = append(rec, rks)
-		m, err := f(int64(0), rec)
-		if !m || err != nil {
-			return err
-		}
-
-		rk := t.RecordKey(h, nil)
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // GetFields implements the plan.Plan GetFields interface.

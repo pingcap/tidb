@@ -166,68 +166,6 @@ func indexCompare(a interface{}, b interface{}) int {
 	return n
 }
 
-func (r *indexPlan) doSpan(ctx context.Context, txn kv.Transaction, span *indexSpan, f plan.RowIterFunc) error {
-	seekVal := span.lowVal
-	if span.lowVal == minNotNullVal {
-		seekVal = []byte{}
-	}
-	it, _, err := r.idx.Seek(txn, []interface{}{seekVal})
-	if err != nil {
-		return types.EOFAsNil(err)
-	}
-	defer it.Close()
-	var skipLowCompare bool
-	for {
-		k, h, err := it.Next()
-		if err != nil {
-			return types.EOFAsNil(err)
-		}
-		val := k[0]
-		if !skipLowCompare {
-			if span.lowExclude && indexCompare(span.lowVal, val) == 0 {
-				continue
-			}
-			skipLowCompare = true
-		}
-		cmp := indexCompare(span.highVal, val)
-		if cmp < 0 || (cmp == 0 && span.highExclude) {
-			return nil
-		}
-		data, err := r.src.Row(ctx, h)
-		if err != nil {
-			return err
-		}
-		// Append RowKeyList
-		rks := &RowKeyList{}
-		rowKey := string(r.src.RecordKey(h, nil))
-		rke := &plan.RowKeyEntry{
-			Tbl: r.src,
-			Key: rowKey,
-		}
-		rks.appendKeys(rke)
-		data = append(data, rks)
-		if more, err := f(h, data); err != nil || !more {
-			return err
-		}
-	}
-}
-
-// Do implements plan.Plan Do interface.
-// It scans a span from the lower bound to upper bound.
-func (r *indexPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return err
-	}
-	for _, span := range r.spans {
-		err := r.doSpan(ctx, txn, span, f)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // Explain implements plan.Plan Explain interface.
 func (r *indexPlan) Explain(w format.Formatter) {
 	w.Format("┌Iterate rows of table %q using index %q where %s in ", r.src.TableName(), r.idxName, r.colName)

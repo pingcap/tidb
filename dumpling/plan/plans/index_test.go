@@ -119,12 +119,16 @@ func (p *testIndexSuit) TestTableNilPlan(c *C) {
 	nilPlan := &plans.TableNilPlan{
 		T: p.tbl,
 	}
-	var ids []int64
-	nilPlan.Do(p, func(id interface{}, data []interface{}) (bool, error) {
-		ids = append(ids, id.(int64))
+	var ids []int
+	id := 0
+	rset := rsets.Recordset{Plan: nilPlan, Ctx: p}
+	err := rset.Do(func(data []interface{}) (bool, error) {
+		id++
+		ids = append(ids, id)
 		return true, nil
 	})
-	c.Assert(ids, DeepEquals, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+	c.Assert(err, IsNil)
+	c.Assert(ids, DeepEquals, []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
 }
 
 func (p *testIndexSuit) TestIndexPlan(c *C) {

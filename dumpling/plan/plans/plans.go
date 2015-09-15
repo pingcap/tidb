@@ -19,16 +19,13 @@ package plans
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
-	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // TODO: split into multi files
@@ -74,40 +71,6 @@ func (r *selectIndexDefaultPlan) Explain(w format.Formatter) {
 // Filter implements plan.Plan Filter interface.
 func (r *selectIndexDefaultPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return r, false, nil
-}
-
-// Do implements plan.Plan Do interface.
-func (r *selectIndexDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	var x kv.Index
-	switch ix := r.x.(type) {
-	case *column.IndexedCol:
-		x = ix.X
-	default:
-		panic("should never happen")
-	}
-
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return err
-	}
-	en, err := x.SeekFirst(txn)
-	if err != nil {
-		return types.EOFAsNil(err)
-	}
-	defer en.Close()
-
-	var id int64
-	for {
-		k, _, err := en.Next()
-		if err != nil {
-			return types.EOFAsNil(err)
-		}
-
-		id++
-		if more, err := f(id, k); !more || err != nil {
-			return err
-		}
-	}
 }
 
 // GetFields implements plan.Plan GetFields interface.
@@ -204,15 +167,4 @@ func setResultFieldInfo(fields []*field.ResultField, values []interface{}) error
 		}
 	}
 	return nil
-}
-
-// RowKeyList is list of RowKeyEntry
-type RowKeyList struct {
-	Keys []*plan.RowKeyEntry
-}
-
-func (rks *RowKeyList) appendKeys(keys ...*plan.RowKeyEntry) {
-	for _, key := range keys {
-		rks.Keys = append(rks.Keys, key)
-	}
 }

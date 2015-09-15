@@ -51,36 +51,6 @@ func (r *HavingPlan) GetFields() []*field.ResultField {
 	return r.Src.GetFields()
 }
 
-// Do implements plan.Plan Do interface.
-// It scans rows over SrcPlan and check if it meets all conditions in Expr.
-func (r *HavingPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	m := map[interface{}]interface{}{}
-
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.Src.GetFields(), in, field.CheckFieldFlag)
-		}
-
-		m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
-			// position is in [1, len(fields)], so we must decrease 1 to get correct index
-			// TODO: check position invalidation
-			return in[position-1], nil
-		}
-
-		v, err := expressions.EvalBoolExpr(ctx, r.Expr, m)
-
-		if err != nil {
-			return false, err
-		}
-
-		if !v {
-			return true, nil
-		}
-
-		return f(rid, in)
-	})
-}
-
 // Next implements plan.Plan Next interface.
 func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.evalArgs == nil {

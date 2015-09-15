@@ -34,32 +34,6 @@ type SelectFinalPlan struct {
 	infered bool // If result field info is already infered
 }
 
-// Do implements the plan.Plan Do interface, and sets result info field.
-func (r *SelectFinalPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	// Reset infered. For prepared statements, this plan may run many times.
-	r.infered = false
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		// we should not output hidden fields to client
-		out := in[0:r.HiddenFieldOffset]
-		for i, o := range out {
-			switch v := o.(type) {
-			case bool:
-				// Convert bool field to int
-				if v {
-					out[i] = uint8(1)
-				} else {
-					out[i] = uint8(0)
-				}
-			}
-		}
-		if !r.infered {
-			setResultFieldInfo(r.ResultFields[0:r.HiddenFieldOffset], out)
-			r.infered = true
-		}
-		return f(rid, out)
-	})
-}
-
 // Explain implements the plan.Plan Explain interface.
 func (r *SelectFinalPlan) Explain(w format.Formatter) {
 	r.Src.Explain(w)
