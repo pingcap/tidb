@@ -469,21 +469,6 @@ func StrToFloat(str string) (float64, error) {
 	// MySQL uses a very loose conversation, e.g, 123.abc -> 123
 	// We should do a trade off whether supporting this feature or using a strict mode.
 	// Now we use a strict mode.
-
-	i := 0
-	if str[0] == '-' || str[0] == '+' {
-		// It is like +0xaa, -0xaa, only for following hexadecimal check.
-		i++
-	}
-
-	// A hexadecimal literal like 0x12 is a string and should be converted to a float too.
-	if len(str[i:]) > 2 && str[i] == '0' && (str[i+1] == 'x' || str[i+1] == 'X') {
-		n, err := strconv.ParseInt(str, 0, 64)
-		if err != nil {
-			return 0, err
-		}
-		return float64(n), nil
-	}
 	return strconv.ParseFloat(str, 64)
 }
 
@@ -514,6 +499,9 @@ func ToUint64(value interface{}) (uint64, error) {
 		return uint64(v.ToNumber().Round(0).IntPart()), nil
 	case mysql.Decimal:
 		return uint64(v.Round(0).IntPart()), nil
+	case mysql.Hex:
+		// we don't need RoundFloat here because hex can not have fractional part.
+		return uint64(v.ToNumber()), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
@@ -551,6 +539,9 @@ func ToInt64(value interface{}) (int64, error) {
 		return v.ToNumber().Round(0).IntPart(), nil
 	case mysql.Decimal:
 		return v.Round(0).IntPart(), nil
+	case mysql.Hex:
+		// we don't need RoundFloat here because hex can not have fractional part.
+		return int64(v.ToNumber()), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
@@ -587,6 +578,8 @@ func ToFloat64(value interface{}) (float64, error) {
 	case mysql.Decimal:
 		vv, _ := v.Float64()
 		return vv, nil
+	case mysql.Hex:
+		return v.ToNumber(), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", value, value)
 	}
@@ -603,6 +596,10 @@ func ToDecimal(value interface{}) (mysql.Decimal, error) {
 		return mysql.ConvertToDecimal(0)
 	case []byte:
 		return mysql.ConvertToDecimal(string(v))
+	case mysql.Time:
+		return v.ToNumber(), nil
+	case mysql.Duration:
+		return v.ToNumber(), nil
 	default:
 		return mysql.ConvertToDecimal(value)
 	}
@@ -636,6 +633,8 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case mysql.Decimal:
 		return v.String(), nil
+	case mysql.Hex:
+		return v.ToString(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
 	}
@@ -685,6 +684,8 @@ func ToBool(value interface{}) (int64, error) {
 	case mysql.Decimal:
 		vv, _ := v.Float64()
 		isZero = (vv == 0)
+	case mysql.Hex:
+		isZero = (v.ToNumber() == 0)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", value, value)
 	}

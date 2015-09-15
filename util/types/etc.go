@@ -196,57 +196,6 @@ func overflow(v interface{}, tp byte) error {
 	return errors.Errorf("constant %v overflows %s", v, TypeStr(tp))
 }
 
-func compareUint64With(x uint64, b interface{}) int {
-	switch y := b.(type) {
-	case nil:
-		return 1
-	case uint8:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint16:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint32:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint64:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint:
-		return CompareUint64(uint64(x), uint64(y))
-	default:
-		panic("should never happen")
-	}
-}
-
-func compareInt64With(x int64, b interface{}) int {
-	switch y := b.(type) {
-	case nil:
-		return 1
-	case int8:
-		return CompareInt64(int64(x), int64(y))
-	case int16:
-		return CompareInt64(int64(x), int64(y))
-	case int32:
-		return CompareInt64(int64(x), int64(y))
-	case int64:
-		return CompareInt64(int64(x), int64(y))
-	case int:
-		return CompareInt64(int64(x), int64(y))
-	default:
-		panic("should never happen")
-	}
-}
-
-func compareFloat64With(x float64, b interface{}) int {
-	switch y := b.(type) {
-	case nil:
-		return 1
-	case float32:
-		return CompareFloat64(float64(x), float64(y))
-	case float64:
-		return CompareFloat64(float64(x), float64(y))
-	default:
-		panic("should never happen")
-	}
-}
-
 // TODO: collate should return errors from Compare.
 func collate(x, y []interface{}) (r int) {
 	nx, ny := len(x), len(y)
@@ -293,18 +242,15 @@ func collateDesc(a, b []interface{}) int {
 
 // IsOrderedType returns a boolean
 // whether the type of y can be used by order by.
-func IsOrderedType(v interface{}) (y interface{}, r bool, err error) {
-	switch x := v.(type) {
-	case float32, float64,
-		int, int8, int16, int32, int64,
+func IsOrderedType(v interface{}) (r bool) {
+	switch v.(type) {
+	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
-		string, mysql.Decimal:
-		return v, true, nil
-	case mysql.Time, mysql.Duration:
-		return x, true, nil
+		float32, float64, string, []byte,
+		mysql.Decimal, mysql.Time, mysql.Duration, mysql.Hex:
+		return true
 	}
-
-	return v, false, nil
+	return false
 }
 
 // Clone copies a interface to another interface.
@@ -336,6 +282,8 @@ func Clone(from interface{}) (interface{}, error) {
 	case mysql.Duration:
 		return x, nil
 	case mysql.Decimal:
+		return x, nil
+	case mysql.Hex:
 		return x, nil
 	default:
 		log.Error(reflect.TypeOf(from))
@@ -409,12 +357,16 @@ func Coerce(a, b interface{}) (x, y interface{}) {
 			x = float64(v)
 		case uint64:
 			x = float64(v)
+		case mysql.Hex:
+			x = v.ToNumber()
 		}
 		switch v := y.(type) {
 		case int64:
 			y = float64(v)
 		case uint64:
 			y = float64(v)
+		case mysql.Hex:
+			y = v.ToNumber()
 		}
 	}
 	return

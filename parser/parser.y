@@ -60,6 +60,7 @@ import (
 	/*yy:token "%c"     */	identifier      "identifier"
 	/*yy:token "%d"     */	intLit          "integer literal"
 	/*yy:token "\"%c\"" */	stringLit       "string literal"
+	/*yy:token "%x"     */	hexLit          "hexadecimal literal"
 
 
 	abs		"ABS"
@@ -1708,6 +1709,7 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
+|	hexLit
 
 Operand:
 	Literal

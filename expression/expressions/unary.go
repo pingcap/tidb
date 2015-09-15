@@ -171,6 +171,11 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		switch x := a.(type) {
 		case nil:
 			return nil, nil
+		case bool:
+			if x {
+				return int64(1), nil
+			}
+			return int64(0), nil
 		case float32:
 			return +x, nil
 		case float64:
@@ -205,6 +210,8 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 			return x, nil
 		case []byte:
 			return x, nil
+		case mysql.Hex:
+			return x, nil
 		default:
 			return types.UndOp(a, op)
 		}
@@ -214,6 +221,11 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		switch x := a.(type) {
 		case nil:
 			return nil, nil
+		case bool:
+			if x {
+				return int64(-1), nil
+			}
+			return int64(0), nil
 		case float32:
 			return -x, nil
 		case float64:
@@ -252,6 +264,8 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		case []byte:
 			f, err := types.StrToFloat(string(x))
 			return -f, err
+		case mysql.Hex:
+			return -x.ToNumber(), nil
 		default:
 			return types.UndOp(a, op)
 		}

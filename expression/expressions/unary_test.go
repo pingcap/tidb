@@ -39,6 +39,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{1, opcode.Not, int64(0)},
 		{0, opcode.Not, int64(1)},
 		{nil, opcode.Not, nil},
+		{mysql.Hex{Value: 0}, opcode.Not, int64(1)},
 
 		// test BitNeg.
 		{nil, opcode.BitNeg, nil},
@@ -53,6 +54,9 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{uint64(1), opcode.Plus, uint64(1)},
 		{"1.0", opcode.Plus, "1.0"},
 		{[]byte("1.0"), opcode.Plus, []byte("1.0")},
+		{mysql.Hex{Value: 1}, opcode.Plus, mysql.Hex{Value: 1}},
+		{true, opcode.Plus, int64(1)},
+		{false, opcode.Plus, int64(0)},
 
 		// test Minus.
 		{nil, opcode.Minus, nil},
@@ -67,6 +71,9 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{uint64(1), opcode.Minus, -int64(1)},
 		{"1.0", opcode.Minus, -1.0},
 		{[]byte("1.0"), opcode.Minus, -1.0},
+		{mysql.Hex{Value: 1}, opcode.Minus, -1.0},
+		{true, opcode.Minus, int64(-1)},
+		{false, opcode.Minus, int64(0)},
 	}
 
 	for _, t := range tbl {
@@ -147,9 +154,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{mockExpr{}, opcode.Not},
 		{mockExpr{}, opcode.BitNeg},
 		{mockExpr{}, opcode.Plus},
-		{false, opcode.Plus},
 		{mockExpr{}, opcode.Minus},
-		{false, opcode.Minus},
 		{mockExpr{}, opcode.EQ},
 	}
 
