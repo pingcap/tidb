@@ -296,6 +296,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
+
+		// For binary operator
+		{"SELECT binary 'a';", true},
 	}
 
 	for _, t := range table {
@@ -351,5 +354,5 @@ func (s *testParserSuite) TestParser0(c *C) {
 	c.Assert(ok, IsTrue)
 	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.IsConvert, IsTrue)
+	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
 }
