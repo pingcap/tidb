@@ -114,7 +114,7 @@ func (u *UnaryOperation) String() string {
 		case opcode.Not:
 			return fmt.Sprintf("NOT %s", u.V)
 		default:
-			return fmt.Sprintf("%s", u.V)
+			return fmt.Sprintf("%s%s", u.Op, u.V)
 		}
 	default:
 		switch u.Op {

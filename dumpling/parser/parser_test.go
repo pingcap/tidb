@@ -297,6 +297,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// For exists subquery
 		{"SELECT EXISTS select 1", false},
 		{"SELECT EXISTS (select 1)", true},
+		{"SELECT + EXISTS (select 1)", true},
+		{"SELECT - EXISTS (select 1)", true},
+		{"SELECT NOT EXISTS (select 1)", true},
+		{"SELECT + NOT EXISTS (select 1)", false},
+		{"SELECT - NOT EXISTS (select 1)", false},
 
 		// For cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
