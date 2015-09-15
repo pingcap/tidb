@@ -1830,7 +1830,7 @@ PrimaryExpression:
 		$$ = &expressions.FunctionCast{
 			Expr: $2.(expression.Expression), 
 			Tp: x,
-			FunctionType: expressions.CastFunctionBinary,
+			FunctionType: expressions.BinaryOperator,
 		}	
 	}
 
@@ -1889,7 +1889,7 @@ FunctionCallKeyword:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
-			FunctionType: expressions.CastFunctionCast,
+			FunctionType: expressions.CastFunction,
 		}	
 	}
 |	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
@@ -1917,7 +1917,7 @@ FunctionCallKeyword:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
-			FunctionType: expressions.CastFunctionConvert,
+			FunctionType: expressions.ConvertFunction,
 		}	
 	}
 |	"DATE" '(' Expression ')'

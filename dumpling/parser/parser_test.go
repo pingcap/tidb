@@ -354,5 +354,5 @@ func (s *testParserSuite) TestParser0(c *C) {
 	c.Assert(ok, IsTrue)
 	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.FunctionType, Equals, expressions.CastFunctionConvert)
+	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
 }

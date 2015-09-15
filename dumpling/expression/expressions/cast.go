@@ -23,15 +23,15 @@ import (
 )
 
 // castOperatopr is the operator type for cast function.
-type castOperator int
+type castFunctionType int
 
 const (
-	// CastFunctionCast is CAST function.
-	CastFunctionCast castOperator = iota
-	// CastFunctionConvert is CONVERT function.
-	CastFunctionConvert
-	// CastFunctionBinary is BINARY operator.
-	CastFunctionBinary
+	// CastFunction is CAST function.
+	CastFunction castFunctionType = iota + 1
+	// ConvertFunction is CONVERT function.
+	ConvertFunction
+	// BinaryOperator is BINARY operator.
+	BinaryOperator
 )
 
 // FunctionCast is the cast function converting value to another type, e.g, cast(expr AS signed).
@@ -42,7 +42,7 @@ type FunctionCast struct {
 	// Tp is the conversion type.
 	Tp *types.FieldType
 	// Cast, Convert and Binary share this struct.
-	FunctionType castOperator
+	FunctionType castFunctionType
 }
 
 // Clone implements the Expression Clone interface.
@@ -76,9 +76,9 @@ func (f *FunctionCast) String() string {
 	} else {
 		tpStr = f.Tp.String()
 	}
-	if f.FunctionType == CastFunctionConvert {
+	if f.FunctionType == ConvertFunction {
 		return fmt.Sprintf("CONVERT(%s, %s)", f.Expr.String(), tpStr)
-	} else if f.FunctionType == CastFunctionBinary {
+	} else if f.FunctionType == BinaryOperator {
 		return fmt.Sprintf("BINARY %s", f.Expr.String())
 	}
 	return fmt.Sprintf("CAST(%s AS %s)", f.Expr.String(), tpStr)
