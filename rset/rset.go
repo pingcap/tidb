@@ -27,13 +27,13 @@ type Recordset interface {
 	// Data filter for input data.
 	Do(f func(data []interface{}) (more bool, err error)) error
 
-	// Get result fields.
+	// Fields gets result fields.
 	Fields() (fields []*field.ResultField, err error)
 
-	// Get first row data.
+	// FirstRow gets first row data.
 	FirstRow() (row []interface{}, err error)
 
-	// Get rows data by using limit/offset.
+	// Rows gets rows data by using limit/offset.
 	// Negative limit means no limit.
 	Rows(limit, offset int) (rows [][]interface{}, err error)
 
