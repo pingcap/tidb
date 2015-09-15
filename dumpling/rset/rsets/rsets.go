@@ -78,6 +78,7 @@ func (r Recordset) FirstRow() (row []interface{}, err error) {
 func (r Recordset) Rows(limit, offset int) ([][]interface{}, error) {
 	var rows [][]interface{}
 	defer r.Plan.Close()
+	// Move to offset.
 	for offset > 0 {
 		row, err := r.Next()
 		if row == nil || err != nil {
@@ -85,6 +86,7 @@ func (r Recordset) Rows(limit, offset int) ([][]interface{}, error) {
 		}
 		offset--
 	}
+	// Negative limit means no limit.
 	for limit != 0 {
 		row, err := r.Next()
 		if err != nil {
