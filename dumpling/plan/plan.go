@@ -42,12 +42,12 @@ type Plan interface {
 	// If no index can be used, the original plan is returned and 'filtered' return false.
 	Filter(ctx context.Context, expr expression.Expression) (p Plan, filtered bool, err error)
 
-	// Next returns the next row of data and rowKeys, nil data means there is no more data to return.
+	// Next returns the next row that contains data and row keys, nil row means there is no more to return.
 	// Aggregation plan will fetch all the data at the first call.
 	Next(ctx context.Context) (row *Row, err error)
 
 	// Close closes the underlying iterator of the plan.
-	// If you call Next after Close, it will start iteration from beginning.
+	// If you call Next after Close, it will start iteration from the beginning.
 	Close() error
 }
 
@@ -64,10 +64,10 @@ type Row struct {
 }
 
 // RowKeyEntry is designed for Delete statement in multi-table mode,
-// we should know which table this row comes from
+// we should know which table this row comes from.
 type RowKeyEntry struct {
-	// The table which this row come from
+	// The table which this row come from.
 	Tbl table.Table
-	// Row handle
+	// Row handle.
 	Key string
 }
