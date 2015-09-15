@@ -50,7 +50,8 @@ func isTableOrIndex(p plan.Plan) bool {
 	}
 }
 
-func getIdentValue(name string, fields []*field.ResultField, row []interface{}, flag uint32) (interface{}, error) {
+// GetIdentValue is a function that evaluate identifier value from row.
+func GetIdentValue(name string, fields []*field.ResultField, row []interface{}, flag uint32) (interface{}, error) {
 	indices := field.GetResultFieldIndex(name, fields, flag)
 	if len(indices) == 0 {
 		return nil, errors.Errorf("unknown field %s", name)
