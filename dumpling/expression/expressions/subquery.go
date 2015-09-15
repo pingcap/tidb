@@ -61,7 +61,7 @@ func (sq *SubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	defer p.Close()
 	row, err := p.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -193,20 +193,12 @@ func (s *mockStatement) String() string {
 
 type mockPlan struct {
 	rset   *mockRecordset
+	rows   [][]interface{}
 	cursor int
 }
 
 func newMockPlan(rset *mockRecordset) *mockPlan {
 	return &mockPlan{rset: rset}
-}
-
-func (p *mockPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	for _, data := range p.rset.rows {
-		if more, err := f(nil, data[:p.rset.offset]); !more || err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (p *mockPlan) Explain(w format.Formatter) {}
@@ -221,12 +213,13 @@ func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 }
 
 func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	if p.cursor == len(p.rset.rows) {
+	if p.rows == nil {
+		p.rows, _ = p.rset.Rows(-1, 0)
+	}
+	if p.cursor == len(p.rows) {
 		return
 	}
-	row = &plan.Row{
-		Data: p.rset.rows[p.cursor],
-	}
+	row = &plan.Row{Data: p.rows[p.cursor]}
 	p.cursor++
 	return
 }

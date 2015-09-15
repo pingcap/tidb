@@ -190,7 +190,6 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 			} else {
 				res = append(res, row.Data)
 			}
-			args[n] = res
 		}
 		args[n] = res
 	} else {
