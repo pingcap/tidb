@@ -2314,10 +2314,14 @@ CastType:
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
-|	"CHAR" OptFieldLen
+|	"CHAR" OptFieldLen OptBinary OptCharset
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int) 
+		if $3.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		x.Charset = $4.(string)
 		$$ = x
 	}
 |	"DATE"
