@@ -66,10 +66,10 @@ func (r Recordset) Fields() (fields []*field.ResultField, err error) {
 // FirstRow implements rset.Recordset.
 func (r Recordset) FirstRow() (row []interface{}, err error) {
 	ro, err := r.Plan.Next(r.Ctx)
+	r.Plan.Close()
 	if ro == nil || err != nil {
 		return nil, errors.Trace(err)
 	}
-	r.Plan.Close()
 	row = ro.Data
 	return
 }

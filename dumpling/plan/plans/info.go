@@ -481,6 +481,8 @@ func (isp *InfoSchemaPlan) fetchAll(ctx context.Context) {
 		isp.fetchStatistics(is, schemas)
 	case tableCharacterSets:
 		isp.fetchCharacterSets()
+	case tableCollations:
+		isp.fetchCollations()
 	}
 }
 
@@ -619,6 +621,13 @@ func (isp *InfoSchemaPlan) fetchCharacterSets() {
 	for _, record := range characterSetsRecords {
 		isp.rows = append(isp.rows, &plan.Row{Data: record})
 	}
+}
+
+func (isp *InfoSchemaPlan) fetchCollations() error {
+	for _, record := range collationsRecords {
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+	return nil
 }
 
 // Close implements plan.Plan Close interface.
