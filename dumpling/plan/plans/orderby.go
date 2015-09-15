@@ -130,62 +130,6 @@ func (t *orderByTable) Less(i, j int) bool {
 	return false
 }
 
-// Do implements plan.Plan Do interface, all records are added into an
-// in-memory array, and sorted in ASC/DESC order.
-func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	t := &orderByTable{Ascs: r.Ascs}
-
-	m := map[interface{}]interface{}{}
-	err := r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.ResultFields, in, field.CheckFieldFlag)
-		}
-
-		m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
-			// position is in [1, len(fields)], so we must decrease 1 to get correct index
-			// TODO: check position invalidation
-			return in[position-1], nil
-		}
-
-		row := &orderByRow{
-			Row: &plan.Row{Data: in},
-			Key: make([]interface{}, 0, len(r.By)),
-		}
-
-		for _, by := range r.By {
-			// err1 is used for passing `go tool vet --shadow` check.
-			val, err1 := by.Eval(ctx, m)
-			if err1 != nil {
-				return false, err1
-			}
-
-			if val != nil {
-				if !types.IsOrderedType(val) {
-					return false, errors.Errorf("cannot order by %v (type %T)", val, val)
-				}
-			}
-
-			row.Key = append(row.Key, val)
-		}
-
-		t.Rows = append(t.Rows, row)
-		return true, nil
-	})
-	if err != nil {
-		return err
-	}
-
-	sort.Sort(t)
-
-	var more bool
-	for _, row := range t.Rows {
-		if more, err = f(nil, row.Row.Data); !more || err != nil {
-			break
-		}
-	}
-	return types.EOFAsNil(err)
-}
-
 // Next implements plan.Plan Next interface.
 func (r *OrderByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.ordTable == nil {

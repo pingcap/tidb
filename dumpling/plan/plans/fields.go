@@ -57,27 +57,6 @@ func (r *SelectFieldsDefaultPlan) Filter(ctx context.Context, expr expression.Ex
 	return r, false, nil
 }
 
-// Do implements the plan.Plan Do interface, extracts specific values by
-// r.Fields from row data.
-func (r *SelectFieldsDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	fields := r.Src.GetFields()
-	m := map[interface{}]interface{}{}
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, fields, in, field.DefaultFieldFlag)
-		}
-
-		out := make([]interface{}, len(r.Fields))
-		for i, fld := range r.Fields {
-			var err error
-			if out[i], err = fld.Expr.Eval(ctx, m); err != nil {
-				return false, err
-			}
-		}
-		return f(rid, out)
-	})
-}
-
 // Next implements plan.Plan Next interface.
 func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.evalArgs == nil {
@@ -111,18 +90,6 @@ func (r *SelectFieldsDefaultPlan) Close() error {
 type SelectEmptyFieldListPlan struct {
 	Fields []*field.Field
 	done   bool
-}
-
-// Do implements the plan.Plan Do interface, returns empty row.
-func (s *SelectEmptyFieldListPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	// here we must output an empty row and don't evaluate fields
-	// because we will evaluate fields later in SelectFieldsDefaultPlan or GroupByDefaultPlan
-	values := make([]interface{}, len(s.Fields))
-	if _, err := f(0, values); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // Explain implements the plan.Plan Explain interface.

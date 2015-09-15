@@ -39,24 +39,6 @@ type ExplainDefaultPlan struct {
 	cursor int
 }
 
-// Do returns explain result lines.
-func (r *ExplainDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	var buf bytes.Buffer
-	switch x := r.S.(type) {
-	default:
-		w := format.IndentFormatter(&buf, "│   ")
-		x.Explain(ctx, w)
-	}
-
-	a := bytes.Split(buf.Bytes(), []byte{'\n'})
-	for _, v := range a[:len(a)-1] {
-		if more, err := f(nil, []interface{}{string(v)}); !more || err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // Explain implements the plan.Plan Explain interface.
 func (r *ExplainDefaultPlan) Explain(w format.Formatter) {
 	// Do nothing

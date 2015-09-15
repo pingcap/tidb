@@ -62,27 +62,27 @@ func (sq *SubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		return nil, errors.Trace(err)
 	}
 
-	count := 0
-	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
-		if count > 0 {
-			return false, errors.Errorf("Subquery returns more than 1 row")
-		}
-
-		if len(p.GetFields()) == 1 {
-			// a scalar value is a single value
-			sq.Value = data[0]
-		} else {
-			// a row value is []interface{}
-			sq.Value = data
-		}
-		count++
-		return true, nil
-	})
-
+	row, err := p.Next(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	if row == nil {
+		return sq.Value, nil
+	}
+	if len(p.GetFields()) == 1 {
+		// a scalar value is a single value
+		sq.Value = row.Data[0]
+	} else {
+		// a row value is []interface{}
+		sq.Value = row.Data
+	}
+	row, err = p.Next(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if row != nil {
+		return nil, errors.Errorf("Subquery returns more than 1 row")
+	}
 	return sq.Value, nil
 }
 

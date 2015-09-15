@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -37,6 +36,18 @@ var (
 
 // GroupByDefaultPlan handles GROUP BY statement, GroupByDefaultPlan uses an
 // in-memory table to aggregate values.
+//
+// Table: Subject_Selection
+// Subject   Semester   Attendee
+// ---------------------------------
+// ITB001    1          John
+// ITB001    1          Bob
+// ITB001    1          Mickey
+// ITB001    2          Jenny
+// ITB001    2          James
+// MKB114    1          John
+// MKB114    1          Erica
+// refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
 type GroupByDefaultPlan struct {
 	*SelectList
 	Src    plan.Plan
@@ -74,118 +85,6 @@ type groupRow struct {
 	Row *plan.Row
 	// for one group by row, we should have a map to save aggregate value
 	Args map[interface{}]interface{}
-}
-
-// Do implements plan.Plan Do interface.
-// Table: Subject_Selection
-// Subject   Semester   Attendee
-// ---------------------------------
-// ITB001    1          John
-// ITB001    1          Bob
-// ITB001    1          Mickey
-// ITB001    2          Jenny
-// ITB001    2          James
-// MKB114    1          John
-// MKB114    1          Erica
-// refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
-func (r *GroupByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	// TODO: now we have to use this to save group key -> row index
-	// later we will serialize group by items into a string key and then use a map instead.
-	t, err := memkv.CreateTemp(true)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if derr := t.Drop(); derr != nil && err == nil {
-			err = derr
-		}
-	}()
-
-	k := make([]interface{}, len(r.By))
-
-	// save output group by result
-	var outRows []*groupRow
-
-	err = r.Src.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		out := make([]interface{}, len(r.Fields))
-
-		// TODO: later order by will use the same mechanism, so we may use another plan to do this
-		m := map[interface{}]interface{}{}
-		// must first eval none aggregate fields, because alias group by will use this.
-		if err := r.evalNoneAggFields(ctx, out, m, in); err != nil {
-			return false, err
-		}
-
-		if err := r.evalGroupKey(ctx, k, out, in); err != nil {
-			return false, err
-		}
-
-		// get row index with k.
-		v, err := t.Get(k)
-		if err != nil {
-			return false, err
-		}
-
-		index := 0
-		if len(v) == 0 {
-			// no group for key, save data for this group
-			index = len(outRows)
-			outRows = append(outRows, &groupRow{Row: &plan.Row{Data: out}, Args: m})
-
-			if err := t.Set(k, []interface{}{index}); err != nil {
-				return false, err
-			}
-		} else {
-			// we have already saved data in the group by key, use this
-			index = v[0].(int)
-
-			// we will use this context args to evaluate aggregate fields.
-			m = outRows[index].Args
-		}
-
-		// eval aggregate fields
-		if err := r.evalAggFields(ctx, out, m, in); err != nil {
-			return false, err
-		}
-
-		return true, nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	if len(outRows) == 0 {
-		// empty table
-		var out []interface{}
-		out, err = r.evalEmptyTable(ctx)
-		if err != nil || out == nil {
-			return err
-		}
-
-		_, err = f(nil, out)
-
-		return err
-	}
-
-	// we don't consider implicit GROUP BY sorting now.
-	// Relying on implicit GROUP BY sorting in MySQL 5.7 is deprecated.
-	// To achieve a specific sort order of grouped results,
-	// it is preferable to use an explicit ORDER BY clause.
-	// GROUP BY sorting is a MySQL extension that may change in a future release
-	var more bool
-	for _, row := range outRows {
-		// eval aggregate done
-		if err := r.evalAggDone(ctx, row.Row.Data, row.Args); err != nil {
-			return err
-		}
-		if more, err = f(nil, row.Row.Data); !more || err != nil {
-			break
-		}
-	}
-
-	return types.EOFAsNil(err)
 }
 
 func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, outRow []interface{}, in []interface{}) error {

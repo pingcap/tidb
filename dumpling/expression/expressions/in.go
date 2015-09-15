@@ -177,19 +177,21 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 
 		res = []interface{}{}
 		// evaluate select and save its result for later in expression check
-		err = r.Do(ctx, func(id interface{}, data []interface{}) (more bool, err error) {
-			if len(data) == 1 {
-				res = append(res, data[0])
+		for {
+			row, err1 := r.Next(ctx)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			if row == nil {
+				break
+			}
+			if len(row.Data) == 1 {
+				res = append(res, row.Data[0])
 			} else {
-				res = append(res, data)
+				res = append(res, row.Data)
 			}
 			args[n] = res
-			return true, nil
-		})
-		if err != nil {
-			return nil, err
 		}
-
 		args[n] = res
 	} else {
 		res = ev.([]interface{})

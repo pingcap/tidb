@@ -30,9 +30,6 @@ type RowIterFunc func(id interface{}, data []interface{}) (more bool, err error)
 
 // Plan is the interface of query execution plan.
 type Plan interface {
-	// Do iterates records and applies plan logic to the result set.
-	// TODO: only get id or some fields.
-	Do(ctx context.Context, f RowIterFunc) error
 	// Explain the plan.
 	Explain(w format.Formatter)
 	// GetFields returns the result field list for a plan.
