@@ -328,7 +328,7 @@ func (r *GroupByDefaultPlan) evalEmptyTable(ctx context.Context) ([]interface{},
 // Next implements plan.Plan Next interface.
 func (r *GroupByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.rows == nil {
-		r.rows = make([]*groupRow, 0)
+		r.rows = []*groupRow{}
 		err = r.fetchAll(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)

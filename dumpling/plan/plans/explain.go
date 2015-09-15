@@ -19,6 +19,7 @@ package plans
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/format"
-	"strings"
 )
 
 var _ plan.Plan = (*ExplainDefaultPlan)(nil)
@@ -80,7 +80,7 @@ func (r *ExplainDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 		r.S.Explain(ctx, w)
 		r.lines = strings.Split(string(buf.Bytes()), "\n")
 	}
-	if r.cursor >= len(r.lines)-1 {
+	if r.cursor == len(r.lines)-1 {
 		return
 	}
 	row = &plan.Row{
