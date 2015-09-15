@@ -57,24 +57,6 @@ func (r *LimitDefaultPlan) GetFields() []*field.ResultField {
 	return r.Fields
 }
 
-// Do implements plan.Plan Do interface, counts the number of results, if the
-// number > N, returns.
-func (r *LimitDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	lim := r.Count
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		switch lim {
-		case 0:
-			// no more results
-			return false, nil
-		default:
-			lim--
-			// TODO: This is a temp solution for pass wordpress
-			variable.GetSessionVars(ctx).AddFoundRows(1)
-			return f(rid, in)
-		}
-	})
-}
-
 // Next implements plan.Plan Next interface.
 func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.cursor == r.Count {
@@ -115,18 +97,6 @@ func (r *OffsetDefaultPlan) Filter(ctx context.Context, expr expression.Expressi
 // GetFields implements plan.Plan GetFields interface.
 func (r *OffsetDefaultPlan) GetFields() []*field.ResultField {
 	return r.Fields
-}
-
-// Do implements plan.Plan Do interface, skips N records.
-func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	off := r.Count
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		if off > 0 {
-			off--
-			return true, nil
-		}
-		return f(rid, in)
-	})
 }
 
 // Next implements plan.Plan Next interface.

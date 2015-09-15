@@ -17,19 +17,30 @@
 
 package rset
 
-import "github.com/pingcap/tidb/field"
+import (
+	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/plan"
+)
 
 // Recordset is an abstract result set interface to help get data from Plan.
 type Recordset interface {
 	// Data filter for input data.
 	Do(f func(data []interface{}) (more bool, err error)) error
 
-	// Get result fields.
+	// Fields gets result fields.
 	Fields() (fields []*field.ResultField, err error)
 
-	// Get first row data.
+	// FirstRow gets first row data.
 	FirstRow() (row []interface{}, err error)
 
-	// Get rows data by using limit/offset.
+	// Rows gets rows data by using limit/offset.
+	// Negative limit means no limit.
 	Rows(limit, offset int) (rows [][]interface{}, err error)
+
+	// Next returns the next row, nil row means there is no more to return.
+	Next() (row *plan.Row, err error)
+
+	// Close closes the underlying iterator, call Next after Close will
+	// restart the iteration.
+	Close() error
 }

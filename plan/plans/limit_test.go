@@ -36,15 +36,6 @@ type testTablePlan struct {
 	cursor int
 }
 
-func (p *testTablePlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	for _, d := range p.rows {
-		if more, err := f(d.id, d.data); !more || err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (p *testTablePlan) Explain(w format.Formatter) {}
 
 func (p *testTablePlan) GetFields() []*field.ResultField {

@@ -90,16 +90,22 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	defer p.Close()
 	res := []interface{}{}
-	err = p.Do(ctx, func(id interface{}, data []interface{}) (bool, error) {
-		if len(data) == 1 {
-			res = append(res, data[0])
-		} else {
-			res = append(res, data)
+	for {
+		row, err1 := p.Next(ctx)
+		if err1 != nil {
+			return nil, errors.Trace(err)
 		}
-		return true, nil
-	})
+		if row == nil {
+			break
+		}
+		if len(row.Data) == 1 {
+			res = append(res, row.Data[0])
+		} else {
+			res = append(res, row.Data)
+		}
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

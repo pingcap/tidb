@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -324,7 +323,7 @@ func (c *driverConn) driverQuery(query string, args []driver.Value) (driver.Rows
 		if len(rss) == 0 {
 			return nil, errors.Trace(errNoResult)
 		}
-		return newdriverRows(rss[0]), nil
+		return &driverRows{rs: rss[0]}, nil
 	}
 	stmt, err := c.getStmt(query)
 	if err != nil {
@@ -352,55 +351,7 @@ func (r *driverResult) RowsAffected() (int64, error) {
 
 // driverRows is an iterator over an executed query's results.
 type driverRows struct {
-	rs   rset.Recordset
-	done chan int
-	rows chan interface{}
-	wg   sync.WaitGroup
-}
-
-func newEmptyDriverRows() *driverRows {
-	r := &driverRows{
-		done: make(chan int, 1),
-	}
-	r.done <- 1
-	return r
-}
-
-func newdriverRows(rs rset.Recordset) *driverRows {
-	r := &driverRows{
-		rs:   rs,
-		done: make(chan int),
-		rows: make(chan interface{}, 500),
-	}
-	r.wg.Add(1)
-	go func() {
-		// TODO: We may change the whole implementation later, so here just using WaitGroup
-		// to solve issue https://github.com/pingcap/tidb/issues/57
-		// But if we forget close rows and do commit later, we may still meet this panic
-		// with very little probability.
-		defer r.wg.Done()
-		err := io.EOF
-		if e := r.rs.Do(func(data []interface{}) (bool, error) {
-			vv, cloneErr := types.Clone(data)
-			if cloneErr != nil {
-				return false, errors.Trace(cloneErr)
-			}
-			select {
-			case r.rows <- vv:
-				return true, nil
-			case <-r.done:
-				return false, nil
-			}
-		}); e != nil {
-			err = e
-		}
-
-		select {
-		case r.rows <- err:
-		case <-r.done:
-		}
-	}()
-	return r
+	rs rset.Recordset
 }
 
 // Columns returns the names of the columns. The number of columns of the
@@ -420,8 +371,9 @@ func (r *driverRows) Columns() []string {
 
 // Close closes the rows iterator.
 func (r *driverRows) Close() error {
-	close(r.done)
-	r.wg.Wait()
+	if r.rs != nil {
+		return r.rs.Close()
+	}
 	return nil
 }
 
@@ -433,55 +385,52 @@ func (r *driverRows) Close() error {
 //
 // Next should return io.EOF when there are no more rows.
 func (r *driverRows) Next(dest []driver.Value) error {
-	select {
-	case rx := <-r.rows:
-		switch x := rx.(type) {
-		case error:
-			return x
-		case []interface{}:
-			if g, e := len(x), len(dest); g != e {
-				return errors.Errorf("field count mismatch: got %d, need %d", g, e)
-			}
-
-			for i, xi := range x {
-				switch v := xi.(type) {
-				case nil, int64, float32, float64, bool, []byte, string:
-					dest[i] = v
-				case int8:
-					dest[i] = int64(v)
-				case int16:
-					dest[i] = int64(v)
-				case int32:
-					dest[i] = int64(v)
-				case int:
-					dest[i] = int64(v)
-				case uint8:
-					dest[i] = uint64(v)
-				case uint16:
-					dest[i] = uint64(v)
-				case uint32:
-					dest[i] = uint64(v)
-				case uint64:
-					dest[i] = uint64(v)
-				case uint:
-					dest[i] = uint64(v)
-				case mysql.Duration:
-					dest[i] = v.String()
-				case mysql.Time:
-					dest[i] = v.String()
-				case mysql.Decimal:
-					dest[i] = v.String()
-				default:
-					return errors.Errorf("unable to handle type %T", xi)
-				}
-			}
-			return nil
-		default:
-			return errors.Errorf("unable to handle type %T", rx)
-		}
-	case <-r.done:
+	if r.rs == nil {
 		return io.EOF
 	}
+	row, err := r.rs.Next()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if row == nil {
+		return io.EOF
+	}
+	if len(row.Data) != len(dest) {
+		return errors.Errorf("field count mismatch: got %d, need %d", len(row.Data), len(dest))
+	}
+	for i, xi := range row.Data {
+		switch v := xi.(type) {
+		case nil, int64, float32, float64, bool, []byte, string:
+			dest[i] = v
+		case int8:
+			dest[i] = int64(v)
+		case int16:
+			dest[i] = int64(v)
+		case int32:
+			dest[i] = int64(v)
+		case int:
+			dest[i] = int64(v)
+		case uint8:
+			dest[i] = uint64(v)
+		case uint16:
+			dest[i] = uint64(v)
+		case uint32:
+			dest[i] = uint64(v)
+		case uint64:
+			dest[i] = uint64(v)
+		case uint:
+			dest[i] = uint64(v)
+		case mysql.Duration:
+			dest[i] = v.String()
+		case mysql.Time:
+			dest[i] = v.String()
+		case mysql.Decimal:
+			dest[i] = v.String()
+		default:
+			return errors.Errorf("unable to handle type %T", xi)
+		}
+	}
+	return nil
 }
 
 // driverStmt is a prepared statement. It is bound to a driverConn and not used
@@ -543,9 +492,9 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 			return nil, errors.Trace(errNoResult)
 		}
 		// The statement is not a query.
-		return newEmptyDriverRows(), nil
+		return &driverRows{}, nil
 	}
-	return newdriverRows(rs), nil
+	return &driverRows{rs: rs}, nil
 }
 
 func init() {

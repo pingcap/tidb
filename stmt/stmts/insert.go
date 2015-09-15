@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
@@ -84,43 +85,49 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 	r, err := s.Sel.Plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
-	} else if len(r.GetFields()) != len(cols) {
+	}
+	defer r.Close()
+	if len(r.GetFields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(r.GetFields()))
 	}
 
 	var bufRecords [][]interface{}
 	var lastInsertIds []uint64
-	err = r.Do(ctx, func(_ interface{}, data []interface{}) (more bool, err error) {
+	for {
+		var row *plan.Row
+		row, err = r.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
 		data0 := make([]interface{}, len(t.Cols()))
 		marked := make(map[int]struct{}, len(cols))
-		for i, d := range data {
+		for i, d := range row.Data {
 			data0[cols[i].Offset] = d
 			marked[cols[i].Offset] = struct{}{}
 		}
 
 		if err = s.initDefaultValues(ctx, t, t.Cols(), data0, marked); err != nil {
-			return false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		if err = column.CastValues(ctx, data0, cols); err != nil {
-			return false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		if err = column.CheckNotNull(t.Cols(), data0); err != nil {
-			return false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-
-		v, err := types.Clone(data0)
+		var v interface{}
+		v, err = types.Clone(data0)
 		if err != nil {
-			return false, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
 		bufRecords = append(bufRecords, v.([]interface{}))
 		lastInsertIds = append(lastInsertIds, variable.GetSessionVars(ctx).LastInsertID)
-		return true, nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	for i, r := range bufRecords {
@@ -129,7 +136,6 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 			return nil, errors.Trace(err)
 		}
 	}
-
 	return nil, nil
 }
 

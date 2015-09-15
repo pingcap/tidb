@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -48,52 +47,6 @@ func (r *DistinctDefaultPlan) Explain(w format.Formatter) {
 // Filter implements the plan.Plan Filter interface.
 func (r *DistinctDefaultPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return r, false, nil
-}
-
-// Do : Distinct plan use an in-memory temp table for storing items that has same
-// key, the value in temp table is an array of record handles.
-func (r *DistinctDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	t, err := memkv.CreateTemp(true)
-	if err != nil {
-		return
-	}
-
-	defer func() {
-		if derr := t.Drop(); derr != nil && err == nil {
-			err = derr
-		}
-	}()
-
-	var rows [][]interface{}
-	if err = r.Src.Do(ctx, func(id interface{}, in []interface{}) (bool, error) {
-		var v []interface{}
-		// get distinct key
-		key := in[0:r.HiddenFieldOffset]
-		v, err = t.Get(key)
-		if err != nil {
-			return false, err
-		}
-
-		if len(v) == 0 {
-			// no group for key, save data for this group
-			rows = append(rows, in)
-			if err := t.Set(key, []interface{}{true}); err != nil {
-				return false, err
-			}
-		}
-
-		return true, nil
-	}); err != nil {
-		return
-	}
-
-	var more bool
-	for _, row := range rows {
-		if more, err = f(nil, row); !more || err != nil {
-			break
-		}
-	}
-	return types.EOFAsNil(err)
 }
 
 // Next implements plan.Plan Next interface.

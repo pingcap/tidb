@@ -239,6 +239,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defer p.Close()
 	updatedRowKeys := make(map[string]bool)
 	for {
 		row, err1 := p.Next(ctx)

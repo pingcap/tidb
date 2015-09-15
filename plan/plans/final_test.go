@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/charset"
 )
 
@@ -83,7 +84,8 @@ func (t *testFinalPlan) TestFinalPlan(c *C) {
 		c.Assert(rf.Col.Charset, Equals, "")
 	}
 
-	p.Do(nil, func(id interface{}, in []interface{}) (bool, error) {
+	rset := rsets.Recordset{Plan: p}
+	rset.Do(func(in []interface{}) (bool, error) {
 		return true, nil
 	})
 
