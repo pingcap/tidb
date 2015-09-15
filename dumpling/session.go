@@ -137,9 +137,9 @@ func (s *session) FinishTxn(rollback bool) error {
 	}
 	defer func() {
 		s.txn = nil
+		variable.GetSessionVars(s).SetStatusInTrans(false)
 	}()
 
-	variable.GetSessionVars(s).SetStatusInTrans(false)
 	if rollback {
 		return s.txn.Rollback()
 	}
