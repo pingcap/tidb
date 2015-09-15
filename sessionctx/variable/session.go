@@ -102,7 +102,7 @@ func (s *SessionVars) SetStatus(status uint16) {
 	s.Status = status
 }
 
-// SetStatusInTrans sets the status flags about SERVER_STATUS_IN_TRANS
+// SetStatusInTrans sets the status flags about ServerStatusInTrans.
 func (s *SessionVars) SetStatusInTrans(isInTrans bool) {
 	if isInTrans {
 		s.Status = s.Status | mysql.ServerStatusInTrans
