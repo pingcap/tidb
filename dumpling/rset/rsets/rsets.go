@@ -77,27 +77,35 @@ func (r Recordset) FirstRow() (row []interface{}, err error) {
 // Rows implements rset.Recordset.
 func (r Recordset) Rows(limit, offset int) ([][]interface{}, error) {
 	var rows [][]interface{}
-	err := r.Do(func(row []interface{}) (bool, error) {
-		if offset > 0 {
-			offset--
-			return true, nil
+	defer r.Plan.Close()
+	for offset > 0 {
+		row, err := r.Next()
+		if row == nil || err != nil {
+			return nil, errors.Trace(err)
 		}
-
-		switch {
-		case limit < 0:
-			rows = append(rows, row)
-			return true, nil
-		case limit == 0:
-			return false, nil
-		default: // limit > 0
-			rows = append(rows, row)
-			limit--
-			return limit > 0, nil
-		}
-	})
-	if err != nil {
-		return nil, err
+		offset--
 	}
-
+	for limit != 0 {
+		row, err := r.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row.Data)
+		if limit > 0 {
+			limit--
+		}
+	}
 	return rows, nil
+}
+
+// Next implements rset.Recordst
+func (r Recordset) Next() (row *plan.Row, err error) {
+	row, err = r.Plan.Next(r.Ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return
 }
