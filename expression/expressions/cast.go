@@ -22,15 +22,27 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// castOperatopr is the operator type for cast function.
+type castOperator int
+
+const (
+	// CastFunctionCast is CAST function.
+	CastFunctionCast castOperator = iota
+	// CastFunctionConvert is CONVERT function.
+	CastFunctionConvert
+	// CastFunctionBinary is BINARY operator.
+	CastFunctionBinary
+)
+
 // FunctionCast is the cast function converting value to another type, e.g, cast(expr AS signed).
-// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
 type FunctionCast struct {
 	// Expr is the expression to be converted.
 	Expr expression.Expression
 	// Tp is the conversion type.
 	Tp *types.FieldType
-	// Cast and Convert share this struct.
-	IsConvert bool
+	// Cast, Convert and Binary share this struct.
+	FunctionType castOperator
 }
 
 // Clone implements the Expression Clone interface.
@@ -40,9 +52,9 @@ func (f *FunctionCast) Clone() (expression.Expression, error) {
 		return nil, err
 	}
 	nf := &FunctionCast{
-		Expr:      expr,
-		Tp:        f.Tp,
-		IsConvert: f.IsConvert,
+		Expr:         expr,
+		Tp:           f.Tp,
+		FunctionType: f.FunctionType,
 	}
 	return nf, nil
 }
@@ -64,8 +76,10 @@ func (f *FunctionCast) String() string {
 	} else {
 		tpStr = f.Tp.String()
 	}
-	if f.IsConvert {
+	if f.FunctionType == CastFunctionConvert {
 		return fmt.Sprintf("CONVERT(%s, %s)", f.Expr.String(), tpStr)
+	} else if f.FunctionType == CastFunctionBinary {
+		return fmt.Sprintf("BINARY %s", f.Expr.String())
 	}
 	return fmt.Sprintf("CAST(%s AS %s)", f.Expr.String(), tpStr)
 }
