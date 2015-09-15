@@ -173,7 +173,7 @@ func (p *UnionPlan) fetchAll(ctx context.Context) error {
 		}
 	}()
 
-	// Eval the first select statement
+	// Fetch results of the first select statement.
 	src := p.Srcs[0]
 	for {
 		var row *plan.Row
@@ -191,7 +191,7 @@ func (p *UnionPlan) fetchAll(ctx context.Context) error {
 		}
 	}
 
-	// Eval the following select statements
+	// Fetch results of the following select statements.
 	for i := range p.Distincts {
 		err = p.fetchSrc(ctx, i, t)
 		if err != nil {
