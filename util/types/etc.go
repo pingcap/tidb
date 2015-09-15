@@ -196,57 +196,6 @@ func overflow(v interface{}, tp byte) error {
 	return errors.Errorf("constant %v overflows %s", v, TypeStr(tp))
 }
 
-func compareUint64With(x uint64, b interface{}) int {
-	switch y := b.(type) {
-	case nil:
-		return 1
-	case uint8:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint16:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint32:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint64:
-		return CompareUint64(uint64(x), uint64(y))
-	case uint:
-		return CompareUint64(uint64(x), uint64(y))
-	default:
-		panic("should never happen")
-	}
-}
-
-func compareInt64With(x int64, b interface{}) int {
-	switch y := b.(type) {
-	case nil:
-		return 1
-	case int8:
-		return CompareInt64(int64(x), int64(y))
-	case int16:
-		return CompareInt64(int64(x), int64(y))
-	case int32:
-		return CompareInt64(int64(x), int64(y))
-	case int64:
-		return CompareInt64(int64(x), int64(y))
-	case int:
-		return CompareInt64(int64(x), int64(y))
-	default:
-		panic("should never happen")
-	}
-}
-
-func compareFloat64With(x float64, b interface{}) int {
-	switch y := b.(type) {
-	case nil:
-		return 1
-	case float32:
-		return CompareFloat64(float64(x), float64(y))
-	case float64:
-		return CompareFloat64(float64(x), float64(y))
-	default:
-		panic("should never happen")
-	}
-}
-
 // TODO: collate should return errors from Compare.
 func collate(x, y []interface{}) (r int) {
 	nx, ny := len(x), len(y)
