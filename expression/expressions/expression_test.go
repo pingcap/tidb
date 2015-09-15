@@ -177,7 +177,8 @@ func (s *mockStatement) String() string {
 }
 
 type mockPlan struct {
-	rset *mockRecordset
+	rset   *mockRecordset
+	cursor int
 }
 
 func newMockPlan(rset *mockRecordset) *mockPlan {
@@ -205,9 +206,17 @@ func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 }
 
 func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if p.cursor == len(p.rset.rows) {
+		return
+	}
+	row = &plan.Row{
+		Data: p.rset.rows[p.cursor],
+	}
+	p.cursor++
 	return
 }
 
 func (p *mockPlan) Close() error {
+	p.cursor = 0
 	return nil
 }

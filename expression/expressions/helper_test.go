@@ -245,3 +245,12 @@ func (s *testHelperSuite) TestIsCurrentTimeExpr(c *C) {
 	v = IsCurrentTimeExpr(CurrentTimeExpr)
 	c.Assert(v, IsTrue)
 }
+
+func convert(v interface{}) interface{} {
+	switch x := v.(type) {
+	case int:
+		return int64(x)
+	}
+
+	return v
+}
