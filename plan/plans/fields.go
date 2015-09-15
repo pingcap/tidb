@@ -64,7 +64,7 @@ func (r *SelectFieldsDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) er
 	m := map[interface{}]interface{}{}
 	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
 		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, fields, in, field.DefaultFieldFlag)
+			return GetIdentValue(name, fields, in, field.DefaultFieldFlag)
 		}
 
 		out := make([]interface{}, len(r.Fields))
@@ -88,7 +88,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 		return nil, errors.Trace(err)
 	}
 	r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		return getIdentValue(name, r.Src.GetFields(), srcRow.Data, field.DefaultFieldFlag)
+		return GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.DefaultFieldFlag)
 	}
 	row = &plan.Row{
 		Data: make([]interface{}, len(r.Fields)),

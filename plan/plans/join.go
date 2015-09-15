@@ -169,7 +169,7 @@ func (r *JoinPlan) doCrossJoin(ctx context.Context, f plan.RowIterFunc) error {
 			row := appendRow(leftRow, in)
 			if r.On != nil {
 				m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-					return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
+					return GetIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
 				}
 
 				b, err := expressions.EvalBoolExpr(ctx, r.On, m)
@@ -200,7 +200,7 @@ func (r *JoinPlan) doLeftJoin(ctx context.Context, f plan.RowIterFunc) error {
 			row := appendRow(leftRow, in)
 
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
+				return GetIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
 			}
 
 			b, err := expressions.EvalBoolExpr(ctx, r.On, m)
@@ -238,7 +238,7 @@ func (r *JoinPlan) doRightJoin(ctx context.Context, f plan.RowIterFunc) error {
 			row := appendRow(in, rightRow)
 
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
+				return GetIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
 			}
 
 			b, err := expressions.EvalBoolExpr(ctx, r.On, m)
@@ -284,7 +284,7 @@ func (r *JoinPlan) doFullJoin(ctx context.Context, f plan.RowIterFunc) error {
 			row := appendRow(in, rightRow)
 
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
+				return GetIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
 			}
 
 			b, err := expressions.EvalBoolExpr(ctx, r.On, m)
@@ -317,12 +317,12 @@ func (r *JoinPlan) doFullJoin(ctx context.Context, f plan.RowIterFunc) error {
  * Append values of prefix/in together and merge RowKeyLists to the tail entry
  */
 func appendRow(prefix []interface{}, in []interface{}) []interface{} {
-	var rks *RowKeyList
+	rks := &RowKeyList{}
 	if prefix != nil && len(prefix) > 0 {
 		t := prefix[len(prefix)-1]
 		switch vt := t.(type) {
 		case *RowKeyList:
-			rks = vt
+			rks.appendKeys(vt.Keys...)
 			prefix = prefix[:len(prefix)-1]
 		}
 	}
@@ -330,21 +330,14 @@ func appendRow(prefix []interface{}, in []interface{}) []interface{} {
 		t := in[len(in)-1]
 		switch vt := t.(type) {
 		case *RowKeyList:
-			if rks == nil {
-				rks = vt
-			} else {
-				rks.appendKeys(vt.Keys...)
-			}
+			rks.appendKeys(vt.Keys...)
 			in = in[:len(in)-1]
 		}
 	}
-	if rks == nil {
-		rks = &RowKeyList{}
-	}
-	in = append(in, rks)
 	row := make([]interface{}, 0, len(prefix)+len(in))
 	row = append(row, prefix...)
 	row = append(row, in...)
+	row = append(row, rks)
 	return row
 }
 
@@ -431,7 +424,7 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 			joined = append(row.Data, cmpRow.Data...)
 		}
 		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
+			return GetIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
 		}
 		var b bool
 		b, err = expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
@@ -481,7 +474,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 		joinedRow := append(r.curRow.Data, rightRow.Data...)
 		if r.On != nil {
 			r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
+				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
 			}
 
 			b, err := expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)

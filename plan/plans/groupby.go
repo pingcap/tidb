@@ -192,7 +192,7 @@ func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, 
 	// group by items can not contain aggregate field, so we can eval them safely.
 	m := map[interface{}]interface{}{}
 	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		v, err := getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 		if err == nil {
 			return v, nil
 		}
@@ -229,7 +229,7 @@ func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{})
 func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
 	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		return getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 	}
 
 	var err error
@@ -251,7 +251,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 	for i := range r.AggFields {
 		if i < r.HiddenFieldOffset {
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 			}
 		} else {
 			// having may contain aggregate function and we will add it to hidden field,
@@ -260,7 +260,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 			// because all the select list data is generated before, so we can get it
 			// when handling hidden field.
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				v, err := getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 				if err == nil {
 					return v, nil
 				}
