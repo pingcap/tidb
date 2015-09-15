@@ -39,6 +39,7 @@ type testTablePlan struct {
 	fields []string
 	filter bool
 	retNil bool
+	cursor int
 }
 
 var testData = []*testRowData{
@@ -88,6 +89,20 @@ func (p *testTablePlan) SetFilter(filter bool) {
 
 func (p *testTablePlan) SetRetNil(retNil bool) {
 	p.retNil = retNil
+}
+
+func (p *testTablePlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if p.cursor == len(p.rows) || p.retNil {
+		return
+	}
+	row = &plan.Row{Data: p.rows[p.cursor].data}
+	p.cursor++
+	return
+}
+
+func (p *testTablePlan) Close() error {
+	p.cursor = 0
+	return nil
 }
 
 var _ = Suite(&testRsetsSuite{})

@@ -310,6 +310,7 @@ import (
 	ColumnSetValueList	"insert statement set value by column name list"
 	CommaOpt		"optional comma"
 	CommitStmt		"COMMIT statement"
+	CompareOp		"Compare opcode"
 	Constraint		"column value constraint"
 	ConstraintElem		"table define constraint element"
 	ConstraintKeywordOpt	"Constraint Keyword or empty"
@@ -422,6 +423,7 @@ import (
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
 	ShowTableIdentOpt	"Show columns statement table name option"
 	SignedLiteral		"Literal or NumLiteral with sign"
+	SimpleQualifiedIdent	"Qualified identifier without *"
 	Statement		"statement"
 	StatementList		"statement list"
 	ExplainableStmt		"explainable statement"
@@ -659,33 +661,13 @@ Symbol:
 
 /*******************************************************************************************/
 Assignment:
-	QualifiedIdent eq Expression
+	SimpleQualifiedIdent eq Expression
 	{
-		name := $1.(string)
-		fs := strings.Split(name, ".")
-		var (
-			tn string
-			cn string
-		)
-		if len(fs) == 1 {
-			cn = fs[0]
-		} else if len(fs) == 2 {
-			tn = fs[0]
-			cn = fs[1]
-		} else {
-			// TODO: Support db.table.column
-			yylex.(*lexer).err("", "We do not support db.tbl.col in Assignment: %s", name)
-			return 1
+		x, err := expressions.NewAssignment($1.(string), $3.(expression.Expression))
+		if err != nil {
+			yylex.(*lexer).errf("Parse Assignment error: %s", $1.(string))
 		}
-		if cn == "*" || tn == "*" {
-			yylex.(*lexer).err("", "We do not support use * as table or column name in Assignment: %s", name)
-			return 1
-		}
-		$$ = expressions.Assignment{
-			TableName:	tn,
-			ColName:	cn, 
-			Expr:		expressions.Expr($3),
-		}
+		$$ = *x
 	}
 
 AssignmentList:
@@ -916,12 +898,12 @@ CreateIndexStmt:
 	{
 		indexName, tableIdent, colNameList := $4.(string), $6.(table.Ident), $8.([]*coldef.IndexColName)
 		if strings.EqualFold(indexName, tableIdent.Name.O) {
-			yylex.(*lexer).err("", "index name collision: %s", indexName)
+			yylex.(*lexer).errf("index name collision: %s", indexName)
 			return 1
 		}
 		for _, colName := range colNameList {
 			if indexName == colName.ColumnName {
-				yylex.(*lexer).err("", "index name collision: %s", indexName)
+				yylex.(*lexer).errf("index name collision: %s", indexName)
 				return 1
 			}
 		}
@@ -993,7 +975,7 @@ CreateDatabaseStmt:
 
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
-			yylex.(*lexer).err("", "Unknown character set %s or collate %s ", cs, co)
+			yylex.(*lexer).errf("Unknown character set %s or collate %s ", cs, co)
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
@@ -1035,7 +1017,7 @@ CharsetName:
 		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
-			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			yylex.(*lexer).errf("Unknown character set: '%s'", $1.(string))
 			return 1
 		}
 	}
@@ -1045,7 +1027,7 @@ CharsetName:
 		if charset.ValidCharsetAndCollation(c, "") {
 			$$ = c
 		} else {
-			yylex.(*lexer).err("", fmt.Sprintf("Unknown character set: '%s'", $1.(string)))
+			yylex.(*lexer).errf("Unknown character set: '%s'", $1.(string))
 			return 1
 		}
 	}
@@ -1099,7 +1081,7 @@ CreateTableStmt:
 			}
 		}
 		if len(columnDefs) == 0 {
-			yylex.(*lexer).err("", "Column Definition List can't be empty.")
+			yylex.(*lexer).err("Column Definition List can't be empty.")
 			return 1
 		}
 
@@ -1385,63 +1367,45 @@ Factor:
 	{
 		$$ = &expressions.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
-|	Factor ">=" Factor1 %prec eq
+|	Factor CompareOp Factor1 %prec eq
 	{
-		$$ = expressions.NewBinaryOperation(opcode.GE, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expressions.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
 	}
-|	Factor '>' Factor1 %prec eq
+|	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
-		$$ = expressions.NewBinaryOperation(opcode.GT, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "<=" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.LE, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor '<' Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.LT, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "!=" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.NE, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "<>" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.NE, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor "=" Factor1 %prec eq
-	{
-		$$ = expressions.NewBinaryOperation(opcode.EQ, $1.(expression.Expression), $3.(expression.Expression))
-	}
-|	Factor ">=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.GE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor '>' AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.GT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "<=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.LE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor '<' AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.LT, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "!=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "<>" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.NE, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
-	}
-|	Factor "=" AnyOrAll SubSelect %prec eq
-	{
-		$$ = expressions.NewCompareSubQuery(opcode.EQ, $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+		$$ = expressions.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
 	}
 |	Factor1
+
+CompareOp:
+	">="
+	{
+		$$ = opcode.GE
+	}
+|	'>'
+	{
+		$$ = opcode.GT
+	}
+|	"<="
+	{
+		$$ = opcode.LE
+	}
+|	'<'
+	{
+		$$ = opcode.LT
+	}
+|	"!="
+	{
+		$$ = opcode.NE
+	}
+|	"<>"
+	{
+		$$ = opcode.NE
+	}
+|	"="
+	{
+		$$ = opcode.EQ
+	}
 
 AnyOrAll:
 	"ANY"
@@ -1471,7 +1435,7 @@ Factor1:
 		var err error
 		$$, err = expressions.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
 		if err != nil {
-			yylex.(*lexer).err("", "%v", err)
+			yylex.(*lexer).err(err)
 			return 1
 		}
 	}
@@ -1782,7 +1746,7 @@ Operand:
 	{
 		l := yylex.(*lexer)
 		if !l.prepare {
-			l.err("", "Can not accept placeholder when not parsing prepare sql")
+			l.err("Can not accept placeholder when not parsing prepare sql")
 		}
 		pm := &expressions.ParamMarker{}	
 		l.ParamList = append(l.ParamList, pm)
@@ -1865,6 +1829,18 @@ PrimaryExpression:
 	{
 		$$ = expressions.NewUnaryOperation(opcode.Plus, $2.(expression.Expression))
 	}
+|	"BINARY" PrimaryExpression %prec neg
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#operator_binary
+		x := types.NewFieldType(mysql.TypeString)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CharsetBin
+		$$ = &expressions.FunctionCast{
+			Expr: $2.(expression.Expression), 
+			Tp: x,
+			FunctionType: expressions.BinaryOperator,
+		}	
+	}
 
 Function:
 	FunctionCallKeyword
@@ -1876,13 +1852,13 @@ FunctionNameConflict:
 	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT"
 
 FunctionCallConflict:
-	FunctionNameConflict '(' ExpressionList ')' 
+	FunctionNameConflict '(' ExpressionListOpt ')' 
 	{
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
-			x.err("", "%v", err)
+			x.err(err)
 			return 1
 		}
 	}
@@ -1911,7 +1887,7 @@ FunctionCallKeyword:
 		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -1921,6 +1897,7 @@ FunctionCallKeyword:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
+			FunctionType: expressions.CastFunction,
 		}	
 	}
 |	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
@@ -1948,7 +1925,7 @@ FunctionCallKeyword:
 		$$ = &expressions.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
-			IsConvert: true,
+			FunctionType: expressions.ConvertFunction,
 		}	
 	}
 |	"DATE" '(' Expression ')'
@@ -1958,7 +1935,7 @@ FunctionCallKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -1973,7 +1950,7 @@ FunctionCallKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -1984,7 +1961,7 @@ FunctionCallKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -1996,7 +1973,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2007,7 +1984,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2017,7 +1994,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2027,7 +2004,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2038,7 +2015,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2049,7 +2026,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2060,7 +2037,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2071,7 +2048,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2082,7 +2059,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2093,7 +2070,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2103,7 +2080,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2114,7 +2091,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2125,7 +2102,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2136,7 +2113,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2147,7 +2124,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2157,7 +2134,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression),false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2167,7 +2144,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2178,7 +2155,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2219,7 +2196,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2230,7 +2207,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2240,7 +2217,7 @@ FunctionCallNonKeyword:
 		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression),false)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2252,7 +2229,7 @@ FunctionCallAgg:
 		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2263,7 +2240,7 @@ FunctionCallAgg:
 		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2273,7 +2250,7 @@ FunctionCallAgg:
 		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression),$3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2284,7 +2261,7 @@ FunctionCallAgg:
 		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2295,7 +2272,7 @@ FunctionCallAgg:
 		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2306,7 +2283,7 @@ FunctionCallAgg:
 		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err("", "%v", err)
+			l.err(err)
 			return 1
 		}
 	}
@@ -2358,10 +2335,14 @@ CastType:
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
-|	"CHAR" OptFieldLen
+|	"CHAR" OptFieldLen OptBinary OptCharset
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $2.(int) 
+		if $3.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		x.Charset = $4.(string)
 		$$ = x
 	}
 |	"DATE"
@@ -2497,6 +2478,17 @@ QualifiedIdent:
 |	Identifier '.' Identifier '.' '*'
 	{
 		$$ = fmt.Sprintf("%s.%s.*", $1.(string), $3.(string))
+	}
+
+SimpleQualifiedIdent:
+	Identifier
+|	Identifier '.' Identifier
+	{
+		$$ = fmt.Sprintf("%s.%s", $1.(string), $3.(string))
+	}
+|	Identifier '.' Identifier '.' Identifier
+	{
+		$$ = fmt.Sprintf("%s.%s.%s", $1.(string), $3.(string), $5.(string))
 	}
 
 TableIdent:

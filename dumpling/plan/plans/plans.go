@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
@@ -51,7 +50,8 @@ func isTableOrIndex(p plan.Plan) bool {
 	}
 }
 
-func getIdentValue(name string, fields []*field.ResultField, row []interface{}, flag uint32) (interface{}, error) {
+// GetIdentValue is a function that evaluate identifier value from row.
+func GetIdentValue(name string, fields []*field.ResultField, row []interface{}, flag uint32) (interface{}, error) {
 	indices := field.GetResultFieldIndex(name, fields, flag)
 	if len(indices) == 0 {
 		return nil, errors.Errorf("unknown field %s", name)
@@ -115,6 +115,16 @@ func (r *selectIndexDefaultPlan) GetFields() []*field.ResultField {
 	return []*field.ResultField{{Name: r.nm}}
 }
 
+// Next implements plan.Plan Next interface.
+func (r *selectIndexDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *selectIndexDefaultPlan) Close() error {
+	return nil
+}
+
 // NullPlan is empty plan, if we can affirm that the resultset is empty, we
 // could just return a NullPlan directly, no need to scan any table. e.g.
 // SELECT * FROM t WHERE i > 0 and i < 0;
@@ -138,6 +148,16 @@ func (r *NullPlan) Do(context.Context, plan.RowIterFunc) error {
 // Filter implements plan.Plan Filter interface.
 func (r *NullPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return r, false, nil
+}
+
+// Next implements plan.Plan Next interface.
+func (r *NullPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *NullPlan) Close() error {
+	return nil
 }
 
 // Set ResultField info according to values
@@ -186,21 +206,12 @@ func setResultFieldInfo(fields []*field.ResultField, values []interface{}) error
 	return nil
 }
 
-// RowKeyEntry is designed for Delete statement in multi-table mode,
-// we should know which table this row comes from
-type RowKeyEntry struct {
-	// The table which this row come from
-	Tbl table.Table
-	// Row handle
-	Key string
-}
-
 // RowKeyList is list of RowKeyEntry
 type RowKeyList struct {
-	Keys []*RowKeyEntry
+	Keys []*plan.RowKeyEntry
 }
 
-func (rks *RowKeyList) appendKeys(keys ...*RowKeyEntry) {
+func (rks *RowKeyList) appendKeys(keys ...*plan.RowKeyEntry) {
 	for _, key := range keys {
 		rks.Keys = append(rks.Keys, key)
 	}
