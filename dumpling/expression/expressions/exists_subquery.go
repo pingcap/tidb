@@ -64,8 +64,6 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 		return true, nil
 	}
 
-	fmt.Println("[ExistsSubQuery][Eval]", r, err)
-
 	return false, nil
 }
 
