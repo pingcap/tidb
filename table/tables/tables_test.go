@@ -146,3 +146,31 @@ func (ts *testSuite) TestTypes(c *C) {
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 }
+
+func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
+	_, err := ts.se.Execute("CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tb.TableID(), Greater, int64(0))
+	c.Assert(tb.TableName().L, Equals, "t")
+	c.Assert(tb.Meta(), NotNil)
+	c.Assert(tb.Indices(), NotNil)
+	c.Assert(tb.FirstKey(), Not(Equals), "")
+	c.Assert(tb.IndexPrefix(), Not(Equals), "")
+	c.Assert(tb.KeyPrefix(), Not(Equals), "")
+	c.Assert(tb.FindIndexByColName("b"), NotNil)
+
+	autoid, err := tb.AllocAutoID()
+	c.Assert(err, IsNil)
+	c.Assert(autoid, Greater, int64(0))
+
+	_, err = tb.AddRecord(ctx, []interface{}{1, nil})
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ctx, []interface{}{2, nil})
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute("drop table test.t")
+	c.Assert(err, IsNil)
+}
