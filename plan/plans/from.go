@@ -42,7 +42,8 @@ var (
 
 // TableNilPlan iterates rows but does nothing, e.g. SELECT 1 FROM t;
 type TableNilPlan struct {
-	T table.Table
+	T    table.Table
+	iter kv.Iterator
 }
 
 // Explain implements the plan.Plan interface.
@@ -94,12 +95,50 @@ func (r *TableNilPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	return nil
 }
 
+// Next implements plan.Plan Next interface.
+func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.iter == nil {
+		var txn kv.Transaction
+		txn, err = ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.iter, err = txn.Seek([]byte(r.T.FirstKey()), nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
+		return
+	}
+	id, err := util.DecodeHandleFromRowKey(r.iter.Key())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rk := r.T.RecordKey(id, nil)
+	// Even though the data is nil, we should return not nil row,
+	// or the iteration will stop.
+	row = &plan.Row{}
+	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *TableNilPlan) Close() error {
+	if r.iter != nil {
+		r.iter.Close()
+	}
+	r.iter = nil
+	return nil
+}
+
 // TableDefaultPlan iterates rows from a table, in general case
 // it performs a full table scan, but using Filter function,
 // it will return a new IndexPlan if an index is found in Filter function.
 type TableDefaultPlan struct {
 	T      table.Table
 	Fields []*field.ResultField
+	iter   kv.Iterator
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -291,7 +330,7 @@ func (r *TableDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 		}
 		// Put rowKey to the tail of record row
 		rks := &RowKeyList{}
-		rke := &RowKeyEntry{
+		rke := &plan.RowKeyEntry{
 			Tbl: t,
 			Key: rowKey,
 		}
@@ -314,4 +353,65 @@ func (r *TableDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 // GetFields implements the plan.Plan GetFields interface.
 func (r *TableDefaultPlan) GetFields() []*field.ResultField {
 	return r.Fields
+}
+
+// Next implements plan.Plan Next interface.
+func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.iter == nil {
+		var txn kv.Transaction
+		txn, err = ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.iter, err = txn.Seek([]byte(r.T.FirstKey()), nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
+		return
+	}
+	// TODO: check if lock valid
+	// the record layout in storage (key -> value):
+	// r1 -> lock-version
+	// r1_col1 -> r1 col1 value
+	// r1_col2 -> r1 col2 value
+	// r2 -> lock-version
+	// r2_col1 -> r2 col1 value
+	// r2_col2 -> r2 col2 value
+	// ...
+	rowKey := r.iter.Key()
+	h, err := util.DecodeHandleFromRowKey(rowKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// TODO: we could just fetch mentioned columns' values
+	row = &plan.Row{}
+	row.Data, err = r.T.Row(ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Put rowKey to the tail of record row
+	rke := &plan.RowKeyEntry{
+		Tbl: r.T,
+		Key: rowKey,
+	}
+	row.RowKeys = append(row.RowKeys, rke)
+
+	rk := r.T.RecordKey(h, nil)
+	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *TableDefaultPlan) Close() error {
+	if r.iter != nil {
+		r.iter.Close()
+		r.iter = nil
+	}
+	return nil
 }

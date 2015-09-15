@@ -411,7 +411,6 @@ func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interfa
 }
 
 func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, error) {
-	// TODO: check overflow
 	switch x := a.(type) {
 	case int64:
 		switch y := b.(type) {
@@ -443,7 +442,6 @@ func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, e
 }
 
 func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, error) {
-	// TODO: check overflow
 	switch x := a.(type) {
 	case int64:
 		switch y := b.(type) {
@@ -475,7 +473,6 @@ func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, 
 }
 
 func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, error) {
-	// TODO: check overflow
 	switch x := a.(type) {
 	case int64:
 		switch y := b.(type) {
@@ -554,14 +551,12 @@ func (o *BinaryOperation) evalIntDiv(a interface{}, b interface{}) (interface{},
 			if y == 0 {
 				return nil, nil
 			}
-			return x / y, nil
+			return types.DivInt64(x, y)
 		case uint64:
 			if y == 0 {
 				return nil, nil
 			}
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return uint64(x) / y, nil
+			return types.DivIntWithUint(x, y)
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -569,9 +564,7 @@ func (o *BinaryOperation) evalIntDiv(a interface{}, b interface{}) (interface{},
 			if y == 0 {
 				return nil, nil
 			}
-			// For MySQL, if any is unsigned, return unsigned
-			// TODO: check overflow
-			return x / uint64(y), nil
+			return types.DivUintWithInt(x, y)
 		case uint64:
 			if y == 0 {
 				return nil, nil
@@ -611,11 +604,10 @@ func (o *BinaryOperation) evalMod(a interface{}, b interface{}) (interface{}, er
 			if y == 0 {
 				return nil, nil
 			} else if x < 0 {
-				// TODO: check overflow
+				// first is int64, return int64.
 				return -int64(uint64(-x) % y), nil
 			}
-			// TODO: check overflow
-			return uint64(x) % y, nil
+			return int64(uint64(x) % y), nil
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -623,10 +615,9 @@ func (o *BinaryOperation) evalMod(a interface{}, b interface{}) (interface{}, er
 			if y == 0 {
 				return nil, nil
 			} else if y < 0 {
-				// TODO: check overflow
-				return -int64(x % uint64(-y)), nil
+				// first is uint64, return uint64.
+				return uint64(x % uint64(-y)), nil
 			}
-			// TODO: check overflow
 			return x % uint64(y), nil
 		case uint64:
 			if y == 0 {

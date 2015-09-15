@@ -11,13 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 type testWhereSuit struct {
@@ -35,8 +37,8 @@ var _ = Suite(&testWhereSuit{
 })
 
 func (t *testWhereSuit) TestWhere(c *C) {
-	tblPlan := &testTablePlan{t.data, []string{"id", "name"}}
-	pln := &FilterDefaultPlan{
+	tblPlan := &testTablePlan{t.data, []string{"id", "name"}, 0}
+	pln := &plans.FilterDefaultPlan{
 		Plan: tblPlan,
 		Expr: &expressions.BinaryOperation{
 			Op: opcode.GE,
@@ -50,7 +52,8 @@ func (t *testWhereSuit) TestWhere(c *C) {
 	}
 
 	cnt := 0
-	pln.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{Ctx: nil, Plan: pln}
+	rset.Do(func(data []interface{}) (bool, error) {
 		cnt++
 		return true, nil
 	})
