@@ -58,7 +58,7 @@ func (r *HavingPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
 
 	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
 		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.Src.GetFields(), in, field.CheckFieldFlag)
+			return GetIdentValue(name, r.Src.GetFields(), in, field.CheckFieldFlag)
 		}
 
 		m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
@@ -93,7 +93,7 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			return nil, errors.Trace(err)
 		}
 		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
+			return GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
 		}
 		r.evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
 			// position is in [1, len(fields)], so we must decrease 1 to get correct index

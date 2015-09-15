@@ -53,7 +53,7 @@ func (r *FilterDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err err
 	fields := r.GetFields()
 	return r.Plan.Do(ctx, func(rid interface{}, data []interface{}) (bool, error) {
 		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, fields, data, field.DefaultFieldFlag)
+			return GetIdentValue(name, fields, data, field.DefaultFieldFlag)
 		}
 		val, err := r.Expr.Eval(ctx, m)
 		if err != nil {
@@ -89,7 +89,7 @@ func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 			return nil, errors.Trace(err)
 		}
 		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
+			return GetIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
 		}
 		var meet bool
 		meet, err = r.meetCondition(ctx)

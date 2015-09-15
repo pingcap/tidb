@@ -138,7 +138,7 @@ func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
 	m := map[interface{}]interface{}{}
 	err := r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
 		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.ResultFields, in, field.CheckFieldFlag)
+			return GetIdentValue(name, r.ResultFields, in, field.CheckFieldFlag)
 		}
 
 		m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
@@ -214,7 +214,7 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 			break
 		}
 		evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
+			return GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
 		}
 
 		evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
