@@ -48,6 +48,8 @@ var (
 	statisticsFields     = buildResultFieldsForStatistics()
 	characterSetsFields  = buildResultFieldsForCharacterSets()
 	characterSetsRecords = buildCharacterSetsRecords()
+	collationsFields     = buildResultFieldsForCollations()
+	collationsRecords    = buildColltionsRecords()
 )
 
 const (
@@ -56,6 +58,7 @@ const (
 	tableColumns       = "COLUMNS"
 	tableStatistics    = "STATISTICS"
 	tableCharacterSets = "CHARACTER_SETS"
+	tableCollations    = "COLLATIONS"
 	catalogVal         = "def"
 )
 
@@ -68,6 +71,7 @@ func NewInfoSchemaPlan(tableName string) (isp *InfoSchemaPlan, err error) {
 	case tableColumns:
 	case tableStatistics:
 	case tableCharacterSets:
+	case tableCollations:
 	default:
 		return nil, errors.Errorf("table INFORMATION_SCHEMA.%s does not exist", tableName)
 	}
@@ -331,8 +335,39 @@ func buildCharacterSetsRecords() (records [][]interface{}) {
 	return records
 }
 
+func buildResultFieldsForCollations() (rfs []*field.ResultField) {
+	tbName := tableCollations
+	rfs = append(rfs, buildResultField(tbName, "COLLATION_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "ID", mysql.TypeLonglong, 11))
+	rfs = append(rfs, buildResultField(tbName, "IS_DEFAULT", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "IS_COMPILED", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "SORTLEN", mysql.TypeLonglong, 3))
+	return rfs
+}
+
+func buildColltionsRecords() (records [][]interface{}) {
+	records = append(records,
+		[]interface{}{"ascii_general_ci", "ascii", 1, "Yes", "Yes", 1},
+		[]interface{}{"binary", "binary", 2, "Yes", "Yes", 1},
+		[]interface{}{"latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1},
+		[]interface{}{"utf8_general_ci", "utf8", 4, "Yes", "Yes", 1},
+		[]interface{}{"utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1},
+	)
+	return records
+}
+
 func (isp *InfoSchemaPlan) doCharacterSets(iterFunc plan.RowIterFunc) error {
 	for _, record := range characterSetsRecords {
+		if more, err := iterFunc(0, record); !more || err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (isp *InfoSchemaPlan) doCollations(iterFunc plan.RowIterFunc) error {
+	for _, record := range collationsRecords {
 		if more, err := iterFunc(0, record); !more || err != nil {
 			return err
 		}
@@ -355,6 +390,8 @@ func (isp *InfoSchemaPlan) Do(ctx context.Context, iterFunc plan.RowIterFunc) er
 		return isp.doStatistics(is, schemas, iterFunc)
 	case tableCharacterSets:
 		return isp.doCharacterSets(iterFunc)
+	case tableCollations:
+		return isp.doCollations(iterFunc)
 	}
 	return nil
 }
@@ -380,6 +417,8 @@ func (isp *InfoSchemaPlan) GetFields() []*field.ResultField {
 		return statisticsFields
 	case tableCharacterSets:
 		return characterSetsFields
+	case tableCollations:
+		return collationsFields
 	}
 	return nil
 }
