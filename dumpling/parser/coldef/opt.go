@@ -107,11 +107,6 @@ const (
 	ConstrFulltext
 )
 
-const (
-	elemColumnDef = iota
-	elemTableConstr
-)
-
 // LockType is select lock type.
 type LockType int
 
