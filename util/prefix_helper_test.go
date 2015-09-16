@@ -150,9 +150,9 @@ func (s *testPrefixSuite) TestCode(c *C) {
 
 	for _, t := range table {
 		b := EncodeRecordKey(t.prefix, t.h, t.ID)
-		h, err := DecodeHandleFromRowKey(string(b))
+		handle, err := DecodeHandleFromRowKey(string(b))
 		c.Assert(err, IsNil)
-		c.Assert(h, Equals, t.h)
+		c.Assert(handle, Equals, t.h)
 	}
 
 	b1 := EncodeRecordKey("aa", 1, 0)
