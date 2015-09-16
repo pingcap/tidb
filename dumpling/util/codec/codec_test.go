@@ -130,7 +130,7 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 		},
 
 		{
-			[]interface{}{[]byte{0x01}, 0xFFFFFFFFFFFFFFF},
+			[]interface{}{[]byte{0x01}, uint64(0xFFFFFFFFFFFFFFF)},
 			[]interface{}{[]byte{0x01, 0x10}, 0},
 			-1,
 		},
@@ -150,12 +150,12 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			1,
 		},
 		{
-			[]interface{}{math.MinInt64},
+			[]interface{}{int64(math.MinInt64)},
 			[]interface{}{nil},
 			1,
 		},
 		{
-			[]interface{}{1, math.MinInt64, nil},
+			[]interface{}{1, int64(math.MinInt64), nil},
 			[]interface{}{1, nil, uint64(math.MaxUint64)},
 			1,
 		},
@@ -578,19 +578,19 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{"-12340", "-123400", 1},
 
 		// Test for int type decimal.
-		{-1, 1, -1},
-		{math.MaxInt64, math.MinInt64, 1},
-		{math.MaxInt64, math.MaxInt32, 1},
-		{math.MinInt32, math.MaxInt16, -1},
-		{math.MinInt64, math.MaxInt8, -1},
-		{0, math.MaxInt8, -1},
-		{math.MinInt8, 0, -1},
-		{math.MinInt16, math.MaxInt16, -1},
-		{1, -1, 1},
-		{1, 0, 1},
-		{-1, 0, -1},
-		{0, 0, 0},
-		{math.MaxInt16, math.MaxInt16, 0},
+		{int64(-1), int64(1), -1},
+		{int64(math.MaxInt64), int64(math.MinInt64), 1},
+		{int64(math.MaxInt64), int64(math.MaxInt32), 1},
+		{int64(math.MinInt32), int64(math.MaxInt16), -1},
+		{int64(math.MinInt64), int64(math.MaxInt8), -1},
+		{int64(0), int64(math.MaxInt8), -1},
+		{int64(math.MinInt8), int64(0), -1},
+		{int64(math.MinInt16), int64(math.MaxInt16), -1},
+		{int64(1), int64(-1), 1},
+		{int64(1), int64(0), 1},
+		{int64(-1), int64(0), -1},
+		{int64(0), int64(0), 0},
+		{int64(math.MaxInt16), int64(math.MaxInt16), 0},
 
 		// Test for uint type decimal.
 		{uint64(0), uint64(0), 0},
