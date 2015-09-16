@@ -50,10 +50,11 @@ var (
 // refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
 type GroupByDefaultPlan struct {
 	*SelectList
-	Src    plan.Plan
-	By     []expression.Expression
-	rows   []*groupRow
-	cursor int
+	Src        plan.Plan
+	By         []expression.Expression
+	OuterQuery *OuterQuery
+	rows       []*groupRow
+	cursor     int
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -264,6 +265,7 @@ func (r *GroupByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 	gRow := r.rows[r.cursor]
 	r.cursor++
 	row = gRow.Row
+	r.OuterQuery.update(ctx, row.Data, row.FromData)
 	return
 }
 
@@ -292,8 +294,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		row := &plan.Row{
 			Data: make([]interface{}, len(r.Fields)),
 			// must save FromData info for inner sub query use.
-			FromData:       srcRow.Data,
-			FromDataFields: srcRow.FromDataFields,
+			FromData: srcRow.Data,
 		}
 		// TODO: later order by will use the same mechanism, so we may use another plan to do this
 		evalArgs := map[interface{}]interface{}{}
@@ -301,6 +302,10 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		if err := r.evalNoneAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}
+
+		// update outer query becuase group by may use it if it has a subquery.
+		r.OuterQuery.update(ctx, row.Data, row.FromData)
+
 		if err := r.evalGroupKey(ctx, k, row.Data, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}
@@ -340,7 +345,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		if err != nil || out == nil {
 			return errors.Trace(err)
 		}
-		row := &plan.Row{Data: out, DataFields: r.ResultFields}
+		row := &plan.Row{Data: out}
 		r.rows = append(r.rows, &groupRow{Row: row, Args: map[interface{}]interface{}{}})
 	} else {
 		for _, row := range r.rows {

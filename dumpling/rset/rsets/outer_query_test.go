@@ -28,8 +28,7 @@ func (s *testOuterQueryRsetSuite) SetUpSuite(c *C) {
 	names := []string{"id", "name"}
 	tblPlan := newTestTablePlan(testData, names)
 
-	s.r = &OuterQueryRset{Src: tblPlan, HiddenFieldOffset: len(tblPlan.GetFields()),
-		SrcPhase: plans.FromPhase, OuterQuery: &plans.OuterQuery{}}
+	s.r = &OuterQueryRset{Src: tblPlan, OuterQuery: &plans.OuterQuery{}}
 }
 
 func (s *testOuterQueryRsetSuite) TestOuterQueryRsetPlan(c *C) {

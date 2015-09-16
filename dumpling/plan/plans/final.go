@@ -30,7 +30,10 @@ var (
 type SelectFinalPlan struct {
 	*SelectList
 
-	Src     plan.Plan
+	Src plan.Plan
+
+	OuterQuery *OuterQuery
+
 	infered bool // If result field info is already infered
 }
 
@@ -60,6 +63,9 @@ func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if row == nil || err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	r.OuterQuery.clear(ctx)
+
 	// we should not output hidden fields to client.
 	row.Data = row.Data[:r.HiddenFieldOffset]
 	for i, o := range row.Data {

@@ -141,18 +141,14 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	// all OuterQueryPlan in the same select will use a OuterQuery.
-	outerQuery := &plans.OuterQuery{}
-	r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.FromPhase,
-		HiddenFieldOffset: 0, OuterQuery: outerQuery}).Plan(ctx)
+	outerQuery := &plans.OuterQuery{FromDataFields: r.GetFields()}
+	r, _ = (&rsets.OuterQueryRset{Src: r, OuterQuery: outerQuery}).Plan(ctx)
 
 	if w := s.Where; w != nil {
 		r, err = (&rsets.WhereRset{Expr: w.Expr, Src: r}).Plan(ctx)
 		if err != nil {
 			return nil, err
 		}
-
-		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.WherePhase,
-			HiddenFieldOffset: 0, OuterQuery: outerQuery}).Plan(ctx)
 	}
 	lock := s.Lock
 	if variable.IsAutocommit(ctx) {
@@ -177,6 +173,9 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// set out data fields, cannot contain hidden select list
+	outerQuery.OutDataFields = selectList.ResultFields[0:selectList.HiddenFieldOffset]
+
 	var groupBy []expression.Expression
 	if s.GroupBy != nil {
 		groupBy = s.GroupBy.By
@@ -200,20 +199,18 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	case !rsets.HasAggFields(selectList.Fields) && s.GroupBy == nil:
 		// If no group by and no aggregate functions, we will use SelectFieldsPlan.
 		if r, err = (&rsets.SelectFieldsRset{Src: r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+			OuterQuery: outerQuery}).Plan(ctx); err != nil {
 			return nil, err
 		}
 
-		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.SelectFieldsPhase,
-			HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
 	default:
 		if r, err = (&rsets.GroupByRset{By: groupBy,
 			Src:        r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+			OuterQuery: outerQuery}).Plan(ctx); err != nil {
 			return nil, err
 		}
-		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.GroupByPhase,
-			HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
 	}
 
 	if s := s.Having; s != nil {
@@ -222,28 +219,23 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			Expr: s.Expr}).Plan(ctx); err != nil {
 			return nil, err
 		}
-		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.HavingPhase,
-			HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
 	}
 
 	if s.Distinct {
 		if r, err = (&rsets.DistinctRset{Src: r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+			OuterQuery: outerQuery}).Plan(ctx); err != nil {
 			return nil, err
 		}
-		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.DistinctPhase,
-			HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
 	}
 
 	if s := s.OrderBy; s != nil {
 		if r, err = (&rsets.OrderByRset{By: s.By,
 			Src:        r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+			OuterQuery: outerQuery}).Plan(ctx); err != nil {
 			return nil, err
 		}
-
-		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.OrderByPhase,
-			HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
 	}
 
 	if s := s.Offset; s != nil {
@@ -257,11 +249,9 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 
-	r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.BeforeFinalPhase,
-		HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
-
 	if r, err = (&rsets.SelectFinalRset{Src: r,
-		SelectList: selectList}).Plan(ctx); err != nil {
+		SelectList: selectList,
+		OuterQuery: outerQuery}).Plan(ctx); err != nil {
 		return nil, err
 	}
 

@@ -36,6 +36,7 @@ var (
 type SelectFieldsRset struct {
 	Src        plan.Plan
 	SelectList *plans.SelectList
+	OuterQuery *plans.OuterQuery
 }
 
 // Plan gets SrcPlan/SelectFieldsDefaultPlan.
@@ -76,7 +77,7 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 
-	p := &plans.SelectFieldsDefaultPlan{Src: src, SelectList: r.SelectList}
+	p := &plans.SelectFieldsDefaultPlan{Src: src, SelectList: r.SelectList, OuterQuery: r.OuterQuery}
 	return p, nil
 }
 
