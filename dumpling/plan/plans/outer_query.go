@@ -152,10 +152,16 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 
 	// The top is current OuterQuery, use its last.
 	t = t.last
+
+	var (
+		v   interface{}
+		err error
+	)
+
 	for ; t != nil; t = t.last {
 		// first try to get from outer table reference.
 		if t.FromData != nil {
-			v, err := GetIdentValue(name, t.FromDataFields, t.FromData, field.DefaultFieldFlag)
+			v, err = GetIdentValue(name, t.FromDataFields, t.FromData, field.DefaultFieldFlag)
 			if err == nil {
 				return v, nil
 			}
@@ -163,12 +169,12 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 
 		// then try to get from outer select list.
 		if t.OutData != nil {
-			v, err := GetIdentValue(name, t.OutDataFields, t.OutData, field.FieldNameFlag)
+			v, err = GetIdentValue(name, t.OutDataFields, t.OutData, field.FieldNameFlag)
 			if err == nil {
 				return v, nil
 			}
 		}
 	}
 
-	return nil, errors.Errorf("unknown field %s", name)
+	return nil, errors.Trace(err)
 }
