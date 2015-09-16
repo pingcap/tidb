@@ -304,15 +304,15 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 		}
 	}
 	for k, t := range rowKeyMap {
-		id, err := util.DecodeHandleFromRowKey(k)
+		handle, err := util.DecodeHandleFromRowKey(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		data, err := t.Row(ctx, id)
+		data, err := t.Row(ctx, handle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = s.removeRow(ctx, t, id, data)
+		err = s.removeRow(ctx, t, handle, data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
