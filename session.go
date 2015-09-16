@@ -137,6 +137,7 @@ func (s *session) FinishTxn(rollback bool) error {
 	}
 	defer func() {
 		s.txn = nil
+		variable.GetSessionVars(s).SetStatusInTrans(false)
 	}()
 
 	if rollback {
@@ -345,6 +346,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 	}
 	if forceNew {
 		err = s.txn.Commit()
+		variable.GetSessionVars(s).SetStatusInTrans(false)
 		if err != nil {
 			return nil, err
 		}

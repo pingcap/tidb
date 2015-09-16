@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -459,6 +460,41 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	mustExecSQL(c, se, "insert t values ()")
 	c.Assert(se.LastInsertID(), Less, uint64(4))
+	mustExecSQL(c, se, s.dropDBSQL)
+}
+
+func checkInTrans(c *C, se Session, stmt string, expect uint16) {
+	mustExecSQL(c, se, stmt)
+	if expect == 0 {
+		c.Assert(se.(*session).txn, IsNil)
+	} else {
+		c.Assert(se.(*session).txn, NotNil)
+	}
+	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusInTrans
+	c.Assert(ret, Equals, expect)
+}
+
+// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestInTrans(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	checkInTrans(c, se, "drop table if exists t;", 0)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkInTrans(c, se, "insert t values ()", 0)
+	checkInTrans(c, se, "begin", 1)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "drop table if exists t;", 0)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkInTrans(c, se, "insert t values ()", 0)
+	checkInTrans(c, se, "commit", 0)
+	checkInTrans(c, se, "insert t values ()", 0)
+
+	checkInTrans(c, se, "drop table if exists t;", 0)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkInTrans(c, se, "begin", 1)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "rollback", 0)
+
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
