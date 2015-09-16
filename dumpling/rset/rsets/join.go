@@ -232,7 +232,7 @@ func (r *JoinRset) Plan(ctx context.Context) (plan.Plan, error) {
 	return p, nil
 }
 
-// MultipleTable checks if the JoinRset contains multiple tables
+// MultipleTable checks if the JoinRset contains multiple tables.
 func (r *JoinRset) MultipleTable() bool {
 	if _, ok := r.Left.(*TableSource); ok {
 		if r.Right == nil {
