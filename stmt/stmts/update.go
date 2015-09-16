@@ -85,19 +85,19 @@ func (s *UpdateStmt) SetText(text string) {
 	s.Text = text
 }
 
-func getUpdateColumns(t table.Table, assignList []expressions.Assignment, multipleTable bool) ([]*column.Col, error) {
+func getUpdateColumns(t table.Table, assignList []expressions.Assignment, isMultipleTable bool) ([]*column.Col, error) {
 	// TODO: We should check the validate if assignList in somewhere else. Maybe in building plan.
 	tcols := make([]*column.Col, 0, len(assignList))
 	tname := t.TableName()
 	for _, asgn := range assignList {
-		if multipleTable {
+		if isMultipleTable {
 			if !strings.EqualFold(tname.O, asgn.TableName) {
 				continue
 			}
 		}
 		col := column.FindCol(t.Cols(), asgn.ColName)
 		if col == nil {
-			if multipleTable {
+			if isMultipleTable {
 				continue
 			}
 			return nil, errors.Errorf("UPDATE: unknown column %s", asgn.ColName)
@@ -242,7 +242,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	defer p.Close()
 	updatedRowKeys := make(map[string]bool)
 	// For single-table syntax, TableRef may contain multiple tables
-	multipleTables := s.MultipleTable || s.TableRefs.MultipleTable()
+	isMultipleTable := s.MultipleTable || s.TableRefs.MultipleTable()
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {
@@ -279,7 +279,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			end := start + len(tbl.Cols())
 			data := rowData[start:end]
 			start = end
-			tcols, err2 := getUpdateColumns(tbl, s.List, multipleTables)
+			tcols, err2 := getUpdateColumns(tbl, s.List, isMultipleTable)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
