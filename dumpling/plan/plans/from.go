@@ -77,11 +77,11 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
 		return
 	}
-	id, err := util.DecodeHandleFromRowKey(r.iter.Key())
+	handle, err := util.DecodeHandleFromRowKey(r.iter.Key())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rk := r.T.RecordKey(id, nil)
+	rk := r.T.RecordKey(handle, nil)
 	// Even though the data is nil, we should return not nil row,
 	// or the iteration will stop.
 	row = &plan.Row{}
@@ -288,14 +288,14 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	// r2_col2 -> r2 col2 value
 	// ...
 	rowKey := r.iter.Key()
-	h, err := util.DecodeHandleFromRowKey(rowKey)
+	handle, err := util.DecodeHandleFromRowKey(rowKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// TODO: we could just fetch mentioned columns' values
 	row = &plan.Row{}
-	row.Data, err = r.T.Row(ctx, h)
+	row.Data, err = r.T.Row(ctx, handle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -306,7 +306,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 
-	rk := r.T.RecordKey(h, nil)
+	rk := r.T.RecordKey(handle, nil)
 	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
 	if err != nil {
 		return nil, errors.Trace(err)
