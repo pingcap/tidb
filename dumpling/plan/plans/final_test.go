@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testFinalPlan struct{}
@@ -84,7 +85,9 @@ func (t *testFinalPlan) TestFinalPlan(c *C) {
 		c.Assert(rf.Col.Charset, Equals, "")
 	}
 
-	rset := rsets.Recordset{Plan: p}
+	rset := rsets.Recordset{
+		Plan: p,
+		Ctx:  mock.NewContext()}
 	rset.Do(func(in []interface{}) (bool, error) {
 		return true, nil
 	})
