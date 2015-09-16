@@ -530,21 +530,21 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		// TODO: check valid lock
 		// get row handle
 		var err error
-		h, err := util.DecodeHandleFromRowKey(it.Key())
+		handle, err := util.DecodeHandleFromRowKey(it.Key())
 		if err != nil {
 			return err
 		}
 
-		data, err := t.RowWithCols(ctx, h, cols)
+		data, err := t.RowWithCols(ctx, handle, cols)
 		if err != nil {
 			return err
 		}
-		more, err := fn(h, data, cols)
+		more, err := fn(handle, data, cols)
 		if !more || err != nil {
 			return err
 		}
 
-		rk := t.RecordKey(h, nil)
+		rk := t.RecordKey(handle, nil)
 		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
