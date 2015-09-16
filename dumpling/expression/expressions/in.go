@@ -163,38 +163,42 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		return n.checkInList(lhs, values)
 	}
 
-	var res []interface{}
-	if ev, ok := args[n]; !ok {
-		if err := hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// select not yet evaluated
-		r, err := n.Sel.Plan(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer r.Close()
-		res = []interface{}{}
-		// evaluate select and save its result for later in expression check
-		for {
-			row, err1 := r.Next(ctx)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			if row == nil {
-				break
-			}
-			if len(row.Data) == 1 {
-				res = append(res, row.Data[0])
-			} else {
-				res = append(res, row.Data)
-			}
-		}
-		args[n] = res
-	} else {
-		res = ev.([]interface{})
+	if !n.Sel.UseOuterQuery && n.Sel.Value != nil {
+		return n.checkInList(lhs, n.Sel.Value.([]interface{}))
 	}
+
+	var res []interface{}
+	if err := hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// select not yet evaluated
+	r, err := n.Sel.Plan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	res = []interface{}{}
+	// evaluate select and save its result for later in expression check
+	n.Sel.push(ctx)
+	defer n.Sel.pop(ctx)
+
+	for {
+		row, err1 := r.Next(ctx)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		if row == nil {
+			break
+		}
+		if len(row.Data) == 1 {
+			res = append(res, row.Data[0])
+		} else {
+			res = append(res, row.Data)
+		}
+	}
+
+	n.Sel.Value = res
 
 	return n.checkInList(lhs, res)
 }

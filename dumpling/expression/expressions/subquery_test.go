@@ -13,7 +13,10 @@
 
 package expressions
 
-import . "github.com/pingcap/check"
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/mock"
+)
 
 var _ = Suite(&testSubQuerySuite{})
 
@@ -25,6 +28,7 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 		Value: 1,
 	}
 
+	ctx := mock.NewContext()
 	c.Assert(e.IsStatic(), IsFalse)
 
 	str := e.String()
@@ -33,7 +37,7 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 	ec, err := e.Clone()
 	c.Assert(err, IsNil)
 
-	v, err := ec.Eval(nil, nil)
+	v, err := ec.Eval(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, 1)
 
@@ -42,24 +46,24 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 
 	e2 = newMockSubQuery([][]interface{}{{1}}, []string{"id"})
 
-	vv, err := e2.Eval(nil, nil)
+	vv, err := e2.Eval(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(vv, Equals, 1)
 
 	e2.Value = nil
-	vv, err = e2.Eval(nil, nil)
+	vv, err = e2.Eval(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(vv, Equals, 1)
 
 	e2 = newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
 
-	vv, err = e2.Eval(nil, nil)
+	vv, err = e2.Eval(ctx, nil)
 	c.Assert(err, IsNil)
 	c.Assert(vv, DeepEquals, []interface{}{1, 2})
 
 	e2 = newMockSubQuery([][]interface{}{{1}, {2}}, []string{"id"})
 
-	_, err = e2.Eval(nil, nil)
+	_, err = e2.Eval(ctx, nil)
 	c.Assert(err, NotNil)
 
 	str = e2.String()
