@@ -19,6 +19,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/juju/errors"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -192,11 +193,11 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 				err = mysql.ErrMalformPacket
 				return
 			}
-
+			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 			if isUnsigned {
-				args[i] = uint64(binary.LittleEndian.Uint16(paramValues[pos : pos+2]))
+				args[i] = uint64(valU16)
 			} else {
-				args[i] = int64((binary.LittleEndian.Uint16(paramValues[pos : pos+2])))
+				args[i] = int64(valU16)
 			}
 			pos += 2
 			continue
@@ -206,11 +207,11 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 				err = mysql.ErrMalformPacket
 				return
 			}
-
+			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 			if isUnsigned {
-				args[i] = uint64(binary.LittleEndian.Uint32(paramValues[pos : pos+4]))
+				args[i] = uint64(valU32)
 			} else {
-				args[i] = int64(binary.LittleEndian.Uint32(paramValues[pos : pos+4]))
+				args[i] = int64(valU32)
 			}
 			pos += 4
 			continue
@@ -220,11 +221,11 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 				err = mysql.ErrMalformPacket
 				return
 			}
-
+			valU64 := binary.LittleEndian.Uint64(paramValues[pos : pos+8])
 			if isUnsigned {
-				args[i] = binary.LittleEndian.Uint64(paramValues[pos : pos+8])
+				args[i] = valU64
 			} else {
-				args[i] = int64(binary.LittleEndian.Uint64(paramValues[pos : pos+8]))
+				args[i] = int64(valU64)
 			}
 			pos += 8
 			continue
@@ -268,11 +269,10 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 
 			if !isNull {
 				args[i] = hack.String(v)
-				continue
 			} else {
 				args[i] = nil
-				continue
 			}
+			continue
 		default:
 			err = fmt.Errorf("Stmt Unknown FieldType %d", tp)
 			return
@@ -289,7 +289,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
-		stmt.Close()
+		return errors.Trace(stmt.Close())
 	}
 	return
 }

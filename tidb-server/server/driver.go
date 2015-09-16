@@ -42,7 +42,7 @@ type IContext interface {
 	// Prepare prepares a statement.
 	Prepare(sql string) (statement IStatement, columns, params []*ColumnInfo, err error)
 
-	// GetStatement get IStatement by statement ID.
+	// GetStatement gets IStatement by statement ID.
 	GetStatement(stmtID int) IStatement
 
 	// FieldList returns columns of a table.
@@ -69,7 +69,7 @@ type IStatement interface {
 	// BoundParams returns bound parameters.
 	BoundParams() [][]byte
 
-	// Reset remove all bound parameters.
+	// Reset removes all bound parameters.
 	Reset()
 
 	// Close closes the statement.

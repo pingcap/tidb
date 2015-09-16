@@ -82,4 +82,4 @@ interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 
 server:
-	@cd tidb-server && $(GO) build
+	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'

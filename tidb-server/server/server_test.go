@@ -69,7 +69,7 @@ func (dbt *DBTest) mustQuery(query string, args ...interface{}) (rows *sql.Rows)
 
 func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 	rows := dbt.mustQuery(query, args...)
-	dbt.Assert(rows.Next(), Equals, true)
+	dbt.Assert(rows.Next(), IsTrue)
 	rows.Close()
 }
 
@@ -82,7 +82,7 @@ func runTestRegression(c *C) {
 		// Test for unexpected data
 		var out bool
 		rows := dbt.mustQuery("SELECT * FROM test")
-		dbt.Assert(rows.Next(), Equals, false, Commentf("unexpected data in empty table"))
+		dbt.Assert(rows.Next(), IsFalse, Commentf("unexpected data in empty table"))
 
 		// Create Data
 		res := dbt.mustExec("INSERT INTO test VALUES (1)")
@@ -98,8 +98,8 @@ func runTestRegression(c *C) {
 		rows = dbt.mustQuery("SELECT val FROM test")
 		if rows.Next() {
 			rows.Scan(&out)
-			dbt.Check(out, Equals, true)
-			dbt.Check(rows.Next(), Equals, false, Commentf("unexpected data"))
+			dbt.Check(out, IsTrue)
+			dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 		} else {
 			dbt.Error("no data")
 		}
@@ -115,8 +115,8 @@ func runTestRegression(c *C) {
 		rows = dbt.mustQuery("SELECT val FROM test")
 		if rows.Next() {
 			rows.Scan(&out)
-			dbt.Check(out, Equals, false)
-			dbt.Check(rows.Next(), Equals, false, Commentf("unexpected data"))
+			dbt.Check(out, IsFalse)
+			dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
 		} else {
 			dbt.Error("no data")
 		}
@@ -173,7 +173,7 @@ func runTestSpecialType(t *C) {
 		dbt.mustExec("create table test (a decimal(10, 5), b datetime, c time)")
 		dbt.mustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34')")
 		rows := dbt.mustQuery("select * from test where a > ?", 0)
-		t.Assert(rows.Next(), Equals, true)
+		t.Assert(rows.Next(), IsTrue)
 		var outA float64
 		var outB, outC string
 		err := rows.Scan(&outA, &outB, &outC)
@@ -189,7 +189,7 @@ func runTestPreparedString(t *C) {
 		dbt.mustExec("create table test (a char(10), b char(10))")
 		dbt.mustExec("insert test values (?, ?)", "abcdeabcde", "abcde")
 		rows := dbt.mustQuery("select * from test where 1 = ?", 1)
-		t.Assert(rows.Next(), Equals, true)
+		t.Assert(rows.Next(), IsTrue)
 		var outA, outB string
 		err := rows.Scan(&outA, &outB)
 		t.Assert(err, IsNil)

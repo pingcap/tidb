@@ -22,7 +22,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/mysqldef"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/arena"
 )
 
@@ -55,8 +55,8 @@ func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 		pkg:          newPacketIO(conn),
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
-		collation:    mysqldef.DefaultCollationID,
-		charset:      mysqldef.DefaultCharset,
+		collation:    mysql.DefaultCollationID,
+		charset:      mysql.DefaultCharset,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	cc.salt = make([]byte, 20)
@@ -74,12 +74,11 @@ func (s *Server) skipAuth() bool {
 }
 
 func (s *Server) cfgGetPwd(user string) string {
-	return s.cfg.Password //TODO support multiple users
+	return s.cfg.Password // TODO: support multiple users
 }
 
 // NewServer creates a new Server.
 func NewServer(cfg *Config, driver IDriver) (*Server, error) {
-	log.Warningf("%#v", cfg)
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
@@ -139,8 +138,6 @@ func (s *Server) onConn(c net.Conn) {
 		c.Close()
 		return
 	}
-
-	const key = "connections"
 
 	defer func() {
 		log.Infof("close %s", conn)

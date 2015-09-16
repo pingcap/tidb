@@ -24,12 +24,12 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-// TiDBDriver implements IDriver
+// TiDBDriver implements IDriver.
 type TiDBDriver struct {
 	store kv.Storage
 }
 
-// NewTiDBDriver creates a new TiDBDriver
+// NewTiDBDriver creates a new TiDBDriver.
 func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 	driver := &TiDBDriver{
 		store: store,
@@ -37,7 +37,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 	return driver
 }
 
-// TiDBContext implements IContext
+// TiDBContext implements IContext.
 type TiDBContext struct {
 	session      tidb.Session
 	currentDB    string
@@ -45,7 +45,7 @@ type TiDBContext struct {
 	stmts        map[int]*TiDBStatement
 }
 
-// TiDBStatement implements IStatement
+// TiDBStatement implements IStatement.
 type TiDBStatement struct {
 	id          uint32
 	numParams   int
@@ -85,17 +85,17 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	return nil
 }
 
-// NumParams implements IStatement  NumParams method.
+// NumParams implements IStatement NumParams method.
 func (ts *TiDBStatement) NumParams() int {
 	return ts.numParams
 }
 
-// BoundParams implements IStatement  BoundParams method.
+// BoundParams implements IStatement BoundParams method.
 func (ts *TiDBStatement) BoundParams() [][]byte {
 	return ts.boundParams
 }
 
-// Reset implements IStatement  Reset method.
+// Reset implements IStatement Reset method.
 func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
@@ -113,7 +113,7 @@ func (ts *TiDBStatement) Close() error {
 	return nil
 }
 
-// OpenCtx implements IDriver
+// OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(capability uint32, collation uint8, dbname string) (IContext, error) {
 	session, _ := tidb.CreateSession(qd.store)
 	session.SetClientCapability(capability)
@@ -136,7 +136,7 @@ func (tc *TiDBContext) Status() uint16 {
 	return tc.session.Status()
 }
 
-// LastInsertID implements IContext Status method.
+// LastInsertID implements IContext LastInsertID method.
 func (tc *TiDBContext) LastInsertID() uint64 {
 	return tc.session.LastInsertID()
 }
@@ -282,6 +282,5 @@ func CreateTiDBTestDatabase(store kv.Storage) {
 		log.Fatal(err)
 	}
 	tc.Execute("CREATE DATABASE IF NOT EXISTS test")
-	tc.Execute("CREATE DATABASE IF NOT EXISTS gotest")
 	tc.Close()
 }
