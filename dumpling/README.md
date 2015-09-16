@@ -62,8 +62,8 @@ See [USAGE.md](./docs/USAGE.md) for detailed instructions to use TiDB as library
 make tidb-server
 cd tidb-server && ./tidb-server
 ```
-The default server address is `127.0.0.1:4000`.
-After you started tidb-server, you can use official mysql client to connect to tidb.
+The default server address is `:4000`.
+After you started tidb-server, you can use official mysql client to connect to TiDB.
 ```
 mysql -h 127.0.0.1 -P 4000 -D test
 ```

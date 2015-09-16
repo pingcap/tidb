@@ -93,39 +93,39 @@ func (cc *clientConn) Close() error {
 func (cc *clientConn) writeInitialHandshake() error {
 	data := make([]byte, 4, 128)
 
-	//min version 10
+	// min version 10
 	data = append(data, 10)
-	//server version[00]
+	// server version[00]
 	data = append(data, mysql.ServerVersion...)
 	data = append(data, 0)
-	//connection id
+	// connection id
 	data = append(data, byte(cc.connectionID), byte(cc.connectionID>>8), byte(cc.connectionID>>16), byte(cc.connectionID>>24))
-	//auth-plugin-data-part-1
+	// auth-plugin-data-part-1
 	data = append(data, cc.salt[0:8]...)
-	//filter [00]
+	// filter [00]
 	data = append(data, 0)
-	//capability flag lower 2 bytes, using default capability here
+	// capability flag lower 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability), byte(defaultCapability>>8))
-	//charset, utf-8 default
+	// charset, utf-8 default
 	data = append(data, uint8(mysql.DefaultCollationID))
 	//status
 	data = append(data, dumpUint16(mysql.ServerStatusAutocommit)...)
-	//below 13 byte may not be used
-	//capability flag upper 2 bytes, using default capability here
+	// below 13 byte may not be used
+	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability>>16), byte(defaultCapability>>24))
 	//filter [0x15], for wireshark dump, value is 0x15
 	data = append(data, 0x15)
-	//reserved 10 [00]
+	// reserved 10 [00]
 	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-	//auth-plugin-data-part-2
+	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
-	//filter [00]
+	// filter [00]
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-	return cc.flush()
+	return errors.Trace(cc.flush())
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
@@ -167,26 +167,25 @@ func calcPassword(scramble, password []byte) []byte {
 
 func (cc *clientConn) readHandshakeResponse() error {
 	data, err := cc.readPacket()
-
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	pos := 0
-	//capability
+	// capability
 	cc.capability = binary.LittleEndian.Uint32(data[:4])
 	pos += 4
-	//skip max packet size
+	// skip max packet size
 	pos += 4
-	//charset, skip, if you want to use another charset, use set names
+	// charset, skip, if you want to use another charset, use set names
 	cc.collation = data[pos]
 	pos++
-	//skip reserved 23[00]
+	// skip reserved 23[00]
 	pos += 23
-	//user name
+	// user name
 	cc.user = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
 	pos += len(cc.user) + 1
-	//auth length and auth
+	// auth length and auth
 	authLen := int(data[pos])
 	pos++
 	auth := data[pos : pos+authLen]
@@ -200,8 +199,8 @@ func (cc *clientConn) readHandshakeResponse() error {
 		if len(data[pos:]) == 0 {
 			return nil
 		}
-
-		cc.dbname = string(data[pos : pos+bytes.IndexByte(data[pos:], 0)])
+		idx := bytes.IndexByte(data[pos:], 0)
+		cc.dbname = string(data[pos : pos+idx])
 	}
 
 	return nil
@@ -224,6 +223,7 @@ func (cc *clientConn) Run() {
 		data, err := cc.readPacket()
 		if err != nil {
 			if errors2.ErrorNotEqual(err, io.EOF) {
+				// TODO: another type of error is also normal, check it.
 				log.Info(err)
 			}
 			return
@@ -376,18 +376,18 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	parts := strings.Split(sql, "\x00")
 	columns, err := cc.ctx.FieldList(parts[0])
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 	data := make([]byte, 4, 1024)
 	for _, v := range columns {
 		data = data[0:4]
 		data = append(data, v.Dump(cc.alloc)...)
 		if err := cc.writePacket(data); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	if err := cc.writeEOF(); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return errors.Trace(cc.flush())
 }

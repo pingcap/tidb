@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/tidb-server/server"
+	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
@@ -40,7 +41,7 @@ var (
 )
 
 func main() {
-	fmt.Printf("Git Commit Hash:%s\nUTC Build Time :%s\n", githash, buildstamp)
+	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
@@ -55,17 +56,16 @@ func main() {
 	log.SetLevelByString(cfg.LogLevel)
 	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
 	if err != nil {
-		log.Error(err.Error())
-		return
+		log.Fatal(err)
 	}
 	server.CreateTiDBTestDatabase(store)
-	var svr *server.Server
+
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
+	var svr *server.Server
 	svr, err = server.NewServer(cfg, driver)
 	if err != nil {
-		log.Error(err.Error())
-		return
+		log.Fatal(err)
 	}
 
 	sc := make(chan os.Signal, 1)
