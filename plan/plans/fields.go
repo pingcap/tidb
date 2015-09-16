@@ -76,6 +76,9 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 	}
 	row = &plan.Row{
 		Data: make([]interface{}, len(r.Fields)),
+		// must save FromData info for inner sub query use.
+		FromData:       srcRow.Data,
+		FromDataFields: srcRow.FromDataFields,
 	}
 	for i, fld := range r.Fields {
 		var err error

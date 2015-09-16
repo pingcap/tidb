@@ -15,6 +15,7 @@ package plans
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -47,6 +48,8 @@ type OuterQueryPlan struct {
 	SrcPhase int
 
 	HiddenFieldOffset int
+
+	OuterQuery *OuterQuery
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -77,21 +80,21 @@ func (p *OuterQueryPlan) Next(ctx context.Context) (*plan.Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// We can let subquery fetching outer table data only after the following phase.
+	// Subquery fetches outer table data only after the following phase.
 	switch p.SrcPhase {
 	case FromPhase:
 		// Here row.Data is the whole data from table.
 		// We set it to FromData so that following phase can access the table reference.
 		row.FromData = row.Data
 		row.FromDataFields = p.Src.GetFields()
-		pushOuterQuery(ctx, row)
+		p.updateOuterQuery(ctx, row)
 	case WherePhase, LockPhase:
-		updateTopOuterQuery(ctx, row)
+		p.updateOuterQuery(ctx, row)
 	case GroupByPhase, SelectFieldsPhase, HavingPhase, DistinctPhase:
 		row.DataFields = p.Src.GetFields()[0:p.HiddenFieldOffset]
-		updateTopOuterQuery(ctx, row)
+		p.updateOuterQuery(ctx, row)
 	case BeforeFinalPhase:
-		popOuterQuery(ctx)
+		p.popOuterQuery(ctx)
 	}
 
 	return row, nil
@@ -100,6 +103,31 @@ func (p *OuterQueryPlan) Next(ctx context.Context) (*plan.Row, error) {
 // Close implements the plan.Plan Close interface.
 func (p *OuterQueryPlan) Close() error {
 	return p.Src.Close()
+}
+
+func (p *OuterQueryPlan) updateOuterQuery(ctx context.Context, row *plan.Row) {
+	p.OuterQuery.row = row
+	t := getOuterQuery(ctx)
+	if t != nil && t != p.OuterQuery {
+		p.OuterQuery.last = t
+	}
+
+	ctx.SetValue(outerQueryKey, p.OuterQuery)
+}
+
+func (p *OuterQueryPlan) popOuterQuery(ctx context.Context) {
+	t := getOuterQuery(ctx)
+	if t == nil || t != p.OuterQuery {
+		log.Errorf("invalid outer query stack, want to pop %v, but top is %v\n", p.OuterQuery, t)
+		return
+	}
+
+	if t.last == nil {
+		ctx.ClearValue(outerQueryKey)
+		return
+	}
+
+	ctx.SetValue(outerQueryKey, t.last)
 }
 
 // A dummy type to avoid naming collision in context.
@@ -113,60 +141,29 @@ func (k outerQueryKeyType) String() string {
 // outerQueryKey is used to retrive outer table references for sub query.
 const outerQueryKey outerQueryKeyType = 0
 
-// outerQuery saves the outer table references.
-// For every select, we will push a outerQuery to a stack for inner sub query use,
-// and the top outerQuery is for current select.
+// OuterQuery saves the outer table references.
+// For every select, we will push a OuterQuery to a stack for inner sub query use,
+// so the top OuterQuery is for current select.
 // e.g, select c1 from t1 where c2 = (select c1 from t2 where t2.c1 = t1.c2 limit 1),
 // the "select c1 from t1" is the outer query for the sub query in where phase, we will
-// first push a outerQuery to the stack saving the row data for "select c1 from t1", then
-// push the second outerQuery to the stack saving the row data for "select c1 from t2".
-type outerQuery struct {
+// first push a OuterQuery to the stack saving the row data for "select c1 from t1", then
+// push the second OuterQuery to the stack saving the row data for "select c1 from t2".
+// We will push a OuterQuery after the from phase and pop it before the final phase.
+// So we can guarantee that there is at least one OuterQuery certainly.
+type OuterQuery struct {
 	// outer is the last outer table reference.
-	last *outerQuery
+	last *OuterQuery
 	row  *plan.Row
 }
 
-// We will push a outerQuery after the from phase and pop it before the final phase.
-// So we can guarantee that there is at least one outerQuery certainly.
-func pushOuterQuery(ctx context.Context, row *plan.Row) {
-	t := &outerQuery{
-		row: row,
-	}
-
-	last := ctx.Value(outerQueryKey)
-	if last != nil {
-		// must be outerQuery
-		t.last = last.(*outerQuery)
-	}
-
-	ctx.SetValue(outerQueryKey, t)
-}
-
-func getOuterQuery(ctx context.Context) *outerQuery {
+func getOuterQuery(ctx context.Context) *OuterQuery {
 	v := ctx.Value(outerQueryKey)
 	if v == nil {
 		return nil
 	}
-	// must be outerQuery
-	t := v.(*outerQuery)
+	// must be OuterQuery
+	t := v.(*OuterQuery)
 	return t
-}
-
-func popOuterQuery(ctx context.Context) {
-	t := getOuterQuery(ctx)
-	// cannot be empty
-	if t.last == nil {
-		ctx.ClearValue(outerQueryKey)
-		return
-	}
-
-	ctx.SetValue(outerQueryKey, t.last)
-}
-
-func updateTopOuterQuery(ctx context.Context, row *plan.Row) {
-	t := getOuterQuery(ctx)
-	// canno be empty
-	t.row = row
 }
 
 func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{}, error) {
@@ -175,7 +172,7 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 		return nil, errors.Errorf("unknown field %s", name)
 	}
 
-	// The top is current outerQuery, use its last.
+	// The top is current OuterQuery, use its last.
 	t = t.last
 	for ; t != nil; t = t.last {
 		// first try to get from outer table reference.
