@@ -14,11 +14,13 @@
 package server
 
 import (
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -57,7 +59,7 @@ func (ts *TiDBStatement) ID() int {
 }
 
 // Execute implements IStatement Execute method.
-func (ts *TiDBStatement) Execute(args ...interface{}) (rs *ResultSet, err error) {
+func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ts.id, args...)
 	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
 		return nil, ts.ctx.session.Retry()
@@ -68,21 +70,8 @@ func (ts *TiDBStatement) Execute(args ...interface{}) (rs *ResultSet, err error)
 	if tidbRecordset == nil {
 		return
 	}
-	rs = new(ResultSet)
-	fields, err := tidbRecordset.Fields()
-	if err != nil {
-		return
-	}
-	rs.Rows, err = tidbRecordset.Rows(-1, 0)
-	fields, err = tidbRecordset.Fields()
-	if err != nil {
-		return
-	}
-	for _, v := range fields {
-		rs.Columns = append(rs.Columns, convertColumnInfo(v))
-	}
-	if err != nil {
-		return
+	rs = &tidbResultSet{
+		recordSet: tidbRecordset,
 	}
 	return
 }
@@ -168,35 +157,19 @@ func (tc *TiDBContext) WarningCount() uint16 {
 }
 
 // Execute implements IContext Execute method.
-func (tc *TiDBContext) Execute(sql string) (rs *ResultSet, err error) {
-	qrsList, err := tc.session.Execute(sql)
+func (tc *TiDBContext) Execute(sql string) (rs ResultSet, err error) {
+	rsList, err := tc.session.Execute(sql)
 	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
 		return nil, tc.session.Retry()
 	}
 	if err != nil {
 		return
 	}
-	if len(qrsList) == 0 { // result ok
+	if len(rsList) == 0 { // result ok
 		return
 	}
-	qrs := qrsList[0]
-
-	rs = new(ResultSet)
-	fields, err := qrs.Fields()
-	if err != nil {
-		return
-	}
-
-	rs.Rows, err = qrs.Rows(-1, 0)
-	if err != nil {
-		return
-	}
-	fields, err = qrs.Fields()
-	if err != nil {
-		return
-	}
-	for _, v := range fields {
-		rs.Columns = append(rs.Columns, convertColumnInfo(v))
+	rs = &tidbResultSet{
+		recordSet: rsList[0],
 	}
 	return
 }
@@ -210,9 +183,12 @@ func (tc *TiDBContext) Close() (err error) {
 func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
 	rs, err := tc.Execute("SELECT * FROM " + table + " LIMIT 0")
 	if err != nil {
-		return
+		return nil, errors.Trace(err)
 	}
-	colums = rs.Columns
+	colums, err = rs.Columns()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return
 }
 
@@ -252,15 +228,49 @@ func (tc *TiDBContext) Prepare(sql string) (statement IStatement, columns, param
 	return
 }
 
-func convertColumnInfo(qlfield *field.ResultField) (ci *ColumnInfo) {
+type tidbResultSet struct {
+	recordSet rset.Recordset
+}
+
+func (trs *tidbResultSet) Next() ([]interface{}, error) {
+	row, err := trs.recordSet.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if row != nil {
+		return row.Data, nil
+	}
+	return nil, nil
+}
+
+func (trs *tidbResultSet) Close() error {
+	return trs.recordSet.Close()
+}
+
+func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
+	fields, err := trs.recordSet.Fields()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var columns []*ColumnInfo
+	for _, v := range fields {
+		columns = append(columns, convertColumnInfo(v))
+	}
+	return columns, nil
+}
+
+func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 	ci = new(ColumnInfo)
-	ci.Schema = ""
-	ci.Flag = uint16(qlfield.Flag)
-	ci.Name = qlfield.Name
-	ci.Table = qlfield.TableName
-	ci.Charset = uint16(mysql.CharsetIDs[qlfield.Charset])
-	ci.ColumnLength = uint32(qlfield.Flen)
-	ci.Type = uint8(qlfield.Tp)
+	ci.Name = fld.Name
+	ci.OrgName = fld.ColumnInfo.Name.O
+	ci.Table = fld.TableName
+	ci.OrgTable = fld.OrgTableName
+	ci.Schema = fld.DBName
+	ci.Flag = uint16(fld.Flag)
+	ci.Charset = uint16(mysql.CharsetIDs[fld.Charset])
+	ci.ColumnLength = uint32(fld.Flen)
+	ci.Decimal = uint8(fld.Decimal)
+	ci.Type = uint8(fld.Tp)
 	return
 }
 

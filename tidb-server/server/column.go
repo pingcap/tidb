@@ -14,7 +14,7 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/tidb-server/arena"
+	"github.com/pingcap/tidb/util/arena"
 )
 
 // ColumnInfo contains information of a column
@@ -34,7 +34,7 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(alloc arena.ArenaAllocator) []byte {
+func (column *ColumnInfo) Dump(alloc arena.Allocator) []byte {
 	l := len(column.Schema) + len(column.Table) + len(column.OrgTable) + len(column.Name) + len(column.OrgName) + len(column.DefaultValue) + 48
 
 	data := make([]byte, 0, l)

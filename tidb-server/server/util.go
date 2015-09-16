@@ -22,7 +22,7 @@ import (
 	"time"
 
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/tidb-server/arena"
+	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -97,8 +97,8 @@ func parseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
 	return nil, false, n, io.EOF
 }
 
-func dumpLengthEncodedString(b []byte, alloc arena.ArenaAllocator) []byte {
-	data := alloc.AllocBytes(len(b) + 9)
+func dumpLengthEncodedString(b []byte, alloc arena.Allocator) []byte {
+	data := alloc.Alloc(len(b) + 9)
 	data = append(data, dumpLengthEncodedInt(uint64(len(b)))...)
 	data = append(data, b...)
 	return data
@@ -213,7 +213,7 @@ func uniformValue(value interface{}) interface{} {
 	}
 }
 
-func dumpRowValuesBinary(alloc arena.ArenaAllocator, columns []*ColumnInfo, row []interface{}) (data []byte, err error) {
+func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []interface{}) (data []byte, err error) {
 	if len(columns) != len(row) {
 		err = mysql.ErrMalformPacket
 		return

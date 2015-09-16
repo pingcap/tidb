@@ -26,7 +26,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/tidb-server/arena"
+	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -46,7 +46,7 @@ type clientConn struct {
 	user         string
 	dbname       string
 	salt         []byte
-	alloc        arena.ArenaAllocator
+	alloc        arena.Allocator
 	lastCmd      string
 	ctx          IContext
 }
@@ -65,7 +65,7 @@ func (cc *clientConn) handshake() error {
 		cc.writeError(err)
 		return errors.Trace(err)
 	}
-	data := cc.alloc.AllocBytesWithLen(4, 32)
+	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -305,7 +305,7 @@ func (cc *clientConn) flush() error {
 }
 
 func (cc *clientConn) writeOK() error {
-	data := cc.alloc.AllocBytesWithLen(4, 32)
+	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, dumpLengthEncodedInt(uint64(cc.ctx.AffectedRows()))...)
 	data = append(data, dumpLengthEncodedInt(uint64(cc.ctx.LastInsertID()))...)
@@ -347,7 +347,7 @@ func (cc *clientConn) writeError(e error) error {
 }
 
 func (cc *clientConn) writeEOF() error {
-	data := cc.alloc.AllocBytesWithLen(4, 9)
+	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
@@ -392,15 +392,27 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 	return errors.Trace(cc.flush())
 }
 
-func (cc *clientConn) writeResultset(rs *ResultSet, binary bool) error {
-	columnLen := dumpLengthEncodedInt(uint64(len(rs.Columns)))
-	data := cc.alloc.AllocBytesWithLen(4, 1024)
+func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
+	defer rs.Close()
+	// We need to call Next before we get columns.
+	// Otherwise, we will get incorrect columns info.
+	row, err := rs.Next()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	columns, err := rs.Columns()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
+	data := cc.alloc.AllocWithLen(4, 1024)
 	data = append(data, columnLen...)
 	if err := cc.writePacket(data); err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, v := range rs.Columns {
+	for _, v := range columns {
 		data = data[0:4]
 		data = append(data, v.Dump(cc.alloc)...)
 		if err := cc.writePacket(data); err != nil {
@@ -411,10 +423,18 @@ func (cc *clientConn) writeResultset(rs *ResultSet, binary bool) error {
 	if err := cc.writeEOF(); err != nil {
 		return errors.Trace(err)
 	}
-	for _, row := range rs.Rows {
+
+	for {
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
 		data = data[0:4]
 		if binary {
-			rowData, err := dumpRowValuesBinary(cc.alloc, rs.Columns, row)
+			var rowData []byte
+			rowData, err = dumpRowValuesBinary(cc.alloc, columns, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -425,7 +445,8 @@ func (cc *clientConn) writeResultset(rs *ResultSet, binary bool) error {
 					data = append(data, 0xfb)
 					continue
 				}
-				valData, err := dumpTextValue(rs.Columns[i].Type, value)
+				var valData []byte
+				valData, err = dumpTextValue(columns[i].Type, value)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -436,9 +457,10 @@ func (cc *clientConn) writeResultset(rs *ResultSet, binary bool) error {
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
+		row, err = rs.Next()
 	}
 
-	err := cc.writeEOF()
+	err = cc.writeEOF()
 	if err != nil {
 		return errors.Trace(err)
 	}
