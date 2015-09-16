@@ -62,8 +62,8 @@ func (p *OuterQueryPlan) GetFields() []*field.ResultField {
 // Filter implements the plan.Plan Filter interface.
 func (p *OuterQueryPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	r, b, err := p.Src.Filter(ctx, expr)
-	if !b {
-		return r, false, errors.Trace(err)
+	if !b || err != nil {
+		return p, false, errors.Trace(err)
 	}
 
 	p.Src = r
@@ -144,13 +144,17 @@ func pushOuterQuery(ctx context.Context, row *plan.Row) {
 
 func getOuterQuery(ctx context.Context) *outerQuery {
 	v := ctx.Value(outerQueryKey)
-	// Cannot empty and must be outerQuery
+	if v == nil {
+		return nil
+	}
+	// must be outerQuery
 	t := v.(*outerQuery)
 	return t
 }
 
 func popOuterQuery(ctx context.Context) {
 	t := getOuterQuery(ctx)
+	// cannot be empty
 	if t.last == nil {
 		ctx.ClearValue(outerQueryKey)
 		return
@@ -161,11 +165,16 @@ func popOuterQuery(ctx context.Context) {
 
 func updateTopOuterQuery(ctx context.Context, row *plan.Row) {
 	t := getOuterQuery(ctx)
+	// canno be empty
 	t.row = row
 }
 
 func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{}, error) {
 	t := getOuterQuery(ctx)
+	if t == nil {
+		return nil, errors.Errorf("unknown field %s", name)
+	}
+
 	// The top is current outerQuery, use its last.
 	t = t.last
 	for ; t != nil; t = t.last {
@@ -182,5 +191,5 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 		}
 	}
 
-	return nil, errors.Errorf("can not find value from outer query for field %s", name)
+	return nil, errors.Errorf("unknown field %s", name)
 }

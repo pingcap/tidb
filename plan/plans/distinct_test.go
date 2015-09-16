@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func TestT(t *testing.T) {
@@ -49,6 +50,7 @@ func (t *testDistinctSuit) TestDistinct(c *C) {
 	}
 	rset := rsets.Recordset{
 		Plan: &p,
+		Ctx:  mock.NewContext(),
 	}
 	r := map[int][]interface{}{}
 	err := rset.Do(func(data []interface{}) (bool, error) {

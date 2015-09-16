@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -80,7 +81,9 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Fields: []*field.ResultField{},
 		On:     expressions.Value{Val: true},
 	}
-	rset := rsets.Recordset{Plan: joinPlan}
+	rset := rsets.Recordset{
+		Plan: joinPlan,
+		Ctx:  mock.NewContext()}
 
 	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil

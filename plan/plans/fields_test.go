@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testFieldsSuit struct{}
@@ -54,6 +55,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	}
 	rset := rsets.Recordset{
 		Plan: selFieldsPlan,
+		Ctx:  mock.NewContext(),
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
 		c.Assert(len(data), Equals, 1)
@@ -122,7 +124,9 @@ func (s *testFieldsSuit) TestSelectExprPlan(c *C) {
 	}
 	fields := pln.GetFields()
 	c.Assert(fields, HasLen, 1)
-	rset := rsets.Recordset{Plan: pln}
+	rset := rsets.Recordset{
+		Plan: pln,
+		Ctx:  mock.NewContext()}
 	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -82,7 +83,9 @@ func (t *testUnionSuit) TestUnion(c *C) {
 			field.ColToResultField(cols[1], "t"),
 		},
 	}
-	rset := rsets.Recordset{Plan: pln}
+	rset := rsets.Recordset{
+		Plan: pln,
+		Ctx:  mock.NewContext()}
 	cnt := 0
 	rset.Do(func(data []interface{}) (bool, error) {
 		cnt++
