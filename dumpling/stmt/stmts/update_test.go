@@ -129,4 +129,26 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 	}
 	rows.Close()
 	mustCommit(c, tx)
+
+	// Single-table syntax but with multiple tables
+	r = mustExec(c, testDB, `UPDATE items join month on items.id=month.id SET items.price=month.id;`)
+	c.Assert(r, NotNil)
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM items")
+	c.Assert(err, IsNil)
+	expectedResult = map[int]string{
+		11: "11",
+		12: "items_price_12",
+		13: "13",
+	}
+	for rows.Next() {
+		var (
+			id    int
+			price string
+		)
+		rows.Scan(&id, &price)
+		c.Assert(price, Equals, expectedResult[id])
+	}
+	rows.Close()
+	mustCommit(c, tx)
 }
