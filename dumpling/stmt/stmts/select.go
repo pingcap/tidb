@@ -140,11 +140,17 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	}
 
+	r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.FromPhase,
+		HiddenFieldOffset: 0}).Plan(ctx)
+
 	if w := s.Where; w != nil {
 		r, err = (&rsets.WhereRset{Expr: w.Expr, Src: r}).Plan(ctx)
 		if err != nil {
 			return nil, err
 		}
+
+		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.WherePhase,
+			HiddenFieldOffset: 0}).Plan(ctx)
 	}
 	lock := s.Lock
 	if variable.IsAutocommit(ctx) {
@@ -195,12 +201,17 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			SelectList: selectList}).Plan(ctx); err != nil {
 			return nil, err
 		}
+
+		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.SelectFieldsPhase,
+			HiddenFieldOffset: selectList.HiddenFieldOffset}).Plan(ctx)
 	default:
 		if r, err = (&rsets.GroupByRset{By: groupBy,
 			Src:        r,
 			SelectList: selectList}).Plan(ctx); err != nil {
 			return nil, err
 		}
+		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.GroupByPhase,
+			HiddenFieldOffset: selectList.HiddenFieldOffset}).Plan(ctx)
 	}
 
 	if s := s.Having; s != nil {
@@ -209,6 +220,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			Expr: s.Expr}).Plan(ctx); err != nil {
 			return nil, err
 		}
+		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.HavingPhase,
+			HiddenFieldOffset: selectList.HiddenFieldOffset}).Plan(ctx)
 	}
 
 	if s.Distinct {
@@ -216,6 +229,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			SelectList: selectList}).Plan(ctx); err != nil {
 			return nil, err
 		}
+		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.DistinctPhase,
+			HiddenFieldOffset: selectList.HiddenFieldOffset}).Plan(ctx)
 	}
 
 	if s := s.OrderBy; s != nil {
@@ -236,6 +251,9 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			return nil, err
 		}
 	}
+
+	r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.BeforeFinalPhase,
+		HiddenFieldOffset: selectList.HiddenFieldOffset}).Plan(ctx)
 
 	if r, err = (&rsets.SelectFinalRset{Src: r,
 		SelectList: selectList}).Plan(ctx); err != nil {

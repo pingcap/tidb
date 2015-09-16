@@ -96,7 +96,13 @@ func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, 
 			return v, nil
 		}
 
-		return r.getFieldValueByName(name, outRow)
+		v, err = r.getFieldValueByName(name, outRow)
+		if err == nil {
+			return v, nil
+		}
+
+		// try to find in outer query
+		return getIdentValueFromOuterQuery(ctx, name)
 	}
 
 	m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
@@ -128,7 +134,13 @@ func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{})
 func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
 	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		if err == nil {
+			return v, nil
+		}
+
+		// try to find in outer query
+		return getIdentValueFromOuterQuery(ctx, name)
 	}
 
 	var err error
@@ -150,7 +162,13 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 	for i := range r.AggFields {
 		if i < r.HiddenFieldOffset {
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				if err == nil {
+					return v, nil
+				}
+
+				// try to find in outer query
+				return getIdentValueFromOuterQuery(ctx, name)
 			}
 		} else {
 			// having may contain aggregate function and we will add it to hidden field,
@@ -166,7 +184,13 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 
 				// if we can not find in table, we will try to find in un-hidden select list
 				// only hidden field can use this
-				return r.getFieldValueByName(name, out)
+				v, err = r.getFieldValueByName(name, out)
+				if err == nil {
+					return v, nil
+				}
+
+				// try to find in outer query
+				return getIdentValueFromOuterQuery(ctx, name)
 			}
 		}
 
@@ -313,7 +337,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		if err != nil || out == nil {
 			return errors.Trace(err)
 		}
-		row := &plan.Row{Data: out}
+		row := &plan.Row{Data: out, DataFields: r.ResultFields}
 		r.rows = append(r.rows, &groupRow{Row: row, Args: map[interface{}]interface{}{}})
 	} else {
 		for _, row := range r.rows {
