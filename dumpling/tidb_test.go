@@ -513,9 +513,9 @@ func (s *testSessionSuite) TestAutoicommit(c *C) {
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
-func checkInTrans(c *C, se Session, stmt string, isNil bool, expect uint16) {
+func checkInTrans(c *C, se Session, stmt string, expect uint16) {
 	mustExecSQL(c, se, stmt)
-	if isNil {
+	if expect == 0 {
 		c.Assert(se.(*session).txn, IsNil)
 	} else {
 		c.Assert(se.(*session).txn, NotNil)
@@ -528,26 +528,22 @@ func checkInTrans(c *C, se Session, stmt string, isNil bool, expect uint16) {
 func (s *testSessionSuite) TestInTrans(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, 0)
-	checkInTrans(c, se, "insert t values ()", true, 0)
-	checkInTrans(c, se, "begin", false, 1)
-	checkInTrans(c, se, "insert t values ()", false, 1)
-	se.Execute("drop table if exists t;")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).Status&mysql.ServerStatusInTrans, Equals, uint16(0))
-	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, 0)
-	checkInTrans(c, se, "insert t values ()", false, 0)
-	checkInTrans(c, se, "commit", true, 0)
-	checkInTrans(c, se, "insert t values ()", true, 0)
+	checkInTrans(c, se, "drop table if exists t;", 0)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkInTrans(c, se, "insert t values ()", 0)
+	checkInTrans(c, se, "begin", 1)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "drop table if exists t;", 0)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "commit", 0)
+	checkInTrans(c, se, "insert t values ()", 0)
 
-	se.Execute("drop table if exists t;")
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(variable.GetSessionVars(se.(*session)).Status&mysql.ServerStatusInTrans, Equals, uint16(0))
-	checkInTrans(c, se, "begin", false, 1)
-	checkInTrans(c, se, "insert t values ()", false, 1)
-	checkInTrans(c, se, "rollback", true, 0)
+	checkInTrans(c, se, "drop table if exists t;", 0)
+	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkInTrans(c, se, "begin", 1)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "rollback", 0)
 
 	mustExecSQL(c, se, s.dropDBSQL)
 }
