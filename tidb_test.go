@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -460,40 +459,6 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	mustExecSQL(c, se, "insert t values ()")
 	c.Assert(se.LastInsertID(), Less, uint64(4))
-	mustExecSQL(c, se, s.dropDBSQL)
-}
-
-func checkAutocommit(c *C, se Session, stmt string, isNil, expect bool) {
-	mustExecSQL(c, se, stmt)
-	if isNil {
-		c.Assert(se.(*session).txn, IsNil)
-	} else {
-		c.Assert(se.(*session).txn, NotNil)
-	}
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, expect)
-}
-
-// See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) TestAutocommit(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	checkAutocommit(c, se, "drop table if exists t", true, false)
-	checkAutocommit(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, false)
-	checkAutocommit(c, se, "insert t values ()", true, false)
-	checkAutocommit(c, se, "begin", false, true)
-	checkAutocommit(c, se, "insert t values ()", false, true)
-	checkAutocommit(c, se, "drop table if exists t;", true, true)
-	checkAutocommit(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, true)
-	checkAutocommit(c, se, "insert t values ()", false, true)
-	checkAutocommit(c, se, "commit", true, false)
-	checkAutocommit(c, se, "insert t values ()", true, false)
-
-	checkAutocommit(c, se, "drop table if exists t;", true, false)
-	checkAutocommit(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", true, false)
-	checkAutocommit(c, se, "begin", false, true)
-	checkAutocommit(c, se, "insert t values ()", false, true)
-	checkAutocommit(c, se, "rollback", true, false)
-
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
