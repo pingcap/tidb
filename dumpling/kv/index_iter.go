@@ -130,7 +130,23 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 	if !c.unique {
 		encVal, err = EncodeValue(append(indexedValues, h)...)
 	} else {
-		encVal, err = EncodeValue(indexedValues...)
+		/*
+			See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+			A UNIQUE index creates a constraint such that all values in the index must be distinct.
+			An error occurs if you try to add a new row with a key value that matches an existing row.
+			For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
+		*/
+		containsNull := false
+		for _, cv := range indexedValues {
+			if cv == nil {
+				containsNull = true
+			}
+		}
+		if containsNull {
+			encVal, err = EncodeValue(append(indexedValues, h)...)
+		} else {
+			encVal, err = EncodeValue(indexedValues...)
+		}
 	}
 	if err != nil {
 		return nil, err
