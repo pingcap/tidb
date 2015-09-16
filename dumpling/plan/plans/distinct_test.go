@@ -11,32 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	"reflect"
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/field"
-	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 )
 
 func TestT(t *testing.T) {
 	TestingT(t)
-}
-
-type testRowData struct {
-	id   int64
-	data []interface{}
-}
-
-type testTablePlan struct {
-	rows   []*testRowData
-	fields []string
 }
 
 var distinctTestData = []*testRowData{
@@ -47,47 +34,24 @@ var distinctTestData = []*testRowData{
 	{6, []interface{}{60, "hello"}},
 }
 
-func (p *testTablePlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	for _, d := range p.rows {
-		if more, err := f(d.id, d.data); !more || err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (p *testTablePlan) Explain(w format.Formatter) {}
-
-func (p *testTablePlan) GetFields() []*field.ResultField {
-	var ret []*field.ResultField
-	for _, fn := range p.fields {
-		ret = append(ret, &field.ResultField{
-			Name: fn,
-		})
-	}
-	return ret
-}
-
-func (p *testTablePlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
-	return p, false, nil
-}
-
 type testDistinctSuit struct{}
 
 var _ = Suite(&testDistinctSuit{})
 
 func (t *testDistinctSuit) TestDistinct(c *C) {
-	tblPlan := &testTablePlan{distinctTestData, []string{"id", "name"}}
+	tblPlan := &testTablePlan{distinctTestData, []string{"id", "name"}, 0}
 
-	p := DistinctDefaultPlan{
-		SelectList: &SelectList{
+	p := plans.DistinctDefaultPlan{
+		SelectList: &plans.SelectList{
 			HiddenFieldOffset: len(tblPlan.GetFields()),
 		},
 		Src: tblPlan,
 	}
-
+	rset := rsets.Recordset{
+		Plan: &p,
+	}
 	r := map[int][]interface{}{}
-	err := p.Do(nil, func(id interface{}, data []interface{}) (bool, error) {
+	err := rset.Do(func(data []interface{}) (bool, error) {
 		r[data[0].(int)] = data
 		return true, nil
 	})

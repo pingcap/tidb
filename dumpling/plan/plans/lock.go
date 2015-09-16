@@ -35,36 +35,6 @@ type SelectLockPlan struct {
 	Lock coldef.LockType
 }
 
-// Do implements plan.Plan Do interface, acquiring locks.
-func (r *SelectLockPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		var rowKeys *RowKeyList
-		if in != nil && len(in) > 0 {
-			t := in[len(in)-1]
-			switch vt := t.(type) {
-			case *RowKeyList:
-				rowKeys = vt
-				// Remove row key list from data tail
-				in = in[:len(in)-1]
-			}
-		}
-		if rowKeys != nil && r.Lock == coldef.SelectLockForUpdate {
-			forupdate.SetForUpdate(ctx)
-			txn, err := ctx.GetTxn(false)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			for _, k := range rowKeys.Keys {
-				err = txn.LockKeys([]byte(k.Key))
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-			}
-		}
-		return f(rid, in)
-	})
-}
-
 // Explain implements plan.Plan Explain interface.
 func (r *SelectLockPlan) Explain(w format.Formatter) {
 	r.Src.Explain(w)
@@ -84,4 +54,31 @@ func (r *SelectLockPlan) GetFields() []*field.ResultField {
 func (r *SelectLockPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	// Do nothing
 	return r, false, nil
+}
+
+// Next implements plan.Plan Next interface.
+func (r *SelectLockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	row, err = r.Src.Next(ctx)
+	if row == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(row.RowKeys) != 0 && r.Lock == coldef.SelectLockForUpdate {
+		forupdate.SetForUpdate(ctx)
+		txn, err := ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, k := range row.RowKeys {
+			err = txn.LockKeys([]byte(k.Key))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *SelectLockPlan) Close() error {
+	return r.Src.Close()
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -32,15 +33,7 @@ type testRowData struct {
 type testTablePlan struct {
 	rows   []*testRowData
 	fields []string
-}
-
-func (p *testTablePlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	for _, d := range p.rows {
-		if more, err := f(d.id, d.data); !more || err != nil {
-			return err
-		}
-	}
-	return nil
+	cursor int
 }
 
 func (p *testTablePlan) Explain(w format.Formatter) {}
@@ -57,6 +50,22 @@ func (p *testTablePlan) GetFields() []*field.ResultField {
 
 func (p *testTablePlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return p, false, nil
+}
+
+func (p *testTablePlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if p.cursor == len(p.rows) {
+		return
+	}
+	row = &plan.Row{
+		Data: p.rows[p.cursor].data,
+	}
+	p.cursor++
+	return
+}
+
+func (p *testTablePlan) Close() error {
+	p.cursor = 0
+	return nil
 }
 
 type testLimitSuit struct {
@@ -80,22 +89,25 @@ func (t *testLimitSuit) SetUpSuite(c *C) {
 }
 
 func (t *testLimitSuit) TestLimit(c *C) {
-	tblPlan := &testTablePlan{t.data, []string{"id", "name"}}
+	tblPlan := &testTablePlan{t.data, []string{"id", "name"}, 0}
 
 	pln := &plans.LimitDefaultPlan{
 		Count:  2,
 		Src:    tblPlan,
 		Fields: []*field.ResultField{},
 	}
-
-	pln.Do(t.sess.(context.Context), func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Ctx:  t.sess.(context.Context),
+		Plan: pln,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		// TODO check result
 		return true, nil
 	})
 }
 
 func (t *testLimitSuit) TestOffset(c *C) {
-	tblPlan := &testTablePlan{t.data, []string{"id", "name"}}
+	tblPlan := &testTablePlan{t.data, []string{"id", "name"}, 0}
 
 	pln := &plans.OffsetDefaultPlan{
 		Count:  2,
@@ -103,7 +115,11 @@ func (t *testLimitSuit) TestOffset(c *C) {
 		Fields: []*field.ResultField{},
 	}
 
-	pln.Do(t.sess.(context.Context), func(id interface{}, data []interface{}) (bool, error) {
+	rset := rsets.Recordset{
+		Ctx:  t.sess.(context.Context),
+		Plan: pln,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
 		// TODO check result
 		return true, nil
 	})

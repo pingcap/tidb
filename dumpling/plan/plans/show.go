@@ -48,6 +48,8 @@ type ShowPlan struct {
 	// Used by SHOW VARIABLES
 	GlobalScope bool
 	Pattern     expression.Expression
+	rows        []*plan.Row
+	cursor      int
 }
 
 func (s *ShowPlan) isColOK(c *column.Col) bool {
@@ -62,128 +64,6 @@ func (s *ShowPlan) isColOK(c *column.Col) bool {
 	}
 
 	return false
-}
-
-// Do implements plan.Plan Do interface.
-func (s *ShowPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	switch s.Target {
-	case stmt.ShowEngines:
-		f(0, []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"})
-	case stmt.ShowDatabases:
-		dbs := sessionctx.GetDomain(ctx).InfoSchema().AllSchemaNames()
-
-		// TODO: let information_schema be the first database
-		sort.Strings(dbs)
-
-		for _, d := range dbs {
-			f(0, []interface{}{d})
-		}
-	case stmt.ShowTables:
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		dbName := model.NewCIStr(s.DBName)
-		if !is.SchemaExists(dbName) {
-			return errors.Errorf("Can not find DB: %s", dbName)
-		}
-
-		// sort for tables
-		var tableNames []string
-		for _, v := range is.SchemaTables(dbName) {
-			tableNames = append(tableNames, v.TableName().L)
-		}
-
-		sort.Strings(tableNames)
-
-		for _, v := range tableNames {
-			f(0, []interface{}{v})
-		}
-	case stmt.ShowColumns:
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		dbName := model.NewCIStr(s.DBName)
-		if !is.SchemaExists(dbName) {
-			return errors.Errorf("Can not find DB: %s", dbName)
-		}
-		tbName := model.NewCIStr(s.TableName)
-		tb, err := is.TableByName(dbName, tbName)
-		if err != nil {
-			return errors.Errorf("Can not find table: %s", s.TableName)
-		}
-		cols := tb.Cols()
-
-		for _, col := range cols {
-			if !s.isColOK(col) {
-				continue
-			}
-
-			desc := column.NewColDesc(col)
-
-			// The FULL keyword causes the output to include the column collation and comments,
-			// as well as the privileges you have for each column.
-			if s.Full {
-				f(0, []interface{}{
-					desc.Field,
-					desc.Type,
-					desc.Collation,
-					desc.Null,
-					desc.Key,
-					desc.DefaultValue,
-					desc.Extra,
-					desc.Privileges,
-					desc.Comment,
-				})
-			} else {
-				f(0, []interface{}{
-					desc.Field,
-					desc.Type,
-					desc.Null,
-					desc.Key,
-					desc.DefaultValue,
-					desc.Extra,
-				})
-			}
-		}
-	case stmt.ShowWarnings:
-		// empty result
-	case stmt.ShowCharset:
-		// See: http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
-		descs := charset.GetAllCharsets()
-		for _, desc := range descs {
-			row := []interface{}{desc.Name, desc.Desc, desc.DefaultCollation, desc.Maxlen}
-			f(0, row)
-		}
-	case stmt.ShowVariables:
-		sessionVars := variable.GetSessionVars(ctx)
-		for _, v := range variable.SysVars {
-			if s.Pattern != nil {
-				p, ok := s.Pattern.(*expressions.PatternLike)
-				if !ok {
-					return errors.Errorf("Like should be a PatternLike expression")
-				}
-				p.Expr = expressions.Value{Val: v.Name}
-				r, err := p.Eval(ctx, nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				match, ok := r.(bool)
-				if !ok {
-					return errors.Errorf("Eval like pattern error")
-				}
-				if !match {
-					continue
-				}
-			}
-			value := v.Value
-			if !s.GlobalScope {
-				// Try to get Session Scope variable value
-				sv, ok := sessionVars.Systems[v.Name]
-				if ok {
-					value = sv
-				}
-			}
-			row := []interface{}{v.Name, value}
-			f(0, row)
-		}
-	}
-	return nil
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -222,4 +102,152 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 // Filter implements plan.Plan Filter interface.
 func (s *ShowPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return s, false, nil
+}
+
+// Next implements plan.Plan Next interface.
+func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if s.rows == nil {
+		s.fetchAll(ctx)
+	}
+	if s.cursor == len(s.rows) {
+		return
+	}
+	row = s.rows[s.cursor]
+	s.cursor++
+	return
+}
+
+func (s *ShowPlan) fetchAll(ctx context.Context) error {
+	switch s.Target {
+	case stmt.ShowEngines:
+		row := &plan.Row{
+			Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
+		}
+		s.rows = append(s.rows, row)
+	case stmt.ShowDatabases:
+		dbs := sessionctx.GetDomain(ctx).InfoSchema().AllSchemaNames()
+
+		// TODO: let information_schema be the first database
+		sort.Strings(dbs)
+
+		for _, d := range dbs {
+			s.rows = append(s.rows, &plan.Row{Data: []interface{}{d}})
+		}
+	case stmt.ShowTables:
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		dbName := model.NewCIStr(s.DBName)
+		if !is.SchemaExists(dbName) {
+			return errors.Errorf("Can not find DB: %s", dbName)
+		}
+
+		// sort for tables
+		var tableNames []string
+		for _, v := range is.SchemaTables(dbName) {
+			tableNames = append(tableNames, v.TableName().L)
+		}
+
+		sort.Strings(tableNames)
+
+		for _, v := range tableNames {
+			s.rows = append(s.rows, &plan.Row{Data: []interface{}{v}})
+		}
+	case stmt.ShowColumns:
+		is := sessionctx.GetDomain(ctx).InfoSchema()
+		dbName := model.NewCIStr(s.DBName)
+		if !is.SchemaExists(dbName) {
+			return errors.Errorf("Can not find DB: %s", dbName)
+		}
+		tbName := model.NewCIStr(s.TableName)
+		tb, err := is.TableByName(dbName, tbName)
+		if err != nil {
+			return errors.Errorf("Can not find table: %s", s.TableName)
+		}
+		cols := tb.Cols()
+
+		for _, col := range cols {
+			if !s.isColOK(col) {
+				continue
+			}
+
+			desc := column.NewColDesc(col)
+
+			// The FULL keyword causes the output to include the column collation and comments,
+			// as well as the privileges you have for each column.
+			row := &plan.Row{}
+			if s.Full {
+				row.Data = []interface{}{
+					desc.Field,
+					desc.Type,
+					desc.Collation,
+					desc.Null,
+					desc.Key,
+					desc.DefaultValue,
+					desc.Extra,
+					desc.Privileges,
+					desc.Comment,
+				}
+			} else {
+				row.Data = []interface{}{
+					desc.Field,
+					desc.Type,
+					desc.Null,
+					desc.Key,
+					desc.DefaultValue,
+					desc.Extra,
+				}
+			}
+			s.rows = append(s.rows, row)
+		}
+	case stmt.ShowWarnings:
+	// empty result
+	case stmt.ShowCharset:
+		// See: http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
+		descs := charset.GetAllCharsets()
+		for _, desc := range descs {
+			row := &plan.Row{
+				Data: []interface{}{desc.Name, desc.Desc, desc.DefaultCollation, desc.Maxlen},
+			}
+			s.rows = append(s.rows, row)
+		}
+	case stmt.ShowVariables:
+		sessionVars := variable.GetSessionVars(ctx)
+		for _, v := range variable.SysVars {
+			if s.Pattern != nil {
+				p, ok := s.Pattern.(*expressions.PatternLike)
+				if !ok {
+					return errors.Errorf("Like should be a PatternLike expression")
+				}
+				p.Expr = expressions.Value{Val: v.Name}
+				r, err := p.Eval(ctx, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				match, ok := r.(bool)
+				if !ok {
+					return errors.Errorf("Eval like pattern error")
+				}
+				if !match {
+					continue
+				}
+			}
+			value := v.Value
+			if !s.GlobalScope {
+				// Try to get Session Scope variable value
+				sv, ok := sessionVars.Systems[v.Name]
+				if ok {
+					value = sv
+				}
+			}
+			row := &plan.Row{Data: []interface{}{v.Name, value}}
+			s.rows = append(s.rows, row)
+		}
+	}
+	return nil
+}
+
+// Close implements plan.Plan Close interface.
+func (s *ShowPlan) Close() error {
+	s.rows = nil
+	s.cursor = 0
+	return nil
 }

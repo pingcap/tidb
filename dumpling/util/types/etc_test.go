@@ -149,6 +149,7 @@ func (s *testTypeEtcSuite) TestClone(c *C) {
 	checkClone(c, mysql.Decimal{}, true)
 	checkClone(c, mysql.Time{Time: time.Now(), Type: 1, Fsp: 3}, true)
 	checkClone(c, make(map[int]string), false)
+	checkClone(c, mysql.Hex{Value: 1}, true)
 }
 
 func checkCoerce(c *C, a, b interface{}) {
@@ -205,18 +206,17 @@ func (s *testTypeEtcSuite) TestCoerce(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
-	_, r, err := IsOrderedType(1)
-	c.Assert(err, IsNil)
+	r := IsOrderedType(1)
 	c.Assert(r, IsTrue)
-	_, r, err = IsOrderedType(-1)
-	c.Assert(err, IsNil)
+	r = IsOrderedType(-1)
 	c.Assert(r, IsTrue)
-	_, r, err = IsOrderedType(uint(1))
-	c.Assert(err, IsNil)
+	r = IsOrderedType(uint(1))
 	c.Assert(r, IsTrue)
 
-	_, r, err = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
-	c.Assert(err, IsNil)
+	r = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
+	c.Assert(r, IsTrue)
+
+	r = IsOrderedType([]byte{1})
 	c.Assert(r, IsTrue)
 }
 

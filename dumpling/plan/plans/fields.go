@@ -20,6 +20,7 @@ package plans
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -36,7 +37,8 @@ var (
 // SelectFieldsDefaultPlan extracts specific fields from Src Plan.
 type SelectFieldsDefaultPlan struct {
 	*SelectList
-	Src plan.Plan
+	Src      plan.Plan
+	evalArgs map[interface{}]interface{}
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -55,42 +57,39 @@ func (r *SelectFieldsDefaultPlan) Filter(ctx context.Context, expr expression.Ex
 	return r, false, nil
 }
 
-// Do implements the plan.Plan Do interface, extracts specific values by
-// r.Fields from row data.
-func (r *SelectFieldsDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	fields := r.Src.GetFields()
-	m := map[interface{}]interface{}{}
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, fields, in, field.DefaultFieldFlag)
+// Next implements plan.Plan Next interface.
+func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
+	srcRow, err := r.Src.Next(ctx)
+	if err != nil || srcRow == nil {
+		return nil, errors.Trace(err)
+	}
+	r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		return GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.DefaultFieldFlag)
+	}
+	row = &plan.Row{
+		Data: make([]interface{}, len(r.Fields)),
+	}
+	for i, fld := range r.Fields {
+		var err error
+		if row.Data[i], err = fld.Expr.Eval(ctx, r.evalArgs); err != nil {
+			return nil, errors.Trace(err)
 		}
+	}
+	return
+}
 
-		out := make([]interface{}, len(r.Fields))
-		for i, fld := range r.Fields {
-			var err error
-			if out[i], err = fld.Expr.Eval(ctx, m); err != nil {
-				return false, err
-			}
-		}
-		return f(rid, out)
-	})
+// Close implements plan.Plan Close interface.
+func (r *SelectFieldsDefaultPlan) Close() error {
+	return r.Src.Close()
 }
 
 // SelectEmptyFieldListPlan is the plan for "select expr, expr, ..."" with no FROM.
 type SelectEmptyFieldListPlan struct {
 	Fields []*field.Field
-}
-
-// Do implements the plan.Plan Do interface, returns empty row.
-func (s *SelectEmptyFieldListPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	// here we must output an empty row and don't evaluate fields
-	// because we will evaluate fields later in SelectFieldsDefaultPlan or GroupByDefaultPlan
-	values := make([]interface{}, len(s.Fields))
-	if _, err := f(0, values); err != nil {
-		return err
-	}
-
-	return nil
+	done   bool
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -114,4 +113,24 @@ func (s *SelectEmptyFieldListPlan) GetFields() []*field.ResultField {
 // Filter implements the plan.Plan Filter interface.
 func (s *SelectEmptyFieldListPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return s, false, nil
+}
+
+// Next implements plan.Plan Next interface.
+func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if s.done {
+		return
+	}
+	// Here we must output an empty row and don't evaluate fields
+	// because we will evaluate fields later in SelectFieldsDefaultPlan or GroupByDefaultPlan.
+	row = &plan.Row{
+		Data: make([]interface{}, len(s.Fields)),
+	}
+	s.done = true
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (s *SelectEmptyFieldListPlan) Close() error {
+	s.done = false
+	return nil
 }

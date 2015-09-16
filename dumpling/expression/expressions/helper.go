@@ -142,8 +142,8 @@ func MentionedAggregateFuncs(e expression.Expression) []expression.Expression {
 
 func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression) {
 	switch x := e.(type) {
-	case Value, *Value, *Variable,
-		*Default, *Ident, *SubQuery, *Position:
+	case Value, *Value, *Variable, *Default,
+		*Ident, *SubQuery, *Position, *ExistsSubQuery:
 		// nop
 	case *BinaryOperation:
 		mentionedAggregateFuncs(x.L, m)
@@ -240,8 +240,8 @@ func ContainAggregateFunc(e expression.Expression) bool {
 
 func mentionedColumns(e expression.Expression, m map[string]bool, names *[]string) {
 	switch x := e.(type) {
-	case Value, *Value, *Variable,
-		*Default, *SubQuery, *Position:
+	case Value, *Value, *Variable, *Default,
+		*SubQuery, *Position, *ExistsSubQuery:
 		// nop
 	case *BinaryOperation:
 		mentionedColumns(x.L, m, names)

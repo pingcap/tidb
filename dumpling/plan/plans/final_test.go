@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plans
+package plans_test
 
 import (
 	. "github.com/pingcap/check"
@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/plan/plans"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/charset"
 )
 
@@ -62,10 +64,10 @@ func (t *testFinalPlan) TestFinalPlan(c *C) {
 		},
 	}
 
-	tblPlan := &testTablePlan{finalTestData, []string{"id", "name", "ok"}}
+	tblPlan := &testTablePlan{finalTestData, []string{"id", "name", "ok"}, 0}
 
-	p := &SelectFinalPlan{
-		SelectList: &SelectList{
+	p := &plans.SelectFinalPlan{
+		SelectList: &plans.SelectList{
 			HiddenFieldOffset: len(tblPlan.GetFields()),
 			ResultFields: []*field.ResultField{
 				field.ColToResultField(col1, "t"),
@@ -82,7 +84,8 @@ func (t *testFinalPlan) TestFinalPlan(c *C) {
 		c.Assert(rf.Col.Charset, Equals, "")
 	}
 
-	p.Do(nil, func(id interface{}, in []interface{}) (bool, error) {
+	rset := rsets.Recordset{Plan: p}
+	rset.Do(func(in []interface{}) (bool, error) {
 		return true, nil
 	})
 

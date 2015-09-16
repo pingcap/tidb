@@ -39,6 +39,8 @@ var _ = (*InfoSchemaPlan)(nil)
 // MySQL.
 type InfoSchemaPlan struct {
 	TableName string
+	rows      []*plan.Row
+	cursor    int
 }
 
 var (
@@ -48,6 +50,8 @@ var (
 	statisticsFields     = buildResultFieldsForStatistics()
 	characterSetsFields  = buildResultFieldsForCharacterSets()
 	characterSetsRecords = buildCharacterSetsRecords()
+	collationsFields     = buildResultFieldsForCollations()
+	collationsRecords    = buildColltionsRecords()
 )
 
 const (
@@ -56,6 +60,7 @@ const (
 	tableColumns       = "COLUMNS"
 	tableStatistics    = "STATISTICS"
 	tableCharacterSets = "CHARACTER_SETS"
+	tableCollations    = "COLLATIONS"
 	catalogVal         = "def"
 )
 
@@ -68,6 +73,7 @@ func NewInfoSchemaPlan(tableName string) (isp *InfoSchemaPlan, err error) {
 	case tableColumns:
 	case tableStatistics:
 	case tableCharacterSets:
+	case tableCollations:
 	default:
 		return nil, errors.Errorf("table INFORMATION_SCHEMA.%s does not exist", tableName)
 	}
@@ -85,23 +91,6 @@ func buildResultFieldsForSchemata() (rfs []*field.ResultField) {
 	rfs = append(rfs, buildResultField(tbName, "DEFAULT_COLLATION_NAME", mysql.TypeVarchar, 32))
 	rfs = append(rfs, buildResultField(tbName, "SQL_PATH", mysql.TypeVarchar, 512))
 	return rfs
-}
-
-func (isp *InfoSchemaPlan) doSchemata(schemas []string, iterFunc plan.RowIterFunc) error {
-	sort.Strings(schemas)
-	for _, schema := range schemas {
-		record := []interface{}{
-			catalogVal,                 // CATALOG_NAME
-			schema,                     // SCHEMA_NAME
-			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
-			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
-			nil,
-		}
-		if more, err := iterFunc(0, record); !more || err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func buildResultFieldsForTables() (rfs []*field.ResultField) {
@@ -133,40 +122,6 @@ func buildResultFieldsForTables() (rfs []*field.ResultField) {
 	return
 }
 
-func (isp *InfoSchemaPlan) doTables(schemas []*model.DBInfo, iterFunc plan.RowIterFunc) error {
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
-			record := []interface{}{
-				catalogVal,          // TABLE_CATALOG
-				schema.Name.O,       // TABLE_SCHEMA
-				table.Name.O,        // TABLE_NAME
-				"BASE_TABLE",        // TABLE_TYPE
-				"InnoDB",            // ENGINE
-				uint64(10),          // VERSION
-				"Compact",           // ROW_FORMAT
-				uint64(0),           // TABLE_ROWS
-				uint64(0),           // AVG_ROW_LENGTH
-				uint64(16384),       // DATA_LENGTH
-				uint64(0),           // MAX_DATA_LENGTH
-				uint64(0),           // INDEX_LENGTH
-				uint64(0),           // DATA_FREE
-				nil,                 // AUTO_INCREMENT
-				nil,                 // CREATE_TIME
-				nil,                 // UPDATE_TIME
-				nil,                 // CHECK_TIME
-				"latin1_swedish_ci", // TABLE_COLLATION
-				nil,                 // CHECKSUM
-				"",                  // CREATE_OPTIONS
-				"",                  // TABLE_COMMENT
-			}
-			if more, err := iterFunc(0, record); !more || err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func buildResultFieldsForColumns() (rfs []*field.ResultField) {
 	tbName := tableColumns
 	rfs = append(rfs, buildResultField(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 512))
@@ -195,7 +150,206 @@ func buildResultFieldsForColumns() (rfs []*field.ResultField) {
 	return
 }
 
-func (isp *InfoSchemaPlan) doColumns(schemas []*model.DBInfo, iterFunc plan.RowIterFunc) error {
+func buildResultFieldsForStatistics() (rfs []*field.ResultField) {
+	tbName := tableStatistics
+	rfs = append(rfs, buildResultField(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 512))
+	rfs = append(rfs, buildResultField(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "NON_UNIQUE", mysql.TypeVarchar, 1))
+	rfs = append(rfs, buildResultField(tbName, "INDEX_SCHEMA", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "INDEX_NAME", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "SEQ_IN_INDEX", mysql.TypeLonglong, 2))
+	rfs = append(rfs, buildResultField(tbName, "COLUMN_NAME", mysql.TypeVarchar, 21))
+	rfs = append(rfs, buildResultField(tbName, "COLLATION", mysql.TypeVarchar, 1))
+	rfs = append(rfs, buildResultField(tbName, "CARDINALITY", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "SUB_PART", mysql.TypeLonglong, 3))
+	rfs = append(rfs, buildResultField(tbName, "PACKED", mysql.TypeVarchar, 10))
+	rfs = append(rfs, buildResultField(tbName, "NULLABLE", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "INDEX_TYPE", mysql.TypeVarchar, 16))
+	rfs = append(rfs, buildResultField(tbName, "COMMENT", mysql.TypeVarchar, 16))
+	rfs = append(rfs, buildResultField(tbName, "INDEX_COMMENT", mysql.TypeVarchar, 1024))
+	for i, f := range rfs {
+		f.Offset = i
+	}
+	return
+}
+
+func buildResultFieldsForCharacterSets() (rfs []*field.ResultField) {
+	tbName := tableCharacterSets
+	rfs = append(rfs, buildResultField(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "DEFAULT_COLLATE_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "DESCRIPTION", mysql.TypeVarchar, 60))
+	rfs = append(rfs, buildResultField(tbName, "MAXLEN", mysql.TypeLonglong, 3))
+	return rfs
+}
+
+func buildCharacterSetsRecords() (records [][]interface{}) {
+	records = append(records,
+		[]interface{}{"ascii", "ascii_general_ci", "US ASCII", 1},
+		[]interface{}{"binary", "binary", "Binary pseudo charset", 1},
+		[]interface{}{"latin1", "latin1_swedish_ci", "cp1252 West European", 1},
+		[]interface{}{"utf8", "utf8_general_ci", "UTF-8 Unicode", 3},
+		[]interface{}{"utf8mb4", "utf8mb4_general_ci", "UTF-8 Unicode", 4},
+	)
+	return records
+}
+
+func buildResultFieldsForCollations() (rfs []*field.ResultField) {
+	tbName := tableCollations
+	rfs = append(rfs, buildResultField(tbName, "COLLATION_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
+	rfs = append(rfs, buildResultField(tbName, "ID", mysql.TypeLonglong, 11))
+	rfs = append(rfs, buildResultField(tbName, "IS_DEFAULT", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "IS_COMPILED", mysql.TypeVarchar, 3))
+	rfs = append(rfs, buildResultField(tbName, "SORTLEN", mysql.TypeLonglong, 3))
+	return rfs
+}
+
+func buildColltionsRecords() (records [][]interface{}) {
+	records = append(records,
+		[]interface{}{"ascii_general_ci", "ascii", 1, "Yes", "Yes", 1},
+		[]interface{}{"binary", "binary", 2, "Yes", "Yes", 1},
+		[]interface{}{"latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1},
+		[]interface{}{"utf8_general_ci", "utf8", 4, "Yes", "Yes", 1},
+		[]interface{}{"utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1},
+	)
+	return records
+}
+
+// Explain implements plan.Plan Explain interface.
+func (isp *InfoSchemaPlan) Explain(w format.Formatter) {}
+
+// Filter implements plan.Plan Filter interface.
+func (isp *InfoSchemaPlan) Filter(ctx context.Context, expr expression.Expression) (p plan.Plan, filtered bool, err error) {
+	return isp, false, nil
+}
+
+// GetFields implements plan.Plan GetFields interface, simulates MySQL's output.
+func (isp *InfoSchemaPlan) GetFields() []*field.ResultField {
+	switch isp.TableName {
+	case tableSchemata:
+		return schemataFields
+	case tableTables:
+		return tablesFields
+	case tableColumns:
+		return columnsFields
+	case tableStatistics:
+		return statisticsFields
+	case tableCharacterSets:
+		return characterSetsFields
+	case tableCollations:
+		return collationsFields
+	}
+	return nil
+}
+
+func buildResultField(tableName, name string, tp byte, size int) *field.ResultField {
+	mCharset := charset.CharsetBin
+	mCollation := charset.CharsetBin
+	mFlag := mysql.UnsignedFlag
+	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
+		mCharset = mysql.DefaultCharset
+		mCollation = mysql.DefaultCollationName
+		mFlag = 0
+	}
+	fieldType := types.FieldType{
+		Charset: mCharset,
+		Collate: mCollation,
+		Tp:      tp,
+		Flen:    size,
+		Flag:    uint(mFlag),
+	}
+	colInfo := model.ColumnInfo{
+		Name:      model.NewCIStr(name),
+		FieldType: fieldType,
+	}
+	field := &field.ResultField{
+		Col:       column.Col{ColumnInfo: colInfo},
+		DBName:    infoschema.Name,
+		TableName: tableName,
+		Name:      colInfo.Name.O,
+	}
+	return field
+}
+
+// Next implements plan.Plan Next interface.
+func (isp *InfoSchemaPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if isp.rows == nil {
+		isp.fetchAll(ctx)
+	}
+	if isp.cursor == len(isp.rows) {
+		return
+	}
+	row = isp.rows[isp.cursor]
+	isp.cursor++
+	return
+}
+
+func (isp *InfoSchemaPlan) fetchAll(ctx context.Context) {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	schemas := is.AllSchemas()
+	switch isp.TableName {
+	case tableSchemata:
+		isp.fetchSchemata(is.AllSchemaNames())
+	case tableTables:
+		isp.fetchTables(schemas)
+	case tableColumns:
+		isp.fetchColumns(schemas)
+	case tableStatistics:
+		isp.fetchStatistics(is, schemas)
+	case tableCharacterSets:
+		isp.fetchCharacterSets()
+	case tableCollations:
+		isp.fetchCollations()
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchSchemata(schemas []string) {
+	sort.Strings(schemas)
+	for _, schema := range schemas {
+		record := []interface{}{
+			catalogVal,                 // CATALOG_NAME
+			schema,                     // SCHEMA_NAME
+			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
+			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
+			nil,
+		}
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchTables(schemas []*model.DBInfo) {
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			record := []interface{}{
+				catalogVal,          // TABLE_CATALOG
+				schema.Name.O,       // TABLE_SCHEMA
+				table.Name.O,        // TABLE_NAME
+				"BASE_TABLE",        // TABLE_TYPE
+				"InnoDB",            // ENGINE
+				uint64(10),          // VERSION
+				"Compact",           // ROW_FORMAT
+				uint64(0),           // TABLE_ROWS
+				uint64(0),           // AVG_ROW_LENGTH
+				uint64(16384),       // DATA_LENGTH
+				uint64(0),           // MAX_DATA_LENGTH
+				uint64(0),           // INDEX_LENGTH
+				uint64(0),           // DATA_FREE
+				nil,                 // AUTO_INCREMENT
+				nil,                 // CREATE_TIME
+				nil,                 // UPDATE_TIME
+				nil,                 // CHECK_TIME
+				"latin1_swedish_ci", // TABLE_COLLATION
+				nil,                 // CHECKSUM
+				"",                  // CREATE_OPTIONS
+				"",                  // TABLE_COMMENT
+			}
+			isp.rows = append(isp.rows, &plan.Row{Data: record})
+		}
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			for i, col := range table.Columns {
@@ -236,40 +390,13 @@ func (isp *InfoSchemaPlan) doColumns(schemas []*model.DBInfo, iterFunc plan.RowI
 					"select,insert,update,references", // PRIVILEGES
 					"", // COLUMN_COMMENT
 				}
-				if more, err := iterFunc(0, record); !more || err != nil {
-					return err
-				}
+				isp.rows = append(isp.rows, &plan.Row{Data: record})
 			}
 		}
 	}
-	return nil
 }
 
-func buildResultFieldsForStatistics() (rfs []*field.ResultField) {
-	tbName := tableStatistics
-	rfs = append(rfs, buildResultField(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 512))
-	rfs = append(rfs, buildResultField(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField(tbName, "NON_UNIQUE", mysql.TypeVarchar, 1))
-	rfs = append(rfs, buildResultField(tbName, "INDEX_SCHEMA", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField(tbName, "INDEX_NAME", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField(tbName, "SEQ_IN_INDEX", mysql.TypeLonglong, 2))
-	rfs = append(rfs, buildResultField(tbName, "COLUMN_NAME", mysql.TypeVarchar, 21))
-	rfs = append(rfs, buildResultField(tbName, "COLLATION", mysql.TypeVarchar, 1))
-	rfs = append(rfs, buildResultField(tbName, "CARDINALITY", mysql.TypeLonglong, 21))
-	rfs = append(rfs, buildResultField(tbName, "SUB_PART", mysql.TypeLonglong, 3))
-	rfs = append(rfs, buildResultField(tbName, "PACKED", mysql.TypeVarchar, 10))
-	rfs = append(rfs, buildResultField(tbName, "NULLABLE", mysql.TypeVarchar, 3))
-	rfs = append(rfs, buildResultField(tbName, "INDEX_TYPE", mysql.TypeVarchar, 16))
-	rfs = append(rfs, buildResultField(tbName, "COMMENT", mysql.TypeVarchar, 16))
-	rfs = append(rfs, buildResultField(tbName, "INDEX_COMMENT", mysql.TypeVarchar, 1024))
-	for i, f := range rfs {
-		f.Offset = i
-	}
-	return
-}
-
-func (isp *InfoSchemaPlan) doStatistics(is infoschema.InfoSchema, schemas []*model.DBInfo, iterFunc plan.RowIterFunc) error {
+func (isp *InfoSchemaPlan) fetchStatistics(is infoschema.InfoSchema, schemas []*model.DBInfo) {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			for _, index := range table.Indices {
@@ -301,114 +428,29 @@ func (isp *InfoSchemaPlan) doStatistics(is infoschema.InfoSchema, schemas []*mod
 						"",            // COMMENT
 						"",            // INDEX_COMMENT
 					}
-					if more, err := iterFunc(0, record); !more || err != nil {
-						return err
-					}
+					isp.rows = append(isp.rows, &plan.Row{Data: record})
 				}
 			}
 		}
 	}
-	return nil
 }
 
-func buildResultFieldsForCharacterSets() (rfs []*field.ResultField) {
-	tbName := tableCharacterSets
-	rfs = append(rfs, buildResultField(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
-	rfs = append(rfs, buildResultField(tbName, "DEFAULT_COLLATE_NAME", mysql.TypeVarchar, 32))
-	rfs = append(rfs, buildResultField(tbName, "DESCRIPTION", mysql.TypeVarchar, 60))
-	rfs = append(rfs, buildResultField(tbName, "MAXLEN", mysql.TypeLonglong, 3))
-	return rfs
-}
-
-func buildCharacterSetsRecords() (records [][]interface{}) {
-	records = append(records,
-		[]interface{}{"ascii", "ascii_general_ci", "US ASCII", 1},
-		[]interface{}{"binary", "binary", "Binary pseudo charset", 1},
-		[]interface{}{"latin1", "latin1_swedish_ci", "cp1252 West European", 1},
-		[]interface{}{"utf8", "utf8_general_ci", "UTF-8 Unicode", 3},
-		[]interface{}{"utf8mb4", "utf8mb4_general_ci", "UTF-8 Unicode", 4},
-	)
-	return records
-}
-
-func (isp *InfoSchemaPlan) doCharacterSets(iterFunc plan.RowIterFunc) error {
+func (isp *InfoSchemaPlan) fetchCharacterSets() {
 	for _, record := range characterSetsRecords {
-		if more, err := iterFunc(0, record); !more || err != nil {
-			return err
-		}
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchCollations() error {
+	for _, record := range collationsRecords {
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
 	}
 	return nil
 }
 
-// Do implements plan.Plan Do interface, constructs result data.
-func (isp *InfoSchemaPlan) Do(ctx context.Context, iterFunc plan.RowIterFunc) error {
-	is := sessionctx.GetDomain(ctx).InfoSchema()
-	schemas := is.AllSchemas()
-	switch isp.TableName {
-	case tableSchemata:
-		return isp.doSchemata(is.AllSchemaNames(), iterFunc)
-	case tableTables:
-		return isp.doTables(schemas, iterFunc)
-	case tableColumns:
-		return isp.doColumns(schemas, iterFunc)
-	case tableStatistics:
-		return isp.doStatistics(is, schemas, iterFunc)
-	case tableCharacterSets:
-		return isp.doCharacterSets(iterFunc)
-	}
+// Close implements plan.Plan Close interface.
+func (isp *InfoSchemaPlan) Close() error {
+	isp.rows = nil
+	isp.cursor = 0
 	return nil
-}
-
-// Explain implements plan.Plan Explain interface.
-func (isp *InfoSchemaPlan) Explain(w format.Formatter) {}
-
-// Filter implements plan.Plan Filter interface.
-func (isp *InfoSchemaPlan) Filter(ctx context.Context, expr expression.Expression) (p plan.Plan, filtered bool, err error) {
-	return isp, false, nil
-}
-
-// GetFields implements plan.Plan GetFields interface, simulates MySQL's output.
-func (isp *InfoSchemaPlan) GetFields() []*field.ResultField {
-	switch isp.TableName {
-	case tableSchemata:
-		return schemataFields
-	case tableTables:
-		return tablesFields
-	case tableColumns:
-		return columnsFields
-	case tableStatistics:
-		return statisticsFields
-	case tableCharacterSets:
-		return characterSetsFields
-	}
-	return nil
-}
-
-func buildResultField(tableName, name string, tp byte, size int) *field.ResultField {
-	mCharset := charset.CharsetBin
-	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
-	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
-		mCharset = mysql.DefaultCharset
-		mCollation = mysql.DefaultCollationName
-		mFlag = 0
-	}
-	fieldType := types.FieldType{
-		Charset: mCharset,
-		Collate: mCollation,
-		Tp:      tp,
-		Flen:    size,
-		Flag:    uint(mFlag),
-	}
-	colInfo := model.ColumnInfo{
-		Name:      model.NewCIStr(name),
-		FieldType: fieldType,
-	}
-	field := &field.ResultField{
-		Col:       column.Col{ColumnInfo: colInfo},
-		DBName:    infoschema.Name,
-		TableName: tableName,
-		Name:      colInfo.Name.O,
-	}
-	return field
 }

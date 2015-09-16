@@ -18,12 +18,12 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -33,7 +33,9 @@ var (
 // DistinctDefaultPlan e.g. SELECT distinct(id) FROM t;
 type DistinctDefaultPlan struct {
 	*SelectList
-	Src plan.Plan
+	Src    plan.Plan
+	rows   []*plan.Row
+	cursor int
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -47,48 +49,58 @@ func (r *DistinctDefaultPlan) Filter(ctx context.Context, expr expression.Expres
 	return r, false, nil
 }
 
-// Do : Distinct plan use an in-memory temp table for storing items that has same
-// key, the value in temp table is an array of record handles.
-func (r *DistinctDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	t, err := memkv.CreateTemp(true)
-	if err != nil {
+// Next implements plan.Plan Next interface.
+func (r *DistinctDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.rows == nil {
+		err = r.fetchAll(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if r.cursor == len(r.rows) {
 		return
 	}
+	row = r.rows[r.cursor]
+	r.cursor++
+	return
+}
 
+func (r *DistinctDefaultPlan) fetchAll(ctx context.Context) error {
+	t, err := memkv.CreateTemp(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		if derr := t.Drop(); derr != nil && err == nil {
 			err = derr
 		}
 	}()
-
-	var rows [][]interface{}
-	if err = r.Src.Do(ctx, func(id interface{}, in []interface{}) (bool, error) {
+	for {
+		row, err := r.Src.Next(ctx)
+		if row == nil || err != nil {
+			return errors.Trace(err)
+		}
 		var v []interface{}
 		// get distinct key
-		key := in[0:r.HiddenFieldOffset]
+		key := row.Data[0:r.HiddenFieldOffset]
 		v, err = t.Get(key)
 		if err != nil {
-			return false, err
+			return errors.Trace(err)
 		}
 
 		if len(v) == 0 {
 			// no group for key, save data for this group
-			rows = append(rows, in)
+			r.rows = append(r.rows, row)
 			if err := t.Set(key, []interface{}{true}); err != nil {
-				return false, err
+				return errors.Trace(err)
 			}
 		}
-
-		return true, nil
-	}); err != nil {
-		return
 	}
+}
 
-	var more bool
-	for _, row := range rows {
-		if more, err = f(nil, row); !more || err != nil {
-			break
-		}
-	}
-	return types.EOFAsNil(err)
+// Close implements plan.Plan Close interface.
+func (r *DistinctDefaultPlan) Close() error {
+	r.rows = nil
+	r.cursor = 0
+	return r.Src.Close()
 }
