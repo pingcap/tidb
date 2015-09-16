@@ -147,7 +147,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 	lock := s.Lock
-	if variable.IsAutocommit(ctx) {
+	if variable.ShouldAutocommit(ctx) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
