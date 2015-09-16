@@ -15,7 +15,6 @@ package plans
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -90,11 +89,13 @@ func (p *OuterQueryPlan) Next(ctx context.Context) (*plan.Row, error) {
 		p.updateOuterQuery(ctx, row)
 	case WherePhase, LockPhase:
 		p.updateOuterQuery(ctx, row)
-	case GroupByPhase, SelectFieldsPhase, HavingPhase, DistinctPhase:
+	case GroupByPhase, SelectFieldsPhase, HavingPhase, DistinctPhase, OrderByPhase:
 		row.DataFields = p.Src.GetFields()[0:p.HiddenFieldOffset]
 		p.updateOuterQuery(ctx, row)
 	case BeforeFinalPhase:
-		p.popOuterQuery(ctx)
+		if err := p.popOuterQuery(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	return row, nil
@@ -115,19 +116,20 @@ func (p *OuterQueryPlan) updateOuterQuery(ctx context.Context, row *plan.Row) {
 	ctx.SetValue(outerQueryKey, p.OuterQuery)
 }
 
-func (p *OuterQueryPlan) popOuterQuery(ctx context.Context) {
+func (p *OuterQueryPlan) popOuterQuery(ctx context.Context) error {
 	t := getOuterQuery(ctx)
+
 	if t == nil || t != p.OuterQuery {
-		log.Errorf("invalid outer query stack, want to pop %v, but top is %v\n", p.OuterQuery, t)
-		return
+		return errors.Errorf("invalid outer query stack")
 	}
 
 	if t.last == nil {
 		ctx.ClearValue(outerQueryKey)
-		return
+		return nil
 	}
 
 	ctx.SetValue(outerQueryKey, t.last)
+	return nil
 }
 
 // A dummy type to avoid naming collision in context.
