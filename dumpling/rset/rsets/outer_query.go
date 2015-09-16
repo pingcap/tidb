@@ -29,9 +29,11 @@ type OuterQueryRset struct {
 	Src               plan.Plan
 	SrcPhase          int
 	HiddenFieldOffset int
+	OuterQuery        *plans.OuterQuery
 }
 
 // Plan gets OuterQueryPlan.
 func (r *OuterQueryRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.OuterQueryPlan{Src: r.Src, SrcPhase: r.SrcPhase, HiddenFieldOffset: r.HiddenFieldOffset}, nil
+	return &plans.OuterQueryPlan{Src: r.Src, SrcPhase: r.SrcPhase,
+		HiddenFieldOffset: r.HiddenFieldOffset, OuterQuery: r.OuterQuery}, nil
 }

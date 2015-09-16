@@ -291,6 +291,9 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		}
 		row := &plan.Row{
 			Data: make([]interface{}, len(r.Fields)),
+			// must save FromData info for inner sub query use.
+			FromData:       srcRow.Data,
+			FromDataFields: srcRow.FromDataFields,
 		}
 		// TODO: later order by will use the same mechanism, so we may use another plan to do this
 		evalArgs := map[interface{}]interface{}{}
