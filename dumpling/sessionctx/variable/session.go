@@ -38,9 +38,6 @@ type SessionVars struct {
 	// Client Capability
 	ClientCapability uint32 // Client capability
 
-	// Disable autocommit
-	DisableAutocommit bool
-
 	// Found rows
 	FoundRows uint64
 }
@@ -117,12 +114,12 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// IsAutocommit checks if it is in autocommit enviroment
-func IsAutocommit(ctx context.Context) bool {
+// ShouldAutocommit checks if it is in autocommit enviroment
+func ShouldAutocommit(ctx context.Context) bool {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
 	if GetSessionVars(ctx).Status&mysql.ServerStatusAutocommit > 0 &&
-		!GetSessionVars(ctx).DisableAutocommit {
+		GetSessionVars(ctx).Status&mysql.ServerStatusInTrans > 0 {
 		return true
 	}
 	return false
