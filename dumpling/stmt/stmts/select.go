@@ -241,6 +241,9 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			SelectList: selectList}).Plan(ctx); err != nil {
 			return nil, err
 		}
+
+		r, _ = (&rsets.OuterQueryRset{Src: r, SrcPhase: plans.OrderByPhase,
+			HiddenFieldOffset: selectList.HiddenFieldOffset, OuterQuery: outerQuery}).Plan(ctx)
 	}
 
 	if s := s.Offset; s != nil {
