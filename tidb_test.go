@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -484,7 +485,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "drop table if exists t;", 0)
 	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
-	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "insert t values ()", 0)
 	checkInTrans(c, se, "commit", 0)
 	checkInTrans(c, se, "insert t values ()", 0)
 
