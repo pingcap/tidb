@@ -26,14 +26,11 @@ var (
 // OuterQueryRset is to generate OuterQueryPlan,
 // so that sub query can fetch value from the table reference from outer query.
 type OuterQueryRset struct {
-	Src               plan.Plan
-	SrcPhase          int
-	HiddenFieldOffset int
-	OuterQuery        *plans.OuterQuery
+	Src        plan.Plan
+	OuterQuery *plans.OuterQuery
 }
 
 // Plan gets OuterQueryPlan.
 func (r *OuterQueryRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.OuterQueryPlan{Src: r.Src, SrcPhase: r.SrcPhase,
-		HiddenFieldOffset: r.HiddenFieldOffset, OuterQuery: r.OuterQuery}, nil
+	return &plans.OuterQueryPlan{Src: r.Src, OuterQuery: r.OuterQuery}, nil
 }

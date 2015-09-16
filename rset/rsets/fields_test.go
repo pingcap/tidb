@@ -46,7 +46,7 @@ func (s *testSelectFieldsRsetSuite) SetUpSuite(c *C) {
 		Fields:            fields,
 	}
 
-	s.sr = &SelectFieldsRset{Src: tblPlan, SelectList: selectList}
+	s.sr = &SelectFieldsRset{Src: tblPlan, SelectList: selectList, OuterQuery: &plans.OuterQuery{}}
 	s.fr = &FieldRset{Fields: fields}
 }
 

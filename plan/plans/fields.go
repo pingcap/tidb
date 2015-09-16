@@ -37,8 +37,9 @@ var (
 // SelectFieldsDefaultPlan extracts specific fields from Src Plan.
 type SelectFieldsDefaultPlan struct {
 	*SelectList
-	Src      plan.Plan
-	evalArgs map[interface{}]interface{}
+	Src        plan.Plan
+	evalArgs   map[interface{}]interface{}
+	OuterQuery *OuterQuery
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -66,6 +67,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 	if err != nil || srcRow == nil {
 		return nil, errors.Trace(err)
 	}
+
 	r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 		v, err0 := GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.DefaultFieldFlag)
 		if err0 == nil {
@@ -77,8 +79,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 	row = &plan.Row{
 		Data: make([]interface{}, len(r.Fields)),
 		// must save FromData info for inner sub query use.
-		FromData:       srcRow.Data,
-		FromDataFields: srcRow.FromDataFields,
+		FromData: srcRow.Data,
 	}
 	for i, fld := range r.Fields {
 		var err error
@@ -86,6 +87,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 			return nil, errors.Trace(err)
 		}
 	}
+	r.OuterQuery.update(ctx, row.Data, row.FromData)
 	return
 }
 

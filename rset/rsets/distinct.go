@@ -31,9 +31,10 @@ var (
 type DistinctRset struct {
 	Src        plan.Plan
 	SelectList *plans.SelectList
+	OuterQuery *plans.OuterQuery
 }
 
 // Plan gets DistinctDefaultPlan.
 func (r *DistinctRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.DistinctDefaultPlan{Src: r.Src, SelectList: r.SelectList}, nil
+	return &plans.DistinctDefaultPlan{Src: r.Src, SelectList: r.SelectList, OuterQuery: r.OuterQuery}, nil
 }

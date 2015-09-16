@@ -73,6 +73,7 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 				CIStr: model.NewCIStr("id"),
 			},
 		},
+		OuterQuery: &plans.OuterQuery{},
 	}
 
 	ret := map[int]string{}

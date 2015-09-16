@@ -38,6 +38,7 @@ type GroupByRset struct {
 	By         []expression.Expression
 	Src        plan.Plan
 	SelectList *plans.SelectList
+	OuterQuery *plans.OuterQuery
 }
 
 // HasAmbiguousField checks whether have ambiguous group by fields.
@@ -134,7 +135,8 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 
-	return &plans.GroupByDefaultPlan{By: r.By, Src: r.Src, SelectList: r.SelectList}, nil
+	return &plans.GroupByDefaultPlan{By: r.By, Src: r.Src,
+		SelectList: r.SelectList, OuterQuery: r.OuterQuery}, nil
 }
 
 func (r *GroupByRset) String() string {

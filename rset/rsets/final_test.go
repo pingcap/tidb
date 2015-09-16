@@ -31,7 +31,7 @@ func (s *testSelectFinalRsetSuite) SetUpSuite(c *C) {
 		HiddenFieldOffset: len(tblPlan.GetFields()),
 	}
 
-	s.r = &SelectFinalRset{Src: tblPlan, SelectList: selectList}
+	s.r = &SelectFinalRset{Src: tblPlan, SelectList: selectList, OuterQuery: &plans.OuterQuery{}}
 }
 
 func (s *testSelectFinalRsetSuite) TestSelectFinalRsetPlan(c *C) {

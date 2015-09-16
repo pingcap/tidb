@@ -52,7 +52,8 @@ func (t *testOrderBySuit) TestOrderBy(c *C) {
 				CIStr: model.NewCIStr("id"),
 			},
 		},
-		Ascs: []bool{false},
+		Ascs:       []bool{false},
+		OuterQuery: &plans.OuterQuery{},
 	}
 
 	prev := 10000
