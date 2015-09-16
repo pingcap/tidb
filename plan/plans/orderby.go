@@ -158,7 +158,13 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 			break
 		}
 		evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
+			v, err := GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
+			if err == nil {
+				return v, nil
+			}
+
+			// try to find in outer query
+			return getIdentValueFromOuterQuery(ctx, name)
 		}
 
 		evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
