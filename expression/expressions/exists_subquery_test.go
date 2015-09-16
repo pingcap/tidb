@@ -16,6 +16,7 @@ package expressions
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -35,6 +36,7 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 		{[]interface{}{}, 0},
 	}
 
+	ctx := mock.NewContext()
 	for _, t := range tbl {
 		in := make([][]interface{}, 0, len(t.in))
 		for _, v := range t.in {
@@ -52,7 +54,7 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 		str := exprc.String()
 		c.Assert(len(str), Greater, 0)
 
-		v, err := exprc.Eval(nil, nil)
+		v, err := exprc.Eval(ctx, nil)
 		c.Assert(err, IsNil)
 
 		val, err := types.ToBool(v)
@@ -91,7 +93,7 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 		str = exprc.String()
 		c.Assert(len(str), Greater, 0)
 
-		v, err := exprc.Eval(nil, nil)
+		v, err := exprc.Eval(ctx, nil)
 		c.Assert(err, IsNil)
 
 		val, err := types.ToBool(v)

@@ -82,7 +82,7 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, nil
 	}
 
-	if cs.R.Value != nil {
+	if !cs.R.UseOuterQuery && cs.R.Value != nil {
 		return cs.checkResult(lv, cs.R.Value.([]interface{}))
 	}
 
@@ -92,6 +92,10 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	}
 	defer p.Close()
 	res := []interface{}{}
+
+	cs.R.push(ctx)
+	defer cs.R.pop(ctx)
+
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {

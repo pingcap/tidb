@@ -16,6 +16,7 @@ package expressions
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -116,6 +117,7 @@ func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 		{3, opcode.LE, []interface{}{1, 2, nil}, true, 0},
 	}
 
+	ctx := mock.NewContext()
 	for _, t := range tbl {
 		lhs := convert(t.lhs)
 
@@ -132,7 +134,7 @@ func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 		str := expr.String()
 		c.Assert(len(str), Greater, 0)
 
-		v, err := expr.Eval(nil, nil)
+		v, err := expr.Eval(ctx, nil)
 		c.Assert(err, IsNil)
 
 		switch x := t.result.(type) {
@@ -149,11 +151,11 @@ func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 	sq := newMockSubQuery([][]interface{}{{1, 2}}, []string{"c1", "c2"})
 	expr := NewCompareSubQuery(opcode.EQ, Value{1}, sq, true)
 
-	_, err := expr.Eval(nil, nil)
+	_, err := expr.Eval(ctx, nil)
 	c.Assert(err, NotNil)
 
 	expr = NewCompareSubQuery(opcode.EQ, Value{1}, sq, false)
 
-	_, err = expr.Eval(nil, nil)
+	_, err = expr.Eval(ctx, nil)
 	c.Assert(err, NotNil)
 }
