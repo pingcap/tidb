@@ -126,6 +126,12 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{[]interface{}{1, 2, 3}, []interface{}{1, 2, 3}, 0},
 		{[]interface{}{1, 3, 3}, []interface{}{1, 2, 3}, 1},
 		{[]interface{}{1, 2, 3}, []interface{}{2, 2, 3}, -1},
+
+		{mysql.Hex{Value: 1}, 1, 0},
+		{mysql.Hex{Value: 0x4D7953514C}, "MySQL", 0},
+		{mysql.Hex{Value: 0}, uint64(10), -1},
+		{mysql.Hex{Value: 1}, float64(0), 1},
+		{mysql.Hex{Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
 	}
 
 	for _, t := range cmpTbl {

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -37,10 +36,24 @@ var (
 
 // GroupByDefaultPlan handles GROUP BY statement, GroupByDefaultPlan uses an
 // in-memory table to aggregate values.
+//
+// Table: Subject_Selection
+// Subject   Semester   Attendee
+// ---------------------------------
+// ITB001    1          John
+// ITB001    1          Bob
+// ITB001    1          Mickey
+// ITB001    2          Jenny
+// ITB001    2          James
+// MKB114    1          John
+// MKB114    1          Erica
+// refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
 type GroupByDefaultPlan struct {
 	*SelectList
-	Src plan.Plan
-	By  []expression.Expression
+	Src    plan.Plan
+	By     []expression.Expression
+	rows   []*groupRow
+	cursor int
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -69,128 +82,16 @@ func (r *GroupByDefaultPlan) Filter(ctx context.Context, expr expression.Express
 }
 
 type groupRow struct {
-	Row []interface{}
+	Row *plan.Row
 	// for one group by row, we should have a map to save aggregate value
 	Args map[interface{}]interface{}
-}
-
-// Do implements plan.Plan Do interface.
-// Table: Subject_Selection
-// Subject   Semester   Attendee
-// ---------------------------------
-// ITB001    1          John
-// ITB001    1          Bob
-// ITB001    1          Mickey
-// ITB001    2          Jenny
-// ITB001    2          James
-// MKB114    1          John
-// MKB114    1          Erica
-// refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
-func (r *GroupByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	// TODO: now we have to use this to save group key -> row index
-	// later we will serialize group by items into a string key and then use a map instead.
-	t, err := memkv.CreateTemp(true)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if derr := t.Drop(); derr != nil && err == nil {
-			err = derr
-		}
-	}()
-
-	k := make([]interface{}, len(r.By))
-
-	// save output group by result
-	var outRows []*groupRow
-
-	err = r.Src.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		out := make([]interface{}, len(r.Fields))
-
-		// TODO: later order by will use the same mechanism, so we may use another plan to do this
-		m := map[interface{}]interface{}{}
-		// must first eval none aggregate fields, because alias group by will use this.
-		if err := r.evalNoneAggFields(ctx, out, m, in); err != nil {
-			return false, err
-		}
-
-		if err := r.evalGroupKey(ctx, k, out, in); err != nil {
-			return false, err
-		}
-
-		// get row index with k.
-		v, err := t.Get(k)
-		if err != nil {
-			return false, err
-		}
-
-		index := 0
-		if len(v) == 0 {
-			// no group for key, save data for this group
-			index = len(outRows)
-			outRows = append(outRows, &groupRow{Row: out, Args: m})
-
-			if err := t.Set(k, []interface{}{index}); err != nil {
-				return false, err
-			}
-		} else {
-			// we have already saved data in the group by key, use this
-			index = v[0].(int)
-
-			// we will use this context args to evaluate aggregate fields.
-			m = outRows[index].Args
-		}
-
-		// eval aggregate fields
-		if err := r.evalAggFields(ctx, out, m, in); err != nil {
-			return false, err
-		}
-
-		return true, nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	if len(outRows) == 0 {
-		// empty table
-		var out []interface{}
-		out, err = r.evalEmptyTable(ctx)
-		if err != nil || out == nil {
-			return err
-		}
-
-		_, err = f(nil, out)
-
-		return err
-	}
-
-	// we don't consider implicit GROUP BY sorting now.
-	// Relying on implicit GROUP BY sorting in MySQL 5.7 is deprecated.
-	// To achieve a specific sort order of grouped results,
-	// it is preferable to use an explicit ORDER BY clause.
-	// GROUP BY sorting is a MySQL extension that may change in a future release
-	var more bool
-	for _, row := range outRows {
-		// eval aggregate done
-		if err := r.evalAggDone(ctx, row.Row, row.Args); err != nil {
-			return err
-		}
-		if more, err = f(nil, row.Row); !more || err != nil {
-			break
-		}
-	}
-
-	return types.EOFAsNil(err)
 }
 
 func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, outRow []interface{}, in []interface{}) error {
 	// group by items can not contain aggregate field, so we can eval them safely.
 	m := map[interface{}]interface{}{}
 	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		v, err := getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 		if err == nil {
 			return v, nil
 		}
@@ -227,7 +128,7 @@ func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{})
 func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
 	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		return getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 	}
 
 	var err error
@@ -249,7 +150,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 	for i := range r.AggFields {
 		if i < r.HiddenFieldOffset {
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 			}
 		} else {
 			// having may contain aggregate function and we will add it to hidden field,
@@ -258,7 +159,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 			// because all the select list data is generated before, so we can get it
 			// when handling hidden field.
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				v, err := getIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 				if err == nil {
 					return v, nil
 				}
@@ -321,4 +222,113 @@ func (r *GroupByDefaultPlan) evalEmptyTable(ctx context.Context) ([]interface{},
 		}
 	}
 	return out, nil
+}
+
+// Next implements plan.Plan Next interface.
+func (r *GroupByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.rows == nil {
+		r.rows = []*groupRow{}
+		err = r.fetchAll(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if r.cursor == len(r.rows) {
+		return
+	}
+
+	gRow := r.rows[r.cursor]
+	r.cursor++
+	row = gRow.Row
+	return
+}
+
+func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
+	// TODO: now we have to use this to save group key -> row index
+	// later we will serialize group by items into a string key and then use a map instead.
+	t, err := memkv.CreateTemp(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer func() {
+		if derr := t.Drop(); derr != nil && err == nil {
+			err = derr
+		}
+	}()
+	k := make([]interface{}, len(r.By))
+	for {
+		srcRow, err1 := r.Src.Next(ctx)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if srcRow == nil {
+			break
+		}
+		row := &plan.Row{
+			Data: make([]interface{}, len(r.Fields)),
+		}
+		// TODO: later order by will use the same mechanism, so we may use another plan to do this
+		evalArgs := map[interface{}]interface{}{}
+		// must first eval none aggregate fields, because alias group by will use this.
+		if err := r.evalNoneAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
+			return errors.Trace(err)
+		}
+		if err := r.evalGroupKey(ctx, k, row.Data, srcRow.Data); err != nil {
+			return errors.Trace(err)
+		}
+
+		// get row index with k.
+		v, err1 := t.Get(k)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+
+		index := 0
+		if len(v) == 0 {
+			// no group for key, save data for this group
+			index = len(r.rows)
+			r.rows = append(r.rows, &groupRow{Row: row, Args: evalArgs})
+
+			if err := t.Set(k, []interface{}{index}); err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			// we have already saved data in the group by key, use this
+			index = v[0].(int)
+
+			// we will use this context args to evaluate aggregate fields.
+			evalArgs = r.rows[index].Args
+		}
+
+		// eval aggregate fields
+		if err := r.evalAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if len(r.rows) == 0 {
+		// empty table
+		var out []interface{}
+		out, err = r.evalEmptyTable(ctx)
+		if err != nil || out == nil {
+			return errors.Trace(err)
+		}
+		row := &plan.Row{Data: out}
+		r.rows = append(r.rows, &groupRow{Row: row, Args: map[interface{}]interface{}{}})
+	} else {
+		for _, row := range r.rows {
+			// eval aggregate done
+			if err := r.evalAggDone(ctx, row.Row.Data, row.Args); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+// Close implements plan.Plan Close interface.
+func (r *GroupByDefaultPlan) Close() error {
+	r.rows = nil
+	r.cursor = 0
+	return r.Src.Close()
 }

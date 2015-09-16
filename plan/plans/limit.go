@@ -18,6 +18,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -35,6 +36,7 @@ var (
 // most N results.
 type LimitDefaultPlan struct {
 	Count  uint64
+	cursor uint64
 	Src    plan.Plan
 	Fields []*field.ResultField
 }
@@ -55,27 +57,28 @@ func (r *LimitDefaultPlan) GetFields() []*field.ResultField {
 	return r.Fields
 }
 
-// Do implements plan.Plan Do interface, counts the number of results, if the
-// number > N, returns.
-func (r *LimitDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) (err error) {
-	lim := r.Count
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		switch lim {
-		case 0:
-			// no more results
-			return false, nil
-		default:
-			lim--
-			// TODO: This is a temp solution for pass wordpress
-			variable.GetSessionVars(ctx).AddFoundRows(1)
-			return f(rid, in)
-		}
-	})
+// Next implements plan.Plan Next interface.
+func (r *LimitDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.cursor == r.Count {
+		return
+	}
+	r.cursor++
+	// TODO: This is a temp solution for pass wordpress
+	variable.GetSessionVars(ctx).AddFoundRows(1)
+	row, err = r.Src.Next(ctx)
+	return
+}
+
+// Close implements plan.Plan Close interface.
+func (r *LimitDefaultPlan) Close() error {
+	r.cursor = 0
+	return r.Src.Close()
 }
 
 // OffsetDefaultPlan handles SELECT ... FROM ... OFFSET N, skips N records.
 type OffsetDefaultPlan struct {
 	Count  uint64
+	cursor uint64
 	Src    plan.Plan
 	Fields []*field.ResultField
 }
@@ -96,14 +99,20 @@ func (r *OffsetDefaultPlan) GetFields() []*field.ResultField {
 	return r.Fields
 }
 
-// Do implements plan.Plan Do interface, skips N records.
-func (r *OffsetDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	off := r.Count
-	return r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		if off > 0 {
-			off--
-			return true, nil
+// Next implements plan.Plan Next interface.
+func (r *OffsetDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	for r.cursor < r.Count {
+		_, err = r.Src.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		return f(rid, in)
-	})
+		r.cursor++
+	}
+	return r.Src.Next(ctx)
+}
+
+// Close implements plan.Plan Close interface.
+func (r *OffsetDefaultPlan) Close() error {
+	r.cursor = 0
+	return r.Src.Close()
 }

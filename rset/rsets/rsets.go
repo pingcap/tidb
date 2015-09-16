@@ -18,6 +18,7 @@
 package rsets
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
@@ -41,9 +42,20 @@ func (r Recordset) GetFields() []interface{} {
 
 // Do implements rset.Recordset.
 func (r Recordset) Do(f func(data []interface{}) (bool, error)) error {
-	return r.Plan.Do(r.Ctx, func(ID interface{}, data []interface{}) (bool, error) {
-		return f(data)
-	})
+	defer r.Plan.Close()
+	for {
+		row, err := r.Plan.Next(r.Ctx)
+		if row == nil || err != nil {
+			return errors.Trace(err)
+		}
+		more, err := f(row.Data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !more {
+			return nil
+		}
+	}
 }
 
 // Fields implements rset.Recordset.
@@ -53,42 +65,49 @@ func (r Recordset) Fields() (fields []*field.ResultField, err error) {
 
 // FirstRow implements rset.Recordset.
 func (r Recordset) FirstRow() (row []interface{}, err error) {
-	rows, err := r.Rows(1, 0)
-	if err != nil {
-		return nil, err
+	ro, err := r.Plan.Next(r.Ctx)
+	r.Plan.Close()
+	if ro == nil || err != nil {
+		return nil, errors.Trace(err)
 	}
-
-	if len(rows) != 0 {
-		return rows[0], nil
-	}
-
-	return nil, nil
+	row = ro.Data
+	return
 }
 
 // Rows implements rset.Recordset.
 func (r Recordset) Rows(limit, offset int) ([][]interface{}, error) {
 	var rows [][]interface{}
-	err := r.Do(func(row []interface{}) (bool, error) {
-		if offset > 0 {
-			offset--
-			return true, nil
+	defer r.Plan.Close()
+	// Move to offset.
+	for offset > 0 {
+		row, err := r.Next()
+		if row == nil || err != nil {
+			return nil, errors.Trace(err)
 		}
-
-		switch {
-		case limit < 0:
-			rows = append(rows, row)
-			return true, nil
-		case limit == 0:
-			return false, nil
-		default: // limit > 0
-			rows = append(rows, row)
-			limit--
-			return limit > 0, nil
-		}
-	})
-	if err != nil {
-		return nil, err
+		offset--
 	}
-
+	// Negative limit means no limit.
+	for limit != 0 {
+		row, err := r.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row.Data)
+		if limit > 0 {
+			limit--
+		}
+	}
 	return rows, nil
+}
+
+// Next implements rset.Recordst
+func (r Recordset) Next() (row *plan.Row, err error) {
+	row, err = r.Plan.Next(r.Ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return
 }

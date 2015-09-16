@@ -21,7 +21,6 @@ package parser
 import (
 	"fmt"
 	"math"
-	"errors"
 	"strconv"
 	"unicode"
 	"strings"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/stmt"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 type lexer struct {
@@ -133,21 +133,28 @@ func (l *lexer) next() int {
 	return l.c
 }
 
-func (l *lexer) err0(ln, c int, args ...interface{}) {
+func (l *lexer) err0(ln, c int, arg interface{}) {
 	var argStr string
-	if len(args) > 0 {
-		argStr = fmt.Sprintf(" " + args[0].(string), args[1:]...)
+	if arg != nil {
+		argStr = fmt.Sprintf(" %v", arg)
 	}
-	err := errors.New(fmt.Sprintf("line %d column %d near \"%s\"", ln, c, l.val) + argStr)
+
+	err := fmt.Errorf("line %d column %d near \"%s\"%s", ln, c, l.val, argStr)
 	l.errs = append(l.errs, err)
 }
 
-func (l *lexer) err(s string, args ...interface{}) {
-	l.err0(l.line, l.col, args...)
+func (l *lexer) err(arg interface{}) {
+	l.err0(l.line, l.col, arg)
+}
+
+func (l *lexer) errf(format string, args ...interface{}) {
+	s := fmt.Sprintf(format, args...)
+	l.err0(l.line, l.col, s)
 }
 
 func (l *lexer) Error(s string) {
-	l.err(s)
+	// Notice: ignore origin error info.
+	l.err(nil)
 }
 
 func (l *lexer) stmtText() string {
@@ -874,7 +881,7 @@ func (l *lexer) trimIdent(idt string) string {
 func (l *lexer) int(lval *yySymType) int {
 	n, err := strconv.ParseUint(string(l.val), 0, 64)
 	if err != nil {
-		l.err("", "integer literal: %v", err)
+		l.errf("integer literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -890,7 +897,7 @@ func (l *lexer) int(lval *yySymType) int {
 func (l *lexer) float(lval *yySymType) int {
 	n, err := strconv.ParseFloat(string(l.val), 64)
 	if err != nil {
-		l.err("", "float literal: %v", err)
+		l.errf("float literal: %v", err)
 		return int(unicode.ReplacementChar)
 	}
 
@@ -901,11 +908,11 @@ func (l *lexer) float(lval *yySymType) int {
 // https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func (l *lexer) hex(lval *yySymType) int {
 	s := string(l.val)
-	// convert x'12' to general 0x12
-	s = strings.Replace(s, "'", "", -1)
-	if s[0] != '0' {
-		s = "0" + s
+	h, err := mysql.ParseHex(s)
+	if err != nil {
+		l.errf("hexadecimal literal: %v", err)
+		return int(unicode.ReplacementChar)
 	}
-	lval.item = s 
-	return stringLit
+	lval.item = h
+	return hexLit
 }

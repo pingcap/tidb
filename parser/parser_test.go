@@ -293,6 +293,32 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT 1 > ANY (select 1)", true},
 		{"SELECT 1 > ALL (select 1)", true},
 		{"SELECT 1 > SOME (select 1)", true},
+
+		// For exists subquery
+		{"SELECT EXISTS select 1", false},
+		{"SELECT EXISTS (select 1)", true},
+		{"SELECT + EXISTS (select 1)", true},
+		{"SELECT - EXISTS (select 1)", true},
+		{"SELECT NOT EXISTS (select 1)", true},
+		{"SELECT + NOT EXISTS (select 1)", false},
+		{"SELECT - NOT EXISTS (select 1)", false},
+
+		// For update statement
+		{"UPDATE t SET id = id + 1 ORDER BY id DESC;", true},
+		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id;", true},
+		{"UPDATE items,month SET items.price=month.price WHERE items.id=month.id LIMIT 10;", false},
+		{"UPDATE user T0 LEFT OUTER JOIN user_profile T1 ON T1.id = T0.profile_id SET T0.profile_id = 1 WHERE T0.profile_id IN (1);", true},
+
+		// For cast with charset
+		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
+
+		// For binary operator
+		{"SELECT binary 'a';", true},
+
+		// For hexadecimal
+		{"SELECT x'0a', X'11', 0x11", true},
+		{"select x'0xaa'", false},
+		{"select 0X11", false},
 	}
 
 	for _, t := range table {
@@ -348,5 +374,5 @@ func (s *testParserSuite) TestParser0(c *C) {
 	c.Assert(ok, IsTrue)
 	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.IsConvert, IsTrue)
+	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
 }

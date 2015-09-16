@@ -18,6 +18,7 @@
 package plans
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
@@ -59,8 +60,12 @@ type JoinPlan struct {
 
 	Type string
 
-	Fields []*field.ResultField
-	On     expression.Expression
+	Fields      []*field.ResultField
+	On          expression.Expression
+	curRow      *plan.Row
+	matchedRows []*plan.Row
+	cursor      int
+	evalArgs    map[interface{}]interface{}
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -137,208 +142,166 @@ func (r *JoinPlan) GetFields() []*field.ResultField {
 	return r.Fields
 }
 
-// Do implements plan.Plan Do interface, it executes join method
-// accourding to given type.
-func (r *JoinPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
+// Next implements plan.Plan Next interface.
+func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if r.Right == nil {
-		return r.Left.Do(ctx, f)
+		return r.Left.Next(ctx)
 	}
-
+	if r.evalArgs == nil {
+		r.evalArgs = map[interface{}]interface{}{}
+	}
 	switch r.Type {
 	case LeftJoin:
-		return r.doLeftJoin(ctx, f)
+		return r.nextLeftJoin(ctx)
 	case RightJoin:
-		return r.doRightJoin(ctx, f)
-	case FullJoin:
-		return r.doFullJoin(ctx, f)
+		return r.nextRightJoin(ctx)
 	default:
-		return r.doCrossJoin(ctx, f)
+		return r.nextCrossJoin(ctx)
 	}
 }
 
-func (r *JoinPlan) doCrossJoin(ctx context.Context, f plan.RowIterFunc) error {
-	return r.Left.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		leftRow := appendRow(nil, in)
-		m := map[interface{}]interface{}{}
-		if err := r.Right.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-			row := appendRow(leftRow, in)
-			if r.On != nil {
-				m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-					return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
-				}
-
-				b, err := expressions.EvalBoolExpr(ctx, r.On, m)
-				if err != nil {
-					return false, err
-				}
-				if !b {
-					// If On condition not satisified, drop this row
-					return true, nil
-				}
-			}
-
-			return f(rid, row)
-		}); err != nil {
-			return false, err
+func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) {
+	for {
+		if r.cursor < len(r.matchedRows) {
+			row = r.matchedRows[r.cursor]
+			r.cursor++
+			return
 		}
-
-		return true, nil
-	})
+		r.cursor = 0
+		var leftRow *plan.Row
+		leftRow, err = r.Left.Next(ctx)
+		if leftRow == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = r.findMatchedRows(ctx, leftRow, false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 }
 
-func (r *JoinPlan) doLeftJoin(ctx context.Context, f plan.RowIterFunc) error {
-	return r.Left.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		leftRow := appendRow(nil, in)
-		matched := false
-		m := map[interface{}]interface{}{}
-		if err := r.Right.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-			row := appendRow(leftRow, in)
-
-			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
-			}
-
-			b, err := expressions.EvalBoolExpr(ctx, r.On, m)
-			if err != nil {
-				return false, err
-			}
-			if !b {
-				return true, nil
-			}
-
-			matched = true
-
-			return f(rid, row)
-		}); err != nil {
-			return false, err
+func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error) {
+	for {
+		if r.cursor < len(r.matchedRows) {
+			row = r.matchedRows[r.cursor]
+			r.cursor++
+			return
 		}
+		var rightRow *plan.Row
+		rightRow, err = r.Right.Next(ctx)
+		if rightRow == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = r.findMatchedRows(ctx, rightRow, true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+}
 
-		if !matched {
-			// Fill right with NULL
+func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right bool) (err error) {
+	var p plan.Plan
+	if right {
+		p = r.Left
+	} else {
+		p = r.Right
+	}
+	r.cursor = 0
+	r.matchedRows = nil
+	p.Close()
+	for {
+		var cmpRow *plan.Row
+		cmpRow, err = p.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cmpRow == nil {
+			break
+		}
+		var joined []interface{}
+		if right {
+			joined = append(cmpRow.Data, row.Data...)
+		} else {
+			joined = append(row.Data, cmpRow.Data...)
+		}
+		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return GetIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
+		}
+		var b bool
+		b, err = expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if b {
+			cmpRow.Data = joined
+			cmpRow.RowKeys = append(row.RowKeys, cmpRow.RowKeys...)
+			r.matchedRows = append(r.matchedRows, cmpRow)
+		}
+	}
+	if len(r.matchedRows) == 0 {
+		if right {
+			leftLen := len(r.Fields) - len(r.Right.GetFields())
+			row.Data = append(make([]interface{}, leftLen), row.Data...)
+		} else {
 			rightLen := len(r.Fields) - len(r.Left.GetFields())
-			return f(rid, appendRow(leftRow, make([]interface{}, rightLen)))
+			row.Data = append(row.Data, make([]interface{}, rightLen)...)
 		}
-
-		return true, nil
-	})
+		r.matchedRows = append(r.matchedRows, row)
+	}
+	return nil
 }
 
-func (r *JoinPlan) doRightJoin(ctx context.Context, f plan.RowIterFunc) error {
-	// right join is the same as left join, only reverse the row result
-	return r.Right.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		rightRow := appendRow(nil, in)
-		matched := false
-		m := map[interface{}]interface{}{}
-		if err := r.Left.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-			row := appendRow(in, rightRow)
-
-			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
+func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error) {
+	for {
+		if r.curRow == nil {
+			r.curRow, err = r.Left.Next(ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if r.curRow == nil {
+				return nil, nil
+			}
+		}
+		var rightRow *plan.Row
+		rightRow, err = r.Right.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rightRow == nil {
+			r.curRow = nil
+			r.Right.Close()
+			continue
+		}
+		joinedRow := append(r.curRow.Data, rightRow.Data...)
+		if r.On != nil {
+			r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
 			}
 
-			b, err := expressions.EvalBoolExpr(ctx, r.On, m)
+			b, err := expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
 			if err != nil {
-				return false, err
+				return nil, errors.Trace(err)
 			}
 			if !b {
-				return true, nil
+				// If On condition not satisified, drop this row
+				continue
 			}
-
-			matched = true
-
-			return f(rid, row)
-		}); err != nil {
-			return false, err
 		}
-
-		if !matched {
-			// Fill left with NULL
-			leftLen := len(r.Fields) - len(r.Right.GetFields())
-			return f(rid, appendRow(make([]interface{}, leftLen), rightRow))
+		row = &plan.Row{
+			Data:    joinedRow,
+			RowKeys: append(r.curRow.RowKeys, rightRow.RowKeys...),
 		}
-
-		return true, nil
-	})
+		return
+	}
 }
 
-func (r *JoinPlan) doFullJoin(ctx context.Context, f plan.RowIterFunc) error {
-	// we just support full join simplify, because MySQL doesn't support it
-	// for full join, we can use two phases
-	// 1, t1 LEFT JOIN t2
-	// 2, t2 anti semi LEFT JOIN t1
-	if err := r.doLeftJoin(ctx, f); err != nil {
-		return err
+// Close implements plan.Plan Close interface.
+func (r *JoinPlan) Close() error {
+	r.curRow = nil
+	r.matchedRows = nil
+	r.cursor = 0
+	if r.Right != nil {
+		r.Right.Close()
 	}
-
-	// anti semi left join
-	return r.Right.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-		rightRow := appendRow(nil, in)
-		matched := false
-		m := map[interface{}]interface{}{}
-		if err := r.Left.Do(ctx, func(rid interface{}, in []interface{}) (more bool, err error) {
-			row := appendRow(in, rightRow)
-
-			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return getIdentValue(name, r.Fields, row, field.DefaultFieldFlag)
-			}
-
-			b, err := expressions.EvalBoolExpr(ctx, r.On, m)
-			if err != nil {
-				return false, err
-			}
-			if b {
-				// here means the condition matched, we can skip this row
-				matched = true
-				return false, nil
-			}
-
-			return true, nil
-		}); err != nil {
-			return false, err
-		}
-
-		if !matched {
-			// Fill left with NULL
-			leftLen := len(r.Fields) - len(r.Right.GetFields())
-			return f(rid, appendRow(make([]interface{}, leftLen), rightRow))
-		}
-
-		return true, nil
-	})
-}
-
-/*
- * The last value in prefix/in maybe RowKeyList
- * Append values of prefix/in together and merge RowKeyLists to the tail entry
- */
-func appendRow(prefix []interface{}, in []interface{}) []interface{} {
-	var rks *RowKeyList
-	if prefix != nil && len(prefix) > 0 {
-		t := prefix[len(prefix)-1]
-		switch vt := t.(type) {
-		case *RowKeyList:
-			rks = vt
-			prefix = prefix[:len(prefix)-1]
-		}
-	}
-	if in != nil && len(in) > 0 {
-		t := in[len(in)-1]
-		switch vt := t.(type) {
-		case *RowKeyList:
-			if rks == nil {
-				rks = vt
-			} else {
-				rks.appendKeys(vt.Keys...)
-			}
-			in = in[:len(in)-1]
-		}
-	}
-	if rks == nil {
-		rks = &RowKeyList{}
-	}
-	in = append(in, rks)
-	row := make([]interface{}, 0, len(prefix)+len(in))
-	row = append(row, prefix...)
-	row = append(row, in...)
-	return row
+	return r.Left.Close()
 }

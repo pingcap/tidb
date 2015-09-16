@@ -39,9 +39,11 @@ var _ plan.Plan = (*OrderByDefaultPlan)(nil)
 // results temporarily, and sorts them by given expression.
 type OrderByDefaultPlan struct {
 	*SelectList
-	By   []expression.Expression
-	Ascs []bool
-	Src  plan.Plan
+	By       []expression.Expression
+	Ascs     []bool
+	Src      plan.Plan
+	ordTable *orderByTable
+	cursor   int
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -68,7 +70,7 @@ func (r *OrderByDefaultPlan) Filter(ctx context.Context, expr expression.Express
 
 type orderByRow struct {
 	Key []interface{}
-	Row []interface{}
+	Row *plan.Row
 }
 
 func (o *orderByRow) String() string {
@@ -128,64 +130,70 @@ func (t *orderByTable) Less(i, j int) bool {
 	return false
 }
 
-// Do implements plan.Plan Do interface, all records are added into an
-// in-memory array, and sorted in ASC/DESC order.
-func (r *OrderByDefaultPlan) Do(ctx context.Context, f plan.RowIterFunc) error {
-	t := &orderByTable{Ascs: r.Ascs}
+// Next implements plan.Plan Next interface.
+func (r *OrderByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.ordTable == nil {
+		r.ordTable = &orderByTable{Ascs: r.Ascs}
+		err = r.fetchAll(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if r.cursor == len(r.ordTable.Rows) {
+		return
+	}
+	row = r.ordTable.Rows[r.cursor].Row
+	r.cursor++
+	return
+}
 
-	m := map[interface{}]interface{}{}
-	err := r.Src.Do(ctx, func(rid interface{}, in []interface{}) (bool, error) {
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return getIdentValue(name, r.ResultFields, in, field.CheckFieldFlag)
+func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
+	evalArgs := map[interface{}]interface{}{}
+	for {
+		row, err := r.Src.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			return GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
 		}
 
-		m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
+		evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
 			// position is in [1, len(fields)], so we must decrease 1 to get correct index
 			// TODO: check position invalidation
-			return in[position-1], nil
+			return row.Data[position-1], nil
 		}
-
-		row := &orderByRow{
-			Row: in,
+		ordRow := &orderByRow{
+			Row: row,
 			Key: make([]interface{}, 0, len(r.By)),
 		}
-
 		for _, by := range r.By {
 			// err1 is used for passing `go tool vet --shadow` check.
-			val, err1 := by.Eval(ctx, m)
+			val, err1 := by.Eval(ctx, evalArgs)
 			if err1 != nil {
-				return false, err1
+				return err1
 			}
 
 			if val != nil {
-				var ordered bool
-				val, ordered, err1 = types.IsOrderedType(val)
-				if err1 != nil {
-					return false, err1
-				}
-
-				if !ordered {
-					return false, errors.Errorf("cannot order by %v (type %T)", val, val)
+				if !types.IsOrderedType(val) {
+					return errors.Errorf("cannot order by %v (type %T)", val, val)
 				}
 			}
 
-			row.Key = append(row.Key, val)
+			ordRow.Key = append(ordRow.Key, val)
 		}
-
-		t.Rows = append(t.Rows, row)
-		return true, nil
-	})
-	if err != nil {
-		return err
+		r.ordTable.Rows = append(r.ordTable.Rows, ordRow)
 	}
+	sort.Sort(r.ordTable)
+	return nil
+}
 
-	sort.Sort(t)
-
-	var more bool
-	for _, row := range t.Rows {
-		if more, err = f(nil, row.Row); !more || err != nil {
-			break
-		}
-	}
-	return types.EOFAsNil(err)
+// Close implements plan.Plan Close interface.
+func (r *OrderByDefaultPlan) Close() error {
+	r.ordTable = nil
+	r.cursor = 0
+	return r.Src.Close()
 }
