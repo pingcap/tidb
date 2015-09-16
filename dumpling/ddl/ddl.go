@@ -575,8 +575,8 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 	defer it.Close()
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
 		var err error
-		h, err := util.DecodeHandleFromRowKey(it.Key())
-		log.Info("building index...", h)
+		handle, err := util.DecodeHandleFromRowKey(it.Key())
+		log.Info("building index...", handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -590,7 +590,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 				val  interface{}
 			)
 			col := cols[v.Offset]
-			k := t.RecordKey(h, col)
+			k := t.RecordKey(handle, col)
 			data, err = txn.Get([]byte(k))
 			if err != nil {
 				return errors.Trace(err)
@@ -603,12 +603,12 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 		}
 		// build index
 		kvX := kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, unique)
-		err = kvX.Create(txn, vals, h)
+		err = kvX.Create(txn, vals, handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		rk := []byte(t.RecordKey(h, nil))
+		rk := []byte(t.RecordKey(handle, nil))
 		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
