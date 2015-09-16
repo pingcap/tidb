@@ -97,7 +97,7 @@ func (s *testStmtSuite) fillMultiTableForUpdate(currDB *sql.DB, c *C) {
 	r := mustExec(c, currDB, `insert into items values (11, "items_price_11"), (12, "items_price_12"), (13, "items_price_13");`)
 	checkResult(c, r, 3, 0)
 	// Create and fill table month
-	mustExec(c, currDB, "CREATE TABLE month (id int, price TEXT);")
+	mustExec(c, currDB, "CREATE TABLE month (mid int, mprice TEXT);")
 	r = mustExec(c, currDB, `insert into month values (11, "month_price_11"), (22, "month_price_22"), (13, "month_price_13");`)
 	checkResult(c, r, 3, 0)
 }
@@ -107,7 +107,7 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 	c.Assert(err, IsNil)
 	s.fillMultiTableForUpdate(testDB, c)
 
-	r := mustExec(c, testDB, `UPDATE items, month  SET items.price=month.price WHERE items.id=month.id;`)
+	r := mustExec(c, testDB, `UPDATE items, month  SET items.price=month.mprice WHERE items.id=month.mid;`)
 	c.Assert(r, NotNil)
 
 	tx := mustBegin(c, testDB)
@@ -118,6 +118,28 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 		11: "month_price_11",
 		12: "items_price_12",
 		13: "month_price_13",
+	}
+	for rows.Next() {
+		var (
+			id    int
+			price string
+		)
+		rows.Scan(&id, &price)
+		c.Assert(price, Equals, expectedResult[id])
+	}
+	rows.Close()
+	mustCommit(c, tx)
+
+	// Single-table syntax but with multiple tables
+	r = mustExec(c, testDB, `UPDATE items join month on items.id=month.mid SET items.price=month.mid;`)
+	c.Assert(r, NotNil)
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM items")
+	c.Assert(err, IsNil)
+	expectedResult = map[int]string{
+		11: "11",
+		12: "items_price_12",
+		13: "13",
 	}
 	for rows.Next() {
 		var (
