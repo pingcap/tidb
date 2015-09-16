@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -464,56 +463,6 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
-func (s *testSessionSuite) TestAutoicommit(c *C) {
-	store := newStore(c, s.dbName)
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, Equals, nil)
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(se.(*session).txn, Equals, nil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	mustExecSQL(c, se, "begin")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	se.Execute("drop table if exists t;")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "commit")
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	c.Assert(se.(*session).txn, IsNil)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-
-	se.Execute("drop table if exists t;")
-	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-	mustExecSQL(c, se, "begin")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.(*session).txn, NotNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, true)
-	mustExecSQL(c, se, "rollback")
-	c.Assert(se.(*session).txn, IsNil)
-	c.Assert(variable.GetSessionVars(se.(*session)).DisableAutocommit, Equals, false)
-
-	mustExecSQL(c, se, s.dropDBSQL)
-}
-
-// See: http://dev.mysql.com/doc/refman/5.7/en/commit.html
 func (s *testSessionSuite) TestRowLock(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -521,7 +470,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	se2 := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, Equals, nil)
+	c.Assert(se.(*session).txn, IsNil)
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
 	mustExecSQL(c, se, "insert t values (11, 2, 3)")
 	mustExecSQL(c, se, "insert t values (12, 2, 3)")
@@ -562,7 +511,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	se2 := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, Equals, nil)
+	c.Assert(se.(*session).txn, IsNil)
 	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
 	mustExecSQL(c, se, "insert t values (11, 2, 3)")
 	mustExecSQL(c, se, "insert t values (12, 2, 3)")
