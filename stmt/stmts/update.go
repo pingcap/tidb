@@ -241,6 +241,8 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 	defer p.Close()
 	updatedRowKeys := make(map[string]bool)
+	// For single-table syntax, TableRef may contain multiple tables
+	multipleTables := s.MultipleTable || s.TableRefs.MultipleTable()
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {
@@ -277,7 +279,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			end := start + len(tbl.Cols())
 			data := rowData[start:end]
 			start = end
-			tcols, err2 := getUpdateColumns(tbl, s.List, s.MultipleTable)
+			tcols, err2 := getUpdateColumns(tbl, s.List, multipleTables)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
