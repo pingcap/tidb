@@ -23,8 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/tidb-server/arena"
-	"github.com/pingcap/tidb/tidb-server/tokenlimiter"
+	"github.com/pingcap/tidb/util/arena"
 )
 
 var (
@@ -37,15 +36,15 @@ type Server struct {
 	driver            IDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
-	concurrentLimiter *tokenlimiter.TokenLimiter
+	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 }
 
-func (s *Server) getToken() *tokenlimiter.Token {
+func (s *Server) getToken() *Token {
 	return s.concurrentLimiter.Get()
 }
 
-func (s *Server) releaseToken(token *tokenlimiter.Token) {
+func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
@@ -58,7 +57,7 @@ func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysqldef.DefaultCollationID,
 		charset:      mysqldef.DefaultCharset,
-		alloc:        arena.NewArenaAllocator(32 * 1024),
+		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	cc.salt = make([]byte, 20)
 	io.ReadFull(rand.Reader, cc.salt)
@@ -84,7 +83,7 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
-		concurrentLimiter: tokenlimiter.NewTokenLimiter(100),
+		concurrentLimiter: NewTokenLimiter(100),
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 	}

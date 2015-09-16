@@ -13,10 +13,6 @@
 
 package server
 
-import (
-	"encoding/json"
-)
-
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with client capability, collation and dbname.
@@ -41,7 +37,7 @@ type IContext interface {
 	CurrentDB() string
 
 	// Execute executes a SQL statement.
-	Execute(sql string) (*ResultSet, error)
+	Execute(sql string) (ResultSet, error)
 
 	// Prepare prepares a statement.
 	Prepare(sql string) (statement IStatement, columns, params []*ColumnInfo, err error)
@@ -62,7 +58,7 @@ type IStatement interface {
 	ID() int
 
 	// Execute executes the statement.
-	Execute(args ...interface{}) (*ResultSet, error)
+	Execute(args ...interface{}) (ResultSet, error)
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
@@ -81,19 +77,8 @@ type IStatement interface {
 }
 
 // ResultSet is the result set of an query.
-type ResultSet struct {
-	Columns []*ColumnInfo
-	Rows    [][]interface{}
-}
-
-// String implements fmt.Stringer
-func (res *ResultSet) String() string {
-	b, _ := json.MarshalIndent(res, "", "\t")
-	return string(b)
-}
-
-// AddRow appends a row to the result set.
-func (res *ResultSet) AddRow(values ...interface{}) *ResultSet {
-	res.Rows = append(res.Rows, values)
-	return res
+type ResultSet interface {
+	Columns() ([]*ColumnInfo, error)
+	Next() ([]interface{}, error)
+	Close() error
 }

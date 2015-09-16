@@ -11,24 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tokenlimiter
+package server
 
+// Token is used as a permission to keep on running.
 type Token struct {
 }
 
+// TokenLimiter is used to limit the number of concurrent tasks.
 type TokenLimiter struct {
 	count int
 	ch    chan *Token
 }
 
+// Put releases the token.
 func (tl *TokenLimiter) Put(tk *Token) {
 	tl.ch <- tk
 }
 
+// Get obtains a token.
 func (tl *TokenLimiter) Get() *Token {
 	return <-tl.ch
 }
 
+// NewTokenLimiter creates a TokenLimiter with count tokens.
 func NewTokenLimiter(count int) *TokenLimiter {
 	tl := &TokenLimiter{count: count, ch: make(chan *Token, count)}
 	for i := 0; i < count; i++ {
