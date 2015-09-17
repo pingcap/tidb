@@ -463,13 +463,55 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
-func checkInTrans(c *C, se Session, stmt string, expect uint16) {
+func checkTxn(c *C, se Session, stmt string, expect uint16) {
 	mustExecSQL(c, se, stmt)
 	if expect == 0 {
 		c.Assert(se.(*session).txn, IsNil)
-	} else {
-		c.Assert(se.(*session).txn, NotNil)
+		return
 	}
+	c.Assert(se.(*session).txn, NotNil)
+}
+
+func checkAutocommit(c *C, se Session, expect uint16) {
+	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusAutocommit
+	c.Assert(ret, Equals, expect)
+}
+
+// See: https://dev.mysql.com/doc/internals/en/status-flags.html
+func (s *testSessionSuite) TestAutocommit(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	checkTxn(c, se, "drop table if exists t;", 0)
+	checkAutocommit(c, se, 2)
+	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkAutocommit(c, se, 2)
+	checkTxn(c, se, "insert t values ()", 0)
+	checkAutocommit(c, se, 2)
+	checkTxn(c, se, "begin", 1)
+	checkAutocommit(c, se, 2)
+	checkTxn(c, se, "insert t values ()", 1)
+	checkAutocommit(c, se, 2)
+	checkTxn(c, se, "drop table if exists t;", 0)
+	checkAutocommit(c, se, 2)
+
+	checkTxn(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
+	checkAutocommit(c, se, 2)
+	checkTxn(c, se, "set autocommit=0;", 0)
+	checkAutocommit(c, se, 0)
+	checkTxn(c, se, "insert t values ()", 1)
+	checkAutocommit(c, se, 0)
+	checkTxn(c, se, "commit", 0)
+	checkAutocommit(c, se, 0)
+	checkTxn(c, se, "drop table if exists t;", 0)
+	checkAutocommit(c, se, 0)
+	checkTxn(c, se, "set autocommit=1;", 0)
+	checkAutocommit(c, se, 2)
+
+	mustExecSQL(c, se, s.dropDBSQL)
+}
+
+func checkInTrans(c *C, se Session, stmt string, expect uint16) {
+	checkTxn(c, se, stmt, expect)
 	ret := variable.GetSessionVars(se.(*session)).Status & mysql.ServerStatusInTrans
 	c.Assert(ret, Equals, expect)
 }
@@ -489,6 +531,14 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "commit", 0)
 	checkInTrans(c, se, "insert t values ()", 0)
 
+	checkInTrans(c, se, "set autocommit=O;", 0)
+	checkInTrans(c, se, "begin", 1)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "commit", 0)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "commit", 0)
+
+	checkInTrans(c, se, "set autocommit=1;", 0)
 	checkInTrans(c, se, "drop table if exists t;", 0)
 	checkInTrans(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)", 0)
 	checkInTrans(c, se, "begin", 1)

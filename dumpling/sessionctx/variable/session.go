@@ -94,18 +94,15 @@ func (s *SessionVars) AddFoundRows(rows uint64) {
 	s.FoundRows += rows
 }
 
-// SetStatus sets the session server status variable
-func (s *SessionVars) SetStatus(status uint16) {
-	s.Status = status
-}
-
-// SetStatusInTrans sets the status flags about ServerStatusInTrans.
-func (s *SessionVars) SetStatusInTrans(isInTrans bool) {
-	if isInTrans {
-		s.Status |= mysql.ServerStatusInTrans
+// SetStatusFlag sets the session server status variable.
+// If on is ture sets the flag in session status,
+// otherwise removes the flag.
+func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
+	if on {
+		s.Status |= flag
 		return
 	}
-	s.Status &= (^mysql.ServerStatusInTrans)
+	s.Status &= (^flag)
 }
 
 // GetNextPreparedStmtID generates and return the next session scope prepared statement id
@@ -114,12 +111,26 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// ShouldAutocommit checks if it is in autocommit enviroment
+// IsAutocommit checks if it is in the auto-commit mode.
+func IsAutocommit(ctx context.Context) bool {
+	autocommit, ok := GetSessionVars(ctx).Systems["autocommit"]
+	if !ok {
+		autocommit = GetSysVar("autocommit").Value
+		ok = true
+	}
+	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
+		GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+		return true
+	}
+	GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	return false
+}
+
+// ShouldAutocommit checks if it should be auto-commit.
 func ShouldAutocommit(ctx context.Context) bool {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
-	if GetSessionVars(ctx).Status&mysql.ServerStatusAutocommit > 0 &&
-		GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 {
+	if IsAutocommit(ctx) && GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 {
 		return true
 	}
 
