@@ -103,7 +103,7 @@ func (s *Server) Run() error {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			log.Errorf("accept error %s", err.Error())
-			return err
+			return errors.Trace(err)
 		}
 
 		go s.onConn(conn)
