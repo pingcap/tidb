@@ -48,9 +48,3 @@ func (s *testOuterQuerySuite) TestOuterQueryPlan(c *C) {
 
 	c.Assert(outerQuery.FromData, DeepEquals, []interface{}{10, "hello"})
 }
-
-func (s *testOuterQuerySuite) TestouterQuery(c *C) {
-	ctx := mock.NewContext()
-
-	q := &plans.OuterQuery{}
-}
