@@ -62,7 +62,7 @@ See [USAGE.md](./docs/USAGE.md) for detailed instructions to use TiDB as library
 make tidb-server
 cd tidb-server && ./tidb-server
 ```
-The default server port is `4000` and can be changeed by flag `-port`.
+The default server port is `4000` and can be changeed by flag `-P <port>`.
 Run `./tidb-server -h` to see more flag options.
 
 After you started tidb-server, you can use official mysql client to connect to TiDB.
