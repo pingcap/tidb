@@ -96,7 +96,7 @@ func (s *SessionVars) AddFoundRows(rows uint64) {
 
 // SetStatus sets the session server status variable.
 // If flag is ture sets the input status in session status,
-// or removes the input status.
+// otherwise removes the input status.
 func (s *SessionVars) SetStatus(flag bool, status uint16) {
 	if flag {
 		s.Status |= status

@@ -137,7 +137,7 @@ func (s *session) FinishTxn(rollback bool) error {
 	}
 	defer func() {
 		s.txn = nil
-		variable.GetSessionVars(s).SetStatusInTrans(false)
+		variable.GetSessionVars(s).SetStatus(false, mysql.ServerStatusInTrans)
 	}()
 
 	if rollback {
@@ -341,14 +341,14 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 			return nil, err
 		}
 		if !variable.IsAutocommit(s) {
-			variable.GetSessionVars(s).SetStatusInTrans(true)
+			variable.GetSessionVars(s).SetStatus(true, mysql.ServerStatusInTrans)
 		}
 		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
 	if forceNew {
 		err = s.txn.Commit()
-		variable.GetSessionVars(s).SetStatusInTrans(false)
+		variable.GetSessionVars(s).SetStatus(false, mysql.ServerStatusInTrans)
 		if err != nil {
 			return nil, err
 		}
@@ -358,7 +358,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 			return nil, err
 		}
 		if !variable.IsAutocommit(s) {
-			variable.GetSessionVars(s).SetStatusInTrans(true)
+			variable.GetSessionVars(s).SetStatus(true, mysql.ServerStatusInTrans)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
 	}
@@ -397,6 +397,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionctx.BindDomain(s, domain)
 
 	variable.BindSessionVars(s)
-	variable.GetSessionVars(s).SetStatus(mysql.ServerStatusAutocommit)
+	variable.GetSessionVars(s).SetStatus(true, mysql.ServerStatusAutocommit)
 	return s, nil
 }
