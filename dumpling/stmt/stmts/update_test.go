@@ -151,4 +151,26 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 	}
 	rows.Close()
 	mustCommit(c, tx)
+
+	// JoinTable with alias table name.
+	r = mustExec(c, testDB, `UPDATE items T0 join month T1 on T0.id=T1.mid SET T0.price=T1.mprice;`)
+	c.Assert(r, NotNil)
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM items")
+	c.Assert(err, IsNil)
+	expectedResult = map[int]string{
+		11: "month_price_11",
+		12: "items_price_12",
+		13: "month_price_13",
+	}
+	for rows.Next() {
+		var (
+			id    int
+			price string
+		)
+		rows.Scan(&id, &price)
+		c.Assert(price, Equals, expectedResult[id])
+	}
+	rows.Close()
+	mustCommit(c, tx)
 }
