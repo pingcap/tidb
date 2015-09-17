@@ -94,7 +94,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	return append(data, buf...), nil
 }
 
-//data already have header
+// writePacket writes data that already have header
 func (p *packetIO) writePacket(data []byte) error {
 	length := len(data) - 4
 

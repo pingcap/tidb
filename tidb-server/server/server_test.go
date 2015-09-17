@@ -75,7 +75,6 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 
 func runTestRegression(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
-
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 
