@@ -19,6 +19,7 @@ package stmts
 
 import (
 	"github.com/pingcap/tidb/context"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
@@ -63,7 +64,7 @@ func (s *BeginStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
-	variable.GetSessionVars(ctx).SetStatusInTrans(true)
+	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusInTrans, true)
 	return
 }
 
@@ -96,7 +97,7 @@ func (s *CommitStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *CommitStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	err = ctx.FinishTxn(false)
-	variable.GetSessionVars(ctx).SetStatusInTrans(false)
+	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return
 }
 
@@ -129,6 +130,6 @@ func (s *RollbackStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *RollbackStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	err = ctx.FinishTxn(true)
-	variable.GetSessionVars(ctx).SetStatusInTrans(false)
+	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return
 }
