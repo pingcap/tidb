@@ -64,6 +64,13 @@ See [USAGE.md](./docs/USAGE.md) for detailed instructions to use TiDB as library
 make server
 cd tidb-server && ./tidb-server
 ```
+
+In case you want to compile a specific location:
+
+```
+make server TARGET=$GOPATH/bin/tidb-server
+```
+
 The default server port is `4000` and can be changed by flag `-P <port>`.
 
 Run `./tidb-server -h` to see more flag options.
