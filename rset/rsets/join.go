@@ -180,14 +180,14 @@ func (r *JoinRset) checkTableDuplicate(t *TableSource, tr *TableRset) error {
 	}
 	r.tableNames[identName] = true
 
-	qualifedName := tr.Schema + "." + tr.Name
+	qualifiedName := tr.Schema + "." + tr.Name
 	// we should check qualifed name too, e,g select * form t1 join test.t1
-	if identName != qualifedName {
-		_, ok = r.tableNames[qualifedName]
+	if identName != qualifiedName {
+		_, ok = r.tableNames[qualifiedName]
 		if ok {
-			return errors.Errorf("%s: duplicate name %s", r, t.String())
+			return errors.Errorf("%s: duplicate name %s", r, identName)
 		}
-		r.tableNames[qualifedName] = true
+		r.tableNames[qualifiedName] = true
 	}
 
 	return nil
