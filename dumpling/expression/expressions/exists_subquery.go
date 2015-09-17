@@ -54,25 +54,13 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 		return true, nil
 	}
 
-	p, err := es.Sel.Plan(ctx)
+	rows, err := es.Sel.EvalRows(ctx, args, 1)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer p.Close()
 
-	es.Sel.push(ctx)
-	defer es.Sel.pop(ctx)
-
-	r, err := p.Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if r != nil {
-		es.Sel.Value = r
-		return true, nil
-	}
-
-	return false, nil
+	es.Sel.Value = rows
+	return len(rows) == 1, nil
 }
 
 // NewExistsSubQuery creates a ExistsSubQuery object.

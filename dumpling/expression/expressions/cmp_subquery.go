@@ -86,30 +86,7 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return cs.checkResult(lv, cs.R.Value.([]interface{}))
 	}
 
-	p, err := cs.R.Plan(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer p.Close()
-	res := []interface{}{}
-
-	cs.R.push(ctx)
-	defer cs.R.pop(ctx)
-
-	for {
-		row, err1 := p.Next(ctx)
-		if err1 != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		if len(row.Data) == 1 {
-			res = append(res, row.Data[0])
-		} else {
-			res = append(res, row.Data)
-		}
-	}
+	res, err := cs.R.EvalRows(ctx, args, -1)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
