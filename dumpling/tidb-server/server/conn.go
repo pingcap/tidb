@@ -244,18 +244,18 @@ func (cc *clientConn) Run() {
 		data, err := cc.readPacket()
 		if err != nil {
 			if errors2.ErrorNotEqual(err, io.EOF) {
-				// TODO: another type of error is also normal, check it.
-				log.Warn(err)
+				log.Error(err)
 			}
 			return
 		}
 
 		if err := cc.dispatch(data); err != nil {
+			if errors2.ErrorEqual(err, io.EOF) {
+				return
+			}
 			log.Errorf("dispatch error %s, %s", errors.ErrorStack(err), cc)
 			log.Errorf("cmd: %s", string(data[1:]))
-			if err != mysql.ErrBadConn { //todo: fix this
-				cc.writeError(err)
-			}
+			cc.writeError(err)
 		}
 
 		cc.pkg.sequence = 0
@@ -275,9 +275,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 
 	switch cmd {
 	case mysql.ComQuit:
-		cc.ctx.Close()
-		cc.Close()
-		return nil
+		return io.EOF
 	case mysql.ComQuery:
 		return cc.handleQuery(hack.String(data))
 	case mysql.ComPing:
@@ -287,7 +285,6 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if err := cc.useDB(hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
-
 		return cc.writeOK()
 	case mysql.ComFieldList:
 		return cc.handleFieldList(hack.String(data))
