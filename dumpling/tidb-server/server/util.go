@@ -36,12 +36,12 @@ package server
 
 import (
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math"
 	"strconv"
 	"time"
 
+	"github.com/juju/errors"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
@@ -338,6 +338,6 @@ func dumpTextValue(mysqlType uint8, value interface{}) ([]byte, error) {
 	case mysql.Decimal:
 		return hack.Slice(v.String()), nil
 	default:
-		return nil, fmt.Errorf("invalid type %T", value)
+		return nil, errors.Errorf("invalid type %T", value)
 	}
 }
