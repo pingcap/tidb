@@ -105,4 +105,20 @@ func (*testLikeSuite) TestEval(c *C) {
 	pattern.Expr = mockExpr{isStatic: false, val: nil}
 	_, err = pattern.Eval(nil, nil)
 	c.Assert(err, IsNil)
+
+	// Testcase for "LIKE BINARY xxx"
+	pattern = &PatternLike{
+		Expr:    mockExpr{isStatic: true, val: "slien"},
+		Pattern: mockExpr{isStatic: true, val: []byte("%E%")},
+	}
+	v, err := pattern.Eval(nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsTrue)
+	pattern = &PatternLike{
+		Expr:    mockExpr{isStatic: true, val: "slin"},
+		Pattern: mockExpr{isStatic: true, val: []byte("%E%")},
+	}
+	v, err = pattern.Eval(nil, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsFalse)
 }
