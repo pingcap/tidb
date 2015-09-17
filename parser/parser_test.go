@@ -319,6 +319,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT x'0a', X'11', 0x11", true},
 		{"select x'0xaa'", false},
 		{"select 0X11", false},
+
+		// For comparison
+		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
 
 	for _, t := range table {
