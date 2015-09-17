@@ -161,6 +161,38 @@ func (r *JoinRset) buildPlan(ctx context.Context, node interface{}) (plan.Plan, 
 	}
 }
 
+func (r *JoinRset) checkTableDuplicate(t *TableSource, tr *TableRset) error {
+	if len(t.Name) > 0 {
+		// use alias name
+		_, ok := r.tableNames[t.Name]
+		if ok {
+			return errors.Errorf("%s: duplicate name %s", r, t.Name)
+		}
+		r.tableNames[t.Name] = true
+		return nil
+	}
+
+	// first check ident name
+	identName := t.String()
+	_, ok := r.tableNames[identName]
+	if ok {
+		return errors.Errorf("%s: duplicate name %s", r, identName)
+	}
+	r.tableNames[identName] = true
+
+	qualifedName := tr.Schema + "." + tr.Name
+	// we should check qualifed name too, e,g select * form t1 join test.t1
+	if identName != qualifedName {
+		_, ok = r.tableNames[qualifedName]
+		if ok {
+			return errors.Errorf("%s: duplicate name %s", r, t.String())
+		}
+		r.tableNames[qualifedName] = true
+	}
+
+	return nil
+}
+
 func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Plan, []*field.ResultField, error) {
 	var (
 		src interface{}
@@ -175,12 +207,8 @@ func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Pl
 			return nil, nil, errors.Trace(err)
 		}
 		src = tr
-		if t.Name == "" {
-			qualifiedTableName := tr.Schema + "." + tr.Name
-			if r.tableNames[qualifiedTableName] {
-				return nil, nil, errors.Errorf("%s: duplicate name %s", r.String(), s)
-			}
-			r.tableNames[qualifiedTableName] = true
+		if err := r.checkTableDuplicate(t, tr); err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 	case stmt.Statement:
 		src = s
