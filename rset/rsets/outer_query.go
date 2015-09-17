@@ -23,7 +23,7 @@ var (
 	_ plan.Planner = (*OuterQueryRset)(nil)
 )
 
-// OuterQueryRset is to generate OuterQueryPlan,
+// OuterQueryRset is used to generate OuterQueryPlan,
 // so that sub query can fetch value from the table reference from outer query.
 type OuterQueryRset struct {
 	Src        plan.Plan
