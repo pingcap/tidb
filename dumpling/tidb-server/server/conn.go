@@ -224,7 +224,7 @@ func (cc *clientConn) Run() {
 		if err != nil {
 			if errors2.ErrorNotEqual(err, io.EOF) {
 				// TODO: another type of error is also normal, check it.
-				log.Info(err)
+				log.Warn(err)
 			}
 			return
 		}
@@ -244,11 +244,6 @@ func (cc *clientConn) Run() {
 func (cc *clientConn) dispatch(data []byte) error {
 	cmd := data[0]
 	data = data[1:]
-	if len(data) > 256 {
-		log.Debug(cc.connectionID, cmd, string(data[:256])+"...")
-	} else {
-		log.Debug(cc.connectionID, cmd, string(data))
-	}
 	cc.lastCmd = hack.String(data)
 
 	token := cc.server.getToken()

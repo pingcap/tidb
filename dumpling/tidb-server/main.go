@@ -34,12 +34,6 @@ var (
 	port      = flag.String("P", "4000", "mp server port")
 )
 
-//version infomation
-var (
-	buildstamp = "No Build Stamp Provided"
-	githash    = "No Git Hash Provided"
-)
-
 func main() {
 	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())

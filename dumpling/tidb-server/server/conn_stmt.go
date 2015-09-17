@@ -27,7 +27,7 @@ import (
 func (cc *clientConn) handleStmtPrepare(sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	data := make([]byte, 4, 128)
 
@@ -45,7 +45,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	data = append(data, 0, 0) //TODO support warning count
 
 	if err := cc.writePacket(data); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	if len(params) > 0 {
@@ -54,12 +54,12 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			data = append(data, params[i].Dump(cc.alloc)...)
 
 			if err := cc.writePacket(data); err != nil {
-				return err
+				return errors.Trace(err)
 			}
 		}
 
 		if err := cc.writeEOF(); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -69,16 +69,16 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			data = append(data, columns[i].Dump(cc.alloc)...)
 
 			if err := cc.writePacket(data); err != nil {
-				return err
+				return errors.Trace(err)
 			}
 		}
 
 		if err := cc.writeEOF(); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 	}
-	return cc.flush()
+	return errors.Trace(cc.flush())
 }
 
 func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
@@ -135,18 +135,18 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, paramTypes, paramValues)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	rs, err := stmt.Execute(args...)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if rs == nil {
-		return cc.writeOK()
+		return errors.Trace(cc.writeOK())
 	}
 
-	return cc.writeResultset(rs, true)
+	return errors.Trace(cc.writeResultset(rs, true))
 }
 
 func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte) (err error) {

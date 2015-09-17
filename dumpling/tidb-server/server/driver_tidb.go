@@ -107,7 +107,7 @@ func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
 	err := ts.ctx.session.DropPreparedStmt(ts.id)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 	return nil
