@@ -72,7 +72,7 @@ type JoinRset struct {
 	Type  JoinType
 	On    expression.Expression
 
-	tableNames map[string]bool
+	tableNames map[string]struct{}
 }
 
 func (r *JoinRset) String() string {
@@ -168,7 +168,7 @@ func (r *JoinRset) checkTableDuplicate(t *TableSource, tr *TableRset) error {
 		if ok {
 			return errors.Errorf("%s: duplicate name %s", r, t.Name)
 		}
-		r.tableNames[t.Name] = true
+		r.tableNames[t.Name] = struct{}{}
 		return nil
 	}
 
@@ -178,7 +178,7 @@ func (r *JoinRset) checkTableDuplicate(t *TableSource, tr *TableRset) error {
 	if ok {
 		return errors.Errorf("%s: duplicate name %s", r, identName)
 	}
-	r.tableNames[identName] = true
+	r.tableNames[identName] = struct{}{}
 
 	qualifiedName := tr.Schema + "." + tr.Name
 	// we should check qualifed name too, e,g select * form t1 join test.t1
@@ -187,7 +187,7 @@ func (r *JoinRset) checkTableDuplicate(t *TableSource, tr *TableRset) error {
 		if ok {
 			return errors.Errorf("%s: duplicate name %s", r, identName)
 		}
-		r.tableNames[qualifiedName] = true
+		r.tableNames[qualifiedName] = struct{}{}
 	}
 
 	return nil
@@ -251,7 +251,7 @@ func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Pl
 
 // Plan gets JoinPlan.
 func (r *JoinRset) Plan(ctx context.Context) (plan.Plan, error) {
-	r.tableNames = make(map[string]bool)
+	r.tableNames = make(map[string]struct{})
 	p := &plans.JoinPlan{}
 	if err := r.buildJoinPlan(ctx, p, r); err != nil {
 		return nil, errors.Trace(err)
