@@ -78,6 +78,32 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 	count, err = e2.ColumnCount(nil)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 2)
+
+	e3 := newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+
+	e2.push(ctx)
+	e3.push(ctx)
+
+	c.Assert(e2.UseOuterQuery, IsFalse)
+	c.Assert(e3.UseOuterQuery, IsFalse)
+	SetOuterQueryUsed(ctx)
+	c.Assert(e2.UseOuterQuery, IsTrue)
+	c.Assert(e3.UseOuterQuery, IsTrue)
+	err = e2.pop(ctx)
+	c.Assert(err, NotNil)
+
+	err = e3.pop(ctx)
+	SetOuterQueryUsed(ctx)
+
+	err = e2.pop(ctx)
+	c.Assert(err, IsNil)
+
+	err = e2.pop(ctx)
+	c.Assert(err, NotNil)
+
+	SetOuterQueryUsed(ctx)
+
+	c.Assert(len(subQueryStackKey.String()), Greater, 0)
 }
 
 func newMockSubQuery(rows [][]interface{}, fields []string) *SubQuery {
