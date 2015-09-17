@@ -72,7 +72,7 @@ type JoinRset struct {
 	Type  JoinType
 	On    expression.Expression
 
-	tableNames map[string]bool
+	tableNames map[string]struct{}
 }
 
 func (r *JoinRset) String() string {
@@ -161,6 +161,38 @@ func (r *JoinRset) buildPlan(ctx context.Context, node interface{}) (plan.Plan, 
 	}
 }
 
+func (r *JoinRset) checkTableDuplicate(t *TableSource, tr *TableRset) error {
+	if len(t.Name) > 0 {
+		// use alias name
+		_, ok := r.tableNames[t.Name]
+		if ok {
+			return errors.Errorf("%s: duplicate name %s", r, t.Name)
+		}
+		r.tableNames[t.Name] = struct{}{}
+		return nil
+	}
+
+	// first check ident name
+	identName := t.String()
+	_, ok := r.tableNames[identName]
+	if ok {
+		return errors.Errorf("%s: duplicate name %s", r, identName)
+	}
+	r.tableNames[identName] = struct{}{}
+
+	qualifiedName := tr.Schema + "." + tr.Name
+	// we should check qualifed name too, e,g select * form t1 join test.t1
+	if identName != qualifiedName {
+		_, ok = r.tableNames[qualifiedName]
+		if ok {
+			return errors.Errorf("%s: duplicate name %s", r, identName)
+		}
+		r.tableNames[qualifiedName] = struct{}{}
+	}
+
+	return nil
+}
+
 func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Plan, []*field.ResultField, error) {
 	var (
 		src interface{}
@@ -175,12 +207,8 @@ func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Pl
 			return nil, nil, errors.Trace(err)
 		}
 		src = tr
-		if t.Name == "" {
-			qualifiedTableName := tr.Schema + "." + tr.Name
-			if r.tableNames[qualifiedTableName] {
-				return nil, nil, errors.Errorf("%s: duplicate name %s", r.String(), s)
-			}
-			r.tableNames[qualifiedTableName] = true
+		if err := r.checkTableDuplicate(t, tr); err != nil {
+			return nil, nil, errors.Trace(err)
 		}
 	case stmt.Statement:
 		src = s
@@ -223,7 +251,7 @@ func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Pl
 
 // Plan gets JoinPlan.
 func (r *JoinRset) Plan(ctx context.Context) (plan.Plan, error) {
-	r.tableNames = make(map[string]bool)
+	r.tableNames = make(map[string]struct{})
 	p := &plans.JoinPlan{}
 	if err := r.buildJoinPlan(ctx, p, r); err != nil {
 		return nil, errors.Trace(err)
