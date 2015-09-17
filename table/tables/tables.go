@@ -137,7 +137,7 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 		return float32(rec.(float64)), nil
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeDouble, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob,
-		mysql.TypeVarchar, mysql.TypeString:
+		mysql.TypeVarchar, mysql.TypeString, mysql.TypeBit:
 		return rec, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t mysql.Time
