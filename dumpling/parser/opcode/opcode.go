@@ -42,6 +42,7 @@ const (
 	BitNeg
 	IntDiv
 	LogicXor
+	NullEQ
 )
 
 var ops = map[Op]string{
@@ -67,6 +68,7 @@ var ops = map[Op]string{
 	BitNeg:     "~",
 	IntDiv:     "DIV",
 	LogicXor:   "XOR",
+	NullEQ:     "<=>",
 }
 
 // String implements Stringer interface.
