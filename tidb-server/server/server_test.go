@@ -136,7 +136,7 @@ func runTestRegression(c *C) {
 
 		dbt.mustQueryRows("SELECT 1")
 
-		b := []byte("")
+		b := []byte{}
 		if err := dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
 			dbt.Fatal(err)
 		}
