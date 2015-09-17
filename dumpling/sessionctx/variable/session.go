@@ -94,15 +94,15 @@ func (s *SessionVars) AddFoundRows(rows uint64) {
 	s.FoundRows += rows
 }
 
-// SetStatus sets the session server status variable.
-// If flag is ture sets the input status in session status,
-// otherwise removes the input status.
-func (s *SessionVars) SetStatus(flag bool, status uint16) {
-	if flag {
-		s.Status |= status
+// SetStatusFlag sets the session server status variable.
+// If on is ture sets the flag in session status,
+// otherwise removes the flag.
+func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
+	if on {
+		s.Status |= flag
 		return
 	}
-	s.Status &= (^status)
+	s.Status &= (^flag)
 }
 
 // GetNextPreparedStmtID generates and return the next session scope prepared statement id
@@ -119,10 +119,10 @@ func IsAutocommit(ctx context.Context) bool {
 		ok = true
 	}
 	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
-		GetSessionVars(ctx).SetStatus(true, mysql.ServerStatusAutocommit)
+		GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
 		return true
 	}
-	GetSessionVars(ctx).SetStatus(false, mysql.ServerStatusAutocommit)
+	GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
 	return false
 }
 
