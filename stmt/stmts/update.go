@@ -85,14 +85,22 @@ func (s *UpdateStmt) SetText(text string) {
 	s.Text = text
 }
 
-func getUpdateColumns(t table.Table, assignList []expressions.Assignment, isMultipleTable bool) ([]*column.Col, error) {
+func getUpdateColumns(t table.Table, assignList []expressions.Assignment, isMultipleTable bool, tblAliasMap map[string]string) ([]*column.Col, error) {
 	// TODO: We should check the validate if assignList in somewhere else. Maybe in building plan.
 	tcols := make([]*column.Col, 0, len(assignList))
 	tname := t.TableName()
 	for _, asgn := range assignList {
 		if isMultipleTable {
 			if !strings.EqualFold(tname.O, asgn.TableName) {
-				continue
+				// Try to compare alias name with t.TableName()
+				if tblAliasMap == nil {
+					continue
+				}
+				if alias, ok := tblAliasMap[asgn.TableName]; !ok {
+					continue
+				} else if !strings.EqualFold(tname.O, alias) {
+					continue
+				}
 			}
 		}
 		col := column.FindCol(t.Cols(), asgn.ColName)
@@ -243,6 +251,15 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	updatedRowKeys := make(map[string]bool)
 	// For single-table syntax, TableRef may contain multiple tables
 	isMultipleTable := s.MultipleTable || s.TableRefs.MultipleTable()
+
+	// Get table alias map.
+	fs := p.GetFields()
+	tblAliasMap := make(map[string]string)
+	for _, f := range fs {
+		if f.TableName != f.OrgTableName {
+			tblAliasMap[f.TableName] = f.OrgTableName
+		}
+	}
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {
@@ -279,7 +296,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			end := start + len(tbl.Cols())
 			data := rowData[start:end]
 			start = end
-			tcols, err2 := getUpdateColumns(tbl, s.List, isMultipleTable)
+			tcols, err2 := getUpdateColumns(tbl, s.List, isMultipleTable, tblAliasMap)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
