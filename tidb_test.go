@@ -495,6 +495,14 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "rollback", 0)
 
+	checkInTrans(c, se, "set autocommit=O;", 0)
+	checkInTrans(c, se, "begin", 1)
+	checkInTrans(c, se, "insert t values ()", 1)
+	checkInTrans(c, se, "commit", 0)
+	checkInTrans(c, se, "insert t values ()", 0)
+	checkInTrans(c, se, "commit", 0)
+	checkInTrans(c, se, "set autocommit=1;", 0)
+
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 

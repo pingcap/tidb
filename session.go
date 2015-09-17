@@ -340,7 +340,9 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-
+		if !variable.IsAutocommit(s) {
+			variable.GetSessionVars(s).SetStatusInTrans(true)
+		}
 		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
@@ -354,6 +356,9 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, err
+		}
+		if !variable.IsAutocommit(s) {
+			variable.GetSessionVars(s).SetStatusInTrans(true)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
 	}
