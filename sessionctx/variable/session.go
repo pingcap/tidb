@@ -114,12 +114,20 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// ShouldAutocommit checks if it is in autocommit enviroment
+// IsAutocommit checks if it is in the auto-commit mode.
+func IsAutocommit(ctx context.Context) bool {
+	autocommit := GetSysVar("autocommit")
+	if autocommit != nil && autocommit.Value == "ON" {
+		return true
+	}
+	return false
+}
+
+// ShouldAutocommit checks if it should be auto-commit.
 func ShouldAutocommit(ctx context.Context) bool {
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
-	if GetSessionVars(ctx).Status&mysql.ServerStatusAutocommit > 0 &&
-		GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 {
+	if IsAutocommit(ctx) && GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 {
 		return true
 	}
 
