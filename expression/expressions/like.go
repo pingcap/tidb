@@ -101,11 +101,15 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 		if pattern == nil {
 			return nil, nil
 		}
-		spattern, ok := pattern.(string)
-		if !ok {
-			return nil, errors.Errorf("non-string pattern in LIKE: %v (Value of type %T)", pattern, pattern)
+		var spattern string
+		switch v := pattern.(type) {
+		case string:
+			spattern = v
+		case []byte:
+			spattern = string(v)
+		default:
+			return nil, errors.Errorf("Pattern should be string or []byte in LIKE: %v (Value of type %T)", pattern, pattern)
 		}
-
 		p.patChars, p.patTypes = compilePattern(spattern)
 	}
 
