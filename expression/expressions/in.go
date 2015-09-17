@@ -168,34 +168,13 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 
 	var res []interface{}
-	if err := hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
+	if err = hasSameColumnCount(ctx, n.Expr, n.Sel); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	// select not yet evaluated
-	r, err := n.Sel.Plan(ctx)
+	res, err = n.Sel.EvalRows(ctx, args, -1)
 	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-	res = []interface{}{}
-	// evaluate select and save its result for later in expression check
-	n.Sel.push(ctx)
-	defer n.Sel.pop(ctx)
-
-	for {
-		row, err1 := r.Next(ctx)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		if row == nil {
-			break
-		}
-		if len(row.Data) == 1 {
-			res = append(res, row.Data[0])
-		} else {
-			res = append(res, row.Data)
-		}
+		return nil, errors.Trace(err)
 	}
 
 	n.Sel.Value = res
