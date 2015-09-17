@@ -673,6 +673,26 @@ func (s *testSessionSuite) TestExpression(c *C) {
 	match(c, row, 1, -1, 0, 0)
 }
 
+func (s *testSessionSuite) TestSelect(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table if not exists t (c1 int, c2 int)")
+	mustExecSQL(c, se, "create table if not exists t1 (c1 int, c2 int)")
+
+	_, err := se.Execute("select * from t as a join t as a")
+	c.Assert(err, NotNil)
+
+	_, err = se.Execute("select * from t join t1 as t")
+	c.Assert(err, NotNil)
+
+	_, err = se.Execute("select * from t join test.t")
+	c.Assert(err, NotNil)
+
+	_, err = se.Execute("select * from t as a join (select 1) as a")
+	c.Assert(err, IsNil)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
