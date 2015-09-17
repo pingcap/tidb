@@ -60,6 +60,14 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 		val, err := types.ToBool(v)
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, t.result)
+
+		// test cache
+		v, err = exprc.Eval(ctx, nil)
+		c.Assert(err, IsNil)
+
+		val, err = types.ToBool(v)
+		c.Assert(err, IsNil)
+		c.Assert(val, Equals, t.result)
 	}
 
 	// Test not exists subquery.
