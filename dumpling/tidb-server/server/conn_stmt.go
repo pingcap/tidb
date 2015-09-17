@@ -6,6 +6,7 @@
 
 // The MIT License (MIT)
 //
+// Copyright (c) 2014 wandoulabs
 // Copyright (c) 2014 siddontang
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
