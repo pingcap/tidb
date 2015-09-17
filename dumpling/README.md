@@ -35,7 +35,7 @@ Read the [Roadmap](./ROADMAP.md).
 
 ## Quick start
 
-- __Pre-requirement__  
+#### __Pre-requirement__
 
 Go environment. Currently a 64-bit version of go >= 1.5 is required.
 ```
@@ -44,7 +44,7 @@ cd $GOPATH/src/github.com/pingcap/tidb
 make
 ```
 
-- __Run command line interpreter__
+#### __Run command line interpreter__
 
 Interpreter is an interactive command line TiDB client.
 You can just enter some SQL statements and get the result.
@@ -54,23 +54,28 @@ cd interpreter && ./interpreter
 ```
 Press `Ctrl+C` to quit.
 
-- __Run as go library__  
+#### __Run as go library__
+
 See [USAGE.md](./docs/USAGE.md) for detailed instructions to use TiDB as library in Go code.
 
-- __Run as MySQL protocol server__
+#### __Run as MySQL protocol server__
+
 ```
-make tidb-server
+make server
 cd tidb-server && ./tidb-server
 ```
-The default server port is `4000` and can be changeed by flag `-P <port>`.
+The default server port is `4000` and can be changed by flag `-P <port>`.
+
 Run `./tidb-server -h` to see more flag options.
 
 After you started tidb-server, you can use official mysql client to connect to TiDB.
+
 ```
 mysql -h 127.0.0.1 -P 4000 -D test
 ```
 
-- __Run as MySQL protocol server with distributed transactional KV storage engine__  
+#### __Run as MySQL protocol server with distributed transactional KV storage engine__
+
 Comming soon.
 
 ## Architecture
