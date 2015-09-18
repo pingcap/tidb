@@ -64,7 +64,7 @@ func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 
 	// pop the rowStackItem
 	if errPop := popRowStack(ctx); errPop != nil {
-		return nil, errors.Trace(errPop)
+		return nil, errors.Wrap(err, errPop)
 	}
 
 	if row == nil || err != nil {
