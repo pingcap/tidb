@@ -18,23 +18,23 @@ import (
 	"github.com/pingcap/tidb/plan/plans"
 )
 
-var _ = Suite(&testOuterQueryRsetSuite{})
+var _ = Suite(&testRowStackFromRsetSuite{})
 
-type testOuterQueryRsetSuite struct {
-	r *OuterQueryRset
+type testRowStackFromRsetSuite struct {
+	r *RowStackFromRset
 }
 
-func (s *testOuterQueryRsetSuite) SetUpSuite(c *C) {
+func (s *testRowStackFromRsetSuite) SetUpSuite(c *C) {
 	names := []string{"id", "name"}
 	tblPlan := newTestTablePlan(testData, names)
 
-	s.r = &OuterQueryRset{Src: tblPlan, OuterQuery: &plans.OuterQuery{}}
+	s.r = &RowStackFromRset{Src: tblPlan}
 }
 
-func (s *testOuterQueryRsetSuite) TestOuterQueryRsetPlan(c *C) {
+func (s *testRowStackFromRsetSuite) TestRowStackFromRsetPlan(c *C) {
 	p, err := s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
-	_, ok := p.(*plans.OuterQueryPlan)
+	_, ok := p.(*plans.RowStackFromPlan)
 	c.Assert(ok, IsTrue)
 }

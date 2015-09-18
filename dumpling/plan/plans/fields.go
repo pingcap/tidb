@@ -37,9 +37,8 @@ var (
 // SelectFieldsDefaultPlan extracts specific fields from Src Plan.
 type SelectFieldsDefaultPlan struct {
 	*SelectList
-	Src        plan.Plan
-	evalArgs   map[interface{}]interface{}
-	OuterQuery *OuterQuery
+	Src      plan.Plan
+	evalArgs map[interface{}]interface{}
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -87,7 +86,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 			return nil, errors.Trace(err)
 		}
 	}
-	r.OuterQuery.update(ctx, row.Data, row.FromData)
+	updateRowStack(ctx, row.Data, row.FromData)
 	return
 }
 

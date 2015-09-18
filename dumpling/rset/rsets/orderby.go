@@ -53,7 +53,6 @@ type OrderByRset struct {
 	By         []OrderByItem
 	Src        plan.Plan
 	SelectList *plans.SelectList
-	OuterQuery *plans.OuterQuery
 }
 
 func (r *OrderByRset) String() string {
@@ -158,5 +157,5 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	return &plans.OrderByDefaultPlan{By: by, Ascs: ascs, Src: r.Src,
-		SelectList: r.SelectList, OuterQuery: r.OuterQuery}, nil
+		SelectList: r.SelectList}, nil
 }

@@ -45,7 +45,7 @@ func (s *testOrderByRsetSuite) SetUpSuite(c *C) {
 		Fields:            fields,
 	}
 
-	s.r = &OrderByRset{Src: tblPlan, SelectList: selectList, OuterQuery: &plans.OuterQuery{}}
+	s.r = &OrderByRset{Src: tblPlan, SelectList: selectList}
 }
 
 func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {

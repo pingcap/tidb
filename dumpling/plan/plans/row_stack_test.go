@@ -24,17 +24,15 @@ type testOuterQuerySuite struct{}
 
 var _ = Suite(&testOuterQuerySuite{})
 
-func (s *testOuterQuerySuite) TestOuterQueryPlan(c *C) {
+func (s *testOuterQuerySuite) TestRowStackFromPlan(c *C) {
 	var data = []*testRowData{
 		{1, []interface{}{10, "hello"}},
 	}
 
 	pln := &testTablePlan{data, []string{"id", "name"}, 0}
 
-	outerQuery := &plans.OuterQuery{}
-	p := &plans.OuterQueryPlan{
-		Src:        pln,
-		OuterQuery: outerQuery,
+	p := &plans.RowStackFromPlan{
+		Src: pln,
 	}
 
 	fields := p.GetFields()
@@ -45,6 +43,4 @@ func (s *testOuterQuerySuite) TestOuterQueryPlan(c *C) {
 		Ctx:  mock.NewContext()}
 	_, err := rset.Rows(-1, 0)
 	c.Assert(err, IsNil)
-
-	c.Assert(outerQuery.FromData, DeepEquals, []interface{}{10, "hello"})
 }

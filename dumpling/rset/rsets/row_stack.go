@@ -20,17 +20,16 @@ import (
 )
 
 var (
-	_ plan.Planner = (*OuterQueryRset)(nil)
+	_ plan.Planner = (*RowStackFromRset)(nil)
 )
 
-// OuterQueryRset is used to generate OuterQueryPlan,
+// RowStackFromRset is used to generate RowStackFromPlan,
 // so that sub query can fetch value from the table reference from outer query.
-type OuterQueryRset struct {
-	Src        plan.Plan
-	OuterQuery *plans.OuterQuery
+type RowStackFromRset struct {
+	Src plan.Plan
 }
 
-// Plan gets OuterQueryPlan.
-func (r *OuterQueryRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.OuterQueryPlan{Src: r.Src, OuterQuery: r.OuterQuery}, nil
+// Plan gets RowStackFromPlan.
+func (r *RowStackFromRset) Plan(ctx context.Context) (plan.Plan, error) {
+	return &plans.RowStackFromPlan{Src: r.Src}, nil
 }

@@ -23,27 +23,25 @@ import (
 	"github.com/pingcap/tidb/util/format"
 )
 
-// OuterQueryPlan stores origin row from table in current OuterQuery,
-// for later subquery fetching value from outer query.
-// OuterQueryPlan is used after From phase, so that we can get the origin row table.
-type OuterQueryPlan struct {
+// RowStackFromPlan stores origin row from table in current select phase,
+// so we can fetch value from outer query for later subquery.
+// RowStackFromPlan is used after From phase to get origin row uniformly.
+type RowStackFromPlan struct {
 	Src plan.Plan
-
-	OuterQuery *OuterQuery
 }
 
 // Explain implements the plan.Plan Explain interface.
-func (p *OuterQueryPlan) Explain(w format.Formatter) {
+func (p *RowStackFromPlan) Explain(w format.Formatter) {
 	p.Src.Explain(w)
 }
 
 // GetFields implements the plan.Plan GetFields interface.
-func (p *OuterQueryPlan) GetFields() []*field.ResultField {
+func (p *RowStackFromPlan) GetFields() []*field.ResultField {
 	return p.Src.GetFields()
 }
 
 // Filter implements the plan.Plan Filter interface.
-func (p *OuterQueryPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
+func (p *RowStackFromPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	r, b, err := p.Src.Filter(ctx, expr)
 	if !b || err != nil {
 		return p, false, errors.Trace(err)
@@ -54,7 +52,7 @@ func (p *OuterQueryPlan) Filter(ctx context.Context, expr expression.Expression)
 }
 
 // Next implements the plan.Plan Next interface.
-func (p *OuterQueryPlan) Next(ctx context.Context) (*plan.Row, error) {
+func (p *RowStackFromPlan) Next(ctx context.Context) (*plan.Row, error) {
 	row, err := p.Src.Next(ctx)
 	if row == nil || err != nil {
 		return nil, errors.Trace(err)
@@ -62,40 +60,41 @@ func (p *OuterQueryPlan) Next(ctx context.Context) (*plan.Row, error) {
 
 	row.FromData = row.Data
 
-	p.OuterQuery.update(ctx, nil, row.Data)
+	updateRowStack(ctx, nil, row.Data)
 
 	return row, nil
 }
 
 // Close implements the plan.Plan Close interface.
-func (p *OuterQueryPlan) Close() error {
+func (p *RowStackFromPlan) Close() error {
 	return p.Src.Close()
 }
 
 // A dummy type to avoid naming collision in context.
-type outerQueryKeyType int
+type rowStackKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k outerQueryKeyType) String() string {
-	return "outer query"
+func (k rowStackKeyType) String() string {
+	return "row stack"
 }
 
-// outerQueryKey is used to retrive outer table references for sub query.
-const outerQueryKey outerQueryKeyType = 0
+// rowStackKey is used to retrive outer table references for sub query.
+const rowStackKey rowStackKeyType = 0
 
-// OuterQuery saves the outer table references.
-// For every select, we will push a OuterQuery to a stack for inner sub query use,
-// so the top OuterQuery is for current select.
+// RowStack saves the current and outer row references.
+// For every select, we will push a RowStack to a stack for inner sub query use,
+// so the top RowStack is always for current select.
 // e.g, select c1 from t1 where c2 = (select c1 from t2 where t2.c1 = t1.c2 limit 1),
 // the "select c1 from t1" is the outer query for the sub query in where phase, we will
-// first push a OuterQuery to the stack saving the row data for "select c1 from t1", then
-// push the second OuterQuery to the stack saving the row data for "select c1 from t2".
-// We will push a OuterQuery after the from phase and pop it before the final phase.
-// So we can guarantee that there is at least one OuterQuery certainly.
-type OuterQuery struct {
-	// outer is the last outer table reference.
-	last *OuterQuery
+// first push a RowStack to the stack saving the row data for "select c1 from t1", then
+// push the second RowStack to the stack saving the row data for "select c1 from t2".
+// We will push a RowStack after the from phase and pop it before the final phase.
+// So we can guarantee that there is at least one RowStack certainly.
+type RowStack struct {
+	items []*rowStackItem
+}
 
+type rowStackItem struct {
 	// OutDataFields is the output record data with select list.
 	OutData       []interface{}
 	OutDataFields []*field.ResultField
@@ -104,62 +103,81 @@ type OuterQuery struct {
 	FromDataFields []*field.ResultField
 }
 
-func getOuterQuery(ctx context.Context) *OuterQuery {
-	v := ctx.Value(outerQueryKey)
+func getRowStack(ctx context.Context) *RowStack {
+	v := ctx.Value(rowStackKey)
 	if v == nil {
 		return nil
 	}
-	// must be OuterQuery
-	t := v.(*OuterQuery)
+	// must be RowStack
+	t := v.(*RowStack)
 	return t
 }
 
-func (q *OuterQuery) update(ctx context.Context, outData []interface{}, fromData []interface{}) {
-	q.OutData = outData
-	q.FromData = fromData
-
-	t := getOuterQuery(ctx)
-	if t != nil && t != q {
-		q.last = t
+func pushRowStack(ctx context.Context, outDataFields []*field.ResultField, fromDataFields []*field.ResultField) {
+	s := getRowStack(ctx)
+	if s == nil {
+		s = &RowStack{
+			items: make([]*rowStackItem, 0, 1),
+		}
 	}
 
-	ctx.SetValue(outerQueryKey, q)
+	s.items = append(s.items, &rowStackItem{
+		OutDataFields:  outDataFields,
+		FromDataFields: fromDataFields,
+	})
+
+	ctx.SetValue(rowStackKey, s)
 }
 
-func (q *OuterQuery) clear(ctx context.Context) error {
-	t := getOuterQuery(ctx)
-
-	if t == nil || t != q {
-		return errors.Errorf("invalid outer query stack")
+func updateRowStack(ctx context.Context, outData []interface{}, fromData []interface{}) error {
+	s := getRowStack(ctx)
+	if s == nil {
+		return errors.Errorf("update empty row stack")
 	}
 
-	t.OutData = nil
-	t.FromData = nil
+	t := s.items[len(s.items)-1]
+	t.OutData = outData
+	t.FromData = fromData
+	return nil
+}
 
-	if t.last == nil {
-		ctx.ClearValue(outerQueryKey)
+func popRowStack(ctx context.Context) error {
+	s := getRowStack(ctx)
+
+	if s == nil || len(s.items) == 0 {
+		return errors.Errorf("pop empty row stack")
+	}
+
+	n := len(s.items) - 1
+	s.items[n] = nil
+	s.items = s.items[0:n]
+
+	if len(s.items) == 0 {
+		ctx.ClearValue(rowStackKey)
 		return nil
 	}
 
-	ctx.SetValue(outerQueryKey, t.last)
+	ctx.SetValue(rowStackKey, s)
 	return nil
 }
 
 func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{}, error) {
-	t := getOuterQuery(ctx)
-	if t == nil {
+	s := getRowStack(ctx)
+	if s == nil {
 		return nil, errors.Errorf("unknown field %s", name)
 	}
 
-	// The top is current OuterQuery, use its last.
-	t = t.last
+	// The top is current RowStack, use its last.
+	n := len(s.items) - 2
 
 	var (
 		v   interface{}
 		err error
 	)
 
-	for ; t != nil; t = t.last {
+	for ; n >= 0; n-- {
+		t := s.items[n]
+
 		// first try to get from outer table reference.
 		if t.FromData != nil {
 			v, err = GetIdentValue(name, t.FromDataFields, t.FromData, field.DefaultFieldFlag)

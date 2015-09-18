@@ -46,8 +46,7 @@ func (t *testDistinctSuit) TestDistinct(c *C) {
 		SelectList: &plans.SelectList{
 			HiddenFieldOffset: len(tblPlan.GetFields()),
 		},
-		Src:        tblPlan,
-		OuterQuery: &plans.OuterQuery{},
+		Src: tblPlan,
 	}
 	rset := rsets.Recordset{
 		Plan: &p,

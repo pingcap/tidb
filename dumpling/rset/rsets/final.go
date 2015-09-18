@@ -28,10 +28,9 @@ var (
 type SelectFinalRset struct {
 	Src        plan.Plan
 	SelectList *plans.SelectList
-	OuterQuery *plans.OuterQuery
 }
 
 // Plan gets SelectFinalPlan.
 func (r *SelectFinalRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.SelectFinalPlan{Src: r.Src, SelectList: r.SelectList, OuterQuery: r.OuterQuery}, nil
+	return &plans.SelectFinalPlan{Src: r.Src, SelectList: r.SelectList}, nil
 }

@@ -52,7 +52,6 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	selFieldsPlan := &plans.SelectFieldsDefaultPlan{
 		SelectList: sl1,
 		Src:        tblPlan,
-		OuterQuery: &plans.OuterQuery{},
 	}
 	rset := rsets.Recordset{
 		Plan: selFieldsPlan,
@@ -83,7 +82,6 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	rset.Plan = &plans.SelectFieldsDefaultPlan{
 		SelectList: sl2,
 		Src:        tblPlan,
-		OuterQuery: &plans.OuterQuery{},
 	}
 
 	rset.Do(func(data []interface{}) (bool, error) {
@@ -107,7 +105,6 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	rset.Plan = &plans.SelectFieldsDefaultPlan{
 		SelectList: sl3,
 		Src:        tblPlan,
-		OuterQuery: &plans.OuterQuery{},
 	}
 	err := rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil

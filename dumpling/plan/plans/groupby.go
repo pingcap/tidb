@@ -50,11 +50,11 @@ var (
 // refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
 type GroupByDefaultPlan struct {
 	*SelectList
-	Src        plan.Plan
-	By         []expression.Expression
-	OuterQuery *OuterQuery
-	rows       []*groupRow
-	cursor     int
+	Src plan.Plan
+	By  []expression.Expression
+
+	rows   []*groupRow
+	cursor int
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -265,7 +265,7 @@ func (r *GroupByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 	gRow := r.rows[r.cursor]
 	r.cursor++
 	row = gRow.Row
-	r.OuterQuery.update(ctx, row.Data, row.FromData)
+	updateRowStack(ctx, row.Data, row.FromData)
 	return
 }
 
@@ -304,7 +304,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		}
 
 		// update outer query becuase group by may use it if it has a subquery.
-		r.OuterQuery.update(ctx, row.Data, row.FromData)
+		updateRowStack(ctx, row.Data, row.FromData)
 
 		if err := r.evalGroupKey(ctx, k, row.Data, srcRow.Data); err != nil {
 			return errors.Trace(err)
