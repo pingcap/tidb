@@ -141,19 +141,15 @@ func (s *testStmtSuite) TestSetCharsetStmt(c *C) {
 func (s *testStmtSuite) TestSetPwdStmt(c *C) {
 	// Mock SetPwdStmt.
 	testStmt := &stmts.SetPwdStmt{
-		User:     "user",
+		User:     "root@localhost",
 		Password: "password",
 	}
 
-	testStmt.SetText(`SET PASSWORD FOR 'user' = PASSWORD('password');`)
+	testStmt.SetText(`SET PASSWORD FOR 'root'@'localhost' = 'password';`)
 
 	c.Assert(testStmt.IsDDL(), IsFalse)
 	c.Assert(len(testStmt.OriginText()), Greater, 0)
 
 	_, err := testStmt.Exec(nil)
 	c.Assert(err, IsNil)
-
-	mf := newMockFormatter()
-	testStmt.Explain(nil, mf)
-	c.Assert(mf.Len(), Greater, 0)
 }
