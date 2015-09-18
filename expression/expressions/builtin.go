@@ -22,9 +22,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/sessionctx/db"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 var builtin = map[string]struct {
@@ -108,27 +105,4 @@ func builtinCoalesce(args []interface{}, ctx map[interface{}]interface{}) (v int
 		}
 	}
 	return nil, nil
-}
-
-func builtinDatabase(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
-	c, ok := data[ExprEvalArgCtx]
-	if !ok {
-		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
-	}
-	ctx := c.(context.Context)
-	d := db.GetCurrentSchema(ctx)
-	if d == "" {
-		return nil, nil
-	}
-	return d, nil
-}
-
-// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
-func builtinFoundRows(arg []interface{}, data map[interface{}]interface{}) (interface{}, error) {
-	c, ok := data[ExprEvalArgCtx]
-	if !ok {
-		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
-	}
-	ctx := c.(context.Context)
-	return variable.GetSessionVars(ctx).FoundRows, nil
 }
