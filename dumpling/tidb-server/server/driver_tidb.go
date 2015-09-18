@@ -275,7 +275,7 @@ func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 	return
 }
 
-// Bootstrap initiate TiDB server
+// Bootstrap initiates TiDB server.
 func Bootstrap(store kv.Storage) {
 	td := NewTiDBDriver(store)
 	tc, err := td.OpenCtx(defaultCapability, mysql.DefaultCollationID, "")
@@ -292,7 +292,7 @@ func Bootstrap(store kv.Storage) {
 	//  Check if mysql db exists.
 	_, err = tc.Execute("USE mysql;")
 	if err == nil {
-		// Already bootstraped
+		// Already bootstrapeds
 		return
 	} else if !errors2.ErrorEqual(err, tidberrors.ErrDatabaseNotExist) {
 		log.Fatal(err)
