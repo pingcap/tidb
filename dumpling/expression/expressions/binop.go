@@ -69,7 +69,7 @@ func NewBinaryOperation(op opcode.Op, x, y expression.Expression) expression.Exp
 		return &BinaryOperation{opcode.LT, r, b.L}
 	case opcode.GE:
 		return &BinaryOperation{opcode.LE, r, b.L}
-	case opcode.EQ, opcode.NE:
+	case opcode.EQ, opcode.NE, opcode.NullEQ:
 		return &BinaryOperation{b.Op, r, b.L}
 	default:
 		return b
@@ -95,7 +95,8 @@ func (o *BinaryOperation) IsIdentRelOpVal() (bool, string, interface{}, error) {
 		switch o.Op {
 		case opcode.LT, opcode.LE,
 			opcode.GT, opcode.GE,
-			opcode.EQ, opcode.NE:
+			opcode.EQ, opcode.NE,
+			opcode.NullEQ:
 			return true, sid, v.Val, nil
 		default:
 			return false, "", nil, nil
@@ -154,7 +155,7 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 
 	// row constructor only supports comparison operation.
 	switch o.Op {
-	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE:
+	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 	default:
 		if err := CheckOneColumn(ctx, o.L); err != nil {
 			return nil, o.traceErr(err)
@@ -164,7 +165,7 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	switch o.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
 		return o.evalLogicOp(ctx, args)
-	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE:
+	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 		return o.evalComparisonOp(ctx, args)
 	case opcode.RightShift, opcode.LeftShift, opcode.And, opcode.Or, opcode.Xor:
 		// TODO: MySQL doesn't support and not, we should remove it later.
@@ -378,6 +379,8 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 		return value == 0, nil
 	case opcode.NE:
 		return value != 0, nil
+	case opcode.NullEQ:
+		return value == 0, nil
 	default:
 		return false, errors.Errorf("invalid op %v in comparision operation", op)
 	}
@@ -393,7 +396,12 @@ func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interfa
 	}
 
 	if a == nil || b == nil {
-		// TODO: for <=>, if a and b are both nil, return true
+		// for <=>, if a and b are both nil, return true.
+		// if a or b is nil, return false.
+		if o.Op == opcode.NullEQ {
+			return a == b, nil
+		}
+
 		return nil, nil
 	}
 
