@@ -113,8 +113,8 @@ func (sq *SubQuery) Plan(ctx context.Context) (plan.Plan, error) {
 
 // EvalRows executes the subquery and returns the multi rows with rowCount.
 // rowCount < 0 means no limit.
-// if the ColumnCount is 1, we will return a column result like {1, 2, 3}
-// otherwise, we will return a table result like {{1, 1}, {2, 2}}
+// If the ColumnCount is 1, we will return a column result like {1, 2, 3},
+// otherwise, we will return a table result like {{1, 1}, {2, 2}}.
 func (sq *SubQuery) EvalRows(ctx context.Context, args map[interface{}]interface{}, rowCount int) ([]interface{}, error) {
 	p, err := sq.Plan(ctx)
 	if err != nil {
