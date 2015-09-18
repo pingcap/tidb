@@ -168,6 +168,7 @@ import (
 	neqSynonym	"<>"
 	not		"NOT"
 	null		"NULL"
+	nulleq		"<=>"
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
@@ -1406,6 +1407,10 @@ CompareOp:
 |	"="
 	{
 		$$ = opcode.EQ
+	}
+|	"<=>"
+	{
+		$$ = opcode.NullEQ
 	}
 
 AnyOrAll:

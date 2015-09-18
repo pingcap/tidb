@@ -721,6 +721,12 @@ func (s *testSessionSuite) TestExpression(c *C) {
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, 1, -1, 0, 0)
+
+	r = mustExecSQL(c, se, "select 1 <=> 1, 1 <=> null, null <=> null, null <=> (select null)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 0, 1, 1)
+
 }
 
 func (s *testSessionSuite) TestSelect(c *C) {

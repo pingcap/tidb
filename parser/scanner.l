@@ -487,6 +487,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 "<>"			return neq
 "||"			return oror
 ">>"			return rsh
+"<=>"			return nulleq
 
 "?"			return placeholder
 
