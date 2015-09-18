@@ -31,7 +31,7 @@ func (s *testDistinctRsetSuite) SetUpSuite(c *C) {
 		HiddenFieldOffset: len(tblPlan.GetFields()),
 	}
 
-	s.r = &DistinctRset{Src: tblPlan, SelectList: selectList, OuterQuery: &plans.OuterQuery{}}
+	s.r = &DistinctRset{Src: tblPlan, SelectList: selectList}
 }
 
 func (s *testDistinctRsetSuite) TestDistinctRsetPlan(c *C) {

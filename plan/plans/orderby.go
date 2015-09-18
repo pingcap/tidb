@@ -39,12 +39,12 @@ var _ plan.Plan = (*OrderByDefaultPlan)(nil)
 // results temporarily, and sorts them by given expression.
 type OrderByDefaultPlan struct {
 	*SelectList
-	By         []expression.Expression
-	Ascs       []bool
-	Src        plan.Plan
-	OuterQuery *OuterQuery
-	ordTable   *orderByTable
-	cursor     int
+	By   []expression.Expression
+	Ascs []bool
+	Src  plan.Plan
+
+	ordTable *orderByTable
+	cursor   int
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -144,7 +144,7 @@ func (r *OrderByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 		return
 	}
 	row = r.ordTable.Rows[r.cursor].Row
-	r.OuterQuery.update(ctx, row.Data, row.FromData)
+	updateRowStack(ctx, row.Data, row.FromData)
 	r.cursor++
 	return
 }

@@ -140,9 +140,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	}
 
-	// all OuterQueryPlan in the same select will use a OuterQuery.
-	outerQuery := &plans.OuterQuery{FromDataFields: r.GetFields()}
-	r, _ = (&rsets.OuterQueryRset{Src: r, OuterQuery: outerQuery}).Plan(ctx)
+	// Put RowStackFromRset here so that we can catch the origin from data after above FROM phase.
+	r, _ = (&rsets.RowStackFromRset{Src: r}).Plan(ctx)
 
 	if w := s.Where; w != nil {
 		r, err = (&rsets.WhereRset{Expr: w.Expr, Src: r}).Plan(ctx)
@@ -173,9 +172,6 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// set out data fields, cannot contain hidden select list
-	outerQuery.OutDataFields = selectList.ResultFields[0:selectList.HiddenFieldOffset]
-
 	var groupBy []expression.Expression
 	if s.GroupBy != nil {
 		groupBy = s.GroupBy.By
@@ -200,7 +196,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		// If no group by and no aggregate functions, we will use SelectFieldsPlan.
 		if r, err = (&rsets.SelectFieldsRset{Src: r,
 			SelectList: selectList,
-			OuterQuery: outerQuery}).Plan(ctx); err != nil {
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 
@@ -208,7 +204,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		if r, err = (&rsets.GroupByRset{By: groupBy,
 			Src:        r,
 			SelectList: selectList,
-			OuterQuery: outerQuery}).Plan(ctx); err != nil {
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -224,7 +220,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	if s.Distinct {
 		if r, err = (&rsets.DistinctRset{Src: r,
 			SelectList: selectList,
-			OuterQuery: outerQuery}).Plan(ctx); err != nil {
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -233,7 +229,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		if r, err = (&rsets.OrderByRset{By: s.By,
 			Src:        r,
 			SelectList: selectList,
-			OuterQuery: outerQuery}).Plan(ctx); err != nil {
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -251,7 +247,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if r, err = (&rsets.SelectFinalRset{Src: r,
 		SelectList: selectList,
-		OuterQuery: outerQuery}).Plan(ctx); err != nil {
+	}).Plan(ctx); err != nil {
 		return nil, err
 	}
 

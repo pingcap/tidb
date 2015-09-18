@@ -76,8 +76,7 @@ func (t *testFinalPlan) TestFinalPlan(c *C) {
 				field.ColToResultField(col3, "t"),
 			},
 		},
-		Src:        tblPlan,
-		OuterQuery: &plans.OuterQuery{},
+		Src: tblPlan,
 	}
 
 	for _, rf := range p.ResultFields {

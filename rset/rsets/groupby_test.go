@@ -48,7 +48,7 @@ func (s *testGroupByRsetSuite) SetUpSuite(c *C) {
 
 	by := []expression.Expression{&expressions.Ident{CIStr: model.NewCIStr("name")}}
 
-	s.r = &GroupByRset{Src: tblPlan, SelectList: selectList, By: by, OuterQuery: &plans.OuterQuery{}}
+	s.r = &GroupByRset{Src: tblPlan, SelectList: selectList, By: by}
 }
 
 func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {

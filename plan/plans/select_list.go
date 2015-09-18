@@ -34,6 +34,9 @@ type SelectList struct {
 	// HiddenFieldOffset distinguishes select field list and hidden fields for internal use.
 	// We will use this to get select filed list and calculate distinct key.
 	HiddenFieldOffset int
+
+	// FromFields is the fields from table.
+	FromFields []*field.ResultField
 }
 
 func (s *SelectList) updateFields(table string, resultFields []*field.ResultField) {
@@ -135,6 +138,7 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 		Fields:       make([]*field.Field, 0, len(selectFields)),
 		ResultFields: make([]*field.ResultField, 0, len(selectFields)),
 		AggFields:    make(map[int]struct{}),
+		FromFields:   srcFields,
 	}
 
 	wildcardNum := 0

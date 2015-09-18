@@ -36,8 +36,6 @@ type DistinctDefaultPlan struct {
 	Src    plan.Plan
 	rows   []*plan.Row
 	cursor int
-
-	OuterQuery *OuterQuery
 }
 
 // Explain implements the plan.Plan Explain interface.
@@ -63,7 +61,7 @@ func (r *DistinctDefaultPlan) Next(ctx context.Context) (row *plan.Row, err erro
 		return
 	}
 	row = r.rows[r.cursor]
-	r.OuterQuery.update(ctx, row.Data, row.FromData)
+	updateRowStack(ctx, row.Data, row.FromData)
 	r.cursor++
 	return
 }
