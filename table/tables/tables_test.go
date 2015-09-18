@@ -135,9 +135,9 @@ func (ts *testSuite) TestTypes(c *C) {
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
-	_, err = ts.se.Execute("CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double)")
+	_, err = ts.se.Execute("CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double, c6 bit)")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute("insert test.t values (1, 2, 3, 4, 5)")
+	_, err = ts.se.Execute("insert test.t values (1, 2, 3, 4, 5, 6)")
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute("select * from test.t where c1 = 1")
 	row, err = rs[0].FirstRow()
