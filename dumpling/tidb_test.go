@@ -688,6 +688,28 @@ func (s *testSessionSuite) TestExpression(c *C) {
 	match(c, row, 1, -1, 0, 0)
 }
 
+func (s *testSessionSuite) TestSubQuery(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table if not exists t1 (c1 int, c2 int)")
+	mustExecSQL(c, se, "create table if not exists t2 (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t1 values (1, 1), (2, 2)")
+	mustExecSQL(c, se, "insert into t2 values (1, 1), (1, 2)")
+
+	r := mustExecSQL(c, se, `select c1 from t1 where c1 = (select c2 from t2 where t1.c2 = t2.c2)`)
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1)
+
+	r = mustExecSQL(c, se, `select (select count(c1) from t2 where t2.c1 != t1.c2) from t1`)
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 2)
+	match(c, rows[0], 0)
+	match(c, rows[1], 2)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
