@@ -150,7 +150,7 @@ func (sq *SubQuery) EvalRows(ctx context.Context, args map[interface{}]interface
 
 	err0 := sq.pop(ctx)
 	if err0 != nil {
-		return res, errors.Trace(err0)
+		return res, errors.Wrap(err, err0)
 	}
 
 	return res, errors.Trace(err)
