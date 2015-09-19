@@ -688,6 +688,8 @@ func (o *BinaryOperation) coerceArithmetic(a interface{}) (interface{}, error) {
 		return f, err
 	case mysql.Hex:
 		return x.ToNumber(), nil
+	case mysql.Bit:
+		return x.ToNumber(), nil
 	default:
 		return x, nil
 	}
