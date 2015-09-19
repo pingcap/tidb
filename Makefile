@@ -11,7 +11,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 
 TARGET = ""
 
-.PHONY: godep deps all build install parser clean todo test tidbtest mysqltest gotest interpreter
+.PHONY: godep deps all build install parser clean todo test tidbtest mysqltest gotest interpreter server
 
 all: godep parser build test check
 
@@ -45,6 +45,8 @@ parser:
 	golex -o parser/scanner.go parser/scanner.l
 
 check:
+	go get github.com/golang/lint/golint
+
 	@echo "vet"
 	@ go tool vet . 2>&1 | grep -vE 'Godeps|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "vet --shadow"
