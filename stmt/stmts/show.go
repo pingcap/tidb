@@ -17,6 +17,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
@@ -67,7 +68,7 @@ func (s *ShowStmt) SetText(text string) {
 func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// TODO: finish this
 	log.Debug("Exec Show Stmt")
-	sr := &rsets.ShowRset{
+	r := &plans.ShowPlan{
 		Target:      s.Target,
 		DBName:      s.DBName,
 		TableName:   s.TableIdent.Name.O,
@@ -76,11 +77,6 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		Full:        s.Full,
 		GlobalScope: s.GlobalScope,
 		Pattern:     s.Pattern,
-	}
-
-	r, err := sr.Plan(ctx)
-	if err != nil {
-		return nil, err
 	}
 
 	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
