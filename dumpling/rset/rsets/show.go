@@ -35,6 +35,7 @@ type ShowRset struct {
 	Full        bool
 	GlobalScope bool
 	Pattern     expression.Expression
+	Where       expression.Expression
 }
 
 // Plan gets ShowPlan.
@@ -48,6 +49,7 @@ func (r *ShowRset) Plan(ctx context.Context) (plan.Plan, error) {
 		Full:        r.Full,
 		GlobalScope: r.GlobalScope,
 		Pattern:     r.Pattern,
+		Where:       r.Where,
 	}, nil
 }
 
