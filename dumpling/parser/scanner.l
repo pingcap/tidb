@@ -196,7 +196,7 @@ int_lit		{decimal_lit}|{octal_lit}
 decimal_lit	[1-9][0-9]*
 octal_lit	0[0-7]*
 hex_lit		0[xX][0-9a-fA-F]+|[xX]"'"[0-9a-fA-F]+"'"
-bit_lit 	0b[01]+|[bB]"'"[01]+"'"
+bit_lit 	0[bB][01]+|[bB]"'"[01]+"'"
 
 float_lit	{D}"."{D}?{E}?|{D}{E}|"."{D}{E}?
 D		[0-9]+
@@ -471,6 +471,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {int_lit}		return l.int(lval)
 {float_lit}		return l.float(lval)
 {hex_lit}		return l.hex(lval)
+{bit_lit}		return l.bit(lval)
 
 \"			l.sc = S1
 '			l.sc = S2
@@ -922,7 +923,7 @@ func (l *lexer) hex(lval *yySymType) int {
 // https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func (l *lexer) bit(lval *yySymType) int {
 	s := string(l.val)
-	b, err := mysql.ParseBit(s)
+	b, err := mysql.ParseBit(s, -1)
 	if err != nil {
 		l.errf("bit literal: %v", err)
 		return int(unicode.ReplacementChar)
