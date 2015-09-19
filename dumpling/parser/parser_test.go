@@ -205,7 +205,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SET CHARACTER SET 'utf8mb4';", true},
 		// Set password
 		{"SET PASSWORD = 'password';", true},
-		{"SET PASSWORD FOR 'shenli'@'localhost' = 'password';", true},
+		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
 
 		// qualified select
 		{"SELECT a.b.c FROM t", true},

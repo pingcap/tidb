@@ -116,12 +116,12 @@ const (
 	AuthName = "mysql_native_password"
 )
 
-// mysql database and tables
+// MySQL database and tables.
 const (
 	// MySQLDB is the name of mysql system database.
 	MySQLDB = "mysql"
 	// UserTable is the table in mysql db contains user info.
 	UserTable = "User"
-
+	// CreateUserTable is the SQL statement creates mysql.User table.
 	CreateUserTable = "CREATE TABLE if not exists mysql.user (Host CHAR(64), User CHAR(16), Password CHAR(41), PRIMARY KEY (Host, User));"
 )
