@@ -36,7 +36,6 @@ func (s *testBitSuite) TestBit(c *C) {
 	for _, t := range tbl {
 		b, err := ParseBit(t.Input, t.Width)
 		c.Assert(err, IsNil)
-		c.Assert(err, IsNil)
 		c.Assert(b.ToNumber(), Equals, float64(t.Number))
 		c.Assert(b.String(), Equals, t.String)
 		c.Assert(b.ToString(), Equals, t.BitString)
