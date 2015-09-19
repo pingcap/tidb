@@ -417,7 +417,6 @@ import (
 	SelectStmtFieldList	"SELECT statement field list"
 	SelectStmtLimit		"SELECT statement optional LIMIT clause"
 	SelectStmtOpts		"Select statement options"
-	SelectStmtWhere		"SELECT statement optional WHERE clause"
 	SelectStmtGroup		"SELECT statement optional GROUP BY clause"
 	SelectStmtOrder		"SELECT statement optional ORDER BY clause"
 	SetStmt			"Set variable statement"
@@ -1153,7 +1152,7 @@ DeleteFromStmt:
 			Ignore:        $4.(bool)}
 	
 		if $7 != nil {
-			x.Where = $7.(*rsets.WhereRset).Expr
+			x.Where = $7.(expression.Expression)
 		}
 
 		if $8 != nil {
@@ -1182,7 +1181,7 @@ DeleteFromStmt:
 			Refs:		$7.(*rsets.JoinRset),
 		}
 		if $8 != nil {
-			x.Where = $8.(*rsets.WhereRset).Expr
+			x.Where = $8.(expression.Expression)
 		}
 		$$ = x
 		if yylex.(*lexer).root {
@@ -1201,7 +1200,7 @@ DeleteFromStmt:
 			Refs:		$8.(*rsets.JoinRset),
 		}
 		if $9 != nil {
-			x.Where = $9.(*rsets.WhereRset).Expr
+			x.Where = $9.(expression.Expression)
 		}
 		$$ = x
 		if yylex.(*lexer).root {
@@ -2633,7 +2632,7 @@ SelectStmt:
 		}
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
-	FromClause SelectStmtWhere SelectStmtGroup HavingClause SelectStmtOrder
+	FromClause WhereClauseOptional SelectStmtGroup HavingClause SelectStmtOrder
 	SelectStmtLimit SelectLockOpt
 	{
 		st := &stmts.SelectStmt{
@@ -2644,7 +2643,7 @@ SelectStmt:
 		}
 
 		if $6 != nil {
-			st.Where = $6.(*rsets.WhereRset)
+			st.Where = &rsets.WhereRset{Expr: $6.(expression.Expression)}
 		}
 
 		if $7 != nil {
@@ -2849,13 +2848,6 @@ SelectStmtFieldList:
 	{
 		$$ = $1
 	}
-
-SelectStmtWhere:
-	/* EMPTY */
-	{
-		$$ = nil
-	}
-|	WhereClause
 
 SelectStmtGroup:
 	/* EMPTY */
@@ -3717,17 +3709,15 @@ UpdateStmt:
 	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single-table syntax
-		var expr expression.Expression
-		if w := $7; w != nil {
-			expr = w.(*rsets.WhereRset).Expr
-		}
 		r := &rsets.JoinRset{Left: $4, Right: nil}
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	r,
-			List:		$6.([]expressions.Assignment), 
-			Where:		expr,
-		} 
+			List:		$6.([]expressions.Assignment),
+		}
+		if $7 != nil {
+			st.Where = $7.(expression.Expression)
+		}
 		if $8 != nil {
 			 st.Order = $8.(*rsets.OrderByRset)
 		}
@@ -3742,17 +3732,15 @@ UpdateStmt:
 |	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		// Multiple-table syntax
-		var expr expression.Expression
-		if w := $7; w != nil {
-			expr = w.(*rsets.WhereRset).Expr
-		}
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	$4.(*rsets.JoinRset),
-			List:		$6.([]expressions.Assignment), 
-			Where:		expr,
+			List:		$6.([]expressions.Assignment),
 			MultipleTable:	true,
-		} 
+		}
+		if $7 != nil {
+			st.Where = $7.(expression.Expression)
+		}
 		$$ = st
 		if yylex.(*lexer).root {
 			break
@@ -3771,7 +3759,7 @@ UseStmt:
 WhereClause:
 	"WHERE" Expression
 	{
-		$$ = &rsets.WhereRset{Expr: expressions.Expr($2)}
+		$$ = expressions.Expr($2)
 	}
 
 WhereClauseOptional:
