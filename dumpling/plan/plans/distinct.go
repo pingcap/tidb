@@ -61,6 +61,7 @@ func (r *DistinctDefaultPlan) Next(ctx context.Context) (row *plan.Row, err erro
 		return
 	}
 	row = r.rows[r.cursor]
+	updateRowStack(ctx, row.Data, row.FromData)
 	r.cursor++
 	return
 }

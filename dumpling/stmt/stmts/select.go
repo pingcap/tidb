@@ -140,6 +140,9 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	}
 
+	// Put RowStackFromRset here so that we can catch the origin from data after above FROM phase.
+	r, _ = (&rsets.RowStackFromRset{Src: r}).Plan(ctx)
+
 	if w := s.Where; w != nil {
 		r, err = (&rsets.WhereRset{Expr: w.Expr, Src: r}).Plan(ctx)
 		if err != nil {
@@ -192,13 +195,16 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	case !rsets.HasAggFields(selectList.Fields) && s.GroupBy == nil:
 		// If no group by and no aggregate functions, we will use SelectFieldsPlan.
 		if r, err = (&rsets.SelectFieldsRset{Src: r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
+
 	default:
 		if r, err = (&rsets.GroupByRset{By: groupBy,
 			Src:        r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -213,7 +219,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if s.Distinct {
 		if r, err = (&rsets.DistinctRset{Src: r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -221,7 +228,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	if s := s.OrderBy; s != nil {
 		if r, err = (&rsets.OrderByRset{By: s.By,
 			Src:        r,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+		}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -238,7 +246,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	if r, err = (&rsets.SelectFinalRset{Src: r,
-		SelectList: selectList}).Plan(ctx); err != nil {
+		SelectList: selectList,
+	}).Plan(ctx); err != nil {
 		return nil, err
 	}
 

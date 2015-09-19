@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testHavingPlan struct{}
@@ -45,6 +46,7 @@ func (t *testHavingPlan) TestHaving(c *C) {
 	cnt := 0
 	rset := rsets.Recordset{
 		Plan: havingPlan,
+		Ctx:  mock.NewContext(),
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
 		cnt++

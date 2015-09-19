@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testOrderBySuit struct {
@@ -57,6 +58,7 @@ func (t *testOrderBySuit) TestOrderBy(c *C) {
 	prev := 10000
 	rset := rsets.Recordset{
 		Plan: pln,
+		Ctx:  mock.NewContext(),
 	}
 	err := rset.Do(func(data []interface{}) (bool, error) {
 		// DESC

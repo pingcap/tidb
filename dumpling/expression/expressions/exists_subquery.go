@@ -50,26 +50,17 @@ func (es *ExistsSubQuery) String() string {
 
 // Eval implements the Expression Eval interface.
 func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	if es.Sel.Value != nil {
-		return true, nil
+	if !es.Sel.UseOuterQuery && es.Sel.Value != nil {
+		return es.Sel.Value.(bool), nil
 	}
 
-	p, err := es.Sel.Plan(ctx)
+	rows, err := es.Sel.EvalRows(ctx, args, 1)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer p.Close()
 
-	r, err := p.Next(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if r != nil {
-		es.Sel.Value = r
-		return true, nil
-	}
-
-	return false, nil
+	es.Sel.Value = len(rows) > 0
+	return es.Sel.Value, nil
 }
 
 // NewExistsSubQuery creates a ExistsSubQuery object.

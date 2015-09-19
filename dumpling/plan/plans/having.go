@@ -63,7 +63,13 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			return nil, errors.Trace(err)
 		}
 		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
+			v, err0 := GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
+			if err0 == nil {
+				return v, nil
+			}
+
+			// try to find in outer query
+			return getIdentValueFromOuterQuery(ctx, name)
 		}
 		r.evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
 			// position is in [1, len(fields)], so we must decrease 1 to get correct index

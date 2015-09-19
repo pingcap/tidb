@@ -134,7 +134,8 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 
-	return &plans.GroupByDefaultPlan{By: r.By, Src: r.Src, SelectList: r.SelectList}, nil
+	return &plans.GroupByDefaultPlan{By: r.By, Src: r.Src,
+		SelectList: r.SelectList}, nil
 }
 
 func (r *GroupByRset) String() string {
