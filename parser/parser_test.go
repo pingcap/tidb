@@ -322,6 +322,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
+
+		// For bit
+		{"select 0b01, 0b0, b'11', B'11'", true},
+		{"select 0B01", false},
+		{"select 0b21", false},
 	}
 
 	for _, t := range table {
