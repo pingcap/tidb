@@ -48,7 +48,7 @@ func (b Bit) ToString() string {
 	byteSize := (b.Width + 7) / 8
 	buf := make([]byte, byteSize)
 	for i := byteSize - 1; i >= 0; i-- {
-		buf[len(buf)-i-1] = byte(b.Value >> uint(i*8))
+		buf[byteSize-i-1] = byte(b.Value >> uint(i*8))
 	}
 	return string(buf)
 }
