@@ -426,6 +426,10 @@ func (r *driverRows) Next(dest []driver.Value) error {
 			dest[i] = v.String()
 		case mysql.Decimal:
 			dest[i] = v.String()
+		case mysql.Hex:
+			dest[i] = v.ToString()
+		case mysql.Bit:
+			dest[i] = v.ToString()
 		default:
 			return errors.Errorf("unable to handle type %T", xi)
 		}
