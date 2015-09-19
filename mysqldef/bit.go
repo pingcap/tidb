@@ -53,23 +53,22 @@ func (b Bit) ToString() string {
 	return string(buf)
 }
 
+// Min and Max bit width.
 const (
 	MinBitWidth = 1
 	MaxBitWidth = 64
+	// UnspecifiedBitWidth is the unspecified with if you want to calculate bit width dynamically.
+	UnspecifiedBitWidth = -1
 )
 
 // ParseBit parses bit string.
-// The string format can be b'val', B'val' or 0bval.
-// val must be 0 or 1.
+// The string format can be b'val', B'val' or 0bval, val must be 0 or 1.
+// Width is the display width for bit representation. -1 means calculating
+// width dynamically, using following algorithm: (len("011101") + 7) & ^7,
+// e.g, if bit string is 0b01, the above will return 8 for its bit width.
 func ParseBit(s string, width int) (Bit, error) {
 	if len(s) == 0 {
 		return Bit{}, errors.Errorf("invalid empty string for parsing bit type")
-	}
-
-	if width == 0 {
-		width = MinBitWidth
-	} else if width < MinBitWidth || width > MaxBitWidth {
-		return Bit{}, errors.Errorf("invalid display width for bit type, must in [1, 64], but %d", width)
 	}
 
 	if s[0] == 'b' || s[0] == 'B' {
@@ -80,6 +79,18 @@ func ParseBit(s string, width int) (Bit, error) {
 	} else {
 		// here means format is not b'val', B'val' or 0bval.
 		return Bit{}, errors.Errorf("invalid bit type format %s", s)
+	}
+
+	if width == UnspecifiedBitWidth {
+		width = (len(s) + 7) & ^7
+	}
+
+	if width == 0 {
+		width = MinBitWidth
+	}
+
+	if width < MinBitWidth || width > MaxBitWidth {
+		return Bit{}, errors.Errorf("invalid display width for bit type, must in [1, 64], but %d", width)
 	}
 
 	n, err := strconv.ParseUint(s, 2, 64)
