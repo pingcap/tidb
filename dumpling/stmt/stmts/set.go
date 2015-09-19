@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -239,16 +240,16 @@ func (s *SetPwdStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	userName := strs[0]
 	host := strs[1]
 	// Update mysql.user
-	tableName := expressions.Ident{
-		CIStr: model.NewCIStr(mysql.MySQLDB + "." + mysql.UserTable),
-	}
 	r := &rsets.JoinRset{
 		Left: &rsets.TableSource{
-			Source: tableName,
+			Source: table.Ident{
+				Name:   model.NewCIStr(mysql.UserTable),
+				Schema: model.NewCIStr(mysql.MySQLDB),
+			},
 		},
 	}
 	asgn := expressions.Assignment{
-		ColName: "password",
+		ColName: "Password",
 		Expr:    expressions.Value{Val: s.Password},
 	}
 	nameMatch := expressions.NewBinaryOperation(opcode.EQ, &expressions.Ident{CIStr: model.NewCIStr("User")}, &expressions.Value{Val: userName})

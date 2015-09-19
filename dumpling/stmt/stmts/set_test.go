@@ -139,17 +139,29 @@ func (s *testStmtSuite) TestSetCharsetStmt(c *C) {
 }
 
 func (s *testStmtSuite) TestSetPwdStmt(c *C) {
-	// Mock SetPwdStmt.
-	testStmt := &stmts.SetPwdStmt{
-		User:     "root@localhost",
-		Password: "password",
-	}
-
-	testStmt.SetText(`SET PASSWORD FOR 'root'@'localhost' = 'password';`)
-
-	c.Assert(testStmt.IsDDL(), IsFalse)
-	c.Assert(len(testStmt.OriginText()), Greater, 0)
-
-	_, err := testStmt.Exec(nil)
+	tx := mustBegin(c, s.testDB)
+	tx.Query(`INSERT INTO mysql.User VALUES ("localhost", "root", ""), ("127.0.0.1", "root", "")`)
+	rows, err := tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
 	c.Assert(err, IsNil)
+	rows.Next()
+	var pwd string
+	rows.Scan(&pwd)
+	c.Assert(pwd, Equals, "")
+	c.Assert(rows.Next(), IsFalse)
+	rows.Close()
+	mustCommit(c, tx)
+
+	tx = mustBegin(c, s.testDB)
+	tx.Query(`SET PASSWORD FOR 'root'@'localhost' = 'password';`)
+	mustCommit(c, tx)
+
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
+	c.Assert(err, IsNil)
+	rows.Next()
+	rows.Scan(&pwd)
+	c.Assert(pwd, Equals, "password")
+	c.Assert(rows.Next(), IsFalse)
+	rows.Close()
+	mustCommit(c, tx)
 }
