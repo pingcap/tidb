@@ -28,12 +28,12 @@ type TidbTestSuite struct {
 var _ = Suite(new(TidbTestSuite))
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := tidb.NewStore("goleveldb:///tmp/tidb")
+	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
-	CreateTiDBTestDatabase(store)
+	Bootstrap(store)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
-		Addr:     ":4000",
+		Addr:     ":4001",
 		User:     "root",
 		Password: "",
 		LogLevel: "debug",
@@ -69,4 +69,8 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
+}
+
+func (ts *TidbTestSuite) TestBootstrap(c *C) {
+	runTestBootstrap(c)
 }
