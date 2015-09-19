@@ -39,9 +39,10 @@ var _ plan.Plan = (*OrderByDefaultPlan)(nil)
 // results temporarily, and sorts them by given expression.
 type OrderByDefaultPlan struct {
 	*SelectList
-	By       []expression.Expression
-	Ascs     []bool
-	Src      plan.Plan
+	By   []expression.Expression
+	Ascs []bool
+	Src  plan.Plan
+
 	ordTable *orderByTable
 	cursor   int
 }
@@ -143,6 +144,7 @@ func (r *OrderByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 		return
 	}
 	row = r.ordTable.Rows[r.cursor].Row
+	updateRowStack(ctx, row.Data, row.FromData)
 	r.cursor++
 	return
 }
@@ -158,7 +160,13 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 			break
 		}
 		evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
+			v, err := GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
+			if err == nil {
+				return v, nil
+			}
+
+			// try to find in outer query
+			return getIdentValueFromOuterQuery(ctx, name)
 		}
 
 		evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {

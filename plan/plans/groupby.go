@@ -50,8 +50,9 @@ var (
 // refs: http://stackoverflow.com/questions/2421388/using-group-by-on-multiple-columns
 type GroupByDefaultPlan struct {
 	*SelectList
-	Src    plan.Plan
-	By     []expression.Expression
+	Src plan.Plan
+	By  []expression.Expression
+
 	rows   []*groupRow
 	cursor int
 }
@@ -96,7 +97,13 @@ func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, 
 			return v, nil
 		}
 
-		return r.getFieldValueByName(name, outRow)
+		v, err = r.getFieldValueByName(name, outRow)
+		if err == nil {
+			return v, nil
+		}
+
+		// try to find in outer query
+		return getIdentValueFromOuterQuery(ctx, name)
 	}
 
 	m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
@@ -128,7 +135,13 @@ func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{})
 func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
 	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		if err == nil {
+			return v, nil
+		}
+
+		// try to find in outer query
+		return getIdentValueFromOuterQuery(ctx, name)
 	}
 
 	var err error
@@ -150,7 +163,13 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 	for i := range r.AggFields {
 		if i < r.HiddenFieldOffset {
 			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+				if err == nil {
+					return v, nil
+				}
+
+				// try to find in outer query
+				return getIdentValueFromOuterQuery(ctx, name)
 			}
 		} else {
 			// having may contain aggregate function and we will add it to hidden field,
@@ -166,7 +185,13 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 
 				// if we can not find in table, we will try to find in un-hidden select list
 				// only hidden field can use this
-				return r.getFieldValueByName(name, out)
+				v, err = r.getFieldValueByName(name, out)
+				if err == nil {
+					return v, nil
+				}
+
+				// try to find in outer query
+				return getIdentValueFromOuterQuery(ctx, name)
 			}
 		}
 
@@ -240,6 +265,7 @@ func (r *GroupByDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error
 	gRow := r.rows[r.cursor]
 	r.cursor++
 	row = gRow.Row
+	updateRowStack(ctx, row.Data, row.FromData)
 	return
 }
 
@@ -267,6 +293,8 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		}
 		row := &plan.Row{
 			Data: make([]interface{}, len(r.Fields)),
+			// must save FromData info for inner sub query use.
+			FromData: srcRow.Data,
 		}
 		// TODO: later order by will use the same mechanism, so we may use another plan to do this
 		evalArgs := map[interface{}]interface{}{}
@@ -274,6 +302,10 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		if err := r.evalNoneAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}
+
+		// update outer query becuase group by may use it if it has a subquery.
+		updateRowStack(ctx, row.Data, row.FromData)
+
 		if err := r.evalGroupKey(ctx, k, row.Data, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}

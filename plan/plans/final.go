@@ -30,7 +30,8 @@ var (
 type SelectFinalPlan struct {
 	*SelectList
 
-	Src     plan.Plan
+	Src plan.Plan
+
 	infered bool // If result field info is already infered
 }
 
@@ -56,10 +57,20 @@ func (r *SelectFinalPlan) Filter(ctx context.Context, expr expression.Expression
 
 // Next implements plan.Plan Next interface.
 func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	// push a new rowStackItem into RowStack
+	pushRowStack(ctx, r.SelectList.ResultFields, r.SelectList.FromFields)
+
 	row, err = r.Src.Next(ctx)
+
+	// pop the rowStackItem
+	if errPop := popRowStack(ctx); errPop != nil {
+		return nil, errors.Wrap(err, errPop)
+	}
+
 	if row == nil || err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	// we should not output hidden fields to client.
 	row.Data = row.Data[:r.HiddenFieldOffset]
 	for i, o := range row.Data {

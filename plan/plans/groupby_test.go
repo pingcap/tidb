@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testGroupBySuite struct{}
@@ -77,6 +78,7 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 	ret := map[int]string{}
 	rset := rsets.Recordset{
 		Plan: groupbyPlan,
+		Ctx:  mock.NewContext(),
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(int)] = data[1].(string)

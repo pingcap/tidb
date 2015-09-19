@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testWhereSuit struct {
@@ -52,7 +53,8 @@ func (t *testWhereSuit) TestWhere(c *C) {
 	}
 
 	cnt := 0
-	rset := rsets.Recordset{Ctx: nil, Plan: pln}
+	rset := rsets.Recordset{Plan: pln,
+		Ctx: mock.NewContext()}
 	rset.Do(func(data []interface{}) (bool, error) {
 		cnt++
 		return true, nil

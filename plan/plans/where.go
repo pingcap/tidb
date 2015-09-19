@@ -58,7 +58,13 @@ func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 			return nil, errors.Trace(err)
 		}
 		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
+			v, err0 := GetIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
+			if err0 == nil {
+				return v, nil
+			}
+
+			// try to find in outer query
+			return getIdentValueFromOuterQuery(ctx, name)
 		}
 		var meet bool
 		meet, err = r.meetCondition(ctx)

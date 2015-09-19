@@ -156,5 +156,6 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 		return r.Src, nil
 	}
 
-	return &plans.OrderByDefaultPlan{By: by, Ascs: ascs, Src: r.Src, SelectList: r.SelectList}, nil
+	return &plans.OrderByDefaultPlan{By: by, Ascs: ascs, Src: r.Src,
+		SelectList: r.SelectList}, nil
 }
