@@ -52,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	server.CreateTiDBTestDatabase(store)
+	server.Bootstrap(store)
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
