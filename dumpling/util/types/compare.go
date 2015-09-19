@@ -185,6 +185,8 @@ func Compare(a, b interface{}) (int, error) {
 			return compareFloatString(float64(x), y)
 		case mysql.Hex:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Bit:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -195,6 +197,8 @@ func Compare(a, b interface{}) (int, error) {
 		case string:
 			return compareFloatString(float64(x), y)
 		case mysql.Hex:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Bit:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
 		}
 	case mysql.Decimal:
@@ -232,6 +236,8 @@ func Compare(a, b interface{}) (int, error) {
 			return -n, err
 		case mysql.Hex:
 			return CompareString(x, y.ToString()), nil
+		case mysql.Bit:
+			return CompareString(x, y.ToString()), nil
 		}
 	case mysql.Time:
 		switch y := b.(type) {
@@ -253,6 +259,19 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(x.ToNumber(), float64(y)), nil
 		case uint64:
 			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case string:
+			return CompareString(x.ToString(), y), nil
+		}
+	case mysql.Bit:
+		switch y := b.(type) {
+		case int64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case uint64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		case string:
 			return CompareString(x.ToString(), y), nil
 		}

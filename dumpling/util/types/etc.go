@@ -247,7 +247,8 @@ func IsOrderedType(v interface{}) (r bool) {
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64, string, []byte,
-		mysql.Decimal, mysql.Time, mysql.Duration, mysql.Hex:
+		mysql.Decimal, mysql.Time, mysql.Duration,
+		mysql.Hex, mysql.Bit:
 		return true
 	}
 	return false
@@ -261,7 +262,9 @@ func Clone(from interface{}) (interface{}, error) {
 	}
 	switch x := from.(type) {
 	case uint8, uint16, uint32, uint64, float32, float64,
-		int16, int8, bool, string, int, int64, int32:
+		int16, int8, bool, string, int, int64, int32,
+		mysql.Time, mysql.Duration, mysql.Decimal,
+		mysql.Hex, mysql.Bit:
 		return x, nil
 	case []byte:
 		target := make([]byte, len(from.([]byte)))
@@ -277,14 +280,6 @@ func Clone(from interface{}) (interface{}, error) {
 			r = append(r, vv)
 		}
 		return r, nil
-	case mysql.Time:
-		return x, nil
-	case mysql.Duration:
-		return x, nil
-	case mysql.Decimal:
-		return x, nil
-	case mysql.Hex:
-		return x, nil
 	default:
 		log.Error(reflect.TypeOf(from))
 		return nil, errors.Errorf("Clone invalid type %T", from)
@@ -359,6 +354,8 @@ func Coerce(a, b interface{}) (x, y interface{}) {
 			x = float64(v)
 		case mysql.Hex:
 			x = v.ToNumber()
+		case mysql.Bit:
+			x = v.ToNumber()
 		}
 		switch v := y.(type) {
 		case int64:
@@ -366,6 +363,8 @@ func Coerce(a, b interface{}) (x, y interface{}) {
 		case uint64:
 			y = float64(v)
 		case mysql.Hex:
+			y = v.ToNumber()
+		case mysql.Bit:
 			y = v.ToNumber()
 		}
 	}
