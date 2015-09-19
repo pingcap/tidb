@@ -126,6 +126,10 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 	case mysql.Decimal:
 		fval, _ := v.Float64()
 		return convertFloatToInt(fval, lowerBound, upperBound, tp)
+	case mysql.Hex:
+		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
+	case mysql.Bit:
+		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
 	}
 	return 0, typeError(val, target)
 }
@@ -190,6 +194,10 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 	case mysql.Decimal:
 		fval, _ := v.Float64()
 		return convertFloatToUint(fval, upperBound, tp)
+	case mysql.Hex:
+		return convertFloatToUint(v.ToNumber(), upperBound, tp)
+	case mysql.Bit:
+		return convertFloatToUint(v.ToNumber(), upperBound, tp)
 	}
 	return 0, typeError(val, target)
 }
