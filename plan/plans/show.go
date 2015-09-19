@@ -241,11 +241,11 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 					return nil, errors.Errorf("unknown field %s", name)
 				}
 
-				v, err := expressions.EvalBoolExpr(ctx, s.Where, m)
+				match, err := expressions.EvalBoolExpr(ctx, s.Where, m)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if !v {
+				if !match {
 					continue
 				}
 			}
