@@ -502,6 +502,8 @@ func ToUint64(value interface{}) (uint64, error) {
 	case mysql.Hex:
 		// we don't need RoundFloat here because hex can not have fractional part.
 		return uint64(v.ToNumber()), nil
+	case mysql.Bit:
+		return uint64(v.ToNumber()), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
@@ -542,6 +544,8 @@ func ToInt64(value interface{}) (int64, error) {
 	case mysql.Hex:
 		// we don't need RoundFloat here because hex can not have fractional part.
 		return int64(v.ToNumber()), nil
+	case mysql.Bit:
+		return int64(v.ToNumber()), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
@@ -579,6 +583,8 @@ func ToFloat64(value interface{}) (float64, error) {
 		vv, _ := v.Float64()
 		return vv, nil
 	case mysql.Hex:
+		return v.ToNumber(), nil
+	case mysql.Bit:
 		return v.ToNumber(), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", value, value)
@@ -635,6 +641,8 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case mysql.Hex:
 		return v.ToString(), nil
+	case mysql.Bit:
+		return v.ToString(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
 	}
@@ -685,6 +693,8 @@ func ToBool(value interface{}) (int64, error) {
 		vv, _ := v.Float64()
 		isZero = (vv == 0)
 	case mysql.Hex:
+		isZero = (v.ToNumber() == 0)
+	case mysql.Bit:
 		isZero = (v.ToNumber() == 0)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", value, value)

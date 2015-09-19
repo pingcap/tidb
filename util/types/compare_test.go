@@ -132,6 +132,14 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{mysql.Hex{Value: 0}, uint64(10), -1},
 		{mysql.Hex{Value: 1}, float64(0), 1},
 		{mysql.Hex{Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
+		{mysql.Hex{Value: 1}, mysql.Bit{Value: 0, Width: 1}, 1},
+
+		{mysql.Bit{Value: 1, Width: 1}, 1, 0},
+		{mysql.Bit{Value: 0x41, Width: 8}, "A", 0},
+		{mysql.Bit{Value: 1, Width: 1}, uint64(10), -1},
+		{mysql.Bit{Value: 1, Width: 1}, float64(0), 1},
+		{mysql.Bit{Value: 1, Width: 1}, mysql.NewDecimalFromInt(1, 0), 0},
+		{mysql.Bit{Value: 1, Width: 1}, mysql.Hex{Value: 2}, -1},
 	}
 
 	for _, t := range cmpTbl {
