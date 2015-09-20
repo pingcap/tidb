@@ -325,6 +325,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
+
+		// For create user
+		{"CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'", true},
+		{"CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY 'new-password'", true},
 	}
 
 	for _, t := range table {

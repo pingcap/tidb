@@ -221,3 +221,14 @@ func (tc *TableConstraint) String() string {
 	}
 	return strings.Join(tokens, " ")
 }
+
+type AuthOption struct {
+	AuthString string
+	HashString string
+	// TODO: support auth_plugin
+}
+
+type UserSpecification struct {
+	User    string
+	AuthOpt *AuthOption
+}
