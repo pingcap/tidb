@@ -140,8 +140,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	}
 
-	// Put RowStackFromRset here so that we can catch the origin from data after above FROM phase.
-	r, _ = (&rsets.RowStackFromRset{Src: r}).Plan(ctx)
+	// Put RowStackFromPlan here so that we can catch the origin from data after above FROM phase.
+	r = &plans.RowStackFromPlan{Src: r}
 
 	if w := s.Where; w != nil {
 		r, err = (&rsets.WhereRset{Expr: w.Expr, Src: r}).Plan(ctx)
@@ -157,10 +157,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		// See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 		lock = coldef.SelectLockNone
 	}
-	r, err = (&rsets.SelectLockRset{Src: r, Lock: lock}).Plan(ctx)
-	if err != nil {
-		return nil, err
-	}
+	r = &plans.SelectLockPlan{Src: r, Lock: lock}
 
 	if err := s.checkOneColumn(ctx); err != nil {
 		return nil, errors.Trace(err)
@@ -218,11 +215,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	if s.Distinct {
-		if r, err = (&rsets.DistinctRset{Src: r,
-			SelectList: selectList,
-		}).Plan(ctx); err != nil {
-			return nil, err
-		}
+		r = &plans.DistinctDefaultPlan{Src: r, SelectList: selectList}
 	}
 
 	if s := s.OrderBy; s != nil {
@@ -235,22 +228,12 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	if s := s.Offset; s != nil {
-		if r, err = (&rsets.OffsetRset{Count: s.Count, Src: r}).Plan(ctx); err != nil {
-			return nil, err
-		}
+		r = &plans.OffsetDefaultPlan{Count: s.Count, Src: r, Fields: r.GetFields()}
 	}
 	if s := s.Limit; s != nil {
-		if r, err = (&rsets.LimitRset{Count: s.Count, Src: r}).Plan(ctx); err != nil {
-			return nil, err
-		}
+		r = &plans.LimitDefaultPlan{Count: s.Count, Src: r, Fields: r.GetFields()}
 	}
-
-	if r, err = (&rsets.SelectFinalRset{Src: r,
-		SelectList: selectList,
-	}).Plan(ctx); err != nil {
-		return nil, err
-	}
-
+	r = &plans.SelectFinalPlan{Src: r, SelectList: selectList}
 	return r, nil
 }
 
