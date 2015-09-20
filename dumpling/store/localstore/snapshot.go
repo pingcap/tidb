@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -63,7 +64,7 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
 			// Check newest version of this key.
 			// If it's tombstone, just skip it.
-			if !IsTombstone(it.Value()) {
+			if !isTombstone(it.Value()) {
 				rawKey = it.Key()
 				v = it.Value()
 			}
@@ -116,6 +117,7 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 	encKey := codec.EncodeBytes(nil, it.startKey)
 	// max key
 	encEndKey := codec.EncodeBytes(nil, []byte{0xff, 0xff})
+	var retErr error
 	for {
 		engineIter := it.s.Snapshot.NewIterator(encKey)
 		defer engineIter.Release()
@@ -123,40 +125,40 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 		// Check if overflow
 		if !engineIter.Next() {
 			it.valid = false
-			return it, nil
+			break
 		}
 
-		// Check if overflow
 		metaKey := engineIter.Key()
+		// Check if meet the end of table.
 		if bytes.Compare(metaKey, encEndKey) >= 0 {
 			it.valid = false
-			return it, nil
+			break
 		}
-
 		// Get real key from metaKey
 		key, _, err := MvccDecode(metaKey)
 		if err != nil {
-			// It's not a valid metaKey, maybe overflow.
+			// It's not a valid metaKey, maybe overflow (other data).
 			it.valid = false
-			return it, err
+			break
 		}
 		// Get kv pair.
 		val, err := it.s.Get(key)
 		if err != nil && err != kv.ErrNotExist {
 			// Get this version error
 			it.valid = false
-			return it, err
+			retErr = err
+			break
 		}
 		if val != nil {
 			it.k = key
 			it.v = val
 			it.startKey = key.Next()
-			return it, nil
+			break
 		}
 		// Current key's all versions are deleted, just go next key.
 		encKey = codec.EncodeBytes(nil, key.Next())
 	}
-	return it, nil
+	return it, errors.Trace(retErr)
 }
 
 func (it *dbIter) Valid() bool {

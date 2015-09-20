@@ -8,18 +8,21 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-var Tombstone = []byte{'\xde', '\xad'}
+var tombstone = []byte{'\xde', '\xad'}
 
-func IsTombstone(v []byte) bool {
-	return bytes.Compare(v, Tombstone) == 0
+func isTombstone(v []byte) bool {
+	return bytes.Compare(v, tombstone) == 0
 }
 
+// MvccEncodeVersionKey returns the encoded key
 func MvccEncodeVersionKey(key kv.Key, ver kv.Version) kv.EncodedKey {
 	b := codec.EncodeBytes(nil, key)
 	ret := codec.EncodeUintDesc(b, ver.Ver)
 	return ret
 }
 
+// MvccDecode parses the origin key and version of an encoded key, if the encoded key is a meta key,
+// just returns the origin key
 func MvccDecode(encodedKey kv.EncodedKey) (kv.Key, kv.Version, error) {
 	// Skip DataPrefix
 	remainBytes, key, err := codec.DecodeBytes([]byte(encodedKey))
