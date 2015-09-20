@@ -39,16 +39,17 @@ func (k EncodedKey) Cmp(another EncodedKey) int {
 	return bytes.Compare(k, another)
 }
 
+// Next returns the next key in byte-order
 func (k EncodedKey) Next() EncodedKey {
 	return EncodedKey(bytes.Join([][]byte{k, Key{0}}, nil))
 }
 
-// VersionProvider
+// VersionProvider provides increasing IDs.
 type VersionProvider interface {
 	GetCurrentVer() (Version, error)
 }
 
-// Version
+// Version is the wrapper of KV's version.
 type Version struct {
 	Ver uint64
 }

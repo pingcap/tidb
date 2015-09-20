@@ -198,7 +198,7 @@ func (txn *dbTxn) doCommit() error {
 		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
 		mvccKey := MvccEncodeVersionKey(iter.Key(), curVer)
 		if len(iter.Value()) == 0 { // Deleted marker
-			b.Put(mvccKey, Tombstone)
+			b.Put(mvccKey, tombstone)
 		} else {
 			b.Put(mvccKey, iter.Value())
 		}
@@ -208,7 +208,6 @@ func (txn *dbTxn) doCommit() error {
 		return errors.Trace(err)
 	}
 	return txn.store.writeBatch(b)
-
 }
 
 func (txn *dbTxn) Commit() error {

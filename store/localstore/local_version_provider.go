@@ -7,12 +7,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
+// LocalVersioProvider uses local timestamp for version.
 type LocalVersioProvider struct {
 	mu              sync.Mutex
 	lastTimeStampTs int64
 	n               int64
 }
 
+// GetCurrentVer implements the VersionProvider's GetCurrentVer interface.
 func (l *LocalVersioProvider) GetCurrentVer() (kv.Version, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -20,9 +22,8 @@ func (l *LocalVersioProvider) GetCurrentVer() (kv.Version, error) {
 	if l.lastTimeStampTs == ts {
 		l.n++
 		return kv.Version{uint64(ts + l.n)}, nil
-	} else {
-		l.lastTimeStampTs = ts
-		l.n = 0
 	}
+	l.lastTimeStampTs = ts
+	l.n = 0
 	return kv.Version{uint64(ts)}, nil
 }
