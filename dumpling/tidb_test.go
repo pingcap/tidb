@@ -775,8 +775,14 @@ func (s *testSessionSuite) TestShow(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
+	mustExecSQL(c, se, "set global autocommit=1")
+	r := mustExecSQL(c, se, "show variables where variable_name = 'autocommit'")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "autocommit", 1)
+
 	mustExecSQL(c, se, "create table if not exists t (c int)")
-	r := mustExecSQL(c, se, `show columns from t`)
+	r = mustExecSQL(c, se, `show columns from t`)
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
