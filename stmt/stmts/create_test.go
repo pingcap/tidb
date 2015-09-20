@@ -33,15 +33,15 @@ var _ = Suite(&testStmtSuite{})
 type testStmtSuite struct {
 	dbName string
 
-	testDB                  *sql.DB
-	createDBSql             string
-	dropDBSql               string
-	useDBSql                string
-	createTableSql          string
-	insertSql               string
-	selectSql               string
-	createMySQLDBSQL        string
-	createMySQLUserTableSQL string
+	testDB             *sql.DB
+	createDBSql        string
+	dropDBSql          string
+	useDBSql           string
+	createTableSql     string
+	insertSql          string
+	selectSql          string
+	createSystemDBSQL  string
+	createUserTableSQL string
 }
 
 func (s *testStmtSuite) SetUpTest(c *C) {
@@ -63,11 +63,11 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 	mustExec(c, s.testDB, s.createDBSql)
 	mustExec(c, s.testDB, s.useDBSql)
 
-	s.createMySQLDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.MySQLDB)
-	s.createMySQLUserTableSQL = mysql.CreateUserTable
+	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
+	s.createUserTableSQL = mysql.CreateUserTable
 
-	mustExec(c, s.testDB, s.createMySQLDBSQL)
-	mustExec(c, s.testDB, s.createMySQLUserTableSQL)
+	mustExec(c, s.testDB, s.createSystemDBSQL)
+	mustExec(c, s.testDB, s.createUserTableSQL)
 }
 
 func (s *testStmtSuite) TearDownTest(c *C) {
