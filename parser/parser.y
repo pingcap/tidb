@@ -370,6 +370,7 @@ import (
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
+	HashString		"Hashed string"
 	HavingClause		"HAVING clause"
 	IfExists		"If Exists"
 	IfNotExists		"If Not Exists"
@@ -3032,7 +3033,7 @@ PasswordOpt:
 	}
 
 AuthString:
-	Identifier
+	stringLit
 	{
 		$$ = $1.(string)
 	}
@@ -3150,6 +3151,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
+|	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -3809,8 +3811,11 @@ CreateUserStmt:
 	"CREATE" "USER" IfNotExists UserSpecificationList
 	{
  		// See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
-	
-	} 
+		$$ = &stmts.CreateUserStmt{
+			IfNotExists: $3.(bool),
+			Specs: $4.([]*coldef.UserSpecification),
+		}
+	}
 
 UserSpecification:
 	Username AuthOption	
@@ -3837,7 +3842,17 @@ AuthOption:
 	{
 		$$ = &coldef.AuthOption {
 			AuthString: $3.(string),
+			ByAuthString: true,
 		}	
 	}
+|	"IDENTIFIED" "BY" "PASSWORD" HashString
+	{
+		$$ = &coldef.AuthOption {
+			HashString: $4.(string),
+		}
+	}
+
+HashString:
+	stringLit
 %%
 
