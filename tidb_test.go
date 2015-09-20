@@ -780,7 +780,6 @@ func (s *testSessionSuite) TestShow(c *C) {
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, "autocommit", 1)
-
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
