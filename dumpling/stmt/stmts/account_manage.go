@@ -18,6 +18,8 @@
 package stmts
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
-	"strings"
 )
 
 /************************************************************************************
@@ -93,6 +94,7 @@ func (s *CreateUserStmt) userExists(ctx context.Context, name string, host strin
 	r := composeUserTableRset()
 	p, err := r.Plan(ctx)
 	if err != nil {
+		p.Close()
 		return false, errors.Trace(err)
 	}
 	where := &rsets.WhereRset{
@@ -100,6 +102,7 @@ func (s *CreateUserStmt) userExists(ctx context.Context, name string, host strin
 		Expr: composeUserTableFilter(name, host),
 	}
 	p, err = where.Plan(ctx)
+	defer p.Close()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -107,7 +110,6 @@ func (s *CreateUserStmt) userExists(ctx context.Context, name string, host strin
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	p.Close()
 	return row != nil, nil
 }
 
