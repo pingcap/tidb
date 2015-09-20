@@ -287,6 +287,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
 
 		// For compare subquery
 		{"SELECT 1 > (select 1)", true},
