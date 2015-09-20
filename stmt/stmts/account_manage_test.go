@@ -22,7 +22,6 @@ func (s *testStmtSuite) TestCreateUserStmt(c *C) {
 	tx := mustBegin(c, s.testDB)
 	rows, err := tx.Query(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
 	c.Assert(err, IsNil)
-	rows.Next()
 	c.Assert(rows.Next(), IsFalse)
 	rows.Close()
 	mustCommit(c, tx)
