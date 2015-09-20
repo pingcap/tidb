@@ -331,6 +331,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+
+		// For select with where clause
+		{"SELECT * FROM t WHERE 1 = 1", true},
 	}
 
 	for _, t := range table {
