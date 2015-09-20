@@ -22,9 +22,14 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/model"
+	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -230,6 +235,30 @@ func (s *SetPwdStmt) SetText(text string) {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *SetPwdStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	// TODO: finish this
-	return nil, nil
+	// If len(s.User) == 0, use CURRENT_USER()
+	strs := strings.Split(s.User, "@")
+	userName := strs[0]
+	host := strs[1]
+	// Update mysql.user
+	r := &rsets.JoinRset{
+		Left: &rsets.TableSource{
+			Source: table.Ident{
+				Name:   model.NewCIStr(mysql.UserTable),
+				Schema: model.NewCIStr(mysql.SystemDB),
+			},
+		},
+	}
+	asgn := expressions.Assignment{
+		ColName: "Password",
+		Expr:    expressions.Value{Val: s.Password},
+	}
+	nameMatch := expressions.NewBinaryOperation(opcode.EQ, &expressions.Ident{CIStr: model.NewCIStr("User")}, &expressions.Value{Val: userName})
+	hostMatch := expressions.NewBinaryOperation(opcode.EQ, &expressions.Ident{CIStr: model.NewCIStr("Host")}, &expressions.Value{Val: host})
+	where := expressions.NewBinaryOperation(opcode.AndAnd, nameMatch, hostMatch)
+	st := &UpdateStmt{
+		TableRefs: r,
+		List:      []expressions.Assignment{asgn},
+		Where:     where,
+	}
+	return st.Exec(ctx)
 }

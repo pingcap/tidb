@@ -16,6 +16,7 @@ package stmts
 import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
@@ -63,12 +64,7 @@ func (s *UnionStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 		srcs = append(srcs, p)
 	}
-
-	r, err := (&rsets.UnionRset{
-		Srcs:      srcs,
-		Distincts: s.Distincts,
-	}).Plan(ctx)
-	return r, err
+	return &plans.UnionPlan{Srcs: srcs, Distincts: s.Distincts}, nil
 }
 
 // Exec implements the stmt.Statement Exec interface.

@@ -74,6 +74,7 @@ import (
 	any 		"ANY"
 	as		"AS"
 	asc		"ASC"
+	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
 	begin		"BEGIN"
@@ -3009,13 +3010,17 @@ UserVariable:
 	}
 
 Username:
-	Identifier
+	stringLit "AT" stringLit	
 	{
-		$$ = $1.(string)
+		$$ = $1.(string) + "@" + $3.(string)
 	}
 
 PasswordOpt:
-	"PASSWORD" '(' AuthString ')' 
+	stringLit
+	{
+		$$ = $1.(string)
+	}
+|	"PASSWORD" '(' AuthString ')' 
 	{
 		$$ = $3.(string)
 	}
