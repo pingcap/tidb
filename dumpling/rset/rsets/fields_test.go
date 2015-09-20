@@ -22,14 +22,14 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 )
 
-var _ = Suite(&testSelectFieldsRsetSuite{})
+var _ = Suite(&testSelectFieldsPlannerSuite{})
 
-type testSelectFieldsRsetSuite struct {
+type testSelectFieldsPlannerSuite struct {
 	sr *SelectFieldsRset
 	fr *FieldRset
 }
 
-func (s *testSelectFieldsRsetSuite) SetUpSuite(c *C) {
+func (s *testSelectFieldsPlannerSuite) SetUpSuite(c *C) {
 	names := []string{"id", "name"}
 	tblPlan := newTestTablePlan(testData, names)
 	resultFields := tblPlan.GetFields()
@@ -50,7 +50,7 @@ func (s *testSelectFieldsRsetSuite) SetUpSuite(c *C) {
 	s.fr = &FieldRset{Fields: fields}
 }
 
-func (s *testSelectFieldsRsetSuite) TestDistinctRsetPlan(c *C) {
+func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 	// check src plan, like `select c1, c2 from t`.
 	p, err := s.sr.Plan(nil)
 	c.Assert(err, IsNil)
@@ -102,7 +102,7 @@ func (s *testSelectFieldsRsetSuite) TestDistinctRsetPlan(c *C) {
 	c.Assert(ok, IsTrue)
 }
 
-func (s *testSelectFieldsRsetSuite) TestFieldRsetPlan(c *C) {
+func (s *testSelectFieldsPlannerSuite) TestFieldPlanner(c *C) {
 	p, err := s.fr.Plan(nil)
 	c.Assert(err, IsNil)
 
