@@ -771,6 +771,18 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 	match(c, rows[1], 2)
 }
 
+func (s *testSessionSuite) TestShow(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "set global autocommit=1")
+	r := mustExecSQL(c, se, "show variables where variable_name = 'autocommit'")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "autocommit", 1)
+
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
