@@ -3078,6 +3078,14 @@ ShowStmt:
 			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
 		}
 	}
+|	"SHOW" GlobalScope "VARIABLES" "WHERE" Expression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			GlobalScope: $2.(bool),
+			Where: expressions.Expr($5),
+		}
+	}
 
 GlobalScope:
 	{
