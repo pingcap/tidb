@@ -244,7 +244,7 @@ func (s *SetPwdStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		Left: &rsets.TableSource{
 			Source: table.Ident{
 				Name:   model.NewCIStr(mysql.UserTable),
-				Schema: model.NewCIStr(mysql.MySQLDB),
+				Schema: model.NewCIStr(mysql.SystemDB),
 			},
 		},
 	}
