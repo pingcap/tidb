@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 func TestT(t *testing.T) {
@@ -32,18 +33,20 @@ var _ = Suite(&testStmtSuite{})
 type testStmtSuite struct {
 	dbName string
 
-	testDB         *sql.DB
-	createDBSql    string
-	dropDBSql      string
-	useDBSql       string
-	createTableSql string
-	insertSql      string
-	selectSql      string
+	testDB             *sql.DB
+	createDBSql        string
+	dropDBSql          string
+	useDBSql           string
+	createTableSql     string
+	insertSql          string
+	selectSql          string
+	createSystemDBSQL  string
+	createUserTableSQL string
 }
 
 func (s *testStmtSuite) SetUpTest(c *C) {
 	log.SetLevelByString("error")
-	s.dbName = "test"
+	s.dbName = "teststmts"
 	var err error
 	s.testDB, err = sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/"+s.dbName+"/"+s.dbName)
 	c.Assert(err, IsNil)
@@ -59,6 +62,12 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 	s.selectSql = `SELECT * from test limit 2;`
 	mustExec(c, s.testDB, s.createDBSql)
 	mustExec(c, s.testDB, s.useDBSql)
+
+	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
+	s.createUserTableSQL = mysql.CreateUserTable
+
+	mustExec(c, s.testDB, s.createSystemDBSQL)
+	mustExec(c, s.testDB, s.createUserTableSQL)
 }
 
 func (s *testStmtSuite) TearDownTest(c *C) {
