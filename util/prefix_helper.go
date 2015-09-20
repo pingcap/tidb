@@ -29,7 +29,7 @@ import (
 )
 
 func hasPrefix(prefix []byte) kv.FnKeyCmp {
-	return func(k []byte) bool {
+	return func(k kv.Key) bool {
 		return bytes.HasPrefix(k, prefix)
 	}
 }
@@ -125,7 +125,7 @@ func DecodeHandleFromRowKey(rk string) (int64, error) {
 
 // RowKeyPrefixFilter returns a function which checks whether currentKey has decoded rowKeyPrefix as prefix.
 func RowKeyPrefixFilter(rowKeyPrefix []byte) kv.FnKeyCmp {
-	return func(currentKey []byte) bool {
+	return func(currentKey kv.Key) bool {
 		// Next until key without prefix of this record.
 		raw, err := codec.StripEnd(rowKeyPrefix)
 		if err != nil {
