@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
@@ -70,7 +71,7 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	log.Debug("Exec Show Stmt")
 	r := &plans.ShowPlan{
 		Target:      s.Target,
-		DBName:      s.DBName,
+		DBName:      s.getDBName(ctx),
 		TableName:   s.TableIdent.Name.O,
 		ColumnName:  s.ColumnName,
 		Flag:        s.Flag,
@@ -80,4 +81,13 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 
 	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
+}
+
+func (s *ShowStmt) getDBName(ctx context.Context) string {
+	if len(s.DBName) > 0 {
+		return s.DBName
+	}
+
+	// if s.DBName is empty, we should use current db name if possible.
+	return db.GetCurrentSchema(ctx)
 }
