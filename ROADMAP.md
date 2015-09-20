@@ -20,7 +20,7 @@ this document defines the roadmap for TiDB development.
 
 ##### __API__  
 - [x] Embedded Go library
-- [ ] MySQL protocol server [WIP]
+- [x] MySQL protocol server
 - [ ] PostgreSQL protocol server
 - [ ] JSON support
 
