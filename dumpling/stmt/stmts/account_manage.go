@@ -94,7 +94,6 @@ func (s *CreateUserStmt) userExists(ctx context.Context, name string, host strin
 	r := composeUserTableRset()
 	p, err := r.Plan(ctx)
 	if err != nil {
-		p.Close()
 		return false, errors.Trace(err)
 	}
 	where := &rsets.WhereRset{
@@ -102,10 +101,10 @@ func (s *CreateUserStmt) userExists(ctx context.Context, name string, host strin
 		Expr: composeUserTableFilter(name, host),
 	}
 	p, err = where.Plan(ctx)
-	defer p.Close()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	defer p.Close()
 	row, err := p.Next(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
