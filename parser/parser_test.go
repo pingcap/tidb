@@ -324,7 +324,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 
 		// For select with where clause
-		{"SELECT 1 WHERE 1 = 1", true},
+		{"SELECT * FROM t WHERE 1 = 1", true},
 	}
 
 	for _, t := range table {
