@@ -489,6 +489,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 ">>"			return rsh
 "<=>"			return nulleq
 
+"@"			return at
 "?"			return placeholder
 
 {abs}			lval.item = string(l.val)
