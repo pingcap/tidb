@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 )
 
@@ -39,7 +40,7 @@ type dbTxn struct {
 	kv.UnionStore
 	store        *dbStore // for commit
 	startTs      time.Time
-	tID          int64
+	tID          uint64
 	valid        bool
 	snapshotVals map[string][]byte // origin version in snapshot
 }
@@ -64,7 +65,7 @@ func (txn *dbTxn) markOrigin(k []byte) error {
 
 // Implement transaction interface
 
-func (txn *dbTxn) Inc(k []byte, step int64) (int64, error) {
+func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tID)
 	k = kv.EncodeKey(k)
 
@@ -103,7 +104,7 @@ func (txn *dbTxn) String() string {
 	return fmt.Sprintf("%d", txn.tID)
 }
 
-func (txn *dbTxn) Get(k []byte) ([]byte, error) {
+func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("get key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
@@ -121,7 +122,7 @@ func (txn *dbTxn) Get(k []byte) ([]byte, error) {
 	return val, nil
 }
 
-func (txn *dbTxn) Set(k []byte, data []byte) error {
+func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if len(data) == 0 {
 		// Incase someone use it in the wrong way, we can figure it out immediately
 		debug.PrintStack()
@@ -133,7 +134,7 @@ func (txn *dbTxn) Set(k []byte, data []byte) error {
 	return txn.UnionStore.Set(k, data)
 }
 
-func (txn *dbTxn) Seek(k []byte, fnKeyCmp func([]byte) bool) (kv.Iterator, error) {
+func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
 	log.Debugf("seek %q txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 
@@ -155,7 +156,7 @@ func (txn *dbTxn) Seek(k []byte, fnKeyCmp func([]byte) bool) (kv.Iterator, error
 	return iter, nil
 }
 
-func (txn *dbTxn) Delete(k []byte) error {
+func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("delete %q txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Delete(k)
@@ -190,11 +191,16 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	// Check dirty store
+	curVer, _ := globalVerProvider.GetCurrentVer()
 	err := txn.each(func(iter iterator.Iterator) error {
+		metaKey := codec.EncodeBytes(nil, iter.Key())
+		// put dummy meta key, write current version
+		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
+		mvccKey := MvccEncodeVersionKey(iter.Key(), curVer)
 		if len(iter.Value()) == 0 { // Deleted marker
-			b.Delete(iter.Key())
+			b.Put(mvccKey, tombstone)
 		} else {
-			b.Put(iter.Key(), iter.Value())
+			b.Put(mvccKey, iter.Value())
 		}
 		return nil
 	})
@@ -202,7 +208,6 @@ func (txn *dbTxn) doCommit() error {
 		return errors.Trace(err)
 	}
 	return txn.store.writeBatch(b)
-
 }
 
 func (txn *dbTxn) Commit() error {
@@ -232,7 +237,7 @@ func (txn *dbTxn) Rollback() error {
 	return txn.close()
 }
 
-func (txn *dbTxn) LockKeys(keys ...[]byte) error {
+func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
 		key = kv.EncodeKey(key)
 		if err := txn.markOrigin(key); err != nil {
