@@ -203,6 +203,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// SET CHARACTER SET
 		{"SET CHARACTER SET utf8mb4;", true},
 		{"SET CHARACTER SET 'utf8mb4';", true},
+		// Set password
+		{"SET PASSWORD = 'password';", true},
+		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
 
 		// qualified select
 		{"SELECT a.b.c FROM t", true},
@@ -327,6 +330,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select 0b01, 0b0, b'11', B'11'", true},
 		{"select 0B01", false},
 		{"select 0b21", false},
+
+		// For select with where clause
+		{"SELECT * FROM t WHERE 1 = 1", true},
 	}
 
 	for _, t := range table {

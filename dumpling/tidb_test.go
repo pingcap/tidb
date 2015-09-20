@@ -776,6 +776,18 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 	match(c, rows[1], 2)
 }
 
+func (s *testSessionSuite) TestShow(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table if not exists t (c int)")
+	r := mustExecSQL(c, se, `show columns from t`)
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 1)
+	match(c, rows[0], "c", "INT", "YES", "", nil, "")
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)

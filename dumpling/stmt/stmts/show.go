@@ -17,8 +17,10 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
+	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
@@ -67,9 +69,9 @@ func (s *ShowStmt) SetText(text string) {
 func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// TODO: finish this
 	log.Debug("Exec Show Stmt")
-	sr := &rsets.ShowRset{
+	r := &plans.ShowPlan{
 		Target:      s.Target,
-		DBName:      s.DBName,
+		DBName:      s.getDBName(ctx),
 		TableName:   s.TableIdent.Name.O,
 		ColumnName:  s.ColumnName,
 		Flag:        s.Flag,
@@ -78,10 +80,14 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		Pattern:     s.Pattern,
 	}
 
-	r, err := sr.Plan(ctx)
-	if err != nil {
-		return nil, err
+	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
+}
+
+func (s *ShowStmt) getDBName(ctx context.Context) string {
+	if len(s.DBName) > 0 {
+		return s.DBName
 	}
 
-	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
+	// if s.DBName is empty, we should use current db name if possible.
+	return db.GetCurrentSchema(ctx)
 }
