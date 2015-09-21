@@ -137,31 +137,3 @@ func (s *testStmtSuite) TestSetCharsetStmt(c *C) {
 	testStmt.Explain(nil, mf)
 	c.Assert(mf.Len(), Greater, 0)
 }
-
-func (s *testStmtSuite) TestSetPwdStmt(c *C) {
-	tx := mustBegin(c, s.testDB)
-	tx.Query(`INSERT INTO mysql.User VALUES ("localhost", "root", ""), ("127.0.0.1", "root", "")`)
-	rows, err := tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
-	c.Assert(err, IsNil)
-	rows.Next()
-	var pwd string
-	rows.Scan(&pwd)
-	c.Assert(pwd, Equals, "")
-	c.Assert(rows.Next(), IsFalse)
-	rows.Close()
-	mustCommit(c, tx)
-
-	tx = mustBegin(c, s.testDB)
-	tx.Query(`SET PASSWORD FOR 'root'@'localhost' = 'password';`)
-	mustCommit(c, tx)
-
-	tx = mustBegin(c, s.testDB)
-	rows, err = tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
-	c.Assert(err, IsNil)
-	rows.Next()
-	rows.Scan(&pwd)
-	c.Assert(pwd, Equals, "password")
-	c.Assert(rows.Next(), IsFalse)
-	rows.Close()
-	mustCommit(c, tx)
-}

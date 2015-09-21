@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -113,6 +115,25 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(ok, IsTrue)
 	// Show session varibale get utf8
 	c.Assert(v, Equals, "utf8")
+	pln.Close()
+	pln.Pattern = nil
+	pln.Where = &expressions.BinaryOperation{
+		L:  &expressions.Ident{CIStr: model.NewCIStr("Variable_name")},
+		R:  expressions.Value{Val: "autocommit"},
+		Op: opcode.EQ,
+	}
+
+	ret = map[string]string{}
+	sessionVars.Systems["autocommit"] = "on"
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+
+	c.Assert(ret, HasLen, 1)
+	v, ok = ret["autocommit"]
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "on")
 }
 
 func (p *testShowSuit) TearDownSuite(c *C) {
