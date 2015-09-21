@@ -292,6 +292,35 @@ func (s *testMainSuite) TestCheckArgs(c *C) {
 		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
 }
 
+func (s *testMainSuite) TestIsQuery(c *C) {
+	tbl := []struct {
+		sql string
+		ok  bool
+	}{
+		{"/*comment*/ select 1;", true},
+		{"/*comment*/ /*comment*/ select 1;", true},
+		{"select /*comment*/ 1 /*comment*/;", true},
+	}
+	for _, t := range tbl {
+		c.Assert(IsQuery(t.sql), Equals, t.ok, Commentf(t.sql))
+	}
+}
+
+func (s *testMainSuite) TestitrimSQL(c *C) {
+	tbl := []struct {
+		sql    string
+		target string
+	}{
+		{"/*comment*/ select 1; ", "select 1;"},
+		{"/*comment*/ /*comment*/ select 1;", "select 1;"},
+		{"select /*comment*/ 1 /*comment*/;", "select /*comment*/ 1 /*comment*/;"},
+		{"/*comment select 1; ", "/*comment select 1;"},
+	}
+	for _, t := range tbl {
+		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
+	}
+}
+
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)
