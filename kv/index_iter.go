@@ -190,15 +190,15 @@ func (c *kvIndex) Delete(txn Transaction, indexedValues []interface{}, h int64) 
 }
 
 func hasPrefix(prefix []byte) FnKeyCmp {
-	return func(k []byte) bool {
-		return bytes.HasPrefix(k, prefix)
+	return func(k Key) bool {
+		return bytes.HasPrefix([]byte(k), prefix)
 	}
 }
 
 // Drop removes the KV index from store.
 func (c *kvIndex) Drop(txn Transaction) error {
 	prefix := []byte(c.prefix)
-	it, err := txn.Seek(prefix, hasPrefix(prefix))
+	it, err := txn.Seek(Key(prefix), hasPrefix(prefix))
 	if err != nil {
 		return err
 	}

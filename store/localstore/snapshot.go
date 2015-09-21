@@ -14,9 +14,15 @@
 package localstore
 
 import (
+	"bytes"
+	"math"
+
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 var (
@@ -28,15 +34,46 @@ type dbSnapshot struct {
 	engine.Snapshot
 }
 
-func (s *dbSnapshot) Get(k []byte) ([]byte, error) {
+func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	// engine Snapshot return nil, nil for value not found,
 	// so here we will check nil and return kv.ErrNotExist.
-	v, err := s.Snapshot.Get(k)
-	if err != nil {
-		return nil, err
+
+	// get newest version, (0, MaxUint64)
+	// Key arrangement:
+	// Key -> META
+	// ...
+	// Key_ver
+	// Key_ver-1
+	// Key_ver-2
+	// ...
+	// Key_ver-n
+	// Key_0
+	// NextKey -> META
+	// NextKey_xxx
+	startKey := MvccEncodeVersionKey(k, kv.Version{math.MaxUint64})
+	endKey := MvccEncodeVersionKey(k, kv.Version{0})
+
+	// get raw iterator
+	it := s.Snapshot.NewIterator(startKey)
+	defer it.Release()
+
+	var rawKey []byte
+	var v []byte
+	if it.Next() {
+		// If scan exceed this key's all versions
+		// it.Key() > endKey.
+		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
+			// Check newest version of this key.
+			// If it's tombstone, just skip it.
+			if !isTombstone(it.Value()) {
+				rawKey = it.Key()
+				v = it.Value()
+			}
+		}
 	}
 
-	if v == nil {
+	// No such key (or it's tombstone).
+	if rawKey == nil {
 		return nil, kv.ErrNotExist
 	}
 
@@ -44,13 +81,12 @@ func (s *dbSnapshot) Get(k []byte) ([]byte, error) {
 }
 
 func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
-	startKey, ok := param.([]byte)
+	k, ok := param.([]byte)
 	if !ok {
 		log.Errorf("leveldb iterator parameter error, %+v", param)
 		return nil
 	}
-	it := s.Snapshot.NewIterator(startKey)
-	return newDBIter(it)
+	return newDBIter(s, k)
 }
 
 func (s *dbSnapshot) Release() {
@@ -61,20 +97,71 @@ func (s *dbSnapshot) Release() {
 }
 
 type dbIter struct {
-	engine.Iterator
-	valid bool
+	s        *dbSnapshot
+	startKey kv.Key
+	valid    bool
+	k        kv.Key
+	v        []byte
 }
 
-func newDBIter(it engine.Iterator) *dbIter {
-	return &dbIter{
-		Iterator: it,
-		valid:    it.Next(),
+func newDBIter(s *dbSnapshot, startKey kv.Key) *dbIter {
+	it := &dbIter{
+		s:        s,
+		startKey: startKey,
+		valid:    true,
 	}
+	it.Next(nil)
+	return it
 }
 
 func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
-	it.valid = it.Iterator.Next()
-	return it, nil
+	encKey := codec.EncodeBytes(nil, it.startKey)
+	// max key
+	encEndKey := codec.EncodeBytes(nil, []byte{0xff, 0xff})
+	var retErr error
+	var engineIter engine.Iterator
+	for {
+		engineIter = it.s.Snapshot.NewIterator(encKey)
+		// Check if overflow
+		if !engineIter.Next() {
+			it.valid = false
+			break
+		}
+
+		metaKey := engineIter.Key()
+		// Check if meet the end of table.
+		if bytes.Compare(metaKey, encEndKey) >= 0 {
+			it.valid = false
+			break
+		}
+		// Get real key from metaKey
+		key, _, err := MvccDecode(metaKey)
+		if err != nil {
+			// It's not a valid metaKey, maybe overflow (other data).
+			it.valid = false
+			break
+		}
+		// Get kv pair.
+		val, err := it.s.Get(key)
+		if err != nil && !errors2.ErrorEqual(err, kv.ErrNotExist) {
+			// Get this version error
+			it.valid = false
+			retErr = err
+			break
+		}
+		if val != nil {
+			it.k = key
+			it.v = val
+			it.startKey = key.Next()
+			break
+		}
+		// Release the iterator, and update key
+		engineIter.Release()
+		// Current key's all versions are deleted, just go next key.
+		encKey = codec.EncodeBytes(nil, key.Next())
+	}
+	engineIter.Release()
+	return it, errors.Trace(retErr)
 }
 
 func (it *dbIter) Valid() bool {
@@ -82,16 +169,11 @@ func (it *dbIter) Valid() bool {
 }
 
 func (it *dbIter) Key() string {
-	return string(it.Iterator.Key())
+	return string(it.k)
 }
 
 func (it *dbIter) Value() []byte {
-	return it.Iterator.Value()
+	return it.v
 }
 
-func (it *dbIter) Close() {
-	if it.Iterator != nil {
-		it.Iterator.Release()
-		it.Iterator = nil
-	}
-}
+func (it *dbIter) Close() {}

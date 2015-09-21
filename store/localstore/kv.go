@@ -14,15 +14,15 @@
 package localstore
 
 import (
-	"bytes"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/twinj/uuid"
 )
 
@@ -34,8 +34,8 @@ type dbStore struct {
 	mu sync.Mutex
 	db engine.DB
 
-	txns       map[int64]*dbTxn
-	keysLocked map[string]int64
+	txns       map[uint64]*dbTxn
+	keysLocked map[string]uint64
 	uuid       string
 	path       string
 }
@@ -46,12 +46,14 @@ type storeCache struct {
 }
 
 var (
-	globalID int64
-	mc       storeCache
+	globalID          int64
+	globalVerProvider kv.VersionProvider
+	mc                storeCache
 )
 
 func init() {
 	mc.cache = make(map[string]*dbStore)
+	globalVerProvider = &LocalVersioProvider{}
 }
 
 // Driver implements kv.Driver interface.
@@ -77,8 +79,8 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 
 	log.Info("New store", schema)
 	s := &dbStore{
-		txns:       make(map[int64]*dbTxn),
-		keysLocked: make(map[string]int64),
+		txns:       make(map[uint64]*dbTxn),
+		keysLocked: make(map[string]uint64),
 		uuid:       uuid.NewV4().String(),
 		path:       schema,
 		db:         db,
@@ -103,9 +105,13 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	beginVer, err := globalVerProvider.CurrentVersion()
+	if err != nil {
+		return nil, err
+	}
 	txn := &dbTxn{
 		startTs:      time.Now(),
-		tID:          atomic.AddInt64(&globalID, 1),
+		tID:          beginVer.Ver,
 		valid:        true,
 		store:        s,
 		snapshotVals: make(map[string][]byte),
@@ -143,8 +149,7 @@ func (s *dbStore) newBatch() engine.Batch {
 }
 
 // Both lock and unlock are used for simulating scenario of percolator papers
-
-func (s *dbStore) tryConditionLockKey(tID int64, key string, snapshotVal []byte) error {
+func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -152,12 +157,22 @@ func (s *dbStore) tryConditionLockKey(tID int64, key string, snapshotVal []byte)
 		return errors.Trace(kv.ErrLockConflict)
 	}
 
-	currValue, err := s.db.Get([]byte(key))
+	metaKey := codec.EncodeBytes(nil, []byte(key))
+	currValue, err := s.db.Get(metaKey)
+	if errors2.ErrorEqual(err, kv.ErrNotExist) || currValue == nil {
+		// If it's a new key, we won't need to check its version
+		return nil
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, ver, err := codec.DecodeUint(currValue)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if !bytes.Equal(currValue, snapshotVal) {
+	// If there's newer version of this key, returns error.
+	if ver > tID {
 		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q, snapshotVal:%q", tID, key, currValue, snapshotVal)
 		return errors.Trace(kv.ErrConditionNotMatch)
 	}

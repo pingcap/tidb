@@ -76,12 +76,12 @@ func mustDel(c *C, txn kv.Transaction) {
 }
 
 func encodeInt(n int) []byte {
-	return []byte(fmt.Sprintf("%10d", n))
+	return []byte(fmt.Sprintf("%010d", n))
 }
 
 func decodeInt(s []byte) int {
 	var n int
-	fmt.Sscanf(string(s), "%10d", &n)
+	fmt.Sscanf(string(s), "%010d", &n)
 	return n
 }
 
@@ -167,7 +167,6 @@ func (s *testKVSuite) TestSeek(c *C) {
 	c.Assert(err, IsNil)
 
 	insertData(c, txn)
-
 	checkSeek(c, txn)
 
 	// Check transaction results
@@ -197,7 +196,6 @@ func (s *testKVSuite) TestInc(c *C) {
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	defer txn.Commit()
 
 	n, err = txn.Inc(key, -200)
 	c.Assert(err, IsNil)
@@ -211,6 +209,9 @@ func (s *testKVSuite) TestInc(c *C) {
 	c.Assert(n, Equals, int64(100))
 
 	err = txn.Delete(key)
+	c.Assert(err, IsNil)
+
+	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 
@@ -271,7 +272,6 @@ func (s *testKVSuite) TestDelete2(c *C) {
 		it, err = it.Next(nil)
 		c.Assert(err, IsNil)
 	}
-
 	txn.Commit()
 
 	txn, err = s.s.Begin()
