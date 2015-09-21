@@ -28,8 +28,8 @@ type testPatternInSuite struct {
 
 func (t *testPatternInSuite) TestPatternIn(c *C) {
 	e := &expression.PatternIn{
-		Expr: expression.Value{1},
-		List: []expression.Expression{expression.Value{1}, expression.Value{2}, expression.Value{3}},
+		Expr: expression.Value{Val: 1},
+		List: []expression.Expression{expression.Value{Val: 1}, expression.Value{Val: 2}, expression.Value{Val: 3}},
 	}
 
 	ctx := mock.NewContext()
@@ -54,11 +54,11 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	str = e2.String()
 	c.Assert(len(str), Greater, 0)
 
-	e2.List = []expression.Expression{&expression.Ident{model.NewCIStr("c1")}, &expression.Ident{model.NewCIStr("c2")}}
+	e2.List = []expression.Expression{&expression.Ident{CIStr: model.NewCIStr("c1")}, &expression.Ident{CIStr: model.NewCIStr("c2")}}
 
 	c.Assert(e2.IsStatic(), IsFalse)
 
-	e2.Expr = &expression.Ident{model.NewCIStr("c1")}
+	e2.Expr = &expression.Ident{CIStr: model.NewCIStr("c1")}
 
 	c.Assert(e2.IsStatic(), IsFalse)
 
@@ -67,7 +67,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	str = e2.String()
 	c.Assert(len(str), Greater, 0)
 
-	e2.Expr = expression.Value{1}
+	e2.Expr = expression.Value{Val: 1}
 	e2.List = []expression.Expression{expression.Value{}}
 
 	vvv, err := e2.Eval(ctx, nil)
@@ -97,7 +97,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	str = e2.String()
 	c.Assert(len(str), Greater, 0)
 
-	e2.Expr = expression.Value{1}
+	e2.Expr = expression.Value{Val: 1}
 	args := make(map[interface{}]interface{})
 
 	_, err = e2.Eval(ctx, args)
@@ -132,7 +132,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	_, err = e2.Eval(ctx, args)
 	c.Assert(err, IsNil)
 
-	e2.List = []expression.Expression{expression.Value{1}}
+	e2.List = []expression.Expression{expression.Value{Val: 1}}
 	_, err = e2.Eval(ctx, args)
 	c.Assert(err, NotNil)
 }
