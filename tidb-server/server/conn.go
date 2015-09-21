@@ -36,7 +36,6 @@ package server
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -157,35 +156,6 @@ func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkg.writePacket(data)
 }
 
-func calcPassword(scramble, password []byte) []byte {
-	if len(password) == 0 {
-		return nil
-	}
-
-	// stage1Hash = SHA1(password)
-	crypt := sha1.New()
-	crypt.Write(password)
-	stage1 := crypt.Sum(nil)
-
-	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
-	// inner Hash
-	crypt.Reset()
-	crypt.Write(stage1)
-	hash := crypt.Sum(nil)
-
-	// outer Hash
-	crypt.Reset()
-	crypt.Write(scramble)
-	crypt.Write(hash)
-	scramble = crypt.Sum(nil)
-
-	// token = scrambleHash XOR stage1Hash
-	for i := range scramble {
-		scramble[i] ^= stage1[i]
-	}
-	return scramble
-}
-
 func (cc *clientConn) readHandshakeResponse() error {
 	data, err := cc.readPacket()
 	if err != nil {
@@ -210,27 +180,27 @@ func (cc *clientConn) readHandshakeResponse() error {
 	authLen := int(data[pos])
 	pos++
 	auth := data[pos : pos+authLen]
-	checkAuth := calcPassword(cc.salt, []byte(cc.server.cfgGetPwd(cc.user)))
-
+	pos += authLen
+	if cc.capability|mysql.ClientConnectWithDB > 0 {
+		if len(data[pos:]) > 0 {
+			idx := bytes.IndexByte(data[pos:], 0)
+			cc.dbname = string(data[pos : pos+idx])
+		}
+	}
+	// Open session and do auth
 	cc.ctx, err = cc.server.driver.OpenCtx(cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
 		cc.Close()
 		return errors.Trace(err)
 	}
-
-	if !bytes.Equal(auth, checkAuth) && !cc.server.skipAuth() {
-		return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.conn.RemoteAddr().String(), cc.user, "Yes"))
+	// Do Auth
+	addr := cc.conn.RemoteAddr().String()
+	strs := strings.Split(addr, ":")
+	host := strs[0]
+	user := fmt.Sprintf("%s@%s", cc.user, host)
+	if !cc.server.skipAuth() && !cc.ctx.Auth(user, auth, cc.salt) {
+		return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, host, "Yes"))
 	}
-
-	pos += authLen
-	if cc.capability|mysql.ClientConnectWithDB > 0 {
-		if len(data[pos:]) == 0 {
-			return nil
-		}
-		idx := bytes.IndexByte(data[pos:], 0)
-		cc.dbname = string(data[pos : pos+idx])
-	}
-
 	return nil
 }
 

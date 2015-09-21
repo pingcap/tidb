@@ -179,8 +179,8 @@ func (tc *TiDBContext) Close() (err error) {
 }
 
 // Auth implements IContext Auth method.
-func (ts *TiDBContext) Auth(user string, password string, salt []byte) bool {
-	return true
+func (ts *TiDBContext) Auth(user string, auth []byte, salt []byte) bool {
+	return ts.session.Auth(user, auth, salt)
 }
 
 // FieldList implements IContext FieldList method.

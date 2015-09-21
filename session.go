@@ -18,6 +18,8 @@
 package tidb
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -55,7 +57,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags
 	Close() error
 	Retry() error
-	Auth(user string, password string, salt []byte) bool
+	Auth(user string, auth []byte, salt []byte) bool
 }
 
 var (
@@ -380,21 +382,49 @@ func (s *session) Close() error {
 	return s.FinishTxn(true)
 }
 
-func (s *session) Auth(user string, password string, salt []byte) bool {
+func calcPassword(scramble, password []byte) []byte {
+	if len(password) == 0 {
+		return nil
+	}
+
+	// stage1Hash = SHA1(password)
+	crypt := sha1.New()
+	crypt.Write(password)
+	stage1 := crypt.Sum(nil)
+
+	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
+	// inner Hash
+	crypt.Reset()
+	crypt.Write(stage1)
+	hash := crypt.Sum(nil)
+
+	// outer Hash
+	crypt.Reset()
+	crypt.Write(scramble)
+	crypt.Write(hash)
+	scramble = crypt.Sum(nil)
+
+	// token = scrambleHash XOR stage1Hash
+	for i := range scramble {
+		scramble[i] ^= stage1[i]
+	}
+	return scramble
+}
+
+func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	strs := strings.Split(user, "@")
 	if len(strs) != 2 {
 		log.Warnf("Invalid format for user: %s", user)
 		return false
 	}
+	// Get user password.
 	name := strs[0]
 	host := strs[1]
-	// TODO: prevent sql inject attack
-	authSQL := fmt.Sprintf("SELECT * FROM %s.%s WHERE User=%s and Host=%s and Password=%s", mysql.SystemDB, mysql.UserTable, name, host, password)
+	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%s\";", mysql.SystemDB, mysql.UserTable, name, host)
 	rs, err := s.Execute(authSQL)
 	if err != nil {
 		return false
 	}
-	// Auth
 	if len(rs) == 0 {
 		return false
 	}
@@ -402,7 +432,15 @@ func (s *session) Auth(user string, password string, salt []byte) bool {
 	if err != nil {
 		return false
 	}
-	if row == nil {
+	if row == nil || len(row.Data) == 0 {
+		return false
+	}
+	pwd, ok := row.Data[0].(string)
+	if !ok {
+		return false
+	}
+	checkAuth := calcPassword(salt, []byte(pwd))
+	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}
 	s.user = user
