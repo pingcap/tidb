@@ -40,6 +40,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{0, opcode.Not, int64(1)},
 		{nil, opcode.Not, nil},
 		{mysql.Hex{Value: 0}, opcode.Not, int64(1)},
+		{mysql.Bit{Value: 0, Width: 1}, opcode.Not, int64(1)},
 
 		// test BitNeg.
 		{nil, opcode.BitNeg, nil},
@@ -55,6 +56,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{"1.0", opcode.Plus, "1.0"},
 		{[]byte("1.0"), opcode.Plus, []byte("1.0")},
 		{mysql.Hex{Value: 1}, opcode.Plus, mysql.Hex{Value: 1}},
+		{mysql.Bit{Value: 1, Width: 1}, opcode.Plus, mysql.Bit{Value: 1, Width: 1}},
 		{true, opcode.Plus, int64(1)},
 		{false, opcode.Plus, int64(0)},
 
@@ -72,6 +74,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{"1.0", opcode.Minus, -1.0},
 		{[]byte("1.0"), opcode.Minus, -1.0},
 		{mysql.Hex{Value: 1}, opcode.Minus, -1.0},
+		{mysql.Bit{Value: 1, Width: 1}, opcode.Minus, -1.0},
 		{true, opcode.Minus, int64(-1)},
 		{false, opcode.Minus, int64(0)},
 	}
