@@ -78,7 +78,7 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(fls[0].Name, Equals, "Variable_name")
 	c.Assert(fls[1].Name, Equals, "Value")
 	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
-	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeVarchar)
 
 	sessionVars := variable.GetSessionVars(p)
 	ret := map[string]string{}
