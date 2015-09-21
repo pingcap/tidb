@@ -28,7 +28,6 @@ import (
 
 var (
 	_ kv.Transaction = (*dbTxn)(nil)
-
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrCannotSetNilValue is the error when sets an empty value
