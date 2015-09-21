@@ -13,8 +13,8 @@ import (
 // may conflict.
 var ErrOverflow = errors.New("overflow when allocating new version")
 
-// LocalVersioProvider uses local timestamp for version.
-type LocalVersioProvider struct {
+// LocalVersionProvider uses local timestamp for version.
+type LocalVersionProvider struct {
 	mu              sync.Mutex
 	lastTimeStampTs uint64
 	n               uint64
@@ -25,7 +25,7 @@ const (
 )
 
 // CurrentVersion implements the VersionProvider's GetCurrentVer interface.
-func (l *LocalVersioProvider) CurrentVersion() (kv.Version, error) {
+func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var ts uint64
