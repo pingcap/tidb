@@ -51,8 +51,7 @@ func (s *testSubstringSuite) TestSubstring(c *C) {
 		fs := f.String()
 		c.Assert(len(fs), Greater, 0)
 
-		f1, err := f.Clone()
-		c.Assert(err, IsNil)
+		f1 := f.Clone()
 
 		r, err := f.Eval(nil, nil)
 		c.Assert(err, IsNil)

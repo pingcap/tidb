@@ -107,18 +107,10 @@ func (o *BinaryOperation) IsIdentRelOpVal() (bool, string, interface{}, error) {
 }
 
 // Clone implements the Expression Clone interface.
-func (o *BinaryOperation) Clone() (expression.Expression, error) {
-	l, err := o.L.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := o.R.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	return NewBinaryOperation(o.Op, l, r), nil
+func (o *BinaryOperation) Clone() expression.Expression {
+	l := o.L.Clone()
+	r := o.R.Clone()
+	return NewBinaryOperation(o.Op, l, r)
 }
 
 // IsStatic implements the Expression IsStatic interface.

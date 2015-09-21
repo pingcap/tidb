@@ -37,13 +37,9 @@ type IsTruth struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (is *IsTruth) Clone() (expression.Expression, error) {
-	expr, err := is.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	return &IsTruth{Expr: expr, Not: is.Not, True: is.True}, nil
+func (is *IsTruth) Clone() expression.Expression {
+	expr := is.Expr.Clone()
+	return &IsTruth{Expr: expr, Not: is.Not, True: is.True}
 }
 
 // IsStatic implements the Expression IsStatic interface.

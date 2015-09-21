@@ -46,17 +46,14 @@ type FunctionCast struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionCast) Clone() (expression.Expression, error) {
-	expr, err := f.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
+func (f *FunctionCast) Clone() expression.Expression {
+	expr := f.Expr.Clone()
 	nf := &FunctionCast{
 		Expr:         expr,
 		Tp:           f.Tp,
 		FunctionType: f.FunctionType,
 	}
-	return nf, nil
+	return nf
 }
 
 // IsStatic implements the Expression IsStatic interface.

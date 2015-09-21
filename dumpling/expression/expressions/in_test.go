@@ -41,8 +41,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	str := e.String()
 	c.Assert(len(str), Greater, 0)
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	e2, ok := ec.(*PatternIn)
 	c.Assert(ok, IsTrue)

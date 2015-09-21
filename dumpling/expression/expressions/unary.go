@@ -90,13 +90,9 @@ func NewUnaryOperation(op opcode.Op, l expression.Expression) expression.Express
 }
 
 // Clone implements the Expression Clone interface.
-func (u *UnaryOperation) Clone() (expression.Expression, error) {
-	v, err := u.V.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	return &UnaryOperation{Op: u.Op, V: v}, nil
+func (u *UnaryOperation) Clone() expression.Expression {
+	v := u.V.Clone()
+	return &UnaryOperation{Op: u.Op, V: v}
 }
 
 // IsStatic implements the Expression IsStatic interface.

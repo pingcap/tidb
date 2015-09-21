@@ -50,9 +50,9 @@ func (m mockExpr) String() string {
 	return "mock expression"
 }
 
-func (m mockExpr) Clone() (expression.Expression, error) {
+func (m mockExpr) Clone() expression.Expression {
 	nm := m
-	return nm, m.err
+	return nm
 }
 
 type mockCtx struct {

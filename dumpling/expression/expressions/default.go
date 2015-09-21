@@ -33,9 +33,9 @@ type Default struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (v *Default) Clone() (expression.Expression, error) {
+func (v *Default) Clone() expression.Expression {
 	newV := *v
-	return &newV, nil
+	return &newV
 }
 
 // IsStatic implements the Expression IsStatic interface, always returns false.

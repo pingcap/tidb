@@ -32,16 +32,13 @@ type FunctionConvert struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionConvert) Clone() (expression.Expression, error) {
-	expr, err := f.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
+func (f *FunctionConvert) Clone() expression.Expression {
+	expr := f.Expr.Clone()
 	nf := &FunctionConvert{
 		Expr:    expr,
 		Charset: f.Charset,
 	}
-	return nf, nil
+	return nf
 }
 
 // IsStatic implements the Expression IsStatic interface.

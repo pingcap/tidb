@@ -26,14 +26,13 @@ func (s *testDefaultSuite) TestDefault(c *C) {
 	e := Default{}
 
 	c.Assert(e.String(), Equals, "default")
-	_, err := e.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(e.Clone(), NotNil)
 
 	c.Assert(e.IsStatic(), IsFalse)
 
 	m := map[interface{}]interface{}{}
 
-	_, err = e.Eval(nil, m)
+	_, err := e.Eval(nil, m)
 	c.Assert(err, NotNil)
 
 	m[ExprEvalDefaultName] = "id"

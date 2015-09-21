@@ -128,16 +128,13 @@ func (s *testBinOpSuite) TestComparisonOp(c *C) {
 		expr := NewBinaryOperation(t.op, Value{t.arg}, mock)
 		_, err := expr.Eval(nil, nil)
 		c.Assert(err, NotNil)
-
-		_, err = expr.Clone()
-		c.Assert(err, NotNil)
+		c.Assert(expr.Clone(), NotNil)
 
 		expr = NewBinaryOperation(t.op, mock, Value{t.arg})
 		_, err = expr.Eval(nil, nil)
 		c.Assert(err, NotNil)
 
-		_, err = expr.Clone()
-		c.Assert(err, NotNil)
+		c.Assert(expr.Clone(), NotNil)
 	}
 
 	mock.err = nil
@@ -255,8 +252,7 @@ func (s *testBinOpSuite) TestLogicOp(c *C) {
 			c.Assert(v, DeepEquals, int64(x))
 		}
 
-		_, err = expr.Clone()
-		c.Assert(err, IsNil)
+		c.Assert(expr.Clone(), NotNil)
 	}
 
 	// test error

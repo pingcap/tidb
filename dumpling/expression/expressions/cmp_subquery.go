@@ -39,18 +39,10 @@ type CompareSubQuery struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (cs *CompareSubQuery) Clone() (expression.Expression, error) {
-	l, err := cs.L.Clone()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	r, err := cs.R.Clone()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return &CompareSubQuery{L: l, Op: cs.Op, R: r.(*SubQuery), All: cs.All}, nil
+func (cs *CompareSubQuery) Clone() expression.Expression {
+	l := cs.L.Clone()
+	r := cs.R.Clone()
+	return &CompareSubQuery{L: l, Op: cs.Op, R: r.(*SubQuery), All: cs.All}
 }
 
 // IsStatic implements the Expression IsStatic interface.

@@ -52,8 +52,7 @@ func (s *testVariableSuite) TestVariable(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "1234")
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	e2, ok := ec.(*Variable)
 	c.Assert(ok, IsTrue)

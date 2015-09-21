@@ -27,8 +27,7 @@ func (s *testValueSuite) TestValue(c *C) {
 	c.Assert(e.IsStatic(), IsTrue)
 	c.Assert(e.String(), Equals, "NULL")
 
-	_, err := e.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(e.Clone(), NotNil)
 
 	v, err := e.Eval(nil, nil)
 	c.Assert(err, IsNil)
