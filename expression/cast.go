@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -38,7 +38,7 @@ const (
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
 type FunctionCast struct {
 	// Expr is the expression to be converted.
-	Expr expression.Expression
+	Expr Expression
 	// Tp is the conversion type.
 	Tp *types.FieldType
 	// Cast, Convert and Binary share this struct.
@@ -46,7 +46,7 @@ type FunctionCast struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionCast) Clone() expression.Expression {
+func (f *FunctionCast) Clone() Expression {
 	expr := f.Expr.Clone()
 	nf := &FunctionCast{
 		Expr:         expr,

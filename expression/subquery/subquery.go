@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/stmt"

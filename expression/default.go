@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -19,11 +19,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*Default)(nil)
+	_ Expression = (*Default)(nil)
 )
 
 // Default is the default expression using default value for a column.
@@ -33,7 +32,7 @@ type Default struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (v *Default) Clone() expression.Expression {
+func (v *Default) Clone() Expression {
 	newV := *v
 	return &newV
 }

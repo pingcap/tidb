@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -23,20 +23,20 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ expression.Expression = (*PatternIn)(nil)
+	_ Expression = (*PatternIn)(nil)
 )
 
 // PatternIn is the expression for in operator, like "expr in (1, 2, 3)" or "expr in (select c from t)".
 type PatternIn struct {
 	// Expr is the value expression to be compared.
-	Expr expression.Expression
+	Expr Expression
 	// List is the list expression in compare list.
-	List []expression.Expression
+	List []Expression
 	// Not is true, the expression is "not in".
 	Not bool
 	// Sel is the sub query.
@@ -44,7 +44,7 @@ type PatternIn struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (n *PatternIn) Clone() expression.Expression {
+func (n *PatternIn) Clone() Expression {
 	expr := n.Expr.Clone()
 	list := cloneExpressionList(n.List)
 	return &PatternIn{
@@ -117,7 +117,7 @@ func (n *PatternIn) checkInList(in interface{}, list []interface{}) (interface{}
 	return n.Not, nil
 }
 
-func evalExprList(ctx context.Context, args map[interface{}]interface{}, list []expression.Expression) ([]interface{}, error) {
+func evalExprList(ctx context.Context, args map[interface{}]interface{}, list []Expression) ([]interface{}, error) {
 	var err error
 	values := make([]interface{}, len(list))
 	for i := range values {

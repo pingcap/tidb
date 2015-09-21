@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -23,27 +23,27 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
-var _ expression.Expression = (*BinaryOperation)(nil)
+var _ Expression = (*BinaryOperation)(nil)
 
 // BinaryOperation is for binary operation like 1 + 1, 1 - 1, etc.
 type BinaryOperation struct {
 	// Op is the operator code for BinaryOperation.
 	Op opcode.Op
 	// L is the left expression in BinaryOperation.
-	L expression.Expression
+	L Expression
 	// R is the right expression in BinaryOperation.
-	R expression.Expression
+	R Expression
 }
 
 // NewBinaryOperation creates a binary expression with op as the operator code and
 // x, y as the left and right operator expression.
-func NewBinaryOperation(op opcode.Op, x, y expression.Expression) expression.Expression {
+func NewBinaryOperation(op opcode.Op, x, y Expression) Expression {
 	b := &BinaryOperation{op, x, y}
 
 	var ok bool
@@ -53,7 +53,7 @@ func NewBinaryOperation(op opcode.Op, x, y expression.Expression) expression.Exp
 		return b
 	}
 
-	var r expression.Expression
+	var r Expression
 	// left is not Ident expression, check right
 	if r, ok = b.R.(*Ident); !ok {
 		return b
@@ -107,7 +107,7 @@ func (o *BinaryOperation) IsIdentRelOpVal() (bool, string, interface{}, error) {
 }
 
 // Clone implements the Expression Clone interface.
-func (o *BinaryOperation) Clone() expression.Expression {
+func (o *BinaryOperation) Clone() Expression {
 	l := o.L.Clone()
 	r := o.R.Clone()
 	return NewBinaryOperation(o.Op, l, r)

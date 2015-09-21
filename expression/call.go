@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -23,11 +23,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*Call)(nil)
+	_ Expression = (*Call)(nil)
 )
 
 // Call is for function expression.
@@ -35,7 +34,7 @@ type Call struct {
 	// F is the function name.
 	F string
 	// Args is the function args.
-	Args []expression.Expression
+	Args []Expression
 	// Distinct only affetcts sum, avg, count, group_concat,
 	// so we can ignore it in other functions
 	Distinct bool
@@ -43,7 +42,7 @@ type Call struct {
 
 // NewCall creates a Call expression with function name f, function args arg and
 // a distinct flag whether this function supports distinct or not.
-func NewCall(f string, args []expression.Expression, distinct bool) (v expression.Expression, err error) {
+func NewCall(f string, args []Expression, distinct bool) (v Expression, err error) {
 	x := builtin[strings.ToLower(f)]
 	if x.f == nil {
 		return nil, errors.Errorf("undefined: %s", f)
@@ -76,7 +75,7 @@ func NewCall(f string, args []expression.Expression, distinct bool) (v expressio
 }
 
 // Clone implements the Expression Clone interface.
-func (c *Call) Clone() expression.Expression {
+func (c *Call) Clone() Expression {
 	list := cloneExpressionList(c.Args)
 	return &Call{F: c.F, Args: list, Distinct: c.Distinct}
 }

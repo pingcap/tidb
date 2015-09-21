@@ -11,24 +11,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
-var _ expression.Expression = (*ParamMarker)(nil)
+var _ Expression = (*ParamMarker)(nil)
 
 // ParamMarker expresion holds a place for another expression.
 // Used in parsing prepare statement.
 type ParamMarker struct {
 	// Expr is the expression to be evaluated in this place holder.
-	Expr expression.Expression
+	Expr Expression
 }
 
 // Clone implements the Expression Clone interface.
-func (pm *ParamMarker) Clone() expression.Expression {
+func (pm *ParamMarker) Clone() Expression {
 	np := &ParamMarker{}
 	if pm.Expr != nil {
 		np.Expr = pm.Expr.Clone()

@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -26,16 +26,16 @@ import (
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#operator_case
 
 var (
-	_ expression.Expression = (*FunctionCase)(nil)
-	_ expression.Expression = (*WhenClause)(nil)
+	_ Expression = (*FunctionCase)(nil)
+	_ Expression = (*WhenClause)(nil)
 )
 
 // WhenClause is the expression in Case expression for "when condition then result".
 type WhenClause struct {
 	// Expr is the condition expression in WhenClause.
-	Expr expression.Expression
+	Expr Expression
 	// Result is the result expression in WhenClause.
-	Result expression.Expression
+	Result Expression
 }
 
 // Check if satisified the target condition.
@@ -71,7 +71,7 @@ func (w *WhenClause) String() string {
 }
 
 // Clone implements the Expression Clone interface.
-func (w *WhenClause) Clone() expression.Expression {
+func (w *WhenClause) Clone() Expression {
 	ne := w.Expr.Clone()
 	nr := w.Result.Clone()
 	return &WhenClause{Expr: ne, Result: nr}
@@ -85,19 +85,19 @@ func (w *WhenClause) IsStatic() bool {
 // FunctionCase is the case expression.
 type FunctionCase struct {
 	// Value is the compare value expression.
-	Value expression.Expression
+	Value Expression
 	// WhenClauses is the condition check expression.
 	WhenClauses []*WhenClause
 	// ElseClause is the else result expression.
-	ElseClause expression.Expression
+	ElseClause Expression
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionCase) Clone() expression.Expression {
+func (f *FunctionCase) Clone() Expression {
 	var (
-		nv expression.Expression
-		ne expression.Expression
-		nw expression.Expression
+		nv Expression
+		ne Expression
+		nw Expression
 	)
 	if f.Value != nil {
 		nv = f.Value.Clone()

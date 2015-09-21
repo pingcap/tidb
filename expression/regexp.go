@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -23,20 +23,19 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*PatternRegexp)(nil)
+	_ Expression = (*PatternRegexp)(nil)
 )
 
 // PatternRegexp is the pattern expression for pattern match.
 // TODO: refactor later.
 type PatternRegexp struct {
 	// Expr is the expression to be checked.
-	Expr expression.Expression
+	Expr Expression
 	// Pattern is the expression for pattern.
-	Pattern expression.Expression
+	Pattern Expression
 	// Re is the compiled regexp.
 	Re *regexp.Regexp
 	// Sexpr is the string for Expr expression.
@@ -46,7 +45,7 @@ type PatternRegexp struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *PatternRegexp) Clone() expression.Expression {
+func (p *PatternRegexp) Clone() Expression {
 	expr := p.Expr.Clone()
 	pattern := p.Pattern.Clone()
 	return &PatternRegexp{
@@ -87,7 +86,7 @@ func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface
 
 		sexpr, ok = expr.(string)
 		if !ok {
-			return nil, errors.Errorf("non-string expression.Expression in LIKE: %v (Value of type %T)", expr, expr)
+			return nil, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
 		}
 
 		if p.Expr.IsStatic() {

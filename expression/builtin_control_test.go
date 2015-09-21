@@ -11,13 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"errors"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
 )
 
 func (s *testBuiltinSuite) TestIf(c *C) {
@@ -88,9 +87,9 @@ func (s *testBuiltinSuite) TestCaseWhen(c *C) {
 	whens0 := []*WhenClause{when0, when1}
 
 	tbl := []struct {
-		value      expression.Expression
+		value      Expression
 		whens      []*WhenClause
-		elseClause expression.Expression
+		elseClause Expression
 		ret        interface{}
 	}{
 		{mockExpr{val: 1}, whens0, nil, "str1"},

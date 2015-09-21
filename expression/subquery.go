@@ -1,12 +1,11 @@
-package expressions
+package expression
 
 import (
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 type SubQuery interface {
-	expression.Expression
+	Expression
 	Value() interface{}
 	SetValue(val interface{})
 	UseOuterQuery() bool

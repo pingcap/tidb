@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -29,7 +29,7 @@ import (
 // See: https://dev.mysql.com/doc/refman/5.7/en/all-subqueries.html
 type CompareSubQuery struct {
 	// L is the left expression
-	L expression.Expression
+	L Expression
 	// Op is the comparison opcode.
 	Op opcode.Op
 	// R is the sub query for right expression.
@@ -39,7 +39,7 @@ type CompareSubQuery struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (cs *CompareSubQuery) Clone() expression.Expression {
+func (cs *CompareSubQuery) Clone() Expression {
 	l := cs.L.Clone()
 	r := cs.R.Clone()
 	return &CompareSubQuery{L: l, Op: cs.Op, R: r.(SubQuery), All: cs.All}
@@ -160,7 +160,7 @@ func (cs *CompareSubQuery) checkResult(lv interface{}, result []interface{}) (in
 }
 
 // NewCompareSubQuery creates a CompareSubQuery object.
-func NewCompareSubQuery(op opcode.Op, lhs expression.Expression, rhs SubQuery, all bool) *CompareSubQuery {
+func NewCompareSubQuery(op opcode.Op, lhs Expression, rhs SubQuery, all bool) *CompareSubQuery {
 	return &CompareSubQuery{
 		Op:  op,
 		L:   lhs,
