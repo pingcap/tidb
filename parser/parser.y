@@ -138,6 +138,7 @@ import (
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
 	hour		"HOUR"
+	identified	"IDENTIFIED"
 	ignore		"IGNORE"
 	ifKwd		"IF"
 	ifNull		"IFNULL"
@@ -218,6 +219,7 @@ import (
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	use		"USE"
+	user		"USER"
 	using		"USING"
 	userVar		"USER_VAR"
 	value		"VALUE"
@@ -300,6 +302,7 @@ import (
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
 	AssignmentListOpt	"assignment list opt"
+	AuthOption		"User auth option"
 	AuthString		"Password string value"
 	BeginTransactionStmt	"BEGIN TRANSACTION statement"
 	CastType		"Cast function target type"
@@ -328,6 +331,7 @@ import (
 	CreateSpecificationList	"CREATE Database specification list"
 	CreateSpecListOpt	"CREATE Database specification list opt"
 	CreateTableStmt		"CREATE TABLE statement"
+	CreateUserStmt		"CREATE User statement"
 	CrossOpt		"Cross join option"
 	DBName			"Database Name"
 	DeallocateSym		"Deallocate or drop"
@@ -367,6 +371,7 @@ import (
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
+	HashString		"Hashed string"
 	HavingClause		"HAVING clause"
 	IfExists		"If Exists"
 	IfNotExists		"If Not Exists"
@@ -451,6 +456,8 @@ import (
 	UnionStmt		"Union statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
+	UserSpecification	"Username and auth option"
+	UserSpecificationList	"Username and auth option list"
 	UserVariable		"User defined variable name"
 	UserVariableList	"User defined variable name list"
 	UseStmt			"USE statement"
@@ -1593,7 +1600,7 @@ UnReservedKeyword:
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
-|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME"
+|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -3020,7 +3027,7 @@ PasswordOpt:
 	}
 
 AuthString:
-	Identifier
+	stringLit
 	{
 		$$ = $1.(string)
 	}
@@ -3078,6 +3085,14 @@ ShowStmt:
 			Target: stmt.ShowVariables,
 			GlobalScope: $2.(bool),
 			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
+		}
+	}
+|	"SHOW" GlobalScope "VARIABLES" "WHERE" Expression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowVariables,
+			GlobalScope: $2.(bool),
+			Where: expressions.Expr($5),
 		}
 	}
 
@@ -3138,6 +3153,7 @@ Statement:
 |	CreateDatabaseStmt
 |	CreateIndexStmt
 |	CreateTableStmt
+|	CreateUserStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -3785,5 +3801,56 @@ CommaOpt:
 	{
 	}
 
+/************************************************************************************
+ *  Account Management Statements
+ *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
+ ************************************************************************************/
+CreateUserStmt:
+	"CREATE" "USER" IfNotExists UserSpecificationList
+	{
+ 		// See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+		$$ = &stmts.CreateUserStmt{
+			IfNotExists: $3.(bool),
+			Specs: $4.([]*coldef.UserSpecification),
+		}
+	}
+
+UserSpecification:
+	Username AuthOption	
+	{
+		$$ = &coldef.UserSpecification{
+			User: $1.(string),
+			AuthOpt: $2.(*coldef.AuthOption),
+		}
+	}
+
+UserSpecificationList:
+	UserSpecification
+	{
+		$$ = []*coldef.UserSpecification{$1.(*coldef.UserSpecification)}
+	}
+|	UserSpecificationList ',' UserSpecification
+	{
+		$$ = append($1.([]*coldef.UserSpecification), $3.(*coldef.UserSpecification))
+	}
+
+AuthOption:
+	{}
+|	"IDENTIFIED" "BY" AuthString
+	{
+		$$ = &coldef.AuthOption {
+			AuthString: $3.(string),
+			ByAuthString: true,
+		}	
+	}
+|	"IDENTIFIED" "BY" "PASSWORD" HashString
+	{
+		$$ = &coldef.AuthOption {
+			HashString: $4.(string),
+		}
+	}
+
+HashString:
+	stringLit
 %%
 
