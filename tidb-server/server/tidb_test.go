@@ -30,7 +30,6 @@ var _ = Suite(new(TidbTestSuite))
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	store, err := tidb.NewStore("memory:///tmp/tidb")
 	c.Assert(err, IsNil)
-	Bootstrap(store)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
 		Addr:     ":4001",
@@ -69,8 +68,4 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
-}
-
-func (ts *TidbTestSuite) TestBootstrap(c *C) {
-	runTestBootstrap(c)
 }

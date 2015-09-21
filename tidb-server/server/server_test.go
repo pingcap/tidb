@@ -219,24 +219,3 @@ func runTestConcurrentUpdate(c *C) {
 		c.Assert(err, IsNil)
 	})
 }
-
-func runTestBootstrap(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("USE mysql;")
-		rows := dbt.mustQuery("select * from mysql.user;")
-		c.Assert(rows.Next(), IsTrue)
-		var host, user, password string
-		err := rows.Scan(&host, &user, &password)
-		c.Assert(err, IsNil)
-		c.Assert(host, Equals, "localhost")
-		c.Assert(user, Equals, "root")
-		c.Assert(password, Equals, "")
-
-		c.Assert(rows.Next(), IsTrue)
-		err = rows.Scan(&host, &user, &password)
-		c.Assert(err, IsNil)
-		c.Assert(host, Equals, "127.0.0.1")
-		c.Assert(user, Equals, "root")
-		c.Assert(password, Equals, "")
-	})
-}
