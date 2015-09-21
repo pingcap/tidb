@@ -42,5 +42,5 @@ func MvccDecode(encodedKey kv.EncodedKey) (kv.Key, kv.Version, error) {
 	if len(remainBytes) != 0 {
 		return nil, kv.Version{}, ErrInvalidEncodedKey
 	}
-	return key, kv.Version{ver}, nil
+	return key, kv.Version{Ver: ver}, nil
 }

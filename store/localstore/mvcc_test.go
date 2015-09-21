@@ -35,8 +35,8 @@ func (t *testMvccSuite) addDirtyData() {
 }
 
 func (t *testMvccSuite) TestMvccEncode(c *C) {
-	encodedKey1 := MvccEncodeVersionKey([]byte("A"), kv.Version{1})
-	encodedKey2 := MvccEncodeVersionKey([]byte("A"), kv.Version{2})
+	encodedKey1 := MvccEncodeVersionKey([]byte("A"), kv.Version{Ver: 1})
+	encodedKey2 := MvccEncodeVersionKey([]byte("A"), kv.Version{Ver: 2})
 	// A_2
 	// A_1
 	c.Assert(encodedKey1.Cmp(encodedKey2), Greater, 0)

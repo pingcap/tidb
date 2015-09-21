@@ -50,8 +50,8 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	// Key_0
 	// NextKey -> META
 	// NextKey_xxx
-	startKey := MvccEncodeVersionKey(k, kv.Version{math.MaxUint64})
-	endKey := MvccEncodeVersionKey(k, kv.Version{0})
+	startKey := MvccEncodeVersionKey(k, kv.Version{Ver: math.MaxUint64})
+	endKey := MvccEncodeVersionKey(k, kv.Version{Ver: 0})
 
 	// get raw iterator
 	it := s.Snapshot.NewIterator(startKey)
