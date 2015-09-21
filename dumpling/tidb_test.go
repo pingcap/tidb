@@ -794,6 +794,17 @@ func (s *testSessionSuite) TestShow(c *C) {
 	match(c, rows[0], "c", "INT", "YES", "", nil, "")
 }
 
+func (s *testSessionSuite) TestBit(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 bit(2))")
+	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
+	_, err := exec(c, se, "insert into t values (4)")
+	c.Assert(err, NotNil)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
