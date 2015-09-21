@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -192,7 +191,7 @@ func (r *indexPlan) GetFields() []*field.ResultField {
 // Filter merges BinaryOperations, and determines the lower and upper bound.
 func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	switch x := expr.(type) {
-	case *expressions.BinaryOperation:
+	case *expression.BinaryOperation:
 		ok, cname, val, err := x.IsIdentRelOpVal()
 		if err != nil {
 			return nil, false, err
@@ -212,18 +211,18 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		}
 		r.spans = filterSpans(r.spans, toSpans(x.Op, val))
 		return r, true, nil
-	case *expressions.Ident:
+	case *expression.Ident:
 		if r.colName != x.L {
 			break
 		}
 		r.spans = filterSpans(r.spans, toSpans(opcode.GE, minNotNullVal))
 		return r, true, nil
-	case *expressions.UnaryOperation:
+	case *expression.UnaryOperation:
 		if x.Op != '!' {
 			break
 		}
 
-		operand, ok := x.V.(*expressions.Ident)
+		operand, ok := x.V.(*expression.Ident)
 		if !ok {
 			break
 		}

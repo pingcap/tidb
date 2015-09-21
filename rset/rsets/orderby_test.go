@@ -16,7 +16,6 @@ package rsets
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
@@ -36,7 +35,7 @@ func (s *testOrderByRsetSuite) SetUpSuite(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
 	}
 
 	selectList := &plans.SelectList{
@@ -54,7 +53,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
 	}
 
 	selectList := &plans.SelectList{
@@ -63,7 +62,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 		Fields:            fields,
 	}
 
-	expr := &expressions.Ident{CIStr: model.NewCIStr("id")}
+	expr := &expression.Ident{CIStr: model.NewCIStr("id")}
 	orderByItem := OrderByItem{Expr: expr, Asc: true}
 	by := []OrderByItem{orderByItem}
 	r := &OrderByRset{By: by, SelectList: selectList}
@@ -80,7 +79,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, NotNil)
 
 	// `select id, name from t order by count(1) > 1`
-	aggExpr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{Val: 1}}, false)
+	aggExpr, err := expression.NewCall("count", []expression.Expression{expression.Value{Val: 1}}, false)
 	c.Assert(err, IsNil)
 
 	r.By[0].Expr = aggExpr
@@ -89,7 +88,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name from t order by count(xxx) > 1`
-	aggExpr, err = expressions.NewCall("count", []expression.Expression{&expressions.Ident{CIStr: model.NewCIStr("xxx")}}, false)
+	aggExpr, err = expression.NewCall("count", []expression.Expression{&expression.Ident{CIStr: model.NewCIStr("xxx")}}, false)
 	c.Assert(err, IsNil)
 
 	r.By[0].Expr = aggExpr
@@ -98,7 +97,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, NotNil)
 
 	// `select id, name from t order by xxx`
-	r.By[0].Expr = &expressions.Ident{CIStr: model.NewCIStr("xxx")}
+	r.By[0].Expr = &expression.Ident{CIStr: model.NewCIStr("xxx")}
 	selectList.Fields[1].Name = "name"
 	selectList.ResultFields[1].Name = "name"
 
@@ -112,7 +111,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetPlan(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name from t order by id`
-	expr := &expressions.Ident{CIStr: model.NewCIStr("id")}
+	expr := &expression.Ident{CIStr: model.NewCIStr("id")}
 	orderByItem := OrderByItem{Expr: expr}
 	by := []OrderByItem{orderByItem}
 
@@ -125,29 +124,29 @@ func (s *testOrderByRsetSuite) TestOrderByRsetPlan(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// `select id, name from t order by 1`
-	s.r.By[0].Expr = expressions.Value{Val: int64(1)}
+	s.r.By[0].Expr = expression.Value{Val: int64(1)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
-	s.r.By[0].Expr = expressions.Value{Val: uint64(1)}
+	s.r.By[0].Expr = expression.Value{Val: uint64(1)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
 	// `select id, name from t order by 0`
-	s.r.By[0].Expr = expressions.Value{Val: int64(0)}
+	s.r.By[0].Expr = expression.Value{Val: int64(0)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)
 
-	s.r.By[0].Expr = expressions.Value{Val: 0}
+	s.r.By[0].Expr = expression.Value{Val: 0}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
 	// `select id, name from t order by xxx`
-	s.r.By[0].Expr = &expressions.Ident{CIStr: model.NewCIStr("xxx")}
+	s.r.By[0].Expr = &expression.Ident{CIStr: model.NewCIStr("xxx")}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)

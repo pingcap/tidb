@@ -16,7 +16,6 @@ package plans_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
@@ -42,20 +41,20 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 	sl := &plans.SelectList{
 		Fields: []*field.Field{
 			{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr("id"),
 				},
 			},
 			{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr("name"),
 				},
 			},
 			{
-				Expr: &expressions.Call{
+				Expr: &expression.Call{
 					F: "sum",
 					Args: []expression.Expression{
-						&expressions.Ident{
+						&expression.Ident{
 							CIStr: model.NewCIStr("id"),
 						},
 					},
@@ -69,7 +68,7 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 		SelectList: sl,
 		Src:        tblPlan,
 		By: []expression.Expression{
-			&expressions.Ident{
+			&expression.Ident{
 				CIStr: model.NewCIStr("id"),
 			},
 		},

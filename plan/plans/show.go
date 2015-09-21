@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
@@ -214,11 +213,11 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		sessionVars := variable.GetSessionVars(ctx)
 		for _, v := range variable.SysVars {
 			if s.Pattern != nil {
-				p, ok := s.Pattern.(*expressions.PatternLike)
+				p, ok := s.Pattern.(*expression.PatternLike)
 				if !ok {
 					return errors.Errorf("Like should be a PatternLike expression")
 				}
-				p.Expr = expressions.Value{Val: v.Name}
+				p.Expr = expression.Value{Val: v.Name}
 				r, err := p.Eval(ctx, nil)
 				if err != nil {
 					return errors.Trace(err)
@@ -233,7 +232,7 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 			} else if s.Where != nil {
 				m := map[interface{}]interface{}{}
 
-				m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 					if strings.EqualFold(name, "Variable_name") {
 						return v.Name, nil
 					}
@@ -241,7 +240,7 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 					return nil, errors.Errorf("unknown field %s", name)
 				}
 
-				match, err := expressions.EvalBoolExpr(ctx, s.Where, m)
+				match, err := expression.EvalBoolExpr(ctx, s.Where, m)
 				if err != nil {
 					return errors.Trace(err)
 				}

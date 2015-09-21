@@ -14,7 +14,7 @@
 package rsets
 
 import (
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 )
 
@@ -22,7 +22,7 @@ import (
 func GetAggFields(fields []*field.Field) map[int]struct{} {
 	aggFields := map[int]struct{}{}
 	for i, v := range fields {
-		if expressions.ContainAggregateFunc(v.Expr) {
+		if expression.ContainAggregateFunc(v.Expr) {
 			aggFields[i] = struct{}{}
 		}
 	}

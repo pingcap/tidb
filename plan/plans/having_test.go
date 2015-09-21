@@ -15,7 +15,7 @@ package plans_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
@@ -31,12 +31,12 @@ func (t *testHavingPlan) TestHaving(c *C) {
 	tblPlan := &testTablePlan{groupByTestData, []string{"id", "name"}, 0}
 	havingPlan := &plans.HavingPlan{
 		Src: tblPlan,
-		Expr: &expressions.BinaryOperation{
+		Expr: &expression.BinaryOperation{
 			Op: opcode.GE,
-			L: &expressions.Ident{
+			L: &expression.Ident{
 				CIStr: model.NewCIStr("id"),
 			},
-			R: &expressions.Value{
+			R: &expression.Value{
 				Val: 20,
 			},
 		},

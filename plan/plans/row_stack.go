@@ -17,7 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
@@ -183,7 +183,7 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 			v, err = GetIdentValue(name, t.FromDataFields, t.FromData, field.DefaultFieldFlag)
 			if err == nil {
 				// tell current subquery using outer query
-				expressions.SetOuterQueryUsed(ctx)
+				subquery.SetOuterQueryUsed(ctx)
 				return v, nil
 			}
 		}
@@ -193,7 +193,7 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 			v, err = GetIdentValue(name, t.OutDataFields, t.OutData, field.FieldNameFlag)
 			if err == nil {
 				// tell current subquery using outer query
-				expressions.SetOuterQueryUsed(ctx)
+				subquery.SetOuterQueryUsed(ctx)
 				return v, nil
 			}
 		}

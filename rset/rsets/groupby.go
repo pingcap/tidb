@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
@@ -48,7 +47,7 @@ func (r *GroupByRset) HasAmbiguousField(indices []int, fields []*field.Field) bo
 
 		// `select c1 + c2 as c1, c1 + c3 as c1 from t order by c1` is valid,
 		// if it is not `Ident` expression, ignore it.
-		v, ok := expr.(*expressions.Ident)
+		v, ok := expr.(*expression.Ident)
 		if !ok {
 			continue
 		}
@@ -71,7 +70,7 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	aggFields := r.SelectList.AggFields
 
 	for i, e := range r.By {
-		if v, ok := e.(expressions.Value); ok {
+		if v, ok := e.(expression.Value); ok {
 			var position int
 			switch u := v.Val.(type) {
 			case int64:
@@ -92,14 +91,14 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 			}
 
 			// use Position expression for the associated field.
-			r.By[i] = &expressions.Position{N: position}
+			r.By[i] = &expression.Position{N: position}
 		} else {
-			names := expressions.MentionedColumns(e)
+			names := expression.MentionedColumns(e)
 			for _, name := range names {
 				if field.ContainFieldName(name, srcFields, field.DefaultFieldFlag) {
 					// check whether column is qualified, like `select t.c1 c1, t.c2 from t group by t.c1, t.c2`
 					// no need to check ambiguous field.
-					if expressions.IsQualified(name) {
+					if expression.IsQualified(name) {
 						continue
 					}
 
@@ -128,7 +127,7 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 
 			// group by should be an expression, a qualified field name or a select field position,
 			// but can not contain any aggregate function.
-			if e := r.By[i]; expressions.ContainAggregateFunc(e) {
+			if e := r.By[i]; expression.ContainAggregateFunc(e) {
 				return nil, errors.Errorf("group by cannot contain aggregate function %s", e.String())
 			}
 		}
