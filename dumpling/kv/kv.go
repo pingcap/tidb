@@ -13,7 +13,10 @@
 
 package kv
 
-import "bytes"
+import (
+	"bytes"
+	"math"
+)
 
 // EncodedKey represents encoded key in low-level storage engine.
 type EncodedKey []byte
@@ -56,6 +59,18 @@ type Version struct {
 	Ver uint64
 }
 
+var (
+	MaxVersion = Version{Ver: math.MaxUint64}
+	MinVersion = Version{Ver: 0}
+)
+
+// NewVersion is a simple wrapper.
+func NewVersion(v uint64) Version {
+	return Version{
+		Ver: v,
+	}
+}
+
 // DecodeFn is a function that decode data after fetch from store.
 type DecodeFn func(raw interface{}) (interface{}, error)
 
@@ -83,6 +98,15 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
+}
+
+type MvccReader interface {
+	// MvccGet returns the specific version of given key, if the version doesn't
+	// exists, returns the nearest(lower) version's data.
+	MvccGet(k Key, ver Version) ([]byte, error)
+	// MvccIterator seeks to the key in the specific version's snapshot, if the
+	// version doesn't exists, return the nearest(lower) version's snaphot.
+	NewMvccIterator(k Key, ver Version) Iterator
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
