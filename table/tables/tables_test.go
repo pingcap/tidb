@@ -41,12 +41,10 @@ type testSuite struct {
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
+	store, err := driver.Open("memory-tables-test")
 	c.Check(err, IsNil)
 	ts.store = store
 	ts.se, err = tidb.CreateSession(ts.store)
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute("CREATE DATABASE test")
 	c.Assert(err, IsNil)
 }
 
