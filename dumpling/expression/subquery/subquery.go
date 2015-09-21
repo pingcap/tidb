@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/stmt"
 )
 
-// SubQueryStatement implements stmt.Statement and plan.Planner interface.
-type SubQueryStatement interface {
+// Statement implements stmt.Statement and plan.Planner interface.
+type Statement interface {
 	stmt.Statement
 	plan.Planner
 }
@@ -37,7 +37,7 @@ var _ expression.Expression = (*SubQuery)(nil)
 // TODO: complete according to https://dev.mysql.com/doc/refman/5.7/en/subquery-restrictions.html
 type SubQuery struct {
 	// Stmt is the sub select statement.
-	Stmt SubQueryStatement
+	Stmt Statement
 	// Value holds the sub select result.
 	Val interface{}
 
@@ -48,14 +48,17 @@ type SubQuery struct {
 	p plan.Plan
 }
 
+// SetValue implements expression.SubQuery interface.
 func (sq *SubQuery) SetValue(val interface{}) {
 	sq.Val = val
 }
 
+// Value implements expression.SubQuery interface.
 func (sq *SubQuery) Value() interface{} {
 	return sq.Val
 }
 
+// UseOuterQuery implements expression.SubQuery interface.
 func (sq *SubQuery) UseOuterQuery() bool {
 	return sq.UseOuter
 }
@@ -135,7 +138,7 @@ func (sq *SubQuery) EvalRows(ctx context.Context, args map[interface{}]interface
 	}
 	defer p.Close()
 
-	sq.push(ctx)
+	sq.Push(ctx)
 
 	var (
 		row *plan.Row
@@ -161,7 +164,7 @@ func (sq *SubQuery) EvalRows(ctx context.Context, args map[interface{}]interface
 		}
 	}
 
-	err0 := sq.pop(ctx)
+	err0 := sq.Pop(ctx)
 	if err0 != nil {
 		return res, errors.Wrap(err, err0)
 	}
@@ -177,12 +180,13 @@ func (k subQueryStackKeyType) String() string {
 	return "sub query stack"
 }
 
-// subQueryStackKey holds the running sub query's stack.
-const subQueryStackKey subQueryStackKeyType = 0
+// SubQueryStackKey holds the running sub query's stack.
+const SubQueryStackKey subQueryStackKeyType = 0
 
-func (sq *SubQuery) push(ctx context.Context) {
+// Push pushes this SubQuery to the query stack.
+func (sq *SubQuery) Push(ctx context.Context) {
 	var st []*SubQuery
-	v := ctx.Value(subQueryStackKey)
+	v := ctx.Value(SubQueryStackKey)
 	if v == nil {
 		st = []*SubQuery{}
 	} else {
@@ -191,11 +195,12 @@ func (sq *SubQuery) push(ctx context.Context) {
 	}
 
 	st = append(st, sq)
-	ctx.SetValue(subQueryStackKey, st)
+	ctx.SetValue(SubQueryStackKey, st)
 }
 
-func (sq *SubQuery) pop(ctx context.Context) error {
-	v := ctx.Value(subQueryStackKey)
+// Pop pops this SubQuery off the query stack.
+func (sq *SubQuery) Pop(ctx context.Context) error {
+	v := ctx.Value(SubQueryStackKey)
 	if v == nil {
 		return errors.Errorf("pop empty sub query stack")
 	}
@@ -211,17 +216,17 @@ func (sq *SubQuery) pop(ctx context.Context) error {
 	st[n] = nil
 	st = st[0:n]
 	if len(st) == 0 {
-		ctx.ClearValue(subQueryStackKey)
+		ctx.ClearValue(SubQueryStackKey)
 		return nil
 	}
 
-	ctx.SetValue(subQueryStackKey, st)
+	ctx.SetValue(SubQueryStackKey, st)
 	return nil
 }
 
 // SetOuterQueryUsed is called when current running subquery uses outer query.
 func SetOuterQueryUsed(ctx context.Context) {
-	v := ctx.Value(subQueryStackKey)
+	v := ctx.Value(SubQueryStackKey)
 	if v == nil {
 		return
 	}

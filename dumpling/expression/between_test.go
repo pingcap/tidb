@@ -96,9 +96,9 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		Left  Expression
 		Right Expression
 	}{
-		{newTestRow(1, 2), f(false), f(false)},
-		{f(false), newTestRow(1, 2), f(false)},
-		{f(false), f(false), newTestRow(1, 2)},
+		{NewTestRow(1, 2), f(false), f(false)},
+		{f(false), NewTestRow(1, 2), f(false)},
+		{f(false), f(false), NewTestRow(1, 2)},
 	}
 
 	for _, t := range tableError {

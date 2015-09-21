@@ -81,7 +81,7 @@ func (s *testHelperSuite) TestMentionedColumns(c *C) {
 	}
 }
 
-func newTestRow(v1 interface{}, v2 interface{}, args ...interface{}) *Row {
+func NewTestRow(v1 interface{}, v2 interface{}, args ...interface{}) *Row {
 	r := &Row{}
 	a := make([]Expression, len(args))
 	for i := range a {
@@ -143,8 +143,8 @@ func (s *testHelperSuite) TestBase(c *C) {
 	}{
 		{Value{nil}, Value{nil}, IsNil},
 		{Value{nil}, &Row{}, NotNil},
-		{newTestRow(1, 2), newTestRow(1, 2), IsNil},
-		{newTestRow(1, 2, 3), newTestRow(1, 2), NotNil},
+		{NewTestRow(1, 2), NewTestRow(1, 2), IsNil},
+		{NewTestRow(1, 2, 3), NewTestRow(1, 2), NotNil},
 	}
 
 	for _, t := range columns {
