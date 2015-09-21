@@ -140,7 +140,7 @@ func MentionedAggregateFuncs(e expression.Expression) []expression.Expression {
 func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression) {
 	switch x := e.(type) {
 	case Value, *Value, *Variable, *Default,
-		*Ident, *SubQuery, *Position, *ExistsSubQuery:
+		*Ident, SubQuery, *Position, *ExistsSubQuery:
 		// nop
 	case *BinaryOperation:
 		mentionedAggregateFuncs(x.L, m)
@@ -238,7 +238,7 @@ func ContainAggregateFunc(e expression.Expression) bool {
 func mentionedColumns(e expression.Expression, m map[string]bool, names *[]string) {
 	switch x := e.(type) {
 	case Value, *Value, *Variable, *Default,
-		*SubQuery, *Position, *ExistsSubQuery:
+		SubQuery, *Position, *ExistsSubQuery:
 		// nop
 	case *BinaryOperation:
 		mentionedColumns(x.L, m, names)
@@ -505,7 +505,7 @@ func columnCount(ctx context.Context, e expression.Expression) (int, error) {
 			return 0, errors.Errorf("Operand should contain >= 2 columns for Row")
 		}
 		return n, nil
-	case *SubQuery:
+	case SubQuery:
 		return x.ColumnCount(ctx)
 	default:
 		return 1, nil
