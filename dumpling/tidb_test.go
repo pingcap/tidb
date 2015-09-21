@@ -306,6 +306,20 @@ func (s *testMainSuite) TestIsQuery(c *C) {
 	}
 }
 
+func (s *testMainSuite) TestitrimSQL(c *C) {
+	tbl := []struct {
+		sql    string
+		target string
+	}{
+		{"/*comment*/ select 1; ", "select 1;"},
+		{"/*comment*/ /*comment*/ select 1;", "select 1;"},
+		{"select /*comment*/ 1 /*comment*/;", "select /*comment*/ 1 /*comment*/;"},
+	}
+	for _, t := range tbl {
+		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
+	}
+}
+
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)
