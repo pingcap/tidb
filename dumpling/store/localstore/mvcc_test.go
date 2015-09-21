@@ -3,7 +3,6 @@ package localstore
 import (
 	"bytes"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -72,7 +71,6 @@ func (t *testMvccSuite) SetUpTest(c *C) {
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
-
 }
 
 func (t *testMvccSuite) TestMvccGet(c *C) {
@@ -114,6 +112,7 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 	txn, _ = t.s.Begin()
 	txn.Set(encodeInt(0), []byte("v"))
 	v, err = txn.Get(encodeInt(0))
+	c.Assert(err, IsNil)
 	txn.Commit()
 
 	cnt1 := 0
@@ -129,7 +128,6 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	for it.Valid() {
-		log.Error("seeking", []byte(it.Key()))
 		it, err = it.Next(nil)
 		c.Assert(err, IsNil)
 	}

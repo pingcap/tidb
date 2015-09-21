@@ -191,14 +191,17 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	// Check dirty store
-	curVer, _ := globalVerProvider.GetCurrentVer()
-	err := txn.each(func(iter iterator.Iterator) error {
+	curVer, err := globalVerProvider.CurrentVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.each(func(iter iterator.Iterator) error {
 		metaKey := codec.EncodeBytes(nil, iter.Key())
 		// put dummy meta key, write current version
 		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
 		mvccKey := MvccEncodeVersionKey(iter.Key(), curVer)
 		if len(iter.Value()) == 0 { // Deleted marker
-			b.Put(mvccKey, tombstone)
+			b.Put(mvccKey, nil)
 		} else {
 			b.Put(mvccKey, iter.Value())
 		}

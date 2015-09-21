@@ -1,17 +1,16 @@
 package localstore
 
 import (
-	"bytes"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 )
 
-var tombstone = []byte{'\xde', '\xad'}
+// ErrInvalidEncodedKey describes parsing an invalid format of EncodedKey
+var ErrInvalidEncodedKey = errors.New("invalid encoded key")
 
 func isTombstone(v []byte) bool {
-	return bytes.Compare(v, tombstone) == 0
+	return len(v) == 0
 }
 
 // MvccEncodeVersionKey returns the encoded key
@@ -41,7 +40,7 @@ func MvccDecode(encodedKey kv.EncodedKey) (kv.Key, kv.Version, error) {
 		return nil, kv.Version{}, errors.Trace(err)
 	}
 	if len(remainBytes) != 0 {
-		return nil, kv.Version{}, errors.New("invalid encoded key")
+		return nil, kv.Version{}, ErrInvalidEncodedKey
 	}
 	return key, kv.Version{ver}, nil
 }

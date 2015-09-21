@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/errors2"
 	"github.com/twinj/uuid"
 )
 
@@ -104,7 +105,10 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	beginVer, _ := globalVerProvider.GetCurrentVer()
+	beginVer, err := globalVerProvider.CurrentVersion()
+	if err != nil {
+		return nil, err
+	}
 	txn := &dbTxn{
 		startTs:      time.Now(),
 		tID:          beginVer.Ver,
@@ -155,7 +159,7 @@ func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte
 
 	metaKey := codec.EncodeBytes(nil, []byte(key))
 	currValue, err := s.db.Get(metaKey)
-	if err == kv.ErrNotExist || currValue == nil {
+	if errors2.ErrorEqual(err, kv.ErrNotExist) || currValue == nil {
 		// If it's a new key, we won't need to check its version
 		return nil
 	}
