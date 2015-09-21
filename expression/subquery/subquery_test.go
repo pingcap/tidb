@@ -11,10 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package subquery
+package subquery_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression/subquery"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/mocks"
 )
 
 var _ = Suite(&testSubQuerySuite{})
@@ -22,95 +25,91 @@ var _ = Suite(&testSubQuerySuite{})
 type testSubQuerySuite struct {
 }
 
-//func (s *testSubQuerySuite) TestSubQuery(c *C) {
-//	e := &SubQuery{
-//		Value: 1,
-//	}
-//
-//	ctx := mock.NewContext()
-//	c.Assert(e.IsStatic(), IsFalse)
-//
-//	str := e.String()
-//	c.Assert(str, Equals, "")
-//
-//	ec := e.Clone()
-//
-//	v, err := ec.Eval(ctx, nil)
-//	c.Assert(err, IsNil)
-//	c.Assert(v, Equals, 1)
-//
-//	e2, ok := ec.(*SubQuery)
-//	c.Assert(ok, IsTrue)
-//
-//	e2 = NewMockSubQuery([][]interface{}{{1}}, []string{"id"})
-//
-//	vv, err := e2.Eval(ctx, nil)
-//	c.Assert(err, IsNil)
-//	c.Assert(vv, Equals, 1)
-//
-//	e2.Value = nil
-//	vv, err = e2.Eval(ctx, nil)
-//	c.Assert(err, IsNil)
-//	c.Assert(vv, Equals, 1)
-//
-//	e2 = NewMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
-//
-//	vv, err = e2.Eval(ctx, nil)
-//	c.Assert(err, IsNil)
-//	c.Assert(vv, DeepEquals, []interface{}{1, 2})
-//
-//	e2 = NewMockSubQuery([][]interface{}{{1}, {2}}, []string{"id"})
-//
-//	_, err = e2.Eval(ctx, nil)
-//	c.Assert(err, NotNil)
-//
-//	str = e2.String()
-//	c.Assert(len(str), Greater, 0)
-//
-//	e2 = NewMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
-//
-//	count, err := e2.ColumnCount(nil)
-//	c.Assert(err, IsNil)
-//	c.Assert(count, Equals, 2)
-//
-//	count, err = e2.ColumnCount(nil)
-//	c.Assert(err, IsNil)
-//	c.Assert(count, Equals, 2)
-//
-//	e3 := NewMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
-//
-//	e2.push(ctx)
-//	e3.push(ctx)
-//
-//	c.Assert(e2.UseOuterQuery, IsFalse)
-//	c.Assert(e3.UseOuterQuery, IsFalse)
-//	SetOuterQueryUsed(ctx)
-//	c.Assert(e2.UseOuterQuery, IsTrue)
-//	c.Assert(e3.UseOuterQuery, IsTrue)
-//	err = e2.pop(ctx)
-//	c.Assert(err, NotNil)
-//
-//	err = e3.pop(ctx)
-//	SetOuterQueryUsed(ctx)
-//
-//	err = e2.pop(ctx)
-//	c.Assert(err, IsNil)
-//
-//	err = e2.pop(ctx)
-//	c.Assert(err, NotNil)
-//
-//	SetOuterQueryUsed(ctx)
-//
-//	c.Assert(len(subQueryStackKey.String()), Greater, 0)
-//}
-//
-//func NewMockSubQuery(rows [][]interface{}, fields []string) *SubQuery {
-//	r := &expressions.MockRecordset{
-//		Rows:   rows,
-//		fields: fields,
-//		Offset: len(fields),
-//	}
-//	ms := &expressions.MockStatement{Rset: r}
-//	ms.Plan = expressions.NewMockPlan(ms.Rset)
-//	return &SubQuery{Stmt: ms}
-//}
+func (s *testSubQuerySuite) TestSubQuery(c *C) {
+	e := &subquery.SubQuery{
+		Val: 1,
+	}
+
+	ctx := mock.NewContext()
+	c.Assert(e.IsStatic(), IsFalse)
+
+	str := e.String()
+	c.Assert(str, Equals, "")
+
+	ec := e.Clone()
+
+	v, err := ec.Eval(ctx, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, 1)
+
+	e2, ok := ec.(*subquery.SubQuery)
+	c.Assert(ok, IsTrue)
+
+	e2 = newMockSubQuery([][]interface{}{{1}}, []string{"id"})
+
+	vv, err := e2.Eval(ctx, nil)
+	c.Assert(err, IsNil)
+	c.Assert(vv, Equals, 1)
+
+	e2.SetValue(nil)
+	vv, err = e2.Eval(ctx, nil)
+	c.Assert(err, IsNil)
+	c.Assert(vv, Equals, 1)
+
+	e2 = newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+
+	vv, err = e2.Eval(ctx, nil)
+	c.Assert(err, IsNil)
+	c.Assert(vv, DeepEquals, []interface{}{1, 2})
+
+	e2 = newMockSubQuery([][]interface{}{{1}, {2}}, []string{"id"})
+
+	_, err = e2.Eval(ctx, nil)
+	c.Assert(err, NotNil)
+
+	str = e2.String()
+	c.Assert(len(str), Greater, 0)
+
+	e2 = newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+
+	count, err := e2.ColumnCount(nil)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2)
+
+	count, err = e2.ColumnCount(nil)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2)
+
+	e3 := newMockSubQuery([][]interface{}{{1, 2}}, []string{"id", "name"})
+
+	e2.Push(ctx)
+	e3.Push(ctx)
+
+	c.Assert(e2.UseOuter, IsFalse)
+	c.Assert(e3.UseOuter, IsFalse)
+	subquery.SetOuterQueryUsed(ctx)
+	c.Assert(e2.UseOuterQuery, IsTrue)
+	c.Assert(e3.UseOuterQuery, IsTrue)
+	err = e2.Pop(ctx)
+	c.Assert(err, NotNil)
+
+	err = e3.Pop(ctx)
+	subquery.SetOuterQueryUsed(ctx)
+
+	err = e2.Pop(ctx)
+	c.Assert(err, IsNil)
+
+	err = e2.Pop(ctx)
+	c.Assert(err, NotNil)
+
+	subquery.SetOuterQueryUsed(ctx)
+
+	c.Assert(len(subquery.SubQueryStackKey.String()), Greater, 0)
+}
+
+func newMockSubQuery(rows [][]interface{}, fields []string) *subquery.SubQuery {
+	r := mocks.NewRecordset(rows, fields, len(fields))
+	ms := &mocks.MockStatement{Rset: r}
+	ms.P = mocks.NewMockPlan(ms.Rset)
+	return &subquery.SubQuery{Stmt: ms}
+}

@@ -62,7 +62,7 @@ func (t *testIsNullSuite) TestIsNull(c *C) {
 	_, err = e.Eval(nil, nil)
 	c.Assert(err, NotNil)
 
-	e.Expr = newTestRow(1, 2)
+	e.Expr = NewTestRow(1, 2)
 	_, err = e.Eval(nil, nil)
 	c.Assert(err, NotNil)
 }

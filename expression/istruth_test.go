@@ -57,7 +57,7 @@ func (t *testIsTruthSuite) TestIsTruth(c *C) {
 	c.Assert(vvv, IsTrue)
 
 	// check error
-	e.Expr = newTestRow(1, 2)
+	e.Expr = NewTestRow(1, 2)
 	_, err = e.Eval(nil, nil)
 	c.Assert(err, NotNil)
 }
