@@ -111,6 +111,12 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 		case mysql.Decimal:
 			b = EncodeDecimal(b, v)
 			format = append(format, formatDecimalFlag)
+		case mysql.Hex:
+			b = EncodeInt(b, int64(v.ToNumber()))
+			format = append(format, formatIntFlag)
+		case mysql.Bit:
+			b = EncodeUint(b, uint64(v.ToNumber()))
+			format = append(format, formatUintFlag)
 		case nil:
 			// We will 0x00, 0x00 for nil.
 			// The []byte{} will be encoded as 0x00, 0x01.

@@ -173,6 +173,14 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
 
+	v, err = Convert(mysql.Hex{Value: 100}, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(100))
+
+	v, err = Convert(mysql.Bit{Value: 100, Width: 8}, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(100))
+
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
@@ -211,6 +219,8 @@ func (s *testTypeConvertSuite) TestConvertToInt64(c *C) {
 	testToInt64(c, uint64(0), int64(0))
 	testToInt64(c, float32(3.1), int64(3))
 	testToInt64(c, float64(3.1), int64(3))
+	testToInt64(c, mysql.Hex{Value: 100}, int64(100))
+	testToInt64(c, mysql.Bit{Value: 100, Width: 8}, int64(100))
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
@@ -246,6 +256,8 @@ func (s *testTypeConvertSuite) TestConvertToFloat64(c *C) {
 	// TODO: check this
 	//testToFloat64(c, float32(3.1), float64(3.1))
 	testToFloat64(c, float64(3.1), float64(3.1))
+	testToFloat64(c, mysql.Hex{Value: 100}, float64(100))
+	testToFloat64(c, mysql.Bit{Value: 100, Width: 8}, float64(100))
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
@@ -281,6 +293,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, float32(1.6), "1.6")
 	testToString(c, float64(-0.6), "-0.6")
 	testToString(c, []byte{1}, "\x01")
+	testToString(c, mysql.Hex{Value: 0x4D7953514C}, "MySQL")
+	testToString(c, mysql.Bit{Value: 0x41, Width: 8}, "A")
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
@@ -316,6 +330,8 @@ func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
 	testToBool(c, "0", 0)
 	testToBool(c, []byte{}, 0)
 	testToBool(c, []byte("0"), 0)
+	testToBool(c, mysql.Hex{Value: 0}, 0)
+	testToBool(c, mysql.Bit{Value: 0, Width: 8}, 0)
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
