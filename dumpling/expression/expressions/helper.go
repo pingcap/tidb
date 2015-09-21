@@ -86,15 +86,12 @@ func Expr(v interface{}) expression.Expression {
 	}
 }
 
-func cloneExpressionList(list []expression.Expression) ([]expression.Expression, error) {
+func cloneExpressionList(list []expression.Expression) []expression.Expression {
 	r := make([]expression.Expression, len(list))
-	var err error
 	for i, v := range list {
-		if r[i], err = v.Clone(); err != nil {
-			return nil, err
-		}
+		r[i] = v.Clone()
 	}
-	return r, nil
+	return r
 }
 
 // FastEval evaluates Value and static +/- Unary expression and returns its value.

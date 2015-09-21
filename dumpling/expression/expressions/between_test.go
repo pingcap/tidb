@@ -54,8 +54,7 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		b, err := NewBetween(t.Expr, Value{t.Left}, Value{t.Right}, t.Not)
 		c.Assert(err, IsNil)
 		c.Assert(len(b.String()), Greater, 0)
-		_, err = b.Clone()
-		c.Assert(err, IsNil)
+		c.Assert(b.Clone(), NotNil)
 		c.Assert(b.IsStatic(), Equals, !ContainAggregateFunc(t.Expr))
 
 		v, err := b.Eval(nil, m)
@@ -87,9 +86,7 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		c.Assert(err, NotNil)
 
 		b := Between{Expr: t.Expr, Left: t.Left, Right: t.Right, Not: false}
-		_, err = b.Clone()
-		c.Assert(err, NotNil)
-
+		c.Assert(b.Clone(), NotNil)
 		_, err = b.Eval(nil, nil)
 		c.Assert(err, NotNil)
 	}

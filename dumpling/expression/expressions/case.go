@@ -71,16 +71,10 @@ func (w *WhenClause) String() string {
 }
 
 // Clone implements the Expression Clone interface.
-func (w *WhenClause) Clone() (expression.Expression, error) {
-	ne, err := w.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-	nr, err := w.Result.Clone()
-	if err != nil {
-		return nil, err
-	}
-	return &WhenClause{Expr: ne, Result: nr}, nil
+func (w *WhenClause) Clone() expression.Expression {
+	ne := w.Expr.Clone()
+	nr := w.Result.Clone()
+	return &WhenClause{Expr: ne, Result: nr}
 }
 
 // IsStatic implements the Expression IsStatic interface.
@@ -99,39 +93,29 @@ type FunctionCase struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionCase) Clone() (expression.Expression, error) {
+func (f *FunctionCase) Clone() expression.Expression {
 	var (
-		nv  expression.Expression
-		ne  expression.Expression
-		nw  expression.Expression
-		err error
+		nv expression.Expression
+		ne expression.Expression
+		nw expression.Expression
 	)
 	if f.Value != nil {
-		nv, err = f.Value.Clone()
-		if err != nil {
-			return nil, err
-		}
+		nv = f.Value.Clone()
 	}
 	ws := make([]*WhenClause, 0, len(f.WhenClauses))
 	for _, w := range f.WhenClauses {
-		nw, err = w.Clone()
-		if err != nil {
-			return nil, err
-		}
+		nw = w.Clone()
 		ws = append(ws, nw.(*WhenClause))
 	}
 
 	if f.ElseClause != nil {
-		ne, err = f.ElseClause.Clone()
-		if err != nil {
-			return nil, err
-		}
+		ne = f.ElseClause.Clone()
 	}
 	return &FunctionCase{
 		Value:       nv,
 		WhenClauses: ws,
 		ElseClause:  ne,
-	}, nil
+	}
 }
 
 // IsStatic implements the Expression IsStatic interface.

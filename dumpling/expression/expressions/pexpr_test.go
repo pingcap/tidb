@@ -32,8 +32,7 @@ func (t *testPExprSuite) TestPExpr(c *C) {
 	str := e.String()
 	c.Assert(len(str), Greater, 0)
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	v, err := ec.Eval(nil, nil)
 	c.Assert(err, IsNil)

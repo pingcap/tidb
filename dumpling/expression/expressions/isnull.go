@@ -34,13 +34,9 @@ type IsNull struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (is *IsNull) Clone() (expression.Expression, error) {
-	expr, err := is.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	return &IsNull{Expr: expr, Not: is.Not}, nil
+func (is *IsNull) Clone() expression.Expression {
+	expr := is.Expr.Clone()
+	return &IsNull{Expr: expr, Not: is.Not}
 }
 
 // IsStatic implements the Expression IsStatic interface.

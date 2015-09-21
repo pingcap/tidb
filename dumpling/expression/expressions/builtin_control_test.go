@@ -107,8 +107,8 @@ func (s *testBuiltinSuite) TestCaseWhen(c *C) {
 	}
 
 	f := FunctionCase{mockExpr{val: 4}, whens0, mockExpr{val: "else"}}
-	cf, err := f.Clone()
-	c.Assert(err, IsNil)
+	cf := f.Clone()
+	c.Assert(cf, NotNil)
 	v, err := f.Eval(nil, nil)
 	c.Assert(err, IsNil)
 	cv, err := cf.Eval(nil, nil)

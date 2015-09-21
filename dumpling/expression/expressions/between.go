@@ -41,23 +41,11 @@ type Between struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (b *Between) Clone() (expression.Expression, error) {
-	expr, err := b.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	left, err := b.Left.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	right, err := b.Right.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	return &Between{Expr: expr, Left: left, Right: right, Not: b.Not}, nil
+func (b *Between) Clone() expression.Expression {
+	expr := b.Expr.Clone()
+	left := b.Left.Clone()
+	right := b.Right.Clone()
+	return &Between{Expr: expr, Left: left, Right: right, Not: b.Not}
 }
 
 // IsStatic implements the Expression IsStatic interface.

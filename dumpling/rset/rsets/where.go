@@ -183,11 +183,7 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 
 // Plan gets NullPlan/FilterDefaultPlan.
 func (r *WhereRset) Plan(ctx context.Context) (plan.Plan, error) {
-	expr, err := r.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
+	expr := r.Expr.Clone()
 	if expr.IsStatic() {
 		// IsStaic means we have a const value for where condition, and we don't need any index.
 		return r.planStatic(ctx, expr)

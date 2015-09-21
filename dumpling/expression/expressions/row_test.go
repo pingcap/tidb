@@ -29,12 +29,11 @@ func (s *testRowSuite) TestRow(c *C) {
 	r := Row{Values: []expression.Expression{Value{1}, Value{2}}}
 	c.Assert(r.IsStatic(), IsTrue)
 
-	_, err := r.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(r.Clone(), NotNil)
 
 	c.Assert(r.String(), Equals, "ROW(1, 2)")
 
-	_, err = r.Eval(nil, nil)
+	_, err := r.Eval(nil, nil)
 	c.Assert(err, IsNil)
 
 	expr := mockExpr{}
@@ -43,8 +42,7 @@ func (s *testRowSuite) TestRow(c *C) {
 	r = Row{Values: []expression.Expression{Value{1}, expr}}
 	c.Assert(r.IsStatic(), IsFalse)
 
-	_, err = r.Clone()
-	c.Assert(err, NotNil)
+	c.Assert(r.Clone(), NotNil)
 
 	_, err = r.Eval(nil, nil)
 	c.Assert(err, NotNil)

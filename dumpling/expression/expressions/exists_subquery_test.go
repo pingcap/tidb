@@ -48,8 +48,8 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 
 		c.Assert(expr.IsStatic(), IsFalse)
 
-		exprc, err := expr.Clone()
-		c.Assert(err, IsNil)
+		exprc := expr.Clone()
+		c.Assert(exprc, NotNil)
 
 		str := exprc.String()
 		c.Assert(len(str), Greater, 0)
@@ -95,8 +95,8 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 
 		expr := NewUnaryOperation(opcode.Not, es)
 
-		exprc, err := expr.Clone()
-		c.Assert(err, IsNil)
+		exprc := expr.Clone()
+		c.Assert(exprc, NotNil)
 
 		str = exprc.String()
 		c.Assert(len(str), Greater, 0)

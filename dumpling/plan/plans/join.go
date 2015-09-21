@@ -102,11 +102,7 @@ func (r *JoinPlan) filterNode(ctx context.Context, expr expression.Expression, n
 		return r, false, nil
 	}
 
-	e2, err := expr.Clone()
-	if err != nil {
-		return nil, false, err
-	}
-
+	e2 := expr.Clone()
 	return node.Filter(ctx, e2)
 }
 

@@ -29,17 +29,12 @@ type Row struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (r *Row) Clone() (expression.Expression, error) {
+func (r *Row) Clone() expression.Expression {
 	values := make([]expression.Expression, len(r.Values))
-	var err error
 	for i, expr := range r.Values {
-		values[i], err = expr.Clone()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		values[i] = expr.Clone()
 	}
-
-	return &Row{Values: values}, nil
+	return &Row{Values: values}
 }
 
 // IsStatic implements the Expression IsStatic interface.

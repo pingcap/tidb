@@ -29,13 +29,9 @@ type ExistsSubQuery struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (es *ExistsSubQuery) Clone() (expression.Expression, error) {
-	sel, err := es.Sel.Clone()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return &ExistsSubQuery{Sel: sel.(*SubQuery)}, nil
+func (es *ExistsSubQuery) Clone() expression.Expression {
+	sel := es.Sel.Clone()
+	return &ExistsSubQuery{Sel: sel.(*SubQuery)}
 }
 
 // IsStatic implements the Expression IsStatic interface.

@@ -30,17 +30,14 @@ type FunctionSubstring struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionSubstring) Clone() (expression.Expression, error) {
-	expr, err := f.StrExpr.Clone()
-	if err != nil {
-		return nil, err
-	}
+func (f *FunctionSubstring) Clone() expression.Expression {
+	expr := f.StrExpr.Clone()
 	nf := &FunctionSubstring{
 		StrExpr: expr,
 		Pos:     f.Pos,
 		Len:     f.Len,
 	}
-	return nf, nil
+	return nf
 }
 
 // IsStatic implements the Expression IsStatic interface.

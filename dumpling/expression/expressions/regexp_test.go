@@ -53,18 +53,15 @@ func (rs *testRegexpSuite) TestT(c *C) {
 		Pattern: &mockExpr{err: errors.Errorf("test error")},
 		Expr:    &mockExpr{err: errors.Errorf("test error")},
 	}
-	_, err := pat.Clone()
-	c.Assert(err, NotNil)
-	_, err = pat.Eval(nil, nil)
+	c.Assert(pat.Clone(), NotNil)
+	_, err := pat.Eval(nil, nil)
 	c.Assert(err, NotNil)
 	pat.Expr = &Value{"^$"}
-	_, err = pat.Clone()
-	c.Assert(err, NotNil)
+	c.Assert(pat.Clone(), NotNil)
 	_, err = pat.Eval(nil, nil)
 	c.Assert(err, NotNil)
 	pat.Pattern = &Value{"a"}
-	_, err = pat.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(pat.Clone(), NotNil)
 	_, err = pat.Eval(nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(pat.IsStatic(), IsTrue)
