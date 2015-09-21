@@ -252,8 +252,10 @@ func trimSQL(sql string) string {
 		i := strings.Index(sql, "*/")
 		if i != -1 && i < len(sql)+1 {
 			sql = sql[i+2:]
+			sql = strings.TrimSpace(sql)
+			continue
 		}
-		sql = strings.TrimSpace(sql)
+		break
 	}
 	return sql
 }

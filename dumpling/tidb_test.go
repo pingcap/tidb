@@ -314,6 +314,7 @@ func (s *testMainSuite) TestitrimSQL(c *C) {
 		{"/*comment*/ select 1; ", "select 1;"},
 		{"/*comment*/ /*comment*/ select 1;", "select 1;"},
 		{"select /*comment*/ 1 /*comment*/;", "select /*comment*/ 1 /*comment*/;"},
+		{"/*comment select 1; ", "/*comment select 1;"},
 	}
 	for _, t := range tbl {
 		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
