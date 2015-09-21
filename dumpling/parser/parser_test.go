@@ -290,6 +290,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW SESSION VARIABLES LIKE 'character_set_results'", true},
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
+		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
 
 		// For compare subquery
 		{"SELECT 1 > (select 1)", true},
@@ -325,6 +326,15 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
+
+		// For create user
+		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
+		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
+		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+
+		// For select with where clause
+		{"SELECT * FROM t WHERE 1 = 1", true},
 	}
 
 	for _, t := range table {
@@ -347,7 +357,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substring", "mode", "any", "some",
+		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
