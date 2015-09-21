@@ -834,6 +834,22 @@ func (s *testSessionSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestBootstrap(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "USE mysql;")
+	r := mustExecSQL(c, se, `select * from user;`)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	match(c, row.Data, "localhost", "root", "")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	match(c, row.Data, "127.0.0.1", "root", "")
+	mustExecSQL(c, se, "USE test;")
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)

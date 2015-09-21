@@ -52,7 +52,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	server.Bootstrap(store)
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)

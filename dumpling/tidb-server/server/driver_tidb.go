@@ -15,13 +15,11 @@ package server
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
-	tidberrors "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -273,41 +271,4 @@ func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 	ci.Decimal = uint8(fld.Decimal)
 	ci.Type = uint8(fld.Tp)
 	return
-}
-
-// Bootstrap initiates TiDB server.
-func Bootstrap(store kv.Storage) {
-	td := NewTiDBDriver(store)
-	tc, err := td.OpenCtx(defaultCapability, mysql.DefaultCollationID, "")
-	defer tc.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-	// Create a test database.
-	_, err = tc.Execute("CREATE DATABASE IF NOT EXISTS test")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	//  Check if mysql db exists.
-	_, err = tc.Execute("USE mysql;")
-	if err == nil {
-		// We have already finished bootstrap.
-		return
-	} else if !errors2.ErrorEqual(err, tidberrors.ErrDatabaseNotExist) {
-		log.Fatal(err)
-	}
-	_, err = tc.Execute("CREATE DATABASE mysql;")
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = tc.Execute("CREATE TABLE mysql.user (Host CHAR(64), User CHAR(16), Password CHAR(41), PRIMARY KEY (Host, User));")
-	if err != nil {
-		log.Fatal(err)
-	}
-	// Insert a default user with empty password.
-	_, err = tc.Execute(`INSERT INTO mysql.user VALUES ("localhost", "root", ""), ("127.0.0.1", "root", "");`)
-	if err != nil {
-		log.Fatal(err)
-	}
 }
