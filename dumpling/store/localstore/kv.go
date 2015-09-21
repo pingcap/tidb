@@ -46,14 +46,14 @@ type storeCache struct {
 }
 
 var (
-	globalID          int64
-	globalVerProvider kv.VersionProvider
-	mc                storeCache
+	globalID              int64
+	globalVersionProvider kv.VersionProvider
+	mc                    storeCache
 )
 
 func init() {
 	mc.cache = make(map[string]*dbStore)
-	globalVerProvider = &LocalVersioProvider{}
+	globalVersionProvider = &LocalVersionProvider{}
 }
 
 // Driver implements kv.Driver interface.
@@ -105,7 +105,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	beginVer, err := globalVerProvider.CurrentVersion()
+	beginVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		return nil, err
 	}
