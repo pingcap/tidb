@@ -48,9 +48,9 @@ type SubQuery struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (sq *SubQuery) Clone() (expression.Expression, error) {
+func (sq *SubQuery) Clone() expression.Expression {
 	nsq := &SubQuery{Stmt: sq.Stmt, Value: sq.Value, p: sq.p, UseOuterQuery: sq.UseOuterQuery}
-	return nsq, nil
+	return nsq
 }
 
 // Eval implements the Expression Eval interface.

@@ -38,8 +38,7 @@ func (t *testIsNullSuite) TestIsNull(c *C) {
 	str := e.String()
 	c.Assert(len(str), Greater, 0)
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	e2, ok := ec.(*IsNull)
 	c.Assert(ok, IsTrue)
@@ -58,8 +57,7 @@ func (t *testIsNullSuite) TestIsNull(c *C) {
 	expr.err = errors.New("must error")
 	e.Expr = expr
 
-	_, err = e.Clone()
-	c.Assert(err, NotNil)
+	c.Assert(e.Clone(), NotNil)
 
 	_, err = e.Eval(nil, nil)
 	c.Assert(err, NotNil)

@@ -32,8 +32,7 @@ func (s *testPositionSuite) TestPosition(c *C) {
 	str := e.String()
 	c.Assert(len(str), Greater, 0)
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	e2, ok := ec.(*Position)
 	c.Assert(ok, IsTrue)
@@ -43,7 +42,7 @@ func (s *testPositionSuite) TestPosition(c *C) {
 	c.Assert(len(str), Greater, 0)
 
 	m := map[interface{}]interface{}{}
-	_, err = e2.Eval(nil, m)
+	_, err := e2.Eval(nil, m)
 	c.Assert(err, NotNil)
 
 	m[ExprEvalPositionFunc] = 1

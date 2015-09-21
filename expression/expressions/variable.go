@@ -37,9 +37,9 @@ type Variable struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (v *Variable) Clone() (expression.Expression, error) {
+func (v *Variable) Clone() expression.Expression {
 	newVar := *v
-	return &newVar, nil
+	return &newVar
 }
 
 // IsStatic implements the Expression IsStatic interface, always returns false.

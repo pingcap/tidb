@@ -48,24 +48,16 @@ type PatternLike struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *PatternLike) Clone() (expression.Expression, error) {
-	expr, err := p.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	pattern, err := p.Pattern.Clone()
-	if err != nil {
-		return nil, err
-	}
-
+func (p *PatternLike) Clone() expression.Expression {
+	expr := p.Expr.Clone()
+	pattern := p.Pattern.Clone()
 	return &PatternLike{
 		Expr:     expr,
 		Pattern:  pattern,
 		patChars: p.patChars,
 		patTypes: p.patTypes,
 		Not:      p.Not,
-	}, nil
+	}
 }
 
 // IsStatic implements the Expression IsStatic interface.

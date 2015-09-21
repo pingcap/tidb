@@ -36,8 +36,7 @@ func (t *testParamMarkerSuite) TestParamMarker(c *C) {
 	str := e.String()
 	c.Assert(len(str), Greater, 0)
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	e2, ok := ec.(*ParamMarker)
 	c.Assert(ok, IsTrue)
@@ -51,6 +50,5 @@ func (t *testParamMarkerSuite) TestParamMarker(c *C) {
 	str = e2.String()
 	c.Assert(str, Equals, "?")
 
-	_, err = e2.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(e2.Clone(), NotNil)
 }

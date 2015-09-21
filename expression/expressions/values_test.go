@@ -31,7 +31,7 @@ func (s *testValuesSuite) TestValues(c *C) {
 	c.Assert(e.IsStatic(), IsFalse)
 	c.Assert(e.String(), Equals, "id")
 
-	ec, err := e.Clone()
+	ec := e.Clone()
 	e2, ok := ec.(*Values)
 	c.Assert(ok, IsTrue)
 	e2.O = "ID"

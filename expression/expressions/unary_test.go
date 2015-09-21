@@ -82,8 +82,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 	for _, t := range tbl {
 		expr := NewUnaryOperation(t.op, Value{t.arg})
 
-		exprc, err := expr.Clone()
-		c.Assert(err, IsNil)
+		exprc := expr.Clone()
 
 		result, err := exprc.Eval(nil, nil)
 		c.Assert(err, IsNil)
@@ -108,8 +107,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 	for _, t := range tbl {
 		expr := NewUnaryOperation(t.op, Value{t.arg})
 
-		exprc, err := expr.Clone()
-		c.Assert(err, IsNil)
+		exprc := expr.Clone()
 
 		result, err := exprc.Eval(nil, nil)
 		c.Assert(err, IsNil)
@@ -163,8 +161,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 
 	// test error clone
 	expr := NewUnaryOperation(opcode.Not, mockExpr{err: errors.New("must error")})
-	_, err := expr.Clone()
-	c.Assert(err, NotNil)
+	c.Assert(expr.Clone(), NotNil)
 
 	for _, t := range errTbl {
 		expr := NewUnaryOperation(t.op, Value{t.arg})

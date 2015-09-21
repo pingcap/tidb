@@ -35,9 +35,9 @@ type Ident struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (i *Ident) Clone() (expression.Expression, error) {
+func (i *Ident) Clone() expression.Expression {
 	newI := *i
-	return &newI, nil
+	return &newI
 }
 
 // IsStatic implements the Expression IsStatic interface, always returns false.

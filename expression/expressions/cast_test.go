@@ -43,8 +43,7 @@ func (s *testCastSuite) TestCast(c *C) {
 	c.Assert(len(expr.String()), Greater, 0)
 
 	f.Tp = mysql.TypeLonglong
-	_, err := expr.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(expr.Clone(), NotNil)
 
 	c.Assert(expr.IsStatic(), IsTrue)
 
@@ -75,8 +74,7 @@ func (s *testCastSuite) TestCast(c *C) {
 	c.Assert(v, Equals, nil)
 
 	expr.Expr = mockExpr{err: errors.New("must error")}
-	_, err = expr.Clone()
-	c.Assert(err, NotNil)
+	c.Assert(expr.Clone(), NotNil)
 
 	_, err = expr.Eval(nil, nil)
 	c.Assert(err, NotNil)
