@@ -19,7 +19,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found PatternIn the LICENSE file.
 
-package expressions
+package expression
 
 import (
 	"strconv"
@@ -29,7 +29,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -75,8 +75,8 @@ var (
 type TypeStar string
 
 // Expr removes parenthese expression, e.g, (expr) -> expr.
-func Expr(v interface{}) expression.Expression {
-	e := v.(expression.Expression)
+func Expr(v interface{}) Expression {
+	e := v.(Expression)
 	for {
 		x, ok := e.(*PExpr)
 		if !ok {
@@ -86,8 +86,8 @@ func Expr(v interface{}) expression.Expression {
 	}
 }
 
-func cloneExpressionList(list []expression.Expression) []expression.Expression {
-	r := make([]expression.Expression, len(list))
+func cloneExpressionList(list []Expression) []Expression {
+	r := make([]Expression, len(list))
 	for i, v := range list {
 		r[i] = v.Clone()
 	}
@@ -121,7 +121,7 @@ func IsQualified(name string) bool {
 }
 
 // Eval is a helper function evaluates expression v and do a panic if evaluating error.
-func Eval(v expression.Expression, ctx context.Context, env map[interface{}]interface{}) (y interface{}) {
+func Eval(v Expression, ctx context.Context, env map[interface{}]interface{}) (y interface{}) {
 	var err error
 	y, err = v.Eval(ctx, env)
 	if err != nil {
@@ -131,13 +131,13 @@ func Eval(v expression.Expression, ctx context.Context, env map[interface{}]inte
 }
 
 // MentionedAggregateFuncs returns a list of the Call expression which is aggregate function.
-func MentionedAggregateFuncs(e expression.Expression) []expression.Expression {
-	var m []expression.Expression
+func MentionedAggregateFuncs(e Expression) []Expression {
+	var m []Expression
 	mentionedAggregateFuncs(e, &m)
 	return m
 }
 
-func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression) {
+func mentionedAggregateFuncs(e Expression, m *[]Expression) {
 	switch x := e.(type) {
 	case Value, *Value, *Variable, *Default,
 		*Ident, SubQuery, *Position, *ExistsSubQuery:
@@ -230,12 +230,12 @@ func mentionedAggregateFuncs(e expression.Expression, m *[]expression.Expression
 }
 
 // ContainAggregateFunc checks whether expression e contains an aggregate function, like count(*) or other.
-func ContainAggregateFunc(e expression.Expression) bool {
+func ContainAggregateFunc(e Expression) bool {
 	m := MentionedAggregateFuncs(e)
 	return len(m) > 0
 }
 
-func mentionedColumns(e expression.Expression, m map[string]bool, names *[]string) {
+func mentionedColumns(e Expression, m map[string]bool, names *[]string) {
 	switch x := e.(type) {
 	case Value, *Value, *Variable, *Default,
 		SubQuery, *Position, *ExistsSubQuery:
@@ -320,14 +320,14 @@ func mentionedColumns(e expression.Expression, m map[string]bool, names *[]strin
 }
 
 // MentionedColumns returns a list of names for Ident expression.
-func MentionedColumns(e expression.Expression) []string {
+func MentionedColumns(e Expression) []string {
 	var names []string
 	m := make(map[string]bool)
 	mentionedColumns(e, m, &names)
 	return names
 }
 
-func staticExpr(e expression.Expression) (expression.Expression, error) {
+func staticExpr(e Expression) (Expression, error) {
 	if e.IsStatic() {
 		v, err := e.Eval(nil, nil)
 		if err != nil {
@@ -345,7 +345,7 @@ func staticExpr(e expression.Expression) (expression.Expression, error) {
 }
 
 // IsCurrentTimeExpr returns whether e is CurrentTimeExpr.
-func IsCurrentTimeExpr(e expression.Expression) bool {
+func IsCurrentTimeExpr(e Expression) bool {
 	x, ok := e.(*Ident)
 	if !ok {
 		return false
@@ -454,7 +454,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 }
 
 // EvalBoolExpr evaluates an expression and convert its return value to bool.
-func EvalBoolExpr(ctx context.Context, expr expression.Expression, m map[interface{}]interface{}) (bool, error) {
+func EvalBoolExpr(ctx context.Context, expr Expression, m map[interface{}]interface{}) (bool, error) {
 	val, err := expr.Eval(ctx, m)
 	if err != nil {
 		return false, err
@@ -473,7 +473,7 @@ func EvalBoolExpr(ctx context.Context, expr expression.Expression, m map[interfa
 
 // CheckOneColumn checks whether expression e has only one column for the evaluation result.
 // Now most of the expressions have one column except Row expression.
-func CheckOneColumn(ctx context.Context, e expression.Expression) error {
+func CheckOneColumn(ctx context.Context, e Expression) error {
 	n, err := columnCount(ctx, e)
 	if err != nil {
 		return errors.Trace(err)
@@ -487,7 +487,7 @@ func CheckOneColumn(ctx context.Context, e expression.Expression) error {
 }
 
 // CheckAllOneColumns checks all expressions have one column.
-func CheckAllOneColumns(ctx context.Context, args ...expression.Expression) error {
+func CheckAllOneColumns(ctx context.Context, args ...Expression) error {
 	for _, e := range args {
 		if err := CheckOneColumn(ctx, e); err != nil {
 			return err
@@ -497,7 +497,7 @@ func CheckAllOneColumns(ctx context.Context, args ...expression.Expression) erro
 	return nil
 }
 
-func columnCount(ctx context.Context, e expression.Expression) (int, error) {
+func columnCount(ctx context.Context, e Expression) (int, error) {
 	switch x := e.(type) {
 	case *Row:
 		n := len(x.Values)
@@ -512,7 +512,7 @@ func columnCount(ctx context.Context, e expression.Expression) (int, error) {
 	}
 }
 
-func hasSameColumnCount(ctx context.Context, e expression.Expression, args ...expression.Expression) error {
+func hasSameColumnCount(ctx context.Context, e Expression, args ...Expression) error {
 	l, err := columnCount(ctx, e)
 	if err != nil {
 		return errors.Trace(err)

@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
+
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
@@ -119,7 +119,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 
 	// test String().
 	strTbl := []struct {
-		expr     expression.Expression
+		expr     Expression
 		op       opcode.Op
 		isStatic bool
 	}{

@@ -11,13 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"errors"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
 )
 
 var _ = Suite(&testRowSuite{})
@@ -26,7 +25,7 @@ type testRowSuite struct {
 }
 
 func (s *testRowSuite) TestRow(c *C) {
-	r := Row{Values: []expression.Expression{Value{1}, Value{2}}}
+	r := Row{Values: []Expression{Value{1}, Value{2}}}
 	c.Assert(r.IsStatic(), IsTrue)
 
 	c.Assert(r.Clone(), NotNil)
@@ -39,7 +38,7 @@ func (s *testRowSuite) TestRow(c *C) {
 	expr := mockExpr{}
 	expr.isStatic = false
 	expr.err = errors.New("must error")
-	r = Row{Values: []expression.Expression{Value{1}, expr}}
+	r = Row{Values: []Expression{Value{1}, expr}}
 	c.Assert(r.IsStatic(), IsFalse)
 
 	c.Assert(r.Clone(), NotNil)

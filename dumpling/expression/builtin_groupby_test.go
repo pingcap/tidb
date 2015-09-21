@@ -11,11 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
+
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -55,7 +55,7 @@ func (s *testBuiltinSuite) TestGroupBy(c *C) {
 
 	for _, t := range tbl {
 		// create a call and use dummy args.
-		e, err := NewCall(t.F, []expression.Expression{Value{nil}}, t.Distinct)
+		e, err := NewCall(t.F, []Expression{Value{nil}}, t.Distinct)
 		c.Assert(err, IsNil)
 
 		call, ok := e.(*Call)
@@ -63,7 +63,7 @@ func (s *testBuiltinSuite) TestGroupBy(c *C) {
 
 		m := map[interface{}]interface{}{}
 		for _, arg := range t.RoundArgs {
-			call.Args = []expression.Expression{Value{arg}}
+			call.Args = []Expression{Value{arg}}
 
 			_, err = call.Eval(nil, m)
 		}
@@ -100,7 +100,7 @@ func (s *testBuiltinSuite) TestGroupConcat(c *C) {
 
 	for _, t := range tbl {
 		// create a call and use dummy args.
-		e, err := NewCall("group_concat", []expression.Expression{Value{nil}}, t.Distinct)
+		e, err := NewCall("group_concat", []Expression{Value{nil}}, t.Distinct)
 		c.Assert(err, IsNil)
 
 		call, ok := e.(*Call)
@@ -108,7 +108,7 @@ func (s *testBuiltinSuite) TestGroupConcat(c *C) {
 
 		m := map[interface{}]interface{}{}
 		for _, arg := range t.RoundArgs {
-			call.Args = []expression.Expression{Value{arg}}
+			call.Args = []Expression{Value{arg}}
 
 			_, err = call.Eval(nil, m)
 		}

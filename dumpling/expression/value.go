@@ -15,17 +15,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*Value)(nil)
+	_ Expression = (*Value)(nil)
 )
 
 // Value is the expression holding simple value.
@@ -35,7 +34,7 @@ type Value struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (l Value) Clone() expression.Expression {
+func (l Value) Clone() Expression {
 	return Value{Val: l.Val}
 }
 

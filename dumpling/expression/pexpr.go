@@ -15,27 +15,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*PExpr)(nil)
+	_ Expression = (*PExpr)(nil)
 )
 
 // PExpr is the parenthese expression.
 type PExpr struct {
 	// Expr is the expression in parenthese.
-	Expr expression.Expression
+	Expr Expression
 }
 
 // Clone implements the Expression Clone interface.
-func (p *PExpr) Clone() expression.Expression {
+func (p *PExpr) Clone() Expression {
 	expr := p.Expr.Clone()
 	return &PExpr{Expr: expr}
 }

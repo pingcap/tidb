@@ -11,13 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"errors"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
 )
 
 var _ = Suite(&testCallSuite{})
@@ -26,7 +25,7 @@ type testCallSuite struct {
 }
 
 func (s *testCallSuite) TestCall(c *C) {
-	f, err := NewCall("abs", []expression.Expression{Value{1}}, false)
+	f, err := NewCall("abs", []Expression{Value{1}}, false)
 	c.Assert(err, IsNil)
 
 	c.Assert(f.IsStatic(), IsTrue)
@@ -41,14 +40,14 @@ func (s *testCallSuite) TestCall(c *C) {
 		isStatic: false,
 	}
 
-	f, err = NewCall("abs", []expression.Expression{mock}, true)
+	f, err = NewCall("abs", []Expression{mock}, true)
 	c.Assert(err, IsNil)
 	c.Assert(len(f.String()), Greater, 0)
 	c.Assert(f.IsStatic(), IsFalse)
 	c.Assert(f.Clone(), NotNil)
 
 	// test error
-	f, err = NewCall("abs", []expression.Expression{Value{1}, Value{2}}, true)
+	f, err = NewCall("abs", []Expression{Value{1}, Value{2}}, true)
 	c.Assert(err, NotNil)
 
 	_, err = NewCall("must_error_func", nil, false)
@@ -64,11 +63,11 @@ func (s *testCallSuite) TestCall(c *C) {
 
 	mock.err = errors.New("must error")
 	mock.isStatic = true
-	f, err = NewCall("abs", []expression.Expression{mock}, true)
+	f, err = NewCall("abs", []Expression{mock}, true)
 	c.Assert(err, NotNil)
 
 	mock.isStatic = false
-	f, err = NewCall("abs", []expression.Expression{mock}, true)
+	f, err = NewCall("abs", []Expression{mock}, true)
 	c.Assert(err, IsNil)
 
 	c.Assert(f.Clone(), NotNil)

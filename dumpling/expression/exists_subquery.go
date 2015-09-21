@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 // ExistsSubQuery is the expression for "exists (select ...)".
@@ -29,7 +28,7 @@ type ExistsSubQuery struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (es *ExistsSubQuery) Clone() expression.Expression {
+func (es *ExistsSubQuery) Clone() Expression {
 	sel := es.Sel.Clone()
 	return &ExistsSubQuery{Sel: sel.(SubQuery)}
 }

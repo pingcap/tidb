@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -20,19 +20,19 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"golang.org/x/text/transform"
 )
 
 // FunctionConvert provides a way to convert data between different character sets.
 // See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 type FunctionConvert struct {
-	Expr    expression.Expression
+	Expr    Expression
 	Charset string
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionConvert) Clone() expression.Expression {
+func (f *FunctionConvert) Clone() Expression {
 	expr := f.Expr.Clone()
 	nf := &FunctionConvert{
 		Expr:    expr,

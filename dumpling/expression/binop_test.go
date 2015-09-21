@@ -11,14 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -157,9 +157,9 @@ func (s *testBinOpSuite) TestComparisonOp(c *C) {
 
 func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 	tbl := []struct {
-		lhs expression.Expression
+		lhs Expression
 		op  opcode.Op
-		rhs expression.Expression
+		rhs Expression
 	}{
 		{&Ident{}, opcode.LT, Value{1}},
 		{&Ident{}, opcode.LE, Value{1}},
@@ -192,9 +192,9 @@ func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 
 	// IsIdentRelOpVal
 	relTbl := []struct {
-		lhs expression.Expression
+		lhs Expression
 		op  opcode.Op
-		rhs expression.Expression
+		rhs Expression
 		ret bool
 	}{
 		{f("id"), opcode.LT, Value{1}, true},

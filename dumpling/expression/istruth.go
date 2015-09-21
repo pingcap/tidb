@@ -11,25 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ expression.Expression = (*IsTruth)(nil)
+	_ Expression = (*IsTruth)(nil)
 )
 
 // IsTruth is the expression for true/false check.
 type IsTruth struct {
 	// Expr is the expression to be checked.
-	Expr expression.Expression
+	Expr Expression
 	// Not is true, the expression is "is not true/false".
 	Not bool
 	// True indicates checking true or false.
@@ -37,7 +37,7 @@ type IsTruth struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (is *IsTruth) Clone() expression.Expression {
+func (is *IsTruth) Clone() Expression {
 	expr := is.Expr.Clone()
 	return &IsTruth{Expr: expr, Not: is.Not, True: is.True}
 }

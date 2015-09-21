@@ -11,17 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/model"
 )
 
 var (
-	_ expression.Expression = (*Values)(nil)
+	_ Expression = (*Values)(nil)
 )
 
 // Values is the expression used in INSERT VALUES
@@ -31,7 +31,7 @@ type Values struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (i *Values) Clone() expression.Expression {
+func (i *Values) Clone() Expression {
 	newI := *i
 	return &newI
 }

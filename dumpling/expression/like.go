@@ -15,18 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*PatternLike)(nil)
+	_ Expression = (*PatternLike)(nil)
 )
 
 const (
@@ -38,9 +37,9 @@ const (
 // PatternLike is the expression for like operator, e.g, expr like "%123%"
 type PatternLike struct {
 	// Expr is the expression to be checked.
-	Expr expression.Expression
+	Expr Expression
 	// Pattern is the like expression.
-	Pattern  expression.Expression
+	Pattern  Expression
 	patChars []byte
 	patTypes []byte
 	// Not is true, the expression is "not like".
@@ -48,7 +47,7 @@ type PatternLike struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *PatternLike) Clone() expression.Expression {
+func (p *PatternLike) Clone() Expression {
 	expr := p.Expr.Clone()
 	pattern := p.Pattern.Clone()
 	return &PatternLike{
@@ -81,7 +80,7 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 	}
 	sexpr, ok := expr.(string)
 	if !ok {
-		return nil, errors.Errorf("non-string expression.Expression in LIKE: %v (Value of type %T)", expr, expr)
+		return nil, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
 	}
 	// We need to compile pattern if it has not been compiled or it is not static.
 	var needCompile = len(p.patChars) == 0 || !p.Pattern.IsStatic()

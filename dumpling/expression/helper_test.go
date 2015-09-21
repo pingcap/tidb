@@ -1,11 +1,11 @@
-package expressions
+package expression
 
 import (
 	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -20,16 +20,16 @@ type testHelperSuite struct {
 func (s *testHelperSuite) TestContainAggFunc(c *C) {
 	v := Value{}
 	tbl := []struct {
-		Expr   expression.Expression
+		Expr   Expression
 		Expect bool
 	}{
 		{Value{1}, false},
 		{&BinaryOperation{L: v, R: v}, false},
-		{&Call{F: "count", Args: []expression.Expression{v}}, true},
-		{&Call{F: "abs", Args: []expression.Expression{v}}, false},
+		{&Call{F: "count", Args: []Expression{v}}, true},
+		{&Call{F: "abs", Args: []Expression{v}}, false},
 		{&IsNull{Expr: v}, false},
 		{&PExpr{Expr: v}, false},
-		{&PatternIn{Expr: v, List: []expression.Expression{v}}, false},
+		{&PatternIn{Expr: v, List: []Expression{v}}, false},
 		{&PatternLike{Expr: v, Pattern: v}, false},
 		{&UnaryOperation{V: v}, false},
 		{&ParamMarker{Expr: v}, false},
@@ -40,7 +40,7 @@ func (s *testHelperSuite) TestContainAggFunc(c *C) {
 		{&WhenClause{Expr: v, Result: v}, false},
 		{&IsTruth{Expr: v}, false},
 		{&Between{Expr: v, Left: v, Right: v}, false},
-		{&Row{Values: []expression.Expression{v, v}}, false},
+		{&Row{Values: []Expression{v, v}}, false},
 	}
 
 	for _, t := range tbl {
@@ -52,16 +52,16 @@ func (s *testHelperSuite) TestContainAggFunc(c *C) {
 func (s *testHelperSuite) TestMentionedColumns(c *C) {
 	v := Value{}
 	tbl := []struct {
-		Expr   expression.Expression
+		Expr   Expression
 		Expect int
 	}{
 		{Value{1}, 0},
 		{&BinaryOperation{L: v, R: v}, 0},
 		{&Ident{model.NewCIStr("id")}, 1},
-		{&Call{F: "count", Args: []expression.Expression{v}}, 0},
+		{&Call{F: "count", Args: []Expression{v}}, 0},
 		{&IsNull{Expr: v}, 0},
 		{&PExpr{Expr: v}, 0},
-		{&PatternIn{Expr: v, List: []expression.Expression{v}}, 0},
+		{&PatternIn{Expr: v, List: []Expression{v}}, 0},
 		{&PatternLike{Expr: v, Pattern: v}, 0},
 		{&UnaryOperation{V: v}, 0},
 		{&ParamMarker{Expr: v}, 0},
@@ -72,7 +72,7 @@ func (s *testHelperSuite) TestMentionedColumns(c *C) {
 		{&WhenClause{Expr: v, Result: v}, 0},
 		{&IsTruth{Expr: v}, 0},
 		{&Between{Expr: v, Left: v, Right: v}, 0},
-		{&Row{Values: []expression.Expression{v, v}}, 0},
+		{&Row{Values: []Expression{v, v}}, 0},
 	}
 
 	for _, t := range tbl {
@@ -83,11 +83,11 @@ func (s *testHelperSuite) TestMentionedColumns(c *C) {
 
 func newTestRow(v1 interface{}, v2 interface{}, args ...interface{}) *Row {
 	r := &Row{}
-	a := make([]expression.Expression, len(args))
+	a := make([]Expression, len(args))
 	for i := range a {
 		a[i] = Value{args[i]}
 	}
-	r.Values = append([]expression.Expression{Value{v1}, Value{v2}}, a...)
+	r.Values = append([]Expression{Value{v1}, Value{v2}}, a...)
 	return r
 }
 
@@ -137,8 +137,8 @@ func (s *testHelperSuite) TestBase(c *C) {
 	//	c.Assert(err, NotNil)
 
 	columns := []struct {
-		lhs     expression.Expression
-		rhs     expression.Expression
+		lhs     Expression
+		rhs     Expression
 		checker Checker
 	}{
 		{Value{nil}, Value{nil}, IsNil},

@@ -11,11 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -28,7 +28,7 @@ type testPatternInSuite struct {
 func (t *testPatternInSuite) TestPatternIn(c *C) {
 	e := &PatternIn{
 		Expr: Value{1},
-		List: []expression.Expression{Value{1}, Value{2}, Value{3}},
+		List: []Expression{Value{1}, Value{2}, Value{3}},
 	}
 
 	ctx := mock.NewContext()
@@ -53,7 +53,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	str = e2.String()
 	c.Assert(len(str), Greater, 0)
 
-	e2.List = []expression.Expression{&Ident{model.NewCIStr("c1")}, &Ident{model.NewCIStr("c2")}}
+	e2.List = []Expression{&Ident{model.NewCIStr("c1")}, &Ident{model.NewCIStr("c2")}}
 
 	c.Assert(e2.IsStatic(), IsFalse)
 
@@ -67,7 +67,7 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	c.Assert(len(str), Greater, 0)
 
 	e2.Expr = Value{1}
-	e2.List = []expression.Expression{Value{}}
+	e2.List = []Expression{Value{}}
 
 	vvv, err := e2.Eval(ctx, nil)
 	c.Assert(err, IsNil)
@@ -127,11 +127,11 @@ func (t *testPatternInSuite) TestPatternIn(c *C) {
 	//
 	//	e2.Sel.Value = nil
 	//	e2.Sel = nil
-	//	e2.List = []expression.Expression{newTestRow(1, 2, 3)}
+	//	e2.List = []Expression{newTestRow(1, 2, 3)}
 	//	_, err = e2.Eval(ctx, args)
 	//	c.Assert(err, IsNil)
 	//
-	//	e2.List = []expression.Expression{Value{1}}
+	//	e2.List = []Expression{Value{1}}
 	//	_, err = e2.Eval(ctx, args)
 	//	c.Assert(err, NotNil)
 }

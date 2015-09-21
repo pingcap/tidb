@@ -11,30 +11,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*IsNull)(nil)
+	_ Expression = (*IsNull)(nil)
 )
 
 // IsNull is the expression for null check.
 type IsNull struct {
 	// Expr is the expression to be checked.
-	Expr expression.Expression
+	Expr Expression
 	// Not is true, the expression is "is not null".
 	Not bool
 }
 
 // Clone implements the Expression Clone interface.
-func (is *IsNull) Clone() expression.Expression {
+func (is *IsNull) Clone() Expression {
 	expr := is.Expr.Clone()
 	return &IsNull{Expr: expr, Not: is.Not}
 }

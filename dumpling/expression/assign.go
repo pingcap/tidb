@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/expression"
 )
 
 // Assignment is the expression for assignment, like a = 1.
@@ -28,7 +27,7 @@ type Assignment struct {
 	// ColName is the variable name we want to set.
 	ColName string
 	// Expr is the expression assigning to ColName.
-	Expr expression.Expression
+	Expr Expression
 }
 
 // String returns Assignment representation.
@@ -40,7 +39,7 @@ func (a *Assignment) String() string {
 }
 
 // NewAssignment builds a new Assignment expression.
-func NewAssignment(key string, value expression.Expression) (*Assignment, error) {
+func NewAssignment(key string, value Expression) (*Assignment, error) {
 	strs := strings.Split(key, ".")
 	var (
 		tblName string

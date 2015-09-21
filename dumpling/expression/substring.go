@@ -11,26 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 // FunctionSubstring returns the substring as specified.
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring
 type FunctionSubstring struct {
-	StrExpr expression.Expression
-	Pos     expression.Expression
-	Len     expression.Expression
+	StrExpr Expression
+	Pos     Expression
+	Len     Expression
 }
 
 // Clone implements the Expression Clone interface.
-func (f *FunctionSubstring) Clone() expression.Expression {
+func (f *FunctionSubstring) Clone() Expression {
 	expr := f.StrExpr.Clone()
 	nf := &FunctionSubstring{
 		StrExpr: expr,

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -19,18 +19,17 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 // Row is the expression for row constructor.
 // See https://dev.mysql.com/doc/refman/5.7/en/row-subqueries.html
 type Row struct {
-	Values []expression.Expression
+	Values []Expression
 }
 
 // Clone implements the Expression Clone interface.
-func (r *Row) Clone() expression.Expression {
-	values := make([]expression.Expression, len(r.Values))
+func (r *Row) Clone() Expression {
+	values := make([]Expression, len(r.Values))
 	for i, expr := range r.Values {
 		values[i] = expr.Clone()
 	}

@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"errors"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -28,7 +28,7 @@ type testBetweenSuite struct {
 
 func (s *testBetweenSuite) TestBetween(c *C) {
 	table := []struct {
-		Expr   expression.Expression
+		Expr   Expression
 		Left   int
 		Right  int
 		Not    bool
@@ -38,11 +38,11 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		{Value{1}, 2, 3, true, 1},
 		{&Call{
 			F:    "count",
-			Args: []expression.Expression{Value{1}},
+			Args: []Expression{Value{1}},
 		}, 2, 3, false, 0},
 		{&Call{
 			F:    "count",
-			Args: []expression.Expression{Value{1}},
+			Args: []Expression{Value{1}},
 		}, 2, 3, true, 1},
 	}
 
@@ -64,7 +64,7 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 		c.Assert(val, Equals, t.Result)
 	}
 
-	f := func(isErr bool) expression.Expression {
+	f := func(isErr bool) Expression {
 		if isErr {
 			return mockExpr{isStatic: true, err: errors.New("test error")}
 		}
@@ -72,9 +72,9 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 	}
 
 	tableError := []struct {
-		Expr  expression.Expression
-		Left  expression.Expression
-		Right expression.Expression
+		Expr  Expression
+		Left  Expression
+		Right Expression
 	}{
 		{f(true), f(false), f(false)},
 		{f(false), f(true), f(false)},
@@ -92,9 +92,9 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 	}
 
 	tableError = []struct {
-		Expr  expression.Expression
-		Left  expression.Expression
-		Right expression.Expression
+		Expr  Expression
+		Left  Expression
+		Right Expression
 	}{
 		{newTestRow(1, 2), f(false), f(false)},
 		{f(false), newTestRow(1, 2), f(false)},

@@ -15,33 +15,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-var _ expression.Expression = (*Between)(nil)
+var _ Expression = (*Between)(nil)
 
 // Between is for "between and" or "not between and" expression.
 type Between struct {
 	// Expr is the expression to be checked.
-	Expr expression.Expression
+	Expr Expression
 	// Left is the expression for minimal value in the range.
-	Left expression.Expression
+	Left Expression
 	// Right is the expression for maximum value in the range.
-	Right expression.Expression
+	Right Expression
 	// Not is true, the expression is "not between and".
 	Not bool
 }
 
 // Clone implements the Expression Clone interface.
-func (b *Between) Clone() expression.Expression {
+func (b *Between) Clone() Expression {
 	expr := b.Expr.Clone()
 	left := b.Left.Clone()
 	right := b.Right.Clone()
@@ -83,7 +83,7 @@ func (b *Between) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 		return nil, errors.Trace(err)
 	}
 
-	var l, r expression.Expression
+	var l, r Expression
 	op := opcode.AndAnd
 
 	if b.Not {
@@ -109,13 +109,13 @@ func (b *Between) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 // e.g, "sum(10) between 10 and 15", if we convert this between to binary operation,
 // we will get (sum(10) >= 10 && sum(10) <= 15), the sum(10) is the same Call expression,
 // so here we will evaluate sum(10) twice, and get the wrong result.
-func (b *Between) convert() expression.Expression {
+func (b *Between) convert() Expression {
 	if ContainAggregateFunc(b.Expr) {
 		return b
 	}
 
 	var (
-		l, r expression.Expression
+		l, r Expression
 	)
 
 	op := opcode.AndAnd
@@ -140,7 +140,7 @@ func (b *Between) convert() expression.Expression {
 // For example:
 //	a between 10 and 15 -> a >= 10 && a <= 15
 //	a not between 10 and 15 -> a < 10 || b > 15
-func NewBetween(expr, lo, hi expression.Expression, not bool) (expression.Expression, error) {
+func NewBetween(expr, lo, hi Expression, not bool) (Expression, error) {
 	e, err := staticExpr(expr)
 	if err != nil {
 		return nil, errors.Trace(err)

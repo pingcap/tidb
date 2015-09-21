@@ -11,18 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 )
 
 var (
-	_ expression.Expression = (*Position)(nil)
+	_ Expression = (*Position)(nil)
 )
 
 // Position is the expression for order by and group by position.
@@ -36,7 +35,7 @@ type Position struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *Position) Clone() expression.Expression {
+func (p *Position) Clone() Expression {
 	newP := *p
 	return &newP
 }

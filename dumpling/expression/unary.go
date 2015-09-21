@@ -15,21 +15,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	_ expression.Expression = (*UnaryOperation)(nil)
+	_ Expression = (*UnaryOperation)(nil)
 )
 
 // UnaryOperation is the expression for unary operator.
@@ -37,11 +37,11 @@ type UnaryOperation struct {
 	// Op is the operator opcode.
 	Op opcode.Op
 	// V is the unary expression.
-	V expression.Expression
+	V Expression
 }
 
 // NewUnaryOperation creates an unary expression.
-func NewUnaryOperation(op opcode.Op, l expression.Expression) expression.Expression {
+func NewUnaryOperation(op opcode.Op, l Expression) Expression {
 	// extract expression in parenthese, e.g, ((expr)) -> expr
 	for {
 		pe, ok := l.(*PExpr)
@@ -90,7 +90,7 @@ func NewUnaryOperation(op opcode.Op, l expression.Expression) expression.Express
 }
 
 // Clone implements the Expression Clone interface.
-func (u *UnaryOperation) Clone() expression.Expression {
+func (u *UnaryOperation) Clone() Expression {
 	v := u.V.Clone()
 	return &UnaryOperation{Op: u.Op, V: v}
 }

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expressions
+package expression
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
+
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -50,7 +50,7 @@ func (m mockExpr) String() string {
 	return "mock expression"
 }
 
-func (m mockExpr) Clone() expression.Expression {
+func (m mockExpr) Clone() Expression {
 	nm := m
 	return nm
 }
@@ -208,7 +208,7 @@ func (p *mockPlan) GetFields() []*field.ResultField {
 	return fields[:p.rset.offset]
 }
 
-func (p *mockPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
+func (p *mockPlan) Filter(ctx context.Context, expr Expression) (plan.Plan, bool, error) {
 	return p, false, nil
 }
 
