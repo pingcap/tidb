@@ -169,6 +169,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
+	ft.Flen = 8
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
@@ -180,6 +181,18 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(mysql.Bit{Value: 100, Width: 8}, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
+
+	ft.Flen = 1
+	v, err = Convert(1, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(1))
+
+	_, err = Convert(2, ft)
+	c.Assert(err, NotNil)
+
+	ft.Flen = 0
+	_, err = Convert(2, ft)
+	c.Assert(err, NotNil)
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
