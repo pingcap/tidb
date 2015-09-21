@@ -48,6 +48,7 @@ type ShowPlan struct {
 	// Used by SHOW VARIABLES
 	GlobalScope bool
 	Pattern     expression.Expression
+	Where       expression.Expression
 	rows        []*plan.Row
 	cursor      int
 }
@@ -225,6 +226,24 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 				match, ok := r.(bool)
 				if !ok {
 					return errors.Errorf("Eval like pattern error")
+				}
+				if !match {
+					continue
+				}
+			} else if s.Where != nil {
+				m := map[interface{}]interface{}{}
+
+				m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+					if strings.EqualFold(name, "Variable_name") {
+						return v.Name, nil
+					}
+
+					return nil, errors.Errorf("unknown field %s", name)
+				}
+
+				match, err := expressions.EvalBoolExpr(ctx, s.Where, m)
+				if err != nil {
+					return errors.Trace(err)
 				}
 				if !match {
 					continue

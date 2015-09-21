@@ -41,6 +41,7 @@ type ShowStmt struct {
 	// Used by show variables
 	GlobalScope bool
 	Pattern     expression.Expression
+	Where       expression.Expression
 
 	Text string
 }
@@ -78,6 +79,7 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		Full:        s.Full,
 		GlobalScope: s.GlobalScope,
 		Pattern:     s.Pattern,
+		Where:       s.Where,
 	}
 
 	return rsets.Recordset{Ctx: ctx, Plan: r}, nil

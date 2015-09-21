@@ -299,6 +299,7 @@ group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
 hour		{h}{o}{u}{r}
+identified	{i}{d}{e}{n}{t}{i}{f}{i}{e}{d}
 if		{i}{f}
 ifnull		{i}{f}{n}{u}{l}{l}
 ignore		{i}{g}{n}{o}{r}{e}
@@ -432,6 +433,7 @@ duration	{d}{u}{r}{a}{t}{i}{o}{n}
 rune		{r}{u}{n}{e}
 string		{s}{t}{r}{i}{n}{g}
 use		{u}{s}{e}
+user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
@@ -590,6 +592,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
 			return hour
+{identified}		lval.item = string(l.val)
+			return identified
 {if}			lval.item = string(l.val)
 			return ifKwd
 {ifnull}		lval.item = string(l.val)
@@ -696,6 +700,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return nullIf
 {update}		return update
 {use}			return use
+{user}			lval.item = string(l.val)
+			return user
 {using}			return using
 {value}			lval.item = string(l.val)
 			return value
