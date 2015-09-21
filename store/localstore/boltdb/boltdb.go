@@ -74,11 +74,11 @@ func (d *db) Commit(b engine.Batch) error {
 		b := tx.Bucket(bucketName)
 		// err1 is used for passing `go tool vet --shadow` check.
 		var err1 error
-		for _, w := range bt.Writes {
-			if w.Value != nil {
-				err1 = b.Put(w.Key, w.Value)
+		for _, w := range bt.writes {
+			if !w.isDelete {
+				err1 = b.Put(w.key, w.value)
 			} else {
-				err1 = b.Delete(w.Key)
+				err1 = b.Delete(w.key)
 			}
 
 			if err1 != nil {
@@ -158,28 +158,30 @@ func (i *iterator) Release() {
 }
 
 type write struct {
-	Key   []byte
-	Value []byte
+	key      []byte
+	value    []byte
+	isDelete bool
 }
 
 type batch struct {
-	Writes []write
+	writes []write
 }
 
 func (b *batch) Put(key []byte, value []byte) {
 	w := write{
-		Key:   append([]byte(nil), key...),
-		Value: append([]byte(nil), value...),
+		key:   append([]byte(nil), key...),
+		value: append([]byte(nil), value...),
 	}
-	b.Writes = append(b.Writes, w)
+	b.writes = append(b.writes, w)
 }
 
 func (b *batch) Delete(key []byte) {
 	w := write{
-		Key:   append([]byte(nil), key...),
-		Value: nil,
+		key:      append([]byte(nil), key...),
+		value:    nil,
+		isDelete: true,
 	}
-	b.Writes = append(b.Writes, w)
+	b.writes = append(b.writes, w)
 }
 
 // Driver implements engine Driver.

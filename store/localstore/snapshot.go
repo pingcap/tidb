@@ -71,12 +71,10 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 			}
 		}
 	}
-
 	// No such key (or it's tombstone).
 	if rawKey == nil {
 		return nil, kv.ErrNotExist
 	}
-
 	return v, nil
 }
 
