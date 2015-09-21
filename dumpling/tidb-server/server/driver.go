@@ -50,6 +50,9 @@ type IContext interface {
 
 	// Close closes the IContext.
 	Close() error
+
+	// Auth auths user
+	Auth(user string, password string, salt []byte) bool
 }
 
 // IStatement is the interface to use a prepared statement.
