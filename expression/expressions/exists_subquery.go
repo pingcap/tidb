@@ -25,13 +25,13 @@ import (
 // https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
 type ExistsSubQuery struct {
 	// Sel is the sub query.
-	Sel *SubQuery
+	Sel SubQuery
 }
 
 // Clone implements the Expression Clone interface.
 func (es *ExistsSubQuery) Clone() expression.Expression {
 	sel := es.Sel.Clone()
-	return &ExistsSubQuery{Sel: sel.(*SubQuery)}
+	return &ExistsSubQuery{Sel: sel.(SubQuery)}
 }
 
 // IsStatic implements the Expression IsStatic interface.
@@ -46,8 +46,8 @@ func (es *ExistsSubQuery) String() string {
 
 // Eval implements the Expression Eval interface.
 func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	if !es.Sel.UseOuterQuery && es.Sel.Value != nil {
-		return es.Sel.Value.(bool), nil
+	if !es.Sel.UseOuterQuery() && es.Sel.Value() != nil {
+		return es.Sel.Value().(bool), nil
 	}
 
 	rows, err := es.Sel.EvalRows(ctx, args, 1)
@@ -55,11 +55,11 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 		return nil, errors.Trace(err)
 	}
 
-	es.Sel.Value = len(rows) > 0
-	return es.Sel.Value, nil
+	es.Sel.SetValue(len(rows) > 0)
+	return es.Sel.Value(), nil
 }
 
 // NewExistsSubQuery creates a ExistsSubQuery object.
-func NewExistsSubQuery(sel *SubQuery) *ExistsSubQuery {
+func NewExistsSubQuery(sel SubQuery) *ExistsSubQuery {
 	return &ExistsSubQuery{Sel: sel}
 }

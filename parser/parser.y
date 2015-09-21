@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -1383,7 +1384,7 @@ Factor:
 	}
 |	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
-		$$ = expressions.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+		$$ = expressions.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*subquery.SubQuery), $3.(bool))
 	}
 |	Factor1
 
@@ -1442,7 +1443,7 @@ Factor1:
 	}
 |	PrimaryFactor NotOpt "IN" SubSelect
 	{
-		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*expressions.SubQuery)}
+		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*subquery.SubQuery)}
 	}
 |	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
 	{
@@ -1780,7 +1781,7 @@ Operand:
 	}
 |	"EXISTS" SubSelect
 	{
-		$$ = &expressions.ExistsSubQuery{Sel: $2.(*expressions.SubQuery)}
+		$$ = &expressions.ExistsSubQuery{Sel: $2.(*subquery.SubQuery)}
 	}
 
 OrderBy:
@@ -2880,7 +2881,7 @@ SubSelect:
 	{
 		s := $2.(*stmts.SelectStmt)
 		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
-		$$ = &expressions.SubQuery{Stmt: s}
+		$$ = &subquery.SubQuery{Stmt: s}
 	}
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html

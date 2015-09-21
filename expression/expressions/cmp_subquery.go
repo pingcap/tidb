@@ -33,7 +33,7 @@ type CompareSubQuery struct {
 	// Op is the comparison opcode.
 	Op opcode.Op
 	// R is the sub query for right expression.
-	R *SubQuery
+	R SubQuery
 	// All is true, we should compare all records in subquery.
 	All bool
 }
@@ -42,7 +42,7 @@ type CompareSubQuery struct {
 func (cs *CompareSubQuery) Clone() expression.Expression {
 	l := cs.L.Clone()
 	r := cs.R.Clone()
-	return &CompareSubQuery{L: l, Op: cs.Op, R: r.(*SubQuery), All: cs.All}
+	return &CompareSubQuery{L: l, Op: cs.Op, R: r.(SubQuery), All: cs.All}
 }
 
 // IsStatic implements the Expression IsStatic interface.
@@ -74,8 +74,8 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, nil
 	}
 
-	if !cs.R.UseOuterQuery && cs.R.Value != nil {
-		return cs.checkResult(lv, cs.R.Value.([]interface{}))
+	if !cs.R.UseOuterQuery() && cs.R.Value() != nil {
+		return cs.checkResult(lv, cs.R.Value().([]interface{}))
 	}
 
 	res, err := cs.R.EvalRows(ctx, args, -1)
@@ -83,8 +83,8 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 		return nil, errors.Trace(err)
 	}
 
-	cs.R.Value = res
-	return cs.checkResult(lv, cs.R.Value.([]interface{}))
+	cs.R.SetValue(res)
+	return cs.checkResult(lv, cs.R.Value().([]interface{}))
 }
 
 func (cs *CompareSubQuery) checkAllResult(lv interface{}, result []interface{}) (interface{}, error) {
@@ -160,7 +160,7 @@ func (cs *CompareSubQuery) checkResult(lv interface{}, result []interface{}) (in
 }
 
 // NewCompareSubQuery creates a CompareSubQuery object.
-func NewCompareSubQuery(op opcode.Op, lhs expression.Expression, rhs *SubQuery, all bool) *CompareSubQuery {
+func NewCompareSubQuery(op opcode.Op, lhs expression.Expression, rhs SubQuery, all bool) *CompareSubQuery {
 	return &CompareSubQuery{
 		Op:  op,
 		L:   lhs,

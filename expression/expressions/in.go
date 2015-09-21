@@ -40,7 +40,7 @@ type PatternIn struct {
 	// Not is true, the expression is "not in".
 	Not bool
 	// Sel is the sub query.
-	Sel *SubQuery
+	Sel SubQuery
 }
 
 // Clone implements the Expression Clone interface.
@@ -155,8 +155,8 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		return n.checkInList(lhs, values)
 	}
 
-	if !n.Sel.UseOuterQuery && n.Sel.Value != nil {
-		return n.checkInList(lhs, n.Sel.Value.([]interface{}))
+	if !n.Sel.UseOuterQuery() && n.Sel.Value() != nil {
+		return n.checkInList(lhs, n.Sel.Value().([]interface{}))
 	}
 
 	var res []interface{}
@@ -169,7 +169,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		return nil, errors.Trace(err)
 	}
 
-	n.Sel.Value = res
+	n.Sel.SetValue(res)
 
 	return n.checkInList(lhs, res)
 }
