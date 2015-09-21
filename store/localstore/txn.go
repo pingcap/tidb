@@ -191,7 +191,7 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	// Check dirty store
-	curVer, err := globalVerProvider.CurrentVersion()
+	curVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
