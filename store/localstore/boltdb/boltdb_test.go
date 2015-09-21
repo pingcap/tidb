@@ -17,6 +17,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ngaut/bolt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/localstore/engine"
 )
@@ -45,6 +46,53 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.db.Close()
 	os.Remove(testPath)
+}
+
+func (s *testSuite) TestPutNilAndDelete(c *C) {
+	d := s.db
+	rawDB := d.(*db).DB
+	// nil as value
+	b := d.NewBatch()
+	b.Put([]byte("aa"), nil)
+	err := d.Commit(b)
+	c.Assert(err, IsNil)
+
+	v, err := d.Get([]byte("aa"))
+	c.Assert(err, IsNil)
+	c.Assert(len(v), Equals, 0)
+
+	found := false
+	rawDB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if string(k) == "aa" {
+				found = true
+			}
+		}
+		return nil
+	})
+	c.Assert(found, Equals, true)
+
+	// real delete
+	b = d.NewBatch()
+	b.Delete([]byte("aa"))
+	err = d.Commit(b)
+	c.Assert(err, IsNil)
+
+	found = false
+	rawDB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			if string(k) == "aa" {
+				found = true
+			}
+
+		}
+		return nil
+	})
+	c.Assert(found, Equals, false)
 }
 
 func (s *testSuite) TestDB(c *C) {
