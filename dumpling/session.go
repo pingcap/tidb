@@ -398,5 +398,11 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	b, ok := storeBootstrapped[store.UUID()]
+	if !ok || !b {
+		bootstrap(s)
+		storeBootstrapped[store.UUID()] = true
+	}
+	// Add auth here
 	return s, nil
 }

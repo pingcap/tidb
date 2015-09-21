@@ -64,7 +64,7 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 	mustExec(c, s.testDB, s.useDBSql)
 
 	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
-	s.createUserTableSQL = mysql.CreateUserTable
+	s.createUserTableSQL = tidb.CreateUserTable
 
 	mustExec(c, s.testDB, s.createSystemDBSQL)
 	mustExec(c, s.testDB, s.createUserTableSQL)

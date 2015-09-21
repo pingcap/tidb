@@ -81,6 +81,8 @@ var (
 	Debug = true
 	// PprofAddr is the pprof url.
 	PprofAddr = "localhost:8888"
+	// store.UUID()-> IfBootstrapped
+	storeBootstrapped = make(map[string]bool)
 )
 
 // Compile is safe for concurrent use by multiple goroutines.
@@ -237,7 +239,7 @@ func NewStore(uri string) (kv.Storage, error) {
 	}
 
 	s, err := d.Open(schema)
-
+	storeBootstrapped[s.UUID()] = false
 	return s, errors.Trace(err)
 }
 
