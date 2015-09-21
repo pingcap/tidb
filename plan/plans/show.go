@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -74,7 +75,10 @@ func (s *ShowPlan) Explain(w format.Formatter) {
 
 // GetFields implements plan.Plan GetFields interface.
 func (s *ShowPlan) GetFields() []*field.ResultField {
-	var names []string
+	var (
+		names []string
+		types []byte
+	)
 
 	switch s.Target {
 	case stmt.ShowEngines:
@@ -87,14 +91,24 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
 		names = []string{"Level", "Code", "Message"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case stmt.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowVariables:
 		names = []string{"Variable_name", "Value"}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
-	for _, name := range names {
-		fields = append(fields, &field.ResultField{Name: name})
+	for i, name := range names {
+		f := &field.ResultField{Name: name}
+		if types == nil || types[i] == 0 {
+			// use varchar as the default return column type
+			f.Col.Tp = mysql.TypeVarchar
+		} else {
+			f.Col.Tp = types[i]
+		}
+
+		fields = append(fields, f)
 	}
 
 	return fields

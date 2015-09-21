@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
@@ -76,6 +77,8 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(fls, HasLen, 2)
 	c.Assert(fls[0].Name, Equals, "Variable_name")
 	c.Assert(fls[1].Name, Equals, "Value")
+	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
 
 	sessionVars := variable.GetSessionVars(p)
 	ret := map[string]string{}
@@ -134,6 +137,16 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	v, ok = ret["autocommit"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "on")
+
+	pln.Target = stmt.ShowWarnings
+	fls = pln.GetFields()
+	c.Assert(fls, HasLen, 3)
+	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeLong)
+
+	pln.Target = stmt.ShowCharset
+	fls = pln.GetFields()
+	c.Assert(fls, HasLen, 4)
+	c.Assert(fls[3].Col.Tp, Equals, mysql.TypeLonglong)
 }
 
 func (p *testShowSuit) TearDownSuite(c *C) {
