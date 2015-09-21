@@ -211,6 +211,13 @@ func (cc *clientConn) readHandshakeResponse() error {
 	pos++
 	auth := data[pos : pos+authLen]
 	checkAuth := calcPassword(cc.salt, []byte(cc.server.cfgGetPwd(cc.user)))
+
+	cc.ctx, err = cc.server.driver.OpenCtx(cc.capability, uint8(cc.collation), cc.dbname)
+	if err != nil {
+		cc.Close()
+		return errors.Trace(err)
+	}
+
 	if !bytes.Equal(auth, checkAuth) && !cc.server.skipAuth() {
 		return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.conn.RemoteAddr().String(), cc.user, "Yes"))
 	}
