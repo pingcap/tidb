@@ -32,35 +32,30 @@ const (
 )
 
 // Bootstrap initiates system DB for a store.
-func bootstrap(s *session) {
+func bootstrap(s Session) {
 	// Create a test database.
-	_, err := s.Execute("CREATE DATABASE IF NOT EXISTS test")
-	if err != nil {
-		log.Fatal(err)
-	}
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 
 	//  Check if system db exists.
-	_, err = s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
+	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if err == nil {
 		// We have already finished bootstrap.
 		return
 	} else if !errors2.ErrorEqual(err, errors.ErrDatabaseNotExist) {
 		log.Fatal(err)
 	}
-	_, err = s.Execute(fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
-	if err != nil {
-		log.Fatal(err)
-	}
+	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
 	initUserTable(s)
 }
 
-func initUserTable(s *session) {
-	_, err := s.Execute(CreateUserTable)
-	if err != nil {
-		log.Fatal(err)
-	}
+func initUserTable(s Session) {
+	mustExecute(s, CreateUserTable)
 	// Insert a default user with empty password.
-	_, err = s.Execute(`INSERT INTO mysql.user VALUES ("localhost", "root", ""), ("127.0.0.1", "root", "");`)
+	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", ""), ("127.0.0.1", "root", "");`)
+}
+
+func mustExecute(s Session, sql string) {
+	_, err := s.Execute(sql)
 	if err != nil {
 		log.Fatal(err)
 	}
