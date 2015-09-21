@@ -347,7 +347,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		switch ok {
 		case true:
-			c.Assert(len(l.errs), Equals, 0, Commentf("src: %s", t.src))
+			c.Assert(l.errs, HasLen, 0, Commentf("src: %s", t.src))
 		case false:
 			c.Assert(len(l.errs), Not(Equals), 0, Commentf("src: %s", t.src))
 		}
@@ -395,10 +395,18 @@ func (s *testParserSuite) TestParser0(c *C) {
 	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
 
 	// For query start with comment
-	src = "/* some comments */ /*comment*/ SELECT /*comment*/ CONVERT('111', /*comment*/ SIGNED) /*comment*/;"
-	l = NewLexer(src)
-	c.Assert(yyParse(l), Equals, 0)
-	st = l.Stmts()[0]
-	ss, ok = st.(*stmts.SelectStmt)
-	c.Assert(ok, IsTrue)
+	srcs := []string{
+		"/* some comments */ SELECT CONVERT('111', SIGNED) ;",
+		"/* some comments */ /*comment*/ SELECT CONVERT('111', SIGNED) ;",
+		"SELECT /*comment*/ CONVERT('111', SIGNED) ;",
+		"SELECT CONVERT('111', /*comment*/ SIGNED) ;",
+		"SELECT CONVERT('111', SIGNED) /*comment*/;",
+	}
+	for _, src := range srcs {
+		l = NewLexer(src)
+		c.Assert(yyParse(l), Equals, 0)
+		st = l.Stmts()[0]
+		ss, ok = st.(*stmts.SelectStmt)
+		c.Assert(ok, IsTrue)
+	}
 }
