@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -168,13 +167,6 @@ func (s *testKVSuite) TestSeek(c *C) {
 	c.Assert(err, IsNil)
 
 	insertData(c, txn)
-
-	ss, _ := s.s.(*dbStore).db.GetSnapshot()
-	i := ss.NewIterator(nil)
-	for i.Next() {
-		log.Warn("!!!!", i.Key(), i.Value())
-	}
-
 	checkSeek(c, txn)
 
 	// Check transaction results
@@ -216,13 +208,11 @@ func (s *testKVSuite) TestInc(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(100))
 
-	log.Info(key)
 	err = txn.Delete(key)
 	c.Assert(err, IsNil)
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)
-
 }
 
 func (s *testKVSuite) TestDelete(c *C) {

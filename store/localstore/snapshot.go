@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 var (
@@ -71,8 +72,8 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 		}
 	}
 
-	// No such key or v is nil.
-	if rawKey == nil || v == nil {
+	// No such key (or it's tombstone).
+	if rawKey == nil {
 		return nil, kv.ErrNotExist
 	}
 
@@ -118,10 +119,9 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 	// max key
 	encEndKey := codec.EncodeBytes(nil, []byte{0xff, 0xff})
 	var retErr error
+	var engineIter engine.Iterator
 	for {
-		engineIter := it.s.Snapshot.NewIterator(encKey)
-		defer engineIter.Release()
-
+		engineIter = it.s.Snapshot.NewIterator(encKey)
 		// Check if overflow
 		if !engineIter.Next() {
 			it.valid = false
@@ -143,7 +143,7 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 		}
 		// Get kv pair.
 		val, err := it.s.Get(key)
-		if err != nil && err != kv.ErrNotExist {
+		if err != nil && !errors2.ErrorEqual(err, kv.ErrNotExist) {
 			// Get this version error
 			it.valid = false
 			retErr = err
@@ -155,9 +155,12 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 			it.startKey = key.Next()
 			break
 		}
+		// Release the iterator, and update key
+		engineIter.Release()
 		// Current key's all versions are deleted, just go next key.
 		encKey = codec.EncodeBytes(nil, key.Next())
 	}
+	engineIter.Release()
 	return it, errors.Trace(retErr)
 }
 
