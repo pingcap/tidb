@@ -335,19 +335,21 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For select with where clause
 		{"SELECT * FROM t WHERE 1 = 1", true},
+
+		// For comment in query
+		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
 	}
 
 	for _, t := range table {
-		fmt.Printf("%s\n", t.src)
 		l := NewLexer(t.src)
 		ok := yyParse(l) == 0
 		c.Assert(ok, Equals, t.ok, Commentf("source %v", t.src))
 
 		switch ok {
 		case true:
-			c.Assert(len(l.errs), Equals, 0)
+			c.Assert(len(l.errs), Equals, 0, Commentf("src: %s", t.src))
 		case false:
-			c.Assert(len(l.errs), Not(Equals), 0)
+			c.Assert(len(l.errs), Not(Equals), 0, Commentf("src: %s", t.src))
 		}
 	}
 
@@ -391,4 +393,12 @@ func (s *testParserSuite) TestParser0(c *C) {
 	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
 	c.Assert(ok, IsTrue)
 	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
+
+	// For query start with comment
+	src = "/* some comments */ /*comment*/ SELECT /*comment*/ CONVERT('111', /*comment*/ SIGNED) /*comment*/;"
+	l = NewLexer(src)
+	c.Assert(yyParse(l), Equals, 0)
+	st = l.Stmts()[0]
+	ss, ok = st.(*stmts.SelectStmt)
+	c.Assert(ok, IsTrue)
 }
