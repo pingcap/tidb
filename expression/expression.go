@@ -25,7 +25,7 @@ import (
 // See https://dev.mysql.com/doc/refman/5.7/en/expressions.html
 type Expression interface {
 	// Clone clones another Expression.
-	Clone() (Expression, error)
+	Clone() Expression
 	// Eval evaluates expression.
 	Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error)
 	// IsStatic returns whether this expression can be evaluated statically or not.

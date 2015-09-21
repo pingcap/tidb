@@ -36,9 +36,9 @@ type Position struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *Position) Clone() (expression.Expression, error) {
+func (p *Position) Clone() expression.Expression {
 	newP := *p
-	return &newP, nil
+	return &newP
 }
 
 // IsStatic implements the Expression IsStatic interface, always returns false.

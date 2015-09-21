@@ -76,13 +76,9 @@ func NewCall(f string, args []expression.Expression, distinct bool) (v expressio
 }
 
 // Clone implements the Expression Clone interface.
-func (c *Call) Clone() (expression.Expression, error) {
-	list, err := cloneExpressionList(c.Args)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Call{F: c.F, Args: list, Distinct: c.Distinct}, nil
+func (c *Call) Clone() expression.Expression {
+	list := cloneExpressionList(c.Args)
+	return &Call{F: c.F, Args: list, Distinct: c.Distinct}
 }
 
 // IsStatic implements the Expression IsStatic interface.

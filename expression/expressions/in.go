@@ -44,23 +44,15 @@ type PatternIn struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (n *PatternIn) Clone() (expression.Expression, error) {
-	expr, err := n.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	list, err := cloneExpressionList(n.List)
-	if err != nil {
-		return nil, err
-	}
-
+func (n *PatternIn) Clone() expression.Expression {
+	expr := n.Expr.Clone()
+	list := cloneExpressionList(n.List)
 	return &PatternIn{
 		Expr: expr,
 		List: list,
 		Not:  n.Not,
 		Sel:  n.Sel,
-	}, nil
+	}
 }
 
 // IsStatic implements the Expression IsStatic interface.

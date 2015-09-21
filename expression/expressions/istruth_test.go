@@ -36,8 +36,7 @@ func (t *testIsTruthSuite) TestIsTruth(c *C) {
 	str := e.String()
 	c.Assert(len(str), Greater, 0)
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	e2, ok := ec.(*IsTruth)
 	c.Assert(ok, IsTrue)

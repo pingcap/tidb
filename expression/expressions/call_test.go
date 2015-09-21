@@ -30,8 +30,7 @@ func (s *testCallSuite) TestCall(c *C) {
 	c.Assert(err, IsNil)
 
 	c.Assert(f.IsStatic(), IsTrue)
-	_, err = f.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(f.Clone(), NotNil)
 
 	c.Assert(len(f.String()), Greater, 0)
 	m := map[interface{}]interface{}{}
@@ -46,8 +45,7 @@ func (s *testCallSuite) TestCall(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(f.String()), Greater, 0)
 	c.Assert(f.IsStatic(), IsFalse)
-	_, err = f.Clone()
-	c.Assert(err, IsNil)
+	c.Assert(f.Clone(), NotNil)
 
 	// test error
 	f, err = NewCall("abs", []expression.Expression{Value{1}, Value{2}}, true)
@@ -73,9 +71,7 @@ func (s *testCallSuite) TestCall(c *C) {
 	f, err = NewCall("abs", []expression.Expression{mock}, true)
 	c.Assert(err, IsNil)
 
-	_, err = f.Clone()
-	c.Assert(err, NotNil)
+	c.Assert(f.Clone(), NotNil)
 	_, err = f.Eval(nil, nil)
 	c.Assert(err, NotNil)
-
 }

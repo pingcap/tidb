@@ -31,9 +31,9 @@ type Values struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (i *Values) Clone() (expression.Expression, error) {
+func (i *Values) Clone() expression.Expression {
 	newI := *i
-	return &newI, nil
+	return &newI
 }
 
 // IsStatic implements the Expression IsStatic interface, always returns false.

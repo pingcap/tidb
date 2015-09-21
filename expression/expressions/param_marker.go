@@ -28,16 +28,12 @@ type ParamMarker struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (pm *ParamMarker) Clone() (expression.Expression, error) {
+func (pm *ParamMarker) Clone() expression.Expression {
 	np := &ParamMarker{}
 	if pm.Expr != nil {
-		var err error
-		np.Expr, err = pm.Expr.Clone()
-		if err != nil {
-			return nil, err
-		}
+		np.Expr = pm.Expr.Clone()
 	}
-	return np, nil
+	return np
 }
 
 // Eval implements the Expression Eval interface.

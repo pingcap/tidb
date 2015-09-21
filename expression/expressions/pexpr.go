@@ -35,13 +35,9 @@ type PExpr struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *PExpr) Clone() (expression.Expression, error) {
-	expr, err := p.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	return &PExpr{Expr: expr}, nil
+func (p *PExpr) Clone() expression.Expression {
+	expr := p.Expr.Clone()
+	return &PExpr{Expr: expr}
 }
 
 // IsStatic implements the Expression IsStatic interface.

@@ -46,24 +46,16 @@ type PatternRegexp struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (p *PatternRegexp) Clone() (expression.Expression, error) {
-	expr, err := p.Expr.Clone()
-	if err != nil {
-		return nil, err
-	}
-
-	pattern, err := p.Pattern.Clone()
-	if err != nil {
-		return nil, err
-	}
-
+func (p *PatternRegexp) Clone() expression.Expression {
+	expr := p.Expr.Clone()
+	pattern := p.Pattern.Clone()
 	return &PatternRegexp{
 		Expr:    expr,
 		Pattern: pattern,
 		Re:      p.Re,
 		Sexpr:   p.Sexpr,
 		Not:     p.Not,
-	}, nil
+	}
 }
 
 // IsStatic implements the Expression IsStatic interface.

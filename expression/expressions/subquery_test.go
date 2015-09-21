@@ -34,8 +34,7 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 	str := e.String()
 	c.Assert(str, Equals, "")
 
-	ec, err := e.Clone()
-	c.Assert(err, IsNil)
+	ec := e.Clone()
 
 	v, err := ec.Eval(ctx, nil)
 	c.Assert(err, IsNil)
