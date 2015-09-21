@@ -128,7 +128,7 @@ func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 		}
 
 		sq := newMockSubQuery(rhs, []string{"c"})
-		expr := expression.NewCompareSubQuery(t.op, expression.Value{lhs}, sq, t.all)
+		expr := expression.NewCompareSubQuery(t.op, expression.Value{Val: lhs}, sq, t.all)
 
 		c.Assert(expr.IsStatic(), IsFalse)
 
@@ -150,12 +150,12 @@ func (s *testCompSubQuerySuite) TestCompSubQuery(c *C) {
 
 	// Test error.
 	sq := newMockSubQuery([][]interface{}{{1, 2}}, []string{"c1", "c2"})
-	expr := expression.NewCompareSubQuery(opcode.EQ, expression.Value{1}, sq, true)
+	expr := expression.NewCompareSubQuery(opcode.EQ, expression.Value{Val: 1}, sq, true)
 
 	_, err := expr.Eval(ctx, nil)
 	c.Assert(err, NotNil)
 
-	expr = expression.NewCompareSubQuery(opcode.EQ, expression.Value{1}, sq, false)
+	expr = expression.NewCompareSubQuery(opcode.EQ, expression.Value{Val: 1}, sq, false)
 
 	_, err = expr.Eval(ctx, nil)
 	c.Assert(err, NotNil)
