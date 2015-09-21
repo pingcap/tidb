@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
+const (
+	// CreateUserTable is the SQL statement creates User table in system db.
+	CreateUserTable = "CREATE TABLE if not exists mysql.user (Host CHAR(64), User CHAR(16), Password CHAR(41), PRIMARY KEY (Host, User));"
+)
+
 // Bootstrap initiates system DB for a store.
 func bootstrap(s *session) {
 	// Create a test database.
@@ -50,7 +55,7 @@ func bootstrap(s *session) {
 }
 
 func initUserTable(s *session) {
-	_, err := s.Execute(mysql.CreateUserTable)
+	_, err := s.Execute(CreateUserTable)
 	if err != nil {
 		log.Fatal(err)
 	}
