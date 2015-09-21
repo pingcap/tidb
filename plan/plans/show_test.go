@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -66,8 +66,8 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	pln := &plans.ShowPlan{
 		Target:      stmt.ShowVariables,
 		GlobalScope: true,
-		Pattern: &expressions.PatternLike{
-			Pattern: &expressions.Value{
+		Pattern: &expression.PatternLike{
+			Pattern: &expression.Value{
 				Val: "character_set_results",
 			},
 		},
@@ -117,9 +117,9 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(v, Equals, "utf8")
 	pln.Close()
 	pln.Pattern = nil
-	pln.Where = &expressions.BinaryOperation{
-		L:  &expressions.Ident{CIStr: model.NewCIStr("Variable_name")},
-		R:  expressions.Value{Val: "autocommit"},
+	pln.Where = &expression.BinaryOperation{
+		L:  &expression.Ident{CIStr: model.NewCIStr("Variable_name")},
+		R:  expression.Value{Val: "autocommit"},
 		Op: opcode.EQ,
 	}
 

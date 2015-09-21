@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
@@ -35,7 +34,7 @@ type HavingRset struct {
 
 // CheckAndUpdateSelectList checks having fields validity and set hidden fields to selectList.
 func (r *HavingRset) CheckAndUpdateSelectList(selectList *plans.SelectList, groupBy []expression.Expression, tableFields []*field.ResultField) error {
-	if expressions.ContainAggregateFunc(r.Expr) {
+	if expression.ContainAggregateFunc(r.Expr) {
 		expr, err := selectList.UpdateAggFields(r.Expr, tableFields)
 		if err != nil {
 			return errors.Errorf("%s in 'having clause'", err.Error())
@@ -46,7 +45,7 @@ func (r *HavingRset) CheckAndUpdateSelectList(selectList *plans.SelectList, grou
 		// having can only contain group by column and select list, e.g,
 		// `select c1 from t group by c2 having c3 > 0` is invalid,
 		// because c3 is not in group by and select list.
-		names := expressions.MentionedColumns(r.Expr)
+		names := expression.MentionedColumns(r.Expr)
 		for _, name := range names {
 			found := false
 

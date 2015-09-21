@@ -17,7 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/types"
@@ -34,7 +34,7 @@ type testFieldSuite struct {
 
 func (*testFieldSuite) TestField(c *C) {
 	f := &field.Field{
-		Expr: expressions.Value{Val: "c1+1"},
+		Expr: expression.Value{Val: "c1+1"},
 		Name: "a",
 	}
 	s := f.String()

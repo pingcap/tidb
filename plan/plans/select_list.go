@@ -16,7 +16,6 @@ package plans
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 )
@@ -46,7 +45,7 @@ func (s *SelectList) updateFields(table string, resultFields []*field.ResultFiel
 			name := field.JoinQualifiedName("", v.TableName, v.Name)
 
 			f := &field.Field{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr(name),
 				},
 				Name: name,
@@ -70,7 +69,7 @@ func (s *SelectList) AddField(f *field.Field, result *field.ResultField) {
 
 func (s *SelectList) resolveAggFields() {
 	for i, v := range s.Fields {
-		if expressions.ContainAggregateFunc(v.Expr) {
+		if expression.ContainAggregateFunc(v.Expr) {
 			s.AggFields[i] = struct{}{}
 		}
 	}
@@ -84,7 +83,7 @@ func (s *SelectList) GetFields() []*field.ResultField {
 // UpdateAggFields adds aggregate function resultfield to select result field list.
 func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*field.ResultField) (expression.Expression, error) {
 	// For aggregate function, the name can be in table or select list.
-	names := expressions.MentionedColumns(expr)
+	names := expression.MentionedColumns(expr)
 
 	for _, name := range names {
 		if field.ContainFieldName(name, tableFields, field.DefaultFieldFlag) {
@@ -106,7 +105,7 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 		resultField := &field.ResultField{Name: exprName}
 		s.AddField(f, resultField)
 
-		return &expressions.Position{N: len(s.Fields), Name: exprName}, nil
+		return &expression.Position{N: len(s.Fields), Name: exprName}, nil
 	}
 
 	return nil, nil
@@ -119,7 +118,7 @@ func (s *SelectList) CloneHiddenField(name string, tableFields []*field.ResultFi
 	if field.ContainFieldName(name, tableFields, field.CheckFieldFlag) {
 		resultField, _ := field.CloneFieldByName(name, tableFields, field.CheckFieldFlag)
 		f := &field.Field{
-			Expr: &expressions.Ident{
+			Expr: &expression.Ident{
 				CIStr: resultField.ColumnInfo.Name,
 			},
 			Name: resultField.Name,
@@ -144,7 +143,7 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 	wildcardNum := 0
 	for _, v := range selectFields {
 		// Check metioned field.
-		names := expressions.MentionedColumns(v.Expr)
+		names := expression.MentionedColumns(v.Expr)
 		if len(names) == 0 {
 			selectList.AddField(v, nil)
 			continue
@@ -175,14 +174,14 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 			return nil, errors.Trace(err)
 		}
 
-		if _, ok := v.Expr.(*expressions.Ident); ok {
+		if _, ok := v.Expr.(*expression.Ident); ok {
 			// Field is ident.
 			if result, err = field.CloneFieldByName(name, srcFields, field.DefaultFieldFlag); err != nil {
 				return nil, errors.Trace(err)
 			}
 
 			// Maybe alias name or only column name.
-			if !expressions.IsQualified(v.Name) {
+			if !expression.IsQualified(v.Name) {
 				result.Name = v.Name
 			}
 		} else {

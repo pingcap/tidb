@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/stmt/stmts"
 )
 
@@ -395,9 +395,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 	st := l.Stmts()[0]
 	ss, ok := st.(*stmts.SelectStmt)
 	c.Assert(ok, IsTrue)
-	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
+	cv, ok := ss.Fields[0].Expr.(*expression.FunctionCast)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
+	c.Assert(cv.FunctionType, Equals, expression.ConvertFunction)
 
 	// For query start with comment
 	srcs := []string{

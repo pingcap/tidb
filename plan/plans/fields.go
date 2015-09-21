@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
@@ -67,7 +66,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 		return nil, errors.Trace(err)
 	}
 
-	r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+	r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 		v, err0 := GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.DefaultFieldFlag)
 		if err0 == nil {
 			return v, nil

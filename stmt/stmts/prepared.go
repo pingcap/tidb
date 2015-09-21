@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -42,9 +41,9 @@ type PreparedStmt struct {
 	Name      string
 	ID        uint32 // For binary protocol, there is no Name but only ID
 	SQLText   string
-	SQLVar    *expressions.Variable
+	SQLVar    *expression.Variable
 	SQLStmt   stmt.Statement // The parsed statement from sql text with placeholder
-	Params    []*expressions.ParamMarker
+	Params    []*expression.ParamMarker
 	Fields    []*field.ResultField
 
 	Text string

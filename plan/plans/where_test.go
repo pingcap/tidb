@@ -15,7 +15,7 @@ package plans_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
@@ -41,12 +41,12 @@ func (t *testWhereSuit) TestWhere(c *C) {
 	tblPlan := &testTablePlan{t.data, []string{"id", "name"}, 0}
 	pln := &plans.FilterDefaultPlan{
 		Plan: tblPlan,
-		Expr: &expressions.BinaryOperation{
+		Expr: &expression.BinaryOperation{
 			Op: opcode.GE,
-			L: &expressions.Ident{
+			L: &expression.Ident{
 				CIStr: model.NewCIStr("id"),
 			},
-			R: expressions.Value{
+			R: expression.Value{
 				Val: 30,
 			},
 		},

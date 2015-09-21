@@ -15,7 +15,7 @@ package plans_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
@@ -42,7 +42,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	sl1 := &plans.SelectList{
 		Fields: []*field.Field{
 			{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr("name"),
 				},
 			},
@@ -67,12 +67,12 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	sl2 := &plans.SelectList{
 		Fields: []*field.Field{
 			{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr("name"),
 				},
 			},
 			{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr("id"),
 				},
 			},
@@ -95,7 +95,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 	sl3 := &plans.SelectList{
 		Fields: []*field.Field{
 			{
-				Expr: &expressions.Ident{
+				Expr: &expression.Ident{
 					CIStr: model.NewCIStr("nosuchfield"),
 				},
 			},
@@ -116,7 +116,7 @@ func (s *testFieldsSuit) TestSelectExprPlan(c *C) {
 	pln := &plans.SelectEmptyFieldListPlan{
 		Fields: []*field.Field{
 			{
-				Expr: &expressions.Value{
+				Expr: &expression.Value{
 					Val: "data",
 				},
 			},

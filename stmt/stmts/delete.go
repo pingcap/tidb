@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
@@ -136,7 +135,7 @@ func (s *DeleteStmt) hitWhere(ctx context.Context, t table.Table, data []interfa
 	for _, col := range t.Cols() {
 		m[col.Name.L] = data[col.Offset]
 	}
-	ok, err := expressions.EvalBoolExpr(ctx, s.Where, m)
+	ok, err := expression.EvalBoolExpr(ctx, s.Where, m)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

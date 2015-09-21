@@ -26,7 +26,6 @@ import (
 	"strings"
 	
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/stmt"
 	mysql "github.com/pingcap/tidb/mysqldef"
 )
@@ -49,7 +48,7 @@ type lexer struct {
 	ungetBuf	[]byte
 	root		bool
 	prepare		bool 
-	ParamList	[]*expressions.ParamMarker
+	ParamList	[]*expression.ParamMarker
 	stmtStartPos 	int
 }
 

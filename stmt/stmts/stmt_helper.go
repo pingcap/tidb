@@ -17,7 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -35,7 +35,7 @@ func getDefaultValue(ctx context.Context, c *column.Col) (interface{}, bool, err
 			return nil, true, nil
 		}
 
-		value, err := expressions.GetTimeValue(ctx, c.DefaultValue, c.Tp, c.Decimal)
+		value, err := expression.GetTimeValue(ctx, c.DefaultValue, c.Tp, c.Decimal)
 		if err != nil {
 			return nil, true, errors.Errorf("Field '%s' get default value fail - %s", c.Name, errors.Trace(err))
 		}
