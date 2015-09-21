@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
@@ -47,7 +46,7 @@ type VariableAssignment struct {
 // See: https://github.com/mysql/mysql-server/blob/5.7/sql/set_var.cc#L679
 func (v *VariableAssignment) getValue(ctx context.Context) (interface{}, error) {
 	switch vv := v.Value.(type) {
-	case *expressions.Ident:
+	case *expression.Ident:
 		return vv.O, nil
 	default:
 		return vv.Eval(ctx, nil)

@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/plan"
@@ -91,7 +90,7 @@ type groupRow struct {
 func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, outRow []interface{}, in []interface{}) error {
 	// group by items can not contain aggregate field, so we can eval them safely.
 	m := map[interface{}]interface{}{}
-	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 		if err == nil {
 			return v, nil
@@ -106,7 +105,7 @@ func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, 
 		return getIdentValueFromOuterQuery(ctx, name)
 	}
 
-	m[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
+	m[expression.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
 		// position is in [1, len(fields)], so we must decrease 1 to get correct index
 		// TODO: check position invalidation
 		return outRow[position-1], nil
@@ -134,7 +133,7 @@ func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{})
 
 func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
-	m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 		if err == nil {
 			return v, nil
@@ -162,7 +161,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 	// Eval aggregate field results in ctx
 	for i := range r.AggFields {
 		if i < r.HiddenFieldOffset {
-			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 				if err == nil {
 					return v, nil
@@ -177,7 +176,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 			// 	select c1 as a from t having count(a) = 1
 			// because all the select list data is generated before, so we can get it
 			// when handling hidden field.
-			m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 				if err == nil {
 					return v, nil
@@ -200,7 +199,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 		// so we don't evaluate count(*) in In expression, and will get an invalid data in AggDone phase for it.
 		// mention all aggregate functions
 		// TODO: optimize, we can get these aggregate functions only once and reuse
-		aggs := expressions.MentionedAggregateFuncs(r.Fields[i].Expr)
+		aggs := expression.MentionedAggregateFuncs(r.Fields[i].Expr)
 		for _, agg := range aggs {
 			if _, err := agg.Eval(ctx, m); err != nil {
 				return err
@@ -213,7 +212,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 
 func (r *GroupByDefaultPlan) evalAggDone(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}) error {
-	m[expressions.ExprAggDone] = true
+	m[expression.ExprAggDone] = true
 
 	var err error
 	// Eval aggregate field results done in ctx
@@ -235,7 +234,7 @@ func (r *GroupByDefaultPlan) evalEmptyTable(ctx context.Context) ([]interface{},
 
 	out := make([]interface{}, len(r.Fields))
 	// aggregate empty record set
-	m := map[interface{}]interface{}{expressions.ExprEvalArgAggEmpty: true}
+	m := map[interface{}]interface{}{expression.ExprEvalArgAggEmpty: true}
 
 	var err error
 	for i, fld := range r.Fields {

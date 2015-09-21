@@ -23,7 +23,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/coldef"
@@ -74,9 +73,9 @@ func (s *CreateUserStmt) SetText(text string) {
 }
 
 func composeUserTableFilter(name string, host string) expression.Expression {
-	nameMatch := expressions.NewBinaryOperation(opcode.EQ, &expressions.Ident{CIStr: model.NewCIStr("User")}, &expressions.Value{Val: name})
-	hostMatch := expressions.NewBinaryOperation(opcode.EQ, &expressions.Ident{CIStr: model.NewCIStr("Host")}, &expressions.Value{Val: host})
-	return expressions.NewBinaryOperation(opcode.AndAnd, nameMatch, hostMatch)
+	nameMatch := expression.NewBinaryOperation(opcode.EQ, &expression.Ident{CIStr: model.NewCIStr("User")}, &expression.Value{Val: name})
+	hostMatch := expression.NewBinaryOperation(opcode.EQ, &expression.Ident{CIStr: model.NewCIStr("Host")}, &expression.Value{Val: host})
+	return expression.NewBinaryOperation(opcode.AndAnd, nameMatch, hostMatch)
 }
 
 func composeUserTableRset() *rsets.JoinRset {
@@ -136,13 +135,13 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 			continue
 		}
 		value := make([]expression.Expression, 0, 3)
-		value = append(value, expressions.Value{Val: host})
-		value = append(value, expressions.Value{Val: userName})
+		value = append(value, expression.Value{Val: host})
+		value = append(value, expression.Value{Val: userName})
 		if spec.AuthOpt.ByAuthString {
-			value = append(value, expressions.Value{Val: spec.AuthOpt.AuthString})
+			value = append(value, expression.Value{Val: spec.AuthOpt.AuthString})
 		} else {
 			// TODO: Maybe we should hash the string here?
-			value = append(value, expressions.Value{Val: spec.AuthOpt.HashString})
+			value = append(value, expression.Value{Val: spec.AuthOpt.HashString})
 		}
 		values = append(values, value)
 	}
@@ -193,13 +192,13 @@ func (s *SetPwdStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	userName := strs[0]
 	host := strs[1]
 	// Update mysql.user
-	asgn := expressions.Assignment{
+	asgn := expression.Assignment{
 		ColName: "Password",
-		Expr:    expressions.Value{Val: s.Password},
+		Expr:    expression.Value{Val: s.Password},
 	}
 	st := &UpdateStmt{
 		TableRefs: composeUserTableRset(),
-		List:      []expressions.Assignment{asgn},
+		List:      []expression.Assignment{asgn},
 		Where:     composeUserTableFilter(userName, host),
 	}
 	return st.Exec(ctx)

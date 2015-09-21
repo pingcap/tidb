@@ -16,7 +16,6 @@ package rsets
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -37,7 +36,7 @@ func (s *testGroupByRsetSuite) SetUpSuite(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
 	}
 
 	selectList := &plans.SelectList{
@@ -46,7 +45,7 @@ func (s *testGroupByRsetSuite) SetUpSuite(c *C) {
 		Fields:            fields,
 	}
 
-	by := []expression.Expression{&expressions.Ident{CIStr: model.NewCIStr("name")}}
+	by := []expression.Expression{&expression.Ident{CIStr: model.NewCIStr("name")}}
 
 	s.r = &GroupByRset{Src: tblPlan, SelectList: selectList, By: by}
 }
@@ -60,45 +59,45 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// `select id, name from t group by abc`
-	s.r.By[0] = expressions.Value{Val: "abc"}
+	s.r.By[0] = expression.Value{Val: "abc"}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
 	// `select id, name from t group by 1`
-	s.r.By[0] = expressions.Value{Val: int64(1)}
+	s.r.By[0] = expression.Value{Val: int64(1)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
-	s.r.By[0] = expressions.Value{Val: uint64(1)}
+	s.r.By[0] = expression.Value{Val: uint64(1)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
 
 	// `select id, name from t group by 0`
-	s.r.By[0] = expressions.Value{Val: int64(0)}
+	s.r.By[0] = expression.Value{Val: int64(0)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)
 
-	fldExpr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{Val: 1}}, false)
+	fldExpr, err := expression.NewCall("count", []expression.Expression{expression.Value{Val: 1}}, false)
 	c.Assert(err, IsNil)
 
 	// `select count(1) as a, name from t group by 1`
 	fld := &field.Field{Expr: fldExpr, Name: "a"}
 	s.r.SelectList.Fields[0] = fld
 
-	s.r.By[0] = expressions.Value{Val: int64(1)}
+	s.r.By[0] = expression.Value{Val: int64(1)}
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)
 
 	// check ambiguous field, like `select id as name, name from t group by name`
-	s.r.By[0] = &expressions.Ident{CIStr: model.NewCIStr("name")}
+	s.r.By[0] = &expression.Ident{CIStr: model.NewCIStr("name")}
 
-	fldx := &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("id")}, Name: "name"}
-	fldy := &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("name")}, Name: "name"}
+	fldx := &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("id")}, Name: "name"}
+	fldy := &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("name")}, Name: "name"}
 	s.r.SelectList.Fields = []*field.Field{fldx, fldy}
 
 	s.r.SelectList.ResultFields[0].Name = "name"
@@ -108,7 +107,7 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	c.Assert(err, NotNil)
 
 	// check aggregate function reference, like `select count(1) as a, name from t group by a + 1`
-	expr := expressions.NewBinaryOperation(opcode.Plus, &expressions.Ident{CIStr: model.NewCIStr("a")}, expressions.Value{Val: 1})
+	expr := expression.NewBinaryOperation(opcode.Plus, &expression.Ident{CIStr: model.NewCIStr("a")}, expression.Value{Val: 1})
 
 	s.r.By[0] = expr
 
@@ -127,7 +126,7 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 }
 
 func (s *testGroupByRsetSuite) TestGroupByHasAmbiguousField(c *C) {
-	fld := &field.Field{Expr: expressions.Value{Val: 1}}
+	fld := &field.Field{Expr: expression.Value{Val: 1}}
 
 	// check `1`
 	fields := []*field.Field{fld}
@@ -137,7 +136,7 @@ func (s *testGroupByRsetSuite) TestGroupByHasAmbiguousField(c *C) {
 	c.Assert(ret, IsFalse)
 
 	// check `c1 as c2, c1 as c2`
-	fld = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("c1")}, Name: "c2"}
+	fld = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("c1")}, Name: "c2"}
 	fields = []*field.Field{fld, fld}
 	indices = []int{0, 1}
 
@@ -145,10 +144,10 @@ func (s *testGroupByRsetSuite) TestGroupByHasAmbiguousField(c *C) {
 	c.Assert(ret, IsFalse)
 
 	// check `c1+c2 as c2, c1+c3 as c2`
-	exprx := expressions.NewBinaryOperation(opcode.Plus, expressions.Value{Val: "c1"},
-		expressions.Value{Val: "c2"})
-	expry := expressions.NewBinaryOperation(opcode.Plus, expressions.Value{Val: "c1"},
-		expressions.Value{Val: "c3"})
+	exprx := expression.NewBinaryOperation(opcode.Plus, expression.Value{Val: "c1"},
+		expression.Value{Val: "c2"})
+	expry := expression.NewBinaryOperation(opcode.Plus, expression.Value{Val: "c1"},
+		expression.Value{Val: "c3"})
 
 	fldx := &field.Field{Expr: exprx, Name: "c2"}
 	fldy := &field.Field{Expr: expry, Name: "c2"}
@@ -159,8 +158,8 @@ func (s *testGroupByRsetSuite) TestGroupByHasAmbiguousField(c *C) {
 	c.Assert(ret, IsFalse)
 
 	// check `c1 as c2, c3 as c2`
-	fldx = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("c1")}, Name: "c2"}
-	fldy = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("c3")}, Name: "c2"}
+	fldx = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("c1")}, Name: "c2"}
+	fldy = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("c3")}, Name: "c2"}
 	fields = []*field.Field{fldx, fldy}
 	indices = []int{0, 1}
 

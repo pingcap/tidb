@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
@@ -62,7 +61,7 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		if srcRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			v, err0 := GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
 			if err0 == nil {
 				return v, nil
@@ -71,13 +70,13 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			// try to find in outer query
 			return getIdentValueFromOuterQuery(ctx, name)
 		}
-		r.evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
+		r.evalArgs[expression.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
 			// position is in [1, len(fields)], so we must decrease 1 to get correct index
 			// TODO: check position invalidation
 			return srcRow.Data[position-1], nil
 		}
 		var v bool
-		v, err = expressions.EvalBoolExpr(ctx, r.Expr, r.evalArgs)
+		v, err = expression.EvalBoolExpr(ctx, r.Expr, r.evalArgs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -17,7 +17,6 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
@@ -48,7 +47,7 @@ func (t *testOrderBySuit) TestOrderBy(c *C) {
 		},
 		Src: tblPlan,
 		By: []expression.Expression{
-			&expressions.Ident{
+			&expression.Ident{
 				CIStr: model.NewCIStr("id"),
 			},
 		},

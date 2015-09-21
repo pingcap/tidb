@@ -16,7 +16,7 @@ package plans_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -79,7 +79,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "CROSS",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{Val: true},
+		On:     expression.Value{Val: true},
 	}
 	rset := rsets.Recordset{
 		Plan: joinPlan,
@@ -95,7 +95,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "LEFT",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{Val: true},
+		On:     expression.Value{Val: true},
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
@@ -107,15 +107,15 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "RIGHT",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{Val: true},
+		On:     expression.Value{Val: true},
 	}
 
-	expr := &expressions.BinaryOperation{
+	expr := &expression.BinaryOperation{
 		Op: opcode.LT,
-		L: &expressions.Ident{
+		L: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
-		R: expressions.Value{
+		R: expression.Value{
 			Val: 100,
 		},
 	}
@@ -133,7 +133,7 @@ func (s *testJoinSuit) TestJoin(c *C) {
 		Right:  tblPlan2,
 		Type:   "FULL",
 		Fields: []*field.ResultField{},
-		On:     expressions.Value{Val: true},
+		On:     expression.Value{Val: true},
 	}
 
 	rset.Do(func(data []interface{}) (bool, error) {
