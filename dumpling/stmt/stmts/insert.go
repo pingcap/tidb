@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
@@ -53,9 +52,9 @@ type InsertIntoStmt struct {
 	Lists       [][]expression.Expression
 	Sel         *SelectStmt
 	TableIdent  table.Ident
-	Setlist     []*expressions.Assignment
+	Setlist     []*expression.Assignment
 	Priority    int
-	OnDuplicate []expressions.Assignment
+	OnDuplicate []expression.Assignment
 
 	Text string
 }
@@ -259,7 +258,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		marked := make(map[int]struct{}, len(list))
 		for i, expr := range list {
 			// For "insert into t values (default)" Default Eval.
-			m[expressions.ExprEvalDefaultName] = cols[i].Name.O
+			m[expression.ExprEvalDefaultName] = cols[i].Name.O
 
 			val, evalErr := expr.Eval(ctx, m)
 			if evalErr != nil {

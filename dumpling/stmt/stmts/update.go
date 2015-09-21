@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
@@ -46,7 +45,7 @@ var _ stmt.Statement = (*UpdateStmt)(nil)
 // See: https://dev.mysql.com/doc/refman/5.7/en/update.html
 type UpdateStmt struct {
 	TableRefs     *rsets.JoinRset
-	List          []expressions.Assignment
+	List          []expression.Assignment
 	Where         expression.Expression
 	Order         *rsets.OrderByRset
 	Limit         *rsets.LimitRset
@@ -85,7 +84,7 @@ func (s *UpdateStmt) SetText(text string) {
 	s.Text = text
 }
 
-func getUpdateColumns(t table.Table, assignList []expressions.Assignment, isMultipleTable bool, tblAliasMap map[string]string) ([]*column.Col, error) {
+func getUpdateColumns(t table.Table, assignList []expression.Assignment, isMultipleTable bool, tblAliasMap map[string]string) ([]*column.Col, error) {
 	// TODO: We should check the validate if assignList in somewhere else. Maybe in building plan.
 	// TODO: We should use field.GetFieldIndex to replace this function.
 	tcols := make([]*column.Col, 0, len(assignList))
@@ -125,7 +124,7 @@ func getInsertValue(name string, cols []*column.Col, row []interface{}) (interfa
 	return nil, errors.Errorf("unknown field %s", name)
 }
 
-func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table, tcols []*column.Col, assignList []expressions.Assignment, insertData []interface{}, args map[interface{}]interface{}) error {
+func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table, tcols []*column.Col, assignList []expression.Assignment, insertData []interface{}, args map[interface{}]interface{}) error {
 	if err := t.LockRow(ctx, h, true); err != nil {
 		return errors.Trace(err)
 	}
@@ -144,7 +143,7 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 		}
 	}
 	if insertData != nil {
-		m[expressions.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
+		m[expression.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
 			return getInsertValue(name, t.Cols(), insertData)
 		}
 	}
@@ -276,7 +275,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		}
 		// Set EvalIdentFunc
 		m := make(map[interface{}]interface{})
-		m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			return plans.GetIdentValue(name, p.GetFields(), rowData, field.DefaultFieldFlag)
 		}
 		// Update rows

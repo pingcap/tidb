@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -112,7 +111,7 @@ func (r *TableDefaultPlan) Explain(w format.Formatter) {
 	w.Format("┌Iterate all rows of table %q\n└Output field names %v\n", r.T.TableName(), field.RFQNames(r.Fields))
 }
 
-func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expressions.BinaryOperation) (plan.Plan, bool, error) {
+func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, bool, error) {
 	ok, cn, rval, err := x.IsIdentRelOpVal()
 	if err != nil {
 		return r, false, err
@@ -151,7 +150,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expressions.Binar
 	}, true, nil
 }
 
-func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expressions.Ident, trueValue bool) (plan.Plan, bool, error) { //TODO !ident
+func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident, trueValue bool) (plan.Plan, bool, error) { //TODO !ident
 	t := r.T
 	for _, v := range t.Cols() {
 		if x.L != v.Name.L {
@@ -184,14 +183,14 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expressions.Ident
 	return r, false, nil
 }
 
-func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expressions.IsNull) (plan.Plan, bool, error) {
-	if _, ok := x.Expr.(*expressions.Ident); !ok {
+func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNull) (plan.Plan, bool, error) {
+	if _, ok := x.Expr.(*expression.Ident); !ok {
 		// if expression is not Ident expression, we cannot use index
 		// e.g, "(x > null) is not null", (x > null) is a binary expression, we must evaluate it first
 		return r, false, nil
 	}
 
-	cns := expressions.MentionedColumns(x.Expr)
+	cns := expression.MentionedColumns(x.Expr)
 	if len(cns) == 0 {
 		return r, false, nil
 	}
@@ -231,7 +230,7 @@ func (r *TableDefaultPlan) Filter(ctx context.Context, expr expression.Expressio
 
 func (r *TableDefaultPlan) filter(ctx context.Context, expr expression.Expression, checkColumns bool) (plan.Plan, bool, error) {
 	if checkColumns {
-		colNames := expressions.MentionedColumns(expr)
+		colNames := expression.MentionedColumns(expr)
 		// make sure all mentioned column names are in Fields
 		// if not, e.g. the expr has two table like t1.c1 = t2.c2, we can't use filter
 		if !field.ContainAllFieldNames(colNames, r.Fields, field.DefaultFieldFlag) {
@@ -240,17 +239,17 @@ func (r *TableDefaultPlan) filter(ctx context.Context, expr expression.Expressio
 	}
 
 	switch x := expr.(type) {
-	case *expressions.BinaryOperation:
+	case *expression.BinaryOperation:
 		return r.filterBinOp(ctx, x)
-	case *expressions.Ident:
+	case *expression.Ident:
 		return r.filterIdent(ctx, x, true)
-	case *expressions.IsNull:
+	case *expression.IsNull:
 		return r.filterIsNull(ctx, x)
-	case *expressions.UnaryOperation:
+	case *expression.UnaryOperation:
 		if x.Op != '!' {
 			break
 		}
-		if operand, ok := x.V.(*expressions.Ident); ok {
+		if operand, ok := x.V.(*expression.Ident); ok {
 			return r.filterIdent(ctx, operand, false)
 		}
 	}

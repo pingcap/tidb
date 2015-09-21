@@ -19,13 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
-
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/rset"
-	"github.com/pingcap/tidb/util/format"
 )
 
 func TestT(t *testing.T) {
@@ -79,152 +73,152 @@ func (c *mockCtx) ClearValue(key fmt.Stringer) {
 	delete(c.vars, key)
 }
 
-type mockRecordset struct {
-	rows   [][]interface{}
-	fields []string
-	offset int
-	cursor int
-}
-
-func newMockRecordset() *mockRecordset {
-	return &mockRecordset{
-		rows: [][]interface{}{
-			{1, 1},
-			{2, 2},
-		},
-		fields: []string{"id", "value"},
-		offset: 2,
-	}
-}
-
-func (r *mockRecordset) Do(f func(data []interface{}) (more bool, err error)) error {
-	for i := range r.rows {
-		if more, err := f(r.rows[i]); !more || err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *mockRecordset) Fields() ([]*field.ResultField, error) {
-	var ret []*field.ResultField
-	for _, fn := range r.fields {
-		resultField := &field.ResultField{Name: fn, TableName: "t"}
-		resultField.Col.Name = model.NewCIStr(fn)
-		ret = append(ret, resultField)
-	}
-
-	return ret[:r.offset], nil
-}
-
-func (r *mockRecordset) FirstRow() ([]interface{}, error) {
-	return r.rows[0], nil
-}
-
-func (r *mockRecordset) Rows(limit, offset int) ([][]interface{}, error) {
-	var ret [][]interface{}
-	for _, row := range r.rows {
-		ret = append(ret, row[:r.offset])
-	}
-
-	return ret, nil
-}
-
-func (r *mockRecordset) SetFieldOffset(offset int) {
-	r.offset = offset
-}
-
-func (r *mockRecordset) Next() (row *plan.Row, err error) {
-	if r.cursor == len(r.rows) {
-		return
-	}
-	row = &plan.Row{Data: r.rows[r.cursor]}
-	r.cursor++
-	return
-}
-
-func (r *mockRecordset) Close() error {
-	r.cursor = 0
-	return nil
-}
-
-type mockStatement struct {
-	text string
-	rset *mockRecordset
-	plan *mockPlan
-}
-
-func newMockStatement() *mockStatement {
-	ms := &mockStatement{rset: newMockRecordset()}
-	ms.plan = newMockPlan(ms.rset)
-	return ms
-}
-
-func (s *mockStatement) Exec(ctx context.Context) (rset.Recordset, error) {
-	return s.rset, nil
-}
-
-func (s *mockStatement) Explain(ctx context.Context, w format.Formatter) {
-}
-
-func (s *mockStatement) IsDDL() bool {
-	return false
-}
-
-func (s *mockStatement) OriginText() string {
-	return s.text
-}
-
-func (s *mockStatement) SetText(text string) {
-	s.text = text
-}
-
-func (s *mockStatement) Plan(ctx context.Context) (plan.Plan, error) {
-	return s.plan, nil
-}
-
-func (s *mockStatement) SetFieldOffset(offset int) {
-	s.rset.SetFieldOffset(offset)
-}
-
-func (s *mockStatement) String() string {
-	return "mock statement"
-}
-
-type mockPlan struct {
-	rset   *mockRecordset
-	rows   [][]interface{}
-	cursor int
-}
-
-func newMockPlan(rset *mockRecordset) *mockPlan {
-	return &mockPlan{rset: rset}
-}
-
-func (p *mockPlan) Explain(w format.Formatter) {}
-
-func (p *mockPlan) GetFields() []*field.ResultField {
-	fields, _ := p.rset.Fields()
-	return fields[:p.rset.offset]
-}
-
-func (p *mockPlan) Filter(ctx context.Context, expr Expression) (plan.Plan, bool, error) {
-	return p, false, nil
-}
-
-func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
-	if p.rows == nil {
-		p.rows, _ = p.rset.Rows(-1, 0)
-	}
-	if p.cursor == len(p.rows) {
-		return
-	}
-	row = &plan.Row{Data: p.rows[p.cursor]}
-	p.cursor++
-	return
-}
-
-func (p *mockPlan) Close() error {
-	p.cursor = 0
-	return nil
-}
+//type mockRecordset struct {
+//	rows   [][]interface{}
+//	fields []string
+//	offset int
+//	cursor int
+//}
+//
+//func newMockRecordset() *mockRecordset {
+//	return &mockRecordset{
+//		rows: [][]interface{}{
+//			{1, 1},
+//			{2, 2},
+//		},
+//		fields: []string{"id", "value"},
+//		offset: 2,
+//	}
+//}
+//
+//func (r *mockRecordset) Do(f func(data []interface{}) (more bool, err error)) error {
+//	for i := range r.rows {
+//		if more, err := f(r.rows[i]); !more || err != nil {
+//			return err
+//		}
+//	}
+//	return nil
+//}
+//
+//func (r *mockRecordset) Fields() ([]*field.ResultField, error) {
+//	var ret []*field.ResultField
+//	for _, fn := range r.fields {
+//		resultField := &field.ResultField{Name: fn, TableName: "t"}
+//		resultField.Col.Name = model.NewCIStr(fn)
+//		ret = append(ret, resultField)
+//	}
+//
+//	return ret[:r.offset], nil
+//}
+//
+//func (r *mockRecordset) FirstRow() ([]interface{}, error) {
+//	return r.rows[0], nil
+//}
+//
+//func (r *mockRecordset) Rows(limit, offset int) ([][]interface{}, error) {
+//	var ret [][]interface{}
+//	for _, row := range r.rows {
+//		ret = append(ret, row[:r.offset])
+//	}
+//
+//	return ret, nil
+//}
+//
+//func (r *mockRecordset) SetFieldOffset(offset int) {
+//	r.offset = offset
+//}
+//
+//func (r *mockRecordset) Next() (row *plan.Row, err error) {
+//	if r.cursor == len(r.rows) {
+//		return
+//	}
+//	row = &plan.Row{Data: r.rows[r.cursor]}
+//	r.cursor++
+//	return
+//}
+//
+//func (r *mockRecordset) Close() error {
+//	r.cursor = 0
+//	return nil
+//}
+//
+//type mockStatement struct {
+//	text string
+//	rset *mockRecordset
+//	plan *mockPlan
+//}
+//
+//func newMockStatement() *mockStatement {
+//	ms := &mockStatement{rset: newMockRecordset()}
+//	ms.plan = newMockPlan(ms.rset)
+//	return ms
+//}
+//
+//func (s *mockStatement) Exec(ctx context.Context) (rset.Recordset, error) {
+//	return s.rset, nil
+//}
+//
+//func (s *mockStatement) Explain(ctx context.Context, w format.Formatter) {
+//}
+//
+//func (s *mockStatement) IsDDL() bool {
+//	return false
+//}
+//
+//func (s *mockStatement) OriginText() string {
+//	return s.text
+//}
+//
+//func (s *mockStatement) SetText(text string) {
+//	s.text = text
+//}
+//
+//func (s *mockStatement) Plan(ctx context.Context) (plan.Plan, error) {
+//	return s.plan, nil
+//}
+//
+//func (s *mockStatement) SetFieldOffset(offset int) {
+//	s.rset.SetFieldOffset(offset)
+//}
+//
+//func (s *mockStatement) String() string {
+//	return "mock statement"
+//}
+//
+//type mockPlan struct {
+//	rset   *mockRecordset
+//	rows   [][]interface{}
+//	cursor int
+//}
+//
+//func newMockPlan(rset *mockRecordset) *mockPlan {
+//	return &mockPlan{rset: rset}
+//}
+//
+//func (p *mockPlan) Explain(w format.Formatter) {}
+//
+//func (p *mockPlan) GetFields() []*field.ResultField {
+//	fields, _ := p.rset.Fields()
+//	return fields[:p.rset.offset]
+//}
+//
+//func (p *mockPlan) Filter(ctx context.Context, expr Expression) (plan.Plan, bool, error) {
+//	return p, false, nil
+//}
+//
+//func (p *mockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+//	if p.rows == nil {
+//		p.rows, _ = p.rset.Rows(-1, 0)
+//	}
+//	if p.cursor == len(p.rows) {
+//		return
+//	}
+//	row = &plan.Row{Data: p.rows[p.cursor]}
+//	p.cursor++
+//	return
+//}
+//
+//func (p *mockPlan) Close() error {
+//	p.cursor = 0
+//	return nil
+//}

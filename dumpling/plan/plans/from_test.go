@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -144,12 +144,12 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 	c.Assert(reflect.DeepEqual(ret, excepted), Equals, true)
 
 	// expr: id > 0
-	expr := &expressions.BinaryOperation{
+	expr := &expression.BinaryOperation{
 		Op: opcode.GE,
-		L: &expressions.Ident{
+		L: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
-		R: &expressions.Value{
+		R: &expression.Value{
 			Val: 5,
 		},
 	}
@@ -176,7 +176,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 	}
 	p.tbl.AddIndex(idxCol)
 
-	expr4 := &expressions.Ident{
+	expr4 := &expression.Ident{
 		CIStr: model.NewCIStr("id"),
 	}
 	_, filtered, err = pln.FilterForUpdateAndDelete(p, expr4)
@@ -184,8 +184,8 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 	// with no index
 	c.Assert(filtered, IsTrue)
 
-	expr5 := &expressions.IsNull{
-		Expr: &expressions.Ident{
+	expr5 := &expression.IsNull{
+		Expr: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
 		Not: true,
