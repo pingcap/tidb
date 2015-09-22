@@ -33,8 +33,6 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
 		Addr:     ":4001",
-		User:     "root",
-		Password: "",
 		LogLevel: "debug",
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -68,4 +66,8 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
+}
+
+func (ts *TidbTestSuite) TestAuth(c *C) {
+	runTestAuth(c)
 }
