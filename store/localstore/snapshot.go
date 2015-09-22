@@ -25,9 +25,9 @@ import (
 )
 
 var (
-	_ kv.Snapshot   = (*dbSnapshot)(nil)
-	_ kv.MvccReader = (*dbSnapshot)(nil)
-	_ kv.Iterator   = (*dbIter)(nil)
+	_ kv.Snapshot     = (*dbSnapshot)(nil)
+	_ kv.MvccSnapshot = (*dbSnapshot)(nil)
+	_ kv.Iterator     = (*dbIter)(nil)
 )
 
 type dbSnapshot struct {
@@ -109,7 +109,6 @@ type dbIter struct {
 	exceptedVersion kv.Version
 	k               kv.Key
 	v               []byte
-	ver             kv.Version
 }
 
 func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {

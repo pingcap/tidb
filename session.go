@@ -144,7 +144,7 @@ func (s *session) FinishTxn(rollback bool) error {
 		return s.txn.Rollback()
 	}
 
-	err := s.txn.Commit()
+	_, err := s.txn.Commit()
 	if err != nil {
 		log.Warnf("txn:%s, %v", s.txn, err)
 		return errors.Trace(err)
@@ -347,7 +347,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		return s.txn, nil
 	}
 	if forceNew {
-		err = s.txn.Commit()
+		_, err = s.txn.Commit()
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
 		if err != nil {
 			return nil, err

@@ -95,6 +95,15 @@ func (s *dbStore) UUID() string {
 	return s.uuid
 }
 
+func (s *dbStore) GetMvccSnapshot() (kv.MvccSnapshot, error) {
+	engineSnapshot, err := s.db.GetSnapshot()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// dbSnapshot implements MvccSnapshot interface.
+	return &dbSnapshot{engineSnapshot}, nil
+}
+
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()

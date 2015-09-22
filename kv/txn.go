@@ -51,7 +51,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			return errors.Trace(err)
 		}
 
-		err = txn.Commit()
+		_, err = txn.Commit()
 		if retryable && IsRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()

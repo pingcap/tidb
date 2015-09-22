@@ -60,7 +60,9 @@ type Version struct {
 }
 
 var (
+	// MaxVersion is the maximum version, notice that it's not a valid version
 	MaxVersion = Version{Ver: math.MaxUint64}
+	// MinVersion is the minimum version, it's not a valid version, too.
 	MinVersion = Version{Ver: 0}
 )
 
@@ -91,7 +93,7 @@ type Transaction interface {
 	// Deletes removes the entry for key k from KV store.
 	Delete(k Key) error
 	// Commit commites the transaction operations to KV store.
-	Commit() error
+	Commit() (Version, error)
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
 	// String implements Stringer.String() interface.
@@ -100,7 +102,8 @@ type Transaction interface {
 	LockKeys(keys ...Key) error
 }
 
-type MvccReader interface {
+// MvccSnapshot is used to get/seek a specific verion in a snaphot.
+type MvccSnapshot interface {
 	// MvccGet returns the specific version of given key, if the version doesn't
 	// exists, returns the nearest(lower) version's data.
 	MvccGet(k Key, ver Version) ([]byte, error)
@@ -131,6 +134,8 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
+	// MvccSnapshot get a snaphot that cloud read any version of data.
+	GetMvccSnapshot() (MvccSnapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID
