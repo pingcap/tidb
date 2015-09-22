@@ -1646,6 +1646,10 @@ InsertRest:
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
+|	'(' ')' ValueSym ExpressionListList
+	{
+		$$ = &stmts.InsertIntoStmt{Lists:  $4.([][]expression.Expression)}
+	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
 		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
