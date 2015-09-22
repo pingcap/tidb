@@ -161,3 +161,43 @@ func (s *testStmtSuite) TestMultiTableDelete(c *C) {
 	c.Assert(cnt, Equals, 3)
 	rows.Close()
 }
+
+func (s *testStmtSuite) TestQualifedDelete(c *C) {
+	mustExec(c, s.testDB, "drop table if exists t1")
+	mustExec(c, s.testDB, "drop table if exists t2")
+	mustExec(c, s.testDB, "create table t1 (c1 int, c2 int, index (c1))")
+	mustExec(c, s.testDB, "create table t2 (c1 int, c2 int)")
+	mustExec(c, s.testDB, "insert into t1 values (1, 1), (2, 2)")
+
+	// delete with index
+	r := mustExec(c, s.testDB, "delete from t1 where t1.c1 = 1")
+	checkResult(c, r, 1, 0)
+
+	// delete with no index
+	r = mustExec(c, s.testDB, "delete from t1 where t1.c2 = 2")
+	checkResult(c, r, 1, 0)
+
+	rows, err := s.testDB.Query("select * from t1")
+	c.Assert(err, IsNil)
+	cnt := 0
+	for rows.Next() {
+		cnt++
+	}
+	rows.Close()
+	c.Assert(cnt, Equals, 0)
+
+	_, err = s.testDB.Exec("delete from t1 as a where a.c1 = 1")
+	c.Assert(err, NotNil)
+
+	mustExec(c, s.testDB, "insert into t1 values (1, 1), (2, 2)")
+	mustExec(c, s.testDB, "insert into t2 values (2, 1), (3,1)")
+
+	r = mustExec(c, s.testDB, "delete t1, t2 from t1 join t2 where t1.c1 = t2.c2")
+	checkResult(c, r, 3, 0)
+
+	mustExec(c, s.testDB, "insert into t2 values (2, 1), (3,1)")
+	r = mustExec(c, s.testDB, "delete a, b from t1 as a join t2 as b where a.c2 = b.c1")
+	checkResult(c, r, 2, 0)
+
+	mustExec(c, s.testDB, "drop table t1, t2")
+}
