@@ -4,3 +4,7 @@ go:
   - 1.5
     
 script: make
+
+addons:
+  hosts:
+    - localhost

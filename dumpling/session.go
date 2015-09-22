@@ -423,6 +423,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%s\";", mysql.SystemDB, mysql.UserTable, name, host)
 	rs, err := s.Execute(authSQL)
 	if err != nil {
+		log.Warnf("Encounter error when auth user %s. Error: %v", user, err)
 		return false
 	}
 	if len(rs) == 0 {
