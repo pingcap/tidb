@@ -172,7 +172,7 @@ func (txn *dbTxn) each(f func(iterator.Iterator) error) error {
 	return nil
 }
 
-func (txn *dbTxn) doCommit() error {
+func (txn *dbTxn) doCommit() (kv.Version, error) {
 	b := txn.store.newBatch()
 	keysLocked := make([]string, 0, len(txn.snapshotVals))
 	defer func() {
@@ -184,7 +184,7 @@ func (txn *dbTxn) doCommit() error {
 	for k, v := range txn.snapshotVals {
 		err := txn.store.tryConditionLockKey(txn.tID, k, v)
 		if err != nil {
-			return errors.Trace(err)
+			return kv.MinVersion, errors.Trace(err)
 		}
 		keysLocked = append(keysLocked, k)
 	}
@@ -192,7 +192,7 @@ func (txn *dbTxn) doCommit() error {
 	// Check dirty store
 	curVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
-		return errors.Trace(err)
+		return kv.MinVersion, errors.Trace(err)
 	}
 	err = txn.each(func(iter iterator.Iterator) error {
 		metaKey := codec.EncodeBytes(nil, iter.Key())
@@ -207,14 +207,14 @@ func (txn *dbTxn) doCommit() error {
 		return nil
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return kv.MinVersion, errors.Trace(err)
 	}
-	return txn.store.writeBatch(b)
+	return curVer, txn.store.writeBatch(b)
 }
 
-func (txn *dbTxn) Commit() error {
+func (txn *dbTxn) Commit() (kv.Version, error) {
 	if !txn.valid {
-		return ErrInvalidTxn
+		return kv.MinVersion, ErrInvalidTxn
 	}
 	log.Infof("commit txn %d", txn.tID)
 	defer func() {

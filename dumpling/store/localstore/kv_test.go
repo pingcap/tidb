@@ -151,7 +151,7 @@ func (s *testKVSuite) TestGetSet(c *C) {
 	mustGet(c, txn)
 
 	// Check transaction results
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
@@ -170,7 +170,7 @@ func (s *testKVSuite) TestSeek(c *C) {
 	checkSeek(c, txn)
 
 	// Check transaction results
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
@@ -191,7 +191,7 @@ func (s *testKVSuite) TestInc(c *C) {
 	c.Assert(n, Equals, int64(100))
 
 	// Check transaction results
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
@@ -211,7 +211,7 @@ func (s *testKVSuite) TestInc(c *C) {
 	err = txn.Delete(key)
 	c.Assert(err, IsNil)
 
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 
@@ -431,7 +431,7 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 			if err != nil {
 				return
 			}
-			err = txn.Commit()
+			_, err = txn.Commit()
 			if err == nil {
 				atomic.AddInt64(&success, 1)
 			}
@@ -445,7 +445,7 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete(b)
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 
@@ -459,7 +459,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Set(b, b)
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 
 	for i := 0; i < cnt; i++ {
@@ -470,7 +470,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 			txn1, err1 := s.s.Begin()
 			c.Assert(err1, IsNil)
 			txn1.Set(b, []byte("newValue"))
-			err1 = txn1.Commit()
+			_, err1 = txn1.Commit()
 			if err1 == nil {
 				atomic.AddInt64(&success, 1)
 			}
@@ -484,7 +484,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete(b)
 	c.Assert(err, IsNil)
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 
@@ -493,6 +493,6 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 	c.Assert(err, IsNil)
 	txn.Delete([]byte("b"))
 	txn.Inc([]byte("a"), 1)
-	err = txn.Commit()
+	_, err = txn.Commit()
 	c.Assert(err, IsNil)
 }

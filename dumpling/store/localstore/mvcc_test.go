@@ -2,7 +2,10 @@ package localstore
 
 import (
 	"bytes"
+	"fmt"
+	"time"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -15,7 +18,8 @@ type testMvccSuite struct {
 }
 
 func createMemStore() kv.Storage {
-	path := "memory:"
+	// avoid cache
+	path := fmt.Sprintf("memory://%d", time.Now().UnixNano())
 	d := Driver{
 		goleveldb.MemoryDriver{},
 	}
@@ -132,4 +136,65 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
+}
+
+func (t *testMvccSuite) TestMvccSnapshotGet(c *C) {
+	tx, _ := t.s.Begin()
+	b, err := tx.Get(encodeInt(1))
+	c.Assert(err, IsNil)
+	tx.Commit()
+
+	// Modify
+	tx, _ = t.s.Begin()
+	err = tx.Set(encodeInt(1), []byte("new"))
+	c.Assert(err, IsNil)
+	v, err := tx.Commit()
+	c.Assert(err, IsNil)
+
+	mvccSnapshot, err := t.s.GetMvccSnapshot()
+	b, err = mvccSnapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.MaxVersion)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, "new")
+
+	// Get last version
+	b, err = mvccSnapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.NewVersion(v.Ver-1))
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, string(encodeInt(1)))
+
+	// Get version not exists
+	b, err = mvccSnapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.MinVersion)
+	c.Assert(err, NotNil)
+}
+
+func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
+	tx, _ := t.s.Begin()
+	err := tx.Set(encodeInt(1), []byte("new"))
+	c.Assert(err, IsNil)
+	v, err := tx.Commit()
+	c.Assert(err, IsNil)
+
+	mvccSnapshot, err := t.s.GetMvccSnapshot()
+	c.Assert(err, IsNil)
+
+	// iter helper function
+	iterFunc := func(it kv.Iterator) bool {
+		found := false
+		for it.Valid() {
+			log.Info(it.Key(), it.Value())
+			if string(it.Value()) == "new" {
+				found = true
+			}
+			it, err = it.Next(nil)
+			c.Assert(err, IsNil)
+		}
+		return found
+	}
+
+	it := mvccSnapshot.NewMvccIterator(kv.EncodeKey(encodeInt(1)), kv.MaxVersion)
+	found := iterFunc(it)
+	c.Assert(found, IsTrue)
+
+	it = mvccSnapshot.NewMvccIterator(kv.EncodeKey(encodeInt(1)), kv.NewVersion(v.Ver-1))
+	found = iterFunc(it)
+	c.Assert(found, IsFalse)
 }
