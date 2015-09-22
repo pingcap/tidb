@@ -1637,13 +1637,13 @@ IntoOpt:
 	}
 
 InsertRest:
-	'(' ColumnNameList ')' ValueSym ExpressionListList
+	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
 		$$ = &stmts.InsertIntoStmt{
 			ColNames:   $2.([]string), 
 			Lists:      $5.([][]expression.Expression)}
 	}
-|	'(' ColumnNameList ')' SelectStmt
+|	'(' ColumnNameListOpt ')' SelectStmt
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
