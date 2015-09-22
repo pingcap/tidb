@@ -15,6 +15,7 @@ package kv
 
 import (
 	"bytes"
+	"errors"
 	"math"
 )
 
@@ -73,11 +74,26 @@ func NewVersion(v uint64) Version {
 	}
 }
 
+// Cmp returns the comparison result of two version.
+// The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
+func (v Version) Cmp(another Version) int {
+	if v.Ver > another.Ver {
+		return 1
+	} else if v.Ver < another.Ver {
+		return -1
+	}
+	return 0
+}
+
 // DecodeFn is a function that decode data after fetch from store.
 type DecodeFn func(raw interface{}) (interface{}, error)
 
 // EncodeFn is a function that encode data before put into store.
 type EncodeFn func(raw interface{}) (interface{}, error)
+
+// ErrNotCommitted is the error returned by CommitVersion when the this
+// transaction is not committed.
+var ErrNotCommitted = errors.New("this transaction is not committed")
 
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
@@ -93,7 +109,10 @@ type Transaction interface {
 	// Deletes removes the entry for key k from KV store.
 	Delete(k Key) error
 	// Commit commites the transaction operations to KV store.
-	Commit() (Version, error)
+	Commit() error
+	// CommitVersion returns the verion of this committed transaction. If this
+	// transaction has not been committed, returns ErrNotCommitted error.
+	CommitVersion() (Version, error)
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
 	// String implements Stringer.String() interface.

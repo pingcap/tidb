@@ -148,7 +148,9 @@ func (t *testMvccSuite) TestMvccSnapshotGet(c *C) {
 	tx, _ = t.s.Begin()
 	err = tx.Set(encodeInt(1), []byte("new"))
 	c.Assert(err, IsNil)
-	v, err := tx.Commit()
+	err = tx.Commit()
+	c.Assert(err, IsNil)
+	v, err := tx.CommitVersion()
 	c.Assert(err, IsNil)
 
 	mvccSnapshot, err := t.s.GetMvccSnapshot()
@@ -170,7 +172,9 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	tx, _ := t.s.Begin()
 	err := tx.Set(encodeInt(1), []byte("new"))
 	c.Assert(err, IsNil)
-	v, err := tx.Commit()
+	err = tx.Commit()
+	c.Assert(err, IsNil)
+	v, err := tx.CommitVersion()
 	c.Assert(err, IsNil)
 
 	mvccSnapshot, err := t.s.GetMvccSnapshot()

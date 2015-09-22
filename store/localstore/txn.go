@@ -41,6 +41,7 @@ type dbTxn struct {
 	startTs      time.Time
 	tID          uint64
 	valid        bool
+	version      kv.Version        // commit version
 	snapshotVals map[string][]byte // origin version in snapshot
 }
 
@@ -172,7 +173,7 @@ func (txn *dbTxn) each(f func(iterator.Iterator) error) error {
 	return nil
 }
 
-func (txn *dbTxn) doCommit() (kv.Version, error) {
+func (txn *dbTxn) doCommit() error {
 	b := txn.store.newBatch()
 	keysLocked := make([]string, 0, len(txn.snapshotVals))
 	defer func() {
@@ -184,7 +185,7 @@ func (txn *dbTxn) doCommit() (kv.Version, error) {
 	for k, v := range txn.snapshotVals {
 		err := txn.store.tryConditionLockKey(txn.tID, k, v)
 		if err != nil {
-			return kv.MinVersion, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		keysLocked = append(keysLocked, k)
 	}
@@ -192,7 +193,7 @@ func (txn *dbTxn) doCommit() (kv.Version, error) {
 	// Check dirty store
 	curVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
-		return kv.MinVersion, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	err = txn.each(func(iter iterator.Iterator) error {
 		metaKey := codec.EncodeBytes(nil, iter.Key())
@@ -207,14 +208,16 @@ func (txn *dbTxn) doCommit() (kv.Version, error) {
 		return nil
 	})
 	if err != nil {
-		return kv.MinVersion, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return curVer, txn.store.writeBatch(b)
+	// Update commit version.
+	txn.version = curVer
+	return txn.store.writeBatch(b)
 }
 
-func (txn *dbTxn) Commit() (kv.Version, error) {
+func (txn *dbTxn) Commit() error {
 	if !txn.valid {
-		return kv.MinVersion, ErrInvalidTxn
+		return ErrInvalidTxn
 	}
 	log.Infof("commit txn %d", txn.tID)
 	defer func() {
@@ -222,6 +225,14 @@ func (txn *dbTxn) Commit() (kv.Version, error) {
 	}()
 
 	return txn.doCommit()
+}
+
+func (txn *dbTxn) CommitVersion() (kv.Version, error) {
+	// Check if this trx is not committed.
+	if txn.version.Cmp(kv.MinVersion) == 0 {
+		return kv.MinVersion, kv.ErrNotCommitted
+	}
+	return txn.version, nil
 }
 
 func (txn *dbTxn) close() error {
