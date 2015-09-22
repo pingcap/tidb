@@ -488,7 +488,11 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 	se.Execute("drop table if exists t;")
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.LastInsertID(), Less, uint64(4))
+	lastID := se.LastInsertID()
+	c.Assert(lastID, Less, uint64(4))
+	mustExecSQL(c, se, "insert t () values ()")
+	c.Assert(se.LastInsertID(), Greater, lastID)
+	mustExecSQL(c, se, "insert t () select 100")
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
