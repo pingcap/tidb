@@ -156,7 +156,7 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// GetSnapshot get a snaphot that is able to read any version of data.
+	// GetSnapshot gets a snaphot that is able to read any version of data.
 	GetSnapshot() (MvccSnapshot, error)
 	// Close store
 	Close() error

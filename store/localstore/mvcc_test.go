@@ -137,6 +137,10 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 	txn.Commit()
 }
 
+func encodeTestDataKey(i int) []byte {
+	return kv.EncodeKey(encodeInt(i))
+}
+
 func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	tx, _ := t.s.Begin()
 	b, err := tx.Get(encodeInt(1))
@@ -151,20 +155,21 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	c.Assert(err, IsNil)
 	v, err := tx.CommittedVersion()
 	c.Assert(err, IsNil)
+	testKey := encodeTestDataKey(1)
 
 	snapshot, err := t.s.GetSnapshot()
 	defer snapshot.MvccRelease()
-	b, err = snapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.MaxVersion)
+	b, err = snapshot.MvccGet(testKey, kv.MaxVersion)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "new")
 
 	// Get last version
-	b, err = snapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.NewVersion(v.Ver-1))
+	b, err = snapshot.MvccGet(testKey, kv.NewVersion(v.Ver-1))
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, string(encodeInt(1)))
 
 	// Get version not exists
-	b, err = snapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.MinVersion)
+	b, err = snapshot.MvccGet(testKey, kv.MinVersion)
 	c.Assert(err, NotNil)
 }
 
@@ -181,6 +186,7 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	defer snapshot.MvccRelease()
 	c.Assert(err, IsNil)
 
+	testKey := encodeTestDataKey(1)
 	// iter helper function
 	iterFunc := func(it kv.Iterator) bool {
 		found := false
@@ -194,11 +200,11 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 		return found
 	}
 
-	it := snapshot.NewMvccIterator(kv.EncodeKey(encodeInt(1)), kv.MaxVersion)
+	it := snapshot.NewMvccIterator(testKey, kv.MaxVersion)
 	found := iterFunc(it)
 	c.Assert(found, IsTrue)
 
-	it = snapshot.NewMvccIterator(kv.EncodeKey(encodeInt(1)), kv.NewVersion(v.Ver-1))
+	it = snapshot.NewMvccIterator(testKey, kv.NewVersion(v.Ver-1))
 	found = iterFunc(it)
 	c.Assert(found, IsFalse)
 }
