@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -141,47 +141,47 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 	}
 
 	// expr: id > 0
-	expr := &expressions.BinaryOperation{
+	expr := &expression.BinaryOperation{
 		Op: opcode.GE,
-		L: &expressions.Ident{
+		L: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
-		R: expressions.Value{
+		R: expression.Value{
 			Val: 50,
 		},
 	}
 
-	expr2 := &expressions.BinaryOperation{
+	expr2 := &expression.BinaryOperation{
 		Op: opcode.LT,
-		L: &expressions.Ident{
+		L: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
-		R: expressions.Value{
+		R: expression.Value{
 			Val: 100,
 		},
 	}
 
-	expr3 := &expressions.BinaryOperation{
+	expr3 := &expression.BinaryOperation{
 		Op: opcode.LE,
-		L: &expressions.Ident{
+		L: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
-		R: expressions.Value{
+		R: expression.Value{
 			Val: 100,
 		},
 	}
 
-	expr4 := &expressions.BinaryOperation{
+	expr4 := &expression.BinaryOperation{
 		Op: opcode.GE,
-		L: &expressions.Ident{
+		L: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
-		R: expressions.Value{
+		R: expression.Value{
 			Val: 60,
 		},
 	}
 
-	expr5 := &expressions.Ident{
+	expr5 := &expression.Ident{
 		CIStr: model.NewCIStr("id"),
 	}
 
@@ -215,9 +215,9 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 		excepted[int64(i*10)] = "hello"
 	}
 
-	expr6 := &expressions.UnaryOperation{
+	expr6 := &expression.UnaryOperation{
 		Op: '!',
-		V: &expressions.Ident{
+		V: &expression.Ident{
 			CIStr: model.NewCIStr("id"),
 		},
 	}

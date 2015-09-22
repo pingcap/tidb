@@ -19,7 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/table"
@@ -86,7 +86,7 @@ func (c *ColumnDef) String() string {
 
 func getDefaultValue(c *ConstraintOpt, tp byte, fsp int) (interface{}, error) {
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		value, err := expressions.GetTimeValue(nil, c.Evalue, tp, fsp)
+		value, err := expression.GetTimeValue(nil, c.Evalue, tp, fsp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -104,7 +104,7 @@ func getDefaultValue(c *ConstraintOpt, tp byte, fsp int) (interface{}, error) {
 		return value, nil
 	}
 
-	return expressions.FastEval(c.Evalue), nil
+	return expression.FastEval(c.Evalue), nil
 }
 
 func removeOnUpdateNowFlag(c *column.Col) {
@@ -123,9 +123,9 @@ func setTimestampDefaultValue(c *column.Col, hasDefaultValue bool, setOnUpdateNo
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = expressions.ZeroTimestamp
+			c.DefaultValue = expression.ZeroTimestamp
 		} else {
-			c.DefaultValue = expressions.CurrentTimestamp
+			c.DefaultValue = expression.CurrentTimestamp
 		}
 	}
 }
@@ -234,7 +234,7 @@ func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstra
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ConstrOnUpdate:
-				if !expressions.IsCurrentTimeExpr(v.Evalue) {
+				if !expression.IsCurrentTimeExpr(v.Evalue) {
 					return nil, nil, errors.Errorf("invalid ON UPDATE for - %s", col.Name)
 				}
 

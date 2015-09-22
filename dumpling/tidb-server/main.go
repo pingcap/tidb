@@ -42,8 +42,6 @@ func main() {
 
 	cfg := &server.Config{
 		Addr:     fmt.Sprintf(":%s", *port),
-		User:     "root",
-		Password: "",
 		LogLevel: *logLevel,
 	}
 

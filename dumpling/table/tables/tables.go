@@ -27,7 +27,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -240,7 +240,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []inte
 	ucols := column.FindOnUpdateCols(t.Cols())
 	for _, c := range ucols {
 		if !touched[c.Offset] {
-			v, err := expressions.GetTimeValue(ctx, expressions.CurrentTimestamp, c.Tp, c.Decimal)
+			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, c.Tp, c.Decimal)
 			if err != nil {
 				return errors.Trace(err)
 			}

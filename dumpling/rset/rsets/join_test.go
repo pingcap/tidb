@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
@@ -108,7 +108,7 @@ func (s *testJoinRsetSuite) TestJoinRsetPlan(c *C) {
 
 func (s *testJoinRsetSuite) TestJoinRsetString(c *C) {
 	s.r.Right = s.r.Left
-	s.r.On = expressions.Value{Val: 1}
+	s.r.On = expression.Value{Val: 1}
 	str := s.r.String()
 	c.Assert(len(str), Greater, 0)
 }

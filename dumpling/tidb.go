@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -99,7 +98,7 @@ func Compile(src string) ([]stmt.Statement, error) {
 
 // CompilePrepare compiles prepared statement, allows placeholder as expr.
 // The return values are compiled statement, parameter list and error.
-func CompilePrepare(src string) (stmt.Statement, []*expressions.ParamMarker, error) {
+func CompilePrepare(src string) (stmt.Statement, []*expression.ParamMarker, error) {
 	log.Debug("compiling prepared", src)
 	l := parser.NewLexer(src)
 	l.SetPrepare()
@@ -175,7 +174,7 @@ func runExecute(ctx context.Context, es *stmts.ExecuteStmt, args ...interface{})
 	if len(args) > 0 {
 		es.UsingVars = make([]expression.Expression, 0, len(args))
 		for _, v := range args {
-			var exp expression.Expression = &expressions.Value{Val: v}
+			var exp expression.Expression = &expression.Value{Val: v}
 			es.UsingVars = append(es.UsingVars, exp)
 		}
 	}

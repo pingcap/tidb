@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
@@ -48,7 +48,7 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 		match := true
 		for i, v := range fields {
 			// TODO: is it this check enough? e.g, the ident field is t.c.
-			if x, ok := v.Expr.(*expressions.Ident); ok && strings.EqualFold(x.L, srcFields[i].Name) && strings.EqualFold(v.Name, srcFields[i].Name) {
+			if x, ok := v.Expr.(*expression.Ident); ok && strings.EqualFold(x.L, srcFields[i].Name) && strings.EqualFold(v.Name, srcFields[i].Name) {
 				continue
 			}
 
@@ -66,7 +66,7 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 		// check whether src plan will be set TableNilPlan, like `select 1, 2 from t`.
 		isConst := true
 		for _, v := range fields {
-			if expressions.FastEval(v.Expr) == nil {
+			if expression.FastEval(v.Expr) == nil {
 				isConst = false
 				break
 			}

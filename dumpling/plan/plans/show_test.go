@@ -18,9 +18,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
@@ -66,8 +67,8 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	pln := &plans.ShowPlan{
 		Target:      stmt.ShowVariables,
 		GlobalScope: true,
-		Pattern: &expressions.PatternLike{
-			Pattern: &expressions.Value{
+		Pattern: &expression.PatternLike{
+			Pattern: &expression.Value{
 				Val: "character_set_results",
 			},
 		},
@@ -76,6 +77,8 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(fls, HasLen, 2)
 	c.Assert(fls[0].Name, Equals, "Variable_name")
 	c.Assert(fls[1].Name, Equals, "Value")
+	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeVarchar)
 
 	sessionVars := variable.GetSessionVars(p)
 	ret := map[string]string{}
@@ -117,9 +120,9 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(v, Equals, "utf8")
 	pln.Close()
 	pln.Pattern = nil
-	pln.Where = &expressions.BinaryOperation{
-		L:  &expressions.Ident{CIStr: model.NewCIStr("Variable_name")},
-		R:  expressions.Value{Val: "autocommit"},
+	pln.Where = &expression.BinaryOperation{
+		L:  &expression.Ident{CIStr: model.NewCIStr("Variable_name")},
+		R:  expression.Value{Val: "autocommit"},
 		Op: opcode.EQ,
 	}
 
@@ -134,6 +137,68 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	v, ok = ret["autocommit"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "on")
+
+	pln.Target = stmt.ShowWarnings
+	fls = pln.GetFields()
+	c.Assert(fls, HasLen, 3)
+	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeLong)
+
+	pln.Target = stmt.ShowCharset
+	fls = pln.GetFields()
+	c.Assert(fls, HasLen, 4)
+	c.Assert(fls[3].Col.Tp, Equals, mysql.TypeLonglong)
+
+}
+
+func (p *testShowSuit) TestShowCollation(c *C) {
+	pln := &plans.ShowPlan{}
+
+	pln.Target = stmt.ShowCollation
+	fls := pln.GetFields()
+	c.Assert(fls, HasLen, 6)
+	c.Assert(fls[2].Col.Tp, Equals, mysql.TypeLong)
+
+	pln.Pattern = &expression.PatternLike{
+		Pattern: &expression.Value{
+			Val: "utf8%",
+		},
+	}
+
+	rset := rsets.Recordset{
+		Ctx:  p,
+		Plan: pln,
+	}
+
+	rows, err := rset.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Greater, 0)
+	pln.Close()
+
+	pln.Pattern = nil
+	tblWhere := []struct {
+		Key   string
+		Value interface{}
+	}{
+		{"Collation", "utf8_bin"},
+		{"Charset", "utf8"},
+		{"Id", 83},
+		{"Default", "Yes"},
+		{"Compiled", "Yes"},
+		{"Sortlen", 1},
+	}
+
+	for _, w := range tblWhere {
+		pln.Where = &expression.BinaryOperation{
+			L:  &expression.Ident{CIStr: model.NewCIStr(w.Key)},
+			R:  expression.Value{Val: w.Value},
+			Op: opcode.EQ,
+		}
+
+		row, err := rset.FirstRow()
+		c.Assert(err, IsNil)
+		c.Assert(row, HasLen, 6)
+		pln.Close()
+	}
 }
 
 func (p *testShowSuit) TearDownSuite(c *C) {

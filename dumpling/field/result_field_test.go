@@ -16,7 +16,7 @@ package field_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -144,11 +144,11 @@ func (*testResultFieldSuite) TestMain(c *C) {
 
 	// For GetFieldIndex
 	f1 := &field.Field{
-		Expr: &expressions.Ident{CIStr: model.NewCIStr("c1")},
+		Expr: &expression.Ident{CIStr: model.NewCIStr("c1")},
 		Name: "a",
 	}
 	f2 := &field.Field{
-		Expr: &expressions.Ident{CIStr: model.NewCIStr("c2")},
+		Expr: &expression.Ident{CIStr: model.NewCIStr("c2")},
 		Name: "a",
 	}
 	fs := []*field.Field{f1, f2}

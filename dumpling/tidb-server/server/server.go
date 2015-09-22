@@ -88,10 +88,6 @@ func (s *Server) skipAuth() bool {
 	return s.cfg.SkipAuth
 }
 
-func (s *Server) cfgGetPwd(user string) string {
-	return s.cfg.Password // TODO: support multiple users
-}
-
 // NewServer creates a new Server.
 func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	s := &Server{
@@ -147,13 +143,6 @@ func (s *Server) onConn(c net.Conn) {
 		c.Close()
 		return
 	}
-	conn.ctx, err = s.driver.OpenCtx(conn.capability, uint8(conn.collation), conn.dbname)
-	if err != nil {
-		log.Errorf("open ctx error %s", errors.ErrorStack(err))
-		c.Close()
-		return
-	}
-
 	defer func() {
 		log.Infof("close %s", conn)
 	}()

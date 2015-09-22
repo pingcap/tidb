@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/plan"
@@ -83,7 +82,7 @@ func (s *SelectStmt) SetText(text string) {
 func (s *SelectStmt) checkOneColumn(ctx context.Context) error {
 	// check select fields
 	for _, f := range s.Fields {
-		if err := expressions.CheckOneColumn(ctx, f.Expr); err != nil {
+		if err := expression.CheckOneColumn(ctx, f.Expr); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -91,7 +90,7 @@ func (s *SelectStmt) checkOneColumn(ctx context.Context) error {
 	// check group by
 	if s.GroupBy != nil {
 		for _, f := range s.GroupBy.By {
-			if err := expressions.CheckOneColumn(ctx, f); err != nil {
+			if err := expression.CheckOneColumn(ctx, f); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -100,7 +99,7 @@ func (s *SelectStmt) checkOneColumn(ctx context.Context) error {
 	// check order by
 	if s.OrderBy != nil {
 		for _, f := range s.OrderBy.By {
-			if err := expressions.CheckOneColumn(ctx, f.Expr); err != nil {
+			if err := expression.CheckOneColumn(ctx, f.Expr); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -108,7 +107,7 @@ func (s *SelectStmt) checkOneColumn(ctx context.Context) error {
 
 	// check having
 	if s.Having != nil {
-		if err := expressions.CheckOneColumn(ctx, s.Having.Expr); err != nil {
+		if err := expression.CheckOneColumn(ctx, s.Having.Expr); err != nil {
 			return errors.Trace(err)
 		}
 	}
