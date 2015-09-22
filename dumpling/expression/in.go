@@ -174,6 +174,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	return n.checkInList(lhs, res)
 }
 
+// Accept implements Expression interface.
 func (n *PatternIn) Accept(v Visitor) (Expression, error) {
 	return v.VisitPatternIn(n)
 }

@@ -102,6 +102,7 @@ func (b *Between) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 	return ret.Eval(ctx, args)
 }
 
+// Accept implements Expression interface.
 func (b *Between) Accept(v Visitor) (Expression, error) {
 	return v.VisitBetween(b)
 }

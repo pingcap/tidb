@@ -65,6 +65,7 @@ func (w *WhenClause) Eval(ctx context.Context, args map[interface{}]interface{})
 	return w.Result.Eval(ctx, args)
 }
 
+// Accept implements Expression interface.
 func (w *WhenClause) Accept(v Visitor) (Expression, error) {
 	return v.VisitWhenClause(w)
 }
@@ -182,6 +183,7 @@ func (f *FunctionCase) Eval(ctx context.Context, args map[interface{}]interface{
 	return nil, nil
 }
 
+// Accept implements Expression interface.
 func (f *FunctionCase) Accept(v Visitor) (Expression, error) {
 	return v.VisitFunctionCase(f)
 }

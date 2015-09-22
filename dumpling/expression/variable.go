@@ -87,6 +87,7 @@ func (v *Variable) Eval(ctx context.Context, args map[interface{}]interface{}) (
 	return sysVar.Value, nil
 }
 
+// Accept implements Expression interface.
 func (v *Variable) Accept(visitor Visitor) (Expression, error) {
 	return visitor.VisitVariable(v)
 }

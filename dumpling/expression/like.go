@@ -111,6 +111,7 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 	return match, nil
 }
 
+// Accept implements Expression interface.
 func (p *PatternLike) Accept(v Visitor) (Expression, error) {
 	return v.VisitPatternLike(p)
 }

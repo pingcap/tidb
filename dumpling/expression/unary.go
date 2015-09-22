@@ -274,6 +274,7 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 	}
 }
 
+// Accept implements Expression interface.
 func (u *UnaryOperation) Accept(v Visitor) (Expression, error) {
-	return v.VisitUnaryOpeartion(u)
+	return v.VisitUnaryOperation(u)
 }
