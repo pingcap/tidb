@@ -223,6 +223,8 @@ func runTestConcurrentUpdate(c *C) {
 func runTestAuth(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'test'@'127.0.0.1' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE USER 'test'@'::1' IDENTIFIED BY '123';`)
 	})
 	newDsn := "test:123@tcp(localhost:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
@@ -232,5 +234,5 @@ func runTestAuth(c *C) {
 	db, err := sql.Open("mysql", "test:456@tcp(localhost:4001)/test?strict=true")
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
-	defer db.Close()
+	db.Close()
 }
