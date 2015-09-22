@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/mocks"
+	"github.com/pingcap/tidb/util/mock/mocks"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -115,7 +115,7 @@ func (s *testExistsSubQuerySuite) TestExistsSubQuery(c *C) {
 
 func newMockSubQuery(rows [][]interface{}, fields []string) *subquery.SubQuery {
 	r := mocks.NewRecordset(rows, fields, len(fields))
-	ms := &mocks.MockStatement{Rset: r}
-	ms.P = mocks.NewMockPlan(ms.Rset)
+	ms := &mocks.Statement{Rset: r}
+	ms.P = mocks.NewPlan(ms.Rset)
 	return &subquery.SubQuery{Stmt: ms}
 }
