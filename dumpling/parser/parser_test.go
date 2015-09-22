@@ -350,6 +350,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
+
+		// For issue 224
+		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 	}
 
 	for _, t := range table {
