@@ -34,6 +34,7 @@ type Expression interface {
 	// String returns the presentation of the expression.
 	String() string
 
-	// Accept calls visitor's specific function for its type, follows visitor pattern.
+	// Accept calls visitor's specific function for its type.
+	// It represents a visitor pattern.
 	Accept(v Visitor) (Expression, error)
 }

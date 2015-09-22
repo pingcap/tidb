@@ -72,6 +72,7 @@ func (d *Default) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 	return nil, errors.Errorf("default column not found - %s", name)
 }
 
+// Accept implements Expression interface.
 func (d *Default) Accept(v Visitor) (Expression, error) {
 	return v.VisitDefault(d)
 }

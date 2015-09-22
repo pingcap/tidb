@@ -71,6 +71,7 @@ func (r *Row) Eval(ctx context.Context, args map[interface{}]interface{}) (inter
 	return row, nil
 }
 
+// Accept implements Expression interface.
 func (r *Row) Accept(v Visitor) (Expression, error) {
 	return v.VisitRow(r)
 }
