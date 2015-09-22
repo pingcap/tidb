@@ -102,7 +102,7 @@ func (iter *UnionIter) updateCur() {
 			} else {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
-					log.Warnf("delete a record not exists? k = %s", string(iter.dirtyIt.Key()))
+					log.Warnf("delete a record not exists? k = %q", iter.dirtyIt.Key())
 					// jump over this deletion
 					iter.dirtyNext()
 					continue
