@@ -88,10 +88,6 @@ func (s *Server) skipAuth() bool {
 	return s.cfg.SkipAuth
 }
 
-func (s *Server) cfgGetPwd(user string) string {
-	return s.cfg.Password // TODO: support multiple users
-}
-
 // NewServer creates a new Server.
 func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	s := &Server{
