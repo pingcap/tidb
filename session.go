@@ -431,6 +431,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	}
 	row, err := rs[0].Next()
 	if err != nil {
+		log.Warnf("Encounter error when auth user %s. Error: %v", user, err)
 		return false
 	}
 	if row == nil || len(row.Data) == 0 {
