@@ -343,6 +343,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
+
+		// For show collation
+		{"show collation", true},
+		{"show collation like 'utf8%'", true},
+		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
 	}
 
 	for _, t := range table {
@@ -365,6 +370,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
+		"collation",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
