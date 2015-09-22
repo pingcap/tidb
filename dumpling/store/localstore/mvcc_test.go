@@ -154,6 +154,7 @@ func (t *testMvccSuite) TestMvccSnapshotGet(c *C) {
 	c.Assert(err, IsNil)
 
 	mvccSnapshot, err := t.s.GetMvccSnapshot()
+	defer mvccSnapshot.MvccRelease()
 	b, err = mvccSnapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.MaxVersion)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "new")
@@ -178,6 +179,7 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	c.Assert(err, IsNil)
 
 	mvccSnapshot, err := t.s.GetMvccSnapshot()
+	defer mvccSnapshot.MvccRelease()
 	c.Assert(err, IsNil)
 
 	// iter helper function
