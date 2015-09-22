@@ -80,6 +80,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"INSERT INTO foo (a,b) VALUES (42,314)", true},
 		{"INSERT INTO foo (a,b,) VALUES (42,314)", false},
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
+		{"INSERT INTO foo () VALUES ()", true},
+		{"INSERT INTO foo VALUE ()", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED)", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) -- foo", true},
 		// 40
