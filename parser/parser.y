@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -87,7 +87,8 @@ import (
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
 	coalesce	"COALESCE"
-	collation	"COLLATE"
+	collate 	"COLLATE"
+	collation	"COLLATION"
 	column		"COLUMN"
 	columns		"COLUMNS"
 	commit		"COMMIT"
@@ -551,7 +552,7 @@ Start:
 	StatementList
 |	parseExpression Expression
 	{
-		yylex.(*lexer).expr = expressions.Expr($2)
+		yylex.(*lexer).expr = expression.Expr($2)
 	}
 
 /**************************************AlterTableStmt***************************************
@@ -673,7 +674,7 @@ Symbol:
 Assignment:
 	SimpleQualifiedIdent eq Expression
 	{
-		x, err := expressions.NewAssignment($1.(string), $3.(expression.Expression))
+		x, err := expression.NewAssignment($1.(string), $3.(expression.Expression))
 		if err != nil {
 			yylex.(*lexer).errf("Parse Assignment error: %s", $1.(string))
 		}
@@ -683,17 +684,17 @@ Assignment:
 AssignmentList:
 	Assignment
 	{
-		$$ = []expressions.Assignment{$1.(expressions.Assignment)}
+		$$ = []expression.Assignment{$1.(expression.Assignment)}
 	}
 |	AssignmentList ',' Assignment
 	{
-		$$ = append($1.([]expressions.Assignment), $3.(expressions.Assignment))
+		$$ = append($1.([]expression.Assignment), $3.(expression.Assignment))
 	}
 
 AssignmentListOpt:
 	/* EMPTY */
 	{
-		$$ = []expressions.Assignment{}
+		$$ = []expression.Assignment{}
 	}
 |	AssignmentList
 
@@ -858,7 +859,7 @@ DefaultValueExpr:
 NowSym:
 	"CURRENT_TIMESTAMP"
 	{
-		$$ = &expressions.Ident{CIStr: model.NewCIStr("CURRENT_TIMESTAMP")}
+		$$ = &expression.Ident{CIStr: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
@@ -867,17 +868,17 @@ NowSym:
 SignedLiteral:
 	Literal
 	{
-		$$ = expressions.Value{Val: $1}
+		$$ = expression.Value{Val: $1}
 	}
 |	'+' NumLiteral
 	{
-		n := expressions.Value{Val: $2}
-		$$ = expressions.NewUnaryOperation(opcode.Plus, n)
+		n := expression.Value{Val: $2}
+		$$ = expression.NewUnaryOperation(opcode.Plus, n)
 	}
 |	'-' NumLiteral
 	{
-		n := expressions.Value{Val: $2}
-		$$ = expressions.NewUnaryOperation(opcode.Minus, n)
+		n := expression.Value{Val: $2}
+		$$ = expression.NewUnaryOperation(opcode.Minus, n)
 	}
 
 // TODO: support decimal literal
@@ -1307,32 +1308,32 @@ NUM:
 Expression:
 	Expression logOr Expression %prec oror
 	{
-		$$ = expressions.NewBinaryOperation(opcode.OrOr, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.OrOr, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	Expression "XOR" Expression %prec xor
 	{
-		$$ = expressions.NewBinaryOperation(opcode.LogicXor, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.LogicXor, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	Expression logAnd Expression %prec andand
 	{
-		$$ = expressions.NewBinaryOperation(opcode.AndAnd, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.AndAnd, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	"NOT" Expression %prec not
 	{
-		$$ = expressions.NewUnaryOperation(opcode.Not, $2.(expression.Expression))
+		$$ = expression.NewUnaryOperation(opcode.Not, $2.(expression.Expression))
 	}
 |	Factor "IS" NotOpt trueKwd %prec is
 	{
-		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(1)}
+		$$ = &expression.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(1)}
 	}
 |	Factor "IS" NotOpt falseKwd %prec is
 	{
-		$$ = &expressions.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(0)}
+		$$ = &expression.IsTruth{Expr:$1.(expression.Expression), Not: $3.(bool), True: int64(0)}
 	}
 |	Factor "IS" NotOpt "UNKNOWN" %prec is
 	{
 		/* https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#operator_is */
-		$$ = &expressions.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
+		$$ = &expression.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
 |	Factor
 
@@ -1359,11 +1360,11 @@ name:
 ExpressionList:
 	Expression
 	{
-		$$ = []expression.Expression{expressions.Expr($1)}
+		$$ = []expression.Expression{expression.Expr($1)}
 	}
 |	ExpressionList ',' Expression
 	{
-		$$ = append($1.([]expression.Expression), expressions.Expr($3))
+		$$ = append($1.([]expression.Expression), expression.Expr($3))
 	}
 
 ExpressionListOpt:
@@ -1375,15 +1376,15 @@ ExpressionListOpt:
 Factor:
 	Factor "IS" NotOpt "NULL" %prec is
 	{
-		$$ = &expressions.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
+		$$ = &expression.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
 |	Factor CompareOp Factor1 %prec eq
 	{
-		$$ = expressions.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
-		$$ = expressions.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*expressions.SubQuery), $3.(bool))
+		$$ = expression.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*subquery.SubQuery), $3.(bool))
 	}
 |	Factor1
 
@@ -1438,16 +1439,16 @@ AnyOrAll:
 Factor1:
 	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
 	{
-		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
+		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
 	}
 |	PrimaryFactor NotOpt "IN" SubSelect
 	{
-		$$ = &expressions.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*expressions.SubQuery)}
+		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*subquery.SubQuery)}
 	}
 |	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
 	{
 		var err error
-		$$, err = expressions.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
+		$$, err = expression.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
 		if err != nil {
 			yylex.(*lexer).err(err)
 			return 1
@@ -1455,11 +1456,11 @@ Factor1:
 	}
 |	PrimaryFactor NotOpt "LIKE" PrimaryExpression
 	{
-		$$ = &expressions.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
+		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
 	}
 |	PrimaryFactor NotOpt RegexpSym PrimaryExpression
 	{
-		$$ = &expressions.PatternRegexp{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
+		$$ = &expression.PatternRegexp{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
 	}
 |	PrimaryFactor
 
@@ -1479,11 +1480,11 @@ NotOpt:
 Field:
 	'*'
 	{
-		$$ = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("*")}}
+		$$ = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("*")}}
 	}
 |	Expression Field1
 	{
-		expr, name := expressions.Expr($1), $2.(string)
+		expr, name := expression.Expr($1), $2.(string)
 		if name == "" {
 			name = expr.String()
 		}
@@ -1600,7 +1601,7 @@ UnReservedKeyword:
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
-|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -1620,7 +1621,7 @@ InsertIntoStmt:
 		x.Priority = $2.(int)
 		x.TableIdent = $5.(table.Ident)
 		if $7 != nil {
-			x.OnDuplicate = $7.([]expressions.Assignment)
+			x.OnDuplicate = $7.([]expression.Assignment)
 		}
 		$$ = x
 		if yylex.(*lexer).root {
@@ -1636,13 +1637,13 @@ IntoOpt:
 	}
 
 InsertRest:
-	'(' ColumnNameList ')' ValueSym ExpressionListList
+	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
 		$$ = &stmts.InsertIntoStmt{
 			ColNames:   $2.([]string), 
 			Lists:      $5.([][]expression.Expression)}
 	}
-|	'(' ColumnNameList ')' SelectStmt
+|	'(' ColumnNameListOpt ')' SelectStmt
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
@@ -1656,7 +1657,7 @@ InsertRest:
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &stmts.InsertIntoStmt{Setlist: $2.([]*expressions.Assignment)}
+		$$ = &stmts.InsertIntoStmt{Setlist: $2.([]*expression.Assignment)}
 	}
 
 ValueSym:
@@ -1684,22 +1685,22 @@ ExpressionListList:
 ColumnSetValue:
 	ColumnName eq Expression
 	{
-		$$ = &expressions.Assignment{
+		$$ = &expression.Assignment{
 			ColName:    $1.(string),
-			Expr:       expressions.Expr($3)}       
+			Expr:       expression.Expr($3)}
 	}
 
 ColumnSetValueList:
 	{
-		$$ = []*expressions.Assignment{}
+		$$ = []*expression.Assignment{}
 	}
 |	ColumnSetValue
 	{
-		$$ = []*expressions.Assignment{$1.(*expressions.Assignment)}
+		$$ = []*expression.Assignment{$1.(*expression.Assignment)}
 	}
 |	ColumnSetValueList ',' ColumnSetValue
 	{
-		$$ = append($1.([]*expressions.Assignment), $3.(*expressions.Assignment))
+		$$ = append($1.([]*expression.Assignment), $3.(*expression.Assignment))
 	}
 
 /* 
@@ -1736,23 +1737,23 @@ Literal:
 Operand:
 	Literal
 	{
-		$$ = expressions.Value{Val: $1}
+		$$ = expression.Value{Val: $1}
 	}
 |	QualifiedIdent
 	{
-		$$ = &expressions.Ident{CIStr: model.NewCIStr($1.(string))}
+		$$ = &expression.Ident{CIStr: model.NewCIStr($1.(string))}
 	}
 |	'(' Expression ')'
 	{
-		$$ = &expressions.PExpr{Expr: expressions.Expr($2)}
+		$$ = &expression.PExpr{Expr: expression.Expr($2)}
 	}
 |	"DEFAULT" %prec lowerThanLeftParen
 	{
-		$$ = &expressions.Default{}
+		$$ = &expression.Default{}
 	}
 |	"DEFAULT" '(' ColumnName ')'
 	{
-		$$ = &expressions.Default{Name: $3.(string)}
+		$$ = &expression.Default{Name: $3.(string)}
 	}
 |	Variable
 	{
@@ -1764,23 +1765,23 @@ Operand:
 		if !l.prepare {
 			l.err("Can not accept placeholder when not parsing prepare sql")
 		}
-		pm := &expressions.ParamMarker{}	
+		pm := &expression.ParamMarker{}
 		l.ParamList = append(l.ParamList, pm)
 		$$ = pm
 	}
 |	"ROW" '(' Expression ',' ExpressionList ')'
 	{
 		values := append([]expression.Expression{$3.(expression.Expression)}, $5.([]expression.Expression)...)
-		$$ = &expressions.Row{Values: values}
+		$$ = &expression.Row{Values: values}
 	}
 |	'(' Expression ',' ExpressionList ')'
 	{
 		values := append([]expression.Expression{$2.(expression.Expression)}, $4.([]expression.Expression)...)
-		$$ = &expressions.Row{Values: values}
+		$$ = &expression.Row{Values: values}
 	}
 |	"EXISTS" SubSelect
 	{
-		$$ = &expressions.ExistsSubQuery{Sel: $2.(*expressions.SubQuery)}
+		$$ = &expression.ExistsSubQuery{Sel: $2.(*subquery.SubQuery)}
 	}
 
 OrderBy:
@@ -1834,19 +1835,19 @@ PrimaryExpression:
 |	SubSelect
 |	'!' PrimaryExpression %prec neg
 	{
-		$$ = expressions.NewUnaryOperation(opcode.Not, $2.(expression.Expression))
+		$$ = expression.NewUnaryOperation(opcode.Not, $2.(expression.Expression))
 	}
 |	'~'  PrimaryExpression %prec neg
 	{
-		$$ = expressions.NewUnaryOperation(opcode.BitNeg, $2.(expression.Expression))
+		$$ = expression.NewUnaryOperation(opcode.BitNeg, $2.(expression.Expression))
 	}
 |	'-' PrimaryExpression %prec neg
 	{
-		$$ = expressions.NewUnaryOperation(opcode.Minus, $2.(expression.Expression))
+		$$ = expression.NewUnaryOperation(opcode.Minus, $2.(expression.Expression))
 	}
 |	'+' PrimaryExpression %prec neg
 	{
-		$$ = expressions.NewUnaryOperation(opcode.Plus, $2.(expression.Expression))
+		$$ = expression.NewUnaryOperation(opcode.Plus, $2.(expression.Expression))
 	}
 |	"BINARY" PrimaryExpression %prec neg
 	{
@@ -1854,10 +1855,10 @@ PrimaryExpression:
 		x := types.NewFieldType(mysql.TypeString)
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
-		$$ = &expressions.FunctionCast{
+		$$ = &expression.FunctionCast{
 			Expr: $2.(expression.Expression), 
 			Tp: x,
-			FunctionType: expressions.BinaryOperator,
+			FunctionType: expression.BinaryOperator,
 		}	
 	}
 
@@ -1875,7 +1876,7 @@ FunctionCallConflict:
 	{
 		x := yylex.(*lexer)
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			x.err(err)
 			return 1
@@ -1903,7 +1904,7 @@ FunctionCallKeyword:
 	"AVG" '(' DistinctOpt ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
+		$$, err = expression.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -1913,15 +1914,15 @@ FunctionCallKeyword:
 |	"CAST" '(' Expression "AS" CastType ')'
 	{
 		/* See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
-		$$ = &expressions.FunctionCast{
+		$$ = &expression.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
-			FunctionType: expressions.CastFunction,
+			FunctionType: expression.CastFunction,
 		}	
 	}
 |	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
 	{
-		x := &expressions.FunctionCase{WhenClauses: $3.([]*expressions.WhenClause)}
+		x := &expression.FunctionCase{WhenClauses: $3.([]*expression.WhenClause)}
 		if $2 != nil {
 			x.Value = $2.(expression.Expression)
 		}
@@ -1933,7 +1934,7 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression "USING" CharsetName ')' 
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		$$ = &expressions.FunctionConvert{
+		$$ = &expression.FunctionConvert{
 			Expr: $3.(expression.Expression), 
 			Charset: $5.(string),
 		}	
@@ -1941,17 +1942,17 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression ',' CastType ')' 
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		$$ = &expressions.FunctionCast{
+		$$ = &expression.FunctionCast{
 			Expr: $3.(expression.Expression), 
 			Tp: $5.(*types.FieldType),
-			FunctionType: expressions.ConvertFunction,
+			FunctionType: expression.ConvertFunction,
 		}	
 	}
 |	"DATE" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -1961,12 +1962,12 @@ FunctionCallKeyword:
 |	"VALUES" '(' Identifier ')' %prec lowerThanInsertValues
 	{
 		// TODO: support qualified identifier for column_name
-		$$ = &expressions.Values{CIStr: model.NewCIStr($3.(string))}
+		$$ = &expression.Values{CIStr: model.NewCIStr($3.(string))}
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -1977,7 +1978,7 @@ FunctionCallKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -1989,7 +1990,7 @@ FunctionCallNonKeyword:
 	"COALESCE" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2000,7 +2001,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2010,7 +2011,7 @@ FunctionCallNonKeyword:
 |	"CONCAT" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2020,7 +2021,7 @@ FunctionCallNonKeyword:
 |	"CONCAT_WS" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2031,7 +2032,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2042,7 +2043,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2053,7 +2054,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2064,7 +2065,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2075,7 +2076,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2086,7 +2087,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2096,7 +2097,7 @@ FunctionCallNonKeyword:
 |	"IFNULL" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2107,7 +2108,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2118,7 +2119,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2129,7 +2130,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2140,7 +2141,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2150,7 +2151,7 @@ FunctionCallNonKeyword:
 |	"NOW" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression),false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression),false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2160,7 +2161,7 @@ FunctionCallNonKeyword:
 |	"NULLIF" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression), false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2171,7 +2172,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2180,21 +2181,21 @@ FunctionCallNonKeyword:
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
-		$$ = &expressions.FunctionSubstring{
+		$$ = &expression.FunctionSubstring{
 			StrExpr: $3.(expression.Expression), 
 			Pos: $5.(expression.Expression),
 		}	
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression ')'
 	{
-		$$ = &expressions.FunctionSubstring{
+		$$ = &expression.FunctionSubstring{
 			StrExpr: $3.(expression.Expression), 
 			Pos: $5.(expression.Expression),
 		}	
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ',' Expression ')'
 	{
-		$$ = &expressions.FunctionSubstring{
+		$$ = &expression.FunctionSubstring{
 			StrExpr: $3.(expression.Expression), 
 			Pos: $5.(expression.Expression),
 			Len: $7.(expression.Expression),
@@ -2202,7 +2203,7 @@ FunctionCallNonKeyword:
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression "FOR" Expression ')'
 	{
-		$$ = &expressions.FunctionSubstring{
+		$$ = &expression.FunctionSubstring{
 			StrExpr: $3.(expression.Expression), 
 			Pos: $5.(expression.Expression),
 			Len: $7.(expression.Expression),
@@ -2212,7 +2213,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2223,7 +2224,7 @@ FunctionCallNonKeyword:
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2233,7 +2234,7 @@ FunctionCallNonKeyword:
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $3.([]expression.Expression),false)
+		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression),false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2245,7 +2246,7 @@ FunctionCallAgg:
 	"COUNT" '(' DistinctOpt ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
+		$$, err = expression.NewCall($1.(string), $4.([]expression.Expression), $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2255,8 +2256,8 @@ FunctionCallAgg:
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
 		var err error
-		args := []expression.Expression{ expressions.Value{Val: expressions.TypeStar("*")} }
-		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		args := []expression.Expression{ expression.Value{Val: expression.TypeStar("*")} }
+		$$, err = expression.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2266,7 +2267,7 @@ FunctionCallAgg:
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
 	{
 		var err error
-		$$, err = expressions.NewCall($1.(string), $4.([]expression.Expression),$3.(bool))
+		$$, err = expression.NewCall($1.(string), $4.([]expression.Expression),$3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2277,7 +2278,7 @@ FunctionCallAgg:
 	{
 		args := []expression.Expression{$4.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		$$, err = expression.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2288,7 +2289,7 @@ FunctionCallAgg:
 	{
 		args := []expression.Expression{$4.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		$$, err = expression.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2299,7 +2300,7 @@ FunctionCallAgg:
 	{
 		args := []expression.Expression{$4.(expression.Expression)}
 		var err error
-		$$, err = expressions.NewCall($1.(string), args, $3.(bool))
+		$$, err = expression.NewCall($1.(string), args, $3.(bool))
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2319,17 +2320,17 @@ ExpressionOpt:
 WhenClauseList:
 	WhenClause
 	{
-		$$ = []*expressions.WhenClause{$1.(*expressions.WhenClause)} 			
+		$$ = []*expression.WhenClause{$1.(*expression.WhenClause)}
 	}
 |	WhenClauseList WhenClause
 	{
-		$$ = append($1.([]*expressions.WhenClause), $2.(*expressions.WhenClause))
+		$$ = append($1.([]*expression.WhenClause), $2.(*expression.WhenClause))
 	}
 
 WhenClause:
 	"WHEN" Expression "THEN" Expression
 	{
-		$$ = &expressions.WhenClause{
+		$$ = &expression.WhenClause{
 			Expr: $2.(expression.Expression),
 			Result: $4.(expression.Expression),
 		}
@@ -2405,51 +2406,51 @@ CastType:
 PrimaryFactor:
 	PrimaryFactor '|' PrimaryFactor %prec '|'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Or, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Or, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '&' PrimaryFactor %prec '&'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.And, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.And, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor "<<" PrimaryFactor %prec lsh
 	{
-		$$ = expressions.NewBinaryOperation(opcode.LeftShift, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.LeftShift, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor ">>" PrimaryFactor %prec rsh
 	{
-		$$ = expressions.NewBinaryOperation(opcode.RightShift, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.RightShift, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '+' PrimaryFactor %prec '+'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Plus, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Plus, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '-' PrimaryFactor %prec '-'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Minus, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Minus, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '*' PrimaryFactor %prec '*'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Mul, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Mul, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '/' PrimaryFactor %prec '/'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Div, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Div, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '%' PrimaryFactor %prec '%'
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Mod, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Mod, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor "DIV" PrimaryFactor %prec div
 	{
-		$$ = expressions.NewBinaryOperation(opcode.IntDiv, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.IntDiv, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor "MOD" PrimaryFactor %prec mod
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Mod, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Mod, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryFactor '^' PrimaryFactor
 	{
-		$$ = expressions.NewBinaryOperation(opcode.Xor, $1.(expression.Expression), $3.(expression.Expression))
+		$$ = expression.NewBinaryOperation(opcode.Xor, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryExpression
 
@@ -2559,12 +2560,12 @@ PreparedStmt:
 	"PREPARE" Identifier "FROM" PrepareSQL
 	{
 		var sqlText string
-		var sqlVar *expressions.Variable
+		var sqlVar *expression.Variable
 		switch $4.(type) {
 		case string:
 			sqlText = $4.(string)
-		case *expressions.Variable:
-			sqlVar = $4.(*expressions.Variable)
+		case *expression.Variable:
+			sqlVar = $4.(*expression.Variable)
 		}
 		$$ = &stmts.PreparedStmt{
 			InPrepare:	true,
@@ -2880,7 +2881,7 @@ SubSelect:
 	{
 		s := $2.(*stmts.SelectStmt)
 		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
-		$$ = &expressions.SubQuery{Stmt: s}
+		$$ = &subquery.SubQuery{Stmt: s}
 	}
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
@@ -2999,7 +3000,7 @@ SystemVariable:
 		} else if strings.HasPrefix(v, "@@") {
 			v = strings.TrimPrefix(v, "@@")
 		}
-		$$ = &expressions.Variable{Name: v, IsGlobal: isGlobal, IsSystem: true}
+		$$ = &expression.Variable{Name: v, IsGlobal: isGlobal, IsSystem: true}
 	}
 
 UserVariable:
@@ -3007,7 +3008,7 @@ UserVariable:
 	{
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")
-		$$ = &expressions.Variable{Name: v, IsGlobal: false, IsSystem: false}
+		$$ = &expression.Variable{Name: v, IsGlobal: false, IsSystem: false}
 	}
 
 Username:
@@ -3084,7 +3085,7 @@ ShowStmt:
 		$$ = &stmts.ShowStmt{
 			Target: stmt.ShowVariables,
 			GlobalScope: $2.(bool),
-			Pattern:  &expressions.PatternLike{Pattern: $5.(expression.Expression)},
+			Pattern:  &expression.PatternLike{Pattern: $5.(expression.Expression)},
 		}
 	}
 |	"SHOW" GlobalScope "VARIABLES" "WHERE" Expression
@@ -3092,7 +3093,27 @@ ShowStmt:
 		$$ = &stmts.ShowStmt{
 			Target: stmt.ShowVariables,
 			GlobalScope: $2.(bool),
-			Where: expressions.Expr($5),
+			Where: expression.Expr($5),
+		}
+	}
+|	"SHOW" "COLLATION"
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowCollation,
+		}
+	}
+|	"SHOW" "COLLATION" "LIKE" PrimaryExpression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowCollation,
+			Pattern:  &expression.PatternLike{Pattern: $4.(expression.Expression)},
+		}
+	}
+|	"SHOW" "COLLATION" "WHERE" Expression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowCollation,
+			Where: expression.Expr($4),
 		}
 	}
 
@@ -3736,7 +3757,7 @@ UpdateStmt:
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	r,
-			List:		$6.([]expressions.Assignment),
+			List:		$6.([]expression.Assignment),
 		}
 		if $7 != nil {
 			st.Where = $7.(expression.Expression)
@@ -3758,7 +3779,7 @@ UpdateStmt:
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	$4.(*rsets.JoinRset),
-			List:		$6.([]expressions.Assignment),
+			List:		$6.([]expression.Assignment),
 			MultipleTable:	true,
 		}
 		if $7 != nil {
@@ -3782,7 +3803,7 @@ UseStmt:
 WhereClause:
 	"WHERE" Expression
 	{
-		$$ = expressions.Expr($2)
+		$$ = expression.Expr($2)
 	}
 
 WhereClauseOptional:

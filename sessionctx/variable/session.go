@@ -16,7 +16,6 @@ package variable
 import (
 	"github.com/pingcap/tidb/context"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/stmt"
 )
 
 // SessionVars is to handle user-defined or global varaibles in current session
@@ -26,7 +25,7 @@ type SessionVars struct {
 	// system variables
 	Systems map[string]string
 	// prepared statement
-	PreparedStmts map[string]stmt.Statement
+	PreparedStmts map[string]interface{}
 	// prepared statement auto increament id
 	preparedStmtID uint32
 
@@ -57,7 +56,7 @@ func BindSessionVars(ctx context.Context) {
 	v := &SessionVars{
 		Users:         make(map[string]string),
 		Systems:       make(map[string]string),
-		PreparedStmts: make(map[string]stmt.Statement),
+		PreparedStmts: make(map[string]interface{}),
 	}
 
 	ctx.SetValue(sessionVarsKey, v)

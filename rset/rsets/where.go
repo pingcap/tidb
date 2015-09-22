@@ -21,7 +21,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
@@ -38,7 +37,7 @@ type WhereRset struct {
 	Src  plan.Plan
 }
 
-func (r *WhereRset) planBinOp(ctx context.Context, x *expressions.BinaryOperation) (plan.Plan, error) {
+func (r *WhereRset) planBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, error) {
 	var err error
 	var p2 plan.Plan
 	var filtered bool
@@ -56,7 +55,7 @@ func (r *WhereRset) planBinOp(ctx context.Context, x *expressions.BinaryOperatio
 		var in []expression.Expression
 		var f func(expression.Expression)
 		f = func(e expression.Expression) {
-			b, ok := e.(*expressions.BinaryOperation)
+			b, ok := e.(*expression.BinaryOperation)
 			if !ok || b.Op != opcode.AndAnd {
 				in = append(in, e)
 				return
@@ -94,7 +93,7 @@ func (r *WhereRset) planBinOp(ctx context.Context, x *expressions.BinaryOperatio
 
 		for len(out) > 1 {
 			n := len(out)
-			e := expressions.NewBinaryOperation(opcode.AndAnd, out[n-2], out[n-1])
+			e := expression.NewBinaryOperation(opcode.AndAnd, out[n-2], out[n-1])
 
 			out = out[:n-1]
 			out[n-2] = e
@@ -109,7 +108,7 @@ func (r *WhereRset) planBinOp(ctx context.Context, x *expressions.BinaryOperatio
 	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
-func (r *WhereRset) planIdent(ctx context.Context, x *expressions.Ident) (plan.Plan, error) {
+func (r *WhereRset) planIdent(ctx context.Context, x *expression.Ident) (plan.Plan, error) {
 	p := r.Src
 	p2, filtered, err := p.Filter(ctx, x)
 	if err != nil {
@@ -123,10 +122,10 @@ func (r *WhereRset) planIdent(ctx context.Context, x *expressions.Ident) (plan.P
 	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
-func (r *WhereRset) planIsNull(ctx context.Context, x *expressions.IsNull) (plan.Plan, error) {
+func (r *WhereRset) planIsNull(ctx context.Context, x *expression.IsNull) (plan.Plan, error) {
 	p := r.Src
 
-	cns := expressions.MentionedColumns(x.Expr)
+	cns := expression.MentionedColumns(x.Expr)
 	if len(cns) == 0 {
 		return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 	}
@@ -143,7 +142,7 @@ func (r *WhereRset) planIsNull(ctx context.Context, x *expressions.IsNull) (plan
 	return &plans.FilterDefaultPlan{Plan: p, Expr: x}, nil
 }
 
-func (r *WhereRset) planUnaryOp(ctx context.Context, x *expressions.UnaryOperation) (plan.Plan, error) {
+func (r *WhereRset) planUnaryOp(ctx context.Context, x *expression.UnaryOperation) (plan.Plan, error) {
 	p := r.Src
 	p2, filtered, err := p.Filter(ctx, x)
 	if err != nil {
@@ -190,20 +189,20 @@ func (r *WhereRset) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	switch x := expr.(type) {
-	case *expressions.BinaryOperation:
+	case *expression.BinaryOperation:
 		return r.planBinOp(ctx, x)
-	case *expressions.Ident:
+	case *expression.Ident:
 		return r.planIdent(ctx, x)
-	case *expressions.IsNull:
+	case *expression.IsNull:
 		return r.planIsNull(ctx, x)
-	case *expressions.PatternIn:
+	case *expression.PatternIn:
 		// TODO: optimize
 		// TODO: show plan
-	case *expressions.PatternLike:
+	case *expression.PatternLike:
 		// TODO: optimize
-	case *expressions.PatternRegexp:
+	case *expression.PatternRegexp:
 		// TODO: optimize
-	case *expressions.UnaryOperation:
+	case *expression.UnaryOperation:
 		return r.planUnaryOp(ctx, x)
 	default:
 		log.Warnf("%v not supported in where rset now", r.Expr)

@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
@@ -220,11 +219,11 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 		} else {
 			joined = append(row.Data, cmpRow.Data...)
 		}
-		r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			return GetIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
 		}
 		var b bool
-		b, err = expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
+		b, err = expression.EvalBoolExpr(ctx, r.On, r.evalArgs)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -270,11 +269,11 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 		}
 		joinedRow := append(r.curRow.Data, rightRow.Data...)
 		if r.On != nil {
-			r.evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
 			}
 
-			b, err := expressions.EvalBoolExpr(ctx, r.On, r.evalArgs)
+			b, err := expression.EvalBoolExpr(ctx, r.On, r.evalArgs)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

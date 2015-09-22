@@ -16,7 +16,6 @@ package rsets
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 )
@@ -28,8 +27,8 @@ type testHelperSuite struct {
 }
 
 func (s *testHelperSuite) SetUpSuite(c *C) {
-	fldx := &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr("name")}, Name: "a"}
-	expr, err := expressions.NewCall("count", []expression.Expression{expressions.Value{Val: 1}}, false)
+	fldx := &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("name")}, Name: "a"}
+	expr, err := expression.NewCall("count", []expression.Expression{expression.Value{Val: 1}}, false)
 	c.Assert(err, IsNil)
 	fldy := &field.Field{Expr: expr}
 

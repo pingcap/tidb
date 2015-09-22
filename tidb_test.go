@@ -488,7 +488,11 @@ func (s *testSessionSuite) TestAutoincrementID(c *C) {
 	se.Execute("drop table if exists t;")
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	mustExecSQL(c, se, "insert t values ()")
-	c.Assert(se.LastInsertID(), Less, uint64(4))
+	lastID := se.LastInsertID()
+	c.Assert(lastID, Less, uint64(4))
+	mustExecSQL(c, se, "insert t () values ()")
+	c.Assert(se.LastInsertID(), Greater, lastID)
+	mustExecSQL(c, se, "insert t () select 100")
 	mustExecSQL(c, se, s.dropDBSQL)
 }
 
@@ -821,6 +825,11 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], "c", "INT", "YES", "", nil, "")
+
+	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "utf8_bin", "utf8", 83, "", "Yes", 1)
 }
 
 func (s *testSessionSuite) TestBit(c *C) {

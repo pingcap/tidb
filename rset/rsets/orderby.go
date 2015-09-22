@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
@@ -69,7 +68,7 @@ func (r *OrderByRset) String() string {
 // CheckAndUpdateSelectList checks order by fields validity and set hidden fields to selectList.
 func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tableFields []*field.ResultField) error {
 	for i, v := range r.By {
-		if expressions.ContainAggregateFunc(v.Expr) {
+		if expression.ContainAggregateFunc(v.Expr) {
 			expr, err := selectList.UpdateAggFields(v.Expr, tableFields)
 			if err != nil {
 				return errors.Errorf("%s in 'order clause'", err.Error())
@@ -77,7 +76,7 @@ func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tab
 
 			r.By[i].Expr = expr
 		} else {
-			names := expressions.MentionedColumns(v.Expr)
+			names := expression.MentionedColumns(v.Expr)
 			for _, name := range names {
 				// try to find in select list
 				// TODO: mysql has confused result for this, see #555.
@@ -116,7 +115,7 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	fields := r.Src.GetFields()
 	for i := range r.By {
 		e := r.By[i].Expr
-		if v, ok := e.(expressions.Value); ok {
+		if v, ok := e.(expression.Value); ok {
 			var (
 				position   int
 				isPosition = true
@@ -138,10 +137,10 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 				}
 
 				// use Position expression for the associated field.
-				r.By[i].Expr = &expressions.Position{N: position}
+				r.By[i].Expr = &expression.Position{N: position}
 			}
 		} else {
-			colNames := expressions.MentionedColumns(e)
+			colNames := expression.MentionedColumns(e)
 			if err := field.CheckAllFieldNames(colNames, fields, field.CheckFieldFlag); err != nil {
 				return nil, errors.Trace(err)
 			}

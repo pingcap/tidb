@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/stmt/stmts"
 )
 
@@ -80,6 +80,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"INSERT INTO foo (a,b) VALUES (42,314)", true},
 		{"INSERT INTO foo (a,b,) VALUES (42,314)", false},
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
+		{"INSERT INTO foo () VALUES ()", true},
+		{"INSERT INTO foo VALUE ()", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED)", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) -- foo", true},
 		// 40
@@ -343,6 +345,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For comment in query
 		{"/*comment*/ /*comment*/ select c /* this is a comment */ from t;", true},
+
+		// For show collation
+		{"show collation", true},
+		{"show collation like 'utf8%'", true},
+		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
 	}
 
 	for _, t := range table {
@@ -365,6 +372,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
+		"collation",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -395,9 +403,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 	st := l.Stmts()[0]
 	ss, ok := st.(*stmts.SelectStmt)
 	c.Assert(ok, IsTrue)
-	cv, ok := ss.Fields[0].Expr.(*expressions.FunctionCast)
+	cv, ok := ss.Fields[0].Expr.(*expression.FunctionCast)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.FunctionType, Equals, expressions.ConvertFunction)
+	c.Assert(cv.FunctionType, Equals, expression.ConvertFunction)
 
 	// For query start with comment
 	srcs := []string{

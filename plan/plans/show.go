@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -47,7 +47,7 @@ type ShowPlan struct {
 	Full       bool
 	// Used by SHOW VARIABLES
 	GlobalScope bool
-	Pattern     expression.Expression
+	Pattern     *expression.PatternLike
 	Where       expression.Expression
 	rows        []*plan.Row
 	cursor      int
@@ -74,7 +74,10 @@ func (s *ShowPlan) Explain(w format.Formatter) {
 
 // GetFields implements plan.Plan GetFields interface.
 func (s *ShowPlan) GetFields() []*field.ResultField {
-	var names []string
+	var (
+		names []string
+		types []byte
+	)
 
 	switch s.Target {
 	case stmt.ShowEngines:
@@ -87,14 +90,28 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
 		names = []string{"Level", "Code", "Message"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case stmt.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowVariables:
 		names = []string{"Variable_name", "Value"}
+	case stmt.ShowCollation:
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
-	for _, name := range names {
-		fields = append(fields, &field.ResultField{Name: name})
+	for i, name := range names {
+		f := &field.ResultField{Name: name}
+		if types == nil || types[i] == 0 {
+			// use varchar as the default return column type
+			f.Col.Tp = mysql.TypeVarchar
+		} else {
+			f.Col.Tp = types[i]
+		}
+
+		fields = append(fields, f)
 	}
 
 	return fields
@@ -119,6 +136,7 @@ func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 }
 
 func (s *ShowPlan) fetchAll(ctx context.Context) error {
+	// TODO split this function
 	switch s.Target {
 	case stmt.ShowEngines:
 		row := &plan.Row{
@@ -214,12 +232,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		sessionVars := variable.GetSessionVars(ctx)
 		for _, v := range variable.SysVars {
 			if s.Pattern != nil {
-				p, ok := s.Pattern.(*expressions.PatternLike)
-				if !ok {
-					return errors.Errorf("Like should be a PatternLike expression")
-				}
-				p.Expr = expressions.Value{Val: v.Name}
-				r, err := p.Eval(ctx, nil)
+				s.Pattern.Expr = expression.Value{Val: v.Name}
+				r, err := s.Pattern.Eval(ctx, nil)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -233,7 +247,7 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 			} else if s.Where != nil {
 				m := map[interface{}]interface{}{}
 
-				m[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 					if strings.EqualFold(name, "Variable_name") {
 						return v.Name, nil
 					}
@@ -241,7 +255,7 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 					return nil, errors.Errorf("unknown field %s", name)
 				}
 
-				match, err := expressions.EvalBoolExpr(ctx, s.Where, m)
+				match, err := expression.EvalBoolExpr(ctx, s.Where, m)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -258,6 +272,64 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 				}
 			}
 			row := &plan.Row{Data: []interface{}{v.Name, value}}
+			s.rows = append(s.rows, row)
+		}
+	case stmt.ShowCollation:
+		collations := charset.GetCollations()
+		for _, v := range collations {
+			if s.Pattern != nil {
+				s.Pattern.Expr = expression.Value{Val: v.Name}
+				r, err := s.Pattern.Eval(ctx, nil)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				match, ok := r.(bool)
+				if !ok {
+					return errors.Errorf("Eval like pattern error")
+				}
+				if !match {
+					continue
+				}
+			} else if s.Where != nil {
+				m := map[interface{}]interface{}{}
+
+				m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+					switch {
+					case strings.EqualFold(name, "Collation"):
+						return v.Name, nil
+					case strings.EqualFold(name, "Charset"):
+						return v.CharsetName, nil
+					case strings.EqualFold(name, "Id"):
+						return v.ID, nil
+					case strings.EqualFold(name, "Default"):
+						if v.IsDefault {
+							return "Yes", nil
+						}
+						return "", nil
+					case strings.EqualFold(name, "Compiled"):
+						return "Yes", nil
+					case strings.EqualFold(name, "Sortlen"):
+						// TODO: add sort length in Collation
+						return 1, nil
+					default:
+						return nil, errors.Errorf("unknown field %s", name)
+					}
+				}
+
+				match, err := expression.EvalBoolExpr(ctx, s.Where, m)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !match {
+					continue
+				}
+			}
+
+			isDefault := ""
+			if v.IsDefault {
+				isDefault = "Yes"
+			}
+			row := &plan.Row{Data: []interface{}{v.Name, v.CharsetName, v.ID, isDefault, "Yes", 1}}
 			s.rows = append(s.rows, row)
 		}
 	}

@@ -51,7 +51,7 @@ func bootstrap(s Session) {
 func initUserTable(s Session) {
 	mustExecute(s, CreateUserTable)
 	// Insert a default user with empty password.
-	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", ""), ("127.0.0.1", "root", "");`)
+	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", ""), ("127.0.0.1", "root", ""), ("::1", "root", "");`)
 }
 
 func mustExecute(s Session, sql string) {

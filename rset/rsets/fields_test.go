@@ -15,7 +15,7 @@ package rsets
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression/expressions"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan/plans"
@@ -37,7 +37,7 @@ func (s *testSelectFieldsPlannerSuite) SetUpSuite(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expressions.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
 	}
 
 	selectList := &plans.SelectList{
@@ -59,7 +59,7 @@ func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// check SelectFieldsDefaultPlan, like `select c1, 1 from t`.
-	fld := &field.Field{Expr: expressions.Value{Val: 1}}
+	fld := &field.Field{Expr: expression.Value{Val: 1}}
 	s.sr.SelectList.Fields[0] = fld
 
 	p, err = s.sr.Plan(nil)

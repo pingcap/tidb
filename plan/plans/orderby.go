@@ -26,7 +26,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/expressions"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
@@ -159,7 +158,7 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 		if row == nil {
 			break
 		}
-		evalArgs[expressions.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			v, err := GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
 			if err == nil {
 				return v, nil
@@ -169,7 +168,7 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 			return getIdentValueFromOuterQuery(ctx, name)
 		}
 
-		evalArgs[expressions.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
+		evalArgs[expression.ExprEvalPositionFunc] = func(position int) (interface{}, error) {
 			// position is in [1, len(fields)], so we must decrease 1 to get correct index
 			// TODO: check position invalidation
 			return row.Data[position-1], nil

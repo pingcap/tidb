@@ -18,8 +18,11 @@
 package tidb
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,7 +47,6 @@ type Session interface {
 	LastInsertID() uint64                         // Last inserted auto_increment id
 	AffectedRows() uint64                         // Affected rows by lastest executed stmt
 	Execute(sql string) ([]rset.Recordset, error) // Execute a sql statement
-	SetUsername(name string)                      // Current user name
 	String() string                               // For debug
 	FinishTxn(rollback bool) error
 	// For execute prepare statement in binary protocol
@@ -55,6 +57,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags
 	Close() error
 	Retry() error
+	Auth(user string, auth []byte, salt []byte) bool
 }
 
 var (
@@ -96,13 +99,13 @@ func (h *stmtHistory) clone() *stmtHistory {
 }
 
 type session struct {
-	txn      kv.Transaction // Current transaction
-	userName string
-	args     []interface{} // Statment execution args, this should be cleaned up after exec
-	values   map[fmt.Stringer]interface{}
-	store    kv.Storage
-	sid      int64
-	history  stmtHistory
+	txn     kv.Transaction // Current transaction
+	user    string
+	args    []interface{} // Statment execution args, this should be cleaned up after exec
+	values  map[fmt.Stringer]interface{}
+	store   kv.Storage
+	sid     int64
+	history stmtHistory
 }
 
 func (s *session) Status() uint16 {
@@ -115,10 +118,6 @@ func (s *session) LastInsertID() uint64 {
 
 func (s *session) AffectedRows() uint64 {
 	return variable.GetSessionVars(s).AffectedRows
-}
-
-func (s *session) SetUsername(name string) {
-	s.userName = name
 }
 
 func (s *session) resetHistory() {
@@ -157,7 +156,7 @@ func (s *session) FinishTxn(rollback bool) error {
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
 	data := map[string]interface{}{
-		"userName":   s.userName,
+		"user":       s.user,
 		"currDBName": db.GetCurrentSchema(s),
 		"sid":        s.sid,
 	}
@@ -381,6 +380,73 @@ func (s *session) ClearValue(key fmt.Stringer) {
 // Close function does some clean work when session end.
 func (s *session) Close() error {
 	return s.FinishTxn(true)
+}
+
+func calcPassword(scramble, password []byte) []byte {
+	if len(password) == 0 {
+		return nil
+	}
+
+	// stage1Hash = SHA1(password)
+	crypt := sha1.New()
+	crypt.Write(password)
+	stage1 := crypt.Sum(nil)
+
+	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
+	// inner Hash
+	crypt.Reset()
+	crypt.Write(stage1)
+	hash := crypt.Sum(nil)
+
+	// outer Hash
+	crypt.Reset()
+	crypt.Write(scramble)
+	crypt.Write(hash)
+	scramble = crypt.Sum(nil)
+
+	// token = scrambleHash XOR stage1Hash
+	for i := range scramble {
+		scramble[i] ^= stage1[i]
+	}
+	return scramble
+}
+
+func (s *session) Auth(user string, auth []byte, salt []byte) bool {
+	strs := strings.Split(user, "@")
+	if len(strs) != 2 {
+		log.Warnf("Invalid format for user: %s", user)
+		return false
+	}
+	// Get user password.
+	name := strs[0]
+	host := strs[1]
+	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%s\";", mysql.SystemDB, mysql.UserTable, name, host)
+	rs, err := s.Execute(authSQL)
+	if err != nil {
+		log.Warnf("Encounter error when auth user %s. Error: %v", user, err)
+		return false
+	}
+	if len(rs) == 0 {
+		return false
+	}
+	row, err := rs[0].Next()
+	if err != nil {
+		log.Warnf("Encounter error when auth user %s. Error: %v", user, err)
+		return false
+	}
+	if row == nil || len(row.Data) == 0 {
+		return false
+	}
+	pwd, ok := row.Data[0].(string)
+	if !ok {
+		return false
+	}
+	checkAuth := calcPassword(salt, []byte(pwd))
+	if !bytes.Equal(auth, checkAuth) {
+		return false
+	}
+	s.user = user
+	return true
 }
 
 // CreateSession creates a new session environment.
