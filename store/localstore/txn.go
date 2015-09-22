@@ -227,7 +227,7 @@ func (txn *dbTxn) Commit() error {
 	return txn.doCommit()
 }
 
-func (txn *dbTxn) CommitVersion() (kv.Version, error) {
+func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
 	// Check if this trx is not committed.
 	if txn.version.Cmp(kv.MinVersion) == 0 {
 		return kv.MinVersion, kv.ErrNotCommitted
