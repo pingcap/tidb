@@ -193,13 +193,15 @@ func (cc *clientConn) readHandshakeResponse() error {
 		cc.Close()
 		return errors.Trace(err)
 	}
-	// Do Auth
-	addr := cc.conn.RemoteAddr().String()
-	strs := strings.Split(addr, ":")
-	host := strs[0]
-	user := fmt.Sprintf("%s@%s", cc.user, host)
-	if !cc.server.skipAuth() && !cc.ctx.Auth(user, auth, cc.salt) {
-		return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, host, "Yes"))
+	if !cc.server.skipAuth() {
+		// Do Auth
+		addr := cc.conn.RemoteAddr().String()
+		strs := strings.Split(addr, ":")
+		host := strs[0]
+		user := fmt.Sprintf("%s@%s", cc.user, host)
+		if !cc.ctx.Auth(user, auth, cc.salt) {
+			return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, host, "Yes"))
+		}
 	}
 	return nil
 }

@@ -51,7 +51,7 @@ type IContext interface {
 	// Close closes the IContext.
 	Close() error
 
-	// Auth auths user
+	// Auth verifies user's authentication.
 	Auth(user string, auth []byte, salt []byte) bool
 }
 
