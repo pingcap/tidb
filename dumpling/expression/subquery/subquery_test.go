@@ -109,7 +109,7 @@ func (s *testSubQuerySuite) TestSubQuery(c *C) {
 
 func newMockSubQuery(rows [][]interface{}, fields []string) *subquery.SubQuery {
 	r := mocks.NewRecordset(rows, fields, len(fields))
-	ms := &mocks.MockStatement{Rset: r}
-	ms.P = mocks.NewMockPlan(ms.Rset)
+	ms := &mocks.Statement{Rset: r}
+	ms.P = mocks.NewPlan(ms.Rset)
 	return &subquery.SubQuery{Stmt: ms}
 }

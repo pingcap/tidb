@@ -8,34 +8,34 @@ import (
 	"github.com/pingcap/tidb/util/format"
 )
 
-// MockPlan mocks a plan.Plan instance
-type MockPlan struct {
+// Plan mocks a plan.Plan instance
+type Plan struct {
 	rset   *Recordset
 	rows   [][]interface{}
 	cursor int
 }
 
-// NewMockPlan creates a new MockPlan
-func NewMockPlan(rset *Recordset) *MockPlan {
-	return &MockPlan{rset: rset}
+// NewPlan creates a new MockPlan
+func NewPlan(rset *Recordset) *Plan {
+	return &Plan{rset: rset}
 }
 
 // Explain implements plan.Plan Explain interface.
-func (p *MockPlan) Explain(w format.Formatter) {}
+func (p *Plan) Explain(w format.Formatter) {}
 
 // GetFields implements plan.Plan GetFields interface.
-func (p *MockPlan) GetFields() []*field.ResultField {
+func (p *Plan) GetFields() []*field.ResultField {
 	fields, _ := p.rset.Fields()
 	return fields[:p.rset.offset]
 }
 
 // Filter implements plan.Plan Filter interface.
-func (p *MockPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
+func (p *Plan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return p, false, nil
 }
 
 // Next implements plan.Plan Next interface.
-func (p *MockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+func (p *Plan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if p.rows == nil {
 		p.rows, _ = p.rset.Rows(-1, 0)
 	}
@@ -48,7 +48,7 @@ func (p *MockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 }
 
 // Close implements plan.Plan Close interface{}
-func (p *MockPlan) Close() error {
+func (p *Plan) Close() error {
 	p.cursor = 0
 	return nil
 }
