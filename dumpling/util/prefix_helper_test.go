@@ -115,8 +115,7 @@ func (c *MockContext) FinishTxn(rollback bool) error {
 		return nil
 	}
 
-	_, err := c.txn.Commit()
-	return err
+	return c.txn.Commit()
 }
 
 func (s *testPrefixSuite) TestPrefix(c *C) {
@@ -134,7 +133,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	c.Assert(err, IsNil)
 	err = ScanMetaWithPrefix(txn, str, func([]byte, []byte) bool { return true })
 	c.Assert(err, IsNil)
-	_, err = txn.Commit()
+	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 

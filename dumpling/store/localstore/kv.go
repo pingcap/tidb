@@ -123,6 +123,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		tID:          beginVer.Ver,
 		valid:        true,
 		store:        s,
+		version:      kv.MinVersion,
 		snapshotVals: make(map[string][]byte),
 	}
 	log.Debugf("Begin txn:%d", txn.tID)
