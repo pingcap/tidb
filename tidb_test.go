@@ -821,6 +821,11 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], "c", "INT", "YES", "", nil, "")
+
+	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "utf8_bin", "utf8", 83, "", "Yes", 1)
 }
 
 func (s *testSessionSuite) TestBit(c *C) {

@@ -40,7 +40,7 @@ type ShowStmt struct {
 
 	// Used by show variables
 	GlobalScope bool
-	Pattern     expression.Expression
+	Pattern     *expression.PatternLike
 	Where       expression.Expression
 
 	Text string
