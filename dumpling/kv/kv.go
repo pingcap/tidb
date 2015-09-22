@@ -15,8 +15,9 @@ package kv
 
 import (
 	"bytes"
-	"errors"
 	"math"
+
+	"github.com/juju/errors"
 )
 
 // EncodedKey represents encoded key in low-level storage engine.
@@ -155,8 +156,8 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// MvccSnapshot get a snaphot that is able to read any version of data.
-	GetMvccSnapshot() (MvccSnapshot, error)
+	// GetSnapshot get a snaphot that is able to read any version of data.
+	GetSnapshot() (MvccSnapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID

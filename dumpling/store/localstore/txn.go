@@ -228,7 +228,7 @@ func (txn *dbTxn) Commit() error {
 }
 
 func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
-	// Check if this trx is not committed.
+	// Check if this transaction is not committed.
 	if txn.version.Cmp(kv.MinVersion) == 0 {
 		return kv.MinVersion, kv.ErrNotCommitted
 	}

@@ -131,7 +131,9 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	str := "key100jfowi878230"
 	err = txn.Set([]byte(str), []byte("val32dfaskli384757^*&%^"))
 	c.Assert(err, IsNil)
-	err = ScanMetaWithPrefix(txn, str, func([]byte, []byte) bool { return true })
+	err = ScanMetaWithPrefix(txn, str, func([]byte, []byte) bool {
+		return true
+	})
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
