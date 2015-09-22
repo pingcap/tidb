@@ -536,6 +536,7 @@ import (
 %left 	'^'
 %left 	'~' neg
 %right 	not
+%right	collate
 
 %precedence lowerThanLeftParen
 %precedence '('
@@ -1860,6 +1861,11 @@ PrimaryExpression:
 			Tp: x,
 			FunctionType: expression.BinaryOperator,
 		}	
+	}
+|	PrimaryExpression "COLLATE" CollationName %prec neg
+	{
+		// TODO: Create a builtin function hold expr and collation. When do evaluation, convert expr result using the collation.
+		$$ = $1
 	}
 
 Function:
