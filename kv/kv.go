@@ -129,6 +129,8 @@ type MvccSnapshot interface {
 	// MvccIterator seeks to the key in the specific version's snapshot, if the
 	// version doesn't exists, return the nearest(lower) version's snaphot.
 	NewMvccIterator(k Key, ver Version) Iterator
+	// Release releases this snapshot.
+	MvccRelease()
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
@@ -153,7 +155,7 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// MvccSnapshot get a snaphot that cloud read any version of data.
+	// MvccSnapshot get a snaphot that is able to read any version of data.
 	GetMvccSnapshot() (MvccSnapshot, error)
 	// Close store
 	Close() error
