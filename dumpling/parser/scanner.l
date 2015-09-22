@@ -251,6 +251,7 @@ character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
 coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
+collation	{c}{o}{l}{l}{a}{t}{i}{o}{n}
 column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
 commit		{c}{o}{m}{m}{i}{t}
@@ -522,7 +523,9 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return charsetKwd
 {coalesce}		lval.item = string(l.val)
 			return coalesce
-{collate}		return collation
+{collate}		return collate
+{collation}		lval.item = string(l.val)
+			return collation
 {column}		return column
 {columns}		lval.item = string(l.val)
 			return columns
