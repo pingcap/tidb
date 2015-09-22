@@ -110,6 +110,11 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	return true
 }
 
+// GetCollations returns a list for all collations.
+func GetCollations() []*Collation {
+	return collations
+}
+
 const (
 	// CharsetBin is used for marking binary charset.
 	CharsetBin = "binary"

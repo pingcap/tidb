@@ -55,6 +55,7 @@ const (
 	ShowWarnings
 	ShowCharset
 	ShowVariables
+	ShowCollation
 )
 
 const (

@@ -147,6 +147,58 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	fls = pln.GetFields()
 	c.Assert(fls, HasLen, 4)
 	c.Assert(fls[3].Col.Tp, Equals, mysql.TypeLonglong)
+
+}
+
+func (p *testShowSuit) TestShowCollation(c *C) {
+	pln := &plans.ShowPlan{}
+
+	pln.Target = stmt.ShowCollation
+	fls := pln.GetFields()
+	c.Assert(fls, HasLen, 6)
+	c.Assert(fls[2].Col.Tp, Equals, mysql.TypeLong)
+
+	pln.Pattern = &expression.PatternLike{
+		Pattern: &expression.Value{
+			Val: "utf8%",
+		},
+	}
+
+	rset := rsets.Recordset{
+		Ctx:  p,
+		Plan: pln,
+	}
+
+	rows, err := rset.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(len(rows), Greater, 0)
+	pln.Close()
+
+	pln.Pattern = nil
+	tblWhere := []struct {
+		Key   string
+		Value interface{}
+	}{
+		{"Collation", "utf8_bin"},
+		{"Charset", "utf8"},
+		{"Id", 83},
+		{"Default", "Yes"},
+		{"Compiled", "Yes"},
+		{"Sortlen", 1},
+	}
+
+	for _, w := range tblWhere {
+		pln.Where = &expression.BinaryOperation{
+			L:  &expression.Ident{CIStr: model.NewCIStr(w.Key)},
+			R:  expression.Value{Val: w.Value},
+			Op: opcode.EQ,
+		}
+
+		row, err := rset.FirstRow()
+		c.Assert(err, IsNil)
+		c.Assert(row, HasLen, 6)
+		pln.Close()
+	}
 }
 
 func (p *testShowSuit) TearDownSuite(c *C) {

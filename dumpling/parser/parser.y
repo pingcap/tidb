@@ -87,7 +87,8 @@ import (
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
 	coalesce	"COALESCE"
-	collation	"COLLATE"
+	collate 	"COLLATE"
+	collation	"COLLATION"
 	column		"COLUMN"
 	columns		"COLUMNS"
 	commit		"COMMIT"
@@ -1600,7 +1601,7 @@ UnReservedKeyword:
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
-|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+|	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -3093,6 +3094,26 @@ ShowStmt:
 			Target: stmt.ShowVariables,
 			GlobalScope: $2.(bool),
 			Where: expression.Expr($5),
+		}
+	}
+|	"SHOW" "COLLATION"
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowCollation,
+		}
+	}
+|	"SHOW" "COLLATION" "LIKE" PrimaryExpression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowCollation,
+			Pattern:  &expression.PatternLike{Pattern: $4.(expression.Expression)},
+		}
+	}
+|	"SHOW" "COLLATION" "WHERE" Expression
+	{
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowCollation,
+			Where: expression.Expr($4),
 		}
 	}
 
