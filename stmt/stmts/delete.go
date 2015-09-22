@@ -130,11 +130,14 @@ func (s *DeleteStmt) hitWhere(ctx context.Context, t table.Table, data []interfa
 		return true, nil
 	}
 	m := map[interface{}]interface{}{}
-
-	// Set parameter for evaluating expression.
-	for _, col := range t.Cols() {
-		m[col.Name.L] = data[col.Offset]
+	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+		offset, err := t.ColumnOffset(name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return data[offset], nil
 	}
+
 	ok, err := expression.EvalBoolExpr(ctx, s.Where, m)
 	if err != nil {
 		return false, errors.Trace(err)

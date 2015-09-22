@@ -87,6 +87,10 @@ func (s *testStmtSuite) TestDelete(c *C) {
 	r = mustExec(c, s.testDB, `DELETE from test where 0;`)
 	checkResult(c, r, 0, 0)
 
+	mustExec(c, s.testDB, "insert into test values (2, 'abc')")
+	r = mustExec(c, s.testDB, `delete from test where test.id = 2 limit 1`)
+	checkResult(c, r, 1, 0)
+
 	// Select data
 	tx := mustBegin(c, s.testDB)
 	rows, err := tx.Query(s.selectSql)
