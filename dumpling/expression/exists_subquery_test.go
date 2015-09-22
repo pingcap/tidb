@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/mocks"
+	"github.com/pingcap/tidb/util/mock/mocks"
 	"github.com/pingcap/tidb/util/types"
 )
 
