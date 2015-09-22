@@ -17,7 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/mocks"
+	"github.com/pingcap/tidb/util/mock/mocks"
 )
 
 var _ = Suite(&testSubQuerySuite{})
