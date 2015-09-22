@@ -111,6 +111,10 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 	return match, nil
 }
 
+func (p *PatternLike) Accept(v Visitor) (Expression, error) {
+	return v.VisitPatternLike(p)
+}
+
 // handle escapes and wild cards convert pattern characters and pattern types,
 func compilePattern(pattern string) (patChars, patTypes []byte) {
 	var lastAny bool

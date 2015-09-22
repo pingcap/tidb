@@ -102,6 +102,10 @@ func (b *Between) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 	return ret.Eval(ctx, args)
 }
 
+func (b *Between) Accept(v Visitor) (Expression, error) {
+	return v.VisitBetween(b)
+}
+
 // convert Between to binary operation, if cannot convert, return itself directly
 // sometimes we can convert between expression to binary operation directly
 // like "a between l and r" -> "a >= l && a <= r"

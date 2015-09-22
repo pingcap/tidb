@@ -87,6 +87,10 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	return cs.checkResult(lv, cs.R.Value().([]interface{}))
 }
 
+func (cs *CompareSubQuery) Accept(v Visitor) (Expression, error) {
+	return v.VisitCompareSubQuery(cs)
+}
+
 func (cs *CompareSubQuery) checkAllResult(lv interface{}, result []interface{}) (interface{}, error) {
 	hasNull := false
 	for _, v := range result {

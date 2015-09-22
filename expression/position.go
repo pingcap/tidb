@@ -66,3 +66,7 @@ func (p *Position) Eval(ctx context.Context, args map[interface{}]interface{}) (
 
 	return got(p.N)
 }
+
+func (p *Position) Accept(v Visitor) (Expression, error) {
+	return v.VisitPosition(p)
+}

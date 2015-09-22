@@ -125,3 +125,7 @@ func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface
 	}
 	return match, nil
 }
+
+func (p *PatternRegexp) Accept(v Visitor) (Expression, error) {
+	return v.VisitPatternRegexp(p)
+}
