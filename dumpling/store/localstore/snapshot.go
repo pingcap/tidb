@@ -95,6 +95,10 @@ func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
 	return newDBIter(s, k, kv.MaxVersion)
 }
 
+func (s *dbSnapshot) MvccRelease() {
+	s.Release()
+}
+
 func (s *dbSnapshot) Release() {
 	if s.Snapshot != nil {
 		s.Snapshot.Release()

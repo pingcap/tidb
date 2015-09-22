@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -150,10 +149,11 @@ func (t *testMvccSuite) TestMvccSnapshotGet(c *C) {
 	c.Assert(err, IsNil)
 	err = tx.Commit()
 	c.Assert(err, IsNil)
-	v, err := tx.CommitVersion()
+	v, err := tx.CommittedVersion()
 	c.Assert(err, IsNil)
 
 	mvccSnapshot, err := t.s.GetMvccSnapshot()
+	defer mvccSnapshot.MvccRelease()
 	b, err = mvccSnapshot.MvccGet(kv.EncodeKey(encodeInt(1)), kv.MaxVersion)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "new")
@@ -174,17 +174,17 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	c.Assert(err, IsNil)
 	err = tx.Commit()
 	c.Assert(err, IsNil)
-	v, err := tx.CommitVersion()
+	v, err := tx.CommittedVersion()
 	c.Assert(err, IsNil)
 
 	mvccSnapshot, err := t.s.GetMvccSnapshot()
+	defer mvccSnapshot.MvccRelease()
 	c.Assert(err, IsNil)
 
 	// iter helper function
 	iterFunc := func(it kv.Iterator) bool {
 		found := false
 		for it.Valid() {
-			log.Info(it.Key(), it.Value())
 			if string(it.Value()) == "new" {
 				found = true
 			}
