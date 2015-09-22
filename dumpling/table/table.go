@@ -107,9 +107,6 @@ type Table interface {
 	// LockRow locks a row.
 	// If update is true, set row lock key to current txn.
 	LockRow(ctx context.Context, h int64, update bool) error
-
-	// ColumnOffset gets the column offset in whole columns with column name.
-	ColumnOffset(name string) (int, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

@@ -558,38 +558,6 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
-// ColumnOffset implements table.Table ColumnOffset interface.
-func (t *Table) ColumnOffset(name string) (int, error) {
-	seps := strings.Split(name, ".")
-	var (
-		table string
-		col   string
-	)
-
-	// Now we only support column or table.column qualified name.
-	// TODO: support db.table.column later.
-	if len(seps) == 1 {
-		col = name
-	} else if len(seps) == 2 {
-		table = seps[0]
-		col = seps[1]
-	} else {
-		return -1, errors.Errorf("invalid column format %s", name)
-	}
-
-	if len(table) > 0 && table != t.Name.O {
-		return -1, errors.Errorf("column table %s is not equal %s", table, t.Name.O)
-	}
-
-	for _, c := range t.Columns {
-		if strings.EqualFold(col, c.Name.L) {
-			return c.Offset, nil
-		}
-	}
-
-	return -1, errors.Errorf("unknown column %s", name)
-}
-
 func init() {
 	table.TableFromMeta = TableFromMeta
 }

@@ -102,28 +102,6 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(cnt, Equals, 0)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
-
-	offsetTbl := []struct {
-		Name   string
-		Offset int
-	}{
-		{"a", 0},
-		{"b", 1},
-		{"c", -1},
-		{"t.a", 0},
-		{"t.c", -1},
-		{"t1.c", -1},
-		{"test.test.t.c", -1},
-	}
-
-	for _, t := range offsetTbl {
-		index, err := tb.ColumnOffset(t.Name)
-		if t.Offset == -1 {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(index, Equals, t.Offset)
-		}
-	}
 }
 
 func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
