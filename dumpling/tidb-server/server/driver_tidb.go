@@ -178,6 +178,11 @@ func (tc *TiDBContext) Close() (err error) {
 	return tc.session.Close()
 }
 
+// Auth implements IContext Auth method.
+func (tc *TiDBContext) Auth(user string, auth []byte, salt []byte) bool {
+	return tc.session.Auth(user, auth, salt)
+}
+
 // FieldList implements IContext FieldList method.
 func (tc *TiDBContext) FieldList(table string) (colums []*ColumnInfo, err error) {
 	rs, err := tc.Execute("SELECT * FROM " + table + " LIMIT 0")
