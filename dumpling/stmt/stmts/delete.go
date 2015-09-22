@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
@@ -125,17 +126,13 @@ func (s *DeleteStmt) planMultiTable(ctx context.Context) (plan.Plan, error) {
 	return r, nil
 }
 
-func (s *DeleteStmt) hitWhere(ctx context.Context, t table.Table, data []interface{}) (bool, error) {
+func (s *DeleteStmt) hitWhere(ctx context.Context, fields []*field.ResultField, data []interface{}) (bool, error) {
 	if s.Where == nil {
 		return true, nil
 	}
 	m := map[interface{}]interface{}{}
 	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		offset, err := t.ColumnOffset(name)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return data[offset], nil
+		return plans.GetIdentValue(name, fields, data, field.DefaultFieldFlag)
 	}
 
 	ok, err := expression.EvalBoolExpr(ctx, s.Where, m)
@@ -189,7 +186,7 @@ func (s *DeleteStmt) tryDeleteUsingIndex(ctx context.Context, t table.Table) (bo
 			return false, err
 		}
 		log.Infof("try delete with index id:%d, ctx:%s", handle, ctx)
-		ok, err := s.hitWhere(ctx, t, data)
+		ok, err := s.hitWhere(ctx, p.GetFields(), data)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -207,6 +204,7 @@ func (s *DeleteStmt) tryDeleteUsingIndex(ctx context.Context, t table.Table) (bo
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
+	// TODO: unify single from and multi from together.
 	if s.MultiTable {
 		return s.execMultiTable(ctx)
 	}
@@ -225,12 +223,14 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		return nil, nil
 	}
 
+	fields := field.ColsToResultFields(t.Cols(), t.TableName().L)
+
 	var cnt uint64
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		if s.Limit != nil && cnt >= s.Limit.Count {
 			return false, nil
 		}
-		ok, err = s.hitWhere(ctx, t, data)
+		ok, err = s.hitWhere(ctx, fields, data)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -297,6 +297,7 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 		if row == nil {
 			break
 		}
+
 		for _, entry := range row.RowKeys {
 			tid := entry.Tbl.TableID()
 			if _, ok := tblIDMap[tid]; !ok {
@@ -305,6 +306,7 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 			rowKeyMap[entry.Key] = entry.Tbl
 		}
 	}
+
 	for k, t := range rowKeyMap {
 		handle, err := util.DecodeHandleFromRowKey(k)
 		if err != nil {
@@ -319,5 +321,6 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 			return nil, errors.Trace(err)
 		}
 	}
+
 	return nil, nil
 }
