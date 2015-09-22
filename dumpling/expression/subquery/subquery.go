@@ -93,6 +93,10 @@ func (sq *SubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 }
 
+func (sq *SubQuery) Accept(v expression.Visitor) (expression.Expression, error) {
+	return v.VisitSubQuery(sq)
+}
+
 // IsStatic implements the Expression IsStatic interface, always returns false.
 func (sq *SubQuery) IsStatic() bool {
 	return false

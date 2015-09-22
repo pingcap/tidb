@@ -58,6 +58,10 @@ func (es *ExistsSubQuery) Eval(ctx context.Context, args map[interface{}]interfa
 	return es.Sel.Value(), nil
 }
 
+func (es *ExistsSubQuery) Accept(v Visitor) (Expression, error) {
+	return v.VisitExistsSubQuery(es)
+}
+
 // NewExistsSubQuery creates a ExistsSubQuery object.
 func NewExistsSubQuery(sel SubQuery) *ExistsSubQuery {
 	return &ExistsSubQuery{Sel: sel}

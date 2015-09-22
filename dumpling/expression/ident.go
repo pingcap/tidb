@@ -75,3 +75,7 @@ func (i *Ident) Eval(ctx context.Context, args map[interface{}]interface{}) (v i
 	}
 	return
 }
+
+func (i *Ident) Accept(v Visitor) (Expression, error) {
+	return v.VisitIdent(i)
+}

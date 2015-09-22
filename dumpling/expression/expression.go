@@ -33,4 +33,7 @@ type Expression interface {
 	IsStatic() bool
 	// String returns the presentation of the expression.
 	String() string
+
+	// Accept calls visitor's specific function for its type, follows visitor pattern.
+	Accept(v Visitor) (Expression, error)
 }

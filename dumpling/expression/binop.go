@@ -169,6 +169,10 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	}
 }
 
+func (o *BinaryOperation) Accept(v Visitor) (Expression, error) {
+	return v.VisitBinaryOperation(o)
+}
+
 func (o *BinaryOperation) get2(ctx context.Context, args map[interface{}]interface{}) (x, y interface{}, err error) {
 	x, err = o.L.Eval(ctx, args)
 	if err != nil {

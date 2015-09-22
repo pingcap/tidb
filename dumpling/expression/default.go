@@ -32,28 +32,28 @@ type Default struct {
 }
 
 // Clone implements the Expression Clone interface.
-func (v *Default) Clone() Expression {
-	newV := *v
+func (d *Default) Clone() Expression {
+	newV := *d
 	return &newV
 }
 
 // IsStatic implements the Expression IsStatic interface, always returns false.
-func (v *Default) IsStatic() bool {
+func (d *Default) IsStatic() bool {
 	return false
 }
 
 // String implements the Expression String interface.
-func (v *Default) String() string {
-	if v.Name == "" {
+func (d *Default) String() string {
+	if d.Name == "" {
 		return "default"
 	}
 
-	return fmt.Sprintf("default (%s)", strings.ToLower(v.Name))
+	return fmt.Sprintf("default (%s)", strings.ToLower(d.Name))
 }
 
 // Eval implements the Expression Eval interface.
-func (v *Default) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	name := strings.ToLower(v.Name)
+func (d *Default) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	name := strings.ToLower(d.Name)
 	if name == "" {
 		// if name is empty, the stmt may like "insert into t values (default)"
 		// we will use the corresponding column name
@@ -70,4 +70,8 @@ func (v *Default) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 	}
 
 	return nil, errors.Errorf("default column not found - %s", name)
+}
+
+func (d *Default) Accept(v Visitor) (Expression, error) {
+	return v.VisitDefault(d)
 }

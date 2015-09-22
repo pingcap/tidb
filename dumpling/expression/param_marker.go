@@ -43,6 +43,10 @@ func (pm *ParamMarker) Eval(ctx context.Context, args map[interface{}]interface{
 	return nil, nil
 }
 
+func (pm *ParamMarker) Accept(v Visitor) (Expression, error) {
+	return v.VisitParamMaker(pm)
+}
+
 // IsStatic implements the Expression IsStatic interface, always returns false.
 func (pm *ParamMarker) IsStatic() bool {
 	return false

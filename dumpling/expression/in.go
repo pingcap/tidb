@@ -173,3 +173,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 
 	return n.checkInList(lhs, res)
 }
+
+func (n *PatternIn) Accept(v Visitor) (Expression, error) {
+	return v.VisitPatternIn(n)
+}

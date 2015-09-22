@@ -94,3 +94,7 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 	}
 	return types.Cast(value, f.Tp), nil
 }
+
+func (f *FunctionCast) Accept(v Visitor) (Expression, error) {
+	return v.VisitFunctionCast(f)
+}
