@@ -847,7 +847,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	last := time.Now().Format(mysql.TimeFormat)
-	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6)")
+	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	for _, t := range row {
