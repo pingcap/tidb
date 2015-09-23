@@ -153,7 +153,8 @@ func ContainAllFieldNames(names []string, fields []*ResultField, flag uint32) bo
 	return true
 }
 
-func splitQualifiedName(name string) (db string, table string, field string) {
+// SplitQualifiedName splits a identifier name to db, tabla and field name.
+func SplitQualifiedName(name string) (db string, table string, field string) {
 	seps := strings.Split(name, ".")
 
 	l := len(seps)
@@ -190,7 +191,7 @@ func JoinQualifiedName(db string, table string, field string) string {
 func GetResultFieldIndex(name string, fields []*ResultField, flag uint32) []int {
 	var indices []int
 
-	db, table, field := splitQualifiedName(name)
+	db, table, field := SplitQualifiedName(name)
 
 	// Check origin field name.
 	if flag&OrgFieldNameFlag > 0 {
@@ -247,8 +248,8 @@ func GetFieldIndex(name string, fields []*Field, flag uint32) []int {
 // If any part of any argument is missing, it will ignore it and
 // continue check other parts. So a.b.c equals b.c
 func CheckFieldsEqual(xname, yname string) bool {
-	xdb, xtable, xfield := splitQualifiedName(xname)
-	ydb, ytable, yfield := splitQualifiedName(yname)
+	xdb, xtable, xfield := SplitQualifiedName(xname)
+	ydb, ytable, yfield := SplitQualifiedName(yname)
 	return checkFieldsEqual(xdb, xtable, xfield, ydb, ytable, yfield)
 }
 
@@ -286,6 +287,6 @@ func CloneFieldByName(name string, fields []*ResultField, flag uint32) (*ResultF
 
 // CheckWildcardField checks wildcard field, like `*` or `table.*` or `db.table.*`.
 func CheckWildcardField(name string) (string, bool, error) {
-	_, table, field := splitQualifiedName(name)
+	_, table, field := SplitQualifiedName(name)
 	return table, field == "*", nil
 }

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -112,15 +112,18 @@ func (r *TableDefaultPlan) Explain(w format.Formatter) {
 }
 
 func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, bool, error) {
-	ok, cn, rval, err := x.IsIdentRelOpVal()
+	ok, name, rval, err := x.IsIdentCompareVal()
 	if err != nil {
 		return r, false, err
 	}
 	if !ok {
 		return r, false, nil
 	}
-
+	_, tn, cn := field.SplitQualifiedName(name)
 	t := r.T
+	if tn != "" && tn != t.TableName().L {
+		return r, false, nil
+	}
 	c := column.FindCol(t.Cols(), cn)
 	if c == nil {
 		return nil, false, errors.Errorf("No such column: %s", cn)
@@ -131,22 +134,24 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		return r, false, nil
 	}
 
-	if rval, err = types.Convert(rval, &c.FieldType); err != nil {
-		return nil, false, err
-	}
-
 	if rval == nil {
 		// if nil, any <, <=, >, >=, =, != operator will do nothing
 		// any value compared null returns null
 		// TODO: if we support <=> later, we must handle null
 		return &NullPlan{r.GetFields()}, true, nil
 	}
+	log.Debugf("table filter:%v, %s, %T, %s", ok, name, rval, &c.FieldType)
+
+	spans, err := toSpans(&c.FieldType, x.Op, rval)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
 	return &indexPlan{
 		src:     t,
-		colName: cn,
+		col:     c,
 		idxName: ix.Name.O,
 		idx:     ix.X,
-		spans:   toSpans(x.Op, rval),
+		spans:   spans,
 	}, true, nil
 }
 
@@ -167,14 +172,18 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 			return r, false, nil
 		}
 		var spans []*indexSpan
+		var err error
 		if trueValue {
-			spans = toSpans(opcode.NE, 0)
+			spans, err = toSpans(&v.FieldType, opcode.NE, 0)
 		} else {
-			spans = toSpans(opcode.EQ, 0)
+			spans, err = toSpans(&v.FieldType, opcode.EQ, 0)
+		}
+		if err != nil {
+			return nil, false, errors.Trace(err)
 		}
 		return &indexPlan{
 			src:     t,
-			colName: x.L,
+			col:     v,
 			idxName: ix.Name.L,
 			idx:     ix.X,
 			spans:   spans,
@@ -201,15 +210,20 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	if ix == nil { // Column cn has no index.
 		return r, false, nil
 	}
+	col := column.FindCol(t.Cols(), cn)
 	var spans []*indexSpan
+	var err error
 	if x.Not {
-		spans = toSpans(opcode.GE, minNotNullVal)
+		spans, err = toSpans(&col.FieldType, opcode.GE, minNotNullVal)
 	} else {
-		spans = toSpans(opcode.EQ, nil)
+		spans, err = toSpans(&col.FieldType, opcode.EQ, nil)
+	}
+	if err != nil {
+		return nil, false, errors.Trace(err)
 	}
 	return &indexPlan{
 		src:     t,
-		colName: cn,
+		col:     col,
 		idxName: ix.Name.L,
 		idx:     ix.X,
 		spans:   spans,
