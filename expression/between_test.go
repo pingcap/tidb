@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 
+	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -47,7 +48,7 @@ func (s *testBetweenSuite) TestBetween(c *C) {
 	}
 
 	m := map[interface{}]interface{}{
-		ExprEvalArgAggEmpty: struct{}{},
+		builtin.ExprEvalArgAggEmpty: struct{}{},
 	}
 
 	for _, t := range table {
