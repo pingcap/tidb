@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression/builtin"
 )
 
 var (
@@ -38,17 +39,19 @@ type Call struct {
 	// Distinct only affetcts sum, avg, count, group_concat,
 	// so we can ignore it in other functions
 	Distinct bool
+
+	d *builtin.AggregateDistinct
 }
 
 // NewCall creates a Call expression with function name f, function args arg and
 // a distinct flag whether this function supports distinct or not.
 func NewCall(f string, args []Expression, distinct bool) (v Expression, err error) {
-	x := builtin[strings.ToLower(f)]
-	if x.f == nil {
+	x := builtin.Funcs[strings.ToLower(f)]
+	if x.F == nil {
 		return nil, errors.Errorf("undefined: %s", f)
 	}
 
-	if g, min, max := len(args), x.minArgs, x.maxArgs; g < min || (max != -1 && g > max) {
+	if g, min, max := len(args), x.MinArgs, x.MaxArgs; g < min || (max != -1 && g > max) {
 		a := []interface{}{}
 		for _, v := range args {
 			a = append(a, v)
@@ -82,8 +85,8 @@ func (c *Call) Clone() Expression {
 
 // IsStatic implements the Expression IsStatic interface.
 func (c *Call) IsStatic() bool {
-	v := builtin[strings.ToLower(c.F)]
-	if v.f == nil || !v.isStatic {
+	v := builtin.Funcs[strings.ToLower(c.F)]
+	if v.F == nil || !v.IsStatic {
 		return false
 	}
 
@@ -110,7 +113,7 @@ func (c *Call) String() string {
 
 // Eval implements the Expression Eval interface.
 func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
-	f, ok := builtin[strings.ToLower(c.F)]
+	f, ok := builtin.Funcs[strings.ToLower(c.F)]
 	if !ok {
 		return nil, errors.Errorf("unknown function %s", c.F)
 	}
@@ -123,14 +126,33 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 		a[i] = v
 	}
 
-	if args != nil {
-		args[ExprEvalFn] = c
-		args[ExprEvalArgCtx] = ctx
+	if c.d == nil {
+		// create a distinct if nil.
+		c.d = builtin.CreateAggregateDistinct(c.F, c.Distinct)
 	}
-	return f.f(a, args)
+
+	if args != nil {
+		args[builtin.ExprEvalFn] = c
+		args[builtin.ExprEvalArgCtx] = ctx
+		args[builtin.ExprAggDistinct] = c.d
+	}
+	return f.F(a, args)
 }
 
 // Accept implements Expression Accept interface.
 func (c *Call) Accept(v Visitor) (Expression, error) {
 	return v.VisitCall(c)
+}
+
+func badNArgs(min int, s string, args []interface{}) error {
+	a := []string{}
+	for _, v := range args {
+		a = append(a, fmt.Sprintf("%v", v))
+	}
+	switch len(args) < min {
+	case true:
+		return errors.Errorf("missing argument to %s(%s)", s, strings.Join(a, ", "))
+	default: //case false:
+		return errors.Errorf("too many arguments to %s(%s)", s, strings.Join(a, ", "))
+	}
 }

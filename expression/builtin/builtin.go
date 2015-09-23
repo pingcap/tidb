@@ -15,22 +15,39 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package builtin
 
-import (
-	"fmt"
-	"strings"
+import "github.com/juju/errors"
 
-	"github.com/juju/errors"
+const (
+	// ExprEvalFn is the key saving Call expression.
+	ExprEvalFn = "$fn"
+	// ExprEvalArgCtx is the key saving Context for a Call expression.
+	ExprEvalArgCtx = "$ctx"
+	// ExprAggDone is the key indicating that aggregate function is done.
+	ExprAggDone = "$aggDone"
+	// ExprEvalArgAggEmpty is the key to evaluate the aggregate function for empty table.
+	ExprEvalArgAggEmpty = "$agg0"
+	// ExprAggDistinct is the key saving a distinct aggregate.
+	ExprAggDistinct = "$aggDistinct"
 )
 
-var builtin = map[string]struct {
-	f           func([]interface{}, map[interface{}]interface{}) (interface{}, error)
-	minArgs     int
-	maxArgs     int
-	isStatic    bool
-	isAggregate bool
-}{
+// Func is for a builtin function.
+type Func struct {
+	// F is the specific calling function.
+	F func([]interface{}, map[interface{}]interface{}) (interface{}, error)
+	// MinArgs is the minimal arguments needed,
+	MinArgs int
+	// MaxArgs is the maximal arguments needed, -1 for infinity.
+	MaxArgs int
+	// IsStatic shows whether this function can be called statically.
+	IsStatic bool
+	// IsAggregate represents whether this function is an aggregate function or not.
+	IsAggregate bool
+}
+
+// Funcs holds all registered builtin functions.
+var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
@@ -81,19 +98,6 @@ var builtin = map[string]struct {
 	"database":     {builtinDatabase, 0, 0, false, false},
 	"found_rows":   {builtinFoundRows, 0, 0, false, false},
 	"user":         {builtinUser, 0, 0, false, false},
-}
-
-func badNArgs(min int, s string, args []interface{}) error {
-	a := []string{}
-	for _, v := range args {
-		a = append(a, fmt.Sprintf("%v", v))
-	}
-	switch len(args) < min {
-	case true:
-		return errors.Errorf("missing argument to %s(%s)", s, strings.Join(a, ", "))
-	default: //case false:
-		return errors.Errorf("too many arguments to %s(%s)", s, strings.Join(a, ", "))
-	}
 }
 
 func invArg(arg interface{}, s string) error {

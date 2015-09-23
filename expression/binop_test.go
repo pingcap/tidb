@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 
+	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -171,7 +172,7 @@ func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 	}
 
 	m := map[interface{}]interface{}{
-		ExprEvalArgAggEmpty: struct{}{},
+		builtin.ExprEvalArgAggEmpty: struct{}{},
 	}
 
 	for _, t := range tbl {

@@ -15,6 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 )
 
@@ -41,12 +42,12 @@ func (s *testIdentSuite) TestIdent(c *C) {
 	v, err := e.Eval(nil, m)
 	c.Assert(err, NotNil)
 
-	m[ExprEvalArgAggEmpty] = struct{}{}
+	m[builtin.ExprEvalArgAggEmpty] = struct{}{}
 	v, err = e.Eval(nil, m)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	delete(m, ExprEvalArgAggEmpty)
+	delete(m, builtin.ExprEvalArgAggEmpty)
 	m[ExprEvalIdentFunc] = func(string) (interface{}, error) {
 		return 1, nil
 	}

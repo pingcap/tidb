@@ -20,6 +20,7 @@ package expression
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression/builtin"
 
 	"github.com/pingcap/tidb/model"
 )
@@ -57,7 +58,7 @@ func (i *Ident) Equal(x *Ident) bool {
 
 // Eval implements the Expression Eval interface.
 func (i *Ident) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
-	if _, ok := args[ExprEvalArgAggEmpty]; ok {
+	if _, ok := args[builtin.ExprEvalArgAggEmpty]; ok {
 		// select c1, max(c1) from t where c1 = null, must get "NULL", "NULL" for empty table
 		return nil, nil
 	}
