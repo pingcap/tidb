@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+// See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 
 // AggregateDistinct handles distinct data for aggregate function: count, sum, avg, and group_concat.
 type AggregateDistinct struct {
@@ -52,7 +52,7 @@ func CreateAggregateDistinct(f string, distinct bool) *AggregateDistinct {
 	return a
 }
 
-// check whether v is distinct or not, return true for distinct
+// Check whether v is distinct or not, return true for distinct
 func (a *AggregateDistinct) isDistinct(v ...interface{}) (bool, error) {
 	// no distinct flag
 	if a.Distinct == nil {
