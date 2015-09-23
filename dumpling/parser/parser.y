@@ -3089,11 +3089,12 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
 	{
 		$$ = &stmts.ShowStmt{
 			Target: stmt.ShowTables,
-			DBName: $3.(string)}
+			DBName: $4.(string),
+			Full: $2.(bool)}
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{

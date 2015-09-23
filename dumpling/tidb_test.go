@@ -830,6 +830,16 @@ func (s *testSessionSuite) TestShow(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, "utf8_bin", "utf8", 83, "", "Yes", 1)
+
+	r = mustExecSQL(c, se, "show tables")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 1)
+
+	r = mustExecSQL(c, se, "show full tables")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 2)
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
