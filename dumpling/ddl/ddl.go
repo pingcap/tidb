@@ -657,7 +657,7 @@ func (d *ddl) writeSchemaInfo(info *model.DBInfo) error {
 			return errors.Trace(err)
 		}
 		key := []byte(meta.DBMetaKey(info.ID))
-		if err := txn.LockKeys(key); err != nil {
+		if err := txn.LockKeys(meta.SchemaMetaVersion, key); err != nil {
 			return errors.Trace(err)
 		}
 		return txn.Set(key, b)

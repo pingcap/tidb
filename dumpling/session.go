@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,7 @@ type Session interface {
 var (
 	_         Session = (*session)(nil)
 	sessionID int64
+	sessionMu sync.Mutex
 )
 
 type stmtRecord struct {
@@ -462,8 +464,10 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	b, ok := storeBootstrapped[store.UUID()]
-	if !ok || !b {
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	_, ok := storeBootstrapped[store.UUID()]
+	if !ok {
 		bootstrap(s)
 		storeBootstrapped[store.UUID()] = true
 	}
