@@ -273,3 +273,8 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		panic("should never happen")
 	}
 }
+
+// Accept implements Expression Accept interface.
+func (u *UnaryOperation) Accept(v Visitor) (Expression, error) {
+	return v.VisitUnaryOperation(u)
+}

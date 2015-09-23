@@ -92,3 +92,8 @@ func (is *IsTruth) Eval(ctx context.Context, args map[interface{}]interface{}) (
 	// true/false is not true/false
 	return b != is.True, nil
 }
+
+// Accept implements Expression Accept interface.
+func (is *IsTruth) Accept(v Visitor) (Expression, error) {
+	return v.VisitIsTruth(is)
+}
