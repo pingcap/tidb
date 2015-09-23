@@ -344,6 +344,7 @@ import (
 	DeleteFromStmt		"DELETE FROM statement"
 	DistinctOpt		"Distinct option"
 	DoStmt			"Do statement"
+	DropDatabase		"DROP {DATABASE | SCHEMA}"
 	DropDatabaseStmt	"DROP DATABASE statement"
 	DropIndexStmt		"DROP INDEX statement"
 	DropTableStmt		"DROP TABLE statement"
@@ -1134,6 +1135,7 @@ DefaultOpt:
 DefaultKwdOpt:
 	{}
 |	"DEFAULT"
+
 /******************************************************************
  * Do statement
  * See: https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -1218,11 +1220,18 @@ DeleteFromStmt:
 		}
 	}
 	
+DropDatabase:
+	"DROP" "DATABASE"
+	{
+	}
+|	"DROP" "SCHEMA"
+	{
+	}
 
 DropDatabaseStmt:
-	"DROP" "DATABASE" IfExists Identifier
+	DropDatabase IfExists DBName
 	{
-		$$ = &stmts.DropDatabaseStmt{IfExists: $3.(bool), Name: $4.(string)}
+		$$ = &stmts.DropDatabaseStmt{IfExists: $2.(bool), Name: $3.(string)}
 		if yylex.(*lexer).root {
 			break
 		}

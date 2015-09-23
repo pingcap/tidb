@@ -350,6 +350,20 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"show collation", true},
 		{"show collation like 'utf8%'", true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
+
+		// For drop datbase/schema
+		{"create database xxx", true},
+		{"create database if exists xxx", false},
+		{"create database if not exists xxx", true},
+		{"create schema xxx", true},
+		{"create schema if exists xxx", false},
+		{"create schema if not exists xxx", true},
+		{"drop database xxx", true},
+		{"drop database if exists xxx", true},
+		{"drop database if not exists xxx", false},
+		{"drop schema xxx", true},
+		{"drop schema if exists xxx", true},
+		{"drop schema if not exists xxx", false},
 	}
 
 	for _, t := range table {
