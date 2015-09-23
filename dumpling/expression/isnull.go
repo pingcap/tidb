@@ -66,7 +66,7 @@ func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (v
 	return (val == nil) != is.Not, nil
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (is *IsNull) Accept(v Visitor) (Expression, error) {
 	return v.VisitIsNull(is)
 }

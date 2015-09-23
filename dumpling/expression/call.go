@@ -130,7 +130,7 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 	return f.f(a, args)
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (c *Call) Accept(v Visitor) (Expression, error) {
 	return v.VisitCall(c)
 }

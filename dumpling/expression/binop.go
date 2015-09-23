@@ -169,7 +169,7 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	}
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (o *BinaryOperation) Accept(v Visitor) (Expression, error) {
 	return v.VisitBinaryOperation(o)
 }

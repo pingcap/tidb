@@ -66,7 +66,7 @@ func (i *Values) Eval(ctx context.Context, args map[interface{}]interface{}) (v 
 	return
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (i *Values) Accept(v Visitor) (Expression, error) {
 	return v.VisitValues(i)
 }

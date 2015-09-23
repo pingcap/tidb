@@ -60,7 +60,7 @@ func (l Value) Eval(ctx context.Context, args map[interface{}]interface{}) (inte
 	return l.Val, nil
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (l Value) Accept(v Visitor) (Expression, error) {
 	return v.VisitValue(l)
 }

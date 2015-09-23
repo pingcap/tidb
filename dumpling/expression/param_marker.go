@@ -43,7 +43,7 @@ func (pm *ParamMarker) Eval(ctx context.Context, args map[interface{}]interface{
 	return nil, nil
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (pm *ParamMarker) Accept(v Visitor) (Expression, error) {
 	return v.VisitParamMaker(pm)
 }

@@ -93,7 +93,7 @@ func (sq *SubQuery) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (sq *SubQuery) Accept(v expression.Visitor) (expression.Expression, error) {
 	return v.VisitSubQuery(sq)
 }
