@@ -2716,7 +2716,7 @@ SelectStmt:
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
 			From:          nil,
-			Lock:	$6.(coldef.LockType),
+			Lock:	       $6.(coldef.LockType),
 		}
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
