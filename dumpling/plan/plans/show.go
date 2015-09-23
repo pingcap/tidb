@@ -86,6 +86,9 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = []string{"Database"}
 	case stmt.ShowTables:
 		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
+		if s.Full {
+			names = append(names, "Table_type")
+		}
 	case stmt.ShowColumns:
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
@@ -168,7 +171,12 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		sort.Strings(tableNames)
 
 		for _, v := range tableNames {
-			s.rows = append(s.rows, &plan.Row{Data: []interface{}{v}})
+			data := []interface{}{v}
+			if s.Full {
+				// now, we only support BASE TABLE
+				data = append(data, "BASE TABLE")
+			}
+			s.rows = append(s.rows, &plan.Row{Data: data})
 		}
 	case stmt.ShowColumns:
 		is := sessionctx.GetDomain(ctx).InfoSchema()
