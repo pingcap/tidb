@@ -32,7 +32,6 @@ var builtin = map[string]struct {
 	isAggregate bool
 }{
 	// common functions
-	"database": {builtinDatabase, 0, 0, false, false},
 	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
 	// math functions
@@ -78,7 +77,10 @@ var builtin = map[string]struct {
 	"repeat":    {builtinRepeat, 2, 2, true, false},
 
 	// information functions
-	"found_rows": {builtinFoundRows, 0, 0, false, false},
+	"current_user": {builtinCurrentUser, 0, 0, false, false},
+	"database":     {builtinDatabase, 0, 0, false, false},
+	"found_rows":   {builtinFoundRows, 0, 0, false, false},
+	"user":         {builtinUser, 0, 0, false, false},
 }
 
 func badNArgs(min int, s string, args []interface{}) error {

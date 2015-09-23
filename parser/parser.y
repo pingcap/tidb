@@ -99,6 +99,7 @@ import (
 	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
+	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
 	day		"DAY"
@@ -1876,7 +1877,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -1884,6 +1885,17 @@ FunctionCallConflict:
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			x.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_USER"
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		x := yylex.(*lexer)
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
 		if err != nil {
 			x.err(err)
 			return 1
@@ -1958,6 +1970,17 @@ FunctionCallKeyword:
 |	"DATE" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"USER" '(' ')'
+	{
+		args := []expression.Expression{}
 		var err error
 		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
