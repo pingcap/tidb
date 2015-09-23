@@ -23,7 +23,7 @@ type Visitor interface {
 	// VisitBinaryOperation visits BinaryOperation expression.
 	VisitBinaryOperation(o *BinaryOperation) (Expression, error)
 
-	// VisitBetween visits Between expression.
+	// VisitCall visits Call expression.
 	VisitCall(c *Call) (Expression, error)
 
 	// VisitCompareSubQuery visits CompareSubQuery expression.
