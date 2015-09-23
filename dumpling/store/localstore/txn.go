@@ -28,7 +28,6 @@ import (
 
 var (
 	_ kv.Transaction = (*dbTxn)(nil)
-
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrCannotSetNilValue is the error when sets an empty value
@@ -42,6 +41,7 @@ type dbTxn struct {
 	startTs      time.Time
 	tID          uint64
 	valid        bool
+	version      kv.Version        // commit version
 	snapshotVals map[string][]byte // origin version in snapshot
 }
 
@@ -210,6 +210,8 @@ func (txn *dbTxn) doCommit() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Update commit version.
+	txn.version = curVer
 	return txn.store.writeBatch(b)
 }
 
@@ -223,6 +225,14 @@ func (txn *dbTxn) Commit() error {
 	}()
 
 	return txn.doCommit()
+}
+
+func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
+	// Check if this transaction is not committed.
+	if txn.version.Cmp(kv.MinVersion) == 0 {
+		return kv.MinVersion, kv.ErrNotCommitted
+	}
+	return txn.version, nil
 }
 
 func (txn *dbTxn) close() error {

@@ -2,6 +2,8 @@ package localstore
 
 import (
 	"bytes"
+	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -15,7 +17,8 @@ type testMvccSuite struct {
 }
 
 func createMemStore() kv.Storage {
-	path := "memory:"
+	// avoid cache
+	path := fmt.Sprintf("memory://%d", time.Now().UnixNano())
 	d := Driver{
 		goleveldb.MemoryDriver{},
 	}
@@ -35,8 +38,8 @@ func (t *testMvccSuite) addDirtyData() {
 }
 
 func (t *testMvccSuite) TestMvccEncode(c *C) {
-	encodedKey1 := MvccEncodeVersionKey([]byte("A"), kv.Version{1})
-	encodedKey2 := MvccEncodeVersionKey([]byte("A"), kv.Version{2})
+	encodedKey1 := MvccEncodeVersionKey([]byte("A"), kv.Version{Ver: 1})
+	encodedKey2 := MvccEncodeVersionKey([]byte("A"), kv.Version{Ver: 2})
 	// A_2
 	// A_1
 	c.Assert(encodedKey1.Cmp(encodedKey2), Greater, 0)
@@ -132,4 +135,76 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
+}
+
+func encodeTestDataKey(i int) []byte {
+	return kv.EncodeKey(encodeInt(i))
+}
+
+func (t *testMvccSuite) TestSnapshotGet(c *C) {
+	tx, _ := t.s.Begin()
+	b, err := tx.Get(encodeInt(1))
+	c.Assert(err, IsNil)
+	tx.Commit()
+
+	// Modify
+	tx, _ = t.s.Begin()
+	err = tx.Set(encodeInt(1), []byte("new"))
+	c.Assert(err, IsNil)
+	err = tx.Commit()
+	c.Assert(err, IsNil)
+	v, err := tx.CommittedVersion()
+	c.Assert(err, IsNil)
+	testKey := encodeTestDataKey(1)
+
+	snapshot, err := t.s.GetSnapshot()
+	defer snapshot.MvccRelease()
+	b, err = snapshot.MvccGet(testKey, kv.MaxVersion)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, "new")
+
+	// Get last version
+	b, err = snapshot.MvccGet(testKey, kv.NewVersion(v.Ver-1))
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, string(encodeInt(1)))
+
+	// Get version not exists
+	b, err = snapshot.MvccGet(testKey, kv.MinVersion)
+	c.Assert(err, NotNil)
+}
+
+func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
+	tx, _ := t.s.Begin()
+	err := tx.Set(encodeInt(1), []byte("new"))
+	c.Assert(err, IsNil)
+	err = tx.Commit()
+	c.Assert(err, IsNil)
+	v, err := tx.CommittedVersion()
+	c.Assert(err, IsNil)
+
+	snapshot, err := t.s.GetSnapshot()
+	defer snapshot.MvccRelease()
+	c.Assert(err, IsNil)
+
+	testKey := encodeTestDataKey(1)
+	// iter helper function
+	iterFunc := func(it kv.Iterator) bool {
+		found := false
+		for it.Valid() {
+			if string(it.Value()) == "new" {
+				found = true
+			}
+			it, err = it.Next(nil)
+			c.Assert(err, IsNil)
+		}
+		return found
+	}
+
+	it := snapshot.NewMvccIterator(testKey, kv.MaxVersion)
+	found := iterFunc(it)
+	c.Assert(found, IsTrue)
+
+	it = snapshot.NewMvccIterator(testKey, kv.NewVersion(v.Ver-1))
+	found = iterFunc(it)
+	c.Assert(found, IsFalse)
 }
