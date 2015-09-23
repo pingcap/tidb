@@ -142,6 +142,8 @@ func builtinMonth(args []interface{}, ctx map[interface{}]interface{}) (interfac
 }
 
 func builtinNow(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
+	// of the execution.
 	fsp := 0
 	if len(args) == 1 {
 		var err error
@@ -293,22 +295,10 @@ func builtinYearWeek(args []interface{}, ctx map[interface{}]interface{}) (inter
 }
 
 func builtinSysDate(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	fsp := 0
-	if len(args) == 1 {
-		var err error
-		if fsp, err = checkFsp(args[0]); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	t := mysql.Time{
-		Time: time.Now(),
-		Type: mysql.TypeDatetime,
-		// set unspecified for later round
-		Fsp: mysql.UnspecifiedFsp,
-	}
-
-	return t.RoundFrac(fsp)
+	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
+	// But here we can just think they are the same because we don't support stored function
+	// and trigger now.
+	return builtinNow(args, ctx)
 }
 
 func checkFsp(arg interface{}) (int, error) {
