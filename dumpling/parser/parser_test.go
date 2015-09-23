@@ -353,6 +353,13 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
+
+		// Select time
+		{"select current_timestamp", true},
+		{"select current_timestamp()", true},
+		{"select current_timestamp(6)", true},
+		{"select now()", true},
+		{"select now(6)", true},
 	}
 
 	for _, t := range table {
