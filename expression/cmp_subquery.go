@@ -87,7 +87,7 @@ func (cs *CompareSubQuery) Eval(ctx context.Context, args map[interface{}]interf
 	return cs.checkResult(lv, cs.R.Value().([]interface{}))
 }
 
-// Accept implements Expression interface.
+// Accept implements Expression Accept interface.
 func (cs *CompareSubQuery) Accept(v Visitor) (Expression, error) {
 	return v.VisitCompareSubQuery(cs)
 }
