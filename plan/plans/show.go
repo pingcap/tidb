@@ -173,7 +173,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		for _, v := range tableNames {
 			data := []interface{}{v}
 			if s.Full {
-				// now, we only support BASE TABLE
+				// TODO: support "VIEW" later if we have supported view feature.
+				// now, just use "BASE TABLE".
 				data = append(data, "BASE TABLE")
 			}
 			s.rows = append(s.rows, &plan.Row{Data: data})
