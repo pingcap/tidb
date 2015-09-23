@@ -48,6 +48,11 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	schemaMetaVersion, err := txn.GetInt64(meta.SchemaMetaVersion)
+	if err != nil {
+		return
+	}
+	do.infoHandle.SetSchemaMetaVersion(schemaMetaVersion)
 	do.infoHandle.Set(schemas)
 	return
 }
@@ -67,18 +72,28 @@ func (do *Domain) Store() kv.Storage {
 	return do.store
 }
 
+func (do *Domain) onDDLChange(err error) error {
+	if err != nil {
+		return err
+	}
+
+	return do.reload()
+}
+
+func (do *Domain) reload() error {
+	infoHandle := infoschema.NewHandle(do.store)
+	do.infoHandle = infoHandle
+	do.ddl = ddl.NewDDL(do.store, infoHandle, do.onDDLChange)
+	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
+	return errors.Trace(err)
+}
+
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage) (d *Domain, err error) {
-	infoHandle := infoschema.NewHandle(store)
-	ddl := ddl.NewDDL(store, infoHandle)
 	d = &Domain{
-		store:      store,
-		infoHandle: infoHandle,
-		ddl:        ddl,
+		store: store,
 	}
-	err = kv.RunInNewTxn(d.store, false, d.loadInfoSchema)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return d, nil
+
+	err = d.reload()
+	return d, errors.Trace(err)
 }
