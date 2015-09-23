@@ -78,7 +78,7 @@ Run `./tidb-server -h` to see more flag options.
 After you started tidb-server, you can use official mysql client to connect to TiDB.
 
 ```
-mysql -h 127.0.0.1 -P 4000 -D test
+mysql -h 127.0.0.1 -P 4000 -u root -D test
 ```
 
 #### __Run as MySQL protocol server with distributed transactional KV storage engine__
