@@ -74,3 +74,11 @@ func (s *testCallSuite) TestCall(c *C) {
 	_, err = f.Eval(nil, nil)
 	c.Assert(err, NotNil)
 }
+
+func (s *testCallSuite) TestBadNArgs(c *C) {
+	err := badNArgs(1, "", nil)
+	c.Assert(err, NotNil)
+
+	err = badNArgs(0, "", []interface{}{1})
+	c.Assert(err, NotNil)
+}
