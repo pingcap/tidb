@@ -142,17 +142,11 @@ func builtinMonth(args []interface{}, ctx map[interface{}]interface{}) (interfac
 }
 
 func builtinNow(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	fsp := int64(0)
+	fsp := 0
 	if len(args) == 1 {
 		var err error
-		fsp, err = types.ToInt64(args[0])
-		if err != nil {
+		if fsp, err = checkFsp(args[0]); err != nil {
 			return nil, errors.Trace(err)
-		}
-		if int(fsp) > mysql.MaxFsp {
-			return nil, errors.Errorf("Too big precision %d specified. Maximum is 6.", fsp)
-		} else if fsp < 0 {
-			return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
 	}
 
@@ -296,4 +290,36 @@ func builtinYearWeek(args []interface{}, ctx map[interface{}]interface{}) (inter
 	// TODO: support multi mode for week
 	year, week := t.ISOWeek()
 	return int64(year*100 + week), nil
+}
+
+func builtinSysDate(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	fsp := 0
+	if len(args) == 1 {
+		var err error
+		if fsp, err = checkFsp(args[0]); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	t := mysql.Time{
+		Time: time.Now(),
+		Type: mysql.TypeDatetime,
+		// set unspecified for later round
+		Fsp: mysql.UnspecifiedFsp,
+	}
+
+	return t.RoundFrac(fsp)
+}
+
+func checkFsp(arg interface{}) (int, error) {
+	fsp, err := types.ToInt64(arg)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if int(fsp) > mysql.MaxFsp {
+		return 0, errors.Errorf("Too big precision %d specified. Maximum is 6.", fsp)
+	} else if fsp < 0 {
+		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	}
+	return int(fsp), nil
 }
