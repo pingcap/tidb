@@ -126,7 +126,10 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 		a[i] = v
 	}
 
-	c.createDistinct()
+	if c.d == nil {
+		// create a distinct if nil.
+		c.d = builtin.CreateAggregateDistinct(c.F, c.Distinct)
+	}
 
 	if args != nil {
 		args[builtin.ExprEvalFn] = c
@@ -139,14 +142,6 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 // Accept implements Expression Accept interface.
 func (c *Call) Accept(v Visitor) (Expression, error) {
 	return v.VisitCall(c)
-}
-
-func (c *Call) createDistinct() {
-	if c.d != nil {
-		return
-	}
-
-	c.d = builtin.CreateAggregateDistinct(c.F, c.Distinct)
 }
 
 func badNArgs(min int, s string, args []interface{}) error {
