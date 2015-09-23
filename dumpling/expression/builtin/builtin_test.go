@@ -11,23 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package builtin
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testBuiltinSuite{})
 
 type testBuiltinSuite struct {
-}
-
-func (s *testBuiltinSuite) TestBadNArgs(c *C) {
-	err := badNArgs(1, "", nil)
-	c.Assert(err, NotNil)
-
-	err = badNArgs(0, "", []interface{}{1})
-	c.Assert(err, NotNil)
 }
 
 func (s *testBuiltinSuite) TestCoalesce(c *C) {

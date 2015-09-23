@@ -30,6 +30,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 
+	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -146,13 +147,13 @@ func mentionedAggregateFuncs(e Expression, m *[]Expression) {
 		mentionedAggregateFuncs(x.L, m)
 		mentionedAggregateFuncs(x.R, m)
 	case *Call:
-		f, ok := builtin[strings.ToLower(x.F)]
+		f, ok := builtin.Funcs[strings.ToLower(x.F)]
 		if !ok {
 			log.Errorf("unknown function %s", x.F)
 			return
 		}
 
-		if f.isAggregate {
+		if f.IsAggregate {
 			// if f is aggregate function, we don't need check the arguments,
 			// because using an aggregate function in the aggregate arg like count(max(c1)) is invalid
 			// TODO: check whether argument contains an aggregate function and return error.

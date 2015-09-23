@@ -11,11 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package builtin
 
 import (
 	. "github.com/pingcap/check"
-
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -54,22 +53,23 @@ func (s *testBuiltinSuite) TestGroupBy(c *C) {
 	}
 
 	for _, t := range tbl {
-		// create a call and use dummy args.
-		e, err := NewCall(t.F, []Expression{Value{nil}}, t.Distinct)
-		c.Assert(err, IsNil)
-
-		call, ok := e.(*Call)
+		f, ok := Funcs[t.F]
 		c.Assert(ok, IsTrue)
 
 		m := map[interface{}]interface{}{}
-		for _, arg := range t.RoundArgs {
-			call.Args = []Expression{Value{arg}}
 
-			_, err = call.Eval(nil, m)
+		m[ExprEvalFn] = new(Func)
+		m[ExprAggDistinct] = CreateAggregateDistinct(t.F, t.Distinct)
+
+		for _, arg := range t.RoundArgs {
+			args := []interface{}{arg}
+
+			_, err := f.F(args, m)
+			c.Assert(err, IsNil)
 		}
 
 		m[ExprAggDone] = struct{}{}
-		v, err := e.Eval(nil, m)
+		v, err := f.F(nil, m)
 		c.Assert(err, IsNil)
 		switch v.(type) {
 		case nil:
@@ -98,23 +98,24 @@ func (s *testBuiltinSuite) TestGroupConcat(c *C) {
 		{[]interface{}{1, nil, 1}, true, "1"},
 	}
 
+	f := builtinGroupConcat
+
 	for _, t := range tbl {
 		// create a call and use dummy args.
-		e, err := NewCall("group_concat", []Expression{Value{nil}}, t.Distinct)
-		c.Assert(err, IsNil)
-
-		call, ok := e.(*Call)
-		c.Assert(ok, IsTrue)
 
 		m := map[interface{}]interface{}{}
-		for _, arg := range t.RoundArgs {
-			call.Args = []Expression{Value{arg}}
+		m[ExprEvalFn] = new(Func)
+		m[ExprAggDistinct] = CreateAggregateDistinct("group_concat", t.Distinct)
 
-			_, err = call.Eval(nil, m)
+		for _, arg := range t.RoundArgs {
+			args := []interface{}{arg}
+
+			_, err := f(args, m)
+			c.Assert(err, IsNil)
 		}
 
 		m[ExprAggDone] = struct{}{}
-		v, err := e.Eval(nil, m)
+		v, err := f(nil, m)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.Ret)
 	}

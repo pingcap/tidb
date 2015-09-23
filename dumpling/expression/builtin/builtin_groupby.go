@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package builtin
 
 import (
 	"bytes"
@@ -30,18 +30,21 @@ import (
 
 // see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 
-type aggregateDistinct struct {
-	// now we have to use memkv Temp, later may be use map directly
+// AggregateDistinct handles distinct data for aggregate function: count, sum, avg, and group_concat.
+type AggregateDistinct struct {
+	// Distinct is a memory key-value map.
+	// Now we have to use memkv Temp, later may be use map directly
 	Distinct memkv.Temp
 }
 
-func (c *Call) createDistinct() *aggregateDistinct {
-	a := new(aggregateDistinct)
+// CreateAggregateDistinct creates a distinct for function f.
+func CreateAggregateDistinct(f string, distinct bool) *AggregateDistinct {
+	a := &AggregateDistinct{}
 
-	switch strings.ToLower(c.F) {
+	switch strings.ToLower(f) {
 	case "count", "sum", "avg", "group_concat":
 		// only these aggregate functions support distinct
-		if c.Distinct {
+		if distinct {
 			a.Distinct, _ = memkv.CreateTemp(true)
 		}
 	}
@@ -50,7 +53,7 @@ func (c *Call) createDistinct() *aggregateDistinct {
 }
 
 // check whether v is distinct or not, return true for distinct
-func (a *aggregateDistinct) isDistinct(v ...interface{}) (bool, error) {
+func (a *AggregateDistinct) isDistinct(v ...interface{}) (bool, error) {
 	// no distinct flag
 	if a.Distinct == nil {
 		return true, nil
@@ -74,7 +77,7 @@ func (a *aggregateDistinct) isDistinct(v ...interface{}) (bool, error) {
 	return true, nil
 }
 
-func (a *aggregateDistinct) clear() {
+func (a *AggregateDistinct) clear() {
 	if a.Distinct == nil {
 		return
 	}
@@ -86,30 +89,15 @@ func (a *aggregateDistinct) clear() {
 	a.Distinct, _ = memkv.CreateTemp(true)
 }
 
-func getDistinct(ctx map[interface{}]interface{}, fn interface{}) *aggregateDistinct {
-	c, ok := fn.(*Call)
+func getDistinct(ctx map[interface{}]interface{}, fn interface{}) *AggregateDistinct {
+	v, ok := ctx[ExprAggDistinct]
 	if !ok {
-		// if fn is not a Call, maybe error
-		// but now we just return a dummpy aggregate distinct
-		return new(aggregateDistinct)
+		// here maybe an error, but now we just return a dummpy aggregate distinct
+		return new(AggregateDistinct)
 	}
 
-	// we may have multi aggregate function in one query
-	// e.g, select sum(c1) + count(*) from t
-	// so here we use a map to keep all aggregate disctinct
-	m := map[interface{}]interface{}{}
-	if v, ok := ctx[ExprAggDistinct]; ok {
-		m = v.(map[interface{}]interface{})
-	}
-
-	if d, ok := m[c]; ok {
-		return d.(*aggregateDistinct)
-	}
-
-	d := c.createDistinct()
-	m[c] = d
-
-	ctx[ExprAggDistinct] = m
+	// must be AggregateDistinct
+	d := v.(*AggregateDistinct)
 	return d
 }
 
