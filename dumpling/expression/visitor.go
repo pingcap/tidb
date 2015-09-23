@@ -97,9 +97,9 @@ type Visitor interface {
 }
 
 // BaseVisitor is the base implementation of Visitor.
-// It traverse the expression tree and call expression's Accept function.
+// It traverses the expression tree and call expression's Accept function.
 // It can not be used directly.
-// A specific Visitor implementation can embed it in and only implement
+// A specific Visitor implementation can embed it in and only implements
 // desired methods to do the job.
 type BaseVisitor struct {
 	V Visitor
