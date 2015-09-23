@@ -142,17 +142,13 @@ func builtinMonth(args []interface{}, ctx map[interface{}]interface{}) (interfac
 }
 
 func builtinNow(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	fsp := int64(0)
+	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
+	// of the execution.
+	fsp := 0
 	if len(args) == 1 {
 		var err error
-		fsp, err = types.ToInt64(args[0])
-		if err != nil {
+		if fsp, err = checkFsp(args[0]); err != nil {
 			return nil, errors.Trace(err)
-		}
-		if int(fsp) > mysql.MaxFsp {
-			return nil, errors.Errorf("Too big precision %d specified. Maximum is 6.", fsp)
-		} else if fsp < 0 {
-			return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
 	}
 
@@ -296,4 +292,24 @@ func builtinYearWeek(args []interface{}, ctx map[interface{}]interface{}) (inter
 	// TODO: support multi mode for week
 	year, week := t.ISOWeek()
 	return int64(year*100 + week), nil
+}
+
+func builtinSysDate(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
+	// But here we can just think they are the same because we don't support stored function
+	// and trigger now.
+	return builtinNow(args, ctx)
+}
+
+func checkFsp(arg interface{}) (int, error) {
+	fsp, err := types.ToInt64(arg)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if int(fsp) > mysql.MaxFsp {
+		return 0, errors.Errorf("Too big precision %d specified. Maximum is 6.", fsp)
+	} else if fsp < 0 {
+		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+	}
+	return int(fsp), nil
 }

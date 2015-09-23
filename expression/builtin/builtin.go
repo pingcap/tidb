@@ -75,6 +75,7 @@ var Funcs = map[string]Func{
 	"month":             {builtinMonth, 1, 1, true, false},
 	"now":               {builtinNow, 0, 1, false, false},
 	"second":            {builtinSecond, 1, 1, true, false},
+	"sysdate":           {builtinSysDate, 0, 1, false, false},
 	"week":              {builtinWeek, 1, 2, true, false},
 	"weekday":           {builtinWeekDay, 1, 1, true, false},
 	"weekofyear":        {builtinWeekOfYear, 1, 1, true, false},
