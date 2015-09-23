@@ -785,6 +785,16 @@ func (s *testSessionSuite) TestSelect(c *C) {
 
 	_, err = se.Execute("select * from t as a join (select 1) as a")
 	c.Assert(err, IsNil)
+
+	r := mustExecSQL(c, se, "select 1, 2 from dual")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
+
+	r = mustExecSQL(c, se, "select 1, 2")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
