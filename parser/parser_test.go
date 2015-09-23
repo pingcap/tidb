@@ -364,6 +364,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select now()", true},
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
+
+		// For dual
+		{"select 1 from dual", true},
+		{"select 1 from dual limit 1", true},
 	}
 
 	for _, t := range table {

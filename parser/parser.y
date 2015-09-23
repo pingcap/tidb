@@ -116,6 +116,7 @@ import (
 	div 		"DIV"
 	do		"DO"
 	drop		"DROP"
+	dual 		"DUAL"
 	duplicate	"DUPLICATE"
 	elseKwd		"ELSE"
 	end		"END"
@@ -2709,13 +2710,13 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
 			From:          nil,
-			Lock:	$5.(coldef.LockType),
+			Lock:	$6.(coldef.LockType),
 		}
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
@@ -2753,6 +2754,11 @@ SelectStmt:
 		
 		$$ = st
 	}
+
+FromDual:
+	/* Empty */
+|	"FROM" "DUAL"
+
 
 FromClause:
 	TableRefs
