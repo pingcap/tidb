@@ -35,9 +35,9 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 		if l.n >= 1<<timePrecisionOffset {
 			return kv.Version{}, ErrOverflow
 		}
-		return kv.Version{ts + l.n}, nil
+		return kv.Version{Ver: ts + l.n}, nil
 	}
 	l.lastTimeStampTs = ts
 	l.n = 0
-	return kv.Version{ts}, nil
+	return kv.Version{Ver: ts}, nil
 }
