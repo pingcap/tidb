@@ -39,22 +39,12 @@ import (
 )
 
 const (
-	// ExprEvalFn is the key saving Call expression.
-	ExprEvalFn = "$fn"
-	// ExprEvalArgCtx is the key saving Context for a Call expression.
-	ExprEvalArgCtx = "$ctx"
-	// ExprAggDone is the key indicating that aggregate function is done.
-	ExprAggDone = "$aggDone"
-	// ExprEvalArgAggEmpty is the key to evaluate the aggregate function for empty table.
-	ExprEvalArgAggEmpty = "$agg0"
 	// ExprEvalDefaultName is the key saving default column name for Default expression.
 	ExprEvalDefaultName = "$defaultName"
 	// ExprEvalIdentFunc is the key saving a function to retrieve value for identifier name.
 	ExprEvalIdentFunc = "$identFunc"
 	// ExprEvalPositionFunc is the key saving a Position expresion.
 	ExprEvalPositionFunc = "$positionFunc"
-	// ExprAggDistinct is the key saving a distinct aggregate.
-	ExprAggDistinct = "$aggDistinct"
 	// ExprEvalValuesFunc is the key saving a function to retrieve value for column name.
 	ExprEvalValuesFunc = "$valuesFunc"
 )
