@@ -739,7 +739,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {calc_found_rows}	lval.item = string(l.val)
 			return calcFoundRows
 
-{current_ts}		return currentTs
+{current_ts}		lval.item = string(l.val)
+			return currentTs
 {localtime}		return localTime
 {localts}		return localTs
 {now}			lval.item = string(l.val)
