@@ -832,6 +832,21 @@ func (s *testSessionSuite) TestShow(c *C) {
 	match(c, row, "utf8_bin", "utf8", 83, "", "Yes", 1)
 }
 
+func (s *testSessionSuite) TestTimeFunc(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	last := time.Now().Format(mysql.TimeFormat)
+	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6)")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	for _, t := range row {
+		n, ok := t.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(n.String(), GreaterEqual, last)
+	}
+}
+
 func (s *testSessionSuite) TestBit(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)

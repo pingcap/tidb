@@ -369,6 +369,7 @@ import (
 	FunctionCallKeyword	"Function call with keyword as function name"
 	FunctionCallNonKeyword	"Function call with nonkeyword as function name"
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
+	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
@@ -2003,6 +2004,20 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"CURRENT_TIMESTAMP" FuncDatetimePrec
+	{
+		args := []expression.Expression{}
+		if $2 != nil {
+			args = append(args, $2.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"ABS" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2154,10 +2169,14 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
-|	"NOW" '(' ExpressionList ')'
+|	"NOW" '(' ExpressionOpt ')'
 	{
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
 		var err error
-		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression),false)
+		$$, err = expression.NewCall($1.(string), args,false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2312,6 +2331,19 @@ FunctionCallAgg:
 			l.err(err)
 			return 1
 		}
+	}
+
+FuncDatetimePrec:
+	{
+		$$ = nil
+	}
+|	'(' ')'
+	{
+		$$ = nil
+	}
+|	'(' Expression ')'
+	{
+		$$ = $2
 	}
 
 ExpressionOpt:
