@@ -101,8 +101,8 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = []string{"Variable_name", "Value"}
 	case stmt.ShowCollation:
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {

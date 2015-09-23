@@ -156,7 +156,7 @@ func (p *testShowSuit) TestShowCollation(c *C) {
 	pln.Target = stmt.ShowCollation
 	fls := pln.GetFields()
 	c.Assert(fls, HasLen, 6)
-	c.Assert(fls[2].Col.Tp, Equals, mysql.TypeLong)
+	c.Assert(fls[2].Col.Tp, Equals, mysql.TypeLonglong)
 
 	pln.Pattern = &expression.PatternLike{
 		Pattern: &expression.Value{
