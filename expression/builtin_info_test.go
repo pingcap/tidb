@@ -54,3 +54,29 @@ func (s *testBuiltinSuite) TestFoundRows(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(0))
 }
+
+func (s *testBuiltinSuite) TestUser(c *C) {
+	ctx := newMockCtx()
+	m := map[interface{}]interface{}{}
+	variable.BindSessionVars(ctx)
+	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars.User = "root@localhost"
+
+	m[ExprEvalArgCtx] = ctx
+	v, err := builtinUser(nil, m)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "root@localhost")
+}
+
+func (s *testBuiltinSuite) TestCurrentUser(c *C) {
+	ctx := newMockCtx()
+	m := map[interface{}]interface{}{}
+	variable.BindSessionVars(ctx)
+	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars.User = "root@localhost"
+
+	m[ExprEvalArgCtx] = ctx
+	v, err := builtinCurrentUser(nil, m)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "root@localhost")
+}

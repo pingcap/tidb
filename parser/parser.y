@@ -99,6 +99,7 @@ import (
 	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
+	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
 	day		"DAY"
@@ -370,6 +371,7 @@ import (
 	FunctionCallKeyword	"Function call with keyword as function name"
 	FunctionCallNonKeyword	"Function call with nonkeyword as function name"
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
+	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
@@ -537,6 +539,7 @@ import (
 %left 	'^'
 %left 	'~' neg
 %right 	not
+%right	collate
 
 %precedence lowerThanLeftParen
 %precedence '('
@@ -1870,6 +1873,11 @@ PrimaryExpression:
 			FunctionType: expression.BinaryOperator,
 		}	
 	}
+|	PrimaryExpression "COLLATE" CollationName %prec neg
+	{
+		// TODO: Create a builtin function hold expr and collation. When do evaluation, convert expr result using the collation.
+		$$ = $1
+	}
 
 Function:
 	FunctionCallKeyword
@@ -1878,7 +1886,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -1886,6 +1894,17 @@ FunctionCallConflict:
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			x.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_USER"
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		x := yylex.(*lexer)
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
 		if err != nil {
 			x.err(err)
 			return 1
@@ -1968,6 +1987,17 @@ FunctionCallKeyword:
 			return 1
 		}
 	}
+|	"USER" '(' ')'
+	{
+		args := []expression.Expression{}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"VALUES" '(' Identifier ')' %prec lowerThanInsertValues
 	{
 		// TODO: support qualified identifier for column_name
@@ -2000,6 +2030,20 @@ FunctionCallNonKeyword:
 	{
 		var err error
 		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_TIMESTAMP" FuncDatetimePrec
+	{
+		args := []expression.Expression{}
+		if $2 != nil {
+			args = append(args, $2.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2157,10 +2201,14 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
-|	"NOW" '(' ExpressionList ')'
+|	"NOW" '(' ExpressionOpt ')'
 	{
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
 		var err error
-		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression),false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2315,6 +2363,19 @@ FunctionCallAgg:
 			l.err(err)
 			return 1
 		}
+	}
+
+FuncDatetimePrec:
+	{
+		$$ = nil
+	}
+|	'(' ')'
+	{
+		$$ = nil
+	}
+|	'(' Expression ')'
+	{
+		$$ = $2
 	}
 
 ExpressionOpt:
@@ -3060,11 +3121,12 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
 	{
 		$$ = &stmts.ShowStmt{
 			Target: stmt.ShowTables,
-			DBName: $3.(string)}
+			DBName: $4.(string),
+			Full: $2.(bool)}
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{

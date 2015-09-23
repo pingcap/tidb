@@ -47,3 +47,23 @@ func builtinFoundRows(arg []interface{}, data map[interface{}]interface{}) (inte
 	ctx := c.(context.Context)
 	return variable.GetSessionVars(ctx).FoundRows, nil
 }
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+// TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
+func builtinCurrentUser(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+	c, ok := data[ExprEvalArgCtx]
+	if !ok {
+		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
+	}
+	ctx := c.(context.Context)
+	return variable.GetSessionVars(ctx).User, nil
+}
+
+func builtinUser(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+	c, ok := data[ExprEvalArgCtx]
+	if !ok {
+		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
+	}
+	ctx := c.(context.Context)
+	return variable.GetSessionVars(ctx).User, nil
+}

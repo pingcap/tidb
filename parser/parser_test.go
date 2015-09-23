@@ -270,6 +270,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT CONVERT('111', SIGNED);", true},
 
 		{"SELECT DATABASE();", true},
+		{"SELECT USER();", true},
+		{"SELECT CURRENT_USER();", true},
+		{"SELECT CURRENT_USER;", true},
 
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -364,6 +367,16 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+
+		// For issue 224
+		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
+
+		// Select time
+		{"select current_timestamp", true},
+		{"select current_timestamp()", true},
+		{"select current_timestamp(6)", true},
+		{"select now()", true},
+		{"select now(6)", true},
 	}
 
 	for _, t := range table {

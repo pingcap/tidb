@@ -39,6 +39,9 @@ type SessionVars struct {
 
 	// Found rows
 	FoundRows uint64
+
+	// Current user
+	User string
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -108,6 +111,11 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
 	return s.preparedStmtID
+}
+
+// SetCurrentUser saves the current user to the session context
+func (s *SessionVars) SetCurrentUser(user string) {
+	s.User = user
 }
 
 // IsAutocommit checks if it is in the auto-commit mode.

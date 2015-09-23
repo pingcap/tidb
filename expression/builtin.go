@@ -32,7 +32,6 @@ var builtin = map[string]struct {
 	isAggregate bool
 }{
 	// common functions
-	"database": {builtinDatabase, 0, 0, false, false},
 	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
 	// math functions
@@ -47,22 +46,23 @@ var builtin = map[string]struct {
 	"sum":          {builtinSum, 1, 1, false, true},
 
 	// time functions
-	"date":        {builtinDate, 8, 8, true, false},
-	"day":         {builtinDay, 1, 1, true, false},
-	"dayofmonth":  {builtinDayOfMonth, 1, 1, true, false},
-	"dayofweek":   {builtinDayOfWeek, 1, 1, true, false},
-	"dayofyear":   {builtinDayOfYear, 1, 1, true, false},
-	"hour":        {builtinHour, 1, 1, true, false},
-	"microsecond": {builtinMicroSecond, 1, 1, true, false},
-	"minute":      {builtinMinute, 1, 1, true, false},
-	"month":       {builtinMonth, 1, 1, true, false},
-	"now":         {builtinNow, 0, 1, false, false},
-	"second":      {builtinSecond, 1, 1, true, false},
-	"week":        {builtinWeek, 1, 2, true, false},
-	"weekday":     {builtinWeekDay, 1, 1, true, false},
-	"weekofyear":  {builtinWeekOfYear, 1, 1, true, false},
-	"year":        {builtinYear, 1, 1, true, false},
-	"yearweek":    {builtinYearWeek, 1, 2, true, false},
+	"current_timestamp": {builtinNow, 0, 1, false, false},
+	"date":              {builtinDate, 8, 8, true, false},
+	"day":               {builtinDay, 1, 1, true, false},
+	"dayofmonth":        {builtinDayOfMonth, 1, 1, true, false},
+	"dayofweek":         {builtinDayOfWeek, 1, 1, true, false},
+	"dayofyear":         {builtinDayOfYear, 1, 1, true, false},
+	"hour":              {builtinHour, 1, 1, true, false},
+	"microsecond":       {builtinMicroSecond, 1, 1, true, false},
+	"minute":            {builtinMinute, 1, 1, true, false},
+	"month":             {builtinMonth, 1, 1, true, false},
+	"now":               {builtinNow, 0, 1, false, false},
+	"second":            {builtinSecond, 1, 1, true, false},
+	"week":              {builtinWeek, 1, 2, true, false},
+	"weekday":           {builtinWeekDay, 1, 1, true, false},
+	"weekofyear":        {builtinWeekOfYear, 1, 1, true, false},
+	"year":              {builtinYear, 1, 1, true, false},
+	"yearweek":          {builtinYearWeek, 1, 2, true, false},
 
 	// control functions
 	"if":     {builtinIf, 3, 3, true, false},
@@ -77,7 +77,10 @@ var builtin = map[string]struct {
 	"repeat":    {builtinRepeat, 2, 2, true, false},
 
 	// information functions
-	"found_rows": {builtinFoundRows, 0, 0, false, false},
+	"current_user": {builtinCurrentUser, 0, 0, false, false},
+	"database":     {builtinDatabase, 0, 0, false, false},
+	"found_rows":   {builtinFoundRows, 0, 0, false, false},
+	"user":         {builtinUser, 0, 0, false, false},
 }
 
 func badNArgs(min int, s string, args []interface{}) error {

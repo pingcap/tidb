@@ -84,3 +84,8 @@ func (f *FunctionConvert) Eval(ctx context.Context, args map[interface{}]interfa
 	}
 	return target, nil
 }
+
+// Accept implements Expression Accept interface.
+func (f *FunctionConvert) Accept(v Visitor) (Expression, error) {
+	return v.VisitFunctionConvert(f)
+}
