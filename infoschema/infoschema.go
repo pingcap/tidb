@@ -185,6 +185,8 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 type Handle struct {
 	value atomic.Value
 	store kv.Storage
+	// We should to check version when change schema
+	schemaMetaVersion int64
 }
 
 // NewHandle creates a new Handle.
@@ -192,6 +194,15 @@ func NewHandle(store kv.Storage) *Handle {
 	return &Handle{
 		store: store,
 	}
+}
+
+func (h *Handle) SetSchemaMetaVersion(ver int64) {
+	h.schemaMetaVersion = ver
+}
+
+// SchemaMetaVersion return version of schema meta
+func (h *Handle) SchemaMetaVersion() int64 {
+	return h.schemaMetaVersion
 }
 
 // Set sets DBInfo to information schema.

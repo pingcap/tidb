@@ -50,7 +50,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 func (ts *testSuite) TestT(c *C) {
 	handle := infoschema.NewHandle(ts.store)
 	handle.Set(nil)
-	dd := ddl.NewDDL(ts.store, handle)
+	dd := ddl.NewDDL(ts.store, handle, nil)
 	se, _ := tidb.CreateSession(ts.store)
 	ctx := se.(context.Context)
 	schemaName := model.NewCIStr("test")
@@ -137,7 +137,7 @@ func (ts *testSuite) TestT(c *C) {
 func (ts *testSuite) TestConstraintNames(c *C) {
 	handle := infoschema.NewHandle(ts.store)
 	handle.Set(nil)
-	dd := ddl.NewDDL(ts.store, handle)
+	dd := ddl.NewDDL(ts.store, handle, nil)
 	se, _ := tidb.CreateSession(ts.store)
 	ctx := se.(context.Context)
 	schemaName := model.NewCIStr("test")

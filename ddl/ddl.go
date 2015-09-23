@@ -61,15 +61,19 @@ type DDL interface {
 }
 
 type ddl struct {
-	store      kv.Storage
-	infoHandle *infoschema.Handle
+	store       kv.Storage
+	infoHandle  *infoschema.Handle
+	onDDLChange OnDDLChange
 }
 
+type OnDDLChange func(err error) error
+
 // NewDDL create new DDL
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle) DDL {
+func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
 	d := &ddl{
-		store:      store,
-		infoHandle: infoHandle,
+		store:       store,
+		infoHandle:  infoHandle,
+		onDDLChange: hook,
 	}
 	return d
 }
@@ -96,6 +100,21 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	newInfo := append(is.Clone(), info)
 	d.infoHandle.Set(newInfo)
 	return nil
+}
+
+func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction) error {
+	curVer, err := txn.GetInt64(meta.SchemaMetaVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ourVer := d.infoHandle.SchemaMetaVersion()
+	if curVer != ourVer {
+		return errors.Errorf("Schema changed, our version %d, got %d", ourVer, curVer)
+	}
+
+	// Increment version
+	_, err = txn.Inc(meta.SchemaMetaVersion, 1)
+	return errors.Trace(err)
 }
 
 func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
@@ -138,16 +157,20 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 	// Delete meta key
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		err := d.verifySchemaMetaVersion(txn)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		key := []byte(meta.DBMetaKey(old.ID))
-		if err := txn.LockKeys(key); err != nil {
+		if err := txn.LockKeys(meta.SchemaMetaVersion, key); err != nil {
 			return errors.Trace(err)
 		}
 		return txn.Delete(key)
 	})
-	if err != nil {
-		return errors.Trace(err)
+	if d.onDDLChange != nil {
+		err = d.onDDLChange(err)
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 func getDefaultCharsetAndCollate() (string, string) {
@@ -629,6 +652,10 @@ func (d *ddl) writeSchemaInfo(info *model.DBInfo) error {
 		return errors.Trace(err)
 	}
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		err := d.verifySchemaMetaVersion(txn)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		key := []byte(meta.DBMetaKey(info.ID))
 		if err := txn.LockKeys(key); err != nil {
 			return errors.Trace(err)
@@ -636,6 +663,9 @@ func (d *ddl) writeSchemaInfo(info *model.DBInfo) error {
 		return txn.Set(key, b)
 	})
 	log.Warn("save schema", string(b))
+	if d.onDDLChange != nil {
+		err = d.onDDLChange(err)
+	}
 	return errors.Trace(err)
 }
 
