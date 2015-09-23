@@ -86,3 +86,8 @@ func (v *Variable) Eval(ctx context.Context, args map[interface{}]interface{}) (
 	// TODO: select global sys var from kv store, now we only get it from memory
 	return sysVar.Value, nil
 }
+
+// Accept implements Expression Accept interface.
+func (v *Variable) Accept(visitor Visitor) (Expression, error) {
+	return visitor.VisitVariable(v)
+}

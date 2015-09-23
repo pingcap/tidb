@@ -49,6 +49,10 @@ func (m mockExpr) Clone() Expression {
 	return nm
 }
 
+func (m mockExpr) Accept(v Visitor) (Expression, error) {
+	return m, nil
+}
+
 type mockCtx struct {
 	vars map[fmt.Stringer]interface{}
 }

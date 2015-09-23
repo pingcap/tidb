@@ -53,3 +53,8 @@ func (p *PExpr) String() string {
 func (p *PExpr) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
 	return p.Expr.Eval(ctx, args)
 }
+
+// Accept implements Expression Accept interface.
+func (p *PExpr) Accept(v Visitor) (Expression, error) {
+	return v.VisitPExpr(p)
+}
