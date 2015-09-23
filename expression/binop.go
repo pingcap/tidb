@@ -76,34 +76,29 @@ func NewBinaryOperation(op opcode.Op, x, y Expression) Expression {
 	}
 }
 
-// IsIdentRelOpVal checks left expression is Ident expression and right is Value expression
+// IsIdentCompareVal checks left expression is Ident expression and right is Value expression
 // for relational comparison, then returns left identifier name and right value.
-func (o *BinaryOperation) IsIdentRelOpVal() (bool, string, interface{}, error) {
-	sid := ""
+func (o *BinaryOperation) IsIdentCompareVal() (bool, string, interface{}, error) {
 	id, ok := o.L.(*Ident)
-	if ok {
-		// TODO: maybe we can remove this later
-		if IsQualified(id.O) {
-			return false, "", nil, nil
-		}
-		sid = id.O
-	} else {
+	if !ok {
 		return false, "", nil, nil
 	}
-
-	if v, ok := o.R.(Value); ok {
-		switch o.Op {
-		case opcode.LT, opcode.LE,
-			opcode.GT, opcode.GE,
-			opcode.EQ, opcode.NE,
-			opcode.NullEQ:
-			return true, sid, v.Val, nil
-		default:
-			return false, "", nil, nil
-		}
+	switch o.Op {
+	case opcode.LT, opcode.LE,
+		opcode.GT, opcode.GE,
+		opcode.EQ, opcode.NE,
+		opcode.NullEQ:
+	default:
+		return false, "", nil, nil
 	}
-
-	return false, "", nil, nil
+	if !o.R.IsStatic() {
+		return false, "", nil, nil
+	}
+	value, err := o.R.Eval(nil, nil)
+	if err != nil {
+		return false, "", nil, errors.Trace(err)
+	}
+	return true, id.L, value, nil
 }
 
 // Clone implements the Expression Clone interface.

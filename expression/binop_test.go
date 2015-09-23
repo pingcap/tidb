@@ -212,7 +212,7 @@ func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 
 	for _, t := range relTbl {
 		expr := &BinaryOperation{Op: t.op, L: t.lhs, R: t.rhs}
-		b, _, _, err := expr.IsIdentRelOpVal()
+		b, _, _, err := expr.IsIdentCompareVal()
 		c.Assert(err, IsNil)
 		c.Assert(t.ret, Equals, b)
 	}
