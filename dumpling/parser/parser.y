@@ -209,6 +209,7 @@ import (
 	substring	"SUBSTRING"
 	sum		"SUM"
 	sysVar		"SYS_VAR"
+	sysDate		"SYSDATE"
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
@@ -2256,6 +2257,20 @@ FunctionCallNonKeyword:
 			Pos: $5.(expression.Expression),
 			Len: $7.(expression.Expression),
 		}	
+	}
+|	"SYSDATE" '(' ExpressionOpt ')'
+	{
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
 	}
 |	"WEEKDAY" '(' Expression ')'
 	{

@@ -363,6 +363,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select current_timestamp(6)", true},
 		{"select now()", true},
 		{"select now(6)", true},
+		{"select sysdate(), sysdate(6)", true},
 	}
 
 	for _, t := range table {

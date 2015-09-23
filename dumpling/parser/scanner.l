@@ -354,6 +354,7 @@ some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 sum		{s}{u}{m}
+sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
@@ -689,6 +690,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return substring
 {sum}			lval.item = string(l.val)
 			return sum
+{sysdate}		lval.item = string(l.val)
+			return sysDate
 {table}			return tableKwd
 {tables}		lval.item = string(l.val)
 			return tables
