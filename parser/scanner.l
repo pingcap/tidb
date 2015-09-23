@@ -279,6 +279,7 @@ describe	{d}{e}{s}{c}{r}{i}{b}{e}
 distinct	{d}{i}{s}{t}{i}{n}{c}{t}
 div		{d}{i}{v}
 do		{d}{o}
+dual 		{d}{u}{a}{l}
 duplicate	{d}{u}{p}{l}{i}{c}{a}{t}{e}
 else		{e}{l}{s}{e}
 end		{e}{n}{d}
@@ -568,6 +569,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {div}			return div
 {do}			lval.item = string(l.val)
 			return do
+{dual}			return dual
 {duplicate}		lval.item = string(l.val)
 			return duplicate
 {else}			return elseKwd
