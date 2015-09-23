@@ -100,8 +100,7 @@ func (h *stmtHistory) clone() *stmtHistory {
 
 type session struct {
 	txn     kv.Transaction // Current transaction
-	user    string
-	args    []interface{} // Statment execution args, this should be cleaned up after exec
+	args    []interface{}  // Statment execution args, this should be cleaned up after exec
 	values  map[fmt.Stringer]interface{}
 	store   kv.Storage
 	sid     int64
@@ -156,7 +155,6 @@ func (s *session) FinishTxn(rollback bool) error {
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
 	data := map[string]interface{}{
-		"user":       s.user,
 		"currDBName": db.GetCurrentSchema(s),
 		"sid":        s.sid,
 	}
@@ -445,7 +443,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}
-	s.user = user
+	variable.GetSessionVars(s).SetCurrentUser(user)
 	return true
 }
 
