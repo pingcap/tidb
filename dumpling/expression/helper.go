@@ -30,6 +30,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 
+	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -38,22 +39,12 @@ import (
 )
 
 const (
-	// ExprEvalFn is the key saving Call expression.
-	ExprEvalFn = "$fn"
-	// ExprEvalArgCtx is the key saving Context for a Call expression.
-	ExprEvalArgCtx = "$ctx"
-	// ExprAggDone is the key indicating that aggregate function is done.
-	ExprAggDone = "$aggDone"
-	// ExprEvalArgAggEmpty is the key to evaluate the aggregate function for empty table.
-	ExprEvalArgAggEmpty = "$agg0"
 	// ExprEvalDefaultName is the key saving default column name for Default expression.
 	ExprEvalDefaultName = "$defaultName"
 	// ExprEvalIdentFunc is the key saving a function to retrieve value for identifier name.
 	ExprEvalIdentFunc = "$identFunc"
 	// ExprEvalPositionFunc is the key saving a Position expresion.
 	ExprEvalPositionFunc = "$positionFunc"
-	// ExprAggDistinct is the key saving a distinct aggregate.
-	ExprAggDistinct = "$aggDistinct"
 	// ExprEvalValuesFunc is the key saving a function to retrieve value for column name.
 	ExprEvalValuesFunc = "$valuesFunc"
 )
@@ -146,13 +137,13 @@ func mentionedAggregateFuncs(e Expression, m *[]Expression) {
 		mentionedAggregateFuncs(x.L, m)
 		mentionedAggregateFuncs(x.R, m)
 	case *Call:
-		f, ok := builtin[strings.ToLower(x.F)]
+		f, ok := builtin.Funcs[strings.ToLower(x.F)]
 		if !ok {
 			log.Errorf("unknown function %s", x.F)
 			return
 		}
 
-		if f.isAggregate {
+		if f.IsAggregate {
 			// if f is aggregate function, we don't need check the arguments,
 			// because using an aggregate function in the aggregate arg like count(max(c1)) is invalid
 			// TODO: check whether argument contains an aggregate function and return error.

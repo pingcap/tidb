@@ -14,74 +14,15 @@
 package expression
 
 import (
-	"errors"
-
 	. "github.com/pingcap/check"
 )
 
-func (s *testBuiltinSuite) TestIf(c *C) {
-	tbl := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
-		Arg3 interface{}
-		Ret  interface{}
-	}{
-		{1, 1, 2, 1},
-		{nil, 1, 2, 2},
-		{0, 1, 2, 2},
-	}
+var _ = Suite(&testCaseSuite{})
 
-	for _, t := range tbl {
-		v, err := builtinIf([]interface{}{t.Arg1, t.Arg2, t.Arg3}, nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t.Ret)
-	}
-
-	_, err := builtinIf([]interface{}{errors.New("must error"), 1, 2}, nil)
-	c.Assert(err, NotNil)
+type testCaseSuite struct {
 }
 
-func (s *testBuiltinSuite) TestIfNull(c *C) {
-	tbl := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
-		Ret  interface{}
-	}{
-		{1, 2, 1},
-		{nil, 2, 2},
-		{nil, nil, nil},
-	}
-
-	for _, t := range tbl {
-		v, err := builtinIfNull([]interface{}{t.Arg1, t.Arg2}, nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t.Ret)
-	}
-}
-
-func (s *testBuiltinSuite) TestNullIf(c *C) {
-	tbl := []struct {
-		Arg1 interface{}
-		Arg2 interface{}
-		Ret  interface{}
-	}{
-		{1, 1, nil},
-		{nil, 2, nil},
-		{1, nil, 1},
-		{1, 2, 1},
-	}
-
-	for _, t := range tbl {
-		v, err := builtinNullIf([]interface{}{t.Arg1, t.Arg2}, nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t.Ret)
-	}
-
-	_, err := builtinNullIf([]interface{}{errors.New("must error"), 1}, nil)
-	c.Assert(err, NotNil)
-}
-
-func (s *testBuiltinSuite) TestCaseWhen(c *C) {
+func (s *testCaseSuite) TestCaseWhen(c *C) {
 	when0 := &WhenClause{mockExpr{val: 1}, mockExpr{val: "str1"}}
 	when1 := &WhenClause{mockExpr{val: 2}, mockExpr{val: "str2"}}
 	whens0 := []*WhenClause{when0, when1}

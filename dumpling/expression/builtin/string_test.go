@@ -11,9 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package builtin
 
 import (
+	"errors"
+
 	. "github.com/pingcap/check"
 )
 
@@ -47,7 +49,7 @@ func (s *testBuiltinSuite) TestConcat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	args = []interface{}{mockExpr{}}
+	args = []interface{}{errors.New("must error")}
 	_, err = builtinConcat(args, nil)
 	c.Assert(err, NotNil)
 }
@@ -64,7 +66,7 @@ func (s *testBuiltinSuite) TestConcatWS(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "a|b|c")
 
-	args = []interface{}{mockExpr{}}
+	args = []interface{}{errors.New("must error")}
 	_, err = builtinConcatWS(args, nil)
 	c.Assert(err, NotNil)
 }
