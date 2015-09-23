@@ -2176,7 +2176,7 @@ FunctionCallNonKeyword:
 			args = append(args, $3.(expression.Expression))
 		}
 		var err error
-		$$, err = expression.NewCall($1.(string), args,false)
+		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
