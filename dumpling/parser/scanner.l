@@ -262,6 +262,7 @@ convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
+current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
 day		{d}{a}{y}
@@ -541,6 +542,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return count
 {create}		return create
 {cross}			return cross
+{current_user}		lval.item = string(l.val)
+			return currentUser
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
@@ -739,7 +742,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {calc_found_rows}	lval.item = string(l.val)
 			return calcFoundRows
 
-{current_ts}		return currentTs
+{current_ts}		lval.item = string(l.val)
+			return currentTs
 {localtime}		return localTime
 {localts}		return localTs
 {now}			lval.item = string(l.val)

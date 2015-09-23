@@ -15,7 +15,6 @@ package localstore
 
 import (
 	"bytes"
-	"math"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -26,18 +25,18 @@ import (
 )
 
 var (
-	_ kv.Snapshot = (*dbSnapshot)(nil)
-	_ kv.Iterator = (*dbIter)(nil)
+	_ kv.Snapshot     = (*dbSnapshot)(nil)
+	_ kv.MvccSnapshot = (*dbSnapshot)(nil)
+	_ kv.Iterator     = (*dbIter)(nil)
 )
 
 type dbSnapshot struct {
 	engine.Snapshot
 }
 
-func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
+func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	// engine Snapshot return nil, nil for value not found,
 	// so here we will check nil and return kv.ErrNotExist.
-
 	// get newest version, (0, MaxUint64)
 	// Key arrangement:
 	// Key -> META
@@ -50,8 +49,8 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	// Key_0
 	// NextKey -> META
 	// NextKey_xxx
-	startKey := MvccEncodeVersionKey(k, kv.Version{math.MaxUint64})
-	endKey := MvccEncodeVersionKey(k, kv.Version{0})
+	startKey := MvccEncodeVersionKey(k, ver)
+	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
 
 	// get raw iterator
 	it := s.Snapshot.NewIterator(startKey)
@@ -78,13 +77,26 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	return v, nil
 }
 
+func (s *dbSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
+	return newDBIter(s, k, ver)
+}
+
+func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
+	// Get latest version.
+	return s.MvccGet(k, kv.MaxVersion)
+}
+
 func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
 	k, ok := param.([]byte)
 	if !ok {
 		log.Errorf("leveldb iterator parameter error, %+v", param)
 		return nil
 	}
-	return newDBIter(s, k)
+	return newDBIter(s, k, kv.MaxVersion)
+}
+
+func (s *dbSnapshot) MvccRelease() {
+	s.Release()
 }
 
 func (s *dbSnapshot) Release() {
@@ -95,18 +107,20 @@ func (s *dbSnapshot) Release() {
 }
 
 type dbIter struct {
-	s        *dbSnapshot
-	startKey kv.Key
-	valid    bool
-	k        kv.Key
-	v        []byte
+	s               *dbSnapshot
+	startKey        kv.Key
+	valid           bool
+	exceptedVersion kv.Version
+	k               kv.Key
+	v               []byte
 }
 
-func newDBIter(s *dbSnapshot, startKey kv.Key) *dbIter {
+func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
 	it := &dbIter{
-		s:        s,
-		startKey: startKey,
-		valid:    true,
+		s:               s,
+		startKey:        startKey,
+		valid:           true,
+		exceptedVersion: exceptedVer,
 	}
 	it.Next(nil)
 	return it
@@ -140,7 +154,7 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 			break
 		}
 		// Get kv pair.
-		val, err := it.s.Get(key)
+		val, err := it.s.MvccGet(key, it.exceptedVersion)
 		if err != nil && !errors2.ErrorEqual(err, kv.ErrNotExist) {
 			// Get this version error
 			it.valid = false

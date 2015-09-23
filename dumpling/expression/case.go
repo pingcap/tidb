@@ -65,6 +65,11 @@ func (w *WhenClause) Eval(ctx context.Context, args map[interface{}]interface{})
 	return w.Result.Eval(ctx, args)
 }
 
+// Accept implements Expression Accept interface.
+func (w *WhenClause) Accept(v Visitor) (Expression, error) {
+	return v.VisitWhenClause(w)
+}
+
 // String implements the Expression String interface.
 func (w *WhenClause) String() string {
 	return fmt.Sprintf("WHEN %s THEN %s", w.Expr.String(), w.Result.String())
@@ -176,4 +181,9 @@ func (f *FunctionCase) Eval(ctx context.Context, args map[interface{}]interface{
 		return f.ElseClause.Eval(ctx, args)
 	}
 	return nil, nil
+}
+
+// Accept implements Expression Accept interface.
+func (f *FunctionCase) Accept(v Visitor) (Expression, error) {
+	return v.VisitFunctionCase(f)
 }

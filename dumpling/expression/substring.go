@@ -107,3 +107,8 @@ func (f *FunctionSubstring) Eval(ctx context.Context, args map[interface{}]inter
 	}
 	return str[pos:end], nil
 }
+
+// Accept implements Expression Accept interface.
+func (f *FunctionSubstring) Accept(v Visitor) (Expression, error) {
+	return v.VisitFunctionSubstring(f)
+}
