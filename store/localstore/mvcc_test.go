@@ -173,6 +173,28 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
+	// update some new data
+	for i := 0; i < 10; i++ {
+		tx, _ := t.s.Begin()
+		err := tx.Set(encodeInt(5), encodeInt(100+i))
+		c.Assert(err, IsNil)
+		err = tx.Commit()
+		c.Assert(err, IsNil)
+	}
+	// we can always read newest data
+	tx, _ := t.s.Begin()
+	b, err := tx.Get(encodeInt(5))
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, string(encodeInt(100+9)))
+	// we can always scan newest data
+	it, err := tx.Seek(encodeInt(5), nil)
+	c.Assert(err, IsNil)
+	c.Assert(it.Valid(), IsTrue)
+	c.Assert(string(it.Value()), Equals, string(encodeInt(100+9)))
+	tx.Commit()
+}
+
 func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	tx, _ := t.s.Begin()
 	err := tx.Set(encodeInt(1), []byte("new"))
