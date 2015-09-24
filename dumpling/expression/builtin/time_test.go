@@ -15,6 +15,7 @@ package builtin
 
 import (
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -245,5 +246,23 @@ func (s *testBuiltinSuite) TestNow(c *C) {
 	c.Assert(err, NotNil)
 
 	_, err = builtinNow([]interface{}{-2}, nil)
+	c.Assert(err, NotNil)
+}
+
+func (s *testBuiltinSuite) TestSysDate(c *C) {
+	last := time.Now()
+	v, err := builtinSysDate(nil, nil)
+	c.Assert(err, IsNil)
+	n, ok := v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(n.String(), GreaterEqual, last.Format(mysql.TimeFormat))
+
+	v, err = builtinSysDate([]interface{}{6}, nil)
+	c.Assert(err, IsNil)
+	n, ok = v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(n.String(), GreaterEqual, last.Format(mysql.TimeFormat))
+
+	_, err = builtinSysDate([]interface{}{-2}, nil)
 	c.Assert(err, NotNil)
 }

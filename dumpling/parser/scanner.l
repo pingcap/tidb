@@ -279,6 +279,7 @@ describe	{d}{e}{s}{c}{r}{i}{b}{e}
 distinct	{d}{i}{s}{t}{i}{n}{c}{t}
 div		{d}{i}{v}
 do		{d}{o}
+dual 		{d}{u}{a}{l}
 duplicate	{d}{u}{p}{l}{i}{c}{a}{t}{e}
 else		{e}{l}{s}{e}
 end		{e}{n}{d}
@@ -354,6 +355,7 @@ some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 sum		{s}{u}{m}
+sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
@@ -567,6 +569,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {div}			return div
 {do}			lval.item = string(l.val)
 			return do
+{dual}			return dual
 {duplicate}		lval.item = string(l.val)
 			return duplicate
 {else}			return elseKwd
@@ -689,6 +692,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return substring
 {sum}			lval.item = string(l.val)
 			return sum
+{sysdate}		lval.item = string(l.val)
+			return sysDate
 {table}			return tableKwd
 {tables}		lval.item = string(l.val)
 			return tables

@@ -354,6 +354,20 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"show collation like 'utf8%'", true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
 
+		// For drop datbase/schema
+		{"create database xxx", true},
+		{"create database if exists xxx", false},
+		{"create database if not exists xxx", true},
+		{"create schema xxx", true},
+		{"create schema if exists xxx", false},
+		{"create schema if not exists xxx", true},
+		{"drop database xxx", true},
+		{"drop database if exists xxx", true},
+		{"drop database if not exists xxx", false},
+		{"drop schema xxx", true},
+		{"drop schema if exists xxx", true},
+		{"drop schema if not exists xxx", false},
+
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
@@ -363,6 +377,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select current_timestamp(6)", true},
 		{"select now()", true},
 		{"select now(6)", true},
+		{"select sysdate(), sysdate(6)", true},
+
+		// For dual
+		{"select 1 from dual", true},
+		{"select 1 from dual limit 1", true},
 	}
 
 	for _, t := range table {
