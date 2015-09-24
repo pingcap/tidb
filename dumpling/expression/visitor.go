@@ -181,9 +181,11 @@ func (bv *BaseVisitor) VisitExistsSubQuery(es *ExistsSubQuery) (Expression, erro
 // VisitFunctionCase implements Visitor interface.
 func (bv *BaseVisitor) VisitFunctionCase(f *FunctionCase) (Expression, error) {
 	var err error
-	f.Value, err = f.Value.Accept(bv.V)
-	if err != nil {
-		return f, errors.Trace(err)
+	if f.Value != nil {
+		f.Value, err = f.Value.Accept(bv.V)
+		if err != nil {
+			return f, errors.Trace(err)
+		}
 	}
 	for i := range f.WhenClauses {
 		_, err = f.WhenClauses[i].Accept(bv.V)
@@ -191,9 +193,11 @@ func (bv *BaseVisitor) VisitFunctionCase(f *FunctionCase) (Expression, error) {
 			return f, errors.Trace(err)
 		}
 	}
-	f.ElseClause, err = f.ElseClause.Accept(bv.V)
-	if err != nil {
-		return f, errors.Trace(err)
+	if f.ElseClause != nil {
+		f.ElseClause, err = f.ElseClause.Accept(bv.V)
+		if err != nil {
+			return f, errors.Trace(err)
+		}
 	}
 	return f, nil
 }
@@ -228,6 +232,9 @@ func (bv *BaseVisitor) VisitFunctionSubstring(ss *FunctionSubstring) (Expression
 	ss.Pos, err = ss.Pos.Accept(bv.V)
 	if err != nil {
 		return ss, errors.Trace(err)
+	}
+	if ss.Len == nil {
+		return ss, nil
 	}
 	ss.Len, err = ss.Len.Accept(bv.V)
 	if err != nil {
