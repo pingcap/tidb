@@ -66,6 +66,7 @@ type ddl struct {
 	onDDLChange OnDDLChange
 }
 
+// OnDDLChange is used as hook function when schema changed
 type OnDDLChange func(err error) error
 
 // NewDDL create new DDL
@@ -86,7 +87,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
-		return ErrExists
+		return errors.Trace(ErrExists)
 	}
 	info := &model.DBInfo{Name: schema}
 	info.ID, err = meta.GenGlobalID(d.store)
@@ -121,7 +122,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
-		return ErrNotExists
+		return errors.Trace(ErrNotExists)
 	}
 
 	// Update InfoSchema

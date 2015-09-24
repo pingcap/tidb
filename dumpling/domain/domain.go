@@ -52,6 +52,7 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	if err != nil {
 		return
 	}
+	log.Info("loadInfoSchema %d", schemaMetaVersion)
 	do.infoHandle.SetSchemaMetaVersion(schemaMetaVersion)
 	do.infoHandle.Set(schemas)
 	return
@@ -76,6 +77,7 @@ func (do *Domain) onDDLChange(err error) error {
 	if err != nil {
 		return err
 	}
+	log.Warnf("on DDL change")
 
 	return do.reload()
 }

@@ -466,6 +466,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
+
 	_, ok := storeBootstrapped[store.UUID()]
 	if !ok {
 		bootstrap(s)
