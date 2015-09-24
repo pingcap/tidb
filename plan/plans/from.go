@@ -147,17 +147,12 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		return nil, false, err
 	}
 	log.Debugf("table filter:%v, %s, %T, %s", ok, name, rval, &c.FieldType)
-
-	spans, err := toSpans(x.Op, rval, seekVal)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
 	return &indexPlan{
 		src:     t,
 		col:     c,
 		idxName: ix.Name.O,
 		idx:     ix.X,
-		spans:   spans,
+		spans:   toSpans(x.Op, rval, seekVal),
 	}, true, nil
 }
 
@@ -178,14 +173,10 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 			return r, false, nil
 		}
 		var spans []*indexSpan
-		var err error
 		if trueValue {
-			spans, err = toSpans(opcode.NE, 0, 0)
+			spans = toSpans(opcode.NE, 0, 0)
 		} else {
-			spans, err = toSpans(opcode.EQ, 0, 0)
-		}
-		if err != nil {
-			return nil, false, errors.Trace(err)
+			spans = toSpans(opcode.EQ, 0, 0)
 		}
 		return &indexPlan{
 			src:     t,
@@ -218,14 +209,10 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	}
 	col := column.FindCol(t.Cols(), cn)
 	var spans []*indexSpan
-	var err error
 	if x.Not {
-		spans, err = toSpans(opcode.GE, minNotNullVal, nil)
+		spans = toSpans(opcode.GE, minNotNullVal, nil)
 	} else {
-		spans, err = toSpans(opcode.EQ, nil, nil)
-	}
-	if err != nil {
-		return nil, false, errors.Trace(err)
+		spans = toSpans(opcode.EQ, nil, nil)
 	}
 	return &indexPlan{
 		src:     t,
