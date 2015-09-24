@@ -30,6 +30,8 @@ const (
 
 var (
 	nextGlobalIDPrefix = []byte("mNextGlobalID")
+	// SchemaMetaVersion is used as lock for changing schema
+	SchemaMetaVersionKey = []byte("mSchemaVersion")
 )
 
 // GenID adds step to the value for key and returns the sum.
