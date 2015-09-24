@@ -581,6 +581,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return engines
 {execute}		lval.item = string(l.val)
 			return execute
+{enum}			return enum
 {exists}		return exists
 {explain}		return explain
 {first}			lval.item = string(l.val)
