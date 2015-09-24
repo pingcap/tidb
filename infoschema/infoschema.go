@@ -45,6 +45,7 @@ type InfoSchema interface {
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
+	SchemaMetaVersion() int64
 	// TODO: add more methods to retrieve tables and columns.
 }
 
@@ -62,6 +63,9 @@ type infoSchema struct {
 	columns        map[int64]*model.ColumnInfo
 	indices        map[indexName]*model.IndexInfo
 	columnIndices  map[int64][]*model.IndexInfo
+
+	// We should to check version when change schema
+	schemaMetaVersion int64
 }
 
 type tableName struct {
@@ -185,8 +189,6 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 type Handle struct {
 	value atomic.Value
 	store kv.Storage
-	// We should to check version when change schema
-	schemaMetaVersion int64
 }
 
 // NewHandle creates a new Handle.
@@ -196,27 +198,18 @@ func NewHandle(store kv.Storage) *Handle {
 	}
 }
 
-// SetSchemaMetaVersion set schema meta version
-func (h *Handle) SetSchemaMetaVersion(ver int64) {
-	h.schemaMetaVersion = ver
-}
-
-// SchemaMetaVersion return version of schema meta
-func (h *Handle) SchemaMetaVersion() int64 {
-	return h.schemaMetaVersion
-}
-
 // Set sets DBInfo to information schema.
-func (h *Handle) Set(newInfo []*model.DBInfo) {
+func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 	info := &infoSchema{
-		schemaNameToID: map[string]int64{},
-		tableNameToID:  map[tableName]int64{},
-		columnNameToID: map[columnName]int64{},
-		schemas:        map[int64]*model.DBInfo{},
-		tables:         map[int64]table.Table{},
-		columns:        map[int64]*model.ColumnInfo{},
-		indices:        map[indexName]*model.IndexInfo{},
-		columnIndices:  map[int64][]*model.IndexInfo{},
+		schemaNameToID:    map[string]int64{},
+		tableNameToID:     map[tableName]int64{},
+		columnNameToID:    map[columnName]int64{},
+		schemas:           map[int64]*model.DBInfo{},
+		tables:            map[int64]table.Table{},
+		columns:           map[int64]*model.ColumnInfo{},
+		indices:           map[indexName]*model.IndexInfo{},
+		columnIndices:     map[int64][]*model.IndexInfo{},
+		schemaMetaVersion: schemaMetaVersion,
 	}
 	for _, di := range newInfo {
 		info.schemas[di.ID] = di
