@@ -116,6 +116,7 @@ import (
 	div 		"DIV"
 	do		"DO"
 	drop		"DROP"
+	dual 		"DUAL"
 	duplicate	"DUPLICATE"
 	elseKwd		"ELSE"
 	end		"END"
@@ -209,6 +210,7 @@ import (
 	substring	"SUBSTRING"
 	sum		"SUM"
 	sysVar		"SYS_VAR"
+	sysDate		"SYSDATE"
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
@@ -325,7 +327,6 @@ import (
 	ConstraintKeywordOpt	"Constraint Keyword or empty"
 	ConstraintOpt		"optional column value constraint"
 	ConstraintOpts		"optional column value constraints"
-	CreateDatabase		"Create {DATABASE | SCHEMA}"
 	CreateDatabaseStmt	"Create Database Statement"
 	CreateIndexStmt		"CREATE INDEX statement"
 	CreateIndexStmtUnique	"CREATE INDEX optional UNIQUE clause"
@@ -335,6 +336,7 @@ import (
 	CreateTableStmt		"CREATE TABLE statement"
 	CreateUserStmt		"CREATE User statement"
 	CrossOpt		"Cross join option"
+	DatabaseSym		"DATABASE or SCHEMA"
 	DBName			"Database Name"
 	DeallocateSym		"Deallocate or drop"
 	DeallocateStmt		"Deallocate prepared statement"
@@ -975,9 +977,9 @@ IndexColNameList:
  *    | [DEFAULT] COLLATE [=] collation_name
  *******************************************************************/
 CreateDatabaseStmt:
-	CreateDatabase IfNotExists DBName CreateSpecListOpt
+	"CREATE" DatabaseSym IfNotExists DBName CreateSpecListOpt
 	{
-		opts := $4.([]*coldef.DatabaseOpt)
+		opts := $5.([]*coldef.DatabaseOpt)
 		//compose charset from x
 		var cs, co string
 		for _, x := range opts {
@@ -994,21 +996,13 @@ CreateDatabaseStmt:
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
 		$$ = &stmts.CreateDatabaseStmt{
-			IfNotExists:    $2.(bool),
-			Name:           $3.(string),
+			IfNotExists:    $3.(bool),
+			Name:           $4.(string),
 			Opt:            dbopt}
 
 		if yylex.(*lexer).root {
 			break
 		}
-	}
-
-CreateDatabase:
-	"CREATE" "DATABASE"
-	{
-	}
-|	"CREATE" "SCHEMA"
-	{
 	}
 
 DBName:
@@ -1137,6 +1131,7 @@ DefaultOpt:
 DefaultKwdOpt:
 	{}
 |	"DEFAULT"
+
 /******************************************************************
  * Do statement
  * See: https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -1220,10 +1215,12 @@ DeleteFromStmt:
 			break
 		}
 	}
-	
+
+DatabaseSym:
+	"DATABASE" | "SCHEMA"
 
 DropDatabaseStmt:
-	"DROP" "DATABASE" IfExists Identifier
+	"DROP" DatabaseSym IfExists DBName
 	{
 		$$ = &stmts.DropDatabaseStmt{IfExists: $3.(bool), Name: $4.(string)}
 		if yylex.(*lexer).root {
@@ -2257,6 +2254,20 @@ FunctionCallNonKeyword:
 			Len: $7.(expression.Expression),
 		}	
 	}
+|	"SYSDATE" '(' ExpressionOpt ')'
+	{
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"WEEKDAY" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2694,13 +2705,13 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
 			From:          nil,
-			Lock:	$5.(coldef.LockType),
+			Lock:	       $6.(coldef.LockType),
 		}
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
@@ -2738,6 +2749,11 @@ SelectStmt:
 		
 		$$ = st
 	}
+
+FromDual:
+	/* Empty */
+|	"FROM" "DUAL"
+
 
 FromClause:
 	TableRefs

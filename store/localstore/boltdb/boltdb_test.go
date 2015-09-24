@@ -17,7 +17,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ngaut/bolt"
+	"github.com/boltdb/bolt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/localstore/engine"
 )

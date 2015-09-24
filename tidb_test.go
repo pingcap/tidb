@@ -785,6 +785,16 @@ func (s *testSessionSuite) TestSelect(c *C) {
 
 	_, err = se.Execute("select * from t as a join (select 1) as a")
 	c.Assert(err, IsNil)
+
+	r := mustExecSQL(c, se, "select 1, 2 from dual")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
+
+	r = mustExecSQL(c, se, "select 1, 2")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
@@ -847,7 +857,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	last := time.Now().Format(mysql.TimeFormat)
-	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6)")
+	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	for _, t := range row {
@@ -882,6 +892,29 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	c.Assert(row, NotNil)
 	match(c, row.Data, "127.0.0.1", "root", "")
 	mustExecSQL(c, se, "USE test;")
+}
+
+func (s *testSessionSuite) TestDatabase(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	// Test database.
+	mustExecSQL(c, se, "create database xxx")
+	mustExecSQL(c, se, "drop database xxx")
+
+	mustExecSQL(c, se, "drop database if exists xxx")
+	mustExecSQL(c, se, "create database xxx")
+	mustExecSQL(c, se, "create database if not exists xxx")
+	mustExecSQL(c, se, "drop database if exists xxx")
+
+	// Test schema.
+	mustExecSQL(c, se, "create schema xxx")
+	mustExecSQL(c, se, "drop schema xxx")
+
+	mustExecSQL(c, se, "drop schema if exists xxx")
+	mustExecSQL(c, se, "create schema xxx")
+	mustExecSQL(c, se, "create schema if not exists xxx")
+	mustExecSQL(c, se, "drop schema if exists xxx")
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
