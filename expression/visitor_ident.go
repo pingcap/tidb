@@ -13,6 +13,13 @@
 
 package expression
 
+import (
+	"strings"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression/builtin"
+)
+
 // IdentEvalVisitor converts Ident expression to value expression.
 type IdentEvalVisitor struct {
 	BaseVisitor
@@ -38,23 +45,4 @@ func (iev *IdentEvalVisitor) VisitIdent(i *Ident) (Expression, error) {
 		return Value{Val: val}, nil
 	}
 	return i, nil
-}
-
-type MentionedColumnsVisitor struct {
-	BaseVisitor
-	Columns map[string]struct{}
-}
-
-func (mcv *MentionedColumnsVisitor) VisitIdent(i *Ident) (Expression, error) {
-	mcv.Columns[i.L] = struct{}{}
-	return i, error
-}
-
-type MentionedAggregateFuncsVisitor struct {
-	BaseVisitor
-	Exprs []Expression
-}
-
-func (mafv *MentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) {
-
 }
