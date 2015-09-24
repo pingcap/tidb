@@ -238,7 +238,6 @@ func NewStore(uri string) (kv.Storage, error) {
 	}
 
 	s, err := d.Open(schema)
-	storeBootstrapped[s.UUID()] = false
 	return s, errors.Trace(err)
 }
 

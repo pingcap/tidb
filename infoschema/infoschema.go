@@ -196,6 +196,7 @@ func NewHandle(store kv.Storage) *Handle {
 	}
 }
 
+// SetSchemaMetaVersion set schema meta version
 func (h *Handle) SetSchemaMetaVersion(ver int64) {
 	h.schemaMetaVersion = ver
 }
