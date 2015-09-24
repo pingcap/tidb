@@ -29,10 +29,8 @@
 package server
 
 import (
-	"fmt"
 	"math/rand"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -91,12 +89,6 @@ func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
 	cc.salt, err = randomBuf(20)
-	ss := make([]string, 0, 20)
-	for _, s := range cc.salt {
-		ss = append(ss, fmt.Sprintf("(byte)%d", s))
-	}
-	fmt.Printf("Salt: %x\n", cc.salt)
-	fmt.Printf("Salt: %s\n", strings.Join(ss, ", "))
 	return
 }
 
