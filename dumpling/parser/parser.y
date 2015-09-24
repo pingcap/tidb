@@ -327,7 +327,6 @@ import (
 	ConstraintKeywordOpt	"Constraint Keyword or empty"
 	ConstraintOpt		"optional column value constraint"
 	ConstraintOpts		"optional column value constraints"
-	CreateDatabase		"Create {DATABASE | SCHEMA}"
 	CreateDatabaseStmt	"Create Database Statement"
 	CreateIndexStmt		"CREATE INDEX statement"
 	CreateIndexStmtUnique	"CREATE INDEX optional UNIQUE clause"
@@ -337,6 +336,7 @@ import (
 	CreateTableStmt		"CREATE TABLE statement"
 	CreateUserStmt		"CREATE User statement"
 	CrossOpt		"Cross join option"
+	DatabaseSym		"DATABASE or SCHEMA"
 	DBName			"Database Name"
 	DeallocateSym		"Deallocate or drop"
 	DeallocateStmt		"Deallocate prepared statement"
@@ -977,9 +977,9 @@ IndexColNameList:
  *    | [DEFAULT] COLLATE [=] collation_name
  *******************************************************************/
 CreateDatabaseStmt:
-	CreateDatabase IfNotExists DBName CreateSpecListOpt
+	"CREATE" DatabaseSym IfNotExists DBName CreateSpecListOpt
 	{
-		opts := $4.([]*coldef.DatabaseOpt)
+		opts := $5.([]*coldef.DatabaseOpt)
 		//compose charset from x
 		var cs, co string
 		for _, x := range opts {
@@ -996,21 +996,13 @@ CreateDatabaseStmt:
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
 		$$ = &stmts.CreateDatabaseStmt{
-			IfNotExists:    $2.(bool),
-			Name:           $3.(string),
+			IfNotExists:    $3.(bool),
+			Name:           $4.(string),
 			Opt:            dbopt}
 
 		if yylex.(*lexer).root {
 			break
 		}
-	}
-
-CreateDatabase:
-	"CREATE" "DATABASE"
-	{
-	}
-|	"CREATE" "SCHEMA"
-	{
 	}
 
 DBName:
@@ -1139,6 +1131,7 @@ DefaultOpt:
 DefaultKwdOpt:
 	{}
 |	"DEFAULT"
+
 /******************************************************************
  * Do statement
  * See: https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -1222,10 +1215,12 @@ DeleteFromStmt:
 			break
 		}
 	}
-	
+
+DatabaseSym:
+	"DATABASE" | "SCHEMA"
 
 DropDatabaseStmt:
-	"DROP" "DATABASE" IfExists Identifier
+	"DROP" DatabaseSym IfExists DBName
 	{
 		$$ = &stmts.DropDatabaseStmt{IfExists: $3.(bool), Name: $4.(string)}
 		if yylex.(*lexer).root {

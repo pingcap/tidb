@@ -894,6 +894,29 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE test;")
 }
 
+func (s *testSessionSuite) TestDatabase(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	// Test database.
+	mustExecSQL(c, se, "create database xxx")
+	mustExecSQL(c, se, "drop database xxx")
+
+	mustExecSQL(c, se, "drop database if exists xxx")
+	mustExecSQL(c, se, "create database xxx")
+	mustExecSQL(c, se, "create database if not exists xxx")
+	mustExecSQL(c, se, "drop database if exists xxx")
+
+	// Test schema.
+	mustExecSQL(c, se, "create schema xxx")
+	mustExecSQL(c, se, "drop schema xxx")
+
+	mustExecSQL(c, se, "drop schema if exists xxx")
+	mustExecSQL(c, se, "create schema xxx")
+	mustExecSQL(c, se, "create schema if not exists xxx")
+	mustExecSQL(c, se, "drop schema if exists xxx")
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
