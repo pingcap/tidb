@@ -29,11 +29,13 @@
 package server
 
 import (
-	"crypto/rand"
-	"io"
+	"fmt"
+	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -63,6 +65,20 @@ func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
+// Generate a random string using ASCII characters but avoid seperator character.
+// See: https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
+func randomBuf(size int) ([]byte, error) {
+	buf := make([]byte, size)
+	rand.Seed(time.Now().UTC().UnixNano())
+	for i := 0; i < size; i++ {
+		buf[i] &= 0x7f
+		if buf[i] == 0 || buf[i] == byte('$') {
+			buf[i]++
+		}
+	}
+	return buf, nil
+}
+
 func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 	log.Info("newConn", conn.RemoteAddr().String())
 	cc = &clientConn{
@@ -74,13 +90,13 @@ func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 		charset:      mysql.DefaultCharset,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
-	cc.salt = make([]byte, 20)
-	io.ReadFull(rand.Reader, cc.salt)
-	for i, b := range cc.salt {
-		if b == 0 {
-			cc.salt[i] = '0'
-		}
+	cc.salt, err = randomBuf(20)
+	ss := make([]string, 0, 20)
+	for _, s := range cc.salt {
+		ss = append(ss, fmt.Sprintf("(byte)%d", s))
 	}
+	fmt.Printf("Salt: %x\n", cc.salt)
+	fmt.Printf("Salt: %s\n", strings.Join(ss, ", "))
 	return
 }
 
