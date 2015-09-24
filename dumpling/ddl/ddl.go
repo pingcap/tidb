@@ -103,9 +103,10 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 		err = d.writeSchemaInfo(info, txn)
 		return errors.Trace(err)
 	})
-	newInfo := append(is.Clone(), info)
-	d.infoHandle.Set(newInfo, is.SchemaMetaVersion()+1)
-	return nil
+	if d.onDDLChange != nil {
+		err = d.onDDLChange(err)
+	}
+	return errors.Trace(err)
 }
 
 func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int64) error {
@@ -144,7 +145,6 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 			newInfo = append(newInfo, v)
 		}
 	}
-	d.infoHandle.Set(newInfo, is.SchemaMetaVersion())
 
 	// Remove data
 	txn, err := ctx.GetTxn(true)
@@ -500,6 +500,9 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 		err = d.updateInfoSchema(schema, tb.Meta(), txn)
 		return errors.Trace(err)
 	})
+	if d.onDDLChange != nil {
+		err = d.onDDLChange(err)
+	}
 	return errors.Trace(err)
 }
 
@@ -536,7 +539,12 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		}
 		return nil
 	})
-	d.infoHandle.Set(clonedInfo, is.SchemaMetaVersion()+1)
+	if d.onDDLChange != nil {
+		err = d.onDDLChange(err)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	err = d.deleteTableData(ctx, tb)
 	return errors.Trace(err)
 }
@@ -628,6 +636,9 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 		err = d.updateInfoSchema(ti.Schema, tbInfo, txn)
 		return errors.Trace(err)
 	})
+	if d.onDDLChange != nil {
+		err = d.onDDLChange(err)
+	}
 	return errors.Trace(err)
 }
 
@@ -733,6 +744,5 @@ func (d *ddl) updateInfoSchema(schema model.CIStr, tbInfo *model.TableInfo, txn 
 			}
 		}
 	}
-	d.infoHandle.Set(clonedInfo, is.SchemaMetaVersion()+1)
 	return nil
 }
