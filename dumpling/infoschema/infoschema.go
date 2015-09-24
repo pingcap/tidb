@@ -68,6 +68,8 @@ type infoSchema struct {
 	schemaMetaVersion int64
 }
 
+var _ InfoSchema = (*infoSchema)(nil)
+
 type tableName struct {
 	schema string
 	table  string
@@ -90,6 +92,10 @@ func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bo
 	}
 	val, ok = is.schemas[id]
 	return
+}
+
+func (is *infoSchema) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
