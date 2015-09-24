@@ -154,13 +154,20 @@ const defaultPrivileges string = "select,insert,update,references"
 
 func (c *Col) getTypeDesc() string {
 	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
-	if c.Flen != -1 {
-		if c.Decimal == -1 {
-			ans = append(ans, fmt.Sprintf("(%d)", c.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", c.Flen, c.Decimal))
+	switch c.Tp {
+	case mysql.TypeSet, mysql.TypeEnum:
+		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
+		ans = append(ans, fmt.Sprintf("('%s')", strings.Join(c.Elems, "','")))
+	default:
+		if c.Flen != -1 {
+			if c.Decimal == -1 {
+				ans = append(ans, fmt.Sprintf("(%d)", c.Flen))
+			} else {
+				ans = append(ans, fmt.Sprintf("(%d, %d)", c.Flen, c.Decimal))
+			}
 		}
 	}
+
 	if mysql.HasUnsignedFlag(c.Flag) {
 		ans = append(ans, "UNSIGNED")
 	}
