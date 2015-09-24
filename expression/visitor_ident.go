@@ -13,13 +13,6 @@
 
 package expression
 
-import (
-	"strings"
-
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/expression/builtin"
-)
-
 // IdentEvalVisitor converts Ident expression to value expression.
 type IdentEvalVisitor struct {
 	BaseVisitor
