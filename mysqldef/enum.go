@@ -14,6 +14,7 @@
 package mysqldef
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/juju/errors"
@@ -42,6 +43,12 @@ func ParseEnumName(elems []string, name string) (Enum, error) {
 			return Enum{Name: n, Value: uint64(i) + 1}, nil
 		}
 	}
+
+	// name doesn't exist, maybe an integer?
+	if num, err := strconv.ParseUint(name, 0, 64); err == nil {
+		return ParseEnumValue(elems, num)
+	}
+
 	return Enum{}, errors.Errorf("item %s is not in enum %v", name, elems)
 }
 

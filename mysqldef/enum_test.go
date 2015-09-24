@@ -30,6 +30,7 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	}{
 		{[]string{"a", "b"}, "a", 1},
 		{[]string{"a"}, "b", 0},
+		{[]string{"a"}, "1", 1},
 	}
 
 	for _, t := range tbl {
@@ -42,7 +43,7 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(e.String(), Equals, t.Name)
+		c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
 		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
 	}
 
