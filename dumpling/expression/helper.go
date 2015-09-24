@@ -226,95 +226,16 @@ func ContainAggregateFunc(e Expression) bool {
 	return len(m) > 0
 }
 
-func mentionedColumns(e Expression, m map[string]bool, names *[]string) {
-	switch x := e.(type) {
-	case Value, *Value, *Variable, *Default,
-		SubQuery, *Position, *ExistsSubQuery:
-		// nop
-	case *BinaryOperation:
-		mentionedColumns(x.L, m, names)
-		mentionedColumns(x.R, m, names)
-	case *Call:
-		for _, e := range x.Args {
-			mentionedColumns(e, m, names)
-		}
-	case *Ident:
-		name := x.L
-		if !m[name] {
-			m[name] = true
-			*names = append(*names, name)
-		}
-	case *IsNull:
-		mentionedColumns(x.Expr, m, names)
-	case *PExpr:
-		mentionedColumns(x.Expr, m, names)
-	case *PatternIn:
-		mentionedColumns(x.Expr, m, names)
-		for _, e := range x.List {
-			mentionedColumns(e, m, names)
-		}
-	case *PatternLike:
-		mentionedColumns(x.Expr, m, names)
-		mentionedColumns(x.Pattern, m, names)
-	case *UnaryOperation:
-		mentionedColumns(x.V, m, names)
-	case *ParamMarker:
-		if x.Expr != nil {
-			mentionedColumns(x.Expr, m, names)
-		}
-	case *FunctionCast:
-		if x.Expr != nil {
-			mentionedColumns(x.Expr, m, names)
-		}
-	case *FunctionConvert:
-		if x.Expr != nil {
-			mentionedColumns(x.Expr, m, names)
-		}
-	case *FunctionSubstring:
-		if x.StrExpr != nil {
-			mentionedColumns(x.StrExpr, m, names)
-		}
-		if x.Pos != nil {
-			mentionedColumns(x.Pos, m, names)
-		}
-		if x.Len != nil {
-			mentionedColumns(x.Len, m, names)
-		}
-	case *FunctionCase:
-		if x.Value != nil {
-			mentionedColumns(x.Value, m, names)
-		}
-		for _, w := range x.WhenClauses {
-			mentionedColumns(w, m, names)
-		}
-		if x.ElseClause != nil {
-			mentionedColumns(x.ElseClause, m, names)
-		}
-	case *WhenClause:
-		mentionedColumns(x.Expr, m, names)
-		mentionedColumns(x.Result, m, names)
-	case *IsTruth:
-		mentionedColumns(x.Expr, m, names)
-	case *Between:
-		mentionedColumns(x.Expr, m, names)
-		mentionedColumns(x.Left, m, names)
-		mentionedColumns(x.Right, m, names)
-	case *Row:
-		for _, expr := range x.Values {
-			mentionedColumns(expr, m, names)
-		}
-	case *CompareSubQuery:
-		mentionedColumns(x.L, m, names)
-	default:
-		log.Errorf("Unknown Expression: %T", e)
-	}
-}
-
 // MentionedColumns returns a list of names for Ident expression.
 func MentionedColumns(e Expression) []string {
 	var names []string
-	m := make(map[string]bool)
-	mentionedColumns(e, m, &names)
+	mcv := &MentionedColumnsVisitor{
+		Columns:map[string]struct{}{},
+	}
+	e.Accept(mcv)
+	for k := range mcv.Columns {
+		names = append(names, k)
+	}
 	return names
 }
 

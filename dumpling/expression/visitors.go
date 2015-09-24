@@ -39,3 +39,22 @@ func (iev *IdentEvalVisitor) VisitIdent(i *Ident) (Expression, error) {
 	}
 	return i, nil
 }
+
+type MentionedColumnsVisitor struct {
+	BaseVisitor
+	Columns map[string]struct{}
+}
+
+func (mcv *MentionedColumnsVisitor) VisitIdent(i *Ident) (Expression, error) {
+	mcv.Columns[i.L] = struct{}{}
+	return i, error
+}
+
+type MentionedAggregateFuncsVisitor struct {
+	BaseVisitor
+	Exprs []Expression
+}
+
+func (mafv *MentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) {
+
+}
