@@ -65,16 +65,16 @@ func (s *Server) releaseToken(token *Token) {
 
 // Generate a random string using ASCII characters but avoid seperator character.
 // See: https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
-func randomBuf(size int) ([]byte, error) {
+func randomBuf(size int) []byte {
 	buf := make([]byte, size)
 	rand.Seed(time.Now().UTC().UnixNano())
 	for i := 0; i < size; i++ {
-		buf[i] &= 0x7f
+		buf[i] = byte(rand.Intn(127))
 		if buf[i] == 0 || buf[i] == byte('$') {
 			buf[i]++
 		}
 	}
-	return buf, nil
+	return buf
 }
 
 func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
@@ -88,7 +88,7 @@ func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 		charset:      mysql.DefaultCharset,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
-	cc.salt, err = randomBuf(20)
+	cc.salt = randomBuf(20)
 	return
 }
 
