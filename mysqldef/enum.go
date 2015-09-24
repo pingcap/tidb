@@ -47,7 +47,7 @@ func ParseEnumName(elems []string, name string) (Enum, error) {
 
 // ParseEnumValue creates a Enum with special number.
 func ParseEnumValue(elems []string, number uint64) (Enum, error) {
-	if number <= 0 || number > uint64(len(elems)) {
+	if number == 0 || number > uint64(len(elems)) {
 		return Enum{}, errors.Errorf("number %d overflow enum boundary [1, %d]", number, len(elems))
 	}
 
