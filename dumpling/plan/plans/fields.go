@@ -30,7 +30,7 @@ import (
 
 var (
 	_ plan.Plan = (*SelectFieldsDefaultPlan)(nil)
-	_ plan.Plan = (*SelectEmptyFieldListPlan)(nil)
+	_ plan.Plan = (*SelectFromDualPlan)(nil)
 )
 
 // SelectFieldsDefaultPlan extracts specific fields from Src Plan.
@@ -94,19 +94,19 @@ func (r *SelectFieldsDefaultPlan) Close() error {
 	return r.Src.Close()
 }
 
-// SelectEmptyFieldListPlan is the plan for "select expr, expr, ..."" with no FROM.
-type SelectEmptyFieldListPlan struct {
+// SelectFromDualPlan is the plan for "select expr, expr, ..."" or "select expr, expr, ... from dual".
+type SelectFromDualPlan struct {
 	Fields []*field.Field
 	done   bool
 }
 
 // Explain implements the plan.Plan Explain interface.
-func (s *SelectEmptyFieldListPlan) Explain(w format.Formatter) {
+func (s *SelectFromDualPlan) Explain(w format.Formatter) {
 	// TODO: finish this
 }
 
 // GetFields implements the plan.Plan GetFields interface.
-func (s *SelectEmptyFieldListPlan) GetFields() []*field.ResultField {
+func (s *SelectFromDualPlan) GetFields() []*field.ResultField {
 	ans := make([]*field.ResultField, 0, len(s.Fields))
 	if len(s.Fields) > 0 {
 		for _, f := range s.Fields {
@@ -119,12 +119,12 @@ func (s *SelectEmptyFieldListPlan) GetFields() []*field.ResultField {
 }
 
 // Filter implements the plan.Plan Filter interface.
-func (s *SelectEmptyFieldListPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
+func (s *SelectFromDualPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	return s, false, nil
 }
 
 // Next implements plan.Plan Next interface.
-func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+func (s *SelectFromDualPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if s.done {
 		return
 	}
@@ -138,7 +138,7 @@ func (s *SelectEmptyFieldListPlan) Next(ctx context.Context) (row *plan.Row, err
 }
 
 // Close implements plan.Plan Close interface.
-func (s *SelectEmptyFieldListPlan) Close() error {
+func (s *SelectFromDualPlan) Close() error {
 	s.done = false
 	return nil
 }
