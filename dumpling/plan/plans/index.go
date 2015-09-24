@@ -214,21 +214,13 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		spans, err := toSpans(x.Op, val, seekVal)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		r.spans = filterSpans(r.spans, spans)
+		r.spans = filterSpans(r.spans, toSpans(x.Op, val, seekVal))
 		return r, true, nil
 	case *expression.Ident:
 		if r.col.Name.L != x.L {
 			break
 		}
-		spans, err := toSpans(opcode.GE, minNotNullVal, nil)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		r.spans = filterSpans(r.spans, spans)
+		r.spans = filterSpans(r.spans, toSpans(opcode.GE, minNotNullVal, nil))
 		return r, true, nil
 	case *expression.UnaryOperation:
 		if x.Op != '!' {
@@ -242,11 +234,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if r.col.Name.L != cname.L {
 			break
 		}
-		spans, err := toSpans(opcode.EQ, nil, nil)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		r.spans = filterSpans(r.spans, spans)
+		r.spans = filterSpans(r.spans, toSpans(opcode.EQ, nil, nil))
 		return r, true, nil
 	}
 
@@ -274,7 +262,7 @@ func filterSpans(origin []*indexSpan, filter []*indexSpan) []*indexSpan {
 }
 
 // generate a slice of span from operator and value.
-func toSpans(op opcode.Op, val, seekVal interface{}) ([]*indexSpan, error) {
+func toSpans(op opcode.Op, val, seekVal interface{}) []*indexSpan {
 	var spans []*indexSpan
 	switch op {
 	case opcode.EQ:
@@ -326,7 +314,7 @@ func toSpans(op opcode.Op, val, seekVal interface{}) ([]*indexSpan, error) {
 	default:
 		panic("should never happen")
 	}
-	return spans, nil
+	return spans
 }
 
 // Next implements plan.Plan Next interface.

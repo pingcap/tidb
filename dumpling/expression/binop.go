@@ -86,8 +86,7 @@ func (o *BinaryOperation) IsIdentCompareVal() (bool, string, interface{}, error)
 	switch o.Op {
 	case opcode.LT, opcode.LE,
 		opcode.GT, opcode.GE,
-		opcode.EQ, opcode.NE,
-		opcode.NullEQ:
+		opcode.EQ, opcode.NE:
 	default:
 		return false, "", nil, nil
 	}
