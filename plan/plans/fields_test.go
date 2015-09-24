@@ -113,7 +113,7 @@ func (s *testFieldsSuit) TestDefaultFieldsPlan(c *C) {
 }
 
 func (s *testFieldsSuit) TestSelectExprPlan(c *C) {
-	pln := &plans.SelectEmptyFieldListPlan{
+	pln := &plans.SelectFromDualPlan{
 		Fields: []*field.Field{
 			{
 				Expr: &expression.Value{
