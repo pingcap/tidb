@@ -67,7 +67,6 @@ func (s *Server) releaseToken(token *Token) {
 // See: https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
 func randomBuf(size int) []byte {
 	buf := make([]byte, size)
-	rand.Seed(time.Now().UTC().UnixNano())
 	for i := 0; i < size; i++ {
 		buf[i] = byte(rand.Intn(127))
 		if buf[i] == 0 || buf[i] == byte('$') {
@@ -112,6 +111,8 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// Init rand seed for randomBuf()
+	rand.Seed(time.Now().UTC().UnixNano())
 	log.Infof("Server run MySql Protocol Listen at [%s]", s.cfg.Addr)
 	return s, nil
 }
