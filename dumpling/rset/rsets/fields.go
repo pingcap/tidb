@@ -29,7 +29,7 @@ import (
 
 var (
 	_ plan.Planner = (*SelectFieldsRset)(nil)
-	_ plan.Planner = (*FieldRset)(nil)
+	_ plan.Planner = (*SelectFromDualRset)(nil)
 )
 
 // SelectFieldsRset is record set to select fields.
@@ -80,12 +80,12 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 	return p, nil
 }
 
-// FieldRset is Recordset for select expression, like `select 1, 1+1`.
-type FieldRset struct {
+// SelectFromDualRset is Recordset for select from dual, like `select 1, 1+1` or `select 1 from dual`.
+type SelectFromDualRset struct {
 	Fields []*field.Field
 }
 
 // Plan gets SelectExprPlan.
-func (r *FieldRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.SelectEmptyFieldListPlan{Fields: r.Fields}, nil
+func (r *SelectFromDualRset) Plan(ctx context.Context) (plan.Plan, error) {
+	return &plans.SelectFromDualPlan{Fields: r.Fields}, nil
 }

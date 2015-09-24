@@ -26,7 +26,7 @@ var _ = Suite(&testSelectFieldsPlannerSuite{})
 
 type testSelectFieldsPlannerSuite struct {
 	sr *SelectFieldsRset
-	fr *FieldRset
+	fr *SelectFromDualRset
 }
 
 func (s *testSelectFieldsPlannerSuite) SetUpSuite(c *C) {
@@ -47,7 +47,7 @@ func (s *testSelectFieldsPlannerSuite) SetUpSuite(c *C) {
 	}
 
 	s.sr = &SelectFieldsRset{Src: tblPlan, SelectList: selectList}
-	s.fr = &FieldRset{Fields: fields}
+	s.fr = &SelectFromDualRset{Fields: fields}
 }
 
 func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
@@ -106,6 +106,6 @@ func (s *testSelectFieldsPlannerSuite) TestFieldPlanner(c *C) {
 	p, err := s.fr.Plan(nil)
 	c.Assert(err, IsNil)
 
-	_, ok := p.(*plans.SelectEmptyFieldListPlan)
+	_, ok := p.(*plans.SelectFromDualPlan)
 	c.Assert(ok, IsTrue)
 }
