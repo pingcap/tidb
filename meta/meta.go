@@ -30,7 +30,7 @@ const (
 
 var (
 	nextGlobalIDPrefix = []byte("mNextGlobalID")
-	// SchemaMetaVersion is used as lock for changing schema
+	// SchemaMetaVersionKey is used as lock for changing schema
 	SchemaMetaVersionKey = []byte("mSchemaVersion")
 )
 
