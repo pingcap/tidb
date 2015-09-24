@@ -161,7 +161,6 @@ func indexCompare(a interface{}, b interface{}) int {
 	}
 
 	n, err := types.Compare(a, b)
-	log.Debugf("index compare %T %v, %T %v, %d", a, a, b, b, n)
 	if err != nil {
 		// Old compare panics if err, so here we do the same thing now.
 		// TODO: return err instead of panic.
@@ -211,7 +210,11 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if r.col.ColumnInfo.Name.L != cname {
 			break
 		}
-		spans, err := toSpans(&r.col.FieldType, x.Op, val)
+		seekVal, err := types.Convert(val, &r.col.FieldType)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		spans, err := toSpans(x.Op, val, seekVal)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -221,7 +224,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if r.col.Name.L != x.L {
 			break
 		}
-		spans, err := toSpans(&r.col.FieldType, opcode.GE, minNotNullVal)
+		spans, err := toSpans(opcode.GE, minNotNullVal, nil)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -239,7 +242,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if r.col.Name.L != cname.L {
 			break
 		}
-		spans, err := toSpans(&r.col.FieldType, opcode.EQ, nil)
+		spans, err := toSpans(opcode.EQ, nil, nil)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -271,15 +274,7 @@ func filterSpans(origin []*indexSpan, filter []*indexSpan) []*indexSpan {
 }
 
 // generate a slice of span from operator and value.
-func toSpans(tp *types.FieldType, op opcode.Op, val interface{}) ([]*indexSpan, error) {
-	var seekVal interface{}
-	var err error
-	if val != minNotNullVal {
-		seekVal, err = types.Convert(val, tp)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
+func toSpans(op opcode.Op, val, seekVal interface{}) ([]*indexSpan, error) {
 	var spans []*indexSpan
 	switch op {
 	case opcode.EQ:
@@ -364,8 +359,8 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		}
 		val := idxKey[0]
 		if !r.skipLowCmp {
-			cmp := indexCompare(span.lowVal, val)
-			if cmp > 0 || (cmp == 0 && span.lowExclude) {
+			cmp := indexCompare(val, span.lowVal)
+			if cmp < 0 || (cmp == 0 && span.lowExclude) {
 				continue
 			}
 			r.skipLowCmp = true
