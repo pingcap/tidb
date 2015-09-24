@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -119,6 +120,13 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 	if !ok {
 		return r, false, nil
 	}
+	if rval == nil {
+		// if nil, any <, <=, >, >=, =, != operator will do nothing
+		// any value compared null returns null
+		// TODO: if we support <=> later, we must handle null
+		return &NullPlan{r.GetFields()}, true, nil
+	}
+
 	_, tn, cn := field.SplitQualifiedName(name)
 	t := r.T
 	if tn != "" && tn != t.TableName().L {
@@ -134,15 +142,13 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		return r, false, nil
 	}
 
-	if rval == nil {
-		// if nil, any <, <=, >, >=, =, != operator will do nothing
-		// any value compared null returns null
-		// TODO: if we support <=> later, we must handle null
-		return &NullPlan{r.GetFields()}, true, nil
+	var seekVal interface{}
+	if seekVal, err = types.Convert(rval, &c.FieldType); err != nil {
+		return nil, false, err
 	}
 	log.Debugf("table filter:%v, %s, %T, %s", ok, name, rval, &c.FieldType)
 
-	spans, err := toSpans(&c.FieldType, x.Op, rval)
+	spans, err := toSpans(x.Op, rval, seekVal)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -174,9 +180,9 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 		var spans []*indexSpan
 		var err error
 		if trueValue {
-			spans, err = toSpans(&v.FieldType, opcode.NE, 0)
+			spans, err = toSpans(opcode.NE, 0, 0)
 		} else {
-			spans, err = toSpans(&v.FieldType, opcode.EQ, 0)
+			spans, err = toSpans(opcode.EQ, 0, 0)
 		}
 		if err != nil {
 			return nil, false, errors.Trace(err)
@@ -214,9 +220,9 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	var spans []*indexSpan
 	var err error
 	if x.Not {
-		spans, err = toSpans(&col.FieldType, opcode.GE, minNotNullVal)
+		spans, err = toSpans(opcode.GE, minNotNullVal, nil)
 	} else {
-		spans, err = toSpans(&col.FieldType, opcode.EQ, nil)
+		spans, err = toSpans(opcode.EQ, nil, nil)
 	}
 	if err != nil {
 		return nil, false, errors.Trace(err)

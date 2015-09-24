@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/column"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
@@ -27,33 +28,17 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 )
 
 type testIndexSuit struct {
-	txn   kv.Transaction
 	cols  []*column.Col
 	tbl   table.Table
-	vars  map[string]interface{}
 	store kv.Storage
-}
-
-// implement Context interface
-func (p *testIndexSuit) GetTxn(forceNew bool) (kv.Transaction, error) { return p.txn, nil }
-
-func (p *testIndexSuit) FinishTxn(rollback bool) error { return nil }
-
-// SetValue saves a value associated with this context for key
-func (p *testIndexSuit) SetValue(key fmt.Stringer, value interface{}) {
-	p.vars[key.String()] = value
-}
-
-// Value returns the value associated with this context for key
-func (p *testIndexSuit) Value(key fmt.Stringer) interface{} {
-	return p.vars[key.String()]
+	ctx   context.Context
 }
 
 // ClearValue clears the value associated with this context for key
@@ -65,8 +50,9 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	p.store = store
-	p.vars = map[string]interface{}{}
-	p.txn, _ = p.store.Begin()
+	se, _ := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	p.ctx = se.(context.Context)
 	p.cols = []*column.Col{
 		{
 			ColumnInfo: model.ColumnInfo{
@@ -106,12 +92,9 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 		X: kv.NewKVIndex("i", "id", false),
 	}
 	p.tbl.AddIndex(idxCol)
-
-	variable.BindSessionVars(p)
-
 	var i int64
 	for i = 0; i < 10; i++ {
-		p.tbl.AddRecord(p, []interface{}{i * 10, "hello"})
+		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"})
 	}
 }
 
@@ -121,7 +104,7 @@ func (p *testIndexSuit) TestTableNilPlan(c *C) {
 	}
 	var ids []int
 	id := 0
-	rset := rsets.Recordset{Plan: nilPlan, Ctx: p}
+	rset := rsets.Recordset{Plan: nilPlan, Ctx: p.ctx}
 	err := rset.Do(func(data []interface{}) (bool, error) {
 		id++
 		ids = append(ids, id)
@@ -185,26 +168,26 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 		CIStr: model.NewCIStr("id"),
 	}
 
-	np, _, err := pln.Filter(p, expr)
+	np, _, err := pln.Filter(p.ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
-	np, _, err = np.Filter(p, expr2)
+	np, _, err = np.Filter(p.ctx, expr2)
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
-	np, _, err = np.Filter(p, expr3)
+	np, _, err = np.Filter(p.ctx, expr3)
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
-	np, _, err = np.Filter(p, expr4)
+	np, _, err = np.Filter(p.ctx, expr4)
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
-	np, _, err = np.Filter(p, expr5)
+	np, _, err = np.Filter(p.ctx, expr5)
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
 
 	ret := map[int64]string{}
 	rset := rsets.Recordset{
 		Plan: np,
-		Ctx:  p,
+		Ctx:  p.ctx,
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(int64)] = data[1].(string)
@@ -221,12 +204,22 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 			CIStr: model.NewCIStr("id"),
 		},
 	}
-	np, _, err = np.Filter(p, expr6)
+	np, _, err = np.Filter(p.ctx, expr6)
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
 	c.Assert(ret, DeepEquals, excepted)
 }
 
-func (p *testIndexSuit) TearDownSuite(c *C) {
-	p.txn.Commit()
+func (p *testIndexSuit) TestIndexUsage(c *C) {
+	tk := testkit.NewTestKit(c, p.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, index (c1))")
+	tk.MustExec("insert t values (-7), (-4), (0), (3), (6), (8)")
+	tk.MustQuery("select c1 from t where c1 >= 0.2").Check([][]interface{}{
+		{3}, {6}, {8},
+	})
+	tk.MustQuery("select c1 from t where c1 >= 0.2 && c1 <= 6.3").Check([][]interface{}{
+		{3}, {6},
+	})
 }
