@@ -242,6 +242,8 @@ func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstra
 				setOnUpdateNow = true
 			case ConstrFulltext:
 				// Do nothing.
+			case ConstrComment:
+				// Do nothing.
 			}
 		}
 	}
