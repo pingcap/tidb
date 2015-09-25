@@ -710,9 +710,6 @@ func (d *ddl) writeSchemaInfo(info *model.DBInfo, txn kv.Transaction) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
 	key := []byte(meta.DBMetaKey(info.ID))
 	if err := txn.LockKeys(key); err != nil {
 		return errors.Trace(err)
