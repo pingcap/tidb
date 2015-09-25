@@ -355,6 +355,7 @@ show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
+substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
 sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
@@ -694,6 +695,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {show}			return show
 {substring}		lval.item = string(l.val)
 			return substring
+{substring_index}	lval.item = string(l.val)
+			return substringIndex
 {sum}			lval.item = string(l.val)
 			return sum
 {sysdate}		lval.item = string(l.val)
