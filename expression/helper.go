@@ -27,9 +27,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-
 	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -122,200 +120,74 @@ func Eval(v Expression, ctx context.Context, env map[interface{}]interface{}) (y
 }
 
 // MentionedAggregateFuncs returns a list of the Call expression which is aggregate function.
-func MentionedAggregateFuncs(e Expression) []Expression {
-	var m []Expression
-	mentionedAggregateFuncs(e, &m)
-	return m
-}
-
-func mentionedAggregateFuncs(e Expression, m *[]Expression) {
-	switch x := e.(type) {
-	case Value, *Value, *Variable, *Default,
-		*Ident, SubQuery, *Position, *ExistsSubQuery:
-		// nop
-	case *BinaryOperation:
-		mentionedAggregateFuncs(x.L, m)
-		mentionedAggregateFuncs(x.R, m)
-	case *Call:
-		f, ok := builtin.Funcs[strings.ToLower(x.F)]
-		if !ok {
-			log.Errorf("unknown function %s", x.F)
-			return
-		}
-
-		if f.IsAggregate {
-			// if f is aggregate function, we don't need check the arguments,
-			// because using an aggregate function in the aggregate arg like count(max(c1)) is invalid
-			// TODO: check whether argument contains an aggregate function and return error.
-			*m = append(*m, e)
-			return
-		}
-
-		for _, e := range x.Args {
-			mentionedAggregateFuncs(e, m)
-		}
-	case *IsNull:
-		mentionedAggregateFuncs(x.Expr, m)
-	case *PExpr:
-		mentionedAggregateFuncs(x.Expr, m)
-	case *PatternIn:
-		mentionedAggregateFuncs(x.Expr, m)
-		for _, e := range x.List {
-			mentionedAggregateFuncs(e, m)
-		}
-	case *PatternLike:
-		mentionedAggregateFuncs(x.Expr, m)
-		mentionedAggregateFuncs(x.Pattern, m)
-	case *UnaryOperation:
-		mentionedAggregateFuncs(x.V, m)
-	case *ParamMarker:
-		if x.Expr != nil {
-			mentionedAggregateFuncs(x.Expr, m)
-		}
-	case *FunctionCast:
-		if x.Expr != nil {
-			mentionedAggregateFuncs(x.Expr, m)
-		}
-	case *FunctionConvert:
-		if x.Expr != nil {
-			mentionedAggregateFuncs(x.Expr, m)
-		}
-	case *FunctionSubstring:
-		if x.StrExpr != nil {
-			mentionedAggregateFuncs(x.StrExpr, m)
-		}
-		if x.Pos != nil {
-			mentionedAggregateFuncs(x.Pos, m)
-		}
-		if x.Len != nil {
-			mentionedAggregateFuncs(x.Len, m)
-		}
-	case *FunctionCase:
-		if x.Value != nil {
-			mentionedAggregateFuncs(x.Value, m)
-		}
-		for _, w := range x.WhenClauses {
-			mentionedAggregateFuncs(w, m)
-		}
-		if x.ElseClause != nil {
-			mentionedAggregateFuncs(x.ElseClause, m)
-		}
-	case *WhenClause:
-		mentionedAggregateFuncs(x.Expr, m)
-		mentionedAggregateFuncs(x.Result, m)
-	case *IsTruth:
-		mentionedAggregateFuncs(x.Expr, m)
-	case *Between:
-		mentionedAggregateFuncs(x.Expr, m)
-		mentionedAggregateFuncs(x.Left, m)
-		mentionedAggregateFuncs(x.Right, m)
-	case *Row:
-		for _, expr := range x.Values {
-			mentionedAggregateFuncs(expr, m)
-		}
-	case *CompareSubQuery:
-		mentionedAggregateFuncs(x.L, m)
-	default:
-		log.Errorf("Unknown Expression: %T", e)
+func MentionedAggregateFuncs(e Expression) ([]Expression, error) {
+	mafv := newMentionedAggregateFuncsVisitor()
+	_, err := e.Accept(mafv)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	return mafv.exprs, nil
 }
 
 // ContainAggregateFunc checks whether expression e contains an aggregate function, like count(*) or other.
 func ContainAggregateFunc(e Expression) bool {
-	m := MentionedAggregateFuncs(e)
+	m, _ := MentionedAggregateFuncs(e)
 	return len(m) > 0
 }
 
-func mentionedColumns(e Expression, m map[string]bool, names *[]string) {
-	switch x := e.(type) {
-	case Value, *Value, *Variable, *Default,
-		SubQuery, *Position, *ExistsSubQuery:
-		// nop
-	case *BinaryOperation:
-		mentionedColumns(x.L, m, names)
-		mentionedColumns(x.R, m, names)
-	case *Call:
-		for _, e := range x.Args {
-			mentionedColumns(e, m, names)
+type mentionedAggregateFuncsVisitor struct {
+	BaseVisitor
+	exprs []Expression
+}
+
+func newMentionedAggregateFuncsVisitor() *mentionedAggregateFuncsVisitor {
+	v := &mentionedAggregateFuncsVisitor{}
+	v.BaseVisitor.V = v
+	return v
+}
+
+func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) {
+	for _, e := range c.Args {
+		_, err := e.Accept(v)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-	case *Ident:
-		name := x.L
-		if !m[name] {
-			m[name] = true
-			*names = append(*names, name)
-		}
-	case *IsNull:
-		mentionedColumns(x.Expr, m, names)
-	case *PExpr:
-		mentionedColumns(x.Expr, m, names)
-	case *PatternIn:
-		mentionedColumns(x.Expr, m, names)
-		for _, e := range x.List {
-			mentionedColumns(e, m, names)
-		}
-	case *PatternLike:
-		mentionedColumns(x.Expr, m, names)
-		mentionedColumns(x.Pattern, m, names)
-	case *UnaryOperation:
-		mentionedColumns(x.V, m, names)
-	case *ParamMarker:
-		if x.Expr != nil {
-			mentionedColumns(x.Expr, m, names)
-		}
-	case *FunctionCast:
-		if x.Expr != nil {
-			mentionedColumns(x.Expr, m, names)
-		}
-	case *FunctionConvert:
-		if x.Expr != nil {
-			mentionedColumns(x.Expr, m, names)
-		}
-	case *FunctionSubstring:
-		if x.StrExpr != nil {
-			mentionedColumns(x.StrExpr, m, names)
-		}
-		if x.Pos != nil {
-			mentionedColumns(x.Pos, m, names)
-		}
-		if x.Len != nil {
-			mentionedColumns(x.Len, m, names)
-		}
-	case *FunctionCase:
-		if x.Value != nil {
-			mentionedColumns(x.Value, m, names)
-		}
-		for _, w := range x.WhenClauses {
-			mentionedColumns(w, m, names)
-		}
-		if x.ElseClause != nil {
-			mentionedColumns(x.ElseClause, m, names)
-		}
-	case *WhenClause:
-		mentionedColumns(x.Expr, m, names)
-		mentionedColumns(x.Result, m, names)
-	case *IsTruth:
-		mentionedColumns(x.Expr, m, names)
-	case *Between:
-		mentionedColumns(x.Expr, m, names)
-		mentionedColumns(x.Left, m, names)
-		mentionedColumns(x.Right, m, names)
-	case *Row:
-		for _, expr := range x.Values {
-			mentionedColumns(expr, m, names)
-		}
-	case *CompareSubQuery:
-		mentionedColumns(x.L, m, names)
-	default:
-		log.Errorf("Unknown Expression: %T", e)
 	}
+	f, ok := builtin.Funcs[strings.ToLower(c.F)]
+	if !ok {
+		return nil, errors.Errorf("unknown function %s", c.F)
+	}
+	if f.IsAggregate {
+		v.exprs = append(v.exprs, c)
+	}
+	return c, nil
 }
 
 // MentionedColumns returns a list of names for Ident expression.
 func MentionedColumns(e Expression) []string {
 	var names []string
-	m := make(map[string]bool)
-	mentionedColumns(e, m, &names)
+	mcv := newMentionedColumnsVisitor()
+	e.Accept(mcv)
+	for k := range mcv.columns {
+		names = append(names, k)
+	}
 	return names
+}
+
+type mentionedColumnsVisitor struct {
+	BaseVisitor
+	columns map[string]struct{}
+}
+
+func newMentionedColumnsVisitor() *mentionedColumnsVisitor {
+	v := &mentionedColumnsVisitor{columns: map[string]struct{}{}}
+	v.BaseVisitor.V = v
+	return v
+}
+
+func (v *mentionedColumnsVisitor) VisitIdent(i *Ident) (Expression, error) {
+	v.columns[i.L] = struct{}{}
+	return i, nil
 }
 
 func staticExpr(e Expression) (Expression, error) {
