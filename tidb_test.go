@@ -894,6 +894,32 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE test;")
 }
 
+func (s *testSessionSuite) TestEnum(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c enum('a', 'b', 'c'))")
+	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c')")
+	r := mustExecSQL(c, se, "select * from t where c = 'a'")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "a")
+
+	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "3")
+
+	mustExecSQL(c, se, "delete from t")
+	mustExecSQL(c, se, "insert into t values ()")
+	mustExecSQL(c, se, "insert into t values (null), ('1')")
+	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "2")
+}
+
 func (s *testSessionSuite) TestDatabase(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)

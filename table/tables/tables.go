@@ -152,6 +152,8 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 		return mysql.Duration{Duration: time.Duration(rec.(int64)), Fsp: col.Decimal}, nil
 	case mysql.TypeNewDecimal, mysql.TypeDecimal:
 		return mysql.ParseDecimal(rec.(string))
+	case mysql.TypeEnum:
+		return mysql.ParseEnumValue(col.Elems, rec.(uint64))
 	}
 	log.Error(col.Tp, rec, reflect.TypeOf(rec))
 	return nil, nil
@@ -167,6 +169,8 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 		return int64(x.Duration), nil
 	case mysql.Decimal:
 		return x.String(), nil
+	case mysql.Enum:
+		return x.Value, nil
 	default:
 		return data, nil
 	}
