@@ -19,6 +19,7 @@ package plans
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -111,25 +112,25 @@ func (r *JoinPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 	// TODO: do more optimization for join plan
 	// now we only use where expression for Filter, but for join
 	// we must use On expression too.
-
-	p, filtered, err := r.filterNode(ctx, expr, r.Left)
+	if r.Right == nil {
+		return r.Left.Filter(ctx, expr)
+	}
+	newPlan := &JoinPlan{
+		Fields: r.Fields,
+		Type:   r.Type,
+		On:     r.On,
+	}
+	p, filteredLeft, err := r.filterNode(ctx, expr, r.Left)
 	if err != nil {
 		return nil, false, err
 	}
-	if filtered {
-		r.Left = p
-		return r, true, nil
-	}
-
-	p, filtered, err = r.filterNode(ctx, expr, r.Right)
+	newPlan.Left = p
+	p, filteredRight, err := r.filterNode(ctx, expr, r.Right)
 	if err != nil {
 		return nil, false, err
 	}
-	if filtered {
-		r.Right = p
-		return r, true, nil
-	}
-	return r, false, nil
+	newPlan.Right = p
+	return newPlan, filteredLeft || filteredRight, nil
 }
 
 // GetFields implements plan.Plan GetFields interface.
@@ -162,13 +163,32 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			r.cursor++
 			return
 		}
-		r.cursor = 0
 		var leftRow *plan.Row
 		leftRow, err = r.Left.Next(ctx)
 		if leftRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = r.findMatchedRows(ctx, leftRow, false)
+		tempExpr := r.On.Clone()
+		visitor := expression.NewIdentEvalVisitor()
+		fields := r.Left.GetFields()
+		for i, f := range fields {
+			identName := field.JoinQualifiedName("", f.OrgTableName, f.ColumnInfo.Name.L)
+			visitor.Set(identName, leftRow.Data[i])
+		}
+		_, err = tempExpr.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var filtered bool
+		var p plan.Plan
+		p, filtered, err = r.Right.Filter(ctx, tempExpr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if filtered {
+			log.Debugf("filtered mathced rows")
+		}
+		err = r.findMatchedRows(ctx, leftRow, p, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -187,20 +207,35 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 		if rightRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = r.findMatchedRows(ctx, rightRow, true)
+
+		tempExpr := r.On.Clone()
+		visitor := expression.NewIdentEvalVisitor()
+		fields := r.Right.GetFields()
+		for i, f := range fields {
+			identName := field.JoinQualifiedName("", f.OrgTableName, f.ColumnInfo.Name.L)
+			visitor.Set(identName, rightRow.Data[i])
+		}
+		_, err = tempExpr.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var filtered bool
+		var p plan.Plan
+		p, filtered, err = r.Left.Filter(ctx, tempExpr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if filtered {
+			log.Debugf("filtered mathced rows")
+		}
+		err = r.findMatchedRows(ctx, rightRow, p, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 }
 
-func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right bool) (err error) {
-	var p plan.Plan
-	if right {
-		p = r.Left
-	} else {
-		p = r.Right
-	}
+func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, p plan.Plan, right bool) (err error) {
 	r.cursor = 0
 	r.matchedRows = nil
 	p.Close()
@@ -227,11 +262,12 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if b {
-			cmpRow.Data = joined
-			cmpRow.RowKeys = append(row.RowKeys, cmpRow.RowKeys...)
-			r.matchedRows = append(r.matchedRows, cmpRow)
+		if !b {
+			continue
 		}
+		cmpRow.Data = joined
+		cmpRow.RowKeys = append(row.RowKeys, cmpRow.RowKeys...)
+		r.matchedRows = append(r.matchedRows, cmpRow)
 	}
 	if len(r.matchedRows) == 0 {
 		if right {
