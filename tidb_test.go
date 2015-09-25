@@ -795,6 +795,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, 1, 2)
+
+	r = mustExecSQL(c, se, `select '''a''', """a""", 'pingcap ''-->'' tidb'`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, `'a'`, `"a"`, `pingcap '-->' tidb`)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
