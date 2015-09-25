@@ -120,6 +120,9 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 		case mysql.Enum:
 			b = EncodeUint(b, uint64(v.ToNumber()))
 			format = append(format, formatUintFlag)
+		case mysql.Set:
+			b = EncodeUint(b, uint64(v.ToNumber()))
+			format = append(format, formatUintFlag)
 		case nil:
 			// We will 0x00, 0x00 for nil.
 			// The []byte{} will be encoded as 0x00, 0x01.

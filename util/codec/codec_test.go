@@ -77,8 +77,8 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		},
 
 		{
-			[]interface{}{mysql.Enum{Name: "a", Value: 1}},
-			[]interface{}{uint64(1)},
+			[]interface{}{mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}},
+			[]interface{}{uint64(1), uint64(1)},
 		},
 	}
 
