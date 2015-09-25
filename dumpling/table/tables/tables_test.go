@@ -146,6 +146,19 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(row[5], Equals, uint64(6))
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+
+	_, err = ts.se.Execute("CREATE TABLE test.t (c1 enum('a', 'b', 'c'))")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute("insert test.t values ('a'), (2), ('c')")
+	c.Assert(err, IsNil)
+	rs, err = ts.se.Execute("select c1 + 1 from test.t where c1 = 1")
+	c.Assert(err, IsNil)
+	row, err = rs[0].FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	c.Assert(row[0], DeepEquals, float64(2))
+	_, err = ts.se.Execute("drop table test.t")
+	c.Assert(err, IsNil)
 }
 
 func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {

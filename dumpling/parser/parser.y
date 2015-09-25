@@ -122,6 +122,7 @@ import (
 	end		"END"
 	engine		"ENGINE"
 	engines		"ENGINES"
+	enum 		"ENUM"
 	eq		"="
 	execute		"EXECUTE"
 	exists		"EXISTS"
@@ -439,6 +440,7 @@ import (
 	SimpleQualifiedIdent	"Qualified identifier without *"
 	Statement		"statement"
 	StatementList		"statement list"
+	StringList 		"string list"
 	ExplainableStmt		"explainable statement"
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
@@ -3617,6 +3619,22 @@ StringType:
 		x.Collate = $4.(string)
 		$$ = x
 	}
+|	"ENUM" '(' StringList ')' OptCharset OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeEnum)
+		x.Elems = $3.([]string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
+		$$ = x
+	}
+|	"SET" '(' StringList ')' OptCharset OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeSet)
+		x.Elems = $3.([]string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
+		$$ = x
+	}
 
 BlobType:
 	"TINYBLOB"
@@ -3785,6 +3803,16 @@ OptCollate:
 |	"COLLATE" CollationName
 	{
 		$$ = $2.(string)
+	}
+
+StringList:
+	stringLit
+	{
+		$$ = []string{$1.(string)}
+	}
+|	StringList ',' stringLit
+	{
+		$$ = append($1.([]string), $3.(string))
 	}
 
 /************************************************************************************
