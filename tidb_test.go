@@ -800,6 +800,15 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, `'a'`, `"a"`, `pingcap '-->' tidb`)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c varchar(20))")
+	mustExecSQL(c, se, `insert t values("pingcap '-->' tidb")`)
+
+	r = mustExecSQL(c, se, `select * from t where c like 'pingcap ''-->'' tidb'`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, `pingcap '-->' tidb`)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
