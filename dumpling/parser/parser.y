@@ -91,6 +91,7 @@ import (
 	collation	"COLLATION"
 	column		"COLUMN"
 	columns		"COLUMNS"
+	comment 	"COMMENT"
 	commit		"COMMIT"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
@@ -779,6 +780,10 @@ Constraint:
 |	"ON" "UPDATE" NowSym
 	{
 		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrOnUpdate, Evalue: $3.(expression.Expression)}
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrComment}
 	}
 
 ConstraintElem:
@@ -1604,6 +1609,7 @@ UnReservedKeyword:
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
+|	"COMMENT"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -3360,6 +3366,10 @@ TableOpt:
 |	"AUTO_INCREMENT" eq LengthNum
 	{
 		$$ = &coldef.TableOpt{Tp: coldef.TblOptAutoIncrement, UintValue: $3.(uint64)}
+	}
+|	"COMMENT" EqOpt stringLit
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptComment, StrValue: $3.(string)} 
 	}
 
 TableOptListOpt:

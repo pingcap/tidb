@@ -254,6 +254,7 @@ collate		{c}{o}{l}{l}{a}{t}{e}
 collation	{c}{o}{l}{l}{a}{t}{i}{o}{n}
 column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
+comment 	{c}{o}{m}{m}{e}{n}{t}
 commit		{c}{o}{m}{m}{i}{t}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
@@ -532,6 +533,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {column}		return column
 {columns}		lval.item = string(l.val)
 			return columns
+{comment}		lval.item = string(l.val)
+			return comment
 {commit}		lval.item = string(l.val)
 			return commit
 {concat}		lval.item = string(l.val)
