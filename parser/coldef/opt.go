@@ -105,6 +105,7 @@ const (
 	ConstrNull
 	ConstrOnUpdate
 	ConstrFulltext
+	ConstrComment
 )
 
 // LockType is select lock type.
@@ -124,6 +125,7 @@ const (
 	TblOptCharset
 	TblOptCollate
 	TblOptAutoIncrement
+	TblOptComment
 )
 
 // TableOpt is used for parsing table option from SQL.

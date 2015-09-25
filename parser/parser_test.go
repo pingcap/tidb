@@ -387,12 +387,19 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"create table t (c1 enum('a', 'b'), c2 set('a', 'b'))", true},
 		{"create table t (c1 enum)", false},
 		{"create table t (c1 set)", false},
+
+		// For comment
+		{"create table t (c int comment 'comment')", true},
+		{"create table t (c int) comment = 'comment'", true},
+		{"create table t (c int) comment 'comment'", true},
+		{"create table t (c int) comment comment", false},
+		{"create table t (comment text)", true},
 	}
 
 	for _, t := range table {
 		l := NewLexer(t.src)
 		ok := yyParse(l) == 0
-		c.Assert(ok, Equals, t.ok, Commentf("source %v", t.src))
+		c.Assert(ok, Equals, t.ok, Commentf("source %v %v", t.src, l.errs))
 
 		switch ok {
 		case true:
@@ -409,7 +416,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
-		"collation",
+		"collation", "comment",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
