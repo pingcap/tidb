@@ -179,6 +179,13 @@ func (s *testJoinSuit) TestJoinWithoutIndex(c *C) {
 			},
 		},
 		{
+			"select * from t1 cross join t2 on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2",
+			[][]interface{}{
+				{1, 1, 1, 1},
+				{3, 3, 3, 3},
+			},
+		},
+		{
 			"select * from t1 left join t2 on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2;",
 			[][]interface{}{
 				{1, 1, 1, 1},

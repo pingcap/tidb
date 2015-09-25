@@ -63,6 +63,7 @@ type JoinPlan struct {
 	Fields      []*field.ResultField
 	On          expression.Expression
 	curRow      *plan.Row
+	tempPlan    plan.Plan
 	matchedRows []*plan.Row
 	cursor      int
 	evalArgs    map[interface{}]interface{}
@@ -186,7 +187,7 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			return nil, errors.Trace(err)
 		}
 		if filtered {
-			log.Debugf("filtered mathced rows")
+			log.Debugf("left join use index")
 		}
 		err = r.findMatchedRows(ctx, leftRow, p, false)
 		if err != nil {
@@ -226,7 +227,7 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 			return nil, errors.Trace(err)
 		}
 		if filtered {
-			log.Debugf("filtered mathced rows")
+			log.Debugf("right join use index")
 		}
 		err = r.findMatchedRows(ctx, rightRow, p, true)
 		if err != nil {
@@ -292,15 +293,36 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			if r.curRow == nil {
 				return nil, nil
 			}
+			if r.On != nil {
+				tempExpr := r.On.Clone()
+				visitor := expression.NewIdentEvalVisitor()
+				fields := r.Left.GetFields()
+				for i, f := range fields {
+					identName := field.JoinQualifiedName("", f.OrgTableName, f.ColumnInfo.Name.L)
+					visitor.Set(identName, r.curRow.Data[i])
+				}
+				_, err = tempExpr.Accept(visitor)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				var filtered bool
+				r.tempPlan, filtered, err = r.Right.Filter(ctx, tempExpr)
+				if filtered {
+					log.Debugf("cross join use index")
+				}
+			} else {
+				r.tempPlan = r.Right
+			}
 		}
+
 		var rightRow *plan.Row
-		rightRow, err = r.Right.Next(ctx)
+		rightRow, err = r.tempPlan.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rightRow == nil {
 			r.curRow = nil
-			r.Right.Close()
+			r.tempPlan.Close()
 			continue
 		}
 		joinedRow := append(r.curRow.Data, rightRow.Data...)
@@ -329,6 +351,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 // Close implements plan.Plan Close interface.
 func (r *JoinPlan) Close() error {
 	r.curRow = nil
+	r.tempPlan = nil
 	r.matchedRows = nil
 	r.cursor = 0
 	if r.Right != nil {
