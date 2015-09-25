@@ -94,7 +94,8 @@ func ParseSetValue(elems []string, number uint64) (Set, error) {
 		return zeroSet, nil
 	}
 
-	items := make([]string, 0)
+	value := number
+	var items []string
 	for i := 0; i < len(elems); i++ {
 		if number&setIndexValue[i] > 0 {
 			items = append(items, elems[i])
@@ -106,5 +107,5 @@ func ParseSetValue(elems []string, number uint64) (Set, error) {
 		return Set{}, errors.Errorf("invalid number %d for Set %v", number, elems)
 	}
 
-	return Set{Name: strings.Join(items, ","), Value: number}, nil
+	return Set{Name: strings.Join(items, ","), Value: value}, nil
 }

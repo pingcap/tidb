@@ -59,6 +59,7 @@ func (s *testSetSuite) TestSet(c *C) {
 		e, err := ParseSetValue(elems, t.Number)
 		c.Assert(err, IsNil)
 		c.Assert(e.String(), Equals, t.ExpectedName)
+		c.Assert(e.ToNumber(), Equals, float64(t.Number))
 	}
 
 	tblErr := []string{
