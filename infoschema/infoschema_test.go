@@ -83,7 +83,7 @@ func (*testSuite) TestT(c *C) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 
-	handle.Set(dbInfos)
+	handle.Set(dbInfos, 1)
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
