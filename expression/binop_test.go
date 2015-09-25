@@ -397,6 +397,7 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 		{1, opcode.Plus, mysql.Hex{Value: 1}, 2},
 		{1, opcode.Plus, mysql.Bit{Value: 1, Width: 1}, 2},
 		{1, opcode.Plus, mysql.Enum{Name: "a", Value: 1}, 2},
+		{1, opcode.Plus, mysql.Set{Name: "a", Value: 1}, 2},
 
 		// minus
 		{1, opcode.Minus, 1, 0},
