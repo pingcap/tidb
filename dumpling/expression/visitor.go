@@ -44,6 +44,9 @@ type Visitor interface {
 	// VisitFunctionSubstring visits FunctionSubstring expression.
 	VisitFunctionSubstring(ss *FunctionSubstring) (Expression, error)
 
+	// VisitFunctionSubstringIndex visits FunctionSubstringIndex expression.
+	VisitFunctionSubstringIndex(ss *FunctionSubstringIndex) (Expression, error)
+
 	// VisitExistsSubQuery visits ExistsSubQuery expression.
 	VisitExistsSubQuery(es *ExistsSubQuery) (Expression, error)
 
@@ -237,6 +240,27 @@ func (bv *BaseVisitor) VisitFunctionSubstring(ss *FunctionSubstring) (Expression
 		return ss, nil
 	}
 	ss.Len, err = ss.Len.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	return ss, nil
+}
+
+// VisitFunctionSubstringIndex implements Visitor interface.
+func (bv *BaseVisitor) VisitFunctionSubstringIndex(ss *FunctionSubstringIndex) (Expression, error) {
+	var err error
+	ss.StrExpr, err = ss.StrExpr.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	ss.Delim, err = ss.Delim.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	if ss.Count == nil {
+		return ss, nil
+	}
+	ss.Count, err = ss.Count.Accept(bv.V)
 	if err != nil {
 		return ss, errors.Trace(err)
 	}

@@ -210,6 +210,7 @@ import (
 	start		"START"
 	stringType	"string"
 	substring	"SUBSTRING"
+	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
@@ -1614,7 +1615,7 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
 |	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "SECOND" | "SQL_CALC_FOUND_ROWS"
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2260,6 +2261,14 @@ FunctionCallNonKeyword:
 			StrExpr: $3.(expression.Expression), 
 			Pos: $5.(expression.Expression),
 			Len: $7.(expression.Expression),
+		}	
+	}
+|	"SUBSTRING_INDEX" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionSubstringIndex{
+			StrExpr: $3.(expression.Expression), 
+			Delim: $5.(expression.Expression),
+			Count: $7.(expression.Expression),
 		}	
 	}
 |	"SYSDATE" '(' ExpressionOpt ')'
