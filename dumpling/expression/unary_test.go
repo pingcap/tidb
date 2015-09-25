@@ -42,6 +42,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{mysql.Hex{Value: 0}, opcode.Not, int64(1)},
 		{mysql.Bit{Value: 0, Width: 1}, opcode.Not, int64(1)},
 		{mysql.Enum{Name: "a", Value: 1}, opcode.Not, int64(0)},
+		{mysql.Set{Name: "a", Value: 1}, opcode.Not, int64(0)},
 
 		// test BitNeg.
 		{nil, opcode.BitNeg, nil},
@@ -61,6 +62,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{true, opcode.Plus, int64(1)},
 		{false, opcode.Plus, int64(0)},
 		{mysql.Enum{Name: "a", Value: 1}, opcode.Plus, mysql.Enum{Name: "a", Value: 1}},
+		{mysql.Set{Name: "a", Value: 1}, opcode.Plus, mysql.Set{Name: "a", Value: 1}},
 
 		// test Minus.
 		{nil, opcode.Minus, nil},
@@ -80,6 +82,7 @@ func (s *testUnaryOperationSuite) TestUnaryOp(c *C) {
 		{true, opcode.Minus, int64(-1)},
 		{false, opcode.Minus, int64(0)},
 		{mysql.Enum{Name: "a", Value: 1}, opcode.Minus, -1.0},
+		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 
 	for _, t := range tbl {

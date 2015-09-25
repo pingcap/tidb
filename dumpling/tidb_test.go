@@ -843,6 +843,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, "autocommit", 1)
 
+	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table if not exists t (c int)")
 	r = mustExecSQL(c, se, `show columns from t`)
 	rows, err := r.Rows(-1, 0)
@@ -919,6 +920,37 @@ func (s *testSessionSuite) TestEnum(c *C) {
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, "a")
+
+	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "3")
+
+	mustExecSQL(c, se, "delete from t")
+	mustExecSQL(c, se, "insert into t values ()")
+	mustExecSQL(c, se, "insert into t values (null), ('1')")
+	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "2")
+}
+
+func (s *testSessionSuite) TestSet(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c set('a', 'b', 'c'))")
+	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
+	r := mustExecSQL(c, se, "select * from t where c = 'a'")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, "a")
+
+	r = mustExecSQL(c, se, "select * from t where c = 'a,b'")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 2)
 
 	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
 	row, err = r.FirstRow()
