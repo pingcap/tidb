@@ -97,6 +97,10 @@ func (s *testSubstringSuite) TestSubstringIndex(c *C) {
 	}{
 		{"www.mysql.com", ".", 2, "www.mysql"},
 		{"www.mysql.com", ".", -2, "mysql.com"},
+		{"www.mysql.com", ".", 20, "www.mysql.com"},
+		{"www.mysql.com", ".", -20, "www.mysql.com"},
+		{"www.mysql.com", "_", 2, "www.mysql.com"},
+		{"www.mysql.com", "_", 0, ""},
 	}
 	for _, v := range tbl {
 		f := FunctionSubstringIndex{
