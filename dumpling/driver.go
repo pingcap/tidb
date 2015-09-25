@@ -432,6 +432,8 @@ func (r *driverRows) Next(dest []driver.Value) error {
 			dest[i] = v.ToString()
 		case mysql.Enum:
 			dest[i] = v.String()
+		case mysql.Set:
+			dest[i] = v.String()
 		default:
 			return errors.Errorf("unable to handle type %T", xi)
 		}
