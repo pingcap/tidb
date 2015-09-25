@@ -151,6 +151,7 @@ func (s *testTypeEtcSuite) TestClone(c *C) {
 	checkClone(c, make(map[int]string), false)
 	checkClone(c, mysql.Hex{Value: 1}, true)
 	checkClone(c, mysql.Bit{Value: 1, Width: 1}, true)
+	checkClone(c, mysql.Enum{Name: "a", Value: 1}, true)
 }
 
 func checkCoerce(c *C, a, b interface{}) {
