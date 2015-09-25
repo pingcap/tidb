@@ -482,8 +482,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 \"			l.sc = S1
 '			l.sc = S2
 
-<S1>(\\.|[^\"])*\"	return l.str(lval, "\"")
-<S2>((\\')|[^']|\n)*'	return l.str(lval, "'")
+<S1>(\\.|[^\"]|\"\")*\"		return l.str(lval, "\"")
+<S2>((\\')|[^']|\n|'')*'	return l.str(lval, "'")
 
 "&&"			return andand
 "&^"			return andnot
@@ -885,9 +885,12 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	s := string(l.val)
 	// TODO: performance issue.
 	if pref == "'" {
+		s = strings.Replace(s, "''", "'", -1)
 		s = strings.Replace(s, "\\'", "'", -1)    
 		s = strings.TrimSuffix(s, "'") + "\""
 		pref = "\""
+	} else if pref == "\"" {
+		s = strings.Replace(s, "\"\"", "\"", -1)
 	}
 	v, err := strconv.Unquote(pref + s)
 	if err != nil {
