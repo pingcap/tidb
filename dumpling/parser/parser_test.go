@@ -383,6 +383,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
 
+		// For enum and set type
+		{"create table t (c1 enum('a', 'b'), c2 set('a', 'b'))", true},
+		{"create table t (c1 enum)", false},
+		{"create table t (c1 set)", false},
+
 		// For comment
 		{"create table t (c int comment 'comment')", true},
 		{"create table t (c int) comment = 'comment'", true},

@@ -38,6 +38,8 @@ type FieldType struct {
 	Decimal int
 	Charset string
 	Collate string
+	// Elems is the element list for enum and set type.
+	Elems []string
 }
 
 // NewFieldType returns a FieldType,
@@ -55,15 +57,22 @@ func NewFieldType(tp byte) *FieldType {
 func (ft *FieldType) String() string {
 	ts := FieldTypeToStr(ft.Tp, ft.Charset)
 	ans := []string{ts}
-	if ft.Flen != UnspecifiedLength {
-		if ft.Decimal == UnspecifiedLength {
-			ans = append(ans, fmt.Sprintf("(%d)", ft.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal))
+	switch ft.Tp {
+	case mysql.TypeEnum, mysql.TypeSet:
+		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
+		ans = append(ans, fmt.Sprintf("('%s')", strings.Join(ft.Elems, "','")))
+	default:
+		if ft.Flen != UnspecifiedLength {
+			if ft.Decimal == UnspecifiedLength {
+				ans = append(ans, fmt.Sprintf("(%d)", ft.Flen))
+			} else {
+				ans = append(ans, fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal))
+			}
+		} else if ft.Decimal != UnspecifiedLength {
+			ans = append(ans, fmt.Sprintf("(%d)", ft.Decimal))
 		}
-	} else if ft.Decimal != UnspecifiedLength {
-		ans = append(ans, fmt.Sprintf("(%d)", ft.Decimal))
 	}
+
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		ans = append(ans, "UNSIGNED")
 	}

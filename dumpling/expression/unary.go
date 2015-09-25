@@ -210,6 +210,8 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 			return x, nil
 		case mysql.Bit:
 			return x, nil
+		case mysql.Enum:
+			return x, nil
 		default:
 			return types.UndOp(a, op)
 		}
@@ -265,6 +267,8 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		case mysql.Hex:
 			return -x.ToNumber(), nil
 		case mysql.Bit:
+			return -x.ToNumber(), nil
+		case mysql.Enum:
 			return -x.ToNumber(), nil
 		default:
 			return types.UndOp(a, op)
