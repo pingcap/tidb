@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -144,7 +145,7 @@ func (f *FunctionSubstringIndex) IsStatic() bool {
 
 // String implements the Expression String interface.
 func (f *FunctionSubstringIndex) String() string {
-	return fmt.Sprintf("SUBSTRING_INDEX(%s, %s, %s)", f.StrExpr.String(), f.Delim.String(), f.Count.String())
+	return fmt.Sprintf("SUBSTRING_INDEX(%s, %s, %s)", f.StrExpr, f.Delim, f.Count)
 }
 
 // Eval implements the Expression Eval interface.
@@ -171,9 +172,9 @@ func (f *FunctionSubstringIndex) Eval(ctx context.Context, args map[interface{}]
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	c, ok := t.(int64)
-	if !ok {
-		return nil, errors.Errorf("Substring invalid pos args, need int but get %T", t)
+	c, err := types.ToInt64(t)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	count := int(c)
 	strs := strings.Split(str, delim)
