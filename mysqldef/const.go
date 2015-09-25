@@ -17,7 +17,7 @@ package mysqldef
 const (
 	MinProtocolVersion byte   = 10
 	MaxPayloadLen      int    = 1<<24 - 1
-	ServerVersion      string = "5.5.31-cm-1.0"
+	ServerVersion      string = "5.5.31-TiDB-1.0"
 )
 
 // Header informations.
