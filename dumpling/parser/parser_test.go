@@ -394,6 +394,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"create table t (c int) comment 'comment'", true},
 		{"create table t (c int) comment comment", false},
 		{"create table t (comment text)", true},
+
+		// For string literal
+		{`select '''a''', """a"""`, true},
+		{`select ''a''`, false},
+		{`select ""a""`, false},
 	}
 
 	for _, t := range table {
