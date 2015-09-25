@@ -19,6 +19,7 @@ package tidb
 
 import (
 	"fmt"
+	"runtime/debug"
 
 	"github.com/ngaut/log"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -57,6 +58,7 @@ func initUserTable(s Session) {
 func mustExecute(s Session, sql string) {
 	_, err := s.Execute(sql)
 	if err != nil {
+		debug.PrintStack()
 		log.Fatal(err)
 	}
 }
