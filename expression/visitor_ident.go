@@ -13,6 +13,11 @@
 
 package expression
 
+import (
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/parser/opcode"
+)
+
 // IdentEvalVisitor converts Ident expression to value expression.
 type IdentEvalVisitor struct {
 	BaseVisitor
@@ -31,11 +36,48 @@ func (iev *IdentEvalVisitor) Set(name string, value interface{}) {
 	iev.evalMap[name] = value
 }
 
-// VisitIdent implements Visitor inferface.
+// VisitIdent implements Visitor interface.
 func (iev *IdentEvalVisitor) VisitIdent(i *Ident) (Expression, error) {
 	val, ok := iev.evalMap[i.L]
 	if ok {
 		return Value{Val: val}, nil
 	}
 	return i, nil
+}
+
+// VisitBinaryOperation swaps the right side identifier to left side if left side expression is static.
+// So it can be used in index plan.
+func (iev *IdentEvalVisitor) VisitBinaryOperation(binop *BinaryOperation) (Expression, error) {
+	var err error
+	binop.L, err = binop.L.Accept(iev)
+	if err != nil {
+		return binop, errors.Trace(err)
+	}
+	binop.R, err = binop.R.Accept(iev)
+	if err != nil {
+		return binop, errors.Trace(err)
+	}
+
+	if binop.L.IsStatic() {
+		if _, ok := binop.R.(*Ident); ok {
+			switch binop.Op {
+			case opcode.EQ:
+			case opcode.NE:
+			case opcode.NullEQ:
+			case opcode.LT:
+				binop.Op = opcode.GE
+			case opcode.LE:
+				binop.Op = opcode.GT
+			case opcode.GE:
+				binop.Op = opcode.LT
+			case opcode.GT:
+				binop.Op = opcode.LE
+			default:
+				// unsupported opcode
+				return binop, nil
+			}
+			binop.L, binop.R = binop.R, binop.L
+		}
+	}
+	return binop, nil
 }
