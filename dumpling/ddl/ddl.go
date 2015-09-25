@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Pre-defined errors
@@ -396,6 +398,7 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	cols := tbl.Cols()
 	position := len(cols)
 	name := spec.Column.Name
+	log.Infof("addColumn, cols:%v, pos:%v, name:%v, spec.Pos:%v", cols, position, name, spec.Position)
 	// Check column name duplicate
 	dc := column.FindCol(cols, name)
 	if dc != nil {
@@ -417,6 +420,7 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Debugf("addColumn, col:%v, pos:%v, spec.Column:%v", col, position, spec.Column)
 	// insert col into the right place of the column list
 	newCols := make([]*column.Col, 0, len(cols)+1)
 	newCols = append(newCols, cols[:position]...)
@@ -443,9 +447,62 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	tb.Columns = newCols
 	// TODO: update index
 	// TODO: update default value
+	log.Debugf("addColumn, Columns:%v", tb.Columns)
+	updateDefaultValue(ctx, tb, col)
 	// update infomation schema
 	err = d.updateInfoSchema(ctx, schema, tb.Meta())
 	return errors.Trace(err)
+}
+
+func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) error {
+	log.Warn("update============================== ")
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	it, err := txn.Seek([]byte(t.FirstKey()), nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	prefix := t.KeyPrefix()
+	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
+		if err0 != nil {
+			return errors.Trace(err)
+		}
+		k := t.RecordKey(handle, col)
+		colID, err0 := tables.ColumnID(k)
+		if err0 != nil {
+			return errors.Trace(err)
+		}
+		if colID != col.ID {
+			continue
+		}
+
+		val := col.DefaultValue
+		// Check and get timestamp/datetime default value.
+		if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) && (col.DefaultValue == nil) {
+			val, err0 = expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+			if err0 != nil {
+				return errors.Trace(err)
+			}
+		}
+		types.Convert(val, &col.FieldType)
+
+		t.SetColValue(txn, k, val)
+
+		rk := t.RecordKey(handle, nil)
+		it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		if err0 != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Warnf("update==============================end, err%v", err)
+
+	return nil
 }
 
 // drop table will proceed even if some table in the list does not exists
