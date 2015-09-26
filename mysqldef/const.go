@@ -123,3 +123,26 @@ const (
 	// UserTable is the table in system db contains user info.
 	UserTable = "User"
 )
+
+// PrivilegeType  privilege
+type PrivilegeType uint32
+
+const (
+	_ PrivilegeType = 1 << iota
+	// CreatePriv is the privilege to create schema/table.
+	CreatePriv
+	// SelectPriv is the privilege to read from table.
+	SelectPriv
+	// InsertPriv is the privilege to insert data into table.
+	InsertPriv
+	// UpdatePriv is the privilege to update data in table.
+	UpdatePriv
+	// DeletePriv is the privilege to delete data from table.
+	DeletePriv
+	// ShowPriv is the privilege to run show statement.
+	ShowPriv
+	// CreateUserPriv is the privilege to create user.
+	CreateUserPriv
+	// DropPriv is the privilege to drop schema/table.
+	DropPriv
+)
