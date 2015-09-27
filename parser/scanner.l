@@ -297,6 +297,7 @@ from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
+grant		{g}{r}{a}{n}{t}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
@@ -361,6 +362,7 @@ sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
+to		{t}{o}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
 max		{m}{a}{x}
@@ -598,6 +600,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {full}			lval.item = string(l.val)
 			return full
 {fulltext}		return fulltext
+{grant}			return grant
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
@@ -705,6 +708,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {tables}		lval.item = string(l.val)
 			return tables
 {then}			return then
+{to}			return to
 {transaction}		lval.item = string(l.val)
 			return transaction
 {truncate}		lval.item = string(l.val)
