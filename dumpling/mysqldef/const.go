@@ -139,8 +139,8 @@ const (
 	UpdatePriv
 	// DeletePriv is the privilege to delete data from table.
 	DeletePriv
-	// ShowPriv is the privilege to run show statement.
-	ShowPriv
+	// ShowDBPriv is the privilege to run show databases statement.
+	ShowDBPriv
 	// CreateUserPriv is the privilege to create user.
 	CreateUserPriv
 	// DropPriv is the privilege to drop schema/table.
@@ -151,4 +151,8 @@ const (
 	AlterPriv
 	// ExecutePriv is the privilege to run execute statement.
 	ExecutePriv
+	// IndexPriv is the privilege to create/drop index.
+	IndexPriv
+	// AllPriv is the privilege for all actions.
+	AllPriv
 )
