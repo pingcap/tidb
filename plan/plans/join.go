@@ -213,11 +213,20 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 		if cmpRow == nil {
 			break
 		}
-		var joined []interface{}
+
+		// Do append(s1, s2) safely. Sometime the s1 capability is larger than its real length, so
+		// multi append may overwrite last valid data, e.g,
+		//   s1 = make([]interface{}, 0, 1)
+		//   s = append(s1, []interface{}{1})
+		//   ss = append(ss, s)
+		//   s = append(s1, []interface{}{2})
+		//   ss = append(ss, s)
+		// We will see that ss only contains 2.
+		joined := make([]interface{}, 0, len(cmpRow.Data)+len(row.Data))
 		if right {
-			joined = append(cmpRow.Data, row.Data...)
+			joined = append(append(joined, cmpRow.Data...), row.Data...)
 		} else {
-			joined = append(row.Data, cmpRow.Data...)
+			joined = append(append(joined, row.Data...), cmpRow.Data...)
 		}
 		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			return GetIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
@@ -227,9 +236,11 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		if b {
 			cmpRow.Data = joined
-			cmpRow.RowKeys = append(row.RowKeys, cmpRow.RowKeys...)
+			keys := make([]*plan.RowKeyEntry, 0, len(row.RowKeys)+len(cmpRow.RowKeys))
+			cmpRow.RowKeys = append(append(keys, row.RowKeys...), cmpRow.RowKeys...)
 			r.matchedRows = append(r.matchedRows, cmpRow)
 		}
 	}
