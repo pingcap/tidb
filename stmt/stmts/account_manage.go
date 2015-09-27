@@ -118,6 +118,7 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 			Name:   model.NewCIStr(mysql.UserTable),
 			Schema: model.NewCIStr(mysql.SystemDB),
 		},
+		ColNames: []string{"Host", "User", "Password"},
 	}
 	values := make([][]expression.Expression, 0, len(s.Specs))
 	for _, spec := range s.Specs {
