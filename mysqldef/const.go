@@ -145,4 +145,10 @@ const (
 	CreateUserPriv
 	// DropPriv is the privilege to drop schema/table.
 	DropPriv
+	// GrantPriv is the privilege to grant privilege to user.
+	GrantPriv
+	// AlterPriv is the privilege to run alter statement.
+	AlterPriv
+	// ExecutePriv is the privilege to run execute statement.
+	ExecutePriv
 )
