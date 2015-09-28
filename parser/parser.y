@@ -87,6 +87,7 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	check 		"CHECK"
 	checksum	"CHECKSUM"
 	coalesce	"COALESCE"
 	collate 	"COLLATE"
@@ -3325,6 +3326,11 @@ TableElement:
 	{
 		$$ = $1.(*coldef.TableConstraint)
 	}
+|	"CHECK" '(' Expression ')'
+	{
+		/* Nothing to do now */
+		$$ = nil 
+	}
 
 TableElementList:
 	TableElement
@@ -3772,7 +3778,7 @@ DateAndTimeType:
 		x.Decimal = $2.(int)
 		$$ = x
 	}
-|	"YEAR"
+|	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		$$ = x
