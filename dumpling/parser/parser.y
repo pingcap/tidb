@@ -87,6 +87,7 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	check 		"CHECK"
 	checksum	"CHECKSUM"
 	coalesce	"COALESCE"
 	collate 	"COLLATE"
@@ -3324,6 +3325,11 @@ TableElement:
 |	TableConstraint
 	{
 		$$ = $1.(*coldef.TableConstraint)
+	}
+|	"CHECK" '(' Expression ')'
+	{
+		/* Nothing to do now */
+		$$ = nil 
 	}
 
 TableElementList:
