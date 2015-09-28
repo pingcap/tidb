@@ -405,11 +405,15 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.TableName().O))
 	for i, col := range tb.Cols() {
-		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.FieldType.String()))
-		if col.DefaultValue == nil {
-			buf.WriteString(" DEFAULT NULL")
+		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
-			buf.WriteString(fmt.Sprintf(" DEFAULT %v", col.DefaultValue))
+			if col.DefaultValue == nil {
+				buf.WriteString(" DEFAULT NULL")
+			} else {
+				buf.WriteString(fmt.Sprintf(" DEFAULT %v", col.DefaultValue))
+			}
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
