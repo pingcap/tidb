@@ -444,6 +444,7 @@ import (
 	SetStmt			"Set variable statement"
 	ShowStmt		"Show engines/databases/tables/columns/warnings statement"
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
+	ShowLikeOrWhereOpt	"Show like or where condition option"
 	ShowTableIdentOpt	"Show columns statement table name option"
 	SignedLiteral		"Literal or NumLiteral with sign"
 	SimpleQualifiedIdent	"Qualified identifier without *"
@@ -3172,51 +3173,35 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowWarnings}
 	}
-// See: https://dev.mysql.com/doc/refman/5.7/en/show-variables.html
-// TODO: Support show variables with where clause. 
-|	"SHOW" GlobalScope "VARIABLES"
+|	"SHOW" GlobalScope "VARIABLES" ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowVariables,
 			GlobalScope: $2.(bool),
 		}
-	
+		stmt.SetCondition($4)
+		$$ = stmt
 	}
-|	"SHOW" GlobalScope "VARIABLES" "LIKE" PrimaryExpression
+|	"SHOW" "COLLATION" ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowVariables,
-			GlobalScope: $2.(bool),
-			Pattern:  &expression.PatternLike{Pattern: $5.(expression.Expression)},
-		}
-	}
-|	"SHOW" GlobalScope "VARIABLES" "WHERE" Expression
-	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowVariables,
-			GlobalScope: $2.(bool),
-			Where: expression.Expr($5),
-		}
-	}
-|	"SHOW" "COLLATION"
-	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowCollation,
 		}
+		stmt.SetCondition($3)
+		$$ = stmt
 	}
-|	"SHOW" "COLLATION" "LIKE" PrimaryExpression
+
+ShowLikeOrWhereOpt:
 	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowCollation,
-			Pattern:  &expression.PatternLike{Pattern: $4.(expression.Expression)},
-		}
+		$$ = nil 
 	}
-|	"SHOW" "COLLATION" "WHERE" Expression
+|	"LIKE" PrimaryExpression
 	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowCollation,
-			Where: expression.Expr($4),
-		}
+		$$ = &expression.PatternLike{Pattern: $2.(expression.Expression)}
+	}
+|	"WHERE" Expression
+	{
+		$$ = expression.Expr($2)
 	}
 
 GlobalScope:
