@@ -152,7 +152,8 @@ type ColDesc struct {
 
 const defaultPrivileges string = "select,insert,update,references"
 
-func (c *Col) getTypeDesc() string {
+// GetTypeDesc gets the description for column type.
+func (c *Col) GetTypeDesc() string {
 	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
 	switch c.Tp {
 	case mysql.TypeSet, mysql.TypeEnum:
@@ -207,7 +208,7 @@ func NewColDesc(col *Col) *ColDesc {
 
 	return &ColDesc{
 		Field:        name.O,
-		Type:         col.getTypeDesc(),
+		Type:         col.GetTypeDesc(),
 		Collation:    col.Collate,
 		Null:         nullFlag,
 		Key:          keyFlag,
