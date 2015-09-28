@@ -450,9 +450,9 @@ func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	v := FieldTypeToStr(mysql.TypeDecimal, "not binary")
 	c.Assert(v, Equals, type2Str[mysql.TypeDecimal])
 	v = FieldTypeToStr(mysql.TypeBlob, charset.CharsetBin)
-	c.Assert(v, Equals, "BLOB")
+	c.Assert(v, Equals, "blob")
 	v = FieldTypeToStr(mysql.TypeString, charset.CharsetBin)
-	c.Assert(v, Equals, "BINARY")
+	c.Assert(v, Equals, "binary")
 }
 
 func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
