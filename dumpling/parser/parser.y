@@ -179,6 +179,7 @@ import (
 	mode		"MODE"
 	month		"MONTH"
 	names		"NAMES"
+	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
@@ -407,6 +408,7 @@ import (
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	name			"name"
+	NationalOpt		"National option"
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
@@ -1619,6 +1621,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
+|	"NATIONAL"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -3605,32 +3608,32 @@ BitValueType:
 	}
 
 StringType:
-	"CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x.Flen = $3.(int)
+		if $4.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
+|	NationalOpt "CHAR" OptBinary
+	{
+		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	"CHAR" OptBinary
-	{
-		x := types.NewFieldType(mysql.TypeString)
-		if $2.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
-		$$ = x
-	}
-|	"VARCHAR" FieldLen OptBinary OptCharset OptCollate
+|	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int) 
-		if $3.(bool) {
+		x.Flen = $3.(int) 
+		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -3678,6 +3681,15 @@ StringType:
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		$$ = x
+	}
+
+NationalOpt:
+	{
+
+	}
+|	"NATIONAL"
+	{
+
 	}
 
 BlobType:
