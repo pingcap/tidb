@@ -426,6 +426,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For check
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
+
+		// For year
+		{"create table t (y year(4), y1 year)", true},
 	}
 
 	for _, t := range table {
