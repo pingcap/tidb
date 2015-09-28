@@ -423,6 +423,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
+
+		// For check
+		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 	}
 
 	for _, t := range table {

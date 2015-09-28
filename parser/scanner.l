@@ -250,6 +250,7 @@ case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+check 		{c}{h}{e}{c}{k}
 checksum 	{c}{h}{e}{c}{k}{s}{u}{m}
 coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
@@ -536,6 +537,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{check}			return check
 {checksum}		lval.item = string(l.val)
 			return checksum
 {coalesce}		lval.item = string(l.val)
