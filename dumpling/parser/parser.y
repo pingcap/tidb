@@ -78,6 +78,7 @@ import (
 	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
+	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
 	by		"BY"
@@ -86,6 +87,7 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	checksum	"CHECKSUM"
 	coalesce	"COALESCE"
 	collate 	"COLLATE"
 	collation	"COLLATION"
@@ -93,8 +95,10 @@ import (
 	columns		"COLUMNS"
 	comment 	"COMMENT"
 	commit		"COMMIT"
+	compression	"COMPRESSION"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
+	connection 	"CONNECTION"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
 	count		"COUNT"
@@ -155,6 +159,7 @@ import (
 	is		"IS"
 	join		"JOIN"
 	key		"KEY"
+	keyBlockSize	"KEY_BLOCK_SIZE"
 	le		"<="
 	left		"LEFT"
 	length		"LENGTH"
@@ -165,9 +170,11 @@ import (
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
 	max		"MAX"
+	maxRows		"MAX_ROWS"
 	microsecond	"MICROSECOND"
 	min		"MIN"
 	minute		"MINUTE"
+	minRows		"MIN_ROWS"
 	mod 		"MOD"
 	mode		"MODE"
 	month		"MONTH"
@@ -1610,7 +1617,7 @@ UnReservedKeyword:
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
-|	"COMMENT"
+|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -3380,6 +3387,39 @@ TableOpt:
 	{
 		$$ = &coldef.TableOpt{Tp: coldef.TblOptComment, StrValue: $3.(string)} 
 	}
+|	"AVG_ROW_LENGTH" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptAvgRowLength, UintValue: $3.(uint64)} 
+	}
+|	"CONNECTION" EqOpt stringLit
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptConnection, StrValue: $3.(string)} 
+	}
+|	"CHECKSUM" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptCheckSum, UintValue: $3.(uint64)} 
+	}
+|	"PASSWORD" EqOpt stringLit
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptPassword, StrValue: $3.(string)} 
+	}
+|	"COMPRESSION" EqOpt Identifier
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptCompression, StrValue: $3.(string)} 
+	}
+|	"KEY_BLOCK_SIZE" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptKeyBlockSize, UintValue: $3.(uint64)} 
+	}
+|	"MAX_ROWS" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptMaxRows, UintValue: $3.(uint64)} 
+	}
+|	"MIN_ROWS" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptMinRows, UintValue: $3.(uint64)} 
+	}
+
 
 TableOptListOpt:
 	{
