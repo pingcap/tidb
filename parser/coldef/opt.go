@@ -134,19 +134,6 @@ const (
 	TblOptKeyBlockSize
 	TblOptMaxRows
 	TblOptMinRows
-	// Following table options are just listed here,
-	// we may support them one by one later.
-	TblOptDataDirectory
-	TblOptDelayKeyWrite
-	TblOptIndexDirectory
-	TblOptInsertMethod
-	TblOptPackKeys
-	TblOptRowFormat
-	TblOptStatsAutoRecalc
-	TblOptStatsPersistent
-	TblOptStatsSamplePages
-	TblOptTableSpace
-	TblOptUnion
 )
 
 // TableOpt is used for parsing table option from SQL.
