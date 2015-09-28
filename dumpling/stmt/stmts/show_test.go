@@ -44,4 +44,5 @@ func (s *testStmtSuite) TestShow(c *C) {
 	c.Assert(stmtList, HasLen, 1)
 	testStmt, ok = stmtList[0].(*stmts.ShowStmt)
 	c.Assert(ok, IsTrue)
+	c.Assert(testStmt.Pattern, NotNil)
 }
