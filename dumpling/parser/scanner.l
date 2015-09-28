@@ -242,6 +242,7 @@ as		{a}{s}
 asc		{a}{s}{c}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
 avg		{a}{v}{g}
+avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
 by		{b}{y}
@@ -249,6 +250,7 @@ case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+checksum 	{c}{h}{e}{c}{k}{s}{u}{m}
 coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
 collation	{c}{o}{l}{l}{a}{t}{i}{o}{n}
@@ -256,8 +258,10 @@ column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
 comment 	{c}{o}{m}{m}{e}{n}{t}
 commit		{c}{o}{m}{m}{i}{t}
+compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
+connection	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
@@ -314,6 +318,7 @@ into		{i}{n}{t}{o}
 is		{i}{s}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
+key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
@@ -321,8 +326,10 @@ limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
 lock		{l}{o}{c}{k}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
+max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
 minute		{m}{i}{n}{u}{t}{e}
+min_rows	{m}{i}{n}_{r}{o}{w}{s}
 mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
@@ -517,6 +524,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return autoIncrement
 {avg}			lval.item = string(l.val)
 			return avg
+{avg_row_length}	lval.item = string(l.val)
+			return avgRowLength
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
@@ -526,6 +535,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{checksum}		lval.item = string(l.val)
+			return checksum
 {coalesce}		lval.item = string(l.val)
 			return coalesce
 {collate}		return collate
@@ -538,10 +549,14 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return comment
 {commit}		lval.item = string(l.val)
 			return commit
+{compression}		lval.item = string(l.val)
+			return compression
 {concat}		lval.item = string(l.val)
 			return concat
 {concat_ws}		lval.item = string(l.val)
 			return concatWs
+{connection}		lval.item = string(l.val)
+			return connection
 {constraint}		return constraint
 {convert}		return convert
 {count}			lval.item = string(l.val)
@@ -620,6 +635,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {is}			return is
 {join}			return join
 {key}			return key
+{key_block_size}	lval.item = string(l.val)
+			return keyBlockSize
 {left}			lval.item = string(l.val)
 			return left
 {length}		lval.item = string(l.val)
@@ -632,12 +649,16 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {low_priority}		return lowPriority
 {max}			lval.item = string(l.val)
 			return max
+{max_rows}		lval.item = string(l.val)
+			return maxRows
 {microsecond}		lval.item = string(l.val)
 			return microsecond
 {min}			lval.item = string(l.val)
 			return min
 {minute}		lval.item = string(l.val)
 			return minute
+{min_rows}		lval.item = string(l.val)
+			return minRows
 {mod}			return mod
 {mode}			lval.item = string(l.val)
 			return mode
