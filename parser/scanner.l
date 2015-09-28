@@ -334,6 +334,7 @@ mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
 names		{n}{a}{m}{e}{s}
+national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
@@ -666,6 +667,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return month
 {names}			lval.item = string(l.val)
 			return names
+{national}		lval.item = string(l.val)
+			return national
 {not}			return not
 {offset}		lval.item = string(l.val)
 			return offset

@@ -420,6 +420,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"create table t (c int) min_rows 1000", true},
 		{"create table t (c int) password = 'abc'", true},
 		{"create table t (c int) password 'abc'", true},
+
+		// For national
+		{"create table t (c1 national char(2), c2 national varchar(2))", true},
 	}
 
 	for _, t := range table {
@@ -443,7 +446,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows",
+		"max_rows", "min_rows", "national",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
