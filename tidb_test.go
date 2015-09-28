@@ -901,12 +901,16 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "localhost", "root", "")
+	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "127.0.0.1", "root", "")
+	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
+	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.db;")
+	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
+	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {

@@ -96,6 +96,8 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeToStr(c, mysql.TypeDecimal, true, "decimal")
 	testTypeToStr(c, 0xdd, true, "")
 	testTypeToStr(c, mysql.TypeBit, true, "bit")
+	testTypeToStr(c, mysql.TypeEnum, true, "enum")
+	testTypeToStr(c, mysql.TypeSet, true, "set")
 }
 
 func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
