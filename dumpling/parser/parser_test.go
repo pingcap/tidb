@@ -420,6 +420,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"create table t (c int) min_rows 1000", true},
 		{"create table t (c int) password = 'abc'", true},
 		{"create table t (c int) password 'abc'", true},
+
+		// For show create table
+		{"show create table test.t", true},
+		{"show create table t", true},
 	}
 
 	for _, t := range table {

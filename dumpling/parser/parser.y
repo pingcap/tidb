@@ -3190,6 +3190,13 @@ ShowStmt:
 		stmt.SetCondition($3)
 		$$ = stmt
 	}
+|	"SHOW" "CREATE" "TABLE" TableIdent 
+	{
+		$$ = &stmts.ShowStmt{
+			Target:     stmt.ShowCreateTable,
+			TableIdent: $4.(table.Ident),
+		}
+	}
 
 ShowLikeOrWhereOpt:
 	{
