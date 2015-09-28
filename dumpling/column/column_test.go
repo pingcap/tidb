@@ -14,6 +14,7 @@
 package column
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -50,7 +51,7 @@ func (s *testColumnSuite) TestString(c *C) {
 	col.Tp = mysql.TypeEnum
 	col.Flag = 0
 	col.Elems = []string{"a", "b"}
-	c.Assert(col.getTypeDesc(), Equals, "ENUM ('a','b')")
+	c.Assert(strings.ToLower(col.GetTypeDesc()), Equals, "enum ('a','b')")
 }
 
 func (s *testColumnSuite) TestFind(c *C) {
