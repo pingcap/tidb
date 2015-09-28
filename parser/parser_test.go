@@ -402,6 +402,24 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`select '''a''', """a"""`, true},
 		{`select ''a''`, false},
 		{`select ""a""`, false},
+
+		// For table option
+		{"create table t (c int) avg_row_length = 3", true},
+		{"create table t (c int) avg_row_length 3", true},
+		{"create table t (c int) checksum = 0", true},
+		{"create table t (c int) checksum 1", true},
+		{"create table t (c int) compression = none", true},
+		{"create table t (c int) compression lz4", true},
+		{"create table t (c int) connection = 'abc'", true},
+		{"create table t (c int) connection 'abc'", true},
+		{"create table t (c int) key_block_size = 1024", true},
+		{"create table t (c int) key_block_size 1024", true},
+		{"create table t (c int) max_rows = 1000", true},
+		{"create table t (c int) max_rows 1000", true},
+		{"create table t (c int) min_rows = 1000", true},
+		{"create table t (c int) min_rows 1000", true},
+		{"create table t (c int) password = 'abc'", true},
+		{"create table t (c int) password 'abc'", true},
 	}
 
 	for _, t := range table {
@@ -424,7 +442,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
-		"collation", "comment",
+		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
+		"max_rows", "min_rows",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
