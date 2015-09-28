@@ -3776,7 +3776,7 @@ DateAndTimeType:
 		x.Decimal = $2.(int)
 		$$ = x
 	}
-|	"YEAR"
+|	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		$$ = x
