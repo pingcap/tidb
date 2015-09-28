@@ -52,7 +52,8 @@ var Funcs = map[string]Func{
 	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
 	// math functions
-	"abs": {builtinAbs, 1, 1, true, false},
+	"abs":  {builtinAbs, 1, 1, true, false},
+	"rand": {builtinRand, 0, 1, true, false},
 
 	// group by functions
 	"avg":          {builtinAvg, 1, 1, false, true},
