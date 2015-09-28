@@ -413,13 +413,11 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
-		} else {
-			if len(tb.Indices()) == 0 {
-				buf.WriteString("\n")
-			} else {
-				buf.WriteString(",\n")
-			}
 		}
+	}
+
+	if len(tb.Indices()) > 0 {
+		buf.WriteString(",\n")
 	}
 
 	for i, idx := range tb.Indices() {
@@ -438,10 +436,10 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 		buf.WriteString(fmt.Sprintf("(`%s`)", strings.Join(cols, "`,")))
 		if i != len(tb.Indices())-1 {
 			buf.WriteString(",\n")
-		} else {
-			buf.WriteString("\n")
 		}
 	}
+
+	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
 	if s := tb.Meta().Charset; len(s) > 0 {
