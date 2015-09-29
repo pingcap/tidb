@@ -868,7 +868,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "INT", "YES", "", nil, "")
+	match(c, rows[0], "c", "int", "YES", "", nil, "")
 
 	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
 	row, err = r.FirstRow()

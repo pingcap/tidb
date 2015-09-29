@@ -261,6 +261,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For buildin functions
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT RAND();", true},
+		{"SELECT RAND(1);", true},
 
 		{"SELECT SUBSTRING('Quadratically',5);", true},
 		{"SELECT SUBSTRING('Quadratically',5, 3);", true},
@@ -424,6 +426,15 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// For show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
+
+		// For national
+		{"create table t (c1 national char(2), c2 national varchar(2))", true},
+
+		// For check
+		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
+
+		// For year
+		{"create table t (y year(4), y1 year)", true},
 	}
 
 	for _, t := range table {
@@ -447,7 +458,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows",
+		"max_rows", "min_rows", "national",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
