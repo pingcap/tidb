@@ -261,6 +261,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For buildin functions
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT RAND();", true},
+		{"SELECT RAND(1);", true},
 
 		{"SELECT SUBSTRING('Quadratically',5);", true},
 		{"SELECT SUBSTRING('Quadratically',5, 3);", true},

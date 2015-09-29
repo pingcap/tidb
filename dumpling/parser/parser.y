@@ -198,6 +198,7 @@ import (
 	prepare		"PREPARE"
 	primary		"PRIMARY"
 	quick		"QUICK"
+	rand		"RAND"
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
@@ -1626,7 +1627,7 @@ UnReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "SECOND" | "SQL_CALC_FOUND_ROWS"
+|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
@@ -2234,6 +2235,21 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"RAND" '(' ExpressionOpt ')'
+	{
+
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"SECOND" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2438,10 +2454,10 @@ WhenClause:
 	}
 
 ElseOpt:
-       /* empty */
-       {
+	/* empty */
+	{
 		$$ = nil	
-       }
+	}
 |	"ELSE" Expression
 	{
 		$$ = $2
