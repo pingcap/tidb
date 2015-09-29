@@ -3722,9 +3722,10 @@ BlobType:
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
-|	"BLOB"
+|	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
+		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -3751,9 +3752,10 @@ TextType:
 		$$ = x
 
 	}
-|	"TEXT"
+|	"TEXT" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
+		x.Flen = $2.(int) 
 		$$ = x
 	}
 |	"MEDIUMTEXT"
