@@ -44,7 +44,7 @@ func getDefaultValue(ctx context.Context, c *column.Col) (interface{}, bool, err
 	} else if c.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		if c.DefaultValue == nil {
+		if c.DefaultValue == nil && mysql.HasNotNullFlag(c.Flag) {
 			return c.FieldType.Elems[0], true, nil
 		}
 	}
