@@ -346,6 +346,7 @@ password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
 quick		{q}{u}{i}{c}{k}
+rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
@@ -701,6 +702,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return start
 {global}		lval.item = string(l.val)
 			return global
+{rand}			lval.item = string(l.val)
+			return rand
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp
