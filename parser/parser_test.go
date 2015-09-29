@@ -404,6 +404,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`select '''a''', """a"""`, true},
 		{`select ''a''`, false},
 		{`select ""a""`, false},
+		{`select '''a''';`, true},
+		{`select '\'a\'';`, true},
+		{`select "\"a\"";`, true},
+		{`select """a""";`, true},
 
 		// For table option
 		{"create table t (c int) avg_row_length = 3", true},
