@@ -250,6 +250,7 @@ case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+check 		{c}{h}{e}{c}{k}
 checksum 	{c}{h}{e}{c}{k}{s}{u}{m}
 coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
@@ -334,6 +335,7 @@ mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
 names		{n}{a}{m}{e}{s}
+national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
@@ -344,6 +346,7 @@ password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
 quick		{q}{u}{i}{c}{k}
+rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
@@ -535,6 +538,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{check}			return check
 {checksum}		lval.item = string(l.val)
 			return checksum
 {coalesce}		lval.item = string(l.val)
@@ -666,6 +670,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return month
 {names}			lval.item = string(l.val)
 			return names
+{national}		lval.item = string(l.val)
+			return national
 {not}			return not
 {offset}		lval.item = string(l.val)
 			return offset
@@ -696,6 +702,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return start
 {global}		lval.item = string(l.val)
 			return global
+{rand}			lval.item = string(l.val)
+			return rand
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp

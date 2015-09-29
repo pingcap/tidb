@@ -36,3 +36,10 @@ func (s *testBuiltinSuite) TestAbs(c *C) {
 		c.Assert(v, DeepEquals, t.Ret)
 	}
 }
+
+func (s *testBuiltinSuite) TestRand(c *C) {
+	v, err := builtinRand([]interface{}{}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, Less, float64(1))
+	c.Assert(v, GreaterEqual, float64(0))
+}

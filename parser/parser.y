@@ -87,6 +87,7 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	check 		"CHECK"
 	checksum	"CHECKSUM"
 	coalesce	"COALESCE"
 	collate 	"COLLATE"
@@ -179,6 +180,7 @@ import (
 	mode		"MODE"
 	month		"MONTH"
 	names		"NAMES"
+	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
@@ -196,6 +198,7 @@ import (
 	prepare		"PREPARE"
 	primary		"PRIMARY"
 	quick		"QUICK"
+	rand		"RAND"
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
@@ -407,6 +410,7 @@ import (
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	name			"name"
+	NationalOpt		"National option"
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
@@ -1619,10 +1623,11 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
+|	"NATIONAL"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "SECOND" | "SQL_CALC_FOUND_ROWS"
+|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
@@ -2230,6 +2235,21 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"RAND" '(' ExpressionOpt ')'
+	{
+
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"SECOND" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2434,10 +2454,10 @@ WhenClause:
 	}
 
 ElseOpt:
-       /* empty */
-       {
+	/* empty */
+	{
 		$$ = nil	
-       }
+	}
 |	"ELSE" Expression
 	{
 		$$ = $2
@@ -3329,6 +3349,11 @@ TableElement:
 	{
 		$$ = $1.(*coldef.TableConstraint)
 	}
+|	"CHECK" '(' Expression ')'
+	{
+		/* Nothing to do now */
+		$$ = nil 
+	}
 
 TableElementList:
 	TableElement
@@ -3612,32 +3637,32 @@ BitValueType:
 	}
 
 StringType:
-	"CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x.Flen = $3.(int)
+		if $4.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
+|	NationalOpt "CHAR" OptBinary
+	{
+		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	"CHAR" OptBinary
-	{
-		x := types.NewFieldType(mysql.TypeString)
-		if $2.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
-		$$ = x
-	}
-|	"VARCHAR" FieldLen OptBinary OptCharset OptCollate
+|	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int) 
-		if $3.(bool) {
+		x.Flen = $3.(int) 
+		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -3685,6 +3710,15 @@ StringType:
 		x.Charset = $5.(string)
 		x.Collate = $6.(string)
 		$$ = x
+	}
+
+NationalOpt:
+	{
+
+	}
+|	"NATIONAL"
+	{
+
 	}
 
 BlobType:
@@ -3765,7 +3799,7 @@ DateAndTimeType:
 		x.Decimal = $2.(int)
 		$$ = x
 	}
-|	"YEAR"
+|	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		$$ = x
