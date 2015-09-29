@@ -409,10 +409,17 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
-			if col.DefaultValue == nil {
+			switch col.DefaultValue {
+			case nil:
 				buf.WriteString(" DEFAULT NULL")
-			} else {
-				buf.WriteString(fmt.Sprintf(" DEFAULT %v", col.DefaultValue))
+			case "CURRENT_TIMESTAMP":
+				buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+			default:
+				buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+			}
+
+			if mysql.HasOnUpdateNowFlag(col.Flag) {
+				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
 			}
 		}
 		if i != len(tb.Cols())-1 {
