@@ -409,6 +409,9 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			buf.WriteString(" NOT NULL AUTO_INCREMENT")
 		} else {
+			if mysql.HasNotNullFlag(col.Flag) {
+				buf.WriteString(" NOT NULL")
+			}
 			switch col.DefaultValue {
 			case nil:
 				buf.WriteString(" DEFAULT NULL")
