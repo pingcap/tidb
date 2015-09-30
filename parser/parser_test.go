@@ -438,6 +438,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For year
 		{"create table t (y year(4), y1 year)", true},
+
+		// For quote identifier
+		{"select `a`, `a.b`, `a b` from t", true},
 	}
 
 	for _, t := range table {
