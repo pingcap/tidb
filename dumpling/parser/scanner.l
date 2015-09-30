@@ -182,6 +182,7 @@ func (l *lexer) Lex(lval *yySymType) (r int) {
 		S1
 		S2
 		S3
+		S4
 	)
 
 	if n := l.inj; n != 0 {
@@ -455,7 +456,6 @@ using		{u}{s}{i}{n}{g}
 idchar0		[a-zA-Z_]
 idchars		{idchar0}|[0-9]
 ident		{idchar0}{idchars}*
-quotedIdent	`{ident}`
 
 user_var	"@"{ident}
 sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
@@ -464,7 +464,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 %yyn c = l.next()
 %yyt l.sc
 
-%x S1 S2 S3
+%x S1 S2 S3 S4
 
 %%
 		l.val = l.val[:0]
@@ -493,6 +493,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 \"			l.sc = S1
 '			l.sc = S2
+`			l.sc = S4
 
 <S1>[^\"\\]*		l.stringLit = append(l.stringLit, l.val...)	
 <S1>\\.			l.stringLit = append(l.stringLit, l.val...)
@@ -506,6 +507,12 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 <S2>'			l.stringLit = append(l.stringLit, '\'')
 			l.sc = 0
 			return l.str(lval, "'")
+<S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)	
+<S4>``			l.stringLit = append(l.stringLit, '`')
+<S4>`			l.sc = 0
+			lval.item = string(l.stringLit)
+			l.stringLit = l.stringLit[0:0]
+			return identifier
 
 "&&"			return andand
 "&^"			return andnot
@@ -904,9 +911,6 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return integerType
 
 {ident}			lval.item = string(l.val)
-			return identifier
-
-{quotedIdent}		lval.item = l.trimIdent(string(l.val))
 			return identifier
 
 .			return c0
