@@ -156,3 +156,47 @@ const (
 	// AllPriv is the privilege for all actions.
 	AllPriv
 )
+
+// Priv2UserCol is the privilege to mysql.user table column name.
+var Priv2UserCol = map[PrivilegeType]string{
+	CreatePriv:     "Create_priv",
+	SelectPriv:     "Select_priv",
+	InsertPriv:     "Insert_priv",
+	UpdatePriv:     "Update_priv",
+	DeletePriv:     "Delete_priv",
+	ShowDBPriv:     "Show_db_priv",
+	CreateUserPriv: "Create_user_priv",
+	DropPriv:       "Drop_priv",
+	GrantPriv:      "Grant_priv",
+	AlterPriv:      "Alter_priv",
+	ExecutePriv:    "Execute_priv",
+	IndexPriv:      "Index_priv",
+}
+
+// AllGlobalPrivs is all the privileges in global scope.
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ShowDBPriv, ExecutePriv, IndexPriv, CreateUserPriv}
+
+// Priv2Str is the map for privilege to string.
+var Priv2Str = map[PrivilegeType]string{
+	CreatePriv:     "Create",
+	SelectPriv:     "Select",
+	InsertPriv:     "Insert",
+	UpdatePriv:     "Update",
+	DeletePriv:     "Delete",
+	ShowDBPriv:     "Show Databases",
+	CreateUserPriv: "Create User",
+	DropPriv:       "Drop",
+	GrantPriv:      "Grant Option",
+	AlterPriv:      "Alter",
+	ExecutePriv:    "Execute",
+	IndexPriv:      "Index",
+}
+
+// AllDBPrivs is all the privileges in database scope.
+var AllDBPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ExecutePriv, IndexPriv}
+
+// AllTablePrivs is all the privileges in table scope.
+var AllTablePrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ExecutePriv, IndexPriv}
+
+// AllColumnPrivs is all the privileges in column scope.
+var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}

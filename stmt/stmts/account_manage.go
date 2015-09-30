@@ -89,7 +89,7 @@ func composeUserTableRset() *rsets.JoinRset {
 	}
 }
 
-func (s *CreateUserStmt) userExists(ctx context.Context, name string, host string) (bool, error) {
+func userExists(ctx context.Context, name string, host string) (bool, error) {
 	r := composeUserTableRset()
 	p, err := r.Plan(ctx)
 	if err != nil {
@@ -125,7 +125,7 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		strs := strings.Split(spec.User, "@")
 		userName := strs[0]
 		host := strs[1]
-		exists, err1 := s.userExists(ctx, userName, host)
+		exists, err1 := userExists(ctx, userName, host)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
