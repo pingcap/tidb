@@ -122,6 +122,8 @@ const (
 	SystemDB = "mysql"
 	// UserTable is the table in system db contains user info.
 	UserTable = "User"
+	// DBTable is the table in system db contains db scope previlege info.
+	DBTable = "DB"
 )
 
 // PrivilegeType  privilege
