@@ -181,6 +181,7 @@ import (
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
+	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
 	oror		"||"
@@ -4106,6 +4107,10 @@ PrivType:
 |	"UPDATE"
 	{
 		$$ = mysql.UpdatePriv
+	}
+|	"GRANT" "OPTION"
+	{
+		$$ = mysql.GrantPriv
 	}
 	
 ObjectType:

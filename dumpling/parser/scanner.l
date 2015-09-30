@@ -331,6 +331,7 @@ names		{n}{a}{m}{e}{s}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
+option		{o}{p}{t}{i}{o}{n}
 or		{o}{r}
 order		{o}{r}{d}{e}{r}
 outer		{o}{u}{t}{e}{r}
@@ -652,6 +653,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {offset}		lval.item = string(l.val)
 			return offset
 {on}			return on
+{option}		return option
 {order}			return order
 {or}			return or
 {outer}			return outer

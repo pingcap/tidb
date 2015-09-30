@@ -14,8 +14,68 @@
 package stmts_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
-func (s *testStmtSuite) TestGrantStmt(c *C) {
+func (s *testStmtSuite) TestGrantGlobal(c *C) {
+	tx := mustBegin(c, s.testDB)
+	// Create a new user
+	createUserSQL := `CREATE USER 'testGlobal'@'localhost' IDENTIFIED BY '123';`
+	mustExec(c, s.testDB, createUserSQL)
+	mustCommit(c, tx)
+	// Make sure all the global privs for new user is "N"
+	for _, v := range mysql.AllGlobalPrivs {
+		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal\" and host=\"localhost\"", mysql.Priv2UserCol[v])
+		tx = mustBegin(c, s.testDB)
+		rows, err := tx.Query(sql)
+		c.Assert(err, IsNil)
+		rows.Next()
+		var p string
+		rows.Scan(&p)
+		c.Assert(p, Equals, "N")
+		c.Assert(rows.Next(), IsFalse)
+		rows.Close()
+		mustCommit(c, tx)
+	}
+
+	// Grant each priv to the user
+	for _, v := range mysql.AllGlobalPrivs {
+		sql := fmt.Sprintf("GRANT %s ON *.* TO 'testGlobal'@'localhost';", mysql.Priv2Str[v])
+		mustExec(c, s.testDB, sql)
+		sql = fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal\" and host=\"localhost\"", mysql.Priv2UserCol[v])
+		tx = mustBegin(c, s.testDB)
+		rows, err := tx.Query(sql)
+		c.Assert(err, IsNil)
+		rows.Next()
+		var p string
+		rows.Scan(&p)
+		c.Assert(p, Equals, "Y")
+		c.Assert(rows.Next(), IsFalse)
+		rows.Close()
+		mustCommit(c, tx)
+	}
+
+	tx = mustBegin(c, s.testDB)
+	// Create a new user
+	createUserSQL = `CREATE USER 'testGlobal1'@'localhost' IDENTIFIED BY '123';`
+	mustExec(c, s.testDB, createUserSQL)
+	mustExec(c, s.testDB, "GRANT ALL ON *.* TO 'testGlobal1'@'localhost';")
+	mustCommit(c, tx)
+	// Make sure all the global privs for granted user is "Y"
+	for _, v := range mysql.AllGlobalPrivs {
+		sql := fmt.Sprintf("SELECT %s FROM mysql.User WHERE User=\"testGlobal1\" and host=\"localhost\"", mysql.Priv2UserCol[v])
+		tx = mustBegin(c, s.testDB)
+		rows, err := tx.Query(sql)
+		c.Assert(err, IsNil)
+		rows.Next()
+		var p string
+		rows.Scan(&p)
+		c.Assert(p, Equals, "Y")
+		c.Assert(rows.Next(), IsFalse)
+		rows.Close()
+		mustCommit(c, tx)
+	}
 }

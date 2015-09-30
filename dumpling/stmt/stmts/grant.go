@@ -18,7 +18,12 @@
 package stmts
 
 import (
+	"strings"
+
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/stmt"
@@ -63,6 +68,91 @@ func (s *GrantStmt) SetText(text string) {
 }
 
 // Exec implements the stmt.Statement Exec interface.
-func (s *GrantStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
+func (s *GrantStmt) Exec(ctx context.Context) (rset.Recordset, error) {
+	// Grant for each user
+	for _, user := range s.Users {
+		// Check if user exists.
+		strs := strings.Split(user.User, "@")
+		userName := strs[0]
+		host := strs[1]
+		exists, err := userExists(ctx, userName, host)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !exists {
+			return nil, errors.Errorf("Unknown user: %s", user.User)
+		}
+		// Grant each priv to the user.
+		for _, priv := range s.Privs {
+			err := s.grantPriv(ctx, priv, user)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
 	return nil, nil
+}
+
+func (s *GrantStmt) grantPriv(ctx context.Context, priv *coldef.PrivElem, user *coldef.UserSpecification) error {
+	switch s.Level.Level {
+	case coldef.GrantLevelGlobal:
+		return s.grantGlobalPriv(ctx, priv, user)
+	case coldef.GrantLevelDB:
+		return s.grantDBPriv(ctx, priv, user)
+	case coldef.GrantLevelTable:
+		return s.grantTablePriv(ctx, priv, user)
+	default:
+		return errors.Errorf("Unknown grant level: %s", s.Level)
+	}
+}
+
+func composeGlobalPrivUpdate(priv mysql.PrivilegeType) ([]expression.Assignment, error) {
+	if priv == mysql.AllPriv {
+		assigns := []expression.Assignment{}
+		for _, v := range mysql.Priv2UserCol {
+			a := expression.Assignment{
+				ColName: v,
+				Expr:    expression.Value{Val: "Y"},
+			}
+			assigns = append(assigns, a)
+		}
+		return assigns, nil
+	}
+	col, ok := mysql.Priv2UserCol[priv]
+	if !ok {
+		return nil, errors.Errorf("Unknown priv: %s", priv)
+	}
+	asgn := expression.Assignment{
+		ColName: col,
+		Expr:    expression.Value{Val: "Y"},
+	}
+	return []expression.Assignment{asgn}, nil
+}
+
+// Manipulate mysql.user table.
+func (s *GrantStmt) grantGlobalPriv(ctx context.Context, priv *coldef.PrivElem, user *coldef.UserSpecification) error {
+	asgns, err := composeGlobalPrivUpdate(priv.Priv)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	strs := strings.Split(user.User, "@")
+	userName := strs[0]
+	host := strs[1]
+	st := &UpdateStmt{
+		TableRefs: composeUserTableRset(),
+		List:      asgns,
+		Where:     composeUserTableFilter(userName, host),
+	}
+	_, err = st.Exec(ctx)
+	return errors.Trace(err)
+}
+
+// Manipulate mysql.db table.
+func (s *GrantStmt) grantDBPriv(ctx context.Context, priv *coldef.PrivElem, user *coldef.UserSpecification) error {
+	return nil
+}
+
+// Manipulate mysql.tables_priv table.
+func (s *GrantStmt) grantTablePriv(ctx context.Context, priv *coldef.PrivElem, user *coldef.UserSpecification) error {
+	return nil
 }

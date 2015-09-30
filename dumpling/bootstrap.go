@@ -43,6 +43,7 @@ const (
 		Alter_priv   ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Show_db_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Execute_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Index_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		Create_user_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
@@ -57,6 +58,7 @@ const (
 		Create_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
 		Drop_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
 		Grant_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
+		Index_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
 		Alter_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
 		Execute_priv	ENUM('N','Y') Not Null  DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User));`
@@ -104,9 +106,9 @@ func bootstrap(s Session) {
 func initUserTable(s Session) {
 	mustExecute(s, CreateUserTable)
 	// Insert a default user with empty password.
-	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
-		("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
-		("::1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y");`)
+	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
+		("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
+		("::1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y");`)
 }
 
 // Initiates privilege tables including mysql.db, mysql.tables_priv and mysql.column_priv.
