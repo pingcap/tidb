@@ -3555,6 +3555,11 @@ NumericType:
 	{
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
+		if x.Flen == -1 || x.Flen == 0 {
+			x.Flen = 1
+		} else if x.Flen > 64 {
+			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+		}
 		$$ = x
 	}
 
