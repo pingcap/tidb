@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -134,7 +135,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
-	_, err = ts.se.Execute("CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double, c6 bit)")
+	_, err = ts.se.Execute("CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double, c6 bit(8))")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("insert test.t values (1, 2, 3, 4, 5, 6)")
 	c.Assert(err, IsNil)
@@ -143,7 +144,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	row, err = rs[0].FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	c.Assert(row[5], Equals, uint64(6))
+	c.Assert(row[5], Equals, mysql.Bit{Value: 6, Width: 8})
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 

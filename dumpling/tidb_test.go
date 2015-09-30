@@ -910,6 +910,10 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
 	_, err := exec(c, se, "insert into t values (4)")
 	c.Assert(err, NotNil)
+	r := mustExecSQL(c, se, "select * from t where c1 = 2")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row[0], Equals, mysql.Bit{Value: 2, Width: 2})
 }
 
 func (s *testSessionSuite) TestBootstrap(c *C) {
