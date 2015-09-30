@@ -172,20 +172,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 8
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	v, err = Convert(mysql.Hex{Value: 100}, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	v, err = Convert(mysql.Bit{Value: 100, Width: 8}, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	ft.Flen = 1
 	v, err = Convert(1, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(1))
+	c.Assert(v, Equals, mysql.Bit{Value: 1, Width: 1})
 
 	_, err = Convert(2, ft)
 	c.Assert(err, NotNil)
@@ -608,7 +608,4 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
-
-	// Test case for TypeBit
-	unsignedAccept(c, mysql.TypeBit, 123, "123")
 }

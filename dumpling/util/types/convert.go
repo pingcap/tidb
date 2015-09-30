@@ -386,10 +386,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		// check bit boundary, if bit has n width, the boundary is
 		// in [0, (1 << n) - 1]
 		width := target.Flen
-		if width == 0 {
+		if width == 0 || width == mysql.UnspecifiedBitWidth {
 			width = mysql.MinBitWidth
-		} else if width == mysql.UnspecifiedBitWidth {
-			width = mysql.MaxBitWidth
 		}
 
 		maxValue := uint64(1)<<uint64(width) - 1
@@ -397,7 +395,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if x > maxValue {
 			return maxValue, overflow(val, tp)
 		}
-		return x, nil
+		return mysql.Bit{Value: x, Width: width}, nil
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
 		x, err := ToDecimal(val)
 		if err != nil {
