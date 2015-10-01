@@ -88,6 +88,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
+		{`SELECT stuff.id 
+		FROM stuff 
+		WHERE stuff.value >= ALL (SELECT stuff.value 
+		FROM stuff)`, true},
 		/*{`-- Examples
 		ALTER TABLE Stock ADD Qty int;
 

@@ -3004,7 +3004,28 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*stmts.SelectStmt)
-		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
+		src := yylex.(*lexer).src
+		lines := yyS[yypt-1].line-1
+		pos := 0
+		if lines > 0 {
+			cnt := 0
+			for ; pos < len(src); pos++{
+				if cnt == lines {
+					break
+				}
+				if src[pos] == '\n' {
+					cnt++
+				}
+			}
+		}
+
+		base := pos+yyS[yypt-1].col-1
+		end := yyS[yypt].col-1
+		if end < base {
+			s.SetText(src[base:])
+		} else{ // when yypt in new line
+			s.SetText(src[base:end])
+		}
 		$$ = &subquery.SubQuery{Stmt: s}
 	}
 
