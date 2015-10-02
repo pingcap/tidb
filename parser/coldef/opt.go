@@ -127,6 +127,14 @@ const (
 	TblOptCollate
 	TblOptAutoIncrement
 	TblOptComment
+	TblOptAvgRowLength
+	TblOptCheckSum
+	TblOptCompression
+	TblOptConnection
+	TblOptPassword
+	TblOptKeyBlockSize
+	TblOptMaxRows
+	TblOptMinRows
 )
 
 // TableOpt is used for parsing table option from SQL.

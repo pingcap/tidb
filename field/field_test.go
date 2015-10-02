@@ -43,20 +43,20 @@ func (*testFieldSuite) TestField(c *C) {
 	ft := types.NewFieldType(mysql.TypeLong)
 	ft.Flen = 20
 	ft.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
-	c.Assert(ft.String(), Equals, "INT (20) UNSIGNED ZEROFILL")
+	c.Assert(ft.String(), Equals, "int (20) UNSIGNED ZEROFILL")
 
 	ft = types.NewFieldType(mysql.TypeFloat)
 	ft.Flen = 20
 	ft.Decimal = 10
-	c.Assert(ft.String(), Equals, "FLOAT (20, 10)")
+	c.Assert(ft.String(), Equals, "float (20, 10)")
 
 	ft = types.NewFieldType(mysql.TypeTimestamp)
 	ft.Decimal = 8
-	c.Assert(ft.String(), Equals, "TIMESTAMP (8)")
+	c.Assert(ft.String(), Equals, "timestamp (8)")
 
 	ft = types.NewFieldType(mysql.TypeVarchar)
 	ft.Flag |= mysql.BinaryFlag
 	ft.Charset = "utf8"
 	ft.Collate = "utf8_unicode_gi"
-	c.Assert(ft.String(), Equals, "VARCHAR BINARY CHARACTER SET utf8 COLLATE utf8_unicode_gi")
+	c.Assert(ft.String(), Equals, "varchar BINARY CHARACTER SET utf8 COLLATE utf8_unicode_gi")
 }

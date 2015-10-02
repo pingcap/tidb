@@ -65,7 +65,7 @@ func testTypeToStr(c *C, tp byte, binary bool, expect string) {
 }
 
 func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
-	testTypeStr(c, mysql.TypeYear, "YEAR")
+	testTypeStr(c, mysql.TypeYear, "year")
 	testTypeStr(c, 0xdd, "")
 
 	testTypeToStr(c, mysql.TypeBlob, true, "text")

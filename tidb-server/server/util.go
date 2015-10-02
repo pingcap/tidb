@@ -300,6 +300,8 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []int
 			data = append(data, dumpLengthEncodedString(hack.Slice(v.String()), alloc)...)
 		case mysql.Set:
 			data = append(data, dumpLengthEncodedString(hack.Slice(v.String()), alloc)...)
+		case mysql.Bit:
+			data = append(data, dumpLengthEncodedString(hack.Slice(v.ToString()), alloc)...)
 		}
 	}
 	return
@@ -345,6 +347,8 @@ func dumpTextValue(mysqlType uint8, value interface{}) ([]byte, error) {
 		return hack.Slice(v.String()), nil
 	case mysql.Set:
 		return hack.Slice(v.String()), nil
+	case mysql.Bit:
+		return hack.Slice(v.ToString()), nil
 	default:
 		return nil, errors.Errorf("invalid type %T", value)
 	}
