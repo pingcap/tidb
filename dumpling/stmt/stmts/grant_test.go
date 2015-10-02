@@ -135,7 +135,7 @@ func (s *testStmtSuite) TestGrantDBScope(c *C) {
 	}
 }
 
-func (s *testStmtSuite) TestTableDBScope(c *C) {
+func (s *testStmtSuite) TestTableScope(c *C) {
 	tx := mustBegin(c, s.testDB)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`
@@ -144,7 +144,7 @@ func (s *testStmtSuite) TestTableDBScope(c *C) {
 	mustCommit(c, tx)
 	// Make sure all the table privs for new user is empty.
 	tx = mustBegin(c, s.testDB)
-	rows, err := tx.Query(`SELECT * FROM mysql.User WHERE User="testTbl" and host="localhost" and db="test" and Table_name="test1"`)
+	rows, err := tx.Query(`SELECT * FROM mysql.Tables_priv WHERE User="testTbl" and host="localhost" and db="test" and Table_name="test1"`)
 	c.Assert(err, IsNil)
 	c.Assert(rows.Next(), IsFalse)
 	mustCommit(c, tx)
@@ -178,6 +178,65 @@ func (s *testStmtSuite) TestTableDBScope(c *C) {
 	for _, v := range mysql.AllTablePrivs {
 		tx = mustBegin(c, s.testDB)
 		rows, err := tx.Query(`SELECT Table_priv FROM mysql.Tables_priv WHERE User="testTbl1" and host="localhost" and db="test" and Table_name="test2";`)
+		c.Assert(err, IsNil)
+		rows.Next()
+		var p string
+		rows.Scan(&p)
+		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
+		c.Assert(rows.Next(), IsFalse)
+		rows.Close()
+		mustCommit(c, tx)
+	}
+}
+
+func (s *testStmtSuite) TestColumnScope(c *C) {
+	tx := mustBegin(c, s.testDB)
+	// Create a new user.
+	createUserSQL := `CREATE USER 'testCol'@'localhost' IDENTIFIED BY '123';`
+	mustExec(c, s.testDB, createUserSQL)
+	mustExec(c, s.testDB, `CREATE TABLE test.test3(c1 int, c2 int);`)
+	mustCommit(c, tx)
+
+	// Make sure all the column privs for new user is empty.
+	tx = mustBegin(c, s.testDB)
+	rows, err := tx.Query(`SELECT * FROM mysql.Columns_priv WHERE User="testCol" and host="localhost" and db="test" and Table_name="test3" and Column_name="c1"`)
+	c.Assert(err, IsNil)
+	c.Assert(rows.Next(), IsFalse)
+	mustCommit(c, tx)
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`SELECT * FROM mysql.Columns_priv WHERE User="testCol" and host="localhost" and db="test" and Table_name="test3" and Column_name="c2"`)
+	c.Assert(err, IsNil)
+	c.Assert(rows.Next(), IsFalse)
+	mustCommit(c, tx)
+
+	// Grant each priv to the user.
+	for _, v := range mysql.AllColumnPrivs {
+		sql := fmt.Sprintf("GRANT %s(c1) ON test.test3 TO 'testCol'@'localhost';", mysql.Priv2Str[v])
+		mustExec(c, s.testDB, sql)
+		tx = mustBegin(c, s.testDB)
+		rows, err := tx.Query(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol" and host="localhost" and db="test" and Table_name="test3" and Column_name="c1";`)
+		c.Assert(err, IsNil)
+		rows.Next()
+		var p string
+		rows.Scan(&p)
+		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
+		c.Assert(rows.Next(), IsFalse)
+		rows.Close()
+		mustCommit(c, tx)
+	}
+
+	tx = mustBegin(c, s.testDB)
+	// Create a new user.
+	createUserSQL = `CREATE USER 'testCol1'@'localhost' IDENTIFIED BY '123';`
+	mustExec(c, s.testDB, createUserSQL)
+	mustExec(c, s.testDB, "USE test;")
+	// Grant all column scope privs.
+	mustExec(c, s.testDB, "GRANT ALL(c2) ON test3 TO 'testCol1'@'localhost';")
+	mustCommit(c, tx)
+	// Make sure all the column privs for granted user are in the Column_priv set.
+	for _, v := range mysql.AllColumnPrivs {
+		tx = mustBegin(c, s.testDB)
+		rows, err := tx.Query(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1" and host="localhost" and db="test" and Table_name="test3" and Column_name="c2";`)
 		c.Assert(err, IsNil)
 		rows.Next()
 		var p string
