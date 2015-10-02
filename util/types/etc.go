@@ -20,7 +20,6 @@ package types
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 
 	"github.com/juju/errors"
@@ -182,7 +181,7 @@ func EOFAsNil(err error) error {
 	if errors2.ErrorEqual(err, io.EOF) {
 		return nil
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // InvOp2 returns an invalid operation error.
@@ -258,7 +257,7 @@ func IsOrderedType(v interface{}) (r bool) {
 	return false
 }
 
-// Clone copies a interface to another interface.
+// Clone copies an interface to another interface.
 // It does a deep copy.
 func Clone(from interface{}) (interface{}, error) {
 	if from == nil {
@@ -285,7 +284,6 @@ func Clone(from interface{}) (interface{}, error) {
 		}
 		return r, nil
 	default:
-		log.Error(reflect.TypeOf(from))
 		return nil, errors.Errorf("Clone invalid type %T", from)
 	}
 }
@@ -335,7 +333,7 @@ func convergeType(a interface{}, hasDecimal, hasFloat *bool) (x interface{}) {
 
 // Coerce changes type.
 // If a or b is Decimal, changes the both to Decimal.
-// If a or b is Float, changes the both to Float.
+// Else if a or b is Float, changes the both to Float.
 func Coerce(a, b interface{}) (x, y interface{}) {
 	var hasDecimal bool
 	var hasFloat bool

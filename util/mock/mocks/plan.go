@@ -21,14 +21,14 @@ import (
 	"github.com/pingcap/tidb/util/format"
 )
 
-// Plan mocks a plan.Plan instance
+// Plan represents mocked plan.Plan.
 type Plan struct {
 	rset   *Recordset
 	rows   [][]interface{}
 	cursor int
 }
 
-// NewPlan creates a new MockPlan
+// NewPlan creates a new mocked plan.Plan.
 func NewPlan(rset *Recordset) *Plan {
 	return &Plan{rset: rset}
 }
@@ -60,7 +60,7 @@ func (p *Plan) Next(ctx context.Context) (row *plan.Row, err error) {
 	return
 }
 
-// Close implements plan.Plan Close interface{}
+// Close implements plan.Plan Close interface.
 func (p *Plan) Close() error {
 	p.cursor = 0
 	return nil

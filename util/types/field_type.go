@@ -82,13 +82,15 @@ func (ft *FieldType) String() string {
 	if mysql.HasBinaryFlag(ft.Flag) {
 		ans = append(ans, "BINARY")
 	}
-	if ft.Charset != "" && ft.Charset != charset.CharsetBin &&
-		(IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp)) {
-		ans = append(ans, fmt.Sprintf("CHARACTER SET %s", ft.Charset))
+
+	if IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) {
+		if ft.Charset != "" && ft.Charset != charset.CharsetBin {
+			ans = append(ans, fmt.Sprintf("CHARACTER SET %s", ft.Charset))
+		}
+		if ft.Collate != "" && ft.Collate != charset.CharsetBin {
+			ans = append(ans, fmt.Sprintf("COLLATE %s", ft.Collate))
+		}
 	}
-	if ft.Collate != "" && ft.Collate != charset.CharsetBin &&
-		(IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp)) {
-		ans = append(ans, fmt.Sprintf("COLLATE %s", ft.Collate))
-	}
+
 	return strings.Join(ans, " ")
 }

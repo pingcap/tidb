@@ -13,21 +13,21 @@
 
 package arena
 
-// Allocator pre-allocates memory to
-// reduce memory allocation cost.
+// Allocator pre-allocates memory to reduce memory allocation cost.
 // It is not thread-safe.
 type Allocator interface {
-	// Alloc allocates memory with 0 len and n cap.
+	// Alloc allocates memory with 0 len and capacity cap.
 	Alloc(capacity int) []byte
 
 	// AllocWithLen allocates memory with length and capacity.
 	AllocWithLen(length int, capacity int) []byte
 
-	// Reset resets arena offset, make sure all the allocated memory are not used any more.
+	// Reset resets arena offset.
+	// Make sure all the allocated memory are not used any more.
 	Reset()
 }
 
-// SimpleAllocator is a simple implementation of ArenaAllocator
+// SimpleAllocator is a simple implementation of ArenaAllocator.
 type SimpleAllocator struct {
 	arena []byte
 	off   int
@@ -36,8 +36,8 @@ type SimpleAllocator struct {
 type stdAllocator struct {
 }
 
-func (a *stdAllocator) Alloc(n int) []byte {
-	return make([]byte, 0, n)
+func (a *stdAllocator) Alloc(capacity int) []byte {
+	return make([]byte, 0, capacity)
 }
 
 func (a *stdAllocator) AllocWithLen(length int, capacity int) []byte {
@@ -58,14 +58,14 @@ func NewAllocator(capacity int) *SimpleAllocator {
 }
 
 // Alloc implements Allocator.AllocBytes interface.
-func (s *SimpleAllocator) Alloc(capcity int) []byte {
-	if s.off+capcity < cap(s.arena) {
-		slice := s.arena[s.off:s.off : s.off+capcity]
-		s.off += capcity
+func (s *SimpleAllocator) Alloc(capacity int) []byte {
+	if s.off+capacity < cap(s.arena) {
+		slice := s.arena[s.off:s.off : s.off+capacity]
+		s.off += capacity
 		return slice
 	}
 
-	return make([]byte, 0, capcity)
+	return make([]byte, 0, capacity)
 }
 
 // AllocWithLen implements Allocator.AllocWithLen interface.
