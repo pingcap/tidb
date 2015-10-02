@@ -126,6 +126,8 @@ const (
 	DBTable = "DB"
 	// TablePrivTable is the table in system db contains table scope privilege info.
 	TablePrivTable = "Tables_priv"
+	// ColumnPrivTable is the table in system db contains column scope privilege info.
+	ColumnPrivTable = "Columns_priv"
 )
 
 // PrivilegeType  privilege
