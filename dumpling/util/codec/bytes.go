@@ -99,6 +99,8 @@ func decodeBytes(b []byte, escapeFirst byte, escape byte, term byte) ([]byte, []
 		}
 
 		if b[i+1] == term {
+			// For `var r []byte`, `b := []byte{}`, `r = append(r, b...)`,
+			// here r is equals to nil, so it is better to distinguish it.
 			if r == nil {
 				r = b[:i]
 			} else {

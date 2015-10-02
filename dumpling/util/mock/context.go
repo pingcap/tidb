@@ -23,7 +23,7 @@ import (
 
 var _ context.Context = (*Context)(nil)
 
-// Context is a mock context.Context for test.
+// Context represents mocked context.Context.
 type Context struct {
 	values map[fmt.Stringer]interface{}
 }
@@ -54,7 +54,7 @@ func (c *Context) FinishTxn(rollback bool) error {
 	return nil
 }
 
-// NewContext creates a mock context.Context.
+// NewContext creates a new mocked context.Context.
 func NewContext() context.Context {
 	return &Context{
 		values: make(map[fmt.Stringer]interface{}),

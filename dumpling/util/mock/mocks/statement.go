@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 )
 
-// Statement represents a mocked Statement.
+// Statement represents mocked stmt.Statement.
 type Statement struct {
 	text string
 	Rset *Recordset
