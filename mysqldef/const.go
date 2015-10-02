@@ -122,8 +122,10 @@ const (
 	SystemDB = "mysql"
 	// UserTable is the table in system db contains user info.
 	UserTable = "User"
-	// DBTable is the table in system db contains db scope previlege info.
+	// DBTable is the table in system db contains db scope privilege info.
 	DBTable = "DB"
+	// TablePrivTable is the table in system db contains table scope privilege info.
+	TablePrivTable = "Tables_priv"
 )
 
 // PrivilegeType  privilege
@@ -194,11 +196,25 @@ var Priv2Str = map[PrivilegeType]string{
 	IndexPriv:      "Index",
 }
 
+// Priv2Str is the map for privilege to string.
+var Priv2SetStr = map[PrivilegeType]string{
+	CreatePriv:  "Create",
+	SelectPriv:  "Select",
+	InsertPriv:  "Insert",
+	UpdatePriv:  "Update",
+	DeletePriv:  "Delete",
+	DropPriv:    "Drop",
+	GrantPriv:   "Grant",
+	AlterPriv:   "Alter",
+	ExecutePriv: "Execute",
+	IndexPriv:   "Index",
+}
+
 // AllDBPrivs is all the privileges in database scope.
 var AllDBPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ExecutePriv, IndexPriv}
 
 // AllTablePrivs is all the privileges in table scope.
-var AllTablePrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ExecutePriv, IndexPriv}
+var AllTablePrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, IndexPriv}
 
 // AllColumnPrivs is all the privileges in column scope.
 var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}

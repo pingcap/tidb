@@ -18,6 +18,7 @@
 package stmts
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
@@ -94,6 +96,11 @@ func (s *GrantStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		case coldef.GrantLevelTable:
+			err := s.checkAndInitTablePriv(ctx, userName, host)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		// Grant each priv to the user.
 		for _, priv := range s.Privs {
@@ -122,6 +129,22 @@ func (s *GrantStmt) checkAndInitDBPriv(ctx context.Context, user string, host st
 	return initDBPrivEntry(ctx, user, host, db.Name.O)
 }
 
+func (s *GrantStmt) checkAndInitTablePriv(ctx context.Context, user string, host string) error {
+	db, tbl, err := s.getTargetSchemaAndTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ok, err := tableUserExists(ctx, user, host, db.Name.O, tbl.TableName().O)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
+		return nil
+	}
+	// Entry does not exists for user/host/db. Insert a new entry.
+	return initTablePrivEntry(ctx, user, host, db.Name.O, tbl.TableName().O)
+}
+
 func initDBPrivEntry(ctx context.Context, user string, host string, db string) error {
 	st := &InsertIntoStmt{
 		TableIdent: table.Ident{
@@ -135,6 +158,26 @@ func initDBPrivEntry(ctx context.Context, user string, host string, db string) e
 	value = append(value, &expression.Value{Val: host})
 	value = append(value, &expression.Value{Val: user})
 	value = append(value, &expression.Value{Val: db})
+	values = append(values, value)
+	st.Lists = values
+	_, err := st.Exec(ctx)
+	return errors.Trace(err)
+}
+
+func initTablePrivEntry(ctx context.Context, user string, host string, db string, tbl string) error {
+	st := &InsertIntoStmt{
+		TableIdent: table.Ident{
+			Name:   model.NewCIStr(mysql.TablePrivTable),
+			Schema: model.NewCIStr(mysql.SystemDB),
+		},
+		ColNames: []string{"Host", "User", "DB", "Table_name"},
+	}
+	values := make([][]expression.Expression, 0, 1)
+	value := make([]expression.Expression, 0, 3)
+	value = append(value, &expression.Value{Val: host})
+	value = append(value, &expression.Value{Val: user})
+	value = append(value, &expression.Value{Val: db})
+	value = append(value, &expression.Value{Val: tbl})
 	values = append(values, value)
 	st.Lists = values
 	_, err := st.Exec(ctx)
@@ -222,6 +265,76 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType) ([]expression.Assignment, err
 	return []expression.Assignment{asgn}, nil
 }
 
+func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string) ([]expression.Assignment, error) {
+	var (
+		newTablePriv  string
+		newColumnPriv string
+	)
+	if priv == mysql.AllPriv {
+		for _, p := range mysql.AllTablePrivs {
+			v, ok := mysql.Priv2SetStr[p]
+			if !ok {
+				return nil, errors.Errorf("Unknown table privilege %s", p)
+			}
+			if len(newTablePriv) == 0 {
+				newTablePriv = v
+			} else {
+				newTablePriv = fmt.Sprintf("%s,%s", newTablePriv, v)
+			}
+		}
+		for _, p := range mysql.AllColumnPrivs {
+			v, ok := mysql.Priv2SetStr[p]
+			if !ok {
+				return nil, errors.Errorf("Unknown column privilege %s", p)
+			}
+			if len(newColumnPriv) == 0 {
+				newColumnPriv = v
+			} else {
+				newColumnPriv = fmt.Sprintf("%s,%s", newColumnPriv, v)
+			}
+
+		}
+	} else {
+		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		p, ok := mysql.Priv2SetStr[priv]
+		if !ok {
+			return nil, errors.Errorf("Unknown priv: %s", priv)
+		}
+		if len(currTablePriv) == 0 {
+			newTablePriv = p
+		} else {
+			newTablePriv = fmt.Sprintf("%s,%s", currTablePriv, p)
+		}
+		for _, cp := range mysql.AllColumnPrivs {
+			if priv == cp {
+				if len(currColumnPriv) == 0 {
+					newColumnPriv = p
+				} else {
+					newColumnPriv = fmt.Sprintf("%s,%s", currColumnPriv, p)
+				}
+				break
+			}
+		}
+	}
+	t := expression.Assignment{
+		ColName: "Table_priv",
+		Expr:    expression.Value{Val: newTablePriv},
+	}
+	c := expression.Assignment{
+		ColName: "Column_priv",
+		Expr:    expression.Value{Val: newColumnPriv},
+	}
+	g := expression.Assignment{
+		ColName: "Grantor",
+		Expr:    expression.Value{Val: variable.GetSessionVars(ctx).User},
+	}
+	assigns := []expression.Assignment{t, c, g}
+	return assigns, nil
+}
+
 func composeDBTableFilter(name string, host string, db string) expression.Expression {
 	dbMatch := expression.NewBinaryOperation(opcode.EQ, &expression.Ident{CIStr: model.NewCIStr("DB")}, &expression.Value{Val: db})
 	return expression.NewBinaryOperation(opcode.AndAnd, composeUserTableFilter(name, host), dbMatch)
@@ -232,6 +345,22 @@ func composeDBTableRset() *rsets.JoinRset {
 		Left: &rsets.TableSource{
 			Source: table.Ident{
 				Name:   model.NewCIStr(mysql.DBTable),
+				Schema: model.NewCIStr(mysql.SystemDB),
+			},
+		},
+	}
+}
+
+func composeTablePrivFilter(name string, host string, db string, tbl string) expression.Expression {
+	tblMatch := expression.NewBinaryOperation(opcode.EQ, &expression.Ident{CIStr: model.NewCIStr("Table_name")}, &expression.Value{Val: tbl})
+	return expression.NewBinaryOperation(opcode.AndAnd, composeDBTableFilter(name, host, db), tblMatch)
+}
+
+func composeTablePrivRset() *rsets.JoinRset {
+	return &rsets.JoinRset{
+		Left: &rsets.TableSource{
+			Source: table.Ident{
+				Name:   model.NewCIStr(mysql.TablePrivTable),
 				Schema: model.NewCIStr(mysql.SystemDB),
 			},
 		},
@@ -260,6 +389,68 @@ func dbUserExists(ctx context.Context, name string, host string, db string) (boo
 	return row != nil, nil
 }
 
+func tableUserExists(ctx context.Context, name string, host string, db string, tbl string) (bool, error) {
+	r := composeTablePrivRset()
+	p, err := r.Plan(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	where := &rsets.WhereRset{
+		Src:  p,
+		Expr: composeTablePrivFilter(name, host, db, tbl),
+	}
+	p, err = where.Plan(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer p.Close()
+	row, err := p.Next(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return row != nil, nil
+}
+
+func getTablePriv(ctx context.Context, name string, host string, db string, tbl string) (string, string, error) {
+	r := composeTablePrivRset()
+	p, err := r.Plan(ctx)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	where := &rsets.WhereRset{
+		Src:  p,
+		Expr: composeTablePrivFilter(name, host, db, tbl),
+	}
+	p, err = where.Plan(ctx)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	defer p.Close()
+	row, err := p.Next(ctx)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	var (
+		tPriv string
+		cPriv string
+	)
+	if row.Data[6] != nil {
+		tablePriv, ok := row.Data[6].(mysql.Set)
+		if !ok {
+			return "", "", errors.Errorf("Table Priv should be mysql.Set but get %v with type %T", row.Data[6], row.Data[6])
+		}
+		tPriv = tablePriv.Name
+	}
+	if row.Data[7] != nil {
+		columnPriv, ok := row.Data[7].(mysql.Set)
+		if !ok {
+			return "", "", errors.Errorf("Column Priv should be mysql.Set but get %v with type %T", row.Data[7], row.Data[7])
+		}
+		cPriv = columnPriv.Name
+	}
+	return tPriv, cPriv, nil
+}
+
 func (s *GrantStmt) getTargetSchema(ctx context.Context) (*model.DBInfo, error) {
 	dbName := s.Level.DBName
 	if len(dbName) == 0 {
@@ -277,6 +468,20 @@ func (s *GrantStmt) getTargetSchema(ctx context.Context) (*model.DBInfo, error) 
 		return nil, errors.Errorf("Unknown schema name: %s", dbName)
 	}
 	return db, nil
+}
+
+func (s *GrantStmt) getTargetSchemaAndTable(ctx context.Context) (*model.DBInfo, table.Table, error) {
+	db, err := s.getTargetSchema(ctx)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	name := model.NewCIStr(s.Level.TableName)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(db.Name, name)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return db, tbl, nil
 }
 
 // Manipulate mysql.db table.
@@ -303,5 +508,22 @@ func (s *GrantStmt) grantDBPriv(ctx context.Context, priv *coldef.PrivElem, user
 
 // Manipulate mysql.tables_priv table.
 func (s *GrantStmt) grantTablePriv(ctx context.Context, priv *coldef.PrivElem, user *coldef.UserSpecification) error {
-	return nil
+	db, tbl, err := s.getTargetSchemaAndTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	strs := strings.Split(user.User, "@")
+	userName := strs[0]
+	host := strs[1]
+	asgns, err := composeTablePrivUpdate(ctx, priv.Priv, userName, host, db.Name.O, tbl.TableName().O)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	st := &UpdateStmt{
+		TableRefs: composeTablePrivRset(),
+		List:      asgns,
+		Where:     composeTablePrivFilter(userName, host, db.Name.O, tbl.TableName().O),
+	}
+	_, err = st.Exec(ctx)
+	return errors.Trace(err)
 }
