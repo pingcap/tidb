@@ -809,6 +809,25 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, `pingcap '-->' tidb`)
+
+	mustExecSQL(c, se, "drop table if exists t1")
+	mustExecSQL(c, se, "drop table if exists t2")
+	mustExecSQL(c, se, "drop table if exists t3")
+	mustExecSQL(c, se, "create table t1 (c1 int, c11 int)")
+	mustExecSQL(c, se, "create table t2 (c2 int)")
+	mustExecSQL(c, se, "create table t3 (c3 int)")
+	mustExecSQL(c, se, "insert into t1 values (1, 1), (2, 2), (3, 3)")
+	mustExecSQL(c, se, "insert into t2 values (1), (1), (2)")
+	mustExecSQL(c, se, "insert into t3 values (1), (3)")
+
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1, t2.c2, t3.c3")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 4)
+	match(c, rows[0], 1, 1, 1, 1)
+	match(c, rows[1], 1, 1, 1, 1)
+	match(c, rows[2], 2, 2, 2, nil)
+	match(c, rows[3], 3, 3, nil, 3)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
@@ -849,7 +868,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "INT", "YES", "", nil, "")
+	match(c, rows[0], "c", "int", "YES", "", nil, "")
 
 	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
 	row, err = r.FirstRow()
@@ -891,6 +910,10 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
 	_, err := exec(c, se, "insert into t values (4)")
 	c.Assert(err, NotNil)
+	r := mustExecSQL(c, se, "select * from t where c1 = 2")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row[0], Equals, mysql.Bit{Value: 2, Width: 2})
 }
 
 func (s *testSessionSuite) TestBootstrap(c *C) {

@@ -261,6 +261,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For buildin functions
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT RAND();", true},
+		{"SELECT RAND(1);", true},
 
 		{"SELECT SUBSTRING('Quadratically',5);", true},
 		{"SELECT SUBSTRING('Quadratically',5, 3);", true},
@@ -413,6 +415,36 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
 		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
+
+		// For table option
+		{"create table t (c int) avg_row_length = 3", true},
+		{"create table t (c int) avg_row_length 3", true},
+		{"create table t (c int) checksum = 0", true},
+		{"create table t (c int) checksum 1", true},
+		{"create table t (c int) compression = none", true},
+		{"create table t (c int) compression lz4", true},
+		{"create table t (c int) connection = 'abc'", true},
+		{"create table t (c int) connection 'abc'", true},
+		{"create table t (c int) key_block_size = 1024", true},
+		{"create table t (c int) key_block_size 1024", true},
+		{"create table t (c int) max_rows = 1000", true},
+		{"create table t (c int) max_rows 1000", true},
+		{"create table t (c int) min_rows = 1000", true},
+		{"create table t (c int) min_rows 1000", true},
+		{"create table t (c int) password = 'abc'", true},
+		{"create table t (c int) password 'abc'", true},
+
+		// For national
+		{"create table t (c1 national char(2), c2 national varchar(2))", true},
+
+		// For blob and text field length
+		{"create table t (c1 blob(1024), c2 text(1024))", true},
+
+		// For check
+		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
+
+		// For year
+		{"create table t (y year(4), y1 year)", true},
 	}
 
 	for _, t := range table {
@@ -435,7 +467,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
-		"collation", "comment",
+		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
+		"max_rows", "min_rows", "national",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
