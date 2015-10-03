@@ -300,7 +300,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 		m := map[interface{}]interface{}{}
 		v := Eval(x, nil, m)
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := types.Convert(v, ft)
+		xval, err := types.Convert(v, *ft)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

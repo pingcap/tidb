@@ -37,12 +37,10 @@ func (s *testColumnSuite) TestString(c *C) {
 		},
 	}
 	col.Flen = 2
-	col.getTypeStr()
 	col.Decimal = 1
 	col.Charset = mysql.DefaultCharset
 	col.Collate = mysql.DefaultCollationName
 	col.Flag |= mysql.ZerofillFlag | mysql.UnsignedFlag | mysql.BinaryFlag | mysql.AutoIncrementFlag | mysql.NotNullFlag
-	col.getTypeStr()
 
 	cs := col.String()
 	c.Assert(len(cs), Greater, 0)

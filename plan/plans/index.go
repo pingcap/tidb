@@ -206,7 +206,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 			break
 		}
 
-		if val, err = types.Convert(val, &col.FieldType); err != nil {
+		if val, err = types.Convert(val, col.FieldType); err != nil {
 			return nil, false, err
 		}
 		r.spans = filterSpans(r.spans, toSpans(x.Op, val))

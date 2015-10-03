@@ -143,7 +143,7 @@ func (p *UnionPlan) fetchSrc(ctx context.Context, i int, t memkv.Temp) error {
 			if srcRf.Flen > rf.Col.Flen {
 				rf.Col.Flen = srcRf.Col.Flen
 			}
-			row.Data[i], err = types.Convert(row.Data[i], &rf.Col.FieldType)
+			row.Data[i], err = types.Convert(row.Data[i], rf.Col.FieldType)
 			if err != nil {
 				return errors.Trace(err)
 			}
