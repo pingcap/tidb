@@ -30,21 +30,21 @@ import (
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE if not exists mysql.user (
-		Host CHAR(64), 
-		User CHAR(16), 
-		Password CHAR(41), 
-		Select_priv  ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Insert_priv  ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Update_priv  ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Delete_priv  ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Create_priv  ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Drop_priv    ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Grant_priv   ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Alter_priv   ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Show_db_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Execute_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Index_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
-		Create_user_priv ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Host			CHAR(64),
+		User			CHAR(16),
+		Password		CHAR(41),
+		Select_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Insert_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Update_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Delete_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Create_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Drop_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Grant_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Alter_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Show_db_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Execute_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Index_priv		ENUM('N','Y') NOT NULL  DEFAULT 'N',
+		Create_user_priv	ENUM('N','Y') NOT NULL  DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
