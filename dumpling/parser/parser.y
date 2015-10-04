@@ -3005,6 +3005,7 @@ SubSelect:
 	{
 		s := $2.(*stmts.SelectStmt)
 		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
 		lines := yyS[yypt-1].line-1
 		pos := 0
 		if lines > 0 {
@@ -3023,7 +3024,7 @@ SubSelect:
 		end := yyS[yypt].col-1
 		if end < base {
 			s.SetText(src[base:])
-		} else{ // when yypt in new line
+		} else { // when yypt in new line
 			s.SetText(src[base:end])
 		}
 		$$ = &subquery.SubQuery{Stmt: s}
