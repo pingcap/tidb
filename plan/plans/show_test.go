@@ -63,7 +63,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	variable.BindSessionVars(p)
 }
 
-func (p *testShowSuit) TestCommon(c *C) {
+func (p *testShowSuit) TestSimple(c *C) {
 	pln := &plans.ShowPlan{}
 	pln.Target = stmt.ShowWarnings
 	fls := pln.GetFields()
