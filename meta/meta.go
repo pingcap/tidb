@@ -74,7 +74,7 @@ func AutoIDKey(tableID int64) string {
 // GenGlobalID generates the next id in the store scope.
 func GenGlobalID(store kv.Storage) (ID int64, err error) {
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		ID, err = GenID(txn, []byte(nextGlobalIDPrefix), 1)
+		ID, err = GenID(txn, globalIDKey, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
