@@ -1173,12 +1173,14 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableIdent WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
+		ts := &rsets.TableSource{Source: $6}
+		r := &rsets.JoinRset{Left: ts, Right: nil}
 		x := &stmts.DeleteStmt{
-			TableIdent:    $6.(table.Ident),
-			LowPriority:   $2.(bool),
-			Quick:         $3.(bool),
-			Ignore:        $4.(bool)}
-	
+			Refs:		r,
+			LowPriority:	$2.(bool),
+			Quick:		$3.(bool),
+			Ignore:		$4.(bool),
+		}
 		if $7 != nil {
 			x.Where = $7.(expression.Expression)
 		}
