@@ -66,7 +66,7 @@ func EncodePassword(pwd string) string {
 func DecodePassword(pwd string) ([]byte, error) {
 	x, err := hex.DecodeString(pwd)
 	if err != nil {
-		return []byte{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return x, nil
 }
