@@ -534,6 +534,10 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 	}
 	defer it.Close()
 
+	if !it.Valid() {
+		return nil
+	}
+
 	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
 
 	prefix := t.KeyPrefix()
