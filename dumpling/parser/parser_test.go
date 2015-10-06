@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/stmt/stmts"
 )
 
@@ -29,6 +30,23 @@ func TestT(t *testing.T) {
 var _ = Suite(&testParserSuite{})
 
 type testParserSuite struct {
+}
+
+func (s *testParserSuite) TestOriginText(c *C) {
+	src := `SELECT stuff.id 
+		FROM stuff 
+		WHERE stuff.value >= ALL (SELECT stuff.value 
+		FROM stuff)`
+
+	l := NewLexer(src)
+	c.Assert(yyParse(l), Equals, 0)
+	node := l.Stmts()[0].(*stmts.SelectStmt)
+	sq := node.Where.Expr.(*expression.CompareSubQuery).R
+	c.Assert(sq, NotNil)
+	subsel := sq.(*subquery.SubQuery)
+	c.Assert(subsel.Stmt.OriginText(), Equals,
+		`SELECT stuff.value 
+		FROM stuff`)
 }
 
 // TODO: table 43 and 50 parse failed
