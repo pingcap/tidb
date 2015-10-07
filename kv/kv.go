@@ -107,6 +107,8 @@ type Transaction interface {
 	Seek(k Key, fnKeyCmp func(key Key) bool) (Iterator, error)
 	// Inc increases the value for key k in KV store by step.
 	Inc(k Key, step int64) (int64, error)
+	// GetInt64 get int64 which created by Inc method.
+	GetInt64(k Key) (int64, error)
 	// Deletes removes the entry for key k from KV store.
 	Delete(k Key) error
 	// Commit commites the transaction operations to KV store.

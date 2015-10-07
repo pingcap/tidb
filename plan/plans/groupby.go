@@ -200,7 +200,10 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 		// so we don't evaluate count(*) in In expression, and will get an invalid data in AggDone phase for it.
 		// mention all aggregate functions
 		// TODO: optimize, we can get these aggregate functions only once and reuse
-		aggs := expression.MentionedAggregateFuncs(r.Fields[i].Expr)
+		aggs, err := expression.MentionedAggregateFuncs(r.Fields[i].Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, agg := range aggs {
 			if _, err := agg.Eval(ctx, m); err != nil {
 				return err

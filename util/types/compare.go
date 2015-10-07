@@ -187,6 +187,10 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(float64(x), y.ToNumber()), nil
 		case mysql.Bit:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -199,6 +203,10 @@ func Compare(a, b interface{}) (int, error) {
 		case mysql.Hex:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
 		case mysql.Bit:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Set:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
 		}
 	case mysql.Decimal:
@@ -238,6 +246,10 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareString(x, y.ToString()), nil
 		case mysql.Bit:
 			return CompareString(x, y.ToString()), nil
+		case mysql.Enum:
+			return CompareString(x, y.String()), nil
+		case mysql.Set:
+			return CompareString(x, y.String()), nil
 		}
 	case mysql.Time:
 		switch y := b.(type) {
@@ -263,6 +275,12 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		case string:
 			return CompareString(x.ToString(), y), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		}
 	case mysql.Bit:
 		switch y := b.(type) {
@@ -274,6 +292,46 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		case string:
 			return CompareString(x.ToString(), y), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		}
+	case mysql.Enum:
+		switch y := b.(type) {
+		case int64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case uint64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case string:
+			return CompareString(x.String(), y), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		}
+	case mysql.Set:
+		switch y := b.(type) {
+		case int64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case uint64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case string:
+			return CompareString(x.String(), y), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		}
 	}
 

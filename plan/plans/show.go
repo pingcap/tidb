@@ -139,208 +139,23 @@ func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 }
 
 func (s *ShowPlan) fetchAll(ctx context.Context) error {
-	// TODO split this function
 	switch s.Target {
 	case stmt.ShowEngines:
-		row := &plan.Row{
-			Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
-		}
-		s.rows = append(s.rows, row)
+		return s.fetchShowEngines(ctx)
 	case stmt.ShowDatabases:
-		dbs := sessionctx.GetDomain(ctx).InfoSchema().AllSchemaNames()
-
-		// TODO: let information_schema be the first database
-		sort.Strings(dbs)
-
-		for _, d := range dbs {
-			s.rows = append(s.rows, &plan.Row{Data: []interface{}{d}})
-		}
+		return s.fetchShowDatabases(ctx)
 	case stmt.ShowTables:
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		dbName := model.NewCIStr(s.DBName)
-		if !is.SchemaExists(dbName) {
-			return errors.Errorf("Can not find DB: %s", dbName)
-		}
-
-		// sort for tables
-		var tableNames []string
-		for _, v := range is.SchemaTables(dbName) {
-			tableNames = append(tableNames, v.TableName().L)
-		}
-
-		sort.Strings(tableNames)
-
-		for _, v := range tableNames {
-			data := []interface{}{v}
-			if s.Full {
-				// TODO: support "VIEW" later if we have supported view feature.
-				// now, just use "BASE TABLE".
-				data = append(data, "BASE TABLE")
-			}
-			s.rows = append(s.rows, &plan.Row{Data: data})
-		}
+		return s.fetchShowTables(ctx)
 	case stmt.ShowColumns:
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		dbName := model.NewCIStr(s.DBName)
-		if !is.SchemaExists(dbName) {
-			return errors.Errorf("Can not find DB: %s", dbName)
-		}
-		tbName := model.NewCIStr(s.TableName)
-		tb, err := is.TableByName(dbName, tbName)
-		if err != nil {
-			return errors.Errorf("Can not find table: %s", s.TableName)
-		}
-		cols := tb.Cols()
-
-		for _, col := range cols {
-			if !s.isColOK(col) {
-				continue
-			}
-
-			desc := column.NewColDesc(col)
-
-			// The FULL keyword causes the output to include the column collation and comments,
-			// as well as the privileges you have for each column.
-			row := &plan.Row{}
-			if s.Full {
-				row.Data = []interface{}{
-					desc.Field,
-					desc.Type,
-					desc.Collation,
-					desc.Null,
-					desc.Key,
-					desc.DefaultValue,
-					desc.Extra,
-					desc.Privileges,
-					desc.Comment,
-				}
-			} else {
-				row.Data = []interface{}{
-					desc.Field,
-					desc.Type,
-					desc.Null,
-					desc.Key,
-					desc.DefaultValue,
-					desc.Extra,
-				}
-			}
-			s.rows = append(s.rows, row)
-		}
+		return s.fetchShowColumns(ctx)
 	case stmt.ShowWarnings:
-	// empty result
+		// empty result
 	case stmt.ShowCharset:
-		// See: http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
-		descs := charset.GetAllCharsets()
-		for _, desc := range descs {
-			row := &plan.Row{
-				Data: []interface{}{desc.Name, desc.Desc, desc.DefaultCollation, desc.Maxlen},
-			}
-			s.rows = append(s.rows, row)
-		}
+		return s.fetchShowCharset(ctx)
 	case stmt.ShowVariables:
-		sessionVars := variable.GetSessionVars(ctx)
-		for _, v := range variable.SysVars {
-			if s.Pattern != nil {
-				s.Pattern.Expr = expression.Value{Val: v.Name}
-				r, err := s.Pattern.Eval(ctx, nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				match, ok := r.(bool)
-				if !ok {
-					return errors.Errorf("Eval like pattern error")
-				}
-				if !match {
-					continue
-				}
-			} else if s.Where != nil {
-				m := map[interface{}]interface{}{}
-
-				m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-					if strings.EqualFold(name, "Variable_name") {
-						return v.Name, nil
-					}
-
-					return nil, errors.Errorf("unknown field %s", name)
-				}
-
-				match, err := expression.EvalBoolExpr(ctx, s.Where, m)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if !match {
-					continue
-				}
-			}
-			value := v.Value
-			if !s.GlobalScope {
-				// Try to get Session Scope variable value
-				sv, ok := sessionVars.Systems[v.Name]
-				if ok {
-					value = sv
-				}
-			}
-			row := &plan.Row{Data: []interface{}{v.Name, value}}
-			s.rows = append(s.rows, row)
-		}
+		return s.fetchShowVariables(ctx)
 	case stmt.ShowCollation:
-		collations := charset.GetCollations()
-		for _, v := range collations {
-			if s.Pattern != nil {
-				s.Pattern.Expr = expression.Value{Val: v.Name}
-				r, err := s.Pattern.Eval(ctx, nil)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				match, ok := r.(bool)
-				if !ok {
-					return errors.Errorf("Eval like pattern error")
-				}
-				if !match {
-					continue
-				}
-			} else if s.Where != nil {
-				m := map[interface{}]interface{}{}
-
-				m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-					switch {
-					case strings.EqualFold(name, "Collation"):
-						return v.Name, nil
-					case strings.EqualFold(name, "Charset"):
-						return v.CharsetName, nil
-					case strings.EqualFold(name, "Id"):
-						return v.ID, nil
-					case strings.EqualFold(name, "Default"):
-						if v.IsDefault {
-							return "Yes", nil
-						}
-						return "", nil
-					case strings.EqualFold(name, "Compiled"):
-						return "Yes", nil
-					case strings.EqualFold(name, "Sortlen"):
-						// TODO: add sort length in Collation
-						return 1, nil
-					default:
-						return nil, errors.Errorf("unknown field %s", name)
-					}
-				}
-
-				match, err := expression.EvalBoolExpr(ctx, s.Where, m)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if !match {
-					continue
-				}
-			}
-
-			isDefault := ""
-			if v.IsDefault {
-				isDefault = "Yes"
-			}
-			row := &plan.Row{Data: []interface{}{v.Name, v.CharsetName, v.ID, isDefault, "Yes", 1}}
-			s.rows = append(s.rows, row)
-		}
+		return s.fetchShowCollation(ctx)
 	}
 	return nil
 }
@@ -349,5 +164,218 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 func (s *ShowPlan) Close() error {
 	s.rows = nil
 	s.cursor = 0
+	return nil
+}
+
+func (s *ShowPlan) evalCondition(ctx context.Context, m map[interface{}]interface{}) (bool, error) {
+	var cond expression.Expression
+	if s.Pattern != nil {
+		cond = s.Pattern
+	} else if s.Where != nil {
+		cond = s.Where
+	}
+
+	if cond == nil {
+		return true, nil
+	}
+
+	return expression.EvalBoolExpr(ctx, cond, m)
+}
+
+func (s *ShowPlan) fetchShowColumns(ctx context.Context) error {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	dbName := model.NewCIStr(s.DBName)
+	if !is.SchemaExists(dbName) {
+		return errors.Errorf("Can not find DB: %s", dbName)
+	}
+	tbName := model.NewCIStr(s.TableName)
+	tb, err := is.TableByName(dbName, tbName)
+	if err != nil {
+		return errors.Errorf("Can not find table: %s", s.TableName)
+	}
+	cols := tb.Cols()
+
+	for _, col := range cols {
+		if !s.isColOK(col) {
+			continue
+		}
+
+		desc := column.NewColDesc(col)
+
+		// The FULL keyword causes the output to include the column collation and comments,
+		// as well as the privileges you have for each column.
+		row := &plan.Row{}
+		if s.Full {
+			row.Data = []interface{}{
+				desc.Field,
+				desc.Type,
+				desc.Collation,
+				desc.Null,
+				desc.Key,
+				desc.DefaultValue,
+				desc.Extra,
+				desc.Privileges,
+				desc.Comment,
+			}
+		} else {
+			row.Data = []interface{}{
+				desc.Field,
+				desc.Type,
+				desc.Null,
+				desc.Key,
+				desc.DefaultValue,
+				desc.Extra,
+			}
+		}
+		s.rows = append(s.rows, row)
+	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowCollation(ctx context.Context) error {
+	collations := charset.GetCollations()
+	m := map[interface{}]interface{}{}
+
+	for _, v := range collations {
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v.Name}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				switch {
+				case strings.EqualFold(name, "Collation"):
+					return v.Name, nil
+				case strings.EqualFold(name, "Charset"):
+					return v.CharsetName, nil
+				case strings.EqualFold(name, "Id"):
+					return v.ID, nil
+				case strings.EqualFold(name, "Default"):
+					if v.IsDefault {
+						return "Yes", nil
+					}
+					return "", nil
+				case strings.EqualFold(name, "Compiled"):
+					return "Yes", nil
+				case strings.EqualFold(name, "Sortlen"):
+					// TODO: add sort length in Collation
+					return 1, nil
+				default:
+					return nil, errors.Errorf("unknown field %s", name)
+				}
+			}
+		}
+
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+
+		isDefault := ""
+		if v.IsDefault {
+			isDefault = "Yes"
+		}
+		row := &plan.Row{Data: []interface{}{v.Name, v.CharsetName, v.ID, isDefault, "Yes", 1}}
+		s.rows = append(s.rows, row)
+	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	dbName := model.NewCIStr(s.DBName)
+	if !is.SchemaExists(dbName) {
+		return errors.Errorf("Can not find DB: %s", dbName)
+	}
+
+	// sort for tables
+	var tableNames []string
+	for _, v := range is.SchemaTables(dbName) {
+		tableNames = append(tableNames, v.TableName().L)
+	}
+
+	sort.Strings(tableNames)
+
+	for _, v := range tableNames {
+		data := []interface{}{v}
+		if s.Full {
+			// TODO: support "VIEW" later if we have supported view feature.
+			// now, just use "BASE TABLE".
+			data = append(data, "BASE TABLE")
+		}
+		s.rows = append(s.rows, &plan.Row{Data: data})
+	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
+	sessionVars := variable.GetSessionVars(ctx)
+	m := map[interface{}]interface{}{}
+
+	for _, v := range variable.SysVars {
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v.Name}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if strings.EqualFold(name, "Variable_name") {
+					return v.Name, nil
+				}
+
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+
+		value := v.Value
+		if !s.GlobalScope {
+			// Try to get Session Scope variable value
+			sv, ok := sessionVars.Systems[v.Name]
+			if ok {
+				value = sv
+			}
+		}
+		row := &plan.Row{Data: []interface{}{v.Name, value}}
+		s.rows = append(s.rows, row)
+	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowCharset(ctx context.Context) error {
+	// See: http://dev.mysql.com/doc/refman/5.7/en/show-character-set.html
+	descs := charset.GetAllCharsets()
+	for _, desc := range descs {
+		row := &plan.Row{
+			Data: []interface{}{desc.Name, desc.Desc, desc.DefaultCollation, desc.Maxlen},
+		}
+		s.rows = append(s.rows, row)
+	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowEngines(ctx context.Context) error {
+	row := &plan.Row{
+		Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
+	}
+	s.rows = append(s.rows, row)
+	return nil
+}
+
+func (s *ShowPlan) fetchShowDatabases(ctx context.Context) error {
+	dbs := sessionctx.GetDomain(ctx).InfoSchema().AllSchemaNames()
+
+	// TODO: let information_schema be the first database
+	sort.Strings(dbs)
+
+	for _, d := range dbs {
+		s.rows = append(s.rows, &plan.Row{Data: []interface{}{d}})
+	}
 	return nil
 }

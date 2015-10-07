@@ -107,7 +107,10 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
 	cc.conn.Close()
-	return cc.ctx.Close()
+	if cc.ctx != nil {
+		return cc.ctx.Close()
+	}
+	return nil
 }
 
 func (cc *clientConn) writeInitialHandshake() error {

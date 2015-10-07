@@ -163,6 +163,10 @@ func ConvertToDecimal(value interface{}) (Decimal, error) {
 		return NewDecimalFromInt(int64(v.Value), 0), nil
 	case Bit:
 		return NewDecimalFromUint(uint64(v.Value), 0), nil
+	case Enum:
+		return NewDecimalFromUint(uint64(v.Value), 0), nil
+	case Set:
+		return NewDecimalFromUint(uint64(v.Value), 0), nil
 	default:
 		return Decimal{}, fmt.Errorf("can't convert %v to decimal", value)
 	}

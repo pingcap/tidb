@@ -78,6 +78,7 @@ import (
 	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
+	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
 	by		"BY"
@@ -86,14 +87,19 @@ import (
 	cast		"CAST"
 	character	"CHARACTER"
 	charsetKwd	"CHARSET"
+	check 		"CHECK"
+	checksum	"CHECKSUM"
 	coalesce	"COALESCE"
 	collate 	"COLLATE"
 	collation	"COLLATION"
 	column		"COLUMN"
 	columns		"COLUMNS"
+	comment 	"COMMENT"
 	commit		"COMMIT"
+	compression	"COMPRESSION"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
+	connection 	"CONNECTION"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
 	count		"COUNT"
@@ -122,6 +128,7 @@ import (
 	end		"END"
 	engine		"ENGINE"
 	engines		"ENGINES"
+	enum 		"ENUM"
 	eq		"="
 	execute		"EXECUTE"
 	exists		"EXISTS"
@@ -153,6 +160,7 @@ import (
 	is		"IS"
 	join		"JOIN"
 	key		"KEY"
+	keyBlockSize	"KEY_BLOCK_SIZE"
 	le		"<="
 	left		"LEFT"
 	length		"LENGTH"
@@ -163,13 +171,16 @@ import (
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
 	max		"MAX"
+	maxRows		"MAX_ROWS"
 	microsecond	"MICROSECOND"
 	min		"MIN"
 	minute		"MINUTE"
+	minRows		"MIN_ROWS"
 	mod 		"MOD"
 	mode		"MODE"
 	month		"MONTH"
 	names		"NAMES"
+	national	"NATIONAL"
 	neq		"!="
 	neqSynonym	"<>"
 	not		"NOT"
@@ -187,6 +198,7 @@ import (
 	prepare		"PREPARE"
 	primary		"PRIMARY"
 	quick		"QUICK"
+	rand		"RAND"
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
@@ -208,6 +220,7 @@ import (
 	start		"START"
 	stringType	"string"
 	substring	"SUBSTRING"
+	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
 	sysVar		"SYS_VAR"
 	sysDate		"SYSDATE"
@@ -397,6 +410,7 @@ import (
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
 	name			"name"
+	NationalOpt		"National option"
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
@@ -434,11 +448,13 @@ import (
 	SetStmt			"Set variable statement"
 	ShowStmt		"Show engines/databases/tables/columns/warnings statement"
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
+	ShowLikeOrWhereOpt	"Show like or where condition option"
 	ShowTableIdentOpt	"Show columns statement table name option"
 	SignedLiteral		"Literal or NumLiteral with sign"
 	SimpleQualifiedIdent	"Qualified identifier without *"
 	Statement		"statement"
 	StatementList		"statement list"
+	StringList 		"string list"
 	ExplainableStmt		"explainable statement"
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
@@ -777,6 +793,10 @@ Constraint:
 |	"ON" "UPDATE" NowSym
 	{
 		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrOnUpdate, Evalue: $3.(expression.Expression)}
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrComment}
 	}
 
 ConstraintElem:
@@ -1153,12 +1173,14 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableIdent WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
+		ts := &rsets.TableSource{Source: $6}
+		r := &rsets.JoinRset{Left: ts, Right: nil}
 		x := &stmts.DeleteStmt{
-			TableIdent:    $6.(table.Ident),
-			LowPriority:   $2.(bool),
-			Quick:         $3.(bool),
-			Ignore:        $4.(bool)}
-	
+			Refs:		r,
+			LowPriority:	$2.(bool),
+			Quick:		$3.(bool),
+			Ignore:		$4.(bool),
+		}
 		if $7 != nil {
 			x.Where = $7.(expression.Expression)
 		}
@@ -1602,11 +1624,13 @@ UnReservedKeyword:
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
+|	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
+|	"NATIONAL"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "SECOND" | "SQL_CALC_FOUND_ROWS"
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2213,6 +2237,21 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"RAND" '(' ExpressionOpt ')'
+	{
+
+		args := []expression.Expression{}
+		if $3 != nil {
+			args = append(args, $3.(expression.Expression))
+		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"SECOND" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2252,6 +2291,14 @@ FunctionCallNonKeyword:
 			StrExpr: $3.(expression.Expression), 
 			Pos: $5.(expression.Expression),
 			Len: $7.(expression.Expression),
+		}	
+	}
+|	"SUBSTRING_INDEX" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionSubstringIndex{
+			StrExpr: $3.(expression.Expression), 
+			Delim: $5.(expression.Expression),
+			Count: $7.(expression.Expression),
 		}	
 	}
 |	"SYSDATE" '(' ExpressionOpt ')'
@@ -2409,10 +2456,10 @@ WhenClause:
 	}
 
 ElseOpt:
-       /* empty */
-       {
+	/* empty */
+	{
 		$$ = nil	
-       }
+	}
 |	"ELSE" Expression
 	{
 		$$ = $2
@@ -3148,51 +3195,35 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowWarnings}
 	}
-// See: https://dev.mysql.com/doc/refman/5.7/en/show-variables.html
-// TODO: Support show variables with where clause. 
-|	"SHOW" GlobalScope "VARIABLES"
+|	"SHOW" GlobalScope "VARIABLES" ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowVariables,
 			GlobalScope: $2.(bool),
 		}
-	
+		stmt.SetCondition($4)
+		$$ = stmt
 	}
-|	"SHOW" GlobalScope "VARIABLES" "LIKE" PrimaryExpression
+|	"SHOW" "COLLATION" ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowVariables,
-			GlobalScope: $2.(bool),
-			Pattern:  &expression.PatternLike{Pattern: $5.(expression.Expression)},
-		}
-	}
-|	"SHOW" GlobalScope "VARIABLES" "WHERE" Expression
-	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowVariables,
-			GlobalScope: $2.(bool),
-			Where: expression.Expr($5),
-		}
-	}
-|	"SHOW" "COLLATION"
-	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowCollation,
 		}
+		stmt.SetCondition($3)
+		$$ = stmt
 	}
-|	"SHOW" "COLLATION" "LIKE" PrimaryExpression
+
+ShowLikeOrWhereOpt:
 	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowCollation,
-			Pattern:  &expression.PatternLike{Pattern: $4.(expression.Expression)},
-		}
+		$$ = nil 
 	}
-|	"SHOW" "COLLATION" "WHERE" Expression
+|	"LIKE" PrimaryExpression
 	{
-		$$ = &stmts.ShowStmt{
-			Target: stmt.ShowCollation,
-			Where: expression.Expr($4),
-		}
+		$$ = &expression.PatternLike{Pattern: $2.(expression.Expression)}
+	}
+|	"WHERE" Expression
+	{
+		$$ = expression.Expr($2)
 	}
 
 GlobalScope:
@@ -3313,6 +3344,11 @@ TableElement:
 	{
 		$$ = $1.(*coldef.TableConstraint)
 	}
+|	"CHECK" '(' Expression ')'
+	{
+		/* Nothing to do now */
+		$$ = nil 
+	}
 
 TableElementList:
 	TableElement
@@ -3359,6 +3395,43 @@ TableOpt:
 	{
 		$$ = &coldef.TableOpt{Tp: coldef.TblOptAutoIncrement, UintValue: $3.(uint64)}
 	}
+|	"COMMENT" EqOpt stringLit
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptComment, StrValue: $3.(string)} 
+	}
+|	"AVG_ROW_LENGTH" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptAvgRowLength, UintValue: $3.(uint64)} 
+	}
+|	"CONNECTION" EqOpt stringLit
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptConnection, StrValue: $3.(string)} 
+	}
+|	"CHECKSUM" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptCheckSum, UintValue: $3.(uint64)} 
+	}
+|	"PASSWORD" EqOpt stringLit
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptPassword, StrValue: $3.(string)} 
+	}
+|	"COMPRESSION" EqOpt Identifier
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptCompression, StrValue: $3.(string)} 
+	}
+|	"KEY_BLOCK_SIZE" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptKeyBlockSize, UintValue: $3.(uint64)} 
+	}
+|	"MAX_ROWS" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptMaxRows, UintValue: $3.(uint64)} 
+	}
+|	"MIN_ROWS" EqOpt LengthNum
+	{
+		$$ = &coldef.TableOpt{Tp: coldef.TblOptMinRows, UintValue: $3.(uint64)} 
+	}
+
 
 TableOptListOpt:
 	{
@@ -3484,6 +3557,11 @@ NumericType:
 	{
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
+		if x.Flen == -1 || x.Flen == 0 {
+			x.Flen = 1
+		} else if x.Flen > 64 {
+			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+		}
 		$$ = x
 	}
 
@@ -3559,32 +3637,32 @@ BitValueType:
 	}
 
 StringType:
-	"CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary
 	{
 		x := types.NewFieldType(mysql.TypeString)
-		x.Flen = $2.(int)
+		x.Flen = $3.(int)
+		if $4.(bool) {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
+|	NationalOpt "CHAR" OptBinary
+	{
+		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
 		$$ = x
 	}
-|	"CHAR" OptBinary
-	{
-		x := types.NewFieldType(mysql.TypeString)
-		if $2.(bool) {
-			x.Flag |= mysql.BinaryFlag
-		}
-		$$ = x
-	}
-|	"VARCHAR" FieldLen OptBinary OptCharset OptCollate
+|	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
-		x.Flen = $2.(int) 
-		if $3.(bool) {
+		x.Flen = $3.(int) 
+		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
-		x.Charset = $4.(string)
-		x.Collate = $5.(string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
 |	"BINARY" OptFieldLen
@@ -3617,6 +3695,31 @@ StringType:
 		x.Collate = $4.(string)
 		$$ = x
 	}
+|	"ENUM" '(' StringList ')' OptCharset OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeEnum)
+		x.Elems = $3.([]string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
+		$$ = x
+	}
+|	"SET" '(' StringList ')' OptCharset OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeSet)
+		x.Elems = $3.([]string)
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
+		$$ = x
+	}
+
+NationalOpt:
+	{
+
+	}
+|	"NATIONAL"
+	{
+
+	}
 
 BlobType:
 	"TINYBLOB"
@@ -3626,9 +3729,10 @@ BlobType:
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
-|	"BLOB"
+|	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
+		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -3655,9 +3759,10 @@ TextType:
 		$$ = x
 
 	}
-|	"TEXT"
+|	"TEXT" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
+		x.Flen = $2.(int) 
 		$$ = x
 	}
 |	"MEDIUMTEXT"
@@ -3696,7 +3801,7 @@ DateAndTimeType:
 		x.Decimal = $2.(int)
 		$$ = x
 	}
-|	"YEAR"
+|	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		$$ = x
@@ -3785,6 +3890,16 @@ OptCollate:
 |	"COLLATE" CollationName
 	{
 		$$ = $2.(string)
+	}
+
+StringList:
+	stringLit
+	{
+		$$ = []string{$1.(string)}
+	}
+|	StringList ',' stringLit
+	{
+		$$ = append($1.([]string), $3.(string))
 	}
 
 /************************************************************************************

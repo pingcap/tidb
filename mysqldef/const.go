@@ -17,7 +17,7 @@ package mysqldef
 const (
 	MinProtocolVersion byte   = 10
 	MaxPayloadLen      int    = 1<<24 - 1
-	ServerVersion      string = "5.5.31-cm-1.0"
+	ServerVersion      string = "5.5.31-TiDB-1.0"
 )
 
 // Header informations.
@@ -122,4 +122,33 @@ const (
 	SystemDB = "mysql"
 	// UserTable is the table in system db contains user info.
 	UserTable = "User"
+)
+
+// PrivilegeType  privilege
+type PrivilegeType uint32
+
+const (
+	_ PrivilegeType = 1 << iota
+	// CreatePriv is the privilege to create schema/table.
+	CreatePriv
+	// SelectPriv is the privilege to read from table.
+	SelectPriv
+	// InsertPriv is the privilege to insert data into table.
+	InsertPriv
+	// UpdatePriv is the privilege to update data in table.
+	UpdatePriv
+	// DeletePriv is the privilege to delete data from table.
+	DeletePriv
+	// ShowPriv is the privilege to run show statement.
+	ShowPriv
+	// CreateUserPriv is the privilege to create user.
+	CreateUserPriv
+	// DropPriv is the privilege to drop schema/table.
+	DropPriv
+	// GrantPriv is the privilege to grant privilege to user.
+	GrantPriv
+	// AlterPriv is the privilege to run alter statement.
+	AlterPriv
+	// ExecutePriv is the privilege to run execute statement.
+	ExecutePriv
 )

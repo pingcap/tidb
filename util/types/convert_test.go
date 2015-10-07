@@ -172,20 +172,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 8
 	v, err = Convert("100", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	v, err = Convert(mysql.Hex{Value: 100}, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	v, err = Convert(mysql.Bit{Value: 100, Width: 8}, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	ft.Flen = 1
 	v, err = Convert(1, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(1))
+	c.Assert(v, Equals, mysql.Bit{Value: 1, Width: 1})
 
 	_, err = Convert(2, ft)
 	c.Assert(err, NotNil)
@@ -217,6 +217,36 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(mysql.ZeroDuration, ft)
 	c.Assert(v, Equals, int64(time.Now().Year()))
+
+	// For enum
+	ft = NewFieldType(mysql.TypeEnum)
+	ft.Elems = []string{"a", "b", "c"}
+	v, err = Convert("a", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, mysql.Enum{Name: "a", Value: 1})
+	v, err = Convert(2, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, mysql.Enum{Name: "b", Value: 2})
+	_, err = Convert("d", ft)
+	c.Assert(err, NotNil)
+	_, err = Convert(4, ft)
+	c.Assert(err, NotNil)
+
+	ft = NewFieldType(mysql.TypeSet)
+	ft.Elems = []string{"a", "b", "c"}
+	v, err = Convert("a", ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, mysql.Set{Name: "a", Value: 1})
+	v, err = Convert(2, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, mysql.Set{Name: "b", Value: 2})
+	v, err = Convert(3, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, mysql.Set{Name: "a,b", Value: 3})
+	_, err = Convert("d", ft)
+	c.Assert(err, NotNil)
+	_, err = Convert(9, ft)
+	c.Assert(err, NotNil)
 }
 
 func testToInt64(c *C, val interface{}, expect int64) {
@@ -234,6 +264,8 @@ func (s *testTypeConvertSuite) TestConvertToInt64(c *C) {
 	testToInt64(c, float64(3.1), int64(3))
 	testToInt64(c, mysql.Hex{Value: 100}, int64(100))
 	testToInt64(c, mysql.Bit{Value: 100, Width: 8}, int64(100))
+	testToInt64(c, mysql.Enum{Name: "a", Value: 1}, int64(1))
+	testToInt64(c, mysql.Set{Name: "a", Value: 1}, int64(1))
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
@@ -271,6 +303,8 @@ func (s *testTypeConvertSuite) TestConvertToFloat64(c *C) {
 	testToFloat64(c, float64(3.1), float64(3.1))
 	testToFloat64(c, mysql.Hex{Value: 100}, float64(100))
 	testToFloat64(c, mysql.Bit{Value: 100, Width: 8}, float64(100))
+	testToFloat64(c, mysql.Enum{Name: "a", Value: 1}, float64(1))
+	testToFloat64(c, mysql.Set{Name: "a", Value: 1}, float64(1))
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
@@ -308,6 +342,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, []byte{1}, "\x01")
 	testToString(c, mysql.Hex{Value: 0x4D7953514C}, "MySQL")
 	testToString(c, mysql.Bit{Value: 0x41, Width: 8}, "A")
+	testToString(c, mysql.Enum{Name: "a", Value: 1}, "a")
+	testToString(c, mysql.Set{Name: "a", Value: 1}, "a")
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
@@ -345,6 +381,8 @@ func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
 	testToBool(c, []byte("0"), 0)
 	testToBool(c, mysql.Hex{Value: 0}, 0)
 	testToBool(c, mysql.Bit{Value: 0, Width: 8}, 0)
+	testToBool(c, mysql.Enum{Name: "a", Value: 1}, 1)
+	testToBool(c, mysql.Set{Name: "a", Value: 1}, 1)
 
 	t, err := mysql.ParseTime("2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
@@ -412,9 +450,9 @@ func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	v := FieldTypeToStr(mysql.TypeDecimal, "not binary")
 	c.Assert(v, Equals, type2Str[mysql.TypeDecimal])
 	v = FieldTypeToStr(mysql.TypeBlob, charset.CharsetBin)
-	c.Assert(v, Equals, "BLOB")
+	c.Assert(v, Equals, "blob")
 	v = FieldTypeToStr(mysql.TypeString, charset.CharsetBin)
-	c.Assert(v, Equals, "BINARY")
+	c.Assert(v, Equals, "binary")
 }
 
 func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
@@ -570,7 +608,4 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
-
-	// Test case for TypeBit
-	unsignedAccept(c, mysql.TypeBit, 123, "123")
 }

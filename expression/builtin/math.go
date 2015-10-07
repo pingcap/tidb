@@ -19,7 +19,9 @@ package builtin
 
 import (
 	"math"
+	"math/rand"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -44,6 +46,19 @@ func builtinAbs(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 		// we will try to convert other types to float
 		// TODO: if time has no precision, it will be a integer
 		f, err := types.ToFloat64(args[0])
-		return math.Abs(f), err
+		return math.Abs(f), errors.Trace(err)
 	}
+}
+
+func builtinRand(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+	if len(args) == 1 {
+		seed, err := types.ToInt64(args[0])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		rand.Seed(seed)
+	}
+
+	return rand.Float64(), nil
 }

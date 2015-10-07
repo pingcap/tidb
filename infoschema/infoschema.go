@@ -45,6 +45,7 @@ type InfoSchema interface {
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
+	SchemaMetaVersion() int64
 	// TODO: add more methods to retrieve tables and columns.
 }
 
@@ -62,7 +63,12 @@ type infoSchema struct {
 	columns        map[int64]*model.ColumnInfo
 	indices        map[indexName]*model.IndexInfo
 	columnIndices  map[int64][]*model.IndexInfo
+
+	// We should to check version when change schema
+	schemaMetaVersion int64
 }
+
+var _ InfoSchema = (*infoSchema)(nil)
 
 type tableName struct {
 	schema string
@@ -86,6 +92,10 @@ func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bo
 	}
 	val, ok = is.schemas[id]
 	return
+}
+
+func (is *infoSchema) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
@@ -195,16 +205,17 @@ func NewHandle(store kv.Storage) *Handle {
 }
 
 // Set sets DBInfo to information schema.
-func (h *Handle) Set(newInfo []*model.DBInfo) {
+func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 	info := &infoSchema{
-		schemaNameToID: map[string]int64{},
-		tableNameToID:  map[tableName]int64{},
-		columnNameToID: map[columnName]int64{},
-		schemas:        map[int64]*model.DBInfo{},
-		tables:         map[int64]table.Table{},
-		columns:        map[int64]*model.ColumnInfo{},
-		indices:        map[indexName]*model.IndexInfo{},
-		columnIndices:  map[int64][]*model.IndexInfo{},
+		schemaNameToID:    map[string]int64{},
+		tableNameToID:     map[tableName]int64{},
+		columnNameToID:    map[columnName]int64{},
+		schemas:           map[int64]*model.DBInfo{},
+		tables:            map[int64]table.Table{},
+		columns:           map[int64]*model.ColumnInfo{},
+		indices:           map[indexName]*model.IndexInfo{},
+		columnIndices:     map[int64][]*model.IndexInfo{},
+		schemaMetaVersion: schemaMetaVersion,
 	}
 	for _, di := range newInfo {
 		info.schemas[di.ID] = di

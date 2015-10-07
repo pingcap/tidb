@@ -87,3 +87,44 @@ func (s *testSubstringSuite) TestSubstring(c *C) {
 		c.Assert(err, NotNil)
 	}
 }
+
+func (s *testSubstringSuite) TestSubstringIndex(c *C) {
+	tbl := []struct {
+		str    string
+		delim  string
+		count  int64
+		result string
+	}{
+		{"www.mysql.com", ".", 2, "www.mysql"},
+		{"www.mysql.com", ".", -2, "mysql.com"},
+		{"www.mysql.com", ".", 20, "www.mysql.com"},
+		{"www.mysql.com", ".", -20, "www.mysql.com"},
+		{"www.mysql.com", "_", 2, "www.mysql.com"},
+		{"www.mysql.com", "_", 0, ""},
+	}
+	for _, v := range tbl {
+		f := FunctionSubstringIndex{
+			StrExpr: &Value{Val: v.str},
+			Delim:   &Value{Val: v.delim},
+			Count:   &Value{Val: v.count},
+		}
+		c.Assert(f.IsStatic(), Equals, true)
+
+		fs := f.String()
+		c.Assert(len(fs), Greater, 0)
+
+		f1 := f.Clone()
+
+		r, err := f.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		s, ok := r.(string)
+		c.Assert(ok, Equals, true)
+		c.Assert(s, Equals, v.result)
+
+		r1, err := f1.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		s1, ok := r1.(string)
+		c.Assert(ok, Equals, true)
+		c.Assert(s, Equals, s1)
+	}
+}
