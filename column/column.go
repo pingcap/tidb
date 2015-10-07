@@ -161,7 +161,12 @@ func (c *Col) GetTypeDesc() string {
 	switch c.Tp {
 	case mysql.TypeSet, mysql.TypeEnum:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
-		buf.WriteString(fmt.Sprintf("('%s')", strings.Join(c.Elems, "','")))
+		// If elem contain ', we will convert ' -> ''
+		elems := make([]string, len(c.Elems))
+		for i := range elems {
+			elems[i] = strings.Replace(c.Elems[i], "'", "''", -1)
+		}
+		buf.WriteString(fmt.Sprintf("('%s')", strings.Join(elems, "','")))
 	default:
 		if c.Flen != -1 {
 			if c.Decimal == -1 {

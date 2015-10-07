@@ -53,4 +53,27 @@ func (s *testStmtSuite) TestGetColDefaultValue(c *C) {
 
 	testSQL = " insert helper_test (c1) values (1);"
 	mustExec(c, s.testDB, testSQL)
+
+	testSQL = `drop table if exists helper_test;
+    create table helper_test (c1 enum("a"), c2 enum("b", "e") not null, c3 enum("c") default "c", c4 enum("d") default "d" not null);`
+	mustExec(c, s.testDB, testSQL)
+
+	testSQL = "insert into helper_test values();"
+	mustExec(c, s.testDB, testSQL)
+
+	row := s.testDB.QueryRow("select * from helper_test")
+	var (
+		v1 interface{}
+		v2 interface{}
+		v3 interface{}
+		v4 interface{}
+	)
+
+	err = row.Scan(&v1, &v2, &v3, &v4)
+	c.Assert(err, IsNil)
+	c.Assert(v1, IsNil)
+	c.Assert(v2, Equals, "b")
+	c.Assert(v3, Equals, "c")
+	c.Assert(v4, Equals, "d")
+
 }
