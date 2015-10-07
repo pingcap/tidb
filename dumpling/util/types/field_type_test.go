@@ -28,25 +28,33 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	c.Assert(ft.Flen, Equals, UnspecifiedLength)
 	c.Assert(ft.Decimal, Equals, UnspecifiedLength)
 	ft.Decimal = 5
-	c.Assert(ft.String(), Equals, "TIME (5)")
+	c.Assert(ft.String(), Equals, "time (5)")
 
 	ft.Tp = mysql.TypeLong
 	ft.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
-	c.Assert(ft.String(), Equals, "INT (5) UNSIGNED ZEROFILL")
+	c.Assert(ft.String(), Equals, "int (5) UNSIGNED ZEROFILL")
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 10
 	ft.Decimal = 3
-	c.Assert(ft.String(), Equals, "FLOAT (10, 3)")
+	c.Assert(ft.String(), Equals, "float (10, 3)")
 
 	ft = NewFieldType(mysql.TypeBlob)
 	ft.Flen = 10
 	ft.Charset = "UTF8"
 	ft.Collate = "UTF8_UNICODE_GI"
-	c.Assert(ft.String(), Equals, "TEXT (10) CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
+	c.Assert(ft.String(), Equals, "text (10) CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
 
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), Equals, "VARCHAR (10) BINARY")
+	c.Assert(ft.String(), Equals, "varchar (10) BINARY")
+
+	ft = NewFieldType(mysql.TypeEnum)
+	ft.Elems = []string{"a", "b"}
+	c.Assert(ft.String(), Equals, "enum ('a','b')")
+
+	ft = NewFieldType(mysql.TypeSet)
+	ft.Elems = []string{"a", "b"}
+	c.Assert(ft.String(), Equals, "set ('a','b')")
 }

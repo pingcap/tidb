@@ -46,6 +46,11 @@ func (s *testColumnSuite) TestString(c *C) {
 
 	cs := col.String()
 	c.Assert(len(cs), Greater, 0)
+
+	col.Tp = mysql.TypeEnum
+	col.Flag = 0
+	col.Elems = []string{"a", "b"}
+	c.Assert(col.getTypeDesc(), Equals, "enum ('a','b')")
 }
 
 func (s *testColumnSuite) TestFind(c *C) {

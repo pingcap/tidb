@@ -100,6 +100,21 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	return intVal, nil
 }
 
+func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
+	k = kv.EncodeKey(k)
+	val, err := txn.UnionStore.Get(k)
+	if kv.IsErrNotFound(err) {
+		return 0, nil
+	}
+
+	if err != nil {
+		return 0, err
+	}
+
+	intVal, err := strconv.ParseInt(string(val), 10, 0)
+	return intVal, errors.Trace(err)
+}
+
 func (txn *dbTxn) String() string {
 	return fmt.Sprintf("%d", txn.tID)
 }

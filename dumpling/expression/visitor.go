@@ -44,6 +44,9 @@ type Visitor interface {
 	// VisitFunctionSubstring visits FunctionSubstring expression.
 	VisitFunctionSubstring(ss *FunctionSubstring) (Expression, error)
 
+	// VisitFunctionSubstringIndex visits FunctionSubstringIndex expression.
+	VisitFunctionSubstringIndex(ss *FunctionSubstringIndex) (Expression, error)
+
 	// VisitExistsSubQuery visits ExistsSubQuery expression.
 	VisitExistsSubQuery(es *ExistsSubQuery) (Expression, error)
 
@@ -181,9 +184,11 @@ func (bv *BaseVisitor) VisitExistsSubQuery(es *ExistsSubQuery) (Expression, erro
 // VisitFunctionCase implements Visitor interface.
 func (bv *BaseVisitor) VisitFunctionCase(f *FunctionCase) (Expression, error) {
 	var err error
-	f.Value, err = f.Value.Accept(bv.V)
-	if err != nil {
-		return f, errors.Trace(err)
+	if f.Value != nil {
+		f.Value, err = f.Value.Accept(bv.V)
+		if err != nil {
+			return f, errors.Trace(err)
+		}
 	}
 	for i := range f.WhenClauses {
 		_, err = f.WhenClauses[i].Accept(bv.V)
@@ -191,9 +196,11 @@ func (bv *BaseVisitor) VisitFunctionCase(f *FunctionCase) (Expression, error) {
 			return f, errors.Trace(err)
 		}
 	}
-	f.ElseClause, err = f.ElseClause.Accept(bv.V)
-	if err != nil {
-		return f, errors.Trace(err)
+	if f.ElseClause != nil {
+		f.ElseClause, err = f.ElseClause.Accept(bv.V)
+		if err != nil {
+			return f, errors.Trace(err)
+		}
 	}
 	return f, nil
 }
@@ -229,7 +236,31 @@ func (bv *BaseVisitor) VisitFunctionSubstring(ss *FunctionSubstring) (Expression
 	if err != nil {
 		return ss, errors.Trace(err)
 	}
+	if ss.Len == nil {
+		return ss, nil
+	}
 	ss.Len, err = ss.Len.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	return ss, nil
+}
+
+// VisitFunctionSubstringIndex implements Visitor interface.
+func (bv *BaseVisitor) VisitFunctionSubstringIndex(ss *FunctionSubstringIndex) (Expression, error) {
+	var err error
+	ss.StrExpr, err = ss.StrExpr.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	ss.Delim, err = ss.Delim.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	if ss.Count == nil {
+		return ss, nil
+	}
+	ss.Count, err = ss.Count.Accept(bv.V)
 	if err != nil {
 		return ss, errors.Trace(err)
 	}

@@ -133,6 +133,7 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{mysql.Hex{Value: 1}, float64(0), 1},
 		{mysql.Hex{Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
 		{mysql.Hex{Value: 1}, mysql.Bit{Value: 0, Width: 1}, 1},
+		{mysql.Hex{Value: 1}, mysql.Hex{Value: 1}, 0},
 
 		{mysql.Bit{Value: 1, Width: 1}, 1, 0},
 		{mysql.Bit{Value: 0x41, Width: 8}, "A", 0},
@@ -140,6 +141,28 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{mysql.Bit{Value: 1, Width: 1}, float64(0), 1},
 		{mysql.Bit{Value: 1, Width: 1}, mysql.NewDecimalFromInt(1, 0), 0},
 		{mysql.Bit{Value: 1, Width: 1}, mysql.Hex{Value: 2}, -1},
+		{mysql.Bit{Value: 1, Width: 1}, mysql.Bit{Value: 1, Width: 1}, 0},
+
+		{mysql.Enum{Name: "a", Value: 1}, 1, 0},
+		{mysql.Enum{Name: "a", Value: 1}, "a", 0},
+		{mysql.Enum{Name: "a", Value: 1}, uint64(10), -1},
+		{mysql.Enum{Name: "a", Value: 1}, float64(0), 1},
+		{mysql.Enum{Name: "a", Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
+		{mysql.Enum{Name: "a", Value: 1}, mysql.Hex{Value: 2}, -1},
+		{mysql.Enum{Name: "a", Value: 1}, mysql.Bit{Value: 1, Width: 1}, 0},
+		{mysql.Enum{Name: "a", Value: 1}, mysql.Hex{Value: 1}, 0},
+		{mysql.Enum{Name: "a", Value: 1}, mysql.Enum{Name: "a", Value: 1}, 0},
+
+		{mysql.Set{Name: "a", Value: 1}, 1, 0},
+		{mysql.Set{Name: "a", Value: 1}, "a", 0},
+		{mysql.Set{Name: "a", Value: 1}, uint64(10), -1},
+		{mysql.Set{Name: "a", Value: 1}, float64(0), 1},
+		{mysql.Set{Name: "a", Value: 1}, mysql.NewDecimalFromInt(1, 0), 0},
+		{mysql.Set{Name: "a", Value: 1}, mysql.Hex{Value: 2}, -1},
+		{mysql.Set{Name: "a", Value: 1}, mysql.Bit{Value: 1, Width: 1}, 0},
+		{mysql.Set{Name: "a", Value: 1}, mysql.Hex{Value: 1}, 0},
+		{mysql.Set{Name: "a", Value: 1}, mysql.Enum{Name: "a", Value: 1}, 0},
+		{mysql.Set{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}, 0},
 	}
 
 	for _, t := range cmpTbl {
