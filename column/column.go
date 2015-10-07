@@ -220,7 +220,7 @@ func (c *Col) CheckNotNull(data interface{}) error {
 func CheckNotNull(cols []*Col, row []interface{}) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
