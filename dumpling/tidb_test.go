@@ -1027,6 +1027,21 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 	mustExecSQL(c, se, "drop schema if exists xxx")
 }
 
+func (s *testSessionSuite) TestWhereLike(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t(c int)")
+	mustExecSQL(c, se, "insert into t values (1),(2),(3),(-11),(11),(123),(211),(210)")
+	mustExecSQL(c, se, "insert into t values ()")
+
+	r := mustExecSQL(c, se, "select c from t where c like '%1%'")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 6)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
