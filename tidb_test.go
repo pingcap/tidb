@@ -801,6 +801,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, `'a'`, `"a"`, `pingcap '-->' tidb`)
 
+	r = mustExecSQL(c, se, `select '\'a\'', "\"a\"";`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, `'a'`, `"a"`)
+
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c varchar(20))")
 	mustExecSQL(c, se, `insert t values("pingcap '-->' tidb")`)
