@@ -51,7 +51,12 @@ type lexer struct {
 	ParamList	[]*expression.ParamMarker
 	stmtStartPos 	int
 	stringLit 	[]byte
+
+	// record token's offset of the input
+	tokenEndOffset   int
+	tokenStartOffset int
 }
+
 
 // NewLexer builds a new lexer.
 func NewLexer(src string) (l *lexer) {
@@ -104,6 +109,7 @@ func (l *lexer) unget(b byte) {
 	l.ungetBuf = append(l.ungetBuf, b)
 	l.i--
 	l.ncol--
+	l.tokenEndOffset--
 }
 
 func (l *lexer) next() int {
@@ -130,6 +136,7 @@ func (l *lexer) next() int {
 	default:
 		l.ncol++
 	}
+	l.tokenEndOffset++
 	return l.c
 }
 
@@ -175,7 +182,8 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col = l.line, l.col
+		lval.line, lval.col, lval.offset = l.line, l.col, l.tokenStartOffset
+		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (
 		INITIAL = iota
