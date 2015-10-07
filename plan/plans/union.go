@@ -44,7 +44,7 @@ func (p *UnionPlan) Explain(w format.Formatter) {
 
 // GetFields implements plan.Plan GetFields interface.
 func (p *UnionPlan) GetFields() []*field.ResultField {
-	return p.Srcs[0].GetFields()
+	return p.RFields
 }
 
 // Filter implements plan.Plan Filter interface.
