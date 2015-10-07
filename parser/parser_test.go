@@ -427,6 +427,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"create table t (c int) password = 'abc'", true},
 		{"create table t (c int) password 'abc'", true},
 
+		// For show create table
+		{"show create table test.t", true},
+		{"show create table t", true},
+
 		// For national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
 
