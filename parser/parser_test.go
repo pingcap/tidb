@@ -483,6 +483,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"(select c1 from t1) union (select c2 from t2) order by c1 union select c3 from t3", false},
 		{"(select c1 from t1) union (select c2 from t2) limit 1 union select c3 from t3", false},
 		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 limit 1", true},
+		{"select (select 1 union select 1) as a", true},
+		{"select * from (select 1 union select 2) as a", true},
 	}
 
 	for _, t := range table {
