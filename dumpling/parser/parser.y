@@ -2687,10 +2687,6 @@ QuickOptional:
 		$$ = true
 	}
 
-semiOpt:
-	/* EMPTY */
-|	';'
-
 
 /***************************Prepared Statement Start******************************
  * See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
@@ -2879,9 +2875,13 @@ TableFactor:
 	{
 		$$ = &rsets.TableSource{Source: $1, Name: $2.(string)}
 	}
-|	'(' SelectStmt semiOpt ')' AsOpt
+|	'(' SelectStmt ')' AsOpt
 	{
-		$$ = &rsets.TableSource{Source: $2, Name: $5.(string)}
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
+	}
+|	'(' UnionStmt ')' AsOpt
+	{
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
 |	'(' TableRefs ')'
 	{
@@ -3030,6 +3030,14 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*stmts.SelectStmt)
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		$$ = &subquery.SubQuery{Stmt: s}
+	}
+|	'(' UnionStmt ')'
+	{
+		s := $2.(*stmts.UnionStmt)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
