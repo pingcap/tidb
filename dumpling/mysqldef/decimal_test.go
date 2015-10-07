@@ -879,6 +879,7 @@ func TestDecimalScientificNotation(t *testing.T) {
 		{"1e2", 100},
 		{"2E-1", 0.2},
 		{"2E0", 2},
+		{"2.2E-1", 0.22},
 	}
 
 	for _, c := range tbl {
@@ -898,6 +899,7 @@ func TestDecimalScientificNotation(t *testing.T) {
 		"ae10",
 		"12e1a",
 		"12e1.2",
+		"e1",
 	}
 
 	for _, c := range tblErr {
