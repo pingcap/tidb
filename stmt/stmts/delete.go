@@ -22,12 +22,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -42,7 +39,6 @@ var _ stmt.Statement = (*DeleteStmt)(nil) // TODO optimizer plan
 // DeleteStmt is a statement to delete rows from table.
 // See: https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteStmt struct {
-	TableIdent  table.Ident
 	Where       expression.Expression
 	Order       *rsets.OrderByRset
 	Limit       *rsets.LimitRset
@@ -59,16 +55,12 @@ type DeleteStmt struct {
 
 // Explain implements the stmt.Statement Explain interface.
 func (s *DeleteStmt) Explain(ctx context.Context, w format.Formatter) {
-	p, err := s.indexPlan(ctx)
+	p, err := s.plan(ctx)
 	if err != nil {
 		log.Error(err)
 		return
 	}
-	if p != nil {
-		p.Explain(w)
-	} else {
-		w.Format("┌Iterate all rows of table: %s\n", s.TableIdent)
-	}
+	p.Explain(w)
 	w.Format("└Delete row\n")
 }
 
@@ -87,26 +79,7 @@ func (s *DeleteStmt) SetText(text string) {
 	s.Text = text
 }
 
-func (s *DeleteStmt) indexPlan(ctx context.Context) (plan.Plan, error) {
-	if s.MultiTable {
-		return s.planMultiTable(ctx)
-	}
-	t, err := getTable(ctx, s.TableIdent)
-	if err != nil {
-		return nil, err
-	}
-
-	p, filtered, err := (&plans.TableDefaultPlan{T: t}).FilterForUpdateAndDelete(ctx, s.Where)
-	if err != nil {
-		return nil, err
-	}
-	if !filtered {
-		return nil, nil
-	}
-	return p, nil
-}
-
-func (s *DeleteStmt) planMultiTable(ctx context.Context) (plan.Plan, error) {
+func (s *DeleteStmt) plan(ctx context.Context) (plan.Plan, error) {
 	var (
 		r   plan.Plan
 		err error
@@ -126,22 +99,6 @@ func (s *DeleteStmt) planMultiTable(ctx context.Context) (plan.Plan, error) {
 	return r, nil
 }
 
-func (s *DeleteStmt) hitWhere(ctx context.Context, fields []*field.ResultField, data []interface{}) (bool, error) {
-	if s.Where == nil {
-		return true, nil
-	}
-	m := map[interface{}]interface{}{}
-	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		return plans.GetIdentValue(name, fields, data, field.DefaultFieldFlag)
-	}
-
-	ok, err := expression.EvalBoolExpr(ctx, s.Where, m)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return ok, nil
-}
-
 func (s *DeleteStmt) removeRow(ctx context.Context, t table.Table, h int64, data []interface{}) error {
 	// remove row's all indexies
 	if err := t.RemoveRowAllIndex(ctx, h, data); err != nil {
@@ -155,107 +112,12 @@ func (s *DeleteStmt) removeRow(ctx context.Context, t table.Table, h int64, data
 	return nil
 }
 
-func (s *DeleteStmt) tryDeleteUsingIndex(ctx context.Context, t table.Table) (bool, error) {
-	log.Info("try delete with index", ctx)
-	p, err := s.indexPlan(ctx)
-	if p == nil || err != nil {
-		return false, errors.Trace(err)
-	}
-	var rowKeys []*plan.RowKeyEntry
-	for {
-		row, err1 := p.Next(ctx)
-		if err1 != nil {
-			return false, errors.Trace(err1)
-		}
-		if row == nil {
-			break
-		}
-		rowKeys = append(rowKeys, row.RowKeys...)
-	}
-	var cnt uint64
-	for _, rowKey := range rowKeys {
-		if s.Limit != nil && cnt >= s.Limit.Count {
-			break
-		}
-		handle, err := util.DecodeHandleFromRowKey(rowKey.Key)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		data, err := t.Row(ctx, handle)
-		if err != nil {
-			return false, err
-		}
-		log.Infof("try delete with index id:%d, ctx:%s", handle, ctx)
-		ok, err := s.hitWhere(ctx, p.GetFields(), data)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if !ok {
-			return true, nil
-		}
-		err = s.removeRow(ctx, t, handle, data)
-		if err != nil {
-			return false, err
-		}
-		cnt++
-	}
-	return true, nil
-}
-
 // Exec implements the stmt.Statement Exec interface.
 func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	// TODO: unify single from and multi from together.
-	if s.MultiTable {
-		return s.execMultiTable(ctx)
-	}
-	t, err := getTable(ctx, s.TableIdent)
-	if err != nil {
-		return nil, err
-	}
-
-	ok, err := s.tryDeleteUsingIndex(ctx, t)
-	if err != nil {
-		return nil, err
-	}
-	if ok {
-		// Delete using index OK.
-		log.Info("try delete with index OK")
+	if s.MultiTable && len(s.TableIdents) == 0 {
 		return nil, nil
 	}
-
-	fields := field.ColsToResultFields(t.Cols(), t.TableName().L)
-
-	var cnt uint64
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		if s.Limit != nil && cnt >= s.Limit.Count {
-			return false, nil
-		}
-		ok, err = s.hitWhere(ctx, fields, data)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if !ok {
-			return true, nil
-		}
-		err = s.removeRow(ctx, t, h, data)
-		if err != nil {
-			return false, err
-		}
-		cnt++
-		return true, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return nil, nil
-}
-
-func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err error) {
-	log.Info("Delete from multi-table")
-	if len(s.TableIdents) == 0 {
-		return nil, nil
-	}
-	p, err := s.indexPlan(ctx)
+	p, err := s.plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -265,28 +127,30 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 	defer p.Close()
 	tblIDMap := make(map[int64]bool, len(s.TableIdents))
 	// Get table alias map.
-	fs := p.GetFields()
 	tblAliasMap := make(map[string]string)
-	for _, f := range fs {
-		if f.TableName != f.OrgTableName {
-			tblAliasMap[f.TableName] = f.OrgTableName
+	if s.MultiTable {
+		// Delete from multiple tables should consider table ident list.
+		fs := p.GetFields()
+		for _, f := range fs {
+			if f.TableName != f.OrgTableName {
+				tblAliasMap[f.TableName] = f.OrgTableName
+			}
 		}
-	}
+		for _, t := range s.TableIdents {
+			// Consider DBName.
+			oname, ok := tblAliasMap[t.Name.O]
+			if ok {
+				t.Name.O = oname
+				t.Name.L = strings.ToLower(oname)
+			}
 
-	for _, t := range s.TableIdents {
-		// Consider DBName.
-		oname, ok := tblAliasMap[t.Name.O]
-		if ok {
-			t.Name.O = oname
-			t.Name.L = strings.ToLower(oname)
+			var tbl table.Table
+			tbl, err = getTable(ctx, t)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDMap[tbl.TableID()] = true
 		}
-
-		var tbl table.Table
-		tbl, err = getTable(ctx, t)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		tblIDMap[tbl.TableID()] = true
 	}
 	rowKeyMap := make(map[string]table.Table)
 	for {
@@ -299,9 +163,11 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 		}
 
 		for _, entry := range row.RowKeys {
-			tid := entry.Tbl.TableID()
-			if _, ok := tblIDMap[tid]; !ok {
-				continue
+			if s.MultiTable {
+				tid := entry.Tbl.TableID()
+				if _, ok := tblIDMap[tid]; !ok {
+					continue
+				}
 			}
 			rowKeyMap[entry.Key] = entry.Tbl
 		}
@@ -321,6 +187,5 @@ func (s *DeleteStmt) execMultiTable(ctx context.Context) (_ rset.Recordset, err 
 			return nil, errors.Trace(err)
 		}
 	}
-
 	return nil, nil
 }
