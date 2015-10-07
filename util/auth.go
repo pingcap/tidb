@@ -27,24 +27,21 @@ import (
 // CalcPassword is the algorithm convert hashed password to auth string.
 // See: https://dev.mysql.com/doc/internals/en/secure-password-authentication.html
 // SHA1( password ) XOR SHA1( "20-bytes random data from server" <concat> SHA1( SHA1( password ) ) )
-func CalcPassword(scramble, password []byte) []byte {
-	if len(password) == 0 {
+func CalcPassword(scramble, sha1pwd []byte) []byte {
+	if len(sha1pwd) == 0 {
 		return nil
 	}
-
-	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
-	stage1 := password
+	// scrambleHash = SHA1(scramble + SHA1(sha1pwd))
 	// inner Hash
-	hash := Sha1Hash(stage1)
+	hash := Sha1Hash(sha1pwd)
 	// outer Hash
 	crypt := sha1.New()
 	crypt.Write(scramble)
 	crypt.Write(hash)
 	scramble = crypt.Sum(nil)
-
 	// token = scrambleHash XOR stage1Hash
 	for i := range scramble {
-		scramble[i] ^= stage1[i]
+		scramble[i] ^= sha1pwd[i]
 	}
 	return scramble
 }
