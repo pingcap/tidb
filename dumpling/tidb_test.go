@@ -889,6 +889,12 @@ func (s *testSessionSuite) TestShow(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(row, HasLen, 2)
+
+	r = mustExecSQL(c, se, "show create table t")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 2)
+	c.Assert(row[0], Equals, "t")
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
