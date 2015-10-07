@@ -153,7 +153,7 @@ func ContainAllFieldNames(names []string, fields []*ResultField, flag uint32) bo
 	return true
 }
 
-// SplitQualifiedName splits a identifier name to db, tabla and field name.
+// SplitQualifiedName splits an identifier name to db, table and field name.
 func SplitQualifiedName(name string) (db string, table string, field string) {
 	seps := strings.Split(name, ".")
 

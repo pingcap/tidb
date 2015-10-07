@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -146,7 +145,6 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 	if seekVal, err = types.Convert(rval, &c.FieldType); err != nil {
 		return nil, false, err
 	}
-	log.Debugf("table filter:%v, %s, %T, %s", ok, name, rval, &c.FieldType)
 	return &indexPlan{
 		src:     t,
 		col:     c,
