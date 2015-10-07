@@ -31,10 +31,12 @@ func builtinLength(args []interface{}, _ map[interface{}]interface{}) (v interfa
 	switch x := args[0].(type) {
 	case nil:
 		return nil, nil
-	case string:
-		return int64(len(x)), nil
 	default:
-		return nil, invArg(x, "length")
+		s, err := types.ToString(x)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return int64(len(s)), nil
 	}
 }
 

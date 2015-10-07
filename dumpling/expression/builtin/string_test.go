@@ -15,8 +15,10 @@ package builtin
 
 import (
 	"errors"
+	"time"
 
 	. "github.com/pingcap/check"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 func (s *testBuiltinSuite) TestLength(c *C) {
@@ -24,12 +26,24 @@ func (s *testBuiltinSuite) TestLength(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	v, err = builtinLength([]interface{}{"abc"}, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(3))
+	tbl := []struct {
+		Input    interface{}
+		Expected int64
+	}{
+		{"abc", 3},
+		{1, 1},
+		{3.14, 4},
+		{mysql.Time{Time: time.Now(), Fsp: 6, Type: mysql.TypeDatetime}, 26},
+		{mysql.Bit{Value: 1, Width: 8}, 1},
+		{mysql.Hex{Value: 1}, 1},
+		{mysql.Set{Value: 1, Name: "abc"}, 3},
+	}
 
-	_, err = builtinLength([]interface{}{1}, nil)
-	c.Assert(err, NotNil)
+	for _, t := range tbl {
+		v, err = builtinLength([]interface{}{t.Input}, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t.Expected)
+	}
 }
 
 func (s *testBuiltinSuite) TestConcat(c *C) {
