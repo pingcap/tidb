@@ -169,6 +169,7 @@ import (
 	limit		"LIMIT"
 	local		"LOCAL"
 	lock		"LOCK"
+	lower 		"LOWER"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
 	max		"MAX"
@@ -236,6 +237,7 @@ import (
 	unique		"UNIQUE"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
+	upper 		"UPPER"
 	use		"USE"
 	user		"USER"
 	using		"USING"
@@ -2181,6 +2183,17 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"LOWER" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"MICROSECOND" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2308,6 +2321,17 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(expression.Expression))
 		}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"UPPER" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
 		$$, err = expression.NewCall($1.(string), args, false)
 		if err != nil {
