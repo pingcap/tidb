@@ -51,7 +51,7 @@ func (b bound) String() string {
 
 // index span is the range of value to be scanned.
 type indexSpan struct {
-	// seekVal is different than lowVal, it is casted from lowVal and
+	// seekVal is different from lowVal, it is casted from lowVal and
 	// must be less than or equal to lowVal, used to seek the index.
 	seekVal     interface{}
 	lowVal      interface{}

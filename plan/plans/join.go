@@ -123,12 +123,12 @@ func (r *JoinPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 	}
 	p, filteredLeft, err := r.filterNode(ctx, expr, r.Left)
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
 	newPlan.Left = p
 	p, filteredRight, err := r.filterNode(ctx, expr, r.Right)
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
 	newPlan.Right = p
 	return newPlan, filteredLeft || filteredRight, nil
