@@ -477,6 +477,7 @@ import (
 	TableRefs 		"table references"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
+	UnionSelect		"Union select/(select)"
 	UnionStmt		"Union statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
@@ -3941,7 +3942,7 @@ StringList:
  * See: https://dev.mysql.com/doc/refman/5.7/en/union.html
  ***********************************************************************************/
 UnionStmt:
-	SelectStmt "UNION" UnionOpt SelectStmt
+	UnionSelect "UNION" UnionOpt SelectStmt
 	{
 		ds := []bool {$3.(bool)}
 		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $4.(*stmts.SelectStmt)}
@@ -3950,13 +3951,43 @@ UnionStmt:
 			Selects:	ss,
 		}
 	}
-|	UnionStmt "UNION" UnionOpt SelectStmt
+|	UnionSelect "UNION" UnionOpt '(' SelectStmt ')' SelectStmtOrder SelectStmtLimit
 	{
-		s := $1.(*stmts.UnionStmt)
-		s.Distincts = append(s.Distincts, $3.(bool))
-		s.Selects = append(s.Selects, $4.(*stmts.SelectStmt))
+		ds := []bool {$3.(bool)}
+		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $5.(*stmts.SelectStmt)}
+		st := &stmts.UnionStmt{
+			Distincts:	ds,
+			Selects:	ss,
+		}
+		if $7 != nil {
+			st.OrderBy = $7.(*rsets.OrderByRset)
+		}
+
+		if $8 != nil {
+			ay := $8.([]interface{})
+			st.Limit = ay[0].(*rsets.LimitRset)
+			st.Offset = ay[1].(*rsets.OffsetRset)
+		}
+		$$ = st
+	}
+|	UnionSelect "UNION" UnionOpt UnionStmt
+	{
+		s := $4.(*stmts.UnionStmt)
+		s.Distincts = append([]bool {$3.(bool)}, s.Distincts...)
+		s.Selects = append([]*stmts.SelectStmt{$1.(*stmts.SelectStmt)}, s.Selects...)
 		$$ = s	
 	}
+
+UnionSelect:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = $2
+	}
+	
 
 UnionOpt:
 	{

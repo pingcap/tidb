@@ -30,8 +30,10 @@ var _ stmt.Statement = (*UnionStmt)(nil)
 type UnionStmt struct {
 	Distincts []bool
 	Selects   []*SelectStmt
-
-	Text string
+	Limit     *rsets.LimitRset
+	Offset    *rsets.OffsetRset
+	OrderBy   *rsets.OrderByRset
+	Text      string
 }
 
 // Explain implements the stmt.Statement Explain interface.
