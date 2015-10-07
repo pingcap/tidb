@@ -22,7 +22,7 @@ import (
 // ErrArithOverflow is the error for arthimetic operation overflow.
 var ErrArithOverflow = errors.New("operation overflow")
 
-// AddUint64 adds uint64 a and b if no overflow, else, returns error.
+// AddUint64 adds uint64 a and b if no overflow, else returns error.
 func AddUint64(a uint64, b uint64) (uint64, error) {
 	if math.MaxUint64-a < b {
 		return 0, errors.Trace(ErrArithOverflow)
@@ -30,7 +30,7 @@ func AddUint64(a uint64, b uint64) (uint64, error) {
 	return a + b, nil
 }
 
-// AddInt64 adds int64 a and b if no overflow, otherwise, returns error.
+// AddInt64 adds int64 a and b if no overflow, otherwise returns error.
 func AddInt64(a int64, b int64) (int64, error) {
 	if (a > 0 && b > 0 && math.MaxInt64-a < b) ||
 		(a < 0 && b < 0 && math.MinInt64-a > b) {

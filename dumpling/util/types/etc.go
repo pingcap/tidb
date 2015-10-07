@@ -20,7 +20,6 @@ package types
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 
 	"github.com/juju/errors"
@@ -53,32 +52,32 @@ func IsTypeChar(tp byte) bool {
 }
 
 var type2Str = map[byte]string{
-	mysql.TypeBit:        "BIT",
-	mysql.TypeBlob:       "TEXT",
-	mysql.TypeDate:       "DATE",
-	mysql.TypeDatetime:   "DATETIME",
-	mysql.TypeDecimal:    "DECIMAL",
-	mysql.TypeNewDecimal: "DECIMAL",
-	mysql.TypeDouble:     "DOUBLE",
-	mysql.TypeEnum:       "ENUM",
-	mysql.TypeFloat:      "FLOAT",
-	mysql.TypeGeometry:   "GEOMETRY",
-	mysql.TypeInt24:      "MEDIUMINT",
-	mysql.TypeLong:       "INT",
-	mysql.TypeLonglong:   "BIGINT",
-	mysql.TypeLongBlob:   "LONGTEXT",
-	mysql.TypeMediumBlob: "MEDIUMTEXT",
-	mysql.TypeNull:       "NULL",
-	mysql.TypeSet:        "SET",
-	mysql.TypeShort:      "SMALLINT",
-	mysql.TypeString:     "CHAR",
-	mysql.TypeDuration:   "TIME",
-	mysql.TypeTimestamp:  "TIMESTAMP",
-	mysql.TypeTiny:       "TINYINT",
-	mysql.TypeTinyBlob:   "TINYTEXT",
-	mysql.TypeVarchar:    "VARCHAR",
-	mysql.TypeVarString:  "VAR_STRING",
-	mysql.TypeYear:       "YEAR",
+	mysql.TypeBit:        "bit",
+	mysql.TypeBlob:       "text",
+	mysql.TypeDate:       "date",
+	mysql.TypeDatetime:   "datetime",
+	mysql.TypeDecimal:    "decimal",
+	mysql.TypeNewDecimal: "decimal",
+	mysql.TypeDouble:     "double",
+	mysql.TypeEnum:       "enum",
+	mysql.TypeFloat:      "float",
+	mysql.TypeGeometry:   "geometry",
+	mysql.TypeInt24:      "mediumint",
+	mysql.TypeLong:       "int",
+	mysql.TypeLonglong:   "bigint",
+	mysql.TypeLongBlob:   "longtext",
+	mysql.TypeMediumBlob: "mediumtext",
+	mysql.TypeNull:       "null",
+	mysql.TypeSet:        "set",
+	mysql.TypeShort:      "smallint",
+	mysql.TypeString:     "char",
+	mysql.TypeDuration:   "time",
+	mysql.TypeTimestamp:  "timestamp",
+	mysql.TypeTiny:       "tinyint",
+	mysql.TypeTinyBlob:   "tinytext",
+	mysql.TypeVarchar:    "varchar",
+	mysql.TypeVarString:  "var_string",
+	mysql.TypeYear:       "year",
 }
 
 // TypeStr converts tp to a string.
@@ -169,9 +168,9 @@ func FieldTypeToStr(tp byte, cs string) (r string) {
 		return ts
 	}
 	if IsTypeBlob(tp) {
-		ts = strings.Replace(ts, "TEXT", "BLOB", 1)
+		ts = strings.Replace(ts, "text", "blob", 1)
 	} else if IsTypeChar(tp) {
-		ts = strings.Replace(ts, "CHAR", "BINARY", 1)
+		ts = strings.Replace(ts, "char", "binary", 1)
 	}
 	return ts
 }
@@ -182,7 +181,7 @@ func EOFAsNil(err error) error {
 	if errors2.ErrorEqual(err, io.EOF) {
 		return nil
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // InvOp2 returns an invalid operation error.
@@ -258,7 +257,7 @@ func IsOrderedType(v interface{}) (r bool) {
 	return false
 }
 
-// Clone copies a interface to another interface.
+// Clone copies an interface to another interface.
 // It does a deep copy.
 func Clone(from interface{}) (interface{}, error) {
 	if from == nil {
@@ -285,7 +284,6 @@ func Clone(from interface{}) (interface{}, error) {
 		}
 		return r, nil
 	default:
-		log.Error(reflect.TypeOf(from))
 		return nil, errors.Errorf("Clone invalid type %T", from)
 	}
 }
@@ -335,7 +333,7 @@ func convergeType(a interface{}, hasDecimal, hasFloat *bool) (x interface{}) {
 
 // Coerce changes type.
 // If a or b is Decimal, changes the both to Decimal.
-// If a or b is Float, changes the both to Float.
+// Else if a or b is Float, changes the both to Float.
 func Coerce(a, b interface{}) (x, y interface{}) {
 	var hasDecimal bool
 	var hasFloat bool

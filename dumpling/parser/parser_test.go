@@ -404,6 +404,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`select '''a''', """a"""`, true},
 		{`select ''a''`, false},
 		{`select ""a""`, false},
+		{`select '''a''';`, true},
+		{`select '\'a\'';`, true},
+		{`select "\"a\"";`, true},
+		{`select """a""";`, true},
 
 		// For table option
 		{"create table t (c int) avg_row_length = 3", true},
@@ -423,11 +427,24 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"create table t (c int) password = 'abc'", true},
 		{"create table t (c int) password 'abc'", true},
 
+		// For show create table
+		{"show create table test.t", true},
+		{"show create table t", true},
+
 		// For national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
 
+		// For blob and text field length
+		{"create table t (c1 blob(1024), c2 text(1024))", true},
+
 		// For check
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
+
+		// For year
+		{"create table t (y year(4), y1 year)", true},
+
+		// For quote identifier
+		{"select `a`, `a.b`, `a b` from t", true},
 	}
 
 	for _, t := range table {

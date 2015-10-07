@@ -1173,12 +1173,14 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableIdent WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
+		ts := &rsets.TableSource{Source: $6}
+		r := &rsets.JoinRset{Left: ts, Right: nil}
 		x := &stmts.DeleteStmt{
-			TableIdent:    $6.(table.Ident),
-			LowPriority:   $2.(bool),
-			Quick:         $3.(bool),
-			Ignore:        $4.(bool)}
-	
+			Refs:		r,
+			LowPriority:	$2.(bool),
+			Quick:		$3.(bool),
+			Ignore:		$4.(bool),
+		}
 		if $7 != nil {
 			x.Where = $7.(expression.Expression)
 		}
@@ -3210,6 +3212,13 @@ ShowStmt:
 		stmt.SetCondition($3)
 		$$ = stmt
 	}
+|	"SHOW" "CREATE" "TABLE" TableIdent 
+	{
+		$$ = &stmts.ShowStmt{
+			Target:     stmt.ShowCreateTable,
+			TableIdent: $4.(table.Ident),
+		}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -3555,6 +3564,11 @@ NumericType:
 	{
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
+		if x.Flen == -1 || x.Flen == 0 {
+			x.Flen = 1
+		} else if x.Flen > 64 {
+			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+		}
 		$$ = x
 	}
 
@@ -3722,9 +3736,10 @@ BlobType:
 		x.Collate = charset.CharsetBin
 		$$ = x
 	}
-|	"BLOB"
+|	"BLOB" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
+		x.Flen = $2.(int) 
 		x.Charset = charset.CharsetBin
 		x.Collate = charset.CharsetBin
 		$$ = x
@@ -3751,9 +3766,10 @@ TextType:
 		$$ = x
 
 	}
-|	"TEXT"
+|	"TEXT" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeBlob)
+		x.Flen = $2.(int) 
 		$$ = x
 	}
 |	"MEDIUMTEXT"
@@ -3792,7 +3808,7 @@ DateAndTimeType:
 		x.Decimal = $2.(int)
 		$$ = x
 	}
-|	"YEAR"
+|	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		$$ = x
