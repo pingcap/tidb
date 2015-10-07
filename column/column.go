@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -43,33 +42,6 @@ const PrimaryKeyName = "PRIMARY"
 type IndexedCol struct {
 	model.IndexInfo
 	X kv.Index
-}
-
-func (c *Col) getTypeStr() string {
-	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
-	if c.Flen != -1 {
-		if c.Decimal == -1 {
-			ans = append(ans, fmt.Sprintf("(%d)", c.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", c.Flen, c.Decimal))
-		}
-	}
-	if mysql.HasUnsignedFlag(c.Flag) {
-		ans = append(ans, "UNSIGNED")
-	}
-	if mysql.HasZerofillFlag(c.Flag) {
-		ans = append(ans, "ZEROFILL")
-	}
-	if mysql.HasBinaryFlag(c.Flag) {
-		ans = append(ans, "BINARY")
-	}
-	if c.Charset != "" && c.Charset != charset.CharsetBin {
-		ans = append(ans, fmt.Sprintf("CHARACTER SET %s", c.Charset))
-	}
-	if c.Collate != "" {
-		ans = append(ans, fmt.Sprintf("COLLATE %s", c.Collate))
-	}
-	return strings.Join(ans, " ")
 }
 
 // String implements fmt.Stringer interface.
@@ -109,7 +81,7 @@ func FindCols(cols []*Col, names []string) ([]*Col, error) {
 	return rcols, nil
 }
 
-// FindOnUpdateCols finds columns have OnUpdateNow flag.
+// FindOnUpdateCols finds columns which have OnUpdateNow flag.
 func FindOnUpdateCols(cols []*Col) []*Col {
 	var rcols []*Col
 	for _, c := range cols {
@@ -121,16 +93,10 @@ func FindOnUpdateCols(cols []*Col) []*Col {
 	return rcols
 }
 
-// TypeError returns error for invalid value type.
-func (c *Col) TypeError(v interface{}) error {
-	return errors.Errorf("cannot use %v (type %T) in assignment to, or comparison with, column %s (type %s)",
-		v, v, c.Name, types.FieldTypeToStr(c.Tp, c.Charset))
-}
-
 // CastValues casts values based on columns type.
 func CastValues(ctx context.Context, rec []interface{}, cols []*Col) (err error) {
 	for _, c := range cols {
-		rec[c.Offset], err = types.Convert(rec[c.Offset], &c.FieldType)
+		rec[c.Offset], err = types.Convert(rec[c.Offset], c.FieldType)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -263,7 +229,7 @@ func (c *Col) CheckNotNull(data interface{}) error {
 func CheckNotNull(cols []*Col, row []interface{}) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil

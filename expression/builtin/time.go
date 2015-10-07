@@ -29,7 +29,7 @@ func convertToTime(arg interface{}, tp byte) (interface{}, error) {
 	f := types.NewFieldType(tp)
 	f.Decimal = mysql.MaxFsp
 
-	v, err := types.Convert(arg, f)
+	v, err := types.Convert(arg, *f)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func convertToDuration(arg interface{}) (interface{}, error) {
 	f := types.NewFieldType(mysql.TypeDuration)
 	f.Decimal = mysql.MaxFsp
 
-	v, err := types.Convert(arg, f)
+	v, err := types.Convert(arg, *f)
 	if err != nil {
 		return nil, err
 	}

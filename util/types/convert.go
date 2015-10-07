@@ -97,7 +97,7 @@ func convertIntToInt(val, lowerBound, upperBound int64, tp byte) (converted int6
 	return
 }
 
-func convertToInt(val interface{}, target *FieldType) (converted int64, err error) {
+func convertToInt(val interface{}, target FieldType) (converted int64, err error) {
 	tp := target.Tp
 	lowerBound := signedLowerBound[tp]
 	upperBound := signedUpperBound[tp]
@@ -170,7 +170,7 @@ func convertFloatToUint(val float64, upperBound uint64, tp byte) (converted uint
 	return
 }
 
-func convertToUint(val interface{}, target *FieldType) (converted uint64, err error) {
+func convertToUint(val interface{}, target FieldType) (converted uint64, err error) {
 	tp := target.Tp
 	upperBound := unsignedUpperBound[tp]
 	switch v := val.(type) {
@@ -212,13 +212,13 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 }
 
 // typeError returns error for invalid value type.
-func typeError(v interface{}, target *FieldType) error {
+func typeError(v interface{}, target FieldType) error {
 	return errors.Errorf("cannot use %v (type %T) in assignment to, or comparison with, column type %s)",
 		v, v, target.String())
 }
 
 // Cast casts val to certain types and does not return error.
-func Cast(val interface{}, target *FieldType) (v interface{}) {
+func Cast(val interface{}, target FieldType) (v interface{}) {
 	tp := target.Tp
 	switch tp {
 	case mysql.TypeString:
@@ -285,7 +285,7 @@ func Cast(val interface{}, target *FieldType) (v interface{}) {
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+func Convert(val interface{}, target FieldType) (v interface{}, err error) {
 	tp := target.Tp
 	if val == nil {
 		return nil, nil

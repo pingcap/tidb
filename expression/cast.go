@@ -92,7 +92,7 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 	if value == nil {
 		return nil, nil
 	}
-	return types.Cast(value, f.Tp), nil
+	return types.Cast(value, *f.Tp), nil
 }
 
 // Accept implements Expression Accept interface.

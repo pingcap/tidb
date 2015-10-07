@@ -131,7 +131,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		return r, false, nil
 	}
 
-	if rval, err = types.Convert(rval, &c.FieldType); err != nil {
+	if rval, err = types.Convert(rval, c.FieldType); err != nil {
 		return nil, false, err
 	}
 

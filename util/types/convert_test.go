@@ -36,73 +36,73 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft := NewFieldType(mysql.TypeBlob)
 	ft.Flen = 4
 	ft.Charset = "utf8"
-	v, err := Convert("123456", ft)
+	v, err := Convert("123456", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "1234")
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 4
 	ft.Charset = charset.CharsetBin
-	v, err = Convert("12345", ft)
+	v, err = Convert("12345", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("1234"))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(111.114, ft)
+	v, err = Convert(111.114, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(111.11))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.999, ft)
+	v, err = Convert(999.999, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(-999.999, ft)
+	v, err = Convert(-999.999, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(-999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(1111.11, ft)
+	v, err = Convert(1111.11, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.99))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.916, ft)
+	v, err = Convert(999.916, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.92))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.915, ft)
+	v, err = Convert(999.915, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.91))
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.9155, ft)
+	v, err = Convert(999.9155, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float32(999.92))
 
 	// For TypeBlob
 	ft = NewFieldType(mysql.TypeBlob)
-	v, err = Convert(&invalidMockType{}, ft)
+	v, err = Convert(&invalidMockType{}, *ft)
 	c.Assert(err, NotNil)
 
 	// Nil
 	ft = NewFieldType(mysql.TypeBlob)
-	v, err = Convert(nil, ft)
+	v, err = Convert(nil, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
@@ -110,142 +110,142 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft = NewFieldType(mysql.TypeDouble)
 	ft.Flen = 5
 	ft.Decimal = 2
-	v, err = Convert(999.9155, ft)
+	v, err = Convert(999.9155, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, float64(999.92))
 
 	// For TypeString
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
-	v, err = Convert("12345", ft)
+	v, err = Convert("12345", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "123")
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	ft.Charset = charset.CharsetBin
-	v, err = Convert("12345", ft)
+	v, err = Convert("12345", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("123"))
 
 	// For TypeDuration
 	ft = NewFieldType(mysql.TypeDuration)
 	ft.Decimal = 3
-	v, err = Convert("10:11:12.123456", ft)
+	v, err = Convert("10:11:12.123456", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Duration).String(), Equals, "10:11:12.123")
 	ft.Decimal = 1
-	vv, err := Convert(v, ft)
+	vv, err := Convert(v, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(vv.(mysql.Duration).String(), Equals, "10:11:12.1")
 
 	vt, err := mysql.ParseTime("2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
-	v, err = Convert(vt, ft)
+	v, err = Convert(vt, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Duration).String(), Equals, "10:11:11.1")
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Decimal = 3
-	v, err = Convert("2010-10-10 10:11:11.12345", ft)
+	v, err = Convert("2010-10-10 10:11:11.12345", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Time).String(), Equals, "2010-10-10 10:11:11.123")
 	ft.Decimal = 1
-	vv, err = Convert(v, ft)
+	vv, err = Convert(v, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(vv.(mysql.Time).String(), Equals, "2010-10-10 10:11:11.1")
 
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
-	v, err = Convert("100", ft)
+	v, err = Convert("100", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(100))
 	ft = NewFieldType(mysql.TypeLonglong)
 	ft.Flag |= mysql.UnsignedFlag
-	v, err = Convert("100", ft)
+	v, err = Convert("100", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(100))
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
 	ft.Flen = 8
-	v, err = Convert("100", ft)
+	v, err = Convert("100", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
-	v, err = Convert(mysql.Hex{Value: 100}, ft)
+	v, err = Convert(mysql.Hex{Value: 100}, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
-	v, err = Convert(mysql.Bit{Value: 100, Width: 8}, ft)
+	v, err = Convert(mysql.Bit{Value: 100, Width: 8}, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, mysql.Bit{Value: 100, Width: 8})
 
 	ft.Flen = 1
-	v, err = Convert(1, ft)
+	v, err = Convert(1, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, mysql.Bit{Value: 1, Width: 1})
 
-	_, err = Convert(2, ft)
+	_, err = Convert(2, *ft)
 	c.Assert(err, NotNil)
 
 	ft.Flen = 0
-	_, err = Convert(2, ft)
+	_, err = Convert(2, *ft)
 	c.Assert(err, NotNil)
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err = Convert(3.1415926, ft)
+	v, err = Convert(3.1415926, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v.(mysql.Decimal).String(), Equals, "3.14159")
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
-	v, err = Convert("2015-11-11", ft)
+	v, err = Convert("2015-11-11", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(2015, ft)
+	v, err = Convert(2015, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(1800, ft)
+	v, err = Convert(1800, *ft)
 	c.Assert(err, NotNil)
 	dt, err := mysql.ParseDate("2015-11-11")
 	c.Assert(err, IsNil)
-	v, err = Convert(dt, ft)
+	v, err = Convert(dt, *ft)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(mysql.ZeroDuration, ft)
+	v, err = Convert(mysql.ZeroDuration, *ft)
 	c.Assert(v, Equals, int64(time.Now().Year()))
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b", "c"}
-	v, err = Convert("a", ft)
+	v, err = Convert("a", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, mysql.Enum{Name: "a", Value: 1})
-	v, err = Convert(2, ft)
+	v, err = Convert(2, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, mysql.Enum{Name: "b", Value: 2})
-	_, err = Convert("d", ft)
+	_, err = Convert("d", *ft)
 	c.Assert(err, NotNil)
-	_, err = Convert(4, ft)
+	_, err = Convert(4, *ft)
 	c.Assert(err, NotNil)
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b", "c"}
-	v, err = Convert("a", ft)
+	v, err = Convert("a", *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, mysql.Set{Name: "a", Value: 1})
-	v, err = Convert(2, ft)
+	v, err = Convert(2, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, mysql.Set{Name: "b", Value: 2})
-	v, err = Convert(3, ft)
+	v, err = Convert(3, *ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, mysql.Set{Name: "a,b", Value: 3})
-	_, err = Convert("d", ft)
+	_, err = Convert("d", *ft)
 	c.Assert(err, NotNil)
-	_, err = Convert(9, ft)
+	_, err = Convert(9, *ft)
 	c.Assert(err, NotNil)
 }
 
@@ -277,7 +277,7 @@ func (s *testTypeConvertSuite) TestConvertToInt64(c *C) {
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(3.1415926, ft)
+	v, err := Convert(3.1415926, *ft)
 	c.Assert(err, IsNil)
 	testToInt64(c, v, int64(3))
 
@@ -316,7 +316,7 @@ func (s *testTypeConvertSuite) TestConvertToFloat64(c *C) {
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(3.1415926, ft)
+	v, err := Convert(3.1415926, *ft)
 	c.Assert(err, IsNil)
 	testToFloat64(c, v, float64(3.14159))
 
@@ -355,7 +355,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(3.1415926, ft)
+	v, err := Convert(3.1415926, *ft)
 	c.Assert(err, IsNil)
 	testToString(c, v, "3.14159")
 
@@ -394,7 +394,7 @@ func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(3.1415926, ft)
+	v, err := Convert(3.1415926, *ft)
 	c.Assert(err, IsNil)
 	testToBool(c, v, 1)
 
@@ -461,8 +461,8 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	//	casted, err := col.CastValue(nil, value)
-	casted, err := Convert(value, ft)
-	c.Assert(err, IsNil, Commentf("%v", ft))
+	casted, err := Convert(value, *ft)
+	c.Assert(err, IsNil, Commentf("%v", *ft))
 	c.Assert(fmt.Sprintf("%v", casted), Equals, expected)
 }
 
@@ -480,7 +480,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 		ft.Flag |= mysql.UnsignedFlag
 	}
 	//	casted, err := col.CastValue(nil, value)
-	casted, err := Convert(value, ft)
+	casted, err := Convert(value, *ft)
 	c.Assert(err, NotNil)
 	switch casted.(type) {
 	case mysql.Duration:
