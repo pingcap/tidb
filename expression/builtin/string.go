@@ -119,7 +119,7 @@ func builtinRepeat(args []interface{}, ctx map[interface{}]interface{}) (v inter
 	return strings.Repeat(ch, num), nil
 }
 
-// See: https://dev.mysql.com/doc/refman/5.0/en/string-functions.html#function_lower
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
 func builtinLower(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	switch x := args[0].(type) {
 	case nil:
@@ -133,7 +133,7 @@ func builtinLower(args []interface{}, ctx map[interface{}]interface{}) (interfac
 	}
 }
 
-// See: https://dev.mysql.com/doc/refman/5.0/en/string-functions.html#function_upper
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
 func builtinUpper(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	switch x := args[0].(type) {
 	case nil:
