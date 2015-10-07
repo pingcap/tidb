@@ -118,3 +118,31 @@ func builtinRepeat(args []interface{}, ctx map[interface{}]interface{}) (v inter
 	}
 	return strings.Repeat(ch, num), nil
 }
+
+// See: https://dev.mysql.com/doc/refman/5.0/en/string-functions.html#function_lower
+func builtinLower(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	switch x := args[0].(type) {
+	case nil:
+		return nil, nil
+	default:
+		s, err := types.ToString(x)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return strings.ToLower(s), nil
+	}
+}
+
+// See: https://dev.mysql.com/doc/refman/5.0/en/string-functions.html#function_upper
+func builtinUpper(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	switch x := args[0].(type) {
+	case nil:
+		return nil, nil
+	default:
+		s, err := types.ToString(x)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return strings.ToUpper(s), nil
+	}
+}
