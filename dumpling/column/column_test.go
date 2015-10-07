@@ -52,6 +52,9 @@ func (s *testColumnSuite) TestString(c *C) {
 	col.Elems = []string{"a", "b"}
 
 	c.Assert(col.GetTypeDesc(), Equals, "enum('a','b')")
+
+	col.Elems = []string{"'a'", "b"}
+	c.Assert(col.GetTypeDesc(), Equals, "enum('''a''','b')")
 }
 
 func (s *testColumnSuite) TestFind(c *C) {
