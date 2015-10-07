@@ -28,7 +28,6 @@ var (
 	// TableMetaPrefix is the prefix for table meta key prefix.
 	TableMetaPrefix = MakeMetaKey("mTable:")
 
-	nextGlobalIDPrefix = []byte("mNextGlobalID")
 	// SchemaMetaVersionKey is used as lock for changing schema
 	SchemaMetaVersionKey = MakeMetaKey("mSchemaVersion")
 
