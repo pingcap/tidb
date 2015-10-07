@@ -15,6 +15,7 @@ package builtin
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -135,4 +136,33 @@ func (s *testBuiltinSuite) TestRepeat(c *C) {
 	v, err = builtinRepeat(args, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "")
+}
+
+func (s *testBuiltinSuite) TestLowerAndUpper(c *C) {
+	v, err := builtinLower([]interface{}{nil}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+
+	v, err = builtinUpper([]interface{}{nil}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{"abc", "abc"},
+		{1, "1"},
+	}
+
+	for _, t := range tbl {
+		args := []interface{}{t.Input}
+		v, err = builtinLower(args, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t.Expect)
+
+		v, err = builtinUpper(args, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, strings.ToUpper(t.Expect))
+	}
 }
