@@ -828,6 +828,14 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	match(c, rows[1], 1, 1, 1, 1)
 	match(c, rows[2], 2, 2, 2, nil)
 	match(c, rows[3], 3, 3, nil, 3)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c float(8))")
+	mustExecSQL(c, se, "insert into t values (3.12)")
+	r = mustExecSQL(c, se, "select * from t")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 3.12)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {

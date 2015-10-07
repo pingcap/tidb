@@ -295,7 +295,9 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return invConv(val, tp)
 		}
-		if target.Flen != UnspecifiedLength {
+		// For float and following double type, we will only truncate it for float(M, D) format.
+		// If no D is set, we will handle it like origin float whether M is set or not.
+		if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -307,7 +309,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return invConv(val, tp)
 		}
-		if target.Flen != UnspecifiedLength {
+		if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
 			if err != nil {
 				return nil, errors.Trace(err)
