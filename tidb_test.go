@@ -801,6 +801,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, `'a'`, `"a"`, `pingcap '-->' tidb`)
 
+	r = mustExecSQL(c, se, `select '\'a\'', "\"a\"";`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, `'a'`, `"a"`)
+
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c varchar(20))")
 	mustExecSQL(c, se, `insert t values("pingcap '-->' tidb")`)
@@ -868,7 +873,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "INT", "YES", "", nil, "")
+	match(c, rows[0], "c", "int", "YES", "", nil, "")
 
 	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
 	row, err = r.FirstRow()
@@ -884,6 +889,12 @@ func (s *testSessionSuite) TestShow(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(row, HasLen, 2)
+
+	r = mustExecSQL(c, se, "show create table t")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 2)
+	c.Assert(row[0], Equals, "t")
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
@@ -910,6 +921,10 @@ func (s *testSessionSuite) TestBit(c *C) {
 	mustExecSQL(c, se, "insert into t values (0), (1), (2), (3)")
 	_, err := exec(c, se, "insert into t values (4)")
 	c.Assert(err, NotNil)
+	r := mustExecSQL(c, se, "select * from t where c1 = 2")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row[0], Equals, mysql.Bit{Value: 2, Width: 2})
 }
 
 func (s *testSessionSuite) TestBootstrap(c *C) {

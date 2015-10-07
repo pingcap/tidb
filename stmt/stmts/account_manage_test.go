@@ -15,6 +15,7 @@ package stmts_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util"
 )
 
 func (s *testStmtSuite) TestCreateUserStmt(c *C) {
@@ -35,7 +36,7 @@ func (s *testStmtSuite) TestCreateUserStmt(c *C) {
 	rows.Next()
 	var pwd string
 	rows.Scan(&pwd)
-	c.Assert(pwd, Equals, "123")
+	c.Assert(pwd, Equals, util.EncodePassword("123"))
 	c.Assert(rows.Next(), IsFalse)
 	rows.Close()
 	mustCommit(c, tx)
@@ -72,7 +73,7 @@ func (s *testStmtSuite) TestSetPwdStmt(c *C) {
 	c.Assert(err, IsNil)
 	rows.Next()
 	rows.Scan(&pwd)
-	c.Assert(pwd, Equals, "password")
+	c.Assert(pwd, Equals, util.EncodePassword("password"))
 	c.Assert(rows.Next(), IsFalse)
 	rows.Close()
 	mustCommit(c, tx)

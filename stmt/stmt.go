@@ -56,6 +56,7 @@ const (
 	ShowCharset
 	ShowVariables
 	ShowCollation
+	ShowCreateTable
 )
 
 const (
