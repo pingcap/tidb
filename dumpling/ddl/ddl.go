@@ -40,15 +40,15 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-// Pre-defined errors
+// Pre-defined errors.
 var (
-	// ErrExists returned for creating an exist schema or table.
+	// ErrExists returns for creating an exist schema or table.
 	ErrExists = errors.Errorf("DDL:exists")
-	// ErrNotExists returned for dropping a not exist schema or table.
+	// ErrNotExists returns for dropping a not exist schema or table.
 	ErrNotExists = errors.Errorf("DDL:not exists")
 )
 
-// DDL is responsible for updating schema in data store and maintain in-memory InfoSchema cache.
+// DDL is responsible for updating schema in data store and maintains in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr) error
 	DropSchema(ctx context.Context, schema model.CIStr) error
@@ -66,10 +66,10 @@ type ddl struct {
 	onDDLChange OnDDLChange
 }
 
-// OnDDLChange is used as hook function when schema changed
+// OnDDLChange is used as hook function when schema changed.
 type OnDDLChange func(err error) error
 
-// NewDDL create new DDL
+// NewDDL create a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
 	d := &ddl{
 		store:       store,
@@ -115,7 +115,7 @@ func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int6
 		return errors.Trace(err)
 	}
 	if curVer != schemaMetaVersion {
-		return errors.Errorf("Schema changed, our version %d, got %d", schemaMetaVersion, curVer)
+		return errors.Errorf("Schema changed, our version %d, but got %d", schemaMetaVersion, curVer)
 	}
 
 	// Increment version

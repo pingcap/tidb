@@ -20,6 +20,7 @@ import (
 )
 
 // AlterTableSpecification.Action types.
+// TODO: Add more actions.
 const (
 	AlterTableOpt int = iota + 1
 	AlterAddColumn
@@ -28,26 +29,24 @@ const (
 	AlterDropPrimaryKey
 	AlterDropIndex
 	AlterDropForeignKey
-
-// TODO: Add more actions
 )
 
-// ColumnPosition Types
+// ColumnPosition Types.
 const (
 	ColumnPositionNone int = iota
 	ColumnPositionFirst
 	ColumnPositionAfter
 )
 
-// ColumnPosition represent the position of the newly added column
+// ColumnPosition represents the position of the newly added column.
 type ColumnPosition struct {
 	// ColumnPositionNone | ColumnPositionFirst | ColumnPositionAfter
 	Type int
-	// RelativeColumn is the column the newly added column after if type is ColumnPositionAfter
+	// RelativeColumn is the column which is after the newly added column if type is ColumnPositionAfter.
 	RelativeColumn string
 }
 
-// String implements fmt.Stringer
+// String implements fmt.Stringer.
 func (cp *ColumnPosition) String() string {
 	switch cp.Type {
 	case ColumnPositionFirst:
@@ -59,7 +58,7 @@ func (cp *ColumnPosition) String() string {
 	}
 }
 
-// AlterSpecification alter table specification
+// AlterSpecification alter table specification.
 type AlterSpecification struct {
 	Action     int
 	Name       string
@@ -69,7 +68,7 @@ type AlterSpecification struct {
 	Position   *ColumnPosition
 }
 
-// String implements fmt.Stringer
+// String implements fmt.Stringer.
 func (as *AlterSpecification) String() string {
 	switch as.Action {
 	case AlterTableOpt:
