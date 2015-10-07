@@ -48,6 +48,7 @@ import (
 %}
 
 %union {
+	offset int // offset
 	line int
 	col  int
 	item interface{}
@@ -3004,7 +3005,9 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*stmts.SelectStmt)
-		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
 		$$ = &subquery.SubQuery{Stmt: s}
 	}
 
