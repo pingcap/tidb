@@ -328,6 +328,7 @@ like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
 lock		{l}{o}{c}{k}
+lower		{l}{o}{w}{e}{r}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
 max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
@@ -382,6 +383,7 @@ union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
+upper		{u}{p}{p}{e}{r}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
@@ -668,6 +670,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {local}			lval.item = string(l.val)
 			return local
 {lock}			return lock
+{lower}			lval.item = string(l.val)
+			return lower
 {low_priority}		return lowPriority
 {max}			lval.item = string(l.val)
 			return max
@@ -763,6 +767,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {nullif}		lval.item = string(l.val)
 			return nullIf
 {update}		return update
+{upper}			lval.item = string(l.val)
+			return upper
 {use}			return use
 {user}			lval.item = string(l.val)
 			return user
