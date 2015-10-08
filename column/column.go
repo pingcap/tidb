@@ -167,6 +167,15 @@ func (c *Col) GetTypeDesc() string {
 			elems[i] = strings.Replace(c.Elems[i], "'", "''", -1)
 		}
 		buf.WriteString(fmt.Sprintf("('%s')", strings.Join(elems, "','")))
+	case mysql.TypeFloat, mysql.TypeDouble:
+		// if only float(M), we will use float. The same for double.
+		if c.Flen != -1 && c.Decimal != -1 {
+			buf.WriteString(fmt.Sprintf("(%d,%d)", c.Flen, c.Decimal))
+		}
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+		if c.Decimal != -1 && c.Decimal != 0 {
+			buf.WriteString(fmt.Sprintf("(%d)", c.Decimal))
+		}
 	default:
 		if c.Flen != -1 {
 			if c.Decimal == -1 {

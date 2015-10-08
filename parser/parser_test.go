@@ -487,6 +487,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select * from (select 1 union select 2) as a", true},
 		{"insert into t select c1 from t1 union select c2 from t2", true},
 		{"insert into t (c) select c1 from t1 union select c2 from t2", true},
+
+		// For unquoted identifier
+		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
 	}
 
 	for _, t := range table {
