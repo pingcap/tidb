@@ -470,6 +470,24 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// For quote identifier
 		{"select `a`, `a.b`, `a b` from t", true},
 
+		// For union
+		{"select c1 from t1 union select c2 from t2", true},
+		{"select c1 from t1 union (select c2 from t2)", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1", true},
+		{"select c1 from t1 union select c2 from t2 order by c2", true},
+		{"select c1 from t1 union (select c2 from t2) limit 1", true},
+		{"select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1 limit 1", true},
+		{"(select c1 from t1) union distinct select c2 from t2", true},
+		{"(select c1 from t1) union all select c2 from t2", true},
+		{"(select c1 from t1) union (select c2 from t2) order by c1 union select c3 from t3", false},
+		{"(select c1 from t1) union (select c2 from t2) limit 1 union select c3 from t3", false},
+		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 limit 1", true},
+		{"select (select 1 union select 1) as a", true},
+		{"select * from (select 1 union select 2) as a", true},
+		{"insert into t select c1 from t1 union select c2 from t2", true},
+		{"insert into t (c) select c1 from t1 union select c2 from t2", true},
+
 		// For unquoted identifier
 		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
 
