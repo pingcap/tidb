@@ -74,6 +74,14 @@ func (s *testStmtSuite) TestUnion(c *C) {
 	c.Assert(err, IsNil)
 	matchRows(c, rows, [][]interface{}{{2}, {1}})
 
+	rows, err = tx.Query(`select null union select "abc"`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{nil}, {"abc"}})
+
+	rows, err = tx.Query(`select "abc" union select 1`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{"abc"}, {"1"}})
+
 	mustCommit(c, tx)
 }
 
