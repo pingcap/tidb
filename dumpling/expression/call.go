@@ -131,7 +131,7 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 		args[builtin.ExprEvalArgCtx] = ctx
 		aggDistinct, ok := args[c.distinctKey]
 		if !ok {
-			// create a aggregate distinct if not.
+			// create an aggregate distinct if not.
 			aggDistinct = builtin.CreateAggregateDistinct(c.F, c.Distinct)
 			args[c.distinctKey] = aggDistinct
 		}
