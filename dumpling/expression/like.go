@@ -22,6 +22,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -78,10 +79,12 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 	if expr == nil {
 		return nil, nil
 	}
-	sexpr, ok := expr.(string)
-	if !ok {
-		return nil, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
+
+	sexpr, err := types.ToString(expr)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+
 	// We need to compile pattern if it has not been compiled or it is not static.
 	var needCompile = len(p.patChars) == 0 || !p.Pattern.IsStatic()
 	if needCompile {
