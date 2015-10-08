@@ -25,6 +25,7 @@ import (
 var (
 	_ Expression = (*FunctionSubstring)(nil)
 	_ Expression = (*FunctionSubstringIndex)(nil)
+	_ Expression = (*FunctionLocate)(nil)
 )
 
 // FunctionSubstring returns the substring as specified.
@@ -201,4 +202,84 @@ func (f *FunctionSubstringIndex) Eval(ctx context.Context, args map[interface{}]
 // Accept implements Expression Accept interface.
 func (f *FunctionSubstringIndex) Accept(v Visitor) (Expression, error) {
 	return v.VisitFunctionSubstringIndex(f)
+}
+
+// FunctionLocate returns the position of the first occurrence of substring.
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+type FunctionLocate struct {
+	Str    Expression
+	SubStr Expression
+	Pos    Expression
+}
+
+// Clone implements the Expression Clone interface.
+func (f *FunctionLocate) Clone() Expression {
+	nf := &FunctionLocate{
+		Str:    f.Str.Clone(),
+		SubStr: f.SubStr.Clone(),
+	}
+	if f.Pos != nil {
+		nf.Pos = f.Pos.Clone()
+	}
+	return nf
+}
+
+// IsStatic implements the Expression IsStatic interface.
+func (f *FunctionLocate) IsStatic() bool {
+	return f.Str.IsStatic() && f.SubStr.IsStatic() && (f.Pos == nil || f.Pos.IsStatic())
+}
+
+// String implements the Expression String interface.
+func (f *FunctionLocate) String() string {
+	if f.Pos != nil {
+		return fmt.Sprintf("LOCATE(%s, %s, %s)", f.SubStr, f.Str, f.Pos)
+	}
+	return fmt.Sprintf("LOCATE(%s, %s)", f.SubStr, f.Str)
+}
+
+// Eval implements the Expression Eval interface.
+func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	// eval str
+	fs, err := f.Str.Eval(ctx, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	str, ok := fs.(string)
+	if !ok {
+		return nil, errors.Errorf("Locate invalid args, need string but get %T for str", fs)
+	}
+	// eval substr
+	fs, err = f.SubStr.Eval(ctx, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	substr, ok := fs.(string)
+	if !ok {
+		return nil, errors.Errorf("Locate invalid args, need string but get %T for substr", fs)
+	}
+	// eval pos
+	pos := 0
+	if f.Pos != nil {
+		t, err := f.Pos.Eval(ctx, args)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		p, ok := t.(int64)
+		if !ok {
+			return nil, errors.Errorf("Locate invalid pos args, need int but get %T", t)
+		}
+		pos = int(p)
+	}
+	// eval locate
+	if pos < 0 || pos > len(str) {
+		return 0, errors.Errorf("Locate invalid pos args: %d", pos)
+	}
+	str = str[pos:]
+	i := strings.Index(str, substr)
+	return i + 1 + pos, nil
+}
+
+// Accept implements Expression Accept interface.
+func (f *FunctionLocate) Accept(v Visitor) (Expression, error) {
+	return v.VisitFunctionLocate(f)
 }
