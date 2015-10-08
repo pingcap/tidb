@@ -801,6 +801,12 @@ Constraint:
 	{
 		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrComment}
 	}
+|	"CHECK" '(' Expression ')'
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/create-table.html
+		// The CHECK clause is parsed but ignored by all storage engines.
+		$$ = nil
+	}
 
 ConstraintElem:
 	"PRIMARY" "KEY" '(' IndexColNameList ')'
