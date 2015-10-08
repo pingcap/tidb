@@ -1675,6 +1675,10 @@ InsertRest:
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
+|	'(' ColumnNameListOpt ')' UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
 		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
@@ -1682,6 +1686,10 @@ InsertRest:
 |	SelectStmt
 	{
 		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+	}
+|	UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
