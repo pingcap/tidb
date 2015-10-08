@@ -62,27 +62,18 @@ func (s *testSuite) TestDB(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	snap, err := db.GetSnapshot()
-	c.Assert(err, IsNil)
-
 	b = db.NewBatch()
 	b.Put([]byte("a"), []byte("2"))
 	err = db.Commit(b)
 	c.Assert(err, IsNil)
 
-	v, err = snap.Get([]byte("a"))
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("1"))
-
 	v, err = db.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("2"))
 
-	v, err = snap.Get([]byte("c"))
+	iter, err := db.Seek(nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
 
-	iter := snap.NewIterator(nil)
 	c.Assert(iter.Next(), Equals, true)
 	c.Assert(iter.Key(), DeepEquals, []byte("a"))
 	c.Assert(iter.Next(), Equals, true)
@@ -90,6 +81,4 @@ func (s *testSuite) TestDB(c *C) {
 	c.Assert(iter.Next(), Equals, false)
 
 	iter.Release()
-
-	snap.Release()
 }
