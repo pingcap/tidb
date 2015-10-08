@@ -15,9 +15,16 @@ package expression
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
+)
+
+var (
+	_ Expression = (*FunctionSubstring)(nil)
+	_ Expression = (*FunctionSubstringIndex)(nil)
 )
 
 // FunctionSubstring returns the substring as specified.
@@ -111,4 +118,87 @@ func (f *FunctionSubstring) Eval(ctx context.Context, args map[interface{}]inter
 // Accept implements Expression Accept interface.
 func (f *FunctionSubstring) Accept(v Visitor) (Expression, error) {
 	return v.VisitFunctionSubstring(f)
+}
+
+// FunctionSubstringIndex returns the substring as specified.
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
+type FunctionSubstringIndex struct {
+	StrExpr Expression
+	Delim   Expression
+	Count   Expression
+}
+
+// Clone implements the Expression Clone interface.
+func (f *FunctionSubstringIndex) Clone() Expression {
+	nf := &FunctionSubstringIndex{
+		StrExpr: f.StrExpr.Clone(),
+		Delim:   f.Delim.Clone(),
+		Count:   f.Count.Clone(),
+	}
+	return nf
+}
+
+// IsStatic implements the Expression IsStatic interface.
+func (f *FunctionSubstringIndex) IsStatic() bool {
+	return f.StrExpr.IsStatic() && f.Delim.IsStatic() && f.Count.IsStatic()
+}
+
+// String implements the Expression String interface.
+func (f *FunctionSubstringIndex) String() string {
+	return fmt.Sprintf("SUBSTRING_INDEX(%s, %s, %s)", f.StrExpr, f.Delim, f.Count)
+}
+
+// Eval implements the Expression Eval interface.
+func (f *FunctionSubstringIndex) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	fs, err := f.StrExpr.Eval(ctx, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	str, ok := fs.(string)
+	if !ok {
+		return nil, errors.Errorf("Substring_Index invalid args, need string but get %T", fs)
+	}
+
+	t, err := f.Delim.Eval(ctx, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	delim, ok := t.(string)
+	if !ok {
+		return nil, errors.Errorf("Substring_Index invalid delim, need string but get %T", t)
+	}
+
+	t, err = f.Count.Eval(ctx, args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	c, err := types.ToInt64(t)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	count := int(c)
+	strs := strings.Split(str, delim)
+	var (
+		start = 0
+		end   = len(strs)
+	)
+	if count > 0 {
+		// If count is positive, everything to the left of the final delimiter (counting from the left) is returned.
+		if count < end {
+			end = count
+		}
+	} else {
+		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
+		count = -count
+		if count < end {
+			start = end - count
+		}
+	}
+	substrs := strs[start:end]
+	return strings.Join(substrs, delim), nil
+}
+
+// Accept implements Expression Accept interface.
+func (f *FunctionSubstringIndex) Accept(v Visitor) (Expression, error) {
+	return v.VisitFunctionSubstringIndex(f)
 }

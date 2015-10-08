@@ -18,6 +18,7 @@
 package column
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -152,19 +153,34 @@ type ColDesc struct {
 
 const defaultPrivileges string = "select,insert,update,references"
 
-func (c *Col) getTypeDesc() string {
-	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
-	if c.Flen != -1 {
-		if c.Decimal == -1 {
-			ans = append(ans, fmt.Sprintf("(%d)", c.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", c.Flen, c.Decimal))
+// GetTypeDesc gets the description for column type.
+func (c *Col) GetTypeDesc() string {
+	var buf bytes.Buffer
+
+	buf.WriteString(types.FieldTypeToStr(c.Tp, c.Charset))
+	switch c.Tp {
+	case mysql.TypeSet, mysql.TypeEnum:
+		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
+		// If elem contain ', we will convert ' -> ''
+		elems := make([]string, len(c.Elems))
+		for i := range elems {
+			elems[i] = strings.Replace(c.Elems[i], "'", "''", -1)
+		}
+		buf.WriteString(fmt.Sprintf("('%s')", strings.Join(elems, "','")))
+	default:
+		if c.Flen != -1 {
+			if c.Decimal == -1 {
+				buf.WriteString(fmt.Sprintf("(%d)", c.Flen))
+			} else {
+				buf.WriteString(fmt.Sprintf("(%d,%d)", c.Flen, c.Decimal))
+			}
 		}
 	}
+
 	if mysql.HasUnsignedFlag(c.Flag) {
-		ans = append(ans, "UNSIGNED")
+		buf.WriteString(" UNSIGNED")
 	}
-	return strings.Join(ans, " ")
+	return buf.String()
 }
 
 // NewColDesc returns a new ColDesc for a column.
@@ -200,7 +216,7 @@ func NewColDesc(col *Col) *ColDesc {
 
 	return &ColDesc{
 		Field:        name.O,
-		Type:         col.getTypeDesc(),
+		Type:         col.GetTypeDesc(),
 		Collation:    col.Collate,
 		Null:         nullFlag,
 		Key:          keyFlag,

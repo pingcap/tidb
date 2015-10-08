@@ -32,6 +32,7 @@ var (
 
 type dbSnapshot struct {
 	engine.Snapshot
+	version kv.Version // transaction begin version
 }
 
 func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
@@ -83,7 +84,7 @@ func (s *dbSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
 
 func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	// Get latest version.
-	return s.MvccGet(k, kv.MaxVersion)
+	return s.MvccGet(k, s.version)
 }
 
 func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
@@ -92,7 +93,7 @@ func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
 		log.Errorf("leveldb iterator parameter error, %+v", param)
 		return nil
 	}
-	return newDBIter(s, k, kv.MaxVersion)
+	return newDBIter(s, k, s.version)
 }
 
 func (s *dbSnapshot) MvccRelease() {

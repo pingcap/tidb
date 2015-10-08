@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -118,6 +119,7 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 			Name:   model.NewCIStr(mysql.UserTable),
 			Schema: model.NewCIStr(mysql.SystemDB),
 		},
+		ColNames: []string{"Host", "User", "Password"},
 	}
 	values := make([][]expression.Expression, 0, len(s.Specs))
 	for _, spec := range s.Specs {
@@ -138,10 +140,10 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		value = append(value, expression.Value{Val: host})
 		value = append(value, expression.Value{Val: userName})
 		if spec.AuthOpt.ByAuthString {
-			value = append(value, expression.Value{Val: spec.AuthOpt.AuthString})
+			value = append(value, expression.Value{Val: util.EncodePassword(spec.AuthOpt.AuthString)})
 		} else {
 			// TODO: Maybe we should hash the string here?
-			value = append(value, expression.Value{Val: spec.AuthOpt.HashString})
+			value = append(value, expression.Value{Val: util.EncodePassword(spec.AuthOpt.HashString)})
 		}
 		values = append(values, value)
 	}
@@ -194,7 +196,7 @@ func (s *SetPwdStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// Update mysql.user
 	asgn := expression.Assignment{
 		ColName: "Password",
-		Expr:    expression.Value{Val: s.Password},
+		Expr:    expression.Value{Val: util.EncodePassword(s.Password)},
 	}
 	st := &UpdateStmt{
 		TableRefs: composeUserTableRset(),

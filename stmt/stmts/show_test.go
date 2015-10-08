@@ -34,6 +34,13 @@ func (s *testStmtSuite) TestShow(c *C) {
 	c.Assert(testStmt.IsDDL(), IsFalse)
 	c.Assert(len(testStmt.OriginText()), Greater, 0)
 
+	testSQL = "show create table show_test;"
+	stmtList, err = tidb.Compile(testSQL)
+	c.Assert(err, IsNil)
+	c.Assert(stmtList, HasLen, 1)
+	testStmt, ok = stmtList[0].(*stmts.ShowStmt)
+	c.Assert(ok, IsTrue)
+
 	mf := newMockFormatter()
 	testStmt.Explain(nil, mf)
 	c.Assert(mf.Len(), Greater, 0)
@@ -44,4 +51,5 @@ func (s *testStmtSuite) TestShow(c *C) {
 	c.Assert(stmtList, HasLen, 1)
 	testStmt, ok = stmtList[0].(*stmts.ShowStmt)
 	c.Assert(ok, IsTrue)
+	c.Assert(testStmt.Pattern, NotNil)
 }

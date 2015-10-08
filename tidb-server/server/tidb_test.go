@@ -71,3 +71,7 @@ func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	runTestAuth(c)
 }
+
+func (ts *TidbTestSuite) TestIssues(c *C) {
+	runTestIssues(c)
+}
