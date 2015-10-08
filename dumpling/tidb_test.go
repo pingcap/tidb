@@ -918,6 +918,16 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 		c.Assert(ok, IsTrue)
 		c.Assert(n.String(), GreaterEqual, last)
 	}
+
+	last = time.Now().Format(mysql.DateFormat)
+	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	for _, t := range row {
+		n, ok := t.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(n.String(), GreaterEqual, last)
+	}
 }
 
 func (s *testSessionSuite) TestBit(c *C) {
