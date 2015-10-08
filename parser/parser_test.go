@@ -472,6 +472,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For unquoted identifier
 		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
+
+		// For check clause
+		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
 	}
 
 	for _, t := range table {
