@@ -17,7 +17,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ngaut/bolt"
+	"github.com/boltdb/bolt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/localstore/engine"
 )
@@ -114,18 +114,8 @@ func (s *testSuite) TestDB(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("1"))
 
-	snap, err := db.GetSnapshot()
+	iter, err := db.Seek(nil)
 	c.Assert(err, IsNil)
-
-	v, err = snap.Get([]byte("a"))
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("1"))
-
-	v, err = snap.Get([]byte("c"))
-	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
-
-	iter := snap.NewIterator(nil)
 	c.Assert(iter.Next(), Equals, true)
 	c.Assert(iter.Key(), DeepEquals, []byte("a"))
 	c.Assert(iter.Next(), Equals, true)
@@ -133,11 +123,11 @@ func (s *testSuite) TestDB(c *C) {
 	c.Assert(iter.Next(), Equals, false)
 	iter.Release()
 
-	iter = snap.NewIterator([]byte("b"))
+	iter, err = db.Seek([]byte("b"))
+	c.Assert(err, IsNil)
 	c.Assert(iter.Next(), Equals, true)
 	c.Assert(iter.Key(), DeepEquals, []byte("b"))
 	c.Assert(iter.Value(), DeepEquals, []byte("2"))
 	c.Assert(iter.Next(), Equals, false)
-
-	snap.Release()
+	iter.Release()
 }

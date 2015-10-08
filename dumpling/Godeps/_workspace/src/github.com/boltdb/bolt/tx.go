@@ -236,7 +236,8 @@ func (tx *Tx) close() {
 		var freelistPendingN = tx.db.freelist.pending_count()
 		var freelistAlloc = tx.db.freelist.size()
 
-		// Remove writer lock.
+		// Remove transaction ref & writer lock.
+		tx.db.rwtx = nil
 		tx.db.rwlock.Unlock()
 
 		// Merge statistics.
@@ -250,7 +251,12 @@ func (tx *Tx) close() {
 	} else {
 		tx.db.removeTx(tx)
 	}
+
+	// Clear all references.
 	tx.db = nil
+	tx.meta = nil
+	tx.root = Bucket{tx: tx}
+	tx.pages = nil
 }
 
 // Copy writes the entire database to a writer.

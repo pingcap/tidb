@@ -464,7 +464,7 @@ user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
-idchars		{idchar0}|[0-9]
+idchars		{idchar0}|[0-9$] // See: https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 ident		{idchar0}{idchars}*
 
 user_var	"@"{ident}
