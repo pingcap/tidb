@@ -65,7 +65,7 @@ func testTypeToStr(c *C, tp byte, binary bool, expect string) {
 }
 
 func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
-	testTypeStr(c, mysql.TypeYear, "YEAR")
+	testTypeStr(c, mysql.TypeYear, "year")
 	testTypeStr(c, 0xdd, "")
 
 	testTypeToStr(c, mysql.TypeBlob, true, "text")
@@ -96,6 +96,8 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeToStr(c, mysql.TypeDecimal, true, "decimal")
 	testTypeToStr(c, 0xdd, true, "")
 	testTypeToStr(c, mysql.TypeBit, true, "bit")
+	testTypeToStr(c, mysql.TypeEnum, true, "enum")
+	testTypeToStr(c, mysql.TypeSet, true, "set")
 }
 
 func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
@@ -151,6 +153,8 @@ func (s *testTypeEtcSuite) TestClone(c *C) {
 	checkClone(c, make(map[int]string), false)
 	checkClone(c, mysql.Hex{Value: 1}, true)
 	checkClone(c, mysql.Bit{Value: 1, Width: 1}, true)
+	checkClone(c, mysql.Enum{Name: "a", Value: 1}, true)
+	checkClone(c, mysql.Set{Name: "a", Value: 1}, true)
 }
 
 func checkCoerce(c *C, a, b interface{}) {

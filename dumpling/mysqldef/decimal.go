@@ -163,6 +163,10 @@ func ConvertToDecimal(value interface{}) (Decimal, error) {
 		return NewDecimalFromInt(int64(v.Value), 0), nil
 	case Bit:
 		return NewDecimalFromUint(uint64(v.Value), 0), nil
+	case Enum:
+		return NewDecimalFromUint(uint64(v.Value), 0), nil
+	case Set:
+		return NewDecimalFromUint(uint64(v.Value), 0), nil
 	default:
 		return Decimal{}, fmt.Errorf("can't convert %v to decimal", value)
 	}
@@ -195,17 +199,28 @@ func NewDecimalFromUint(value uint64, exp int32) Decimal {
 //
 func ParseDecimal(value string) (Decimal, error) {
 	var intString string
-	var exp int32
+	var exp = int32(0)
+
+	n := strings.IndexAny(value, "eE")
+	if n > 0 {
+		// It is scientific notation, like 3.14e10
+		expInt, err := strconv.Atoi(value[n+1:])
+		if err != nil {
+			return Decimal{}, fmt.Errorf("can't convert %s to decimal, incorrect exponent", value)
+		}
+		value = value[0:n]
+		exp = int32(expInt)
+	}
+
 	parts := strings.Split(value, ".")
 	if len(parts) == 1 {
 		// There is no decimal point, we can just parse the original string as
 		// an int.
 		intString = value
-		exp = 0
 	} else if len(parts) == 2 {
 		intString = parts[0] + parts[1]
 		expInt := -len(parts[1])
-		exp = int32(expInt)
+		exp += int32(expInt)
 	} else {
 		return Decimal{}, fmt.Errorf("can't convert %s to decimal: too many .s", value)
 	}

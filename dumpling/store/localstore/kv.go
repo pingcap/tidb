@@ -100,8 +100,15 @@ func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	currentVer, err := globalVersionProvider.CurrentVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// dbSnapshot implements MvccSnapshot interface.
-	return &dbSnapshot{engineSnapshot}, nil
+	return &dbSnapshot{
+		Snapshot: engineSnapshot,
+		version:  currentVer,
+	}, nil
 }
 
 // Begin transaction
@@ -127,7 +134,10 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		snapshotVals: make(map[string][]byte),
 	}
 	log.Debugf("Begin txn:%d", txn.tID)
-	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{snapshot})
+	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{
+		Snapshot: snapshot,
+		version:  beginVer,
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

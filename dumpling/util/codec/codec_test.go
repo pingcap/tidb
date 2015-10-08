@@ -75,6 +75,11 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 			[]interface{}{mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}},
 			[]interface{}{int64(100), uint64(100)},
 		},
+
+		{
+			[]interface{}{mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}},
+			[]interface{}{uint64(1), uint64(1)},
+		},
 	}
 
 	for _, t := range table {

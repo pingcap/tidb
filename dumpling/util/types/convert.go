@@ -49,6 +49,7 @@ var unsignedUpperBound = map[byte]uint64{
 	mysql.TypeLonglong: math.MaxUint64,
 	mysql.TypeBit:      math.MaxUint64,
 }
+
 var signedUpperBound = map[byte]int64{
 	mysql.TypeTiny:     math.MaxInt8,
 	mysql.TypeShort:    math.MaxInt16,
@@ -130,6 +131,10 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
 	case mysql.Bit:
 		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
+	case mysql.Enum:
+		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
+	case mysql.Set:
+		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
 	}
 	return 0, typeError(val, target)
 }
@@ -198,6 +203,10 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 		return convertFloatToUint(v.ToNumber(), upperBound, tp)
 	case mysql.Bit:
 		return convertFloatToUint(v.ToNumber(), upperBound, tp)
+	case mysql.Enum:
+		return convertFloatToUint(v.ToNumber(), upperBound, tp)
+	case mysql.Set:
+		return convertFloatToUint(v.ToNumber(), upperBound, tp)
 	}
 	return 0, typeError(val, target)
 }
@@ -209,7 +218,7 @@ func typeError(v interface{}, target *FieldType) error {
 }
 
 // Cast casts val to certain types and does not return error.
-func Cast(val interface{}, target *FieldType) (v interface{}) { //NTYPE
+func Cast(val interface{}, target *FieldType) (v interface{}) {
 	tp := target.Tp
 	switch tp {
 	case mysql.TypeString:
@@ -276,7 +285,7 @@ func Cast(val interface{}, target *FieldType) (v interface{}) { //NTYPE
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //NTYPE
+func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	tp := target.Tp
 	if val == nil {
 		return nil, nil
@@ -287,7 +296,9 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return invConv(val, tp)
 		}
-		if target.Flen != UnspecifiedLength {
+		// For float and following double type, we will only truncate it for float(M, D) format.
+		// If no D is set, we will handle it like origin float whether M is set or not.
+		if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -299,7 +310,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return invConv(val, tp)
 		}
-		if target.Flen != UnspecifiedLength {
+		if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -378,10 +389,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		// check bit boundary, if bit has n width, the boundary is
 		// in [0, (1 << n) - 1]
 		width := target.Flen
-		if width == 0 {
+		if width == 0 || width == mysql.UnspecifiedBitWidth {
 			width = mysql.MinBitWidth
-		} else if width == mysql.UnspecifiedBitWidth {
-			width = mysql.MaxBitWidth
 		}
 
 		maxValue := uint64(1)<<uint64(width) - 1
@@ -389,7 +398,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if x > maxValue {
 			return maxValue, overflow(val, tp)
 		}
-		return x, nil
+		return mysql.Bit{Value: x, Width: width}, nil
 	case mysql.TypeDecimal, mysql.TypeNewDecimal:
 		x, err := ToDecimal(val)
 		if err != nil {
@@ -423,6 +432,52 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 			return invConv(val, tp)
 		}
 		return int64(y), nil
+	case mysql.TypeEnum:
+		var (
+			e   mysql.Enum
+			err error
+		)
+		switch x := val.(type) {
+		case string:
+			e, err = mysql.ParseEnumName(target.Elems, x)
+		case []byte:
+			e, err = mysql.ParseEnumName(target.Elems, string(x))
+		default:
+			var number uint64
+			number, err = ToUint64(x)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			e, err = mysql.ParseEnumValue(target.Elems, number)
+		}
+
+		if err != nil {
+			return invConv(val, tp)
+		}
+		return e, nil
+	case mysql.TypeSet:
+		var (
+			s   mysql.Set
+			err error
+		)
+		switch x := val.(type) {
+		case string:
+			s, err = mysql.ParseSetName(target.Elems, x)
+		case []byte:
+			s, err = mysql.ParseSetName(target.Elems, string(x))
+		default:
+			var number uint64
+			number, err = ToUint64(x)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			s, err = mysql.ParseSetValue(target.Elems, number)
+		}
+
+		if err != nil {
+			return invConv(val, tp)
+		}
+		return s, nil
 	default:
 		panic("should never happen")
 	}
@@ -431,7 +486,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 // StrToInt converts a string to an integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToInt(str string) (int64, error) {
-	str = strings.Trim(str, " \t\r\n")
+	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return 0, nil
 	}
@@ -460,7 +515,7 @@ func StrToInt(str string) (int64, error) {
 // StrToUint converts a string to an unsigned integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToUint(str string) (uint64, error) {
-	str = strings.Trim(str, " \t\r\n")
+	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return uint64(0), nil
 	}
@@ -488,7 +543,7 @@ func StrToUint(str string) (uint64, error) {
 
 // StrToFloat converts a string to a float64 in best effort.
 func StrToFloat(str string) (float64, error) {
-	str = strings.Trim(str, " \t\r\n")
+	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return 0, nil
 	}
@@ -499,7 +554,7 @@ func StrToFloat(str string) (float64, error) {
 	return strconv.ParseFloat(str, 64)
 }
 
-// ToUint64 converts a interface to an uint64.
+// ToUint64 converts an interface to an uint64.
 func ToUint64(value interface{}) (uint64, error) {
 	switch v := value.(type) {
 	case int:
@@ -531,12 +586,16 @@ func ToUint64(value interface{}) (uint64, error) {
 		return uint64(v.ToNumber()), nil
 	case mysql.Bit:
 		return uint64(v.ToNumber()), nil
+	case mysql.Enum:
+		return uint64(v.ToNumber()), nil
+	case mysql.Set:
+		return uint64(v.ToNumber()), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
 }
 
-// ToInt64 converts a interface to an int64.
+// ToInt64 converts an interface to an int64.
 func ToInt64(value interface{}) (int64, error) {
 	switch v := value.(type) {
 	case bool:
@@ -573,12 +632,16 @@ func ToInt64(value interface{}) (int64, error) {
 		return int64(v.ToNumber()), nil
 	case mysql.Bit:
 		return int64(v.ToNumber()), nil
+	case mysql.Enum:
+		return int64(v.ToNumber()), nil
+	case mysql.Set:
+		return int64(v.ToNumber()), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
 }
 
-// ToFloat64 converts a interface to a float64.
+// ToFloat64 converts an interface to a float64.
 func ToFloat64(value interface{}) (float64, error) {
 	switch v := value.(type) {
 	case bool:
@@ -613,19 +676,22 @@ func ToFloat64(value interface{}) (float64, error) {
 		return v.ToNumber(), nil
 	case mysql.Bit:
 		return v.ToNumber(), nil
+	case mysql.Enum:
+		return v.ToNumber(), nil
+	case mysql.Set:
+		return v.ToNumber(), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", value, value)
 	}
 }
 
-// ToDecimal converts a interface to the Decimal.
+// ToDecimal converts an interface to a Decimal.
 func ToDecimal(value interface{}) (mysql.Decimal, error) {
 	switch v := value.(type) {
 	case bool:
 		if v {
 			return mysql.ConvertToDecimal(1)
 		}
-
 		return mysql.ConvertToDecimal(0)
 	case []byte:
 		return mysql.ConvertToDecimal(string(v))
@@ -638,7 +704,7 @@ func ToDecimal(value interface{}) (mysql.Decimal, error) {
 	}
 }
 
-// ToString converts a interface to a string.
+// ToString converts an interface to a string.
 func ToString(value interface{}) (string, error) {
 	switch v := value.(type) {
 	case bool:
@@ -670,12 +736,16 @@ func ToString(value interface{}) (string, error) {
 		return v.ToString(), nil
 	case mysql.Bit:
 		return v.ToString(), nil
+	case mysql.Enum:
+		return v.String(), nil
+	case mysql.Set:
+		return v.String(), nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
 	}
 }
 
-// ToBool converts a interface to a bool.
+// ToBool converts an interface to a bool.
 // We will use 1 for true, and 0 for false.
 func ToBool(value interface{}) (int64, error) {
 	isZero := false
@@ -722,6 +792,10 @@ func ToBool(value interface{}) (int64, error) {
 	case mysql.Hex:
 		isZero = (v.ToNumber() == 0)
 	case mysql.Bit:
+		isZero = (v.ToNumber() == 0)
+	case mysql.Enum:
+		isZero = (v.ToNumber() == 0)
+	case mysql.Set:
 		isZero = (v.ToNumber() == 0)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", value, value)

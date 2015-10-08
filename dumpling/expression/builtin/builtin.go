@@ -52,7 +52,8 @@ var Funcs = map[string]Func{
 	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
 	// math functions
-	"abs": {builtinAbs, 1, 1, true, false},
+	"abs":  {builtinAbs, 1, 1, true, false},
+	"rand": {builtinRand, 0, 1, true, false},
 
 	// group by functions
 	"avg":          {builtinAvg, 1, 1, false, true},
@@ -92,7 +93,9 @@ var Funcs = map[string]Func{
 	"concat_ws": {builtinConcatWS, 2, -1, true, false},
 	"left":      {builtinLeft, 2, 2, true, false},
 	"length":    {builtinLength, 1, 1, true, false},
+	"lower":     {builtinLower, 1, 1, true, false},
 	"repeat":    {builtinRepeat, 2, 2, true, false},
+	"upper":     {builtinUpper, 1, 1, true, false},
 
 	// information functions
 	"current_user": {builtinCurrentUser, 0, 0, false, false},

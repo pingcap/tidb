@@ -34,7 +34,7 @@ type Collation struct {
 
 var charsets = make(map[string]*Charset)
 
-// All the supported charsets should in the following table.
+// All the supported charsets should be in the following table.
 var charsetInfos = []*Charset{
 	{"utf8", nil, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	{"latin1", nil, make(map[string]*Collation), "cp1252 West European", 1},
