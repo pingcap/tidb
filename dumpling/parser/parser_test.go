@@ -469,6 +469,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For quote identifier
 		{"select `a`, `a.b`, `a b` from t", true},
+
+		// For unquoted identifier
+		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
 	}
 
 	for _, t := range table {
