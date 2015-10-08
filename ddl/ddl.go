@@ -26,7 +26,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -428,7 +427,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			if err := d.addColumn(ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
+			if err := d.addColumn(ctx, ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
 				return errors.Trace(err)
 			}
 		default:
@@ -440,12 +439,11 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 }
 
 // Add a column into table
-func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
+func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
 	// Find position
 	cols := tbl.Cols()
 	position := len(cols)
 	name := spec.Column.Name
-	log.Infof("addColumn, cols:%v, pos:%v, name:%v, spec.Pos:%v", cols, position, name, spec.Position)
 	// Check column name duplicate
 	dc := column.FindCol(cols, name)
 	if dc != nil {
@@ -467,7 +465,6 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debugf("addColumn, col:%v, pos:%v, spec.Column:%v", col, position, spec.Column)
 	// insert col into the right place of the column list
 	newCols := make([]*column.Col, 0, len(cols)+1)
 	newCols = append(newCols, cols[:position]...)
@@ -493,11 +490,9 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 	tb := tbl.(*tables.Table)
 	tb.Columns = newCols
 	// TODO: update index
-	// TODO: update default value
-	log.Debugf("addColumn, Columns:%v", tb.Columns)
 	updateDefaultValue(ctx, tb, col)
-	// update infomation schema
 
+	// update infomation schema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		err := d.verifySchemaMetaVersion(txn, schemaMetaVersion)
 		if err != nil {
@@ -513,12 +508,10 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 }
 
 func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) error {
-	log.Warn("update============================== ")
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	it, err := txn.Seek([]byte(t.FirstKey()), nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -540,25 +533,15 @@ func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) e
 			continue
 		}
 
-		val := col.DefaultValue
-		// Check and get timestamp/datetime default value.
-		if (col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) && (col.DefaultValue == nil) {
-			val, err0 = expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
-			if err0 != nil {
-				return errors.Trace(err)
-			}
-		}
-		types.Convert(val, &col.FieldType)
-
-		t.SetColValue(txn, k, val)
+		// TODO: check and get timestamp/datetime/enum default value.
+		types.Convert(col.DefaultValue, &col.FieldType)
+		t.SetColValue(txn, k, col.DefaultValue)
 
 		rk := t.RecordKey(handle, nil)
-		it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err0 != nil {
+		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
 			return errors.Trace(err)
 		}
 	}
-	log.Warnf("update==============================end, err%v", err)
 
 	return nil
 }
