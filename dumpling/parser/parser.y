@@ -168,6 +168,7 @@ import (
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
+	locate		"LOCATE"
 	lock		"LOCK"
 	lower 		"LOWER"
 	lowPriority	"LOW_PRIORITY"
@@ -1639,7 +1640,7 @@ UnReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
+|	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
@@ -2197,6 +2198,21 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+|	"LOCATE" '(' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+		}	
+	}
+|	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+			Pos: $7.(expression.Expression),
+		}	
 	}
 |	"LOWER" '(' Expression ')'
 	{
