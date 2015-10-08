@@ -477,6 +477,7 @@ import (
 	TableRefs 		"table references"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
+	UnionSelect		"Union select/(select)"
 	UnionStmt		"Union statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
@@ -1680,6 +1681,10 @@ InsertRest:
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
+|	'(' ColumnNameListOpt ')' UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
 		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
@@ -1687,6 +1692,10 @@ InsertRest:
 |	SelectStmt
 	{
 		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+	}
+|	UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
@@ -2692,10 +2701,6 @@ QuickOptional:
 		$$ = true
 	}
 
-semiOpt:
-	/* EMPTY */
-|	';'
-
 
 /***************************Prepared Statement Start******************************
  * See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
@@ -2884,9 +2889,13 @@ TableFactor:
 	{
 		$$ = &rsets.TableSource{Source: $1, Name: $2.(string)}
 	}
-|	'(' SelectStmt semiOpt ')' AsOpt
+|	'(' SelectStmt ')' AsOpt
 	{
-		$$ = &rsets.TableSource{Source: $2, Name: $5.(string)}
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
+	}
+|	'(' UnionStmt ')' AsOpt
+	{
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
 |	'(' TableRefs ')'
 	{
@@ -3035,6 +3044,14 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*stmts.SelectStmt)
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		$$ = &subquery.SubQuery{Stmt: s}
+	}
+|	'(' UnionStmt ')'
+	{
+		s := $2.(*stmts.UnionStmt)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -3948,7 +3965,7 @@ StringList:
  * See: https://dev.mysql.com/doc/refman/5.7/en/union.html
  ***********************************************************************************/
 UnionStmt:
-	SelectStmt "UNION" UnionOpt SelectStmt
+	UnionSelect "UNION" UnionOpt SelectStmt
 	{
 		ds := []bool {$3.(bool)}
 		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $4.(*stmts.SelectStmt)}
@@ -3957,13 +3974,43 @@ UnionStmt:
 			Selects:	ss,
 		}
 	}
-|	UnionStmt "UNION" UnionOpt SelectStmt
+|	UnionSelect "UNION" UnionOpt '(' SelectStmt ')' SelectStmtOrder SelectStmtLimit
 	{
-		s := $1.(*stmts.UnionStmt)
-		s.Distincts = append(s.Distincts, $3.(bool))
-		s.Selects = append(s.Selects, $4.(*stmts.SelectStmt))
+		ds := []bool {$3.(bool)}
+		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $5.(*stmts.SelectStmt)}
+		st := &stmts.UnionStmt{
+			Distincts:	ds,
+			Selects:	ss,
+		}
+		if $7 != nil {
+			st.OrderBy = $7.(*rsets.OrderByRset)
+		}
+
+		if $8 != nil {
+			ay := $8.([]interface{})
+			st.Limit = ay[0].(*rsets.LimitRset)
+			st.Offset = ay[1].(*rsets.OffsetRset)
+		}
+		$$ = st
+	}
+|	UnionSelect "UNION" UnionOpt UnionStmt
+	{
+		s := $4.(*stmts.UnionStmt)
+		s.Distincts = append([]bool {$3.(bool)}, s.Distincts...)
+		s.Selects = append([]*stmts.SelectStmt{$1.(*stmts.SelectStmt)}, s.Selects...)
 		$$ = s	
 	}
+
+UnionSelect:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = $2
+	}
+	
 
 UnionOpt:
 	{

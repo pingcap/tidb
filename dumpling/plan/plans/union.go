@@ -44,7 +44,7 @@ func (p *UnionPlan) Explain(w format.Formatter) {
 
 // GetFields implements plan.Plan GetFields interface.
 func (p *UnionPlan) GetFields() []*field.ResultField {
-	return p.Srcs[0].GetFields()
+	return p.RFields
 }
 
 // Filter implements plan.Plan Filter interface.
@@ -101,6 +101,15 @@ func (p *UnionPlan) fetchAll(ctx context.Context) error {
 		}
 	}
 
+	// Update return result types
+	// e,g, for select 'abc' union select 'a', we can only get result type after
+	// executing first select.
+	for i, f := range p.RFields {
+		if f.Col.FieldType.Tp == 0 {
+			f.Col.FieldType = src.GetFields()[i].Col.FieldType
+		}
+	}
+
 	// Fetch results of the following select statements.
 	for i := range p.Distincts {
 		err = p.fetchSrc(ctx, i, t)
@@ -115,8 +124,7 @@ func (p *UnionPlan) fetchSrc(ctx context.Context, i int, t memkv.Temp) error {
 	src := p.Srcs[i+1]
 	distinct := p.Distincts[i]
 
-	// Use the ResultFields of the first select statement as the final ResultFields
-	rfs := p.Srcs[0].GetFields()
+	rfs := p.GetFields()
 	if len(src.GetFields()) != len(rfs) {
 		return errors.New("The used SELECT statements have a different number of columns")
 	}
@@ -125,6 +133,7 @@ func (p *UnionPlan) fetchSrc(ctx context.Context, i int, t memkv.Temp) error {
 		if row == nil || err != nil {
 			return errors.Trace(err)
 		}
+
 		srcRfs := src.GetFields()
 		for i := range row.Data {
 			// The column value should be casted as the same type of the first select statement in corresponding position
@@ -143,11 +152,23 @@ func (p *UnionPlan) fetchSrc(ctx context.Context, i int, t memkv.Temp) error {
 			if srcRf.Flen > rf.Col.Flen {
 				rf.Col.Flen = srcRf.Col.Flen
 			}
-			row.Data[i], err = types.Convert(row.Data[i], &rf.Col.FieldType)
+			if rf.Col.FieldType.Tp > 0 {
+				row.Data[i], err = types.Convert(row.Data[i], &rf.Col.FieldType)
+			} else {
+				// First select result doesn't contain enough type information, e,g, select null union select 1.
+				// We cannot get the proper data type for select null.
+				// Now we just use the first correct return data types with following select.
+				// TODO: Try to merge all data types for all select like select null union select 1 union select "abc"
+				if tp := srcRf.Col.FieldType.Tp; tp > 0 {
+					rf.Col.FieldType.Tp = tp
+				}
+			}
+
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
+
 		if distinct {
 			// distinct union, check duplicate
 			v, getErr := t.Get(row.Data)
