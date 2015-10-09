@@ -4200,7 +4200,6 @@ PrivLevel:
 		$$ = &coldef.GrantLevel {
 			Level: coldef.GrantLevelGlobal,
 		}		
-	
 	}
 | 	Identifier '.' '*'
 	{
@@ -4224,6 +4223,5 @@ PrivLevel:
 			TableName: $1.(string),
 		}		
 	}
-
 %%
 
