@@ -74,7 +74,7 @@ func (e *Extract) String() string {
 	return fmt.Sprintf("EXTRACT(%s FROM %s)", strings.ToUpper(e.Unit), e.Date)
 }
 
-// Accept implements the Expression Accept interface.
+// Accept implements the Visitor Accept interface.
 func (e *Extract) Accept(v Visitor) (Expression, error) {
 	return v.VisitExtract(e)
 }
