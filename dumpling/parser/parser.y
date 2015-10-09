@@ -2172,13 +2172,9 @@ FunctionCallNonKeyword:
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
 	{
-		args := []expression.Expression{expression.Value{Val:$3.(string)}, $5.(expression.Expression)}
-		var err error
-		$$, err = expression.NewCall($1.(string), args, false)
-		if err != nil {
-			l := yylex.(*lexer)
-			l.err(err)
-			return 1
+		$$ = &expression.Extract{
+			Unit: $3.(string), 
+			Date: $5.(expression.Expression),
 		}
 	}
 |	"FOUND_ROWS" '(' ')'
