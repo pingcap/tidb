@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -254,7 +253,6 @@ func filterSpans(origin []*indexSpan, filter []*indexSpan) []*indexSpan {
 			if newSpan == nil {
 				continue
 			}
-			log.Debugf("span %v", *newSpan)
 			newSpans = append(newSpans, newSpan)
 		}
 	}

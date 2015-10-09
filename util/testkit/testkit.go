@@ -22,7 +22,7 @@ type Result struct {
 	c       *check.C
 }
 
-// NewTestKit returns a new *TestKit
+// NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	return &TestKit{
 		c:     c,
