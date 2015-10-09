@@ -64,6 +64,8 @@ var Funcs = map[string]Func{
 	"sum":          {builtinSum, 1, 1, false, true},
 
 	// time functions
+	"curdate":           {builtinCurrentDate, 0, 0, false, false},
+	"current_date":      {builtinCurrentDate, 0, 0, false, false},
 	"current_timestamp": {builtinNow, 0, 1, false, false},
 	"date":              {builtinDate, 8, 8, true, false},
 	"day":               {builtinDay, 1, 1, true, false},
