@@ -106,6 +106,8 @@ import (
 	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
+	curDate 	"CURDATE"
+	currentDate 	"CURRENT_DATE"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -477,6 +479,7 @@ import (
 	TableRefs 		"table references"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
+	UnionSelect		"Union select/(select)"
 	UnionStmt		"Union statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
@@ -800,6 +803,12 @@ Constraint:
 |	"COMMENT" stringLit
 	{
 		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrComment}
+	}
+|	"CHECK" '(' Expression ')'
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/create-table.html
+		// The CHECK clause is parsed but ignored by all storage engines.
+		$$ = nil
 	}
 
 ConstraintElem:
@@ -1628,7 +1637,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL"
+|	"NATIONAL" | "ROW"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -1674,6 +1683,10 @@ InsertRest:
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
+|	'(' ColumnNameListOpt ')' UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
 		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
@@ -1681,6 +1694,10 @@ InsertRest:
 |	SelectStmt
 	{
 		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+	}
+|	UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
@@ -1901,7 +1918,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -1917,6 +1934,16 @@ FunctionCallConflict:
 |	"CURRENT_USER"
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		x := yylex.(*lexer)
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
+		if err != nil {
+			x.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_DATE"
+	{
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
@@ -2045,6 +2072,16 @@ FunctionCallNonKeyword:
 	{
 		var err error
 		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"CURDATE" '(' ')'
+	{
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2686,10 +2723,6 @@ QuickOptional:
 		$$ = true
 	}
 
-semiOpt:
-	/* EMPTY */
-|	';'
-
 
 /***************************Prepared Statement Start******************************
  * See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
@@ -2878,9 +2911,13 @@ TableFactor:
 	{
 		$$ = &rsets.TableSource{Source: $1, Name: $2.(string)}
 	}
-|	'(' SelectStmt semiOpt ')' AsOpt
+|	'(' SelectStmt ')' AsOpt
 	{
-		$$ = &rsets.TableSource{Source: $2, Name: $5.(string)}
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
+	}
+|	'(' UnionStmt ')' AsOpt
+	{
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
 |	'(' TableRefs ')'
 	{
@@ -2921,10 +2958,6 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = rsets.RightJoin
-	}
-|	"FULL"
-	{
-		$$ = rsets.FullJoin
 	}
 
 OuterOpt:
@@ -3029,6 +3062,14 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*stmts.SelectStmt)
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		$$ = &subquery.SubQuery{Stmt: s}
+	}
+|	'(' UnionStmt ')'
+	{
+		s := $2.(*stmts.UnionStmt)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -3838,6 +3879,7 @@ DateAndTimeType:
 |	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
+		x.Flen = $2.(int)
 		$$ = x
 	}
 
@@ -3941,7 +3983,7 @@ StringList:
  * See: https://dev.mysql.com/doc/refman/5.7/en/union.html
  ***********************************************************************************/
 UnionStmt:
-	SelectStmt "UNION" UnionOpt SelectStmt
+	UnionSelect "UNION" UnionOpt SelectStmt
 	{
 		ds := []bool {$3.(bool)}
 		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $4.(*stmts.SelectStmt)}
@@ -3950,13 +3992,43 @@ UnionStmt:
 			Selects:	ss,
 		}
 	}
-|	UnionStmt "UNION" UnionOpt SelectStmt
+|	UnionSelect "UNION" UnionOpt '(' SelectStmt ')' SelectStmtOrder SelectStmtLimit
 	{
-		s := $1.(*stmts.UnionStmt)
-		s.Distincts = append(s.Distincts, $3.(bool))
-		s.Selects = append(s.Selects, $4.(*stmts.SelectStmt))
+		ds := []bool {$3.(bool)}
+		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $5.(*stmts.SelectStmt)}
+		st := &stmts.UnionStmt{
+			Distincts:	ds,
+			Selects:	ss,
+		}
+		if $7 != nil {
+			st.OrderBy = $7.(*rsets.OrderByRset)
+		}
+
+		if $8 != nil {
+			ay := $8.([]interface{})
+			st.Limit = ay[0].(*rsets.LimitRset)
+			st.Offset = ay[1].(*rsets.OffsetRset)
+		}
+		$$ = st
+	}
+|	UnionSelect "UNION" UnionOpt UnionStmt
+	{
+		s := $4.(*stmts.UnionStmt)
+		s.Distincts = append([]bool {$3.(bool)}, s.Distincts...)
+		s.Selects = append([]*stmts.SelectStmt{$1.(*stmts.SelectStmt)}, s.Selects...)
 		$$ = s	
 	}
+
+UnionSelect:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = $2
+	}
+	
 
 UnionOpt:
 	{

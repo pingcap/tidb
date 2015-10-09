@@ -833,6 +833,14 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	match(c, rows[1], 1, 1, 1, 1)
 	match(c, rows[2], 2, 2, 2, nil)
 	match(c, rows[3], 3, 3, nil, 3)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c float(8))")
+	mustExecSQL(c, se, "insert into t values (3.12)")
+	r = mustExecSQL(c, se, "select * from t")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 3.12)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
@@ -904,6 +912,16 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	last := time.Now().Format(mysql.TimeFormat)
 	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
 	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	for _, t := range row {
+		n, ok := t.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(n.String(), GreaterEqual, last)
+	}
+
+	last = time.Now().Format(mysql.DateFormat)
+	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
+	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	for _, t := range row {
 		n, ok := t.(mysql.Time)
@@ -1025,6 +1043,21 @@ func (s *testSessionSuite) TestDatabase(c *C) {
 	mustExecSQL(c, se, "create schema xxx")
 	mustExecSQL(c, se, "create schema if not exists xxx")
 	mustExecSQL(c, se, "drop schema if exists xxx")
+}
+
+func (s *testSessionSuite) TestWhereLike(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t(c int)")
+	mustExecSQL(c, se, "insert into t values (1),(2),(3),(-11),(11),(123),(211),(210)")
+	mustExecSQL(c, se, "insert into t values ()")
+
+	r := mustExecSQL(c, se, "select c from t where c like '%1%'")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 6)
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {

@@ -303,6 +303,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
+		{"select current_date, current_date(), curdate()", true},
+
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -317,6 +319,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select (1, 1,)", false},
 		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
 		{"Select (1, 1) > (1, 1)", true},
+		{"create table t (row int)", true},
 
 		// For SHOW statement
 		{"SHOW VARIABLES LIKE 'character_set_results'", true},
@@ -469,6 +472,30 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For quote identifier
 		{"select `a`, `a.b`, `a b` from t", true},
+
+		// For union
+		{"select c1 from t1 union select c2 from t2", true},
+		{"select c1 from t1 union (select c2 from t2)", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1", true},
+		{"select c1 from t1 union select c2 from t2 order by c2", true},
+		{"select c1 from t1 union (select c2 from t2) limit 1", true},
+		{"select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1 limit 1", true},
+		{"(select c1 from t1) union distinct select c2 from t2", true},
+		{"(select c1 from t1) union all select c2 from t2", true},
+		{"(select c1 from t1) union (select c2 from t2) order by c1 union select c3 from t3", false},
+		{"(select c1 from t1) union (select c2 from t2) limit 1 union select c3 from t3", false},
+		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 limit 1", true},
+		{"select (select 1 union select 1) as a", true},
+		{"select * from (select 1 union select 2) as a", true},
+		{"insert into t select c1 from t1 union select c2 from t2", true},
+		{"insert into t (c) select c1 from t1 union select c2 from t2", true},
+
+		// For unquoted identifier
+		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
+
+		// For check clause
+		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
 	}
 
 	for _, t := range table {
@@ -492,7 +519,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national",
+		"max_rows", "min_rows", "national", "row",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
