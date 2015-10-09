@@ -17,6 +17,7 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression/builtin"
 )
 
 var _ = Suite(&testCallSuite{})
@@ -73,6 +74,23 @@ func (s *testCallSuite) TestCall(c *C) {
 	c.Assert(f.Clone(), NotNil)
 	_, err = f.Eval(nil, nil)
 	c.Assert(err, NotNil)
+
+	f, err = NewCall("sum", []Expression{Value{float64(1)}}, true)
+	c.Assert(err, IsNil)
+	m1 := map[interface{}]interface{}{}
+	m2 := map[interface{}]interface{}{}
+	f.Eval(nil, m1)
+	f.Eval(nil, m1)
+	f.Eval(nil, m2)
+	m1[builtin.ExprAggDone] = struct{}{}
+	m2[builtin.ExprAggDone] = struct{}{}
+	v, err := f.Eval(nil, m1)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float64(1))
+
+	v, err = f.Eval(nil, m2)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, float64(1))
 }
 
 func (s *testCallSuite) TestBadNArgs(c *C) {

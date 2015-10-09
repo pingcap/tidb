@@ -126,6 +126,11 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 		a[i] = v
 	}
 
+	if c.distinctKey == nil {
+		// create an unique distinct key if not.
+		c.distinctKey = new(int)
+	}
+
 	if args != nil {
 		args[builtin.ExprEvalFn] = c
 		args[builtin.ExprEvalArgCtx] = ctx
