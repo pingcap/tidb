@@ -243,6 +243,8 @@ func Cast(val interface{}, target *FieldType) (v interface{}) {
 			dur, _ = dur.RoundFrac(fsp)
 		case string:
 			dur, _ = mysql.ParseDuration(x, fsp)
+		case *DataItem:
+			return Cast(x.Data, target)
 		}
 		return dur
 	case mysql.TypeDatetime, mysql.TypeDate:
@@ -263,6 +265,8 @@ func Cast(val interface{}, target *FieldType) (v interface{}) {
 			t, _ = mysql.ParseTime(x, tp, fsp)
 		case int64:
 			t, _ = mysql.ParseTimeFromNum(x, tp, fsp)
+		case *DataItem:
+			return Cast(x.Data, target)
 		}
 		return t
 	case mysql.TypeLonglong:
@@ -346,6 +350,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return t.RoundFrac(fsp)
 		case string:
 			return mysql.ParseDuration(x, fsp)
+		case *DataItem:
+			return Convert(x.Data, target)
 		default:
 			return invConv(val, tp)
 		}
@@ -371,6 +377,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return mysql.ParseTime(x, tp, fsp)
 		case int64:
 			return mysql.ParseTimeFromNum(x, tp, fsp)
+		case *DataItem:
+			return Convert(x.Data, target)
 		default:
 			return invConv(val, tp)
 		}
@@ -421,6 +429,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return int64(x.Year()), nil
 		case mysql.Duration:
 			return int64(time.Now().Year()), nil
+		case *DataItem:
+			return Convert(x.Data, target)
 		default:
 			intVal, err = ToInt64(x)
 		}
@@ -442,6 +452,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			e, err = mysql.ParseEnumName(target.Elems, x)
 		case []byte:
 			e, err = mysql.ParseEnumName(target.Elems, string(x))
+		case *DataItem:
+			return Convert(x.Data, target)
 		default:
 			var number uint64
 			number, err = ToUint64(x)
@@ -465,6 +477,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			s, err = mysql.ParseSetName(target.Elems, x)
 		case []byte:
 			s, err = mysql.ParseSetName(target.Elems, string(x))
+		case *DataItem:
+			return Convert(x.Data, target)
 		default:
 			var number uint64
 			number, err = ToUint64(x)
@@ -592,6 +606,8 @@ func ToUint64(value interface{}) (uint64, error) {
 		return uint64(v.ToNumber()), nil
 	case mysql.Set:
 		return uint64(v.ToNumber()), nil
+	case *DataItem:
+		return ToUint64(v.Data)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
@@ -638,6 +654,8 @@ func ToInt64(value interface{}) (int64, error) {
 		return int64(v.ToNumber()), nil
 	case mysql.Set:
 		return int64(v.ToNumber()), nil
+	case *DataItem:
+		return ToInt64(v.Data)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
 	}
@@ -682,6 +700,8 @@ func ToFloat64(value interface{}) (float64, error) {
 		return v.ToNumber(), nil
 	case mysql.Set:
 		return v.ToNumber(), nil
+	case *DataItem:
+		return ToFloat64(v.Data)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", value, value)
 	}
@@ -701,6 +721,8 @@ func ToDecimal(value interface{}) (mysql.Decimal, error) {
 		return v.ToNumber(), nil
 	case mysql.Duration:
 		return v.ToNumber(), nil
+	case *DataItem:
+		return ToDecimal(v.Data)
 	default:
 		return mysql.ConvertToDecimal(value)
 	}
@@ -742,6 +764,8 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case mysql.Set:
 		return v.String(), nil
+	case *DataItem:
+		return ToString(v.Data)
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
 	}
@@ -799,6 +823,8 @@ func ToBool(value interface{}) (int64, error) {
 		isZero = (v.ToNumber() == 0)
 	case mysql.Set:
 		isZero = (v.ToNumber() == 0)
+	case *DataItem:
+		return ToBool(v.Data)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", value, value)
 	}
