@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"

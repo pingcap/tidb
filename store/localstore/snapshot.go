@@ -31,7 +31,7 @@ var (
 )
 
 type dbSnapshot struct {
-	engine.Snapshot
+	db      engine.DB
 	version kv.Version // transaction begin version
 }
 
@@ -54,7 +54,10 @@ func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
 
 	// get raw iterator
-	it := s.Snapshot.NewIterator(startKey)
+	it, err := s.db.Seek(startKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	defer it.Release()
 
 	var rawKey []byte
@@ -100,12 +103,7 @@ func (s *dbSnapshot) MvccRelease() {
 	s.Release()
 }
 
-func (s *dbSnapshot) Release() {
-	if s.Snapshot != nil {
-		s.Snapshot.Release()
-		s.Snapshot = nil
-	}
-}
+func (s *dbSnapshot) Release() {}
 
 type dbIter struct {
 	s               *dbSnapshot
@@ -134,7 +132,10 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 	var retErr error
 	var engineIter engine.Iterator
 	for {
-		engineIter = it.s.Snapshot.NewIterator(encKey)
+		engineIter, retErr = it.s.db.Seek(encKey)
+		if retErr != nil {
+			return nil, errors.Trace(retErr)
+		}
 		// Check if overflow
 		if !engineIter.Next() {
 			it.valid = false
