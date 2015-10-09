@@ -17,8 +17,8 @@ import (
 	"os"
 	"path"
 
+	"github.com/boltdb/bolt"
 	"github.com/juju/errors"
-	"github.com/ngaut/bolt"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/localstore/engine"
 )
@@ -53,12 +53,12 @@ func (d *db) Get(key []byte) ([]byte, error) {
 	return value, errors.Trace(err)
 }
 
-func (d *db) GetSnapshot() (engine.Snapshot, error) {
+func (d *db) Seek(startKey []byte) (engine.Iterator, error) {
 	tx, err := d.DB.Begin(false)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	return &snapshot{tx}, nil
+	return &iterator{tx: tx, key: startKey}, nil
 }
 
 func (d *db) NewBatch() engine.Batch {
@@ -95,33 +95,6 @@ func (d *db) Close() error {
 	return d.DB.Close()
 }
 
-type snapshot struct {
-	*bolt.Tx
-}
-
-func (s *snapshot) Get(key []byte) ([]byte, error) {
-	b := s.Tx.Bucket(bucketName)
-	v := b.Get(key)
-	if v == nil {
-		return nil, nil
-	}
-
-	value := append([]byte(nil), v...)
-
-	return value, nil
-}
-
-func (s *snapshot) NewIterator(startKey []byte) engine.Iterator {
-	return &iterator{tx: s.Tx, key: startKey}
-}
-
-func (s *snapshot) Release() {
-	err := s.Tx.Rollback()
-	if err != nil {
-		log.Errorf("commit err %v", err)
-	}
-}
-
 type iterator struct {
 	tx *bolt.Tx
 	*bolt.Cursor
@@ -154,7 +127,10 @@ func (i *iterator) Value() []byte {
 }
 
 func (i *iterator) Release() {
-
+	err := i.tx.Rollback()
+	if err != nil {
+		log.Errorf("commit err %v", err)
+	}
 }
 
 type write struct {
