@@ -39,8 +39,9 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-// KeyLastItem is the last item in key.
-const KeyLastItem = 3
+// The key has tableID, rowID/idx, columnID three parts.
+// keyLastItem is the last item in key.
+const keyLastItem = 3
 
 // Table implements table.Table interface.
 type Table struct {
@@ -138,11 +139,11 @@ func ColumnID(key []byte) (interface{}, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if len(k) != KeyLastItem {
+	if len(k) != keyLastItem {
 		return 0, errors.New("column not exist")
 	}
 
-	return k[KeyLastItem-1], nil
+	return k[keyLastItem-1], nil
 }
 
 func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error) {
@@ -285,10 +286,10 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []inte
 func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) error {
 	v, err := t.EncodeValue(data)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if err := txn.Set(key, v); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
