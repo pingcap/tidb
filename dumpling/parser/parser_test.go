@@ -496,6 +496,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For check clause
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
+
+		// For as
+		{"select 1 as a, 1 as `a`, 1 as \"a\", 1 as 'a'", true},
+		{`select 1 as a, 1 as "a", 1 as 'a'`, true},
+		{`select * from t as "a"`, false},
 	}
 
 	for _, t := range table {
