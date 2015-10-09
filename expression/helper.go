@@ -99,6 +99,8 @@ func FastEval(v interface{}) interface{} {
 		}
 		m := map[interface{}]interface{}{}
 		return Eval(x, nil, m)
+	case *types.DataItem:
+		return FastEval(x.Data)
 	default:
 		return nil
 	}
@@ -115,6 +117,10 @@ func Eval(v Expression, ctx context.Context, env map[interface{}]interface{}) (y
 	y, err = v.Eval(ctx, env)
 	if err != nil {
 		panic(err) // panic ok here
+	}
+	x, ok := y.(*types.DataItem)
+	if ok {
+		y = x.Data
 	}
 	return
 }

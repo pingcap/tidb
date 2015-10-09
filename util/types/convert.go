@@ -294,6 +294,10 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	if val == nil {
 		return nil, nil
 	}
+	vdi, ok := val.(*DataItem)
+	if ok {
+		return Convert(vdi.Data, target)
+	}
 	switch tp { // TODO: implement mysql types convert when "CAST() AS" syntax are supported.
 	case mysql.TypeFloat:
 		x, err := ToFloat64(val)
@@ -350,8 +354,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return t.RoundFrac(fsp)
 		case string:
 			return mysql.ParseDuration(x, fsp)
-		case *DataItem:
-			return Convert(x.Data, target)
 		default:
 			return invConv(val, tp)
 		}
@@ -377,8 +379,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return mysql.ParseTime(x, tp, fsp)
 		case int64:
 			return mysql.ParseTimeFromNum(x, tp, fsp)
-		case *DataItem:
-			return Convert(x.Data, target)
 		default:
 			return invConv(val, tp)
 		}
@@ -429,8 +429,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return int64(x.Year()), nil
 		case mysql.Duration:
 			return int64(time.Now().Year()), nil
-		case *DataItem:
-			return Convert(x.Data, target)
 		default:
 			intVal, err = ToInt64(x)
 		}
@@ -452,8 +450,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			e, err = mysql.ParseEnumName(target.Elems, x)
 		case []byte:
 			e, err = mysql.ParseEnumName(target.Elems, string(x))
-		case *DataItem:
-			return Convert(x.Data, target)
 		default:
 			var number uint64
 			number, err = ToUint64(x)
@@ -477,8 +473,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			s, err = mysql.ParseSetName(target.Elems, x)
 		case []byte:
 			s, err = mysql.ParseSetName(target.Elems, string(x))
-		case *DataItem:
-			return Convert(x.Data, target)
 		default:
 			var number uint64
 			number, err = ToUint64(x)

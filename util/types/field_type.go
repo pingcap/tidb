@@ -100,3 +100,7 @@ type DataItem struct {
 	Type *FieldType
 	Data interface{}
 }
+
+func (di *DataItem) String() string {
+	return fmt.Sprintf("%s", di.Data)
+}
