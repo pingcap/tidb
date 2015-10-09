@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -170,12 +171,7 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			return nil, errors.Trace(err)
 		}
 		tempExpr := r.On.Clone()
-		visitor := expression.NewIdentEvalVisitor()
-		fields := r.Left.GetFields()
-		for i, f := range fields {
-			identName := field.JoinQualifiedName("", f.OrgTableName, f.ColumnInfo.Name.L)
-			visitor.Set(identName, leftRow.Data[i])
-		}
+		visitor := NewIdentEvalVisitor(r.Left.GetFields(), leftRow.Data)
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -210,12 +206,7 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 		}
 
 		tempExpr := r.On.Clone()
-		visitor := expression.NewIdentEvalVisitor()
-		fields := r.Right.GetFields()
-		for i, f := range fields {
-			identName := field.JoinQualifiedName("", f.OrgTableName, f.ColumnInfo.Name.L)
-			visitor.Set(identName, rightRow.Data[i])
-		}
+		visitor := NewIdentEvalVisitor(r.Right.GetFields(), rightRow.Data)
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -304,12 +295,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			}
 			if r.On != nil {
 				tempExpr := r.On.Clone()
-				visitor := expression.NewIdentEvalVisitor()
-				fields := r.Left.GetFields()
-				for i, f := range fields {
-					identName := field.JoinQualifiedName("", f.OrgTableName, f.ColumnInfo.Name.L)
-					visitor.Set(identName, r.curRow.Data[i])
-				}
+				visitor := NewIdentEvalVisitor(r.Left.GetFields(), r.curRow.Data)
 				_, err = tempExpr.Accept(visitor)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -367,4 +353,64 @@ func (r *JoinPlan) Close() error {
 		r.Right.Close()
 	}
 	return r.Left.Close()
+}
+
+// IdentEvalVisitor converts Ident expression to value expression.
+type IdentEvalVisitor struct {
+	expression.BaseVisitor
+	fields []*field.ResultField
+	row    []interface{}
+}
+
+// NewIdentEvalVisitor creates a new IdentEvalVisitor.
+func NewIdentEvalVisitor(fields []*field.ResultField, row []interface{}) *IdentEvalVisitor {
+	iev := &IdentEvalVisitor{fields: fields, row: row}
+	iev.BaseVisitor.V = iev
+	return iev
+}
+
+// VisitIdent implements Visitor interface.
+func (iev *IdentEvalVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	v, err := GetIdentValue(i.L, iev.fields, iev.row, field.CheckFieldFlag)
+	if err != nil {
+		return i, nil
+	}
+	return expression.Value{Val: v}, nil
+}
+
+// VisitBinaryOperation swaps the right side identifier to left side if left side expression is static.
+// So it can be used in index plan.
+func (iev *IdentEvalVisitor) VisitBinaryOperation(binop *expression.BinaryOperation) (expression.Expression, error) {
+	var err error
+	binop.L, err = binop.L.Accept(iev)
+	if err != nil {
+		return binop, errors.Trace(err)
+	}
+	binop.R, err = binop.R.Accept(iev)
+	if err != nil {
+		return binop, errors.Trace(err)
+	}
+
+	if binop.L.IsStatic() {
+		if _, ok := binop.R.(*expression.Ident); ok {
+			switch binop.Op {
+			case opcode.EQ:
+			case opcode.NE:
+			case opcode.NullEQ:
+			case opcode.LT:
+				binop.Op = opcode.GE
+			case opcode.LE:
+				binop.Op = opcode.GT
+			case opcode.GE:
+				binop.Op = opcode.LT
+			case opcode.GT:
+				binop.Op = opcode.LE
+			default:
+				// unsupported opcode
+				return binop, nil
+			}
+			binop.L, binop.R = binop.R, binop.L
+		}
+	}
+	return binop, nil
 }
