@@ -38,8 +38,6 @@ const (
 	LeftJoin = "LEFT"
 	// RightJoin returns all rows from the right table (table2), with the matching rows in the left table (table1). The result is NULL in the left side when there is no match.
 	RightJoin = "RIGHT"
-	// FullJoin returns all rows from the left table (table1) and from the right table (table2).
-	FullJoin = "FULL"
 )
 
 // JoinPlan handles JOIN query.
