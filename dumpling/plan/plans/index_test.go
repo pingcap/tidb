@@ -51,7 +51,6 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	p.store = store
 	se, _ := tidb.CreateSession(store)
-	c.Assert(err, IsNil)
 	p.ctx = se.(context.Context)
 	p.cols = []*column.Col{
 		{
