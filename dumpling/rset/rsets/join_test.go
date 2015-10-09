@@ -64,10 +64,6 @@ func (s *testJoinRsetSuite) TestJoinTypeString(c *C) {
 	str = joinType.String()
 	c.Assert(str, Equals, plans.RightJoin)
 
-	joinType = rsets.FullJoin
-	str = joinType.String()
-	c.Assert(str, Equals, plans.FullJoin)
-
 	joinType = rsets.JoinType(0)
 	str = joinType.String()
 	c.Assert(str, Equals, "Unknown")

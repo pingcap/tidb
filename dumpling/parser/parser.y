@@ -106,6 +106,8 @@ import (
 	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
+	curDate 	"CURDATE"
+	currentDate 	"CURRENT_DATE"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -1636,7 +1638,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL"
+|	"NATIONAL" | "ROW"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -1917,7 +1919,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -1933,6 +1935,16 @@ FunctionCallConflict:
 |	"CURRENT_USER"
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		x := yylex.(*lexer)
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
+		if err != nil {
+			x.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_DATE"
+	{
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
@@ -2061,6 +2073,16 @@ FunctionCallNonKeyword:
 	{
 		var err error
 		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"CURDATE" '(' ')'
+	{
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2952,10 +2974,6 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = rsets.RightJoin
-	}
-|	"FULL"
-	{
-		$$ = rsets.FullJoin
 	}
 
 OuterOpt:

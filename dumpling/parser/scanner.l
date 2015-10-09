@@ -278,6 +278,8 @@ convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
+curdate 	{c}{u}{r}{d}{a}{t}{e}
+current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
@@ -596,6 +598,10 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return count
 {create}		return create
 {cross}			return cross
+{curdate}		lval.item = string(l.val)
+			return curDate
+{current_date}		lval.item = string(l.val)
+			return currentDate
 {current_user}		lval.item = string(l.val)
 			return currentUser
 {database}		lval.item = string(l.val)
