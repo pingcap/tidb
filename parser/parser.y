@@ -2959,10 +2959,6 @@ JoinType:
 	{
 		$$ = rsets.RightJoin
 	}
-|	"FULL"
-	{
-		$$ = rsets.FullJoin
-	}
 
 OuterOpt:
 	{
