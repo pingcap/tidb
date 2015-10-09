@@ -1537,7 +1537,7 @@ Field1:
 	}
 
 AsOpt:
-	identifier
+	Identifier
 	{
 		// TODO: check potential bug
 		$$ = $1
@@ -2943,7 +2943,7 @@ TableIdentOpt:
 	}
 
 TableAsOpt:
-	identifier
+	Identifier
 	{
 		// TODO: check potential bug
 		$$ = $1
