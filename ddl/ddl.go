@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // Pre-defined errors
@@ -490,7 +489,9 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	tb := tbl.(*tables.Table)
 	tb.Columns = newCols
 	// TODO: update index
-	updateDefaultValue(ctx, tb, col)
+	if err = updateDefaultValue(ctx, tb, col); err != nil {
+		return errors.Trace(err)
+	}
 
 	// update infomation schema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
@@ -522,23 +523,24 @@ func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) e
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
 		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
 		if err0 != nil {
-			return errors.Trace(err)
+			return errors.Trace(err0)
 		}
 		k := t.RecordKey(handle, col)
 		colID, err0 := tables.ColumnID(k)
 		if err0 != nil {
-			return errors.Trace(err)
+			return errors.Trace(err0)
 		}
 		if colID != col.ID {
 			continue
 		}
 
-		types.Convert(col.DefaultValue, &col.FieldType)
-		t.SetColValue(txn, k, col.DefaultValue)
+		if err0 = t.SetColValue(txn, k, col.DefaultValue); err0 != nil {
+			return errors.Trace(err0)
+		}
 
 		rk := t.RecordKey(handle, nil)
 		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
-			return errors.Trace(err)
+			return errors.Trace(err0)
 		}
 	}
 

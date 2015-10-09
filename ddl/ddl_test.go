@@ -82,6 +82,7 @@ func (ts *testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 	_, err = tb.AddRecord(ctx, []interface{}{1})
+	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ctx, []interface{}{2})
 	c.Assert(err, IsNil)
 	alterStmt := statement(`alter table t2 add b enum("bbb") first`).(*stmts.AlterTableStmt)
