@@ -18,6 +18,7 @@
 package builtin
 
 import (
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -312,4 +313,93 @@ func checkFsp(arg interface{}) (int, error) {
 		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
 	return int(fsp), nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
+func builtinExtract(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	unit, ok := args[0].(string)
+	if !ok {
+		return nil, errors.Errorf("invalid unit type %T, must string", args[0])
+	}
+
+	v, err := convertToTime(args[1], mysql.TypeDatetime)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	t := v.(mysql.Time)
+	if t.IsZero() {
+		return 0, nil
+	}
+
+	// TODO: add more check
+	n, err := extractTime(unit, t)
+	return int64(n), errors.Trace(err)
+}
+
+func extractTime(unit string, t mysql.Time) (int, error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return t.Nanosecond() / 1000, nil
+	case "SECOND":
+		return t.Second(), nil
+	case "MINUTE":
+		return t.Minute(), nil
+	case "HOUR":
+		return t.Hour(), nil
+	case "DAY":
+		return t.Day(), nil
+	case "WEEK":
+		_, week := t.ISOWeek()
+		return week, nil
+	case "MONTH":
+		return int(t.Month()), nil
+	case "QUARTER":
+		m := int(t.Month())
+		// 1 - 3 -> 1
+		// 4 - 6 -> 2
+		// 7 - 9 -> 3
+		// 10 - 12 -> 4
+		return (m + 2) / 3, nil
+	case "YEAR":
+		return t.Year(), nil
+	case "SECOND_MICROSECOND":
+		return t.Second()*1000000 + t.Nanosecond()/1000, nil
+	case "MINUTE_MICROSECOND":
+		_, m, s := t.Clock()
+		return m*100000000 + s*1000000 + t.Nanosecond()/1000, nil
+	case "MINUTE_SECOND":
+		_, m, s := t.Clock()
+		return m*100 + s, nil
+	case "HOUR_MICROSECOND":
+		h, m, s := t.Clock()
+		return h*10000000000 + m*100000000 + s*1000000 + t.Nanosecond()/1000, nil
+	case "HOUR_SECOND":
+		h, m, s := t.Clock()
+		return h*10000 + m*100 + s, nil
+	case "HOUR_MINUTE":
+		h, m, _ := t.Clock()
+		return h*100 + m, nil
+	case "DAY_MICROSECOND":
+		h, m, s := t.Clock()
+		d := t.Day()
+		return (d*1000000+h*10000+m*100+s)*1000000 + t.Nanosecond()/1000, nil
+	case "DAY_SECOND":
+		h, m, s := t.Clock()
+		d := t.Day()
+		return d*1000000 + h*10000 + m*100 + s, nil
+	case "DAY_MINUTE":
+		h, m, _ := t.Clock()
+		d := t.Day()
+		return d*10000 + h*100 + m, nil
+	case "DAY_HOUR":
+		h, _, _ := t.Clock()
+		d := t.Day()
+		return d*100 + h, nil
+	case "YEAR_MONTH":
+		y, m, _ := t.Date()
+		return y*100 + int(m), nil
+	default:
+		return 0, errors.Errorf("invalid unit %s", unit)
+	}
 }
