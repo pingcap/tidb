@@ -478,6 +478,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return invConv(val, tp)
 		}
 		return s, nil
+	case mysql.TypeNull:
+		return nil, nil
 	default:
 		panic("should never happen")
 	}
