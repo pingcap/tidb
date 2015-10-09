@@ -422,6 +422,8 @@ func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, e
 			return types.AddInt64(x, y)
 		case uint64:
 			return types.AddInteger(y, x)
+		case *types.DataItem:
+			return evalPlus(x, y.Data)
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -429,17 +431,25 @@ func (o *BinaryOperation) evalPlus(a interface{}, b interface{}) (interface{}, e
 			return types.AddInteger(x, y)
 		case uint64:
 			return types.AddUint64(x, y)
+		case *types.DataItem:
+			return evalPlus(x, y.Data)
 		}
 	case float64:
 		switch y := b.(type) {
 		case float64:
 			return x + y, nil
+		case *types.DataItem:
+			return evalPlus(x, y.Data)
 		}
 	case mysql.Decimal:
 		switch y := b.(type) {
 		case mysql.Decimal:
 			return x.Add(y), nil
+		case *types.DataItem:
+			return evalPlus(x, y.Data)
 		}
+	case *types.DataItem:
+		return evalPlus(x.Data, b)
 	}
 
 	return types.InvOp2(a, b, opcode.Plus)
@@ -453,6 +463,8 @@ func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, 
 			return types.SubInt64(x, y)
 		case uint64:
 			return types.SubIntWithUint(x, y)
+		case *types.DataItem:
+			return evalMinus(x, y.Data)
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -460,17 +472,25 @@ func (o *BinaryOperation) evalMinus(a interface{}, b interface{}) (interface{}, 
 			return types.SubUintWithInt(x, y)
 		case uint64:
 			return types.SubUint64(x, y)
+		case *types.DataItem:
+			return evalMinus(x, y.Data)
 		}
 	case float64:
 		switch y := b.(type) {
 		case float64:
 			return x - y, nil
+		case *types.DataItem:
+			return evalMinus(x, y.Data)
 		}
 	case mysql.Decimal:
 		switch y := b.(type) {
 		case mysql.Decimal:
 			return x.Sub(y), nil
+		case *types.DataItem:
+			return evalMinus(x, y.Data)
 		}
+	case *types.DataItem:
+		return evalMinus(x.Data, b)
 	}
 
 	return types.InvOp2(a, b, opcode.Minus)
@@ -484,6 +504,8 @@ func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, er
 			return types.MulInt64(x, y)
 		case uint64:
 			return types.MulInteger(y, x)
+		case *types.DataItem:
+			return evalMul(x, y.Data)
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -491,17 +513,25 @@ func (o *BinaryOperation) evalMul(a interface{}, b interface{}) (interface{}, er
 			return types.MulInteger(x, y)
 		case uint64:
 			return types.MulUint64(x, y)
+		case *types.DataItem:
+			return evalMul(x, y.Data)
 		}
 	case float64:
 		switch y := b.(type) {
 		case float64:
 			return x * y, nil
+		case *types.DataItem:
+			return evalMul(x, y.Data)
 		}
 	case mysql.Decimal:
 		switch y := b.(type) {
 		case mysql.Decimal:
 			return x.Mul(y), nil
+		case *types.DataItem:
+			return evalMul(x, y.Data)
 		}
+	case *types.DataItem:
+		return evalMul(x.Data, b)
 	}
 
 	return types.InvOp2(a, b, opcode.Mul)
