@@ -303,6 +303,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
+		{"select current_date, current_date(), curdate()", true},
+
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
