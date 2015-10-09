@@ -534,6 +534,8 @@ func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) e
 			continue
 		}
 
+		// TODO: check and get timestamp/datetime default value.
+		// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
 		if err0 = t.SetColValue(txn, k, col.DefaultValue); err0 != nil {
 			return errors.Trace(err0)
 		}
