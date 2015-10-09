@@ -533,7 +533,6 @@ func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) e
 			continue
 		}
 
-		// TODO: check and get timestamp/datetime/enum default value.
 		types.Convert(col.DefaultValue, &col.FieldType)
 		t.SetColValue(txn, k, col.DefaultValue)
 
