@@ -112,6 +112,7 @@ func (s *GrantStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		for _, priv := range s.Privs {
 			if len(priv.Cols) > 0 {
 				// Check column scope privilege entry.
+				// TODO: Check validity before insert new entry.
 				err1 := s.checkAndInitColumnPriv(ctx, userName, host, priv.Cols)
 				if err1 != nil {
 					return nil, errors.Trace(err1)
@@ -728,11 +729,11 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 func (s *GrantStmt) getTargetSchema(ctx context.Context) (*model.DBInfo, error) {
 	dbName := s.Level.DBName
 	if len(dbName) == 0 {
-		// Grant *, user current schema
+		// Grant *, use current schema
 		dbName = db.GetCurrentSchema(ctx)
 	}
 	if len(dbName) == 0 {
-		return nil, errors.Errorf("Miss DB name in grant db scope privilege.")
+		return nil, errors.New("Miss DB name for grant privilege.")
 	}
 	//check if db exists
 	schema := model.NewCIStr(dbName)
