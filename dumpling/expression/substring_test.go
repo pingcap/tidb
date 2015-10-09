@@ -131,14 +131,18 @@ func (s *testSubstringSuite) TestSubstringIndex(c *C) {
 
 func (s *testSubstringSuite) TestLocate(c *C) {
 	tbl := []struct {
-		substr string
-		str    string
-		pos    int64
-		result int
+		substr interface{}
+		str    interface{}
+		pos    interface{}
+		result interface{}
 	}{
 		{"bar", "foobarbar", -1, 4},
 		{"xbar", "foobarbar", -1, 0},
 		{"bar", "foobarbar", 5, 7},
+		{nil, "foobarbar", 5, nil},
+		{"bar", nil, 5, nil},
+		{1, 2, -1, 0},
+		{"bar", "foobarbar", "5", 7},
 	}
 	for _, v := range tbl {
 		f := FunctionLocate{
@@ -157,15 +161,11 @@ func (s *testSubstringSuite) TestLocate(c *C) {
 
 		r, err := f.Eval(nil, nil)
 		c.Assert(err, IsNil)
-		s, ok := r.(int)
-		c.Assert(ok, Equals, true)
-		c.Assert(s, Equals, v.result)
+		c.Assert(r, Equals, v.result)
 
 		r1, err := f1.Eval(nil, nil)
 		c.Assert(err, IsNil)
-		s1, ok := r1.(int)
-		c.Assert(ok, Equals, true)
-		c.Assert(s, Equals, s1)
+		c.Assert(r, Equals, r1)
 	}
 	errTbl := []struct {
 		substr interface{}
