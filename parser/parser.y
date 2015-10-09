@@ -464,6 +464,7 @@ import (
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
 	SystemVariable		"System defined variable name"
+	TableAsOpt		"table as option"
 	TableConstraint		"table constraint definition"
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
@@ -1542,6 +1543,14 @@ AsOpt:
 		$$ = $1
 	}
 |	"AS" Identifier
+	{
+		$$ = $2
+	}
+|	stringLit
+	{
+		$$ = $1
+	}
+|	"AS" stringLit
 	{
 		$$ = $2
 	}
@@ -2911,11 +2920,11 @@ TableFactor:
 	{
 		$$ = &rsets.TableSource{Source: $1, Name: $2.(string)}
 	}
-|	'(' SelectStmt ')' AsOpt
+|	'(' SelectStmt ')' TableAsOpt
 	{
 		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
-|	'(' UnionStmt ')' AsOpt
+|	'(' UnionStmt ')' TableAsOpt
 	{
 		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
@@ -2928,11 +2937,21 @@ TableIdentOpt:
 	{
 		$$ = ""
 	}
-|	AsOpt 
+|	TableAsOpt 
 	{
 		$$ = $1
 	}
 
+TableAsOpt:
+	identifier
+	{
+		// TODO: check potential bug
+		$$ = $1
+	}
+|	"AS" Identifier
+	{
+		$$ = $2
+	}
 
 JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
