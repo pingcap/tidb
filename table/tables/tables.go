@@ -132,7 +132,7 @@ func (t *Table) Cols() []*column.Col {
 	return t.Columns
 }
 
-// ColumnID implements table ColumnID interface.
+// ColumnID returns the column ID from the key.
 func ColumnID(key []byte) (interface{}, error) {
 	k, err := codec.DecodeKey(key)
 	if err != nil {
@@ -281,7 +281,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []inte
 }
 
 // SetColValue sets the column value.
-// If column untouched, we don't need to do this.
+// If the column untouched, we don't need to do this.
 func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) error {
 	v, err := t.EncodeValue(data)
 	if err != nil {
