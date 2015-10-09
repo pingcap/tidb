@@ -266,3 +266,12 @@ func (s *testBuiltinSuite) TestSysDate(c *C) {
 	_, err = builtinSysDate([]interface{}{-2}, nil)
 	c.Assert(err, NotNil)
 }
+
+func (s *testBuiltinSuite) TestCurrentDate(c *C) {
+	last := time.Now()
+	v, err := builtinCurrentDate(nil, nil)
+	c.Assert(err, IsNil)
+	n, ok := v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(n.String(), GreaterEqual, last.Format(mysql.DateFormat))
+}

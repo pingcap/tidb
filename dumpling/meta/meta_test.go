@@ -49,14 +49,14 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, NotNil)
 
 	// For DBMetaKey
-	mkey := meta.DBMetaKey(1)
-	c.Assert(mkey, Equals, "mDB::1")
+	mkey := []byte(meta.DBMetaKey(1))
+	c.Assert(mkey, DeepEquals, meta.MakeMetaKey("mDB::1"))
 
 	//For AutoIDKey
-	mkey = meta.AutoIDKey(1)
-	c.Assert(mkey, Equals, "mTable::1_autoID")
-	mkey = meta.AutoIDKey(0)
-	c.Assert(mkey, Equals, "mTable::0_autoID")
+	mkey = []byte(meta.AutoIDKey(1))
+	c.Assert(mkey, DeepEquals, meta.MakeMetaKey("mTable::1_autoID"))
+	mkey = []byte(meta.AutoIDKey(0))
+	c.Assert(mkey, DeepEquals, meta.MakeMetaKey("mTable::0_autoID"))
 
 	// For GenGlobalID
 	id, err = meta.GenGlobalID(store)
