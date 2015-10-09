@@ -500,7 +500,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// For as
 		{"select 1 as a, 1 as `a`, 1 as \"a\", 1 as 'a'", true},
 		{`select 1 as a, 1 as "a", 1 as 'a'`, true},
+		{`select 1 a, 1 "a", 1 'a'`, true},
 		{`select * from t as "a"`, false},
+		{`select * from t a`, true},
+		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},
 	}
