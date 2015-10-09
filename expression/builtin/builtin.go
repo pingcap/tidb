@@ -70,7 +70,6 @@ var Funcs = map[string]Func{
 	"dayofmonth":        {builtinDayOfMonth, 1, 1, true, false},
 	"dayofweek":         {builtinDayOfWeek, 1, 1, true, false},
 	"dayofyear":         {builtinDayOfYear, 1, 1, true, false},
-	"extract":           {builtinExtract, 2, 2, true, false},
 	"hour":              {builtinHour, 1, 1, true, false},
 	"microsecond":       {builtinMicroSecond, 1, 1, true, false},
 	"minute":            {builtinMinute, 1, 1, true, false},
