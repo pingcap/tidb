@@ -134,6 +134,7 @@ import (
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
+	extract		"EXTRACT"
 	falseKwd	"false"
 	first		"FIRST"
 	foreign		"FOREIGN"
@@ -199,6 +200,7 @@ import (
 	placeholder	"PLACEHOLDER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
 	references	"REFERENCES"
@@ -312,6 +314,18 @@ import (
 	booleanType	"BOOLEAN"
 
 	parseExpression	"parse expression prefix"
+
+	secondMicrosecond	"SECOND_MICROSECOND"
+	minuteMicrosecond	"MINUTE_MICROSECOND"
+	minuteSecond 		"MINUTE_SECOND"
+	hourMicrosecond		"HOUR_MICROSECOND"
+	hourSecond 		"HOUR_SECOND"
+	hourMinute 		"HOUR_MINUTE"
+	dayMicrosecond 		"DAY_MICROSECOND"
+	daySecond 		"DAY_SECOND"
+	dayMinute 		"DAY_MINUTE"
+	dayHour			"DAY_HOUR"
+	yearMonth		"YEAR_MONTH"
 
 %type   <item>
 	AlterTableStmt		"Alter table statement"
@@ -475,6 +489,7 @@ import (
 	TableOptListOpt		"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TimeUnit		"Time unit"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionSelect		"Union select/(select)"
@@ -1635,7 +1650,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW"
+|	"NATIONAL" | "ROW" | "QUARTER"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -2155,6 +2170,17 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
+	{
+		args := []expression.Expression{expression.Value{Val:$3.(string)}, $5.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"FOUND_ROWS" '(' ')'
 	{
 		args := []expression.Expression{}
@@ -2466,6 +2492,12 @@ FuncDatetimePrec:
 	{
 		$$ = $2
 	}
+
+TimeUnit:
+	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" 
+|	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" 
+|	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
 ExpressionOpt:
 	{
