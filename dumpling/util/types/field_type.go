@@ -94,3 +94,9 @@ func (ft *FieldType) String() string {
 
 	return strings.Join(ans, " ")
 }
+
+// DataItem is wrapped data with type info.
+type DataItem struct {
+	Type *FieldType
+	Data interface{}
+}
