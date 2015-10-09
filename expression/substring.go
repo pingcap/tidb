@@ -244,18 +244,24 @@ func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	str, ok := fs.(string)
-	if !ok {
-		return nil, errors.Errorf("Locate invalid args, need string but get %T for str", fs)
+	if fs == nil {
+		return nil, nil
+	}
+	str, err := types.ToString(fs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	// eval substr
 	fs, err = f.SubStr.Eval(ctx, args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	substr, ok := fs.(string)
-	if !ok {
-		return nil, errors.Errorf("Locate invalid args, need string but get %T for substr", fs)
+	if fs == nil {
+		return nil, nil
+	}
+	substr, err := types.ToString(fs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	// eval pos
 	pos := 0
@@ -264,9 +270,9 @@ func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interfac
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p, ok := t.(int64)
-		if !ok {
-			return nil, errors.Errorf("Locate invalid pos args, need int but get %T", t)
+		p, err := types.ToInt64(t)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		pos = int(p)
 	}
