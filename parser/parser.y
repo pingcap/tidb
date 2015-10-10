@@ -3276,12 +3276,15 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowTables,
 			DBName: $4.(string),
-			Full: $2.(bool)}
+			Full: $2.(bool),
+		}
+		stmt.SetCondition($5)
+		$$ = stmt
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{
