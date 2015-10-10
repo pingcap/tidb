@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"github.com/juju/errors"
 	"github.com/ngaut/pool"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -22,16 +23,16 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
-// SetCondition is the type for condition consts.
-type SetCondition int
+// conditionType is the type for condition consts.
+type conditionType int
 
 const (
-	// ConditionIfNotExist means the condition is not exist.
-	ConditionIfNotExist SetCondition = iota + 1
-	// ConditionIfEqual means the condition is equals.
-	ConditionIfEqual
-	// ConditionForceSet means the condition is force set.
-	ConditionForceSet
+	// conditionIfNotExist means the condition is not exist.
+	conditionIfNotExist conditionType = iota + 1
+	// conditionIfEqual means the condition is equals.
+	conditionIfEqual
+	// conditionForceSet means the condition is force set.
+	conditionForceSet
 )
 
 var (
@@ -40,20 +41,20 @@ var (
 	})
 )
 
-// ConditionValue is a data structure used to store current stored data and data verification condition.
-type ConditionValue struct {
-	OriginValue []byte
-	Condition   SetCondition
+// conditionValue is a data structure used to store current stored data and data verification condition.
+type conditionValue struct {
+	originValue []byte
+	condition   conditionType
 }
 
-// MakeCondition builds a new ConditionValue.
-func MakeCondition(originValue []byte) *ConditionValue {
-	cv := &ConditionValue{
-		OriginValue: originValue,
-		Condition:   ConditionIfEqual,
+// makeCondition builds a new conditionValue.
+func makeCondition(originValue []byte) *conditionValue {
+	cv := &conditionValue{
+		originValue: originValue,
+		condition:   conditionIfEqual,
 	}
 	if originValue == nil {
-		cv.Condition = ConditionIfNotExist
+		cv.condition = conditionIfNotExist
 	}
 	return cv
 }
@@ -67,7 +68,7 @@ func IsErrNotFound(err error) bool {
 	return false
 }
 
-// UnionStore is a implement of Store which contains a buffer for update.
+// UnionStore is an implement of Store which contains a buffer for update.
 type UnionStore struct {
 	Dirty    *memdb.DB // updates are buffered in memory
 	Snapshot Snapshot  // for read
@@ -90,13 +91,12 @@ func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 		// Try get from snapshot
 		return us.Snapshot.Get(key)
 	}
-
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if len(value) == 0 { // Deleted marker
-		return nil, ErrNotExist
+		return nil, errors.Trace(ErrNotExist)
 	}
 
 	return value, nil
@@ -121,20 +121,20 @@ func (us *UnionStore) Delete(k []byte) error {
 	val, err := us.Dirty.Get(k)
 	if err != nil {
 		if !IsErrNotFound(err) { // something wrong
-			return err
+			return errors.Trace(err)
 		}
 
-		// miss in dirty
+		// missed in dirty
 		val, err = us.Snapshot.Get(k)
 		if err != nil {
 			if IsErrNotFound(err) {
-				return ErrNotExist
+				return errors.Trace(ErrNotExist)
 			}
 		}
 	}
 
 	if len(val) == 0 { // deleted marker, already deleted
-		return ErrNotExist
+		return errors.Trace(ErrNotExist)
 	}
 
 	return us.Dirty.Put(k, nil)
