@@ -82,6 +82,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
+	both		"BOTH"
 	by		"BY"
 	byteType	"BYTE"
 	caseKwd		"CASE"
@@ -166,6 +167,7 @@ import (
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	le		"<="
+	leading		"LEADING"
 	left		"LEFT"
 	length		"LENGTH"
 	like		"LIKE"
@@ -234,7 +236,9 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	trailing	"TRAILING"
 	transaction	"TRANSACTION"
+	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
 	unknown 	"UNKNOWN"
@@ -494,6 +498,7 @@ import (
 	TableRef 		"table reference"
 	TableRefs 		"table references"
 	TimeUnit		"Time unit"
+	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionSelect		"Union select/(select)"
@@ -1666,7 +1671,7 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2412,6 +2417,34 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"TRIM" '(' Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			RemStr: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' TrimDirection "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
+|	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $6.(expression.Expression), 
+			RemStr: $4.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
 |	"UPPER" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2454,6 +2487,20 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+
+TrimDirection:
+	"BOTH"
+	{
+		$$ = expression.TrimBoth
+	}
+|	"LEADING"
+	{
+		$$ = expression.TrimLeading
+	}
+|	"TRAILING"
+	{
+		$$ = expression.TrimTrailing
 	}
 
 FunctionCallAgg:
