@@ -146,7 +146,7 @@ type Snapshot interface {
 	Release()
 }
 
-// Driver is the interface that must be implemented by a K storage.
+// Driver is the interface that must be implemented by a KV storage.
 type Driver interface {
 	// Open returns a new Storage.
 	// The schema is the string for storage specific format.
