@@ -303,6 +303,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
+		{`SELECT LOCATE('bar', 'foobarbar');`, true},
+		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
+
+		{"select current_date, current_date(), curdate()", true},
+
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
 		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -516,6 +521,16 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`select extract(day_minute from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(day_hour from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(year_month from "2011-11-11 10:10:10.123456")`, true},
+
+		// For as
+		{"select 1 as a, 1 as `a`, 1 as \"a\", 1 as 'a'", true},
+		{`select 1 as a, 1 as "a", 1 as 'a'`, true},
+		{`select 1 a, 1 "a", 1 'a'`, true},
+		{`select * from t as "a"`, false},
+		{`select * from t a`, true},
+		{`select * from t as a`, true},
+		{"select 1 full, 1 row, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", true},
 	}
 
 	for _, t := range table {

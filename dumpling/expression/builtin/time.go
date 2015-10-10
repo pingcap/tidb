@@ -301,6 +301,14 @@ func builtinSysDate(args []interface{}, ctx map[interface{}]interface{}) (interf
 	return builtinNow(args, ctx)
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
+func builtinCurrentDate(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	year, month, day := time.Now().Date()
+	return mysql.Time{
+		Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
+		Type: mysql.TypeDate, Fsp: 0}, nil
+}
+
 func checkFsp(arg interface{}) (int, error) {
 	fsp, err := types.ToInt64(arg)
 	if err != nil {
