@@ -182,7 +182,7 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col, lval.offset = l.line, l.col, l.tokenStartOffset
+		lval.line, lval.col, lval.offset, lval.endOffset = l.line, l.col, l.tokenStartOffset, l.tokenEndOffset
 		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (

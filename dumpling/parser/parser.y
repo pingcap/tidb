@@ -49,6 +49,7 @@ import (
 
 %union {
 	offset int // offset
+	endOffset int
 	line int
 	col  int
 	item interface{}
@@ -1520,10 +1521,7 @@ Field:
 |	Expression Field1
 	{
 		expr, name := expression.Expr($1), $2.(string)
-		if name == "" {
-			name = expr.String()
-		}
-		$$ = &field.Field{Expr: expr, Name: name}
+		$$ = &field.Field{Expr: expr, AsName: name}
 	}
 
 Field1:
@@ -3054,7 +3052,7 @@ SelectStmtCalcFoundRows:
 	}
 
 SelectStmtFieldList:
-	FieldList CommaOpt
+	FieldList
 	{
 		$$ = $1
 	}
