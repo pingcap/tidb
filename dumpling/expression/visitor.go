@@ -100,6 +100,9 @@ type Visitor interface {
 
 	// VisitWhenClause visits WhenClause expression.
 	VisitWhenClause(w *WhenClause) (Expression, error)
+
+	// VisitExtract visits Extract expression.
+	VisitExtract(v *Extract) (Expression, error)
 }
 
 // BaseVisitor is the base implementation of Visitor.
@@ -448,4 +451,11 @@ func (bv *BaseVisitor) VisitWhenClause(w *WhenClause) (Expression, error) {
 		return w, errors.Trace(err)
 	}
 	return w, nil
+}
+
+// VisitExtract implements Visitor
+func (bv *BaseVisitor) VisitExtract(v *Extract) (Expression, error) {
+	var err error
+	v.Date, err = v.Date.Accept(bv.V)
+	return v, errors.Trace(err)
 }
