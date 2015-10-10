@@ -424,7 +424,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			if err := d.addColumn(ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
+			if err := d.addColumn(ctx, ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
 				return errors.Trace(err)
 			}
 		default:
@@ -435,9 +435,9 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	return nil
 }
 
-// Add a column into table.
-func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
-	// Find position.
+// Add a column into table
+func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
+	// Find position
 	cols := tbl.Cols()
 	position := len(cols)
 	name := spec.Column.Name
@@ -488,7 +488,10 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 	tb.Columns = newCols
 
 	// TODO: update index
-	// TODO: update default value
+	if err = updateOldRows(ctx, tb, col); err != nil {
+		return errors.Trace(err)
+	}
+
 	// update infomation schema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		err := d.verifySchemaMetaVersion(txn, schemaMetaVersion)
@@ -502,6 +505,40 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 		err = d.onDDLChange(err)
 	}
 	return errors.Trace(err)
+}
+
+func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	it, err := txn.Seek([]byte(t.FirstKey()), nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	prefix := t.KeyPrefix()
+	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
+		if err0 != nil {
+			return errors.Trace(err0)
+		}
+		k := t.RecordKey(handle, col)
+
+		// TODO: check and get timestamp/datetime default value.
+		// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
+		if err0 = t.SetColValue(txn, k, col.DefaultValue); err0 != nil {
+			return errors.Trace(err0)
+		}
+
+		rk := t.RecordKey(handle, nil)
+		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
+			return errors.Trace(err0)
+		}
+	}
+
+	return nil
 }
 
 // DropTable will proceed even if some table in the list does not exists.
