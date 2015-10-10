@@ -232,7 +232,7 @@ func GetFieldIndex(name string, fields []*Field, flag uint32) []int {
 	// Check alias field name.
 	if flag&FieldNameFlag > 0 {
 		for i, f := range fields {
-			if CheckFieldsEqual(name, f.Name) {
+			if CheckFieldsEqual(name, f.AsName) {
 				indices = append(indices, i)
 				continue
 			}

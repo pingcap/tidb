@@ -44,7 +44,7 @@ func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}}
 	}
 
 	selectList := &plans.SelectList{

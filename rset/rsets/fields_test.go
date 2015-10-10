@@ -37,7 +37,7 @@ func (s *testSelectFieldsPlannerSuite) SetUpSuite(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}}
 	}
 
 	selectList := &plans.SelectList{
@@ -56,7 +56,7 @@ func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 	c.Assert(err, IsNil)
 
 	_, ok := p.(*testTablePlan)
-	c.Assert(ok, IsTrue)
+	c.Assert(ok, IsTrue, Commentf("%T", p))
 
 	// check SelectFieldsDefaultPlan, like `select c1, 1 from t`.
 	fld := &field.Field{Expr: expression.Value{Val: 1}}
