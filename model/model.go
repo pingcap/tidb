@@ -22,15 +22,14 @@ import (
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
 	ID              int64       `json:"id"`
-	Name            CIStr       `json:"name"` // Column Name.
+	Name            CIStr       `json:"name"`
 	Offset          int         `json:"offset"`
-	DefaultValue    interface{} `json:"default"` // Default Value.
+	DefaultValue    interface{} `json:"default"`
 	types.FieldType `json:"type"`
 }
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	// Table name.
 	ID      int64  `json:"id"`
 	Name    CIStr  `json:"name"`
 	Charset string `json:"charset"`
