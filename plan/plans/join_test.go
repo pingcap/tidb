@@ -15,6 +15,7 @@ package plans_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -139,5 +141,132 @@ func (s *testJoinSuit) TestJoin(c *C) {
 	rset.Do(func(data []interface{}) (bool, error) {
 		return true, nil
 	})
+}
 
+func (s *testJoinSuit) TestJoinWithoutIndex(c *C) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t3;")
+
+	tk.MustExec("create table t1 (c1 int, c2 int, index(c1), index(c2));")
+	tk.MustExec("create table t2 (c1 int, c2 int, index(c1), index(c2));")
+	tk.MustExec("create table t3 (c1 int, c2 int, index(c1), index(c2));")
+
+	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3);")
+	tk.MustExec("insert into t2 values (1,1), (3,3), (5,5);")
+	tk.MustExec("insert into t3 values (1,1), (5,5), (9,9);")
+
+	testcases := []struct {
+		sql    string
+		result [][]interface{}
+	}{
+		{
+			"select * from t1, t2 order by t1.c1, t1.c2, t2.c1, t2.c2",
+			[][]interface{}{
+				{1, 1, 1, 1},
+				{1, 1, 3, 3},
+				{1, 1, 5, 5},
+				{2, 2, 1, 1},
+				{2, 2, 3, 3},
+				{2, 2, 5, 5},
+				{3, 3, 1, 1},
+				{3, 3, 3, 3},
+				{3, 3, 5, 5},
+			},
+		},
+		{
+			"select * from t1 cross join t2 on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2",
+			[][]interface{}{
+				{1, 1, 1, 1},
+				{3, 3, 3, 3},
+			},
+		},
+		{
+			"select * from t1 left join t2 on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2;",
+			[][]interface{}{
+				{1, 1, 1, 1},
+				{2, 2, nil, nil},
+				{3, 3, 3, 3},
+			},
+		},
+		{
+			"select * from t1 right join t2 on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2;",
+			[][]interface{}{
+				{nil, nil, 5, 5},
+				{1, 1, 1, 1},
+				{3, 3, 3, 3},
+			},
+		},
+		{
+			"select * from t1 left join (t2, t3) on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;",
+			[][]interface{}{
+				{1, 1, 1, 1, 1, 1},
+				{1, 1, 1, 1, 5, 5},
+				{1, 1, 1, 1, 9, 9},
+				{2, 2, nil, nil, nil, nil},
+				{3, 3, 3, 3, 1, 1},
+				{3, 3, 3, 3, 5, 5},
+				{3, 3, 3, 3, 9, 9},
+			},
+		},
+		{
+			"select * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;",
+			[][]interface{}{
+				{nil, nil, nil, nil, 5, 5},
+				{nil, nil, nil, nil, 9, 9},
+				{1, 1, 1, 1, 1, 1},
+			},
+		},
+		{
+			"select * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;",
+			[][]interface{}{
+				{nil, nil, nil, nil, 5, 5},
+				{nil, nil, nil, nil, 9, 9},
+				{1, 1, 1, 1, 1, 1},
+			},
+		},
+		{
+			"select * from t1, t2 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;",
+			[][]interface{}{
+				{1, 1, nil, nil, 9, 9},
+				{1, 1, 1, 1, 1, 1},
+				{1, 1, 5, 5, 5, 5},
+				{2, 2, nil, nil, 9, 9},
+				{2, 2, 1, 1, 1, 1},
+				{2, 2, 5, 5, 5, 5},
+				{3, 3, nil, nil, 9, 9},
+				{3, 3, 1, 1, 1, 1},
+				{3, 3, 5, 5, 5, 5},
+			},
+		},
+		{
+			"select * from t1, (select * from t2) as t2 order by t1.c1, t1.c2, t2.c1, t2.c2;",
+			[][]interface{}{
+				{1, 1, 1, 1},
+				{1, 1, 3, 3},
+				{1, 1, 5, 5},
+				{2, 2, 1, 1},
+				{2, 2, 3, 3},
+				{2, 2, 5, 5},
+				{3, 3, 1, 1},
+				{3, 3, 3, 3},
+				{3, 3, 5, 5},
+			},
+		},
+		{
+			"select * from t1 left join (select * from t2) as t2 on t1.c1 = t2.c1 order by t1.c1, t1.c2, t2.c1, t2.c2;",
+			[][]interface{}{
+				{1, 1, 1, 1},
+				{2, 2, nil, nil},
+				{3, 3, 3, 3},
+			},
+		},
+	}
+	for _, v := range testcases {
+		tk.MustQuery(v.sql).Check(v.result)
+	}
 }

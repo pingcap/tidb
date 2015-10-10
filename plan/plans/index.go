@@ -50,6 +50,9 @@ func (b bound) String() string {
 
 // index span is the range of value to be scanned.
 type indexSpan struct {
+	// seekVal is different from lowVal, it is casted from lowVal and
+	// must be less than or equal to lowVal, used to seek the index.
+	seekVal     interface{}
 	lowVal      interface{}
 	lowExclude  bool
 	highVal     interface{}
@@ -120,7 +123,7 @@ func (span *indexSpan) cutOffHigh(val interface{}, exclude bool) *indexSpan {
 
 type indexPlan struct {
 	src        table.Table
-	colName    string
+	col        *column.Col
 	idxName    string
 	idx        kv.Index
 	spans      []*indexSpan // multiple spans are ordered by their values and without overlapping.
@@ -168,7 +171,7 @@ func indexCompare(a interface{}, b interface{}) int {
 
 // Explain implements plan.Plan Explain interface.
 func (r *indexPlan) Explain(w format.Formatter) {
-	w.Format("┌Iterate rows of table %q using index %q where %s in ", r.src.TableName(), r.idxName, r.colName)
+	w.Format("┌Iterate rows of table %q using index %q where %s in ", r.src.TableName(), r.idxName, r.col.Name.L)
 	for _, span := range r.spans {
 		open := "["
 		close := "]"
@@ -193,46 +196,45 @@ func (r *indexPlan) GetFields() []*field.ResultField {
 func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	switch x := expr.(type) {
 	case *expression.BinaryOperation:
-		ok, cname, val, err := x.IsIdentRelOpVal()
+		ok, name, val, err := x.IsIdentCompareVal()
 		if err != nil {
 			return nil, false, err
 		}
-
-		if !ok || r.colName != cname {
+		if !ok {
 			break
 		}
-
-		col := column.FindCol(r.src.Cols(), cname)
-		if col == nil {
+		_, tname, cname := field.SplitQualifiedName(name)
+		if tname != "" && r.src.TableName().L != tname {
 			break
 		}
-
-		if val, err = types.Convert(val, &col.FieldType); err != nil {
-			return nil, false, err
+		if r.col.ColumnInfo.Name.L != cname {
+			break
 		}
-		r.spans = filterSpans(r.spans, toSpans(x.Op, val))
+		seekVal, err := types.Convert(val, &r.col.FieldType)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		r.spans = filterSpans(r.spans, toSpans(x.Op, val, seekVal))
 		return r, true, nil
 	case *expression.Ident:
-		if r.colName != x.L {
+		if r.col.Name.L != x.L {
 			break
 		}
-		r.spans = filterSpans(r.spans, toSpans(opcode.GE, minNotNullVal))
+		r.spans = filterSpans(r.spans, toSpans(opcode.GE, minNotNullVal, nil))
 		return r, true, nil
 	case *expression.UnaryOperation:
 		if x.Op != '!' {
 			break
 		}
 
-		operand, ok := x.V.(*expression.Ident)
+		cname, ok := x.V.(*expression.Ident)
 		if !ok {
 			break
 		}
-
-		cname := operand.L
-		if r.colName != cname {
+		if r.col.Name.L != cname.L {
 			break
 		}
-		r.spans = filterSpans(r.spans, toSpans(opcode.EQ, nil))
+		r.spans = filterSpans(r.spans, toSpans(opcode.EQ, nil, nil))
 		return r, true, nil
 	}
 
@@ -259,11 +261,12 @@ func filterSpans(origin []*indexSpan, filter []*indexSpan) []*indexSpan {
 }
 
 // generate a slice of span from operator and value.
-func toSpans(op opcode.Op, val interface{}) []*indexSpan {
+func toSpans(op opcode.Op, val, seekVal interface{}) []*indexSpan {
 	var spans []*indexSpan
 	switch op {
 	case opcode.EQ:
 		spans = append(spans, &indexSpan{
+			seekVal:     seekVal,
 			lowVal:      val,
 			lowExclude:  false,
 			highVal:     val,
@@ -283,12 +286,14 @@ func toSpans(op opcode.Op, val interface{}) []*indexSpan {
 		})
 	case opcode.GE:
 		spans = append(spans, &indexSpan{
+			seekVal:    seekVal,
 			lowVal:     val,
 			lowExclude: false,
 			highVal:    maxVal,
 		})
 	case opcode.GT:
 		spans = append(spans, &indexSpan{
+			seekVal:    seekVal,
 			lowVal:     val,
 			lowExclude: true,
 			highVal:    maxVal,
@@ -300,6 +305,7 @@ func toSpans(op opcode.Op, val interface{}) []*indexSpan {
 			highExclude: true,
 		})
 		spans = append(spans, &indexSpan{
+			seekVal:    seekVal,
 			lowVal:     val,
 			lowExclude: true,
 			highVal:    maxVal,
@@ -318,7 +324,7 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		}
 		span := r.spans[r.cursor]
 		if r.iter == nil {
-			seekVal := span.lowVal
+			seekVal := span.seekVal
 			if span.lowVal == minNotNullVal {
 				seekVal = []byte{}
 			}
@@ -340,7 +346,8 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		}
 		val := idxKey[0]
 		if !r.skipLowCmp {
-			if span.lowExclude && indexCompare(span.lowVal, val) == 0 {
+			cmp := indexCompare(val, span.lowVal)
+			if cmp < 0 || (cmp == 0 && span.lowExclude) {
 				continue
 			}
 			r.skipLowCmp = true
