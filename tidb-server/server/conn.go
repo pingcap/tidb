@@ -184,7 +184,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 	pos++
 	auth := data[pos : pos+authLen]
 	pos += authLen
-	if cc.capability|mysql.ClientConnectWithDB > 0 {
+	if cc.capability&mysql.ClientConnectWithDB > 0 {
 		if len(data[pos:]) > 0 {
 			idx := bytes.IndexByte(data[pos:], 0)
 			cc.dbname = string(data[pos : pos+idx])
