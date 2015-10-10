@@ -278,6 +278,8 @@ convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
+curdate 	{c}{u}{r}{d}{a}{t}{e}
+current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
@@ -336,6 +338,7 @@ length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
+locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
 lower		{l}{o}{w}{e}{r}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
@@ -609,6 +612,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return count
 {create}		return create
 {cross}			return cross
+{curdate}		lval.item = string(l.val)
+			return curDate
+{current_date}		lval.item = string(l.val)
+			return currentDate
 {current_user}		lval.item = string(l.val)
 			return currentUser
 {database}		lval.item = string(l.val)
@@ -707,6 +714,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
+{locate}		lval.item = string(l.val)
+			return locate
 {lock}			return lock
 {lower}			lval.item = string(l.val)
 			return lower

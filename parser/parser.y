@@ -106,6 +106,8 @@ import (
 	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
+	curDate 	"CURDATE"
+	currentDate 	"CURRENT_DATE"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -169,6 +171,7 @@ import (
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
+	locate		"LOCATE"
 	lock		"LOCK"
 	lower 		"LOWER"
 	lowPriority	"LOW_PRIORITY"
@@ -476,6 +479,7 @@ import (
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
 	SystemVariable		"System defined variable name"
+	TableAsOpt		"table as option"
 	TableConstraint		"table constraint definition"
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
@@ -1549,12 +1553,19 @@ Field1:
 	}
 
 AsOpt:
-	identifier
+	Identifier
 	{
-		// TODO: check potential bug
 		$$ = $1
 	}
 |	"AS" Identifier
+	{
+		$$ = $2
+	}
+|	stringLit
+	{
+		$$ = $1
+	}
+|	"AS" stringLit
 	{
 		$$ = $2
 	}
@@ -1654,7 +1665,7 @@ UnReservedKeyword:
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
+|	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
@@ -1931,7 +1942,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -1947,6 +1958,16 @@ FunctionCallConflict:
 |	"CURRENT_USER"
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		x := yylex.(*lexer)
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
+		if err != nil {
+			x.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_DATE"
+	{
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
@@ -2075,6 +2096,16 @@ FunctionCallNonKeyword:
 	{
 		var err error
 		$$, err = expression.NewCall($1.(string), $3.([]expression.Expression), false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"CURDATE" '(' ')'
+	{
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(err)
@@ -2219,6 +2250,21 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+|	"LOCATE" '(' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+		}	
+	}
+|	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+			Pos: $7.(expression.Expression),
+		}	
 	}
 |	"LOWER" '(' Expression ')'
 	{
@@ -2917,11 +2963,11 @@ TableFactor:
 	{
 		$$ = &rsets.TableSource{Source: $1, Name: $2.(string)}
 	}
-|	'(' SelectStmt ')' AsOpt
+|	'(' SelectStmt ')' TableAsOpt
 	{
 		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
-|	'(' UnionStmt ')' AsOpt
+|	'(' UnionStmt ')' TableAsOpt
 	{
 		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
@@ -2934,11 +2980,20 @@ TableIdentOpt:
 	{
 		$$ = ""
 	}
-|	AsOpt 
+|	TableAsOpt 
 	{
 		$$ = $1
 	}
 
+TableAsOpt:
+	Identifier
+	{
+		$$ = $1
+	}
+|	"AS" Identifier
+	{
+		$$ = $2
+	}
 
 JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
@@ -2964,10 +3019,6 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = rsets.RightJoin
-	}
-|	"FULL"
-	{
-		$$ = rsets.FullJoin
 	}
 
 OuterOpt:
