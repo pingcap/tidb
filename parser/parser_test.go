@@ -331,6 +331,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
+		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
+		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 
 		// For compare subquery
 		{"SELECT 1 > (select 1)", true},
