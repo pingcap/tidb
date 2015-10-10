@@ -312,12 +312,31 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 
 	sort.Strings(tableNames)
 
+	m := map[interface{}]interface{}{}
 	for _, v := range tableNames {
 		data := []interface{}{v}
 		if s.Full {
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
 			data = append(data, "BASE TABLE")
+		}
+		// Check like/where clause.
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: data[0]}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if s.Full && strings.EqualFold(name, "Table_type") {
+					return data[1], nil
+				}
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
 		}
 		s.rows = append(s.rows, &plan.Row{Data: data})
 	}
