@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -46,7 +47,7 @@ import (
 const (
 	EngineGoLevelDBMemory     = "memory://"
 	EngineGoLevelDBPersistent = "goleveldb://"
-	EngineHBase               = "zk://"
+	EngineHBase               = "hbase://"
 	EngineBoltDB              = "boltdb://"
 )
 
@@ -238,7 +239,6 @@ func NewStore(uri string) (kv.Storage, error) {
 	}
 
 	s, err := d.Open(schema)
-	storeBootstrapped[s.UUID()] = false
 	return s, errors.Trace(err)
 }
 
@@ -278,6 +278,7 @@ func init() {
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
 	RegisterLocalStore("boltdb", boltdb.Driver{})
+	RegisterStore("hbase", hbasekv.Driver{})
 
 	// start pprof handlers
 	if Debug {
