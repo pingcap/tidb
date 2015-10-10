@@ -87,4 +87,6 @@ func (s *testVisitorSuite) TestBase(c *C) {
 	exp.Accept(visitor)
 	exp = &expression.Variable{Name: "a"}
 	exp.Accept(visitor)
+	exp = &expression.Extract{Unit: "SECOND", Date: expression.Value{Val: nil}}
+	exp.Accept(visitor)
 }
