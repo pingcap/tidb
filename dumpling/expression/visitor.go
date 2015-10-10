@@ -47,6 +47,9 @@ type Visitor interface {
 	// VisitFunctionSubstringIndex visits FunctionSubstringIndex expression.
 	VisitFunctionSubstringIndex(ss *FunctionSubstringIndex) (Expression, error)
 
+	// VisitFunctionLocate visits FunctionLocate expression.
+	VisitFunctionLocate(ss *FunctionLocate) (Expression, error)
+
 	// VisitExistsSubQuery visits ExistsSubQuery expression.
 	VisitExistsSubQuery(es *ExistsSubQuery) (Expression, error)
 
@@ -97,6 +100,9 @@ type Visitor interface {
 
 	// VisitWhenClause visits WhenClause expression.
 	VisitWhenClause(w *WhenClause) (Expression, error)
+
+	// VisitExtract visits Extract expression.
+	VisitExtract(v *Extract) (Expression, error)
 }
 
 // BaseVisitor is the base implementation of Visitor.
@@ -267,6 +273,27 @@ func (bv *BaseVisitor) VisitFunctionSubstringIndex(ss *FunctionSubstringIndex) (
 	return ss, nil
 }
 
+// VisitFunctionLocate implements Visitor interface.
+func (bv *BaseVisitor) VisitFunctionLocate(ss *FunctionLocate) (Expression, error) {
+	var err error
+	ss.Str, err = ss.Str.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	ss.SubStr, err = ss.SubStr.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	if ss.Pos == nil {
+		return ss, nil
+	}
+	ss.Pos, err = ss.Pos.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	return ss, nil
+}
+
 // VisitIdent implements Visitor interface.
 func (bv *BaseVisitor) VisitIdent(i *Ident) (Expression, error) {
 	return i, nil
@@ -424,4 +451,11 @@ func (bv *BaseVisitor) VisitWhenClause(w *WhenClause) (Expression, error) {
 		return w, errors.Trace(err)
 	}
 	return w, nil
+}
+
+// VisitExtract implements Visitor
+func (bv *BaseVisitor) VisitExtract(v *Extract) (Expression, error) {
+	var err error
+	v.Date, err = v.Date.Accept(bv.V)
+	return v, errors.Trace(err)
 }
