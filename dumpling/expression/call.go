@@ -40,6 +40,9 @@ type Call struct {
 	// so we can ignore it in other functions
 	Distinct bool
 
+	// distinctKey is the unique key when using same Call object for different Eval args.
+	// We have already use Call pointer to store aggregate result, so here we will need
+	// another unique key to keep aggregate distincter.
 	distinctKey *int
 }
 
