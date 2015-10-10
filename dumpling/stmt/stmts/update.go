@@ -84,10 +84,11 @@ func (s *UpdateStmt) SetText(text string) {
 	s.Text = text
 }
 
-func getUpdateColumns(t table.Table, assignList []expression.Assignment, isMultipleTable bool, tblAliasMap map[string]string) ([]*column.Col, error) {
+func getUpdateColumns(t table.Table, assignList []expression.Assignment, isMultipleTable bool, tblAliasMap map[string]string) ([]*column.Col, []expression.Assignment, error) {
 	// TODO: We should check the validate if assignList in somewhere else. Maybe in building plan.
 	// TODO: We should use field.GetFieldIndex to replace this function.
 	tcols := make([]*column.Col, 0, len(assignList))
+	tAsgns := make([]expression.Assignment, 0, len(assignList))
 	tname := t.TableName()
 	for _, asgn := range assignList {
 		if isMultipleTable {
@@ -108,11 +109,12 @@ func getUpdateColumns(t table.Table, assignList []expression.Assignment, isMulti
 			if isMultipleTable {
 				continue
 			}
-			return nil, errors.Errorf("UPDATE: unknown column %s", asgn.ColName)
+			return nil, nil, errors.Errorf("UPDATE: unknown column %s", asgn.ColName)
 		}
 		tcols = append(tcols, col)
+		tAsgns = append(tAsgns, asgn)
 	}
-	return tcols, nil
+	return tcols, tAsgns, nil
 }
 
 func getInsertValue(name string, cols []*column.Col, row []interface{}) (interface{}, error) {
@@ -296,7 +298,8 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			end := start + len(tbl.Cols())
 			data := rowData[start:end]
 			start = end
-			tcols, err2 := getUpdateColumns(tbl, s.List, isMultipleTable, tblAliasMap)
+			// For multiple table mode, get to-update cols and to-update assginments.
+			tcols, tAsgns, err2 := getUpdateColumns(tbl, s.List, isMultipleTable, tblAliasMap)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
@@ -305,7 +308,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				continue
 			}
 			// Get data in the table
-			err2 = updateRecord(ctx, handle, data, tbl, tcols, s.List, nil, m)
+			err2 = updateRecord(ctx, handle, data, tbl, tcols, tAsgns, nil, m)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
