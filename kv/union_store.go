@@ -47,18 +47,6 @@ type conditionValue struct {
 	condition   conditionType
 }
 
-// makeCondition builds a new conditionValue.
-func makeCondition(originValue []byte) *conditionValue {
-	cv := &conditionValue{
-		originValue: originValue,
-		condition:   conditionIfEqual,
-	}
-	if originValue == nil {
-		cv.condition = conditionIfNotExist
-	}
-	return cv
-}
-
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
 	if errors2.ErrorEqual(err, leveldb.ErrNotFound) || errors2.ErrorEqual(err, ErrNotExist) {
