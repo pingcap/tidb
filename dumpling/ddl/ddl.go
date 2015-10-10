@@ -489,7 +489,7 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	tb := tbl.(*tables.Table)
 	tb.Columns = newCols
 	// TODO: update index
-	if err = updateDefaultValue(ctx, tb, col); err != nil {
+	if err = updateOldRows(ctx, tb, col); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -508,7 +508,7 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	return errors.Trace(err)
 }
 
-func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) error {
+func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -526,13 +526,6 @@ func updateDefaultValue(ctx context.Context, t *tables.Table, col *column.Col) e
 			return errors.Trace(err0)
 		}
 		k := t.RecordKey(handle, col)
-		colID, err0 := tables.ColumnID(k)
-		if err0 != nil {
-			return errors.Trace(err0)
-		}
-		if colID != col.ID {
-			continue
-		}
 
 		// TODO: check and get timestamp/datetime default value.
 		// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
