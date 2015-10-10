@@ -35,13 +35,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/errors2"
 )
-
-// The record key has tableID_r, rowID, columnID three parts.
-// recordKeyItemsCount is the items count in the record key.
-const recordKeyItemsCount = 3
 
 // Table implements table.Table interface.
 type Table struct {
@@ -131,19 +126,6 @@ func (t *Table) Meta() *model.TableInfo {
 // Cols implements table.Table Cols interface.
 func (t *Table) Cols() []*column.Col {
 	return t.Columns
-}
-
-// ColumnID returns the column ID from the key.
-func ColumnID(key []byte) (interface{}, error) {
-	k, err := codec.DecodeKey(key)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(k) != recordKeyItemsCount {
-		return 0, errors.New("column not exist")
-	}
-
-	return k[recordKeyItemsCount-1], nil
 }
 
 func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error) {
