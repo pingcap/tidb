@@ -337,6 +337,7 @@ length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
+locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
 lower		{l}{o}{w}{e}{r}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
@@ -683,6 +684,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
+{locate}		lval.item = string(l.val)
+			return locate
 {lock}			return lock
 {lower}			lval.item = string(l.val)
 			return lower

@@ -303,6 +303,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
+		{`SELECT LOCATE('bar', 'foobarbar');`, true},
+		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
+
 		{"select current_date, current_date(), curdate()", true},
 
 		// For delete statement
