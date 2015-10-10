@@ -27,19 +27,13 @@ var _ = Suite(&testVisitorSuite{})
 type testVisitorSuite struct {
 }
 
-func (s *testVisitorSuite) TestIdentEval(c *C) {
-	exp := expression.NewBinaryOperation(opcode.Plus, &expression.Ident{CIStr: model.NewCIStr("a")}, expression.Value{Val: 1})
-	iev := expression.NewIdentEvalVisitor()
-	iev.Set("a", 3)
-	exp.Accept(iev)
-	v, err := exp.Eval(nil, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(4))
-}
-
 func (s *testVisitorSuite) TestBase(c *C) {
 	val := expression.Value{Val: 1}
-	visitor := expression.NewIdentEvalVisitor()
+	type TestVisitor struct {
+		expression.BaseVisitor
+	}
+	visitor := &TestVisitor{}
+	visitor.BaseVisitor.V = visitor
 	var exp expression.Expression
 	exp = &expression.Between{Expr: val, Left: val, Right: val}
 	exp.Accept(visitor)

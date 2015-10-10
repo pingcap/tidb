@@ -112,15 +112,25 @@ func (r *TableDefaultPlan) Explain(w format.Formatter) {
 }
 
 func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, bool, error) {
-	ok, cn, rval, err := x.IsIdentRelOpVal()
+	ok, name, rval, err := x.IsIdentCompareVal()
 	if err != nil {
 		return r, false, err
 	}
 	if !ok {
 		return r, false, nil
 	}
+	if rval == nil {
+		// if nil, any <, <=, >, >=, =, != operator will do nothing
+		// any value compared null returns null
+		// TODO: if we support <=> later, we must handle null
+		return &NullPlan{r.GetFields()}, true, nil
+	}
 
+	_, tn, cn := field.SplitQualifiedName(name)
 	t := r.T
+	if tn != "" && tn != t.TableName().L {
+		return r, false, nil
+	}
 	c := column.FindCol(t.Cols(), cn)
 	if c == nil {
 		return nil, false, errors.Errorf("No such column: %s", cn)
@@ -131,22 +141,16 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		return r, false, nil
 	}
 
-	if rval, err = types.Convert(rval, &c.FieldType); err != nil {
+	var seekVal interface{}
+	if seekVal, err = types.Convert(rval, &c.FieldType); err != nil {
 		return nil, false, err
-	}
-
-	if rval == nil {
-		// if nil, any <, <=, >, >=, =, != operator will do nothing
-		// any value compared null returns null
-		// TODO: if we support <=> later, we must handle null
-		return &NullPlan{r.GetFields()}, true, nil
 	}
 	return &indexPlan{
 		src:     t,
-		colName: cn,
+		col:     c,
 		idxName: ix.Name.O,
 		idx:     ix.X,
-		spans:   toSpans(x.Op, rval),
+		spans:   toSpans(x.Op, rval, seekVal),
 	}, true, nil
 }
 
@@ -168,13 +172,13 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 		}
 		var spans []*indexSpan
 		if trueValue {
-			spans = toSpans(opcode.NE, 0)
+			spans = toSpans(opcode.NE, 0, 0)
 		} else {
-			spans = toSpans(opcode.EQ, 0)
+			spans = toSpans(opcode.EQ, 0, 0)
 		}
 		return &indexPlan{
 			src:     t,
-			colName: x.L,
+			col:     v,
 			idxName: ix.Name.L,
 			idx:     ix.X,
 			spans:   spans,
@@ -201,15 +205,16 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	if ix == nil { // Column cn has no index.
 		return r, false, nil
 	}
+	col := column.FindCol(t.Cols(), cn)
 	var spans []*indexSpan
 	if x.Not {
-		spans = toSpans(opcode.GE, minNotNullVal)
+		spans = toSpans(opcode.GE, minNotNullVal, nil)
 	} else {
-		spans = toSpans(opcode.EQ, nil)
+		spans = toSpans(opcode.EQ, nil, nil)
 	}
 	return &indexPlan{
 		src:     t,
-		colName: cn,
+		col:     col,
 		idxName: ix.Name.L,
 		idx:     ix.X,
 		spans:   spans,
