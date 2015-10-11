@@ -3681,6 +3681,16 @@ NumericType:
 		fopt := $2.(*coldef.FloatOpt)
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen 
+		if x.Tp == mysql.TypeFloat {
+			// Fix issue #312
+			if x.Flen > 53 {
+				yylex.(*lexer).errf("Float len(%d) should not be greater than 53", x.Flen)
+				return 1
+			}
+			if x.Flen > 24 { 
+				x.Tp = mysql.TypeDouble
+			}
+		}
 		x.Decimal =fopt.Decimal
 		for _, o := range $3.([]*field.Opt) {
 			if o.IsUnsigned {
