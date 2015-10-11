@@ -20,6 +20,7 @@ package rsets
 import (
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -87,5 +88,11 @@ type SelectFromDualRset struct {
 
 // Plan gets SelectExprPlan.
 func (r *SelectFromDualRset) Plan(ctx context.Context) (plan.Plan, error) {
+	// field cannot contain identifier
+	for _, f := range r.Fields {
+		if cs := expression.MentionedColumns(f.Expr); len(cs) > 0 {
+			return nil, errors.Errorf("Unknown column '%s' in 'field list'", cs[0])
+		}
+	}
 	return &plans.SelectFromDualPlan{Fields: r.Fields}, nil
 }
