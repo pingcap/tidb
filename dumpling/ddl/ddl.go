@@ -48,7 +48,7 @@ var (
 	ErrNotExists = errors.Errorf("DDL:not exists")
 )
 
-// DDL is responsible for updating schema in data store and maintains in-memory InfoSchema cache.
+// DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr) error
 	DropSchema(ctx context.Context, schema model.CIStr) error
@@ -69,7 +69,7 @@ type ddl struct {
 // OnDDLChange is used as hook function when schema changed.
 type OnDDLChange func(err error) error
 
-// NewDDL create a new DDL.
+// NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
 	d := &ddl{
 		store:       store,
