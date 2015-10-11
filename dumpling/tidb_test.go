@@ -300,6 +300,7 @@ func (s *testMainSuite) TestIsQuery(c *C) {
 		{"/*comment*/ select 1;", true},
 		{"/*comment*/ /*comment*/ select 1;", true},
 		{"select /*comment*/ 1 /*comment*/;", true},
+		{"(select /*comment*/ 1 /*comment*/);", true},
 	}
 	for _, t := range tbl {
 		c.Assert(IsQuery(t.sql), Equals, t.ok, Commentf(t.sql))
