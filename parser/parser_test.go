@@ -533,6 +533,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},
+
+		// For https://github.com/pingcap/tidb/issues/320
+		{`(select 1);`, true},
 	}
 
 	for _, t := range table {

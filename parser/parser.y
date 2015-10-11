@@ -3437,6 +3437,11 @@ Statement:
 |	UnionStmt
 |	UpdateStmt
 |	UseStmt
+|	SubSelect
+	{
+		// `(select 1)`; is a valid select statement
+		$$ = $1.(*subquery.SubQuery).Stmt
+	}
 
 ExplainableStmt:
 	SelectStmt
