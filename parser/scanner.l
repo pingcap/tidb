@@ -50,7 +50,13 @@ type lexer struct {
 	prepare		bool 
 	ParamList	[]*expression.ParamMarker
 	stmtStartPos 	int
+	stringLit 	[]byte
+
+	// record token's offset of the input
+	tokenEndOffset   int
+	tokenStartOffset int
 }
+
 
 // NewLexer builds a new lexer.
 func NewLexer(src string) (l *lexer) {
@@ -103,6 +109,7 @@ func (l *lexer) unget(b byte) {
 	l.ungetBuf = append(l.ungetBuf, b)
 	l.i--
 	l.ncol--
+	l.tokenEndOffset--
 }
 
 func (l *lexer) next() int {
@@ -129,6 +136,7 @@ func (l *lexer) next() int {
 	default:
 		l.ncol++
 	}
+	l.tokenEndOffset++
 	return l.c
 }
 
@@ -174,13 +182,15 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col = l.line, l.col
+		lval.line, lval.col, lval.offset = l.line, l.col, l.tokenStartOffset
+		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (
 		INITIAL = iota
 		S1
 		S2
 		S3
+		S4
 	)
 
 	if n := l.inj; n != 0 {
@@ -268,6 +278,8 @@ convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
+curdate 	{c}{u}{r}{d}{a}{t}{e}
+current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
@@ -294,6 +306,7 @@ engines		{e}{n}{g}{i}{n}{e}{s}
 execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
+extract		{e}{x}{t}{r}{a}{c}{t}
 first		{f}{i}{r}{s}{t}
 for		{f}{o}{r}
 foreign		{f}{o}{r}{e}{i}{g}{n}
@@ -326,7 +339,9 @@ length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
+locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
+lower		{l}{o}{w}{e}{r}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
 max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
@@ -347,6 +362,7 @@ outer		{o}{u}{t}{e}{r}
 password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
@@ -383,6 +399,7 @@ union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
+upper		{u}{p}{p}{e}{r}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
@@ -455,18 +472,29 @@ user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
-idchars		{idchar0}|[0-9]
+idchars		{idchar0}|[0-9$] // See: https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 ident		{idchar0}{idchars}*
-quotedIdent	`{ident}`
 
 user_var	"@"{ident}
 sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
+
+second_microsecond	{s}{e}{c}{o}{n}{d}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_microsecond	{m}{i}{n}{u}{t}{e}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_second 		{m}{i}{n}{u}{t}{e}_{s}{e}{c}{o}{n}{d}
+hour_microsecond	{h}{o}{u}{r}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+hour_second 		{h}{o}{u}{r}_{s}{e}{c}{o}{n}{d}
+hour_minute		{h}{o}{u}{r}_{m}{i}{n}{u}{t}{e}
+day_microsecond		{d}{a}{y}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+day_second 		{d}{a}{y}_{s}{e}{c}{o}{n}{d}
+day_minute		{d}{a}{y}_{m}{i}{n}{u}{t}{e}
+day_hour		{d}{a}{y}_{h}{o}{u}{r}
+year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 
 %yyc c
 %yyn c = l.next()
 %yyt l.sc
 
-%x S1 S2 S3
+%x S1 S2 S3 S4
 
 %%
 		l.val = l.val[:0]
@@ -495,9 +523,26 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 \"			l.sc = S1
 '			l.sc = S2
+`			l.sc = S4
 
-<S1>(\\.|[^\"]|\"\")*\"		return l.str(lval, "\"")
-<S2>((\\')|[^']|\n|'')*'	return l.str(lval, "'")
+<S1>[^\"\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S1>\\.			l.stringLit = append(l.stringLit, l.val...)
+<S1>\"\"		l.stringLit = append(l.stringLit, '"')
+<S1>\"			l.stringLit = append(l.stringLit, '"')
+			l.sc = 0
+			return l.str(lval, "\"")	
+<S2>[^'\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S2>\\.			l.stringLit = append(l.stringLit, l.val...)
+<S2>''			l.stringLit = append(l.stringLit, '\'')
+<S2>'			l.stringLit = append(l.stringLit, '\'')
+			l.sc = 0
+			return l.str(lval, "'")
+<S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)	
+<S4>``			l.stringLit = append(l.stringLit, '`')
+<S4>`			l.sc = 0
+			lval.item = string(l.stringLit)
+			l.stringLit = l.stringLit[0:0]
+			return identifier
 
 "&&"			return andand
 "&^"			return andnot
@@ -570,6 +615,10 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return count
 {create}		return create
 {cross}			return cross
+{curdate}		lval.item = string(l.val)
+			return curDate
+{current_date}		lval.item = string(l.val)
+			return currentDate
 {current_user}		lval.item = string(l.val)
 			return currentUser
 {database}		lval.item = string(l.val)
@@ -583,6 +632,14 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return dayofmonth
 {dayofyear}		lval.item = string(l.val)
 			return dayofyear
+{day_hour}		lval.item = string(l.val)
+			return dayHour
+{day_microsecond}	lval.item = string(l.val)
+			return dayMicrosecond
+{day_minute}		lval.item = string(l.val)
+			return dayMinute
+{day_second}		lval.item = string(l.val)
+			return daySecond
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd
@@ -610,6 +667,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {enum}			return enum
 {exists}		return exists
 {explain}		return explain
+{extract}		lval.item = string(l.val)
+			return extract
 {first}			lval.item = string(l.val)
 			return first
 {for}			return forKwd
@@ -628,6 +687,12 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
 			return hour
+{hour_microsecond}	lval.item = string(l.val)
+			return hourMicrosecond
+{hour_minute}		lval.item = string(l.val)
+			return hourMinute
+{hour_second}		lval.item = string(l.val)
+			return hourSecond
 {identified}		lval.item = string(l.val)
 			return identified
 {if}			lval.item = string(l.val)
@@ -653,7 +718,11 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
+{locate}		lval.item = string(l.val)
+			return locate
 {lock}			return lock
+{lower}			lval.item = string(l.val)
+			return lower
 {low_priority}		return lowPriority
 {max}			lval.item = string(l.val)
 			return max
@@ -665,6 +734,10 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return min
 {minute}		lval.item = string(l.val)
 			return minute
+{minute_microsecond}	lval.item = string(l.val)
+			return minuteMicrosecond
+{minute_second}		lval.item = string(l.val)
+			return minuteSecond
 {min_rows}		lval.item = string(l.val)
 			return minRows
 {mod}			return mod
@@ -689,6 +762,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{quarter}		lval.item = string(l.val)
+			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
 {right}			return right
@@ -722,6 +797,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return userVar
 {second}		lval.item = string(l.val)
 			return second
+{second_microsecond}	lval.item= string(l.val)
+			return secondMicrosecond
 {select}		return selectKwd
 
 {set}			return set
@@ -751,6 +828,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {nullif}		lval.item = string(l.val)
 			return nullIf
 {update}		return update
+{upper}			lval.item = string(l.val)
+			return upper
 {use}			return use
 {user}			lval.item = string(l.val)
 			return user
@@ -773,6 +852,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {xor}			return xor
 {yearweek}		lval.item = string(l.val)
 			return yearweek
+{year_month}		lval.item = string(l.val)
+			return yearMonth
 			
 {signed}		lval.item = string(l.val)
 			return signed
@@ -901,9 +982,6 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {ident}			lval.item = string(l.val)
 			return identifier
 
-{quotedIdent}		lval.item = l.trimIdent(string(l.val))
-			return identifier
-
 .			return c0
 
 %%
@@ -920,16 +998,14 @@ func (l *lexer) npos() (line, col int) {
 
 func (l *lexer) str(lval *yySymType, pref string) int {
 	l.sc = 0
-	s := string(l.val)
 	// TODO: performance issue.
+	s := string(l.stringLit)
+	l.stringLit = l.stringLit[0:0]
 	if pref == "'" {
-		s = strings.Replace(s, "''", "'", -1)
 		s = strings.Replace(s, "\\'", "'", -1)    
 		s = strings.TrimSuffix(s, "'") + "\""
 		pref = "\""
-	} else if pref == "\"" {
-		s = strings.Replace(s, "\"\"", "\"", -1)
-	}
+	} 
 	v, err := strconv.Unquote(pref + s)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)

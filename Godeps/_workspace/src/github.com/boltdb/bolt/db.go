@@ -21,9 +21,6 @@ const version = 2
 // Represents a marker value to indicate that a file is a Bolt DB.
 const magic uint32 = 0xED0CDAED
 
-// Default mmap size
-const defaultSize = 500 * 1024 * 1024
-
 // IgnoreNoSync specifies whether the NoSync field of a DB is ignored when
 // syncing changes to a file.  This is required as some operating systems,
 // such as OpenBSD, do not have a unified buffer cache (UBC) and writes
@@ -194,7 +191,7 @@ func Open(path string, mode os.FileMode, options *Options) (*DB, error) {
 	}
 
 	// Memory map the data file.
-	if err := db.mmap(defaultSize); err != nil {
+	if err := db.mmap(0); err != nil {
 		_ = db.close()
 		return nil, err
 	}

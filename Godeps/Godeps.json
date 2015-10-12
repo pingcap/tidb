@@ -6,6 +6,11 @@
 	],
 	"Deps": [
 		{
+			"ImportPath": "github.com/boltdb/bolt",
+			"Comment": "v1.0-129-g51f99c8",
+			"Rev": "51f99c862475898df9773747d3accd05a7ca33c1"
+		},
+		{
 			"ImportPath": "github.com/go-sql-driver/mysql",
 			"Comment": "v1.2-118-g3dd7008",
 			"Rev": "3dd7008ac1529aca1bcd8a9db75228a71ba23cac"
@@ -17,11 +22,6 @@
 		{
 			"ImportPath": "github.com/juju/errors",
 			"Rev": "4567a5e69fd3130ca0d89f69478e7ac025b67452"
-		},
-		{
-			"ImportPath": "github.com/ngaut/bolt",
-			"Comment": "v1.0-117-g430b1ff",
-			"Rev": "430b1ff461fe33eb4655b5116d139c75497ede66"
 		},
 		{
 			"ImportPath": "github.com/ngaut/log",

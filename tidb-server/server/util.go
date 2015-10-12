@@ -330,7 +330,7 @@ func dumpTextValue(mysqlType uint8, value interface{}) ([]byte, error) {
 	case uint:
 		return strconv.AppendUint(nil, uint64(v), 10), nil
 	case float32:
-		return strconv.AppendFloat(nil, float64(v), 'f', -1, 64), nil
+		return strconv.AppendFloat(nil, float64(v), 'f', -1, 32), nil
 	case float64:
 		return strconv.AppendFloat(nil, float64(v), 'f', -1, 64), nil
 	case []byte:

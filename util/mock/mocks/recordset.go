@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 )
 
-// Recordset represents mock Recordsets
+// Recordset represents mocked rset.Recordset.
 type Recordset struct {
 	rows   [][]interface{}
 	fields []string
@@ -27,7 +27,7 @@ type Recordset struct {
 	cursor int
 }
 
-// NewRecordset creates a new mocked Recordset.
+// NewRecordset creates a new mocked rset.Recordset.
 func NewRecordset(rows [][]interface{}, fields []string, offset int) *Recordset {
 	return &Recordset{
 		rows:   rows,
@@ -58,12 +58,12 @@ func (r *Recordset) Fields() ([]*field.ResultField, error) {
 	return ret[:r.offset], nil
 }
 
-// FirstRow implements rset.Recordset.
+// FirstRow implements rset.Recordset FirstRow interface.
 func (r *Recordset) FirstRow() ([]interface{}, error) {
 	return r.rows[0], nil
 }
 
-// Rows implements rset.Recordset.
+// Rows implements rset.Recordset Rows interface.
 func (r *Recordset) Rows(limit, offset int) ([][]interface{}, error) {
 	var ret [][]interface{}
 	for _, row := range r.rows {
@@ -78,7 +78,7 @@ func (r *Recordset) SetFieldOffset(offset int) {
 	r.offset = offset
 }
 
-// Next implements rset.Recordset.
+// Next implements rset.Recordset Next interface.
 func (r *Recordset) Next() (row *plan.Row, err error) {
 	if r.cursor == len(r.rows) {
 		return
@@ -88,7 +88,7 @@ func (r *Recordset) Next() (row *plan.Row, err error) {
 	return
 }
 
-// Close implements rset.Recordset.
+// Close implements rset.Recordset Close interface.
 func (r *Recordset) Close() error {
 	r.cursor = 0
 	return nil

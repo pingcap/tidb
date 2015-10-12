@@ -64,6 +64,8 @@ var Funcs = map[string]Func{
 	"sum":          {builtinSum, 1, 1, false, true},
 
 	// time functions
+	"curdate":           {builtinCurrentDate, 0, 0, false, false},
+	"current_date":      {builtinCurrentDate, 0, 0, false, false},
 	"current_timestamp": {builtinNow, 0, 1, false, false},
 	"date":              {builtinDate, 8, 8, true, false},
 	"day":               {builtinDay, 1, 1, true, false},
@@ -93,7 +95,9 @@ var Funcs = map[string]Func{
 	"concat_ws": {builtinConcatWS, 2, -1, true, false},
 	"left":      {builtinLeft, 2, 2, true, false},
 	"length":    {builtinLength, 1, 1, true, false},
+	"lower":     {builtinLower, 1, 1, true, false},
 	"repeat":    {builtinRepeat, 2, 2, true, false},
+	"upper":     {builtinUpper, 1, 1, true, false},
 
 	// information functions
 	"current_user": {builtinCurrentUser, 0, 0, false, false},

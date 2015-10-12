@@ -263,21 +263,28 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []inte
 	return nil
 }
 
+// SetColValue sets the column value.
+// If the column untouched, we don't need to do this.
+func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) error {
+	v, err := t.EncodeValue(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := txn.Set(key, v); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (t *Table) setNewData(ctx context.Context, h int64, data []interface{}) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return err
 	}
 	for _, col := range t.Cols() {
-		// set new value
-		// If column untouched, we do not need to do this
 		k := t.RecordKey(h, col)
-		v, err := t.EncodeValue(data[col.Offset])
-		if err != nil {
-			return err
-		}
-		if err := txn.Set([]byte(k), v); err != nil {
-			return err
+		if err := t.SetColValue(txn, k, data[col.Offset]); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -365,13 +372,8 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	}
 	// column key -> column value
 	for _, c := range t.Cols() {
-		colKey := t.RecordKey(recordID, c)
-		data, err := t.EncodeValue(r[c.Offset])
-		if err != nil {
-			return 0, err
-		}
-		err = txn.Set([]byte(colKey), data)
-		if err != nil {
+		k := t.RecordKey(recordID, c)
+		if err := t.SetColValue(txn, k, r[c.Offset]); err != nil {
 			return 0, err
 		}
 	}
@@ -533,6 +535,10 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		return err
 	}
 	defer it.Close()
+
+	if !it.Valid() {
+		return nil
+	}
 
 	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
 

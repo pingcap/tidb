@@ -48,6 +48,7 @@ import (
 %}
 
 %union {
+	offset int // offset
 	line int
 	col  int
 	item interface{}
@@ -105,6 +106,8 @@ import (
 	count		"COUNT"
 	create		"CREATE"
 	cross 		"CROSS"
+	curDate 	"CURDATE"
+	currentDate 	"CURRENT_DATE"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -133,6 +136,7 @@ import (
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
+	extract		"EXTRACT"
 	falseKwd	"false"
 	first		"FIRST"
 	foreign		"FOREIGN"
@@ -168,7 +172,9 @@ import (
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
+	locate		"LOCATE"
 	lock		"LOCK"
+	lower 		"LOWER"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
 	max		"MAX"
@@ -199,6 +205,7 @@ import (
 	placeholder	"PLACEHOLDER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
 	references	"REFERENCES"
@@ -238,6 +245,7 @@ import (
 	unique		"UNIQUE"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
+	upper 		"UPPER"
 	use		"USE"
 	user		"USER"
 	using		"USING"
@@ -312,6 +320,18 @@ import (
 	booleanType	"BOOLEAN"
 
 	parseExpression	"parse expression prefix"
+
+	secondMicrosecond	"SECOND_MICROSECOND"
+	minuteMicrosecond	"MINUTE_MICROSECOND"
+	minuteSecond 		"MINUTE_SECOND"
+	hourMicrosecond		"HOUR_MICROSECOND"
+	hourSecond 		"HOUR_SECOND"
+	hourMinute 		"HOUR_MINUTE"
+	dayMicrosecond 		"DAY_MICROSECOND"
+	daySecond 		"DAY_SECOND"
+	dayMinute 		"DAY_MINUTE"
+	dayHour			"DAY_HOUR"
+	yearMonth		"YEAR_MONTH"
 
 %type   <item>
 	AlterTableStmt		"Alter table statement"
@@ -469,6 +489,7 @@ import (
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
 	SystemVariable		"System defined variable name"
+	TableAsOpt		"table as option"
 	TableConstraint		"table constraint definition"
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
@@ -482,8 +503,10 @@ import (
 	TableOptListOpt		"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TimeUnit		"Time unit"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
+	UnionSelect		"Union select/(select)"
 	UnionStmt		"Union statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
@@ -807,6 +830,12 @@ Constraint:
 |	"COMMENT" stringLit
 	{
 		$$ = &coldef.ConstraintOpt{Tp: coldef.ConstrComment}
+	}
+|	"CHECK" '(' Expression ')'
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/create-table.html
+		// The CHECK clause is parsed but ignored by all storage engines.
+		$$ = nil
 	}
 
 ConstraintElem:
@@ -1183,12 +1212,14 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableIdent WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
+		ts := &rsets.TableSource{Source: $6}
+		r := &rsets.JoinRset{Left: ts, Right: nil}
 		x := &stmts.DeleteStmt{
-			TableIdent:    $6.(table.Ident),
-			LowPriority:   $2.(bool),
-			Quick:         $3.(bool),
-			Ignore:        $4.(bool)}
-	
+			Refs:		r,
+			LowPriority:	$2.(bool),
+			Quick:		$3.(bool),
+			Ignore:		$4.(bool),
+		}
 		if $7 != nil {
 			x.Where = $7.(expression.Expression)
 		}
@@ -1532,12 +1563,19 @@ Field1:
 	}
 
 AsOpt:
-	identifier
+	Identifier
 	{
-		// TODO: check potential bug
 		$$ = $1
 	}
 |	"AS" Identifier
+	{
+		$$ = $2
+	}
+|	stringLit
+	{
+		$$ = $1
+	}
+|	"AS" stringLit
 	{
 		$$ = $2
 	}
@@ -1633,11 +1671,11 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL"
+|	"NATIONAL" | "ROW" | "QUARTER"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
+|	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
@@ -1679,6 +1717,10 @@ InsertRest:
 	{
 		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
+|	'(' ColumnNameListOpt ')' UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
 		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
@@ -1686,6 +1728,10 @@ InsertRest:
 |	SelectStmt
 	{
 		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+	}
+|	UnionStmt
+	{
+		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
@@ -1906,7 +1952,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -1922,6 +1968,16 @@ FunctionCallConflict:
 |	"CURRENT_USER"
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+		x := yylex.(*lexer)
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
+		if err != nil {
+			x.err(err)
+			return 1
+		}
+	}
+|	"CURRENT_DATE"
+	{
 		x := yylex.(*lexer)
 		var err error
 		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
@@ -2056,6 +2112,16 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"CURDATE" '(' ')'
+	{
+		var err error
+		$$, err = expression.NewCall($1.(string), []expression.Expression{}, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{
 		args := []expression.Expression{}
@@ -2145,6 +2211,13 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
+	{
+		$$ = &expression.Extract{
+			Unit: $3.(string), 
+			Date: $5.(expression.Expression),
+		}
+	}
 |	"FOUND_ROWS" '(' ')'
 	{
 		args := []expression.Expression{}
@@ -2178,6 +2251,32 @@ FunctionCallNonKeyword:
 		}
 	}
 |	"LENGTH" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
+|	"LOCATE" '(' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+		}	
+	}
+|	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+			Pos: $7.(expression.Expression),
+		}	
+	}
+|	"LOWER" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
 		var err error
@@ -2323,6 +2422,17 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"UPPER" '(' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"WEEKDAY" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2434,6 +2544,12 @@ FuncDatetimePrec:
 	{
 		$$ = $2
 	}
+
+TimeUnit:
+	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" 
+|	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" 
+|	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
 ExpressionOpt:
 	{
@@ -2669,10 +2785,6 @@ QuickOptional:
 		$$ = true
 	}
 
-semiOpt:
-	/* EMPTY */
-|	';'
-
 
 /***************************Prepared Statement Start******************************
  * See: https://dev.mysql.com/doc/refman/5.7/en/prepare.html
@@ -2861,9 +2973,13 @@ TableFactor:
 	{
 		$$ = &rsets.TableSource{Source: $1, Name: $2.(string)}
 	}
-|	'(' SelectStmt semiOpt ')' AsOpt
+|	'(' SelectStmt ')' TableAsOpt
 	{
-		$$ = &rsets.TableSource{Source: $2, Name: $5.(string)}
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
+	}
+|	'(' UnionStmt ')' TableAsOpt
+	{
+		$$ = &rsets.TableSource{Source: $2, Name: $4.(string)}
 	}
 |	'(' TableRefs ')'
 	{
@@ -2874,11 +2990,20 @@ TableIdentOpt:
 	{
 		$$ = ""
 	}
-|	AsOpt 
+|	TableAsOpt 
 	{
 		$$ = $1
 	}
 
+TableAsOpt:
+	Identifier
+	{
+		$$ = $1
+	}
+|	"AS" Identifier
+	{
+		$$ = $2
+	}
 
 JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
@@ -2904,10 +3029,6 @@ JoinType:
 |	"RIGHT"
 	{
 		$$ = rsets.RightJoin
-	}
-|	"FULL"
-	{
-		$$ = rsets.FullJoin
 	}
 
 OuterOpt:
@@ -3012,7 +3133,17 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*stmts.SelectStmt)
-		s.SetText(yylex.(*lexer).src[yyS[yypt - 1].col-1:yyS[yypt].col-1])
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		$$ = &subquery.SubQuery{Stmt: s}
+	}
+|	'(' UnionStmt ')'
+	{
+		s := $2.(*stmts.UnionStmt)
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
 		$$ = &subquery.SubQuery{Stmt: s}
 	}
 
@@ -3183,12 +3314,15 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowTables,
 			DBName: $4.(string),
-			Full: $2.(bool)}
+			Full: $2.(bool),
+		}
+		stmt.SetCondition($5)
+		$$ = stmt
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{
@@ -3219,6 +3353,13 @@ ShowStmt:
 		}
 		stmt.SetCondition($3)
 		$$ = stmt
+	}
+|	"SHOW" "CREATE" "TABLE" TableIdent 
+	{
+		$$ = &stmts.ShowStmt{
+			Target:     stmt.ShowCreateTable,
+			TableIdent: $4.(table.Ident),
+		}
 	}
 
 ShowLikeOrWhereOpt:
@@ -3551,6 +3692,16 @@ NumericType:
 		fopt := $2.(*coldef.FloatOpt)
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen 
+		if x.Tp == mysql.TypeFloat {
+			// Fix issue #312
+			if x.Flen > 53 {
+				yylex.(*lexer).errf("Float len(%d) should not be greater than 53", x.Flen)
+				return 1
+			}
+			if x.Flen > 24 { 
+				x.Tp = mysql.TypeDouble
+			}
+		}
 		x.Decimal =fopt.Decimal
 		for _, o := range $3.([]*field.Opt) {
 			if o.IsUnsigned {
@@ -3813,6 +3964,7 @@ DateAndTimeType:
 |	"YEAR" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeYear)
+		x.Flen = $2.(int)
 		$$ = x
 	}
 
@@ -3916,7 +4068,7 @@ StringList:
  * See: https://dev.mysql.com/doc/refman/5.7/en/union.html
  ***********************************************************************************/
 UnionStmt:
-	SelectStmt "UNION" UnionOpt SelectStmt
+	UnionSelect "UNION" UnionOpt SelectStmt
 	{
 		ds := []bool {$3.(bool)}
 		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $4.(*stmts.SelectStmt)}
@@ -3925,13 +4077,43 @@ UnionStmt:
 			Selects:	ss,
 		}
 	}
-|	UnionStmt "UNION" UnionOpt SelectStmt
+|	UnionSelect "UNION" UnionOpt '(' SelectStmt ')' SelectStmtOrder SelectStmtLimit
 	{
-		s := $1.(*stmts.UnionStmt)
-		s.Distincts = append(s.Distincts, $3.(bool))
-		s.Selects = append(s.Selects, $4.(*stmts.SelectStmt))
+		ds := []bool {$3.(bool)}
+		ss := []*stmts.SelectStmt{$1.(*stmts.SelectStmt), $5.(*stmts.SelectStmt)}
+		st := &stmts.UnionStmt{
+			Distincts:	ds,
+			Selects:	ss,
+		}
+		if $7 != nil {
+			st.OrderBy = $7.(*rsets.OrderByRset)
+		}
+
+		if $8 != nil {
+			ay := $8.([]interface{})
+			st.Limit = ay[0].(*rsets.LimitRset)
+			st.Offset = ay[1].(*rsets.OffsetRset)
+		}
+		$$ = st
+	}
+|	UnionSelect "UNION" UnionOpt UnionStmt
+	{
+		s := $4.(*stmts.UnionStmt)
+		s.Distincts = append([]bool {$3.(bool)}, s.Distincts...)
+		s.Selects = append([]*stmts.SelectStmt{$1.(*stmts.SelectStmt)}, s.Selects...)
 		$$ = s	
 	}
+
+UnionSelect:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	'(' SelectStmt ')'
+	{
+		$$ = $2
+	}
+	
 
 UnionOpt:
 	{
