@@ -29,6 +29,7 @@ import (
 // InfoSchema is the interface used to retrieve the schema information.
 // It works as a in memory cache and doesn't handle any schema change.
 // InfoSchema is read-only, and the returned value is a copy.
+// TODO: add more methods to retrieve tables and columns.
 type InfoSchema interface {
 	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 	SchemaExists(schema model.CIStr) bool
@@ -40,13 +41,12 @@ type InfoSchema interface {
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	ColumnByID(id int64) (*model.ColumnInfo, bool)
-	ColumnIndices(id int64) []*model.IndexInfo
+	ColumnIndicesByID(id int64) ([]*model.IndexInfo, bool)
 	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
-	// TODO: add more methods to retrieve tables and columns.
 }
 
 // Infomation Schema Name.
@@ -64,7 +64,7 @@ type infoSchema struct {
 	indices        map[indexName]*model.IndexInfo
 	columnIndices  map[int64][]*model.IndexInfo
 
-	// We should to check version when change schema
+	// We should check version when change schema.
 	schemaMetaVersion int64
 }
 
@@ -151,8 +151,9 @@ func (is *infoSchema) ColumnByID(id int64) (val *model.ColumnInfo, ok bool) {
 	return
 }
 
-func (is *infoSchema) ColumnIndices(id int64) (indices []*model.IndexInfo) {
-	return is.columnIndices[id]
+func (is *infoSchema) ColumnIndicesByID(id int64) (indices []*model.IndexInfo, ok bool) {
+	indices, ok = is.columnIndices[id]
+	return
 }
 
 func (is *infoSchema) AllSchemaNames() (names []string) {

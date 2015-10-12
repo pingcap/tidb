@@ -14,8 +14,7 @@
 package kv
 
 import (
-	"errors"
-
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -75,7 +74,7 @@ func NextUntil(it Iterator, fn FnKeyCmp) (Iterator, error) {
 	for it.Valid() && !fn([]byte(it.Key())) {
 		it, err = it.Next(nil)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 	}
 	return it, nil

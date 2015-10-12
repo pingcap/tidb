@@ -264,7 +264,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	for iter.Valid() {
 		iter, err = iter.Next(nil)
 		c.Assert(err, IsNil)
-		cnt += 1
+		cnt++
 	}
 	tx.Commit()
 	c.Assert(cnt, Equals, 6)
