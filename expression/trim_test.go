@@ -35,6 +35,7 @@ func (s *testTrimSuite) TestTrim(c *C) {
 		{"barxxyz", "xyz", TrimTrailing, "barx"},
 		{nil, "xyz", TrimBoth, nil},
 		{1, 2, TrimBoth, "1"},
+		{"  \t\rbar\n   ", nil, TrimBothDefault, "bar"},
 	}
 	for _, v := range tbl {
 		f := FunctionTrim{

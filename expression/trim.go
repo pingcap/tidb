@@ -89,6 +89,8 @@ func (f *FunctionTrim) String() string {
 	return fmt.Sprintf("TRIM(%s %s FROM %s)", f.getDirectionStr(), f.RemStr, f.Str)
 }
 
+const spaceChars = "\n\t\r "
+
 // Eval implements the Expression Eval interface.
 func (f *FunctionTrim) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	// eval str
@@ -123,19 +125,19 @@ func (f *FunctionTrim) Eval(ctx context.Context, args map[interface{}]interface{
 		if len(remstr) > 0 {
 			return trimLeft(str, remstr), nil
 		}
-		return strings.TrimLeft(str, "\n\t "), nil
+		return strings.TrimLeft(str, spaceChars), nil
 	} else if f.Direction == TrimTrailing {
 		if len(remstr) > 0 {
 			return trimRight(str, remstr), nil
 		}
-		return strings.TrimRight(str, "\n\t "), nil
+		return strings.TrimRight(str, spaceChars), nil
 	}
 	if len(remstr) > 0 {
 		x := trimLeft(str, remstr)
 		x = trimRight(x, remstr)
 		return x, nil
 	}
-	return strings.Trim(str, "\n\t "), nil
+	return strings.Trim(str, spaceChars), nil
 }
 
 func trimLeft(str, remstr string) string {
