@@ -201,6 +201,9 @@ func (txn *hbaseTxn) doCommit() error {
 		log.Error(err)
 		return err
 	}
+
+	txn.version = kv.NewVersion(txn.Txn.GetCommitTS())
+	log.Debugf("doCommit txn.version:%d", txn.version.Ver)
 	return nil
 }
 
@@ -230,6 +233,7 @@ func (txn *hbaseTxn) close() error {
 	return nil
 }
 
+//if fail, themis auto rollback
 func (txn *hbaseTxn) Rollback() error {
 	if !txn.valid {
 		return ErrInvalidTxn
