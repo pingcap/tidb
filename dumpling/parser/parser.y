@@ -137,6 +137,7 @@ import (
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
+	extract		"EXTRACT"
 	falseKwd	"false"
 	first		"FIRST"
 	foreign		"FOREIGN"
@@ -171,6 +172,7 @@ import (
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
+	locate		"LOCATE"
 	lock		"LOCK"
 	lower 		"LOWER"
 	lowPriority	"LOW_PRIORITY"
@@ -202,6 +204,7 @@ import (
 	placeholder	"PLACEHOLDER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
 	references	"REFERENCES"
@@ -315,6 +318,18 @@ import (
 	booleanType	"BOOLEAN"
 
 	parseExpression	"parse expression prefix"
+
+	secondMicrosecond	"SECOND_MICROSECOND"
+	minuteMicrosecond	"MINUTE_MICROSECOND"
+	minuteSecond 		"MINUTE_SECOND"
+	hourMicrosecond		"HOUR_MICROSECOND"
+	hourSecond 		"HOUR_SECOND"
+	hourMinute 		"HOUR_MINUTE"
+	dayMicrosecond 		"DAY_MICROSECOND"
+	daySecond 		"DAY_SECOND"
+	dayMinute 		"DAY_MINUTE"
+	dayHour			"DAY_HOUR"
+	yearMonth		"YEAR_MONTH"
 
 %type   <item>
 	AlterTableStmt		"Alter table statement"
@@ -479,6 +494,7 @@ import (
 	TableOptListOpt		"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TimeUnit		"Time unit"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionSelect		"Union select/(select)"
@@ -1643,11 +1659,11 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW"
+|	"NATIONAL" | "ROW" | "QUARTER"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
-|	"HOUR" | "IFNULL" | "LENGTH" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
+|	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
@@ -2183,6 +2199,13 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
+	{
+		$$ = &expression.Extract{
+			Unit: $3.(string), 
+			Date: $5.(expression.Expression),
+		}
+	}
 |	"FOUND_ROWS" '(' ')'
 	{
 		args := []expression.Expression{}
@@ -2225,6 +2248,21 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+|	"LOCATE" '(' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+		}	
+	}
+|	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		$$ = &expression.FunctionLocate{
+			SubStr: $3.(expression.Expression), 
+			Str: $5.(expression.Expression),
+			Pos: $7.(expression.Expression),
+		}	
 	}
 |	"LOWER" '(' Expression ')'
 	{
@@ -2494,6 +2532,12 @@ FuncDatetimePrec:
 	{
 		$$ = $2
 	}
+
+TimeUnit:
+	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" 
+|	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" 
+|	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
 ExpressionOpt:
 	{
@@ -3258,12 +3302,15 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowTables,
 			DBName: $4.(string),
-			Full: $2.(bool)}
+			Full: $2.(bool),
+		}
+		stmt.SetCondition($5)
+		$$ = stmt
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{

@@ -19,9 +19,11 @@ package plans
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -60,6 +62,7 @@ type JoinPlan struct {
 	Fields      []*field.ResultField
 	On          expression.Expression
 	curRow      *plan.Row
+	tempPlan    plan.Plan
 	matchedRows []*plan.Row
 	cursor      int
 	evalArgs    map[interface{}]interface{}
@@ -109,25 +112,25 @@ func (r *JoinPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 	// TODO: do more optimization for join plan
 	// now we only use where expression for Filter, but for join
 	// we must use On expression too.
-
-	p, filtered, err := r.filterNode(ctx, expr, r.Left)
+	if r.Right == nil {
+		return r.Left.Filter(ctx, expr)
+	}
+	newPlan := &JoinPlan{
+		Fields: r.Fields,
+		Type:   r.Type,
+		On:     r.On,
+	}
+	p, filteredLeft, err := r.filterNode(ctx, expr, r.Left)
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
-	if filtered {
-		r.Left = p
-		return r, true, nil
-	}
-
-	p, filtered, err = r.filterNode(ctx, expr, r.Right)
+	newPlan.Left = p
+	p, filteredRight, err := r.filterNode(ctx, expr, r.Right)
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
-	if filtered {
-		r.Right = p
-		return r, true, nil
-	}
-	return r, false, nil
+	newPlan.Right = p
+	return newPlan, filteredLeft || filteredRight, nil
 }
 
 // GetFields implements plan.Plan GetFields interface.
@@ -160,13 +163,27 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			r.cursor++
 			return
 		}
-		r.cursor = 0
 		var leftRow *plan.Row
 		leftRow, err = r.Left.Next(ctx)
 		if leftRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = r.findMatchedRows(ctx, leftRow, false)
+		tempExpr := r.On.Clone()
+		visitor := NewIdentEvalVisitor(r.Left.GetFields(), leftRow.Data)
+		_, err = tempExpr.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var filtered bool
+		var p plan.Plan
+		p, filtered, err = r.Right.Filter(ctx, tempExpr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if filtered {
+			log.Debugf("left join use index")
+		}
+		err = r.findMatchedRows(ctx, leftRow, p, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -185,20 +202,30 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 		if rightRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = r.findMatchedRows(ctx, rightRow, true)
+
+		tempExpr := r.On.Clone()
+		visitor := NewIdentEvalVisitor(r.Right.GetFields(), rightRow.Data)
+		_, err = tempExpr.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var filtered bool
+		var p plan.Plan
+		p, filtered, err = r.Left.Filter(ctx, tempExpr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if filtered {
+			log.Debugf("right join use index")
+		}
+		err = r.findMatchedRows(ctx, rightRow, p, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 }
 
-func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right bool) (err error) {
-	var p plan.Plan
-	if right {
-		p = r.Left
-	} else {
-		p = r.Right
-	}
+func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, p plan.Plan, right bool) (err error) {
 	r.cursor = 0
 	r.matchedRows = nil
 	p.Close()
@@ -234,7 +261,6 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, right boo
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if b {
 			cmpRow.Data = joined
 			keys := make([]*plan.RowKeyEntry, 0, len(row.RowKeys)+len(cmpRow.RowKeys))
@@ -265,15 +291,31 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			if r.curRow == nil {
 				return nil, nil
 			}
+			if r.On != nil {
+				tempExpr := r.On.Clone()
+				visitor := NewIdentEvalVisitor(r.Left.GetFields(), r.curRow.Data)
+				_, err = tempExpr.Accept(visitor)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				var filtered bool
+				r.tempPlan, filtered, err = r.Right.Filter(ctx, tempExpr)
+				if filtered {
+					log.Debugf("cross join use index")
+				}
+			} else {
+				r.tempPlan = r.Right
+			}
 		}
+
 		var rightRow *plan.Row
-		rightRow, err = r.Right.Next(ctx)
+		rightRow, err = r.tempPlan.Next(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if rightRow == nil {
 			r.curRow = nil
-			r.Right.Close()
+			r.tempPlan.Close()
 			continue
 		}
 		joinedRow := append(r.curRow.Data, rightRow.Data...)
@@ -302,10 +344,71 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 // Close implements plan.Plan Close interface.
 func (r *JoinPlan) Close() error {
 	r.curRow = nil
+	r.tempPlan = nil
 	r.matchedRows = nil
 	r.cursor = 0
 	if r.Right != nil {
 		r.Right.Close()
 	}
 	return r.Left.Close()
+}
+
+// IdentEvalVisitor converts Ident expression to value expression.
+type IdentEvalVisitor struct {
+	expression.BaseVisitor
+	fields []*field.ResultField
+	row    []interface{}
+}
+
+// NewIdentEvalVisitor creates a new IdentEvalVisitor.
+func NewIdentEvalVisitor(fields []*field.ResultField, row []interface{}) *IdentEvalVisitor {
+	iev := &IdentEvalVisitor{fields: fields, row: row}
+	iev.BaseVisitor.V = iev
+	return iev
+}
+
+// VisitIdent implements Visitor interface.
+func (iev *IdentEvalVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	v, err := GetIdentValue(i.L, iev.fields, iev.row, field.CheckFieldFlag)
+	if err != nil {
+		return i, nil
+	}
+	return expression.Value{Val: v}, nil
+}
+
+// VisitBinaryOperation swaps the right side identifier to left side if left side expression is static.
+// So it can be used in index plan.
+func (iev *IdentEvalVisitor) VisitBinaryOperation(binop *expression.BinaryOperation) (expression.Expression, error) {
+	var err error
+	binop.L, err = binop.L.Accept(iev)
+	if err != nil {
+		return binop, errors.Trace(err)
+	}
+	binop.R, err = binop.R.Accept(iev)
+	if err != nil {
+		return binop, errors.Trace(err)
+	}
+
+	if binop.L.IsStatic() {
+		if _, ok := binop.R.(*expression.Ident); ok {
+			switch binop.Op {
+			case opcode.EQ:
+			case opcode.NE:
+			case opcode.NullEQ:
+			case opcode.LT:
+				binop.Op = opcode.GE
+			case opcode.LE:
+				binop.Op = opcode.GT
+			case opcode.GE:
+				binop.Op = opcode.LT
+			case opcode.GT:
+				binop.Op = opcode.LE
+			default:
+				// unsupported opcode
+				return binop, nil
+			}
+			binop.L, binop.R = binop.R, binop.L
+		}
+	}
+	return binop, nil
 }

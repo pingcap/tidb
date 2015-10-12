@@ -81,7 +81,6 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		Pattern:     s.Pattern,
 		Where:       s.Where,
 	}
-
 	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
 }
 
