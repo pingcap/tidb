@@ -71,7 +71,7 @@ func (p *PatternLike) IsStatic() bool {
 // String implements the Expression String interface.
 func (p *PatternLike) String() string {
 	if p.Escape != '\\' {
-		return fmt.Sprintf("%s LIKE %s ESCAPE '%v'", p.Expr, p.Pattern, p.Escape)
+		return fmt.Sprintf("%s LIKE %s ESCAPE '%c'", p.Expr, p.Pattern, p.Escape)
 	}
 	return fmt.Sprintf("%s LIKE %s", p.Expr, p.Pattern)
 }
