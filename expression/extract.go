@@ -61,7 +61,7 @@ func (e *Extract) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 		return nil, errors.Trace(err1)
 	}
 
-	return int64(n), nil
+	return n, nil
 }
 
 // IsStatic implements the Expression IsStatic interface.
@@ -79,68 +79,68 @@ func (e *Extract) Accept(v Visitor) (Expression, error) {
 	return v.VisitExtract(e)
 }
 
-func extractTime(unit string, t mysql.Time) (int, error) {
+func extractTime(unit string, t mysql.Time) (int64, error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return t.Nanosecond() / 1000, nil
+		return int64(t.Nanosecond() / 1000), nil
 	case "SECOND":
-		return t.Second(), nil
+		return int64(t.Second()), nil
 	case "MINUTE":
-		return t.Minute(), nil
+		return int64(t.Minute()), nil
 	case "HOUR":
-		return t.Hour(), nil
+		return int64(t.Hour()), nil
 	case "DAY":
-		return t.Day(), nil
+		return int64(t.Day()), nil
 	case "WEEK":
 		_, week := t.ISOWeek()
-		return week, nil
+		return int64(week), nil
 	case "MONTH":
-		return int(t.Month()), nil
+		return int64(t.Month()), nil
 	case "QUARTER":
-		m := int(t.Month())
+		m := int64(t.Month())
 		// 1 - 3 -> 1
 		// 4 - 6 -> 2
 		// 7 - 9 -> 3
 		// 10 - 12 -> 4
 		return (m + 2) / 3, nil
 	case "YEAR":
-		return t.Year(), nil
+		return int64(t.Year()), nil
 	case "SECOND_MICROSECOND":
-		return t.Second()*1000000 + t.Nanosecond()/1000, nil
+		return int64(t.Second())*1000000 + int64(t.Nanosecond())/1000, nil
 	case "MINUTE_MICROSECOND":
 		_, m, s := t.Clock()
-		return m*100000000 + s*1000000 + t.Nanosecond()/1000, nil
+		return int64(m)*100000000 + int64(s)*1000000 + int64(t.Nanosecond())/1000, nil
 	case "MINUTE_SECOND":
 		_, m, s := t.Clock()
-		return m*100 + s, nil
+		return int64(m*100 + s), nil
 	case "HOUR_MICROSECOND":
 		h, m, s := t.Clock()
-		return h*10000000000 + m*100000000 + s*1000000 + t.Nanosecond()/1000, nil
+		return int64(h)*10000000000 + int64(m)*100000000 + int64(s)*1000000 + int64(t.Nanosecond())/1000, nil
 	case "HOUR_SECOND":
 		h, m, s := t.Clock()
-		return h*10000 + m*100 + s, nil
+		return int64(h)*10000 + int64(m)*100 + int64(s), nil
 	case "HOUR_MINUTE":
 		h, m, _ := t.Clock()
-		return h*100 + m, nil
+		return int64(h)*100 + int64(m), nil
 	case "DAY_MICROSECOND":
 		h, m, s := t.Clock()
 		d := t.Day()
-		return (d*1000000+h*10000+m*100+s)*1000000 + t.Nanosecond()/1000, nil
+		return int64(d*1000000+h*10000+m*100+s)*1000000 + int64(t.Nanosecond())/1000, nil
 	case "DAY_SECOND":
 		h, m, s := t.Clock()
 		d := t.Day()
-		return d*1000000 + h*10000 + m*100 + s, nil
+		return int64(d)*1000000 + int64(h)*10000 + int64(m)*100 + int64(s), nil
 	case "DAY_MINUTE":
 		h, m, _ := t.Clock()
 		d := t.Day()
-		return d*10000 + h*100 + m, nil
+		return int64(d)*10000 + int64(h)*100 + int64(m), nil
 	case "DAY_HOUR":
 		h, _, _ := t.Clock()
 		d := t.Day()
-		return d*100 + h, nil
+		return int64(d)*100 + int64(h), nil
 	case "YEAR_MONTH":
 		y, m, _ := t.Date()
-		return y*100 + int(m), nil
+		return int64(y)*100 + int64(m), nil
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
