@@ -47,10 +47,12 @@ type Iterator interface {
 	// Values returns the current value of the key/value pair or nil
 	// if the iterator is done.
 	Value() []byte
+	// Seek moves the iterator to the first key/value pair whose key is greater
+	// or equal to the given key.
+	// It returns whether such pair exist.
+	Seek(startKey []byte) bool
 	// Release releases current iterator.
 	Release()
-
-	Seek(startKey []byte) bool
 }
 
 // Batch is the interface for local storage
