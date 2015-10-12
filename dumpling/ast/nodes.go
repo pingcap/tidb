@@ -1,6 +1,19 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ast
 
-// txtNode is the struct implements partial node interface
+// txtNode is the struct implements partial node interface.
 // can be embeded by other nodes.
 type txtNode struct {
 	txt string
@@ -27,11 +40,10 @@ type VariableAssignment struct {
 
 // Accept implements Node interface.
 func (va *VariableAssignment) Accept(v Visitor) (Node, bool) {
-	node, ok := v.Enter(va)
-	if !ok {
-		return node, false
+	if !v.Enter(va) {
+		return va, false
 	}
-	node, ok = va.Value.Accept(v)
+	node, ok := va.Value.Accept(v)
 	if !ok {
 		return va, false
 	}
@@ -48,12 +60,11 @@ type SetStmt struct {
 
 // Accept implements Node interface.
 func (set *SetStmt) Accept(v Visitor) (Node, bool) {
-	node, ok := v.Enter(set)
-	if !ok {
-		return node, false
+	if !v.Enter(set) {
+		return set, false
 	}
 	for i, val := range set.Variables {
-		node, ok = val.Accept(v)
+		node, ok := val.Accept(v)
 		if !ok {
 			return set, false
 		}

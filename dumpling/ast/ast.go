@@ -47,7 +47,7 @@ type Expression interface {
 type Visitor interface {
 	// VisitEnter is called before children nodes is visited.
 	// ok returns false to stop visiting.
-	Enter(n Node) (node Node, ok bool)
+	Enter(n Node) (ok bool)
 	// VisitLeave is called after children nodes has been visited.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
