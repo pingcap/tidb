@@ -18,6 +18,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/bytes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/errors2"
 )
@@ -86,7 +87,7 @@ func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	if rawKey == nil {
 		return nil, kv.ErrNotExist
 	}
-	return append([]byte(nil), v...), nil
+	return bytes.CloneBytes(v), nil
 }
 
 func (s *dbSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
@@ -168,8 +169,8 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 			break
 		}
 		if val != nil {
-			it.k = append([]byte(nil), key...)
-			it.v = append([]byte(nil), val...)
+			it.k = bytes.CloneBytes(key)
+			it.v = bytes.CloneBytes(val)
 			it.startKey = key.Next()
 			break
 		}
