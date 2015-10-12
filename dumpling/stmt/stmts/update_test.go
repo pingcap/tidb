@@ -212,4 +212,34 @@ func (s *testStmtSuite) TestIssue345(c *C) {
 	c.Assert(cnt, Equals, 1)
 	rows.Close()
 	mustCommit(c, tx)
+
+	mustExec(c, testDB, `update t1 as a, t2 as t1 set a.c1 = 1, t1.c2 = 2;`)
+	// Check t1 content
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM t1;")
+	c.Assert(err, IsNil)
+	cnt = 0
+	for rows.Next() {
+		var d int
+		rows.Scan(&d)
+		c.Assert(d, Equals, 1)
+		cnt += 1
+	}
+	c.Assert(cnt, Equals, 1)
+	rows.Close()
+	mustCommit(c, tx)
+	// Check t2 content
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM t2;")
+	c.Assert(err, IsNil)
+	cnt = 0
+	for rows.Next() {
+		var d int
+		rows.Scan(&d)
+		c.Assert(d, Equals, 2)
+		cnt += 1
+	}
+	c.Assert(cnt, Equals, 1)
+	rows.Close()
+	mustCommit(c, tx)
 }
