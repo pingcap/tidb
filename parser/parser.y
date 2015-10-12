@@ -82,6 +82,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
+	both		"BOTH"
 	by		"BY"
 	byteType	"BYTE"
 	caseKwd		"CASE"
@@ -167,6 +168,7 @@ import (
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	le		"<="
+	leading		"LEADING"
 	left		"LEFT"
 	length		"LENGTH"
 	like		"LIKE"
@@ -235,7 +237,9 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	trailing	"TRAILING"
 	transaction	"TRANSACTION"
+	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
 	unknown 	"UNKNOWN"
@@ -496,6 +500,7 @@ import (
 	TableRef 		"table reference"
 	TableRefs 		"table references"
 	TimeUnit		"Time unit"
+	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionSelect		"Union select/(select)"
@@ -1688,7 +1693,7 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2434,6 +2439,34 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"TRIM" '(' Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			RemStr: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' TrimDirection "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
+|	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $6.(expression.Expression), 
+			RemStr: $4.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
 |	"UPPER" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2476,6 +2509,20 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+
+TrimDirection:
+	"BOTH"
+	{
+		$$ = expression.TrimBoth
+	}
+|	"LEADING"
+	{
+		$$ = expression.TrimLeading
+	}
+|	"TRAILING"
+	{
+		$$ = expression.TrimTrailing
 	}
 
 FunctionCallAgg:
@@ -3703,6 +3750,16 @@ NumericType:
 		fopt := $2.(*coldef.FloatOpt)
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen 
+		if x.Tp == mysql.TypeFloat {
+			// Fix issue #312
+			if x.Flen > 53 {
+				yylex.(*lexer).errf("Float len(%d) should not be greater than 53", x.Flen)
+				return 1
+			}
+			if x.Flen > 24 { 
+				x.Tp = mysql.TypeDouble
+			}
+		}
 		x.Decimal =fopt.Decimal
 		for _, o := range $3.([]*field.Opt) {
 			if o.IsUnsigned {

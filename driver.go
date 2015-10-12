@@ -117,9 +117,12 @@ type sqlDriver struct {
 	mu sync.Mutex
 }
 
-func (d *sqlDriver) lock() func() {
+func (d *sqlDriver) lock() {
 	d.mu.Lock()
-	return d.mu.Unlock
+}
+
+func (d *sqlDriver) unlock() {
+	d.mu.Unlock()
 }
 
 // Open returns a new connection to the database.  The name is a string in a
@@ -155,7 +158,10 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 		return nil, errors.Trace(err)
 	}
 	s := sess.(*session)
-	defer d.lock()()
+
+	d.lock()
+	defer d.unlock()
+
 	DBName := model.NewCIStr(dbName)
 	domain := sessionctx.GetDomain(s)
 	if !domain.InfoSchema().SchemaExists(DBName) {
@@ -220,7 +226,10 @@ func (c *driverConn) Close() error {
 		stmt := s.(*driverStmt)
 		err.append(stmt.conn.s.DropPreparedStmt(stmt.stmtID))
 	}
-	defer c.driver.lock()()
+
+	c.driver.lock()
+	defer c.driver.unlock()
+
 	return err.error()
 }
 
@@ -248,7 +257,7 @@ func (c *driverConn) Commit() error {
 	}
 
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	return errors.Trace(c.s.FinishTxn(false))

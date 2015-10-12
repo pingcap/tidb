@@ -103,6 +103,9 @@ type Visitor interface {
 
 	// VisitExtract visits Extract expression.
 	VisitExtract(v *Extract) (Expression, error)
+
+	// VisitFunctionTrim visits FunctionTrim expression.
+	VisitFunctionTrim(v *FunctionTrim) (Expression, error)
 }
 
 // BaseVisitor is the base implementation of Visitor.
@@ -458,4 +461,20 @@ func (bv *BaseVisitor) VisitExtract(v *Extract) (Expression, error) {
 	var err error
 	v.Date, err = v.Date.Accept(bv.V)
 	return v, errors.Trace(err)
+}
+
+// VisitFunctionTrim implements Visitor interface.
+func (bv *BaseVisitor) VisitFunctionTrim(ss *FunctionTrim) (Expression, error) {
+	var err error
+	ss.Str, err = ss.Str.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	if ss.RemStr != nil {
+		ss.RemStr, err = ss.RemStr.Accept(bv.V)
+		if err != nil {
+			return ss, errors.Trace(err)
+		}
+	}
+	return ss, nil
 }

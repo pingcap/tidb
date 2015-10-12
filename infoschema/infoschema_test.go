@@ -151,7 +151,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(ok, IsFalse)
 	c.Assert(col, IsNil)
 
-	indices := is.ColumnIndices(3)
+	indices, ok := is.ColumnIndicesByID(3)
+	c.Assert(ok, IsTrue)
 	c.Assert(len(indices), Equals, 1)
 
 	tbs := is.SchemaTables(dbName)

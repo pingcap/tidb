@@ -141,6 +141,7 @@ func indexCompare(a interface{}, b interface{}) int {
 	} else if b == nil {
 		return -1
 	}
+
 	// a and b both not nil
 	if a == minNotNullVal && b == minNotNullVal {
 		return 0
@@ -191,7 +192,7 @@ func (r *indexPlan) GetFields() []*field.ResultField {
 }
 
 // Filter implements plan.Plan Filter interface.
-// Filter merges BinaryOperations, and determines the lower and upper bound.
+// Filter merges BinaryOperations and determines the lower and upper bound.
 func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
 	switch x := expr.(type) {
 	case *expression.BinaryOperation:
