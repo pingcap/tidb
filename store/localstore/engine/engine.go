@@ -49,6 +49,8 @@ type Iterator interface {
 	Value() []byte
 	// Release releases current iterator.
 	Release()
+
+	Seek(startKey []byte) bool
 }
 
 // Batch is the interface for local storage
