@@ -303,6 +303,9 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
+		{`SELECT LOCATE('bar', 'foobarbar');`, true},
+		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
+
 		{"select current_date, current_date(), curdate()", true},
 
 		// For delete statement
@@ -328,6 +331,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SHOW VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES", true},
 		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
+		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
+		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 
 		// For compare subquery
 		{"SELECT 1 > (select 1)", true},
@@ -497,6 +502,28 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// For check clause
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
 
+		// For time extract
+		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(second from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(minute from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(hour from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(day from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(week from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(month from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(quarter from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(year from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(second_microsecond from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(minute_microsecond from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(minute_second from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(hour_microsecond from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(hour_second from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(hour_minute from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(day_microsecond from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(day_second from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(day_minute from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(day_hour from "2011-11-11 10:10:10.123456")`, true},
+		{`select extract(year_month from "2011-11-11 10:10:10.123456")`, true},
+
 		// For as
 		{"select 1 as a, 1 as `a`, 1 as \"a\", 1 as 'a'", true},
 		{`select 1 as a, 1 as "a", 1 as 'a'`, true},
@@ -529,7 +556,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row",
+		"max_rows", "min_rows", "national", "row", "quarter",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)

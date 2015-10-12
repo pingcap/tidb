@@ -306,6 +306,7 @@ engines		{e}{n}{g}{i}{n}{e}{s}
 execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
+extract		{e}{x}{t}{r}{a}{c}{t}
 first		{f}{i}{r}{s}{t}
 for		{f}{o}{r}
 foreign		{f}{o}{r}{e}{i}{g}{n}
@@ -337,6 +338,7 @@ length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
+locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
 lower		{l}{o}{w}{e}{r}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
@@ -358,6 +360,7 @@ outer		{o}{u}{t}{e}{r}
 password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
@@ -471,6 +474,18 @@ ident		{idchar0}{idchars}*
 
 user_var	"@"{ident}
 sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
+
+second_microsecond	{s}{e}{c}{o}{n}{d}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_microsecond	{m}{i}{n}{u}{t}{e}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_second 		{m}{i}{n}{u}{t}{e}_{s}{e}{c}{o}{n}{d}
+hour_microsecond	{h}{o}{u}{r}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+hour_second 		{h}{o}{u}{r}_{s}{e}{c}{o}{n}{d}
+hour_minute		{h}{o}{u}{r}_{m}{i}{n}{u}{t}{e}
+day_microsecond		{d}{a}{y}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+day_second 		{d}{a}{y}_{s}{e}{c}{o}{n}{d}
+day_minute		{d}{a}{y}_{m}{i}{n}{u}{t}{e}
+day_hour		{d}{a}{y}_{h}{o}{u}{r}
+year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 
 %yyc c
 %yyn c = l.next()
@@ -614,6 +629,14 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return dayofmonth
 {dayofyear}		lval.item = string(l.val)
 			return dayofyear
+{day_hour}		lval.item = string(l.val)
+			return dayHour
+{day_microsecond}	lval.item = string(l.val)
+			return dayMicrosecond
+{day_minute}		lval.item = string(l.val)
+			return dayMinute
+{day_second}		lval.item = string(l.val)
+			return daySecond
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd
@@ -641,6 +664,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {enum}			return enum
 {exists}		return exists
 {explain}		return explain
+{extract}		lval.item = string(l.val)
+			return extract
 {first}			lval.item = string(l.val)
 			return first
 {for}			return forKwd
@@ -658,6 +683,12 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
 			return hour
+{hour_microsecond}	lval.item = string(l.val)
+			return hourMicrosecond
+{hour_minute}		lval.item = string(l.val)
+			return hourMinute
+{hour_second}		lval.item = string(l.val)
+			return hourSecond
 {identified}		lval.item = string(l.val)
 			return identified
 {if}			lval.item = string(l.val)
@@ -683,6 +714,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
+{locate}		lval.item = string(l.val)
+			return locate
 {lock}			return lock
 {lower}			lval.item = string(l.val)
 			return lower
@@ -697,6 +730,10 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return min
 {minute}		lval.item = string(l.val)
 			return minute
+{minute_microsecond}	lval.item = string(l.val)
+			return minuteMicrosecond
+{minute_second}		lval.item = string(l.val)
+			return minuteSecond
 {min_rows}		lval.item = string(l.val)
 			return minRows
 {mod}			return mod
@@ -720,6 +757,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{quarter}		lval.item = string(l.val)
+			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
 {right}			return right
@@ -753,6 +792,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return userVar
 {second}		lval.item = string(l.val)
 			return second
+{second_microsecond}	lval.item= string(l.val)
+			return secondMicrosecond
 {select}		return selectKwd
 
 {set}			return set
@@ -805,6 +846,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {xor}			return xor
 {yearweek}		lval.item = string(l.val)
 			return yearweek
+{year_month}		lval.item = string(l.val)
+			return yearMonth
 			
 {signed}		lval.item = string(l.val)
 			return signed

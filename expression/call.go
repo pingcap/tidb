@@ -40,7 +40,10 @@ type Call struct {
 	// so we can ignore it in other functions
 	Distinct bool
 
-	d *builtin.AggregateDistinct
+	// distinctKey is the unique key when using same Call object for different Eval args.
+	// We have already use Call pointer to store aggregate result, so here we will need
+	// another unique key to keep aggregate distincter.
+	distinctKey *int
 }
 
 // NewCall creates a Call expression with function name f, function args arg and
@@ -59,7 +62,7 @@ func NewCall(f string, args []Expression, distinct bool) (v Expression, err erro
 		return nil, badNArgs(min, f, a)
 	}
 
-	c := Call{F: f, Distinct: distinct}
+	c := Call{F: f, Distinct: distinct, distinctKey: new(int)}
 	for _, Val := range args {
 		if !Val.IsStatic() {
 			c.Args = append(c.Args, Val)
@@ -126,15 +129,22 @@ func (c *Call) Eval(ctx context.Context, args map[interface{}]interface{}) (v in
 		a[i] = v
 	}
 
-	if c.d == nil {
-		// create a distinct if nil.
-		c.d = builtin.CreateAggregateDistinct(c.F, c.Distinct)
+	if c.distinctKey == nil {
+		// create an unique distinct key if not.
+		c.distinctKey = new(int)
 	}
 
 	if args != nil {
 		args[builtin.ExprEvalFn] = c
 		args[builtin.ExprEvalArgCtx] = ctx
-		args[builtin.ExprAggDistinct] = c.d
+		aggDistinct, ok := args[c.distinctKey]
+		if !ok {
+			// create an aggregate distinct if not.
+			aggDistinct = builtin.CreateAggregateDistinct(c.F, c.Distinct)
+			args[c.distinctKey] = aggDistinct
+		}
+
+		args[builtin.ExprAggDistinct] = aggDistinct
 	}
 	return f.F(a, args)
 }
