@@ -50,7 +50,6 @@ func (s *testParserSuite) TestOriginText(c *C) {
 }
 
 func (s *testParserSuite) TestSimple(c *C) {
-
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
