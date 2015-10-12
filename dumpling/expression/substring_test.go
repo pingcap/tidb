@@ -128,3 +128,62 @@ func (s *testSubstringSuite) TestSubstringIndex(c *C) {
 		c.Assert(s, Equals, s1)
 	}
 }
+
+func (s *testSubstringSuite) TestLocate(c *C) {
+	tbl := []struct {
+		substr interface{}
+		str    interface{}
+		pos    interface{}
+		result interface{}
+	}{
+		{"bar", "foobarbar", -1, 4},
+		{"xbar", "foobarbar", -1, 0},
+		{"bar", "foobarbar", 5, 7},
+		{nil, "foobarbar", 5, nil},
+		{"bar", nil, 5, nil},
+		{1, 2, -1, 0},
+		{"bar", "foobarbar", "5", 7},
+	}
+	for _, v := range tbl {
+		f := FunctionLocate{
+			SubStr: &Value{Val: v.substr},
+			Str:    &Value{Val: v.str},
+		}
+		if v.pos != -1 {
+			f.Pos = &Value{Val: v.pos}
+		}
+		c.Assert(f.IsStatic(), Equals, true)
+
+		fs := f.String()
+		c.Assert(len(fs), Greater, 0)
+
+		f1 := f.Clone()
+
+		r, err := f.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, Equals, v.result)
+
+		r1, err := f1.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		c.Assert(r, Equals, r1)
+	}
+	errTbl := []struct {
+		substr interface{}
+		str    interface{}
+		pos    interface{}
+		result interface{}
+	}{
+		{1, 5, -1, 0},
+		{"foobarbar", "4", -1, 0},
+		{"Quadratically", "Qua", "6", 0},
+	}
+	for _, v := range errTbl {
+		f := FunctionLocate{
+			Str:    &Value{Val: v.str},
+			SubStr: &Value{Val: v.substr},
+			Pos:    &Value{Val: v.pos},
+		}
+		_, err := f.Eval(nil, nil)
+		c.Assert(err, NotNil)
+	}
+}

@@ -72,6 +72,10 @@ func (t *testUnionSuit) TestUnion(c *C) {
 		},
 	}
 
+	// Set Flen explicitly here, because following ColToResultField will change Flen to zero.
+	// TODO: remove this if ColToResultField update.
+	cols[1].FieldType.Flen = 100
+
 	pln := &plans.UnionPlan{
 		Srcs: []plan.Plan{
 			tblPlan,

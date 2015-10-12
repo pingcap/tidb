@@ -49,6 +49,7 @@ var unsignedUpperBound = map[byte]uint64{
 	mysql.TypeLonglong: math.MaxUint64,
 	mysql.TypeBit:      math.MaxUint64,
 }
+
 var signedUpperBound = map[byte]int64{
 	mysql.TypeTiny:     math.MaxInt8,
 	mysql.TypeShort:    math.MaxInt16,
@@ -217,7 +218,7 @@ func typeError(v interface{}, target *FieldType) error {
 }
 
 // Cast casts val to certain types and does not return error.
-func Cast(val interface{}, target *FieldType) (v interface{}) { //NTYPE
+func Cast(val interface{}, target *FieldType) (v interface{}) {
 	tp := target.Tp
 	switch tp {
 	case mysql.TypeString:
@@ -284,7 +285,7 @@ func Cast(val interface{}, target *FieldType) (v interface{}) { //NTYPE
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //NTYPE
+func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	tp := target.Tp
 	if val == nil {
 		return nil, nil
@@ -295,7 +296,9 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return invConv(val, tp)
 		}
-		if target.Flen != UnspecifiedLength {
+		// For float and following double type, we will only truncate it for float(M, D) format.
+		// If no D is set, we will handle it like origin float whether M is set or not.
+		if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -307,7 +310,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 		if err != nil {
 			return invConv(val, tp)
 		}
-		if target.Flen != UnspecifiedLength {
+		if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 			x, err = TruncateFloat(x, target.Flen, target.Decimal)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -483,7 +486,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) { //
 // StrToInt converts a string to an integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToInt(str string) (int64, error) {
-	str = strings.Trim(str, " \t\r\n")
+	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return 0, nil
 	}
@@ -512,7 +515,7 @@ func StrToInt(str string) (int64, error) {
 // StrToUint converts a string to an unsigned integer in best effort.
 // TODO: handle overflow and add unittest.
 func StrToUint(str string) (uint64, error) {
-	str = strings.Trim(str, " \t\r\n")
+	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return uint64(0), nil
 	}
@@ -540,7 +543,7 @@ func StrToUint(str string) (uint64, error) {
 
 // StrToFloat converts a string to a float64 in best effort.
 func StrToFloat(str string) (float64, error) {
-	str = strings.Trim(str, " \t\r\n")
+	str = strings.TrimSpace(str)
 	if len(str) == 0 {
 		return 0, nil
 	}
@@ -551,7 +554,7 @@ func StrToFloat(str string) (float64, error) {
 	return strconv.ParseFloat(str, 64)
 }
 
-// ToUint64 converts a interface to an uint64.
+// ToUint64 converts an interface to an uint64.
 func ToUint64(value interface{}) (uint64, error) {
 	switch v := value.(type) {
 	case int:
@@ -592,7 +595,7 @@ func ToUint64(value interface{}) (uint64, error) {
 	}
 }
 
-// ToInt64 converts a interface to an int64.
+// ToInt64 converts an interface to an int64.
 func ToInt64(value interface{}) (int64, error) {
 	switch v := value.(type) {
 	case bool:
@@ -638,7 +641,7 @@ func ToInt64(value interface{}) (int64, error) {
 	}
 }
 
-// ToFloat64 converts a interface to a float64.
+// ToFloat64 converts an interface to a float64.
 func ToFloat64(value interface{}) (float64, error) {
 	switch v := value.(type) {
 	case bool:
@@ -682,14 +685,13 @@ func ToFloat64(value interface{}) (float64, error) {
 	}
 }
 
-// ToDecimal converts a interface to the Decimal.
+// ToDecimal converts an interface to a Decimal.
 func ToDecimal(value interface{}) (mysql.Decimal, error) {
 	switch v := value.(type) {
 	case bool:
 		if v {
 			return mysql.ConvertToDecimal(1)
 		}
-
 		return mysql.ConvertToDecimal(0)
 	case []byte:
 		return mysql.ConvertToDecimal(string(v))
@@ -702,7 +704,7 @@ func ToDecimal(value interface{}) (mysql.Decimal, error) {
 	}
 }
 
-// ToString converts a interface to a string.
+// ToString converts an interface to a string.
 func ToString(value interface{}) (string, error) {
 	switch v := value.(type) {
 	case bool:
@@ -743,7 +745,7 @@ func ToString(value interface{}) (string, error) {
 	}
 }
 
-// ToBool converts a interface to a bool.
+// ToBool converts an interface to a bool.
 // We will use 1 for true, and 0 for false.
 func ToBool(value interface{}) (int64, error) {
 	isZero := false

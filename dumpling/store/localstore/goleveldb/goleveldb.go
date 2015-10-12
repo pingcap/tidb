@@ -25,9 +25,8 @@ import (
 )
 
 var (
-	_ engine.DB       = (*db)(nil)
-	_ engine.Batch    = (*leveldb.Batch)(nil)
-	_ engine.Snapshot = (*snapshot)(nil)
+	_ engine.DB    = (*db)(nil)
+	_ engine.Batch = (*leveldb.Batch)(nil)
 )
 
 var (
@@ -51,17 +50,13 @@ func (d *db) Get(key []byte) ([]byte, error) {
 	return v, err
 }
 
-func (d *db) GetSnapshot() (engine.Snapshot, error) {
-	s, err := d.DB.GetSnapshot()
-	if err != nil {
-		return nil, err
-	}
-	return &snapshot{s}, nil
-}
-
 func (d *db) NewBatch() engine.Batch {
 	b := p.Get().(*leveldb.Batch)
 	return b
+}
+
+func (d *db) Seek(startKey []byte) (engine.Iterator, error) {
+	return d.DB.NewIterator(&util.Range{Start: startKey}, nil), nil
 }
 
 func (d *db) Commit(b engine.Batch) error {
@@ -77,28 +72,6 @@ func (d *db) Commit(b engine.Batch) error {
 
 func (d *db) Close() error {
 	return d.DB.Close()
-}
-
-type snapshot struct {
-	*leveldb.Snapshot
-}
-
-func (s *snapshot) Get(key []byte) ([]byte, error) {
-	v, err := s.Snapshot.Get(key, nil)
-	if err == leveldb.ErrNotFound {
-		return nil, nil
-	}
-
-	return v, err
-}
-
-func (s *snapshot) NewIterator(startKey []byte) engine.Iterator {
-	it := s.Snapshot.NewIterator(&util.Range{Start: startKey}, nil)
-	return it
-}
-
-func (s *snapshot) Release() {
-	s.Snapshot.Release()
 }
 
 // Driver implements engine Driver.

@@ -112,6 +112,44 @@ func (s *testStmtSuite) TestCreateTable(c *C) {
 
 	// Test "if not exist"
 	mustExec(c, s.testDB, "CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+
+	// Testcase for https://github.com/pingcap/tidb/issues/312
+	mustExec(c, s.testDB, `create table issue312_1 (c float(24));`)
+	mustExec(c, s.testDB, `create table issue312_2 (c float(25));`)
+	tx = mustBegin(c, s.testDB)
+	rows, err := tx.Query(`desc issue312_1`)
+	c.Assert(err, IsNil)
+	for rows.Next() {
+		var (
+			c1 string
+			c2 string
+			c3 string
+			c4 string
+			c5 string
+			c6 string
+		)
+		rows.Scan(&c1, &c2, &c3, &c4, &c5, &c6)
+		c.Assert(c2, Equals, "float")
+	}
+	rows.Close()
+	mustCommit(c, tx)
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`desc issue312_2`)
+	c.Assert(err, IsNil)
+	for rows.Next() {
+		var (
+			c1 string
+			c2 string
+			c3 string
+			c4 string
+			c5 string
+			c6 string
+		)
+		rows.Scan(&c1, &c2, &c3, &c4, &c5, &c6)
+		c.Assert(c2, Equals, "double")
+	}
+	rows.Close()
+	mustCommit(c, tx)
 }
 
 func (s *testStmtSuite) TestCreateIndex(c *C) {

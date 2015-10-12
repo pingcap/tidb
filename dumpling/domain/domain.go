@@ -52,7 +52,7 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	if err != nil {
 		return
 	}
-	log.Info("loadInfoSchema %d", schemaMetaVersion)
+	log.Infof("loadInfoSchema %d", schemaMetaVersion)
 	do.infoHandle.Set(schemas, schemaMetaVersion)
 	return
 }

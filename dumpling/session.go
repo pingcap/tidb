@@ -19,7 +19,6 @@ package tidb
 
 import (
 	"bytes"
-	"crypto/sha1"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -382,35 +382,6 @@ func (s *session) Close() error {
 	return s.FinishTxn(true)
 }
 
-func calcPassword(scramble, password []byte) []byte {
-	if len(password) == 0 {
-		return nil
-	}
-
-	// stage1Hash = SHA1(password)
-	crypt := sha1.New()
-	crypt.Write(password)
-	stage1 := crypt.Sum(nil)
-
-	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
-	// inner Hash
-	crypt.Reset()
-	crypt.Write(stage1)
-	hash := crypt.Sum(nil)
-
-	// outer Hash
-	crypt.Reset()
-	crypt.Write(scramble)
-	crypt.Write(hash)
-	scramble = crypt.Sum(nil)
-
-	// token = scrambleHash XOR stage1Hash
-	for i := range scramble {
-		scramble[i] ^= stage1[i]
-	}
-	return scramble
-}
-
 func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	strs := strings.Split(user, "@")
 	if len(strs) != 2 {
@@ -441,7 +412,12 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	if !ok {
 		return false
 	}
-	checkAuth := calcPassword(salt, []byte(pwd))
+	hpwd, err := util.DecodePassword(pwd)
+	if err != nil {
+		log.Errorf("Decode password string error %v", err)
+		return false
+	}
+	checkAuth := util.CalcPassword(salt, hpwd)
 	if !bytes.Equal(auth, checkAuth) {
 		return false
 	}

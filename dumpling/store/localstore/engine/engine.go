@@ -25,26 +25,15 @@ type DB interface {
 	// Get the associated value with key
 	// return nil, nil if no value found
 	Get(key []byte) ([]byte, error)
-	// Getsnapshot generates a snapshot for current DB
-	GetSnapshot() (Snapshot, error)
+	// Seek seeks the iterator to the first key in the engine which
+	// is >= startKey in byte-order.
+	Seek(startKey []byte) (Iterator, error)
 	// NewBatch creates a Batch for writing
 	NewBatch() Batch
 	// Commit writes the changed data in Batch
 	Commit(b Batch) error
 	// Close closes database
 	Close() error
-}
-
-// Snapshot is the interface for local storage
-type Snapshot interface {
-	// Get the associated value with key in this snapshot
-	// return nil, nil if no value found
-	Get(key []byte) ([]byte, error)
-	// NewIterator creates an iterator, seeks the iterator to
-	// the first key >= startKey.
-	NewIterator(startKey []byte) Iterator
-	// Release releases the snapshot
-	Release()
 }
 
 // Iterator is the interface for local storage
