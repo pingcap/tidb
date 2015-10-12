@@ -587,6 +587,8 @@ import (
 %precedence '('
 %precedence lowerThanQuick
 %precedence quick
+%precedence lowerThanEscape
+%precedence escape
 %precedence lowerThanComma
 %precedence ','
 
@@ -1530,6 +1532,7 @@ RegexpSym:
 |	"RLIKE"
 
 LikeEscapeOpt:
+	%prec lowerThanEscape
 	{
 		$$ = "\\"
 	}
