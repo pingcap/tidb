@@ -58,7 +58,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter",
+		"max_rows", "min_rows", "national", "row", "quarter", "escape",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -585,6 +585,7 @@ func (s *testParserSuite) TestLikeEscape(c *C) {
 		{`select "abc_" like "abc\\_" escape ''`, true},
 		{`select "abc_" like "abc\\_" escape '\\'`, true},
 		{`select "abc_" like "abc\\_" escape '||'`, false},
+		{`select "abc" like "escape" escape '+'`, true},
 	}
 
 	s.RunTest(c, table)
