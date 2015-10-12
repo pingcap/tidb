@@ -49,7 +49,6 @@ import (
 
 %union {
 	offset int // offset
-	endOffset int
 	line int
 	col  int
 	item interface{}
