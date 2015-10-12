@@ -14,6 +14,8 @@
 package plans
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
@@ -48,7 +50,6 @@ func (s *SelectList) updateFields(table string, resultFields []*field.ResultFiel
 				Expr: &expression.Ident{
 					CIStr: model.NewCIStr(name),
 				},
-				Name: name,
 			}
 
 			s.AddField(f, v.Clone())
@@ -56,11 +57,21 @@ func (s *SelectList) updateFields(table string, resultFields []*field.ResultFiel
 	}
 }
 
+func createEmptyResultField(f *field.Field) *field.ResultField {
+	result := &field.ResultField{}
+	if len(f.AsName) > 0 {
+		result.Name = f.AsName
+	} else {
+		result.Name = f.Expr.String()
+	}
+	return result
+}
+
 // AddField adds Field and ResultField objects to SelectList, and if result is nil,
 // constructs a new ResultField.
 func (s *SelectList) AddField(f *field.Field, result *field.ResultField) {
 	if result == nil {
-		result = &field.ResultField{Name: f.Name}
+		result = createEmptyResultField(f)
 	}
 
 	s.Fields = append(s.Fields, f)
@@ -101,7 +112,7 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 	// and use a position expression to fetch its value later.
 	exprName := expr.String()
 	if !field.ContainFieldName(exprName, s.ResultFields, field.CheckFieldFlag) {
-		f := &field.Field{Expr: expr, Name: exprName}
+		f := &field.Field{Expr: expr}
 		resultField := &field.ResultField{Name: exprName}
 		s.AddField(f, resultField)
 
@@ -121,7 +132,6 @@ func (s *SelectList) CloneHiddenField(name string, tableFields []*field.ResultFi
 			Expr: &expression.Ident{
 				CIStr: resultField.ColumnInfo.Name,
 			},
-			Name: resultField.Name,
 		}
 		s.AddField(f, resultField)
 		return true
@@ -180,14 +190,20 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 				return nil, errors.Trace(err)
 			}
 
-			// Maybe alias name or only column name.
-			if !expression.IsQualified(v.Name) {
-				result.Name = v.Name
+			// Use alias name
+			if len(v.AsName) > 0 {
+				result.Name = v.AsName
+			} else {
+				// use field identifier name directly, but not contain qualified name.
+				// e.g, select t.c will only return c as the column name.
+				s := v.Expr.String()
+				n := strings.LastIndexByte(s, '.')
+				if n == -1 {
+					result.Name = s
+				} else {
+					result.Name = s[n+1:]
+				}
 			}
-		} else {
-			// The field is not an ident, maybe binary expression,
-			// like `select c1 + c2`, or `select c1 + 10`, etc.
-			result = &field.ResultField{Name: v.Name}
 		}
 
 		selectList.AddField(v, result)

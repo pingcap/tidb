@@ -49,7 +49,13 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 		match := true
 		for i, v := range fields {
 			// TODO: is it this check enough? e.g, the ident field is t.c.
-			if x, ok := v.Expr.(*expression.Ident); ok && strings.EqualFold(x.L, srcFields[i].Name) && strings.EqualFold(v.Name, srcFields[i].Name) {
+			if x, ok := v.Expr.(*expression.Ident); ok && strings.EqualFold(x.L, srcFields[i].Name) {
+				if len(v.AsName) > 0 && !strings.EqualFold(v.AsName, srcFields[i].Name) {
+					// have alias name, but alias name is not the same with result field name.
+					// e.g, select c as a from t;
+					match = false
+					break
+				}
 				continue
 			}
 
