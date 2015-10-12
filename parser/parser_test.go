@@ -533,6 +533,11 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{`select * from t as a`, true},
 		{"select 1 full, 1 row, 1 abs", true},
 		{"select * from t full, t1 row, t2 abs", true},
+
+		// For like escape
+		{`select "abc_" like "abc\\_" escape ''`, true},
+		{`select "abc_" like "abc\\_" escape '\\'`, true},
+		{`select "abc_" like "abc\\_" escape '||'`, false},
 	}
 
 	for _, t := range table {
@@ -556,7 +561,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter",
+		"max_rows", "min_rows", "national", "row", "quarter", "escape",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)

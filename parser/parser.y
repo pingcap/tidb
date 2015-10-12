@@ -133,6 +133,7 @@ import (
 	engines		"ENGINES"
 	enum 		"ENUM"
 	eq		"="
+	escape 		"ESCAPE"
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
@@ -424,6 +425,7 @@ import (
 	JoinTable 		"join table"
 	JoinType		"join type"
 	KeyOrIndex		"{KEY|INDEX}"
+	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
 	logAnd			"logical and operator"
@@ -1505,9 +1507,17 @@ Factor1:
 			return 1
 		}
 	}
-|	PrimaryFactor NotOpt "LIKE" PrimaryExpression
+|	PrimaryFactor NotOpt "LIKE" PrimaryExpression LikeEscapeOpt
 	{
-		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
+		escape := $5.(string)
+		if len(escape) > 1 {
+			yylex.(*lexer).errf("Incorrect arguments %s to ESCAPE", escape)
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), 
+					Not: $2.(bool), Escape: escape[0]}
 	}
 |	PrimaryFactor NotOpt RegexpSym PrimaryExpression
 	{
@@ -1518,6 +1528,15 @@ Factor1:
 RegexpSym:
 	"REGEXP"
 |	"RLIKE"
+
+LikeEscapeOpt:
+	{
+		$$ = "\\"
+	}
+|	"ESCAPE" stringLit
+	{
+		$$ = $2
+	}
 
 NotOpt:
 	{
@@ -1661,7 +1680,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 

@@ -303,6 +303,7 @@ else		{e}{l}{s}{e}
 end		{e}{n}{d}
 engine		{e}{n}{g}{i}{n}{e}
 engines		{e}{n}{g}{i}{n}{e}{s}
+escape		{e}{s}{c}{a}{p}{e}
 execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
@@ -662,6 +663,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {execute}		lval.item = string(l.val)
 			return execute
 {enum}			return enum
+{escape}		lval.item = string(l.val)
+			return escape
 {exists}		return exists
 {explain}		return explain
 {extract}		lval.item = string(l.val)
