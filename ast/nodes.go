@@ -27,7 +27,7 @@ type VariableAssignment struct {
 
 // Accept implements Node interface.
 func (va *VariableAssignment) Accept(v Visitor) (Node, bool) {
-	node, ok := v.VisitEnter(va)
+	node, ok := v.Enter(va)
 	if !ok {
 		return node, false
 	}
@@ -36,7 +36,7 @@ func (va *VariableAssignment) Accept(v Visitor) (Node, bool) {
 		return va, false
 	}
 	va.Value = node.(Expression)
-	return v.VisitLeave(va)
+	return v.Leave(va)
 }
 
 // SetStmt is the statement to set variables.
@@ -48,7 +48,7 @@ type SetStmt struct {
 
 // Accept implements Node interface.
 func (set *SetStmt) Accept(v Visitor) (Node, bool) {
-	node, ok := v.VisitEnter(set)
+	node, ok := v.Enter(set)
 	if !ok {
 		return node, false
 	}
@@ -59,5 +59,5 @@ func (set *SetStmt) Accept(v Visitor) (Node, bool) {
 		}
 		set.Variables[i] = node.(*VariableAssignment)
 	}
-	return v.VisitLeave(set)
+	return v.Leave(set)
 }
