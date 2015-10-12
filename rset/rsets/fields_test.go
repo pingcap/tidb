@@ -47,7 +47,6 @@ func (s *testSelectFieldsPlannerSuite) SetUpSuite(c *C) {
 	}
 
 	s.sr = &SelectFieldsRset{Src: tblPlan, SelectList: selectList}
-	s.fr = &SelectFromDualRset{Fields: fields}
 }
 
 func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
@@ -103,9 +102,18 @@ func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 }
 
 func (s *testSelectFieldsPlannerSuite) TestFieldPlanner(c *C) {
+	fields := make([]*field.Field, 1)
+	fields[0] = &field.Field{Expr: &expression.Value{Val: "abc"}}
+
+	s.fr = &SelectFromDualRset{Fields: fields}
 	p, err := s.fr.Plan(nil)
 	c.Assert(err, IsNil)
 
 	_, ok := p.(*plans.SelectFromDualPlan)
 	c.Assert(ok, IsTrue)
+
+	fields[0] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("value")}}
+	s.fr = &SelectFromDualRset{Fields: fields}
+	_, err = s.fr.Plan(nil)
+	c.Assert(err, NotNil)
 }
