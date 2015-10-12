@@ -18,7 +18,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
-// SessionVars is to handle user-defined or global varaibles in current session
+// SessionVars is to handle user-defined or global variables in current session.
 type SessionVars struct {
 	// user-defined variables
 	Users map[string]string
@@ -26,16 +26,16 @@ type SessionVars struct {
 	Systems map[string]string
 	// prepared statement
 	PreparedStmts map[string]interface{}
-	// prepared statement auto increament id
+	// prepared statement auto increment id
 	preparedStmtID uint32
 
-	// following variables are specail for current session
+	// following variables are special for current session
 	Status       uint16
 	LastInsertID uint64
 	AffectedRows uint64
 
-	// Client Capability
-	ClientCapability uint32 // Client capability
+	// Client capability
+	ClientCapability uint32
 
 	// Found rows
 	FoundRows uint64
@@ -47,14 +47,14 @@ type SessionVars struct {
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
 type sessionVarsKeyType int
 
-// define a Stringer function for debugging and pretty printting
+// String defines a Stringer function for debugging and pretty printing.
 func (k sessionVarsKeyType) String() string {
 	return "session_vars"
 }
 
 const sessionVarsKey sessionVarsKeyType = 0
 
-// BindSessionVars creates a session vars object and bind it to context
+// BindSessionVars creates a session vars object and binds it to context.
 func BindSessionVars(ctx context.Context) {
 	v := &SessionVars{
 		Users:         make(map[string]string),
@@ -65,7 +65,7 @@ func BindSessionVars(ctx context.Context) {
 	ctx.SetValue(sessionVarsKey, v)
 }
 
-// GetSessionVars gets the session vars from context
+// GetSessionVars gets the session vars from context.
 func GetSessionVars(ctx context.Context) *SessionVars {
 	v, ok := ctx.Value(sessionVarsKey).(*SessionVars)
 	if !ok {
@@ -74,24 +74,23 @@ func GetSessionVars(ctx context.Context) *SessionVars {
 	return v
 }
 
-// SetLastInsertID saves the last insert id to the session context
+// SetLastInsertID saves the last insert id to the session context.
+// TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
 	s.LastInsertID = insertID
-
-	// TODO: we may store the result for last_insert_id sys var later.
 }
 
-// SetAffectedRows saves the affected rows to the session context
+// SetAffectedRows saves the affected rows to the session context.
 func (s *SessionVars) SetAffectedRows(affectedRows uint64) {
 	s.AffectedRows = affectedRows
 }
 
-// AddAffectedRows adds affected rows with the argument rows
+// AddAffectedRows adds affected rows with the argument rows.
 func (s *SessionVars) AddAffectedRows(rows uint64) {
 	s.AffectedRows += rows
 }
 
-// AddFoundRows adds found rows with the argument rows
+// AddFoundRows adds found rows with the argument rows.
 func (s *SessionVars) AddFoundRows(rows uint64) {
 	s.FoundRows += rows
 }
@@ -107,13 +106,13 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	s.Status &= (^flag)
 }
 
-// GetNextPreparedStmtID generates and return the next session scope prepared statement id
+// GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
 	return s.preparedStmtID
 }
 
-// SetCurrentUser saves the current user to the session context
+// SetCurrentUser saves the current user to the session context.
 func (s *SessionVars) SetCurrentUser(user string) {
 	s.User = user
 }

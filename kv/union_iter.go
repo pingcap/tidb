@@ -22,13 +22,14 @@ import (
 
 // UnionIter is the iterator on an UnionStore.
 type UnionIter struct {
-	dirtyIt       iterator.Iterator
-	snapshotIt    Iterator
-	curIsDirty    bool
+	dirtyIt    iterator.Iterator
+	snapshotIt Iterator
+
 	dirtyValid    bool
 	snapshotValid bool
 
-	isValid bool
+	curIsDirty bool
+	isValid    bool
 }
 
 func newUnionIter(dirtyIt iterator.Iterator, snapshotIt Iterator) *UnionIter {
@@ -85,7 +86,7 @@ func (iter *UnionIter) updateCur() {
 			// if equal, means both have value
 			if cmp == 0 {
 				if len(iter.dirtyIt.Value()) == 0 {
-					// snapshot has a record, but trx says we have deleted it
+					// snapshot has a record, but txn says we have deleted it
 					// just go next
 					iter.dirtyNext()
 					iter.snapshotNext()
