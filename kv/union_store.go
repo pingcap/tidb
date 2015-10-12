@@ -27,7 +27,7 @@ import (
 type conditionType int
 
 const (
-	// conditionIfNotExist means the condition is not exist.
+	// conditionIfNotExist means the condition doesn't exist.
 	conditionIfNotExist conditionType = iota + 1
 	// conditionIfEqual means the condition is equals.
 	conditionIfEqual
