@@ -281,5 +281,10 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	it, err = tx.Seek([]byte{0xff, 0xff, 0xff, 0xff}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsFalse)
+
+	it, err = tx.Seek([]byte{0x0, 0xff}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(it.Valid(), IsTrue)
+	c.Assert(it.Value(), DeepEquals, []byte("2"))
 	tx.Commit()
 }

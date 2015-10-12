@@ -49,7 +49,7 @@ type Iterator interface {
 	Value() []byte
 	// Seek moves the iterator to the first key/value pair whose key is greater
 	// or equal to the given key.
-	// It returns whether such pair exist.
+	// It returns whether such pair exists or not.
 	Seek(startKey []byte) bool
 	// Release releases current iterator.
 	Release()
