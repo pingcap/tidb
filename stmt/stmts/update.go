@@ -92,16 +92,14 @@ func getUpdateColumns(t table.Table, assignList []expression.Assignment, isMulti
 	tname := t.TableName()
 	for _, asgn := range assignList {
 		if isMultipleTable {
-			if !strings.EqualFold(tname.O, asgn.TableName) {
-				// Try to compare alias name with t.TableName()
-				if tblAliasMap == nil {
-					continue
+			if tblAliasMap != nil {
+				if alias, ok := tblAliasMap[asgn.TableName]; ok {
+					if !strings.EqualFold(tname.O, alias) {
+						continue
+					}
 				}
-				if alias, ok := tblAliasMap[asgn.TableName]; !ok {
-					continue
-				} else if !strings.EqualFold(tname.O, alias) {
-					continue
-				}
+			} else if !strings.EqualFold(tname.O, asgn.TableName) {
+				continue
 			}
 		}
 		col := column.FindCol(t.Cols(), asgn.ColName)
