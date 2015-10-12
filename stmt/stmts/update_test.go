@@ -174,3 +174,43 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 	rows.Close()
 	mustCommit(c, tx)
 }
+
+// For https://github.com/pingcap/tidb/issues/345
+func (s *testStmtSuite) TestIssue345(c *C) {
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"tmp-issue345/"+s.dbName)
+	c.Assert(err, IsNil)
+	mustExec(c, testDB, `create table t1 (c1 int);`)
+	mustExec(c, testDB, `create table t2 (c2 int);`)
+	mustExec(c, testDB, `insert into t1 values (1);`)
+	mustExec(c, testDB, `insert into t2 values (2);`)
+	mustExec(c, testDB, `update t1, t2 set t1.c1 = 2, t2.c2 = 1;`)
+	// Check t1 content
+	tx := mustBegin(c, testDB)
+	rows, err := tx.Query("SELECT * FROM t1;")
+	matchRows(c, rows, [][]interface{}{{2}})
+	rows.Close()
+	mustCommit(c, tx)
+	// Check t2 content
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM t2;")
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{1}})
+	rows.Close()
+	mustCommit(c, tx)
+
+	mustExec(c, testDB, `update t1 as a, t2 as t1 set a.c1 = 1, t1.c2 = 2;`)
+	// Check t1 content
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM t1;")
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{1}})
+	rows.Close()
+	mustCommit(c, tx)
+	// Check t2 content
+	tx = mustBegin(c, testDB)
+	rows, err = tx.Query("SELECT * FROM t2;")
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{2}})
+	rows.Close()
+	mustCommit(c, tx)
+}
