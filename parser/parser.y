@@ -398,7 +398,7 @@ import (
 	ExpressionListOpt	"expression list opt"
 	ExpressionListList	"expression list list"
 	Factor			"expression factor"
-	Factor1			"binary expression factor"
+	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
 	Field1			"field expression optional AS clause"
 	FieldList		"field expression list"
@@ -1434,7 +1434,7 @@ Factor:
 	{
 		$$ = &expression.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
-|	Factor CompareOp Factor1 %prec eq
+|	Factor CompareOp PredicateExpr %prec eq
 	{
 		$$ = expression.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
 	}
@@ -1442,7 +1442,7 @@ Factor:
 	{
 		$$ = expression.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*subquery.SubQuery), $3.(bool))
 	}
-|	Factor1
+|	PredicateExpr
 
 CompareOp:
 	">="
@@ -1492,7 +1492,7 @@ AnyOrAll:
 		$$ = true
 	}
 
-Factor1:
+PredicateExpr:
 	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
 	{
 		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
@@ -1501,7 +1501,7 @@ Factor1:
 	{
 		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*subquery.SubQuery)}
 	}
-|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
+|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" PredicateExpr
 	{
 		var err error
 		$$, err = expression.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
