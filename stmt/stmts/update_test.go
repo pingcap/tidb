@@ -187,29 +187,14 @@ func (s *testStmtSuite) TestIssue345(c *C) {
 	// Check t1 content
 	tx := mustBegin(c, testDB)
 	rows, err := tx.Query("SELECT * FROM t1;")
-	c.Assert(err, IsNil)
-	cnt := 0
-	for rows.Next() {
-		var d int
-		rows.Scan(&d)
-		c.Assert(d, Equals, 2)
-		cnt += 1
-	}
-	c.Assert(cnt, Equals, 1)
+	matchRows(c, rows, [][]interface{}{{2}})
 	rows.Close()
 	mustCommit(c, tx)
 	// Check t2 content
 	tx = mustBegin(c, testDB)
 	rows, err = tx.Query("SELECT * FROM t2;")
 	c.Assert(err, IsNil)
-	cnt = 0
-	for rows.Next() {
-		var d int
-		rows.Scan(&d)
-		c.Assert(d, Equals, 1)
-		cnt += 1
-	}
-	c.Assert(cnt, Equals, 1)
+	matchRows(c, rows, [][]interface{}{{1}})
 	rows.Close()
 	mustCommit(c, tx)
 
@@ -218,28 +203,14 @@ func (s *testStmtSuite) TestIssue345(c *C) {
 	tx = mustBegin(c, testDB)
 	rows, err = tx.Query("SELECT * FROM t1;")
 	c.Assert(err, IsNil)
-	cnt = 0
-	for rows.Next() {
-		var d int
-		rows.Scan(&d)
-		c.Assert(d, Equals, 1)
-		cnt += 1
-	}
-	c.Assert(cnt, Equals, 1)
+	matchRows(c, rows, [][]interface{}{{1}})
 	rows.Close()
 	mustCommit(c, tx)
 	// Check t2 content
 	tx = mustBegin(c, testDB)
 	rows, err = tx.Query("SELECT * FROM t2;")
 	c.Assert(err, IsNil)
-	cnt = 0
-	for rows.Next() {
-		var d int
-		rows.Scan(&d)
-		c.Assert(d, Equals, 2)
-		cnt += 1
-	}
-	c.Assert(cnt, Equals, 1)
+	matchRows(c, rows, [][]interface{}{{2}})
 	rows.Close()
 	mustCommit(c, tx)
 }
