@@ -49,7 +49,7 @@ func (s *testParserSuite) TestOriginText(c *C) {
 		FROM stuff`)
 }
 
-func (s *testParserSuite) TestParser0(c *C) {
+func (s *testParserSuite) TestSimple(c *C) {
 
 	// Testcase for unreserved keywords
 	unreservedKws := []string{
