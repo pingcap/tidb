@@ -255,6 +255,7 @@ avg		{a}{v}{g}
 avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
+both		{b}{o}{t}{h}
 by		{b}{y}
 case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
@@ -334,6 +335,7 @@ is		{i}{s}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
 key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
+leading		{l}{e}{a}{d}{i}{n}{g}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
@@ -388,7 +390,9 @@ sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
+trailing	{t}{r}{a}{i}{l}{i}{n}{g}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
+trim		{t}{r}{i}{m}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
 max		{m}{a}{x}
 min		{m}{i}{n}
@@ -578,6 +582,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
+{both}			return both
 {by}			return by
 {case}			return caseKwd
 {cast}			return cast
@@ -709,6 +714,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {key}			return key
 {key_block_size}	lval.item = string(l.val)
 			return keyBlockSize
+{leading}		return leading
 {left}			lval.item = string(l.val)
 			return left
 {length}		lval.item = string(l.val)
@@ -814,8 +820,11 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {tables}		lval.item = string(l.val)
 			return tables
 {then}			return then
+{trailing}		return trailing
 {transaction}		lval.item = string(l.val)
 			return transaction
+{trim}			lval.item = string(l.val)
+			return trim
 {truncate}		lval.item = string(l.val)
 			return truncate
 {union}			return union
