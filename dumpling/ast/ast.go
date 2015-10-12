@@ -15,11 +15,15 @@
 // It can be analysed and transformed by optimizer.
 package ast
 
+import (
+	"github.com/pingcap/tidb/util/types"
+)
+
 // Node is the basic element of the AST.
 type Node interface {
 	// Accept accepts Visitor to visit itself.
 	// The returned node should replace original node.
-	// ok returns false means stop.
+	// ok returns false to stop visiting.
 	Accept(v Visitor) (node Node, ok bool)
 	// Text returns the original text of the element.
 	Text() string
@@ -31,16 +35,20 @@ type Node interface {
 type Expression interface {
 	// Node is embeded in Expression.
 	Node
-	// IsStatic means it can be evaluated without column binding.
+	// IsStatic means it can be evaluated independently.
 	IsStatic() bool
+	// SetType sets type to the expression.
+	SetType(tp *types.FieldType)
+	// GetType gets type of the expression.
+	GetType() *types.FieldType
 }
 
 // Visitor visits a Node.
 type Visitor interface {
-	// VisitEnter is called before children node has been visited.
-	// ok returns false means stop visiting.
-	VisitEnter(n Node) (node Node, ok bool)
-	// VisitLeave is called after chiledren node has been visited.
-	// ok returns false means stop visiting.
-	VisitLeave(n Node) (node Node, ok bool)
+	// VisitEnter is called before children nodes is visited.
+	// ok returns false to stop visiting.
+	Enter(n Node) (node Node, ok bool)
+	// VisitLeave is called after children nodes has been visited.
+	// ok returns false to stop visiting.
+	Leave(n Node) (node Node, ok bool)
 }
