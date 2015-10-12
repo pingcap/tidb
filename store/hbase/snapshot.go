@@ -17,7 +17,6 @@ import (
 	"github.com/c4pt0r/go-hbase"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
@@ -31,7 +30,7 @@ type hbaseSnapshot struct {
 }
 
 func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
-	g := hbase.NewGet(codec.EncodeBytes(nil, k))
+	g := hbase.NewGet([]byte(k))
 	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
 	s.txn.Get(s.storeName, g)
 	r, err := s.txn.Get(s.storeName, g)

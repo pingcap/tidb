@@ -78,10 +78,10 @@ type Driver struct {
 }
 
 // Open opens or creates a storage database with given path.
-func (d Driver) Open(dbPath string) (kv.Storage, error) {
-	zks, storeName := getHBaseZkAndStoreNameFromURI(dbPath)
+func (d Driver) Open(zkInfo string) (kv.Storage, error) {
+	zks := strings.Split(zkInfo, ",")
 	if zks == nil {
-		log.Fatal("db uri is error, has not zk info, dbPath:" + dbPath)
+		log.Fatal("db uri is error, has not zk info, zkInfo:" + zkInfo)
 		return nil, nil
 	}
 	c, err := hbase.NewClient(zks, "/hbase")
@@ -89,8 +89,9 @@ func (d Driver) Open(dbPath string) (kv.Storage, error) {
 		log.Fatal(err)
 	}
 
+	storeName := "tidb"
 	if !c.TableExists(storeName) {
-		log.Warn("auto create table:" + storeName)
+		log.Warn("auto create table:"+storeName)
 		// create new hbase table for store
 		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(storeName))
 		cf := hbase.NewColumnFamilyDescriptor(ColFamily)
@@ -108,21 +109,4 @@ func (d Driver) Open(dbPath string) (kv.Storage, error) {
 		storeName: storeName,
 		cli:       c,
 	}, nil
-}
-
-// get zk and storename from uri like: hbase://zk1,zk2,zk3/tidb
-func getHBaseZkAndStoreNameFromURI(uri string) ([]string, string) {
-	uri = uri[len("hbase://"):]
-	parts := strings.SplitN(uri, "/", 2)
-	if len(parts) == 0 {
-		log.Fatal("db uri error, url:" + uri)
-		return nil, ""
-	}
-
-	storeName := "tidb"
-	if len(parts) == 2 {
-		storeName = parts[1]
-	}
-
-	return strings.Split(parts[0], ","), storeName
 }

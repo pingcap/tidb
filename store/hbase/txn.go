@@ -45,25 +45,6 @@ type hbaseTxn struct {
 	tID          uint64
 	valid        bool
 	version      kv.Version        // commit version
-	snapshotVals map[string][]byte // origin version in snapshot
-}
-
-func (txn *hbaseTxn) markOrigin(k []byte) error {
-	keystr := string(k)
-
-	// Already exist, no nothing
-	if _, ok := txn.snapshotVals[keystr]; ok {
-		return nil
-	}
-
-	val, err := txn.Snapshot.Get(k)
-	if err != nil && !kv.IsErrNotFound(err) {
-		return err
-	}
-
-	//log.Debugf("markOrigin, key:%q, value:%q", keystr, val)
-	txn.snapshotVals[keystr] = val
-	return nil
 }
 
 // Implement transaction interface
@@ -72,9 +53,6 @@ func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tID)
 	k = kv.EncodeKey(k)
 
-	if err := txn.markOrigin(k); err != nil {
-		return 0, err
-	}
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
@@ -248,7 +226,6 @@ func (txn *hbaseTxn) CommittedVersion() (kv.Version, error) {
 
 func (txn *hbaseTxn) close() error {
 	txn.UnionStore.Close()
-	txn.snapshotVals = nil
 	txn.valid = false
 	return nil
 }
@@ -262,11 +239,11 @@ func (txn *hbaseTxn) Rollback() error {
 }
 
 func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
-	for _, key := range keys {
-		key = kv.EncodeKey(key)
-		if err := txn.markOrigin(key); err != nil {
-			return err
-		}
-	}
+//	for _, key := range keys {
+//		key = kv.EncodeKey(key)
+//		if err := txn.markOrigin(key); err != nil {
+//			return err
+//		}
+//	}
 	return nil
 }
