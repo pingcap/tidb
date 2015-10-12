@@ -42,7 +42,7 @@ const (
 type ColumnPosition struct {
 	// ColumnPositionNone | ColumnPositionFirst | ColumnPositionAfter
 	Type int
-	// RelativeColumn is the column which is after the newly added column if type is ColumnPositionAfter.
+	// RelativeColumn is the column which is before the newly added column if type is ColumnPositionAfter.
 	RelativeColumn string
 }
 

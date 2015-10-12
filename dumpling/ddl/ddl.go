@@ -202,7 +202,7 @@ func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *coldef.TableC
 				continue
 			}
 			c.Flag |= mysql.PriKeyFlag
-			// primary key can not be NULL.
+			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
 		}
 	case coldef.ConstrUniq, coldef.ConstrUniqIndex, coldef.ConstrUniqKey:
@@ -457,7 +457,7 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 		// Insert position is after the mentioned column.
 		position = c.Offset + 1
 	}
-	// TODO: Set constraint
+	// TODO: set constraint
 	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
 	if err != nil {
 		return errors.Trace(err)
