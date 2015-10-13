@@ -282,6 +282,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
+
+		// For https://github.com/pingcap/tidb/issues/320
+		{`(select 1);`, true},
 	}
 	s.RunTest(c, table)
 }
