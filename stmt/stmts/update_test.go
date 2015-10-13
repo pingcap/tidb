@@ -179,11 +179,15 @@ func (s *testStmtSuite) TestMultipleTableUpdate(c *C) {
 func (s *testStmtSuite) TestIssue345(c *C) {
 	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"tmp-issue345/"+s.dbName)
 	c.Assert(err, IsNil)
+	mustExec(c, testDB, `drop table if exists t1, t2`)
 	mustExec(c, testDB, `create table t1 (c1 int);`)
 	mustExec(c, testDB, `create table t2 (c2 int);`)
 	mustExec(c, testDB, `insert into t1 values (1);`)
 	mustExec(c, testDB, `insert into t2 values (2);`)
 	mustExec(c, testDB, `update t1, t2 set t1.c1 = 2, t2.c2 = 1;`)
+	mustExec(c, testDB, `update t1, t2 set c1 = 2, c2 = 1;`)
+	mustExec(c, testDB, `update t1 as a, t2 as b set a.c1 = 2, b.c2 = 1;`)
+
 	// Check t1 content
 	tx := mustBegin(c, testDB)
 	rows, err := tx.Query("SELECT * FROM t1;")
@@ -212,5 +216,48 @@ func (s *testStmtSuite) TestIssue345(c *C) {
 	c.Assert(err, IsNil)
 	matchRows(c, rows, [][]interface{}{{2}})
 	rows.Close()
+
+	_, err = testDB.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
+	c.Assert(err, NotNil)
+
 	mustCommit(c, tx)
+}
+
+// See https://github.com/pingcap/tidb/issues/369
+func (s *testStmtSuite) TestIssue369(c *C) {
+	testSQL := `drop table if exists users, foobar;`
+	mustExec(c, s.testDB, testSQL)
+
+	testSQL = `CREATE TABLE users (
+				id INTEGER NOT NULL AUTO_INCREMENT, 
+			    name VARCHAR(30) NOT NULL, 
+			    some_update VARCHAR(30), 
+			    PRIMARY KEY (id)
+			)ENGINE=MyISAM;
+
+			CREATE TABLE foobar (
+			    id INTEGER NOT NULL AUTO_INCREMENT, 
+			    user_id INTEGER, 
+			    data VARCHAR(30), 
+			    some_update VARCHAR(30), 
+			    PRIMARY KEY (id), 
+			    FOREIGN KEY(user_id) REFERENCES users (id)
+			)ENGINE=MyISAM;`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `
+		INSERT INTO users (id, name, some_update) VALUES 
+			(8, 'ed', 'value'),
+			(9, 'fred', 'value');
+
+		INSERT INTO foobar (id, user_id, data) VALUES 
+			(2, 8, 'd1'),
+			(3, 8, 'd2'),
+			(4, 9, 'd3');`
+	mustExec(c, s.testDB, testSQL)
+
+	testSQL = `UPDATE users, foobar SET foobar.data=(concat(foobar.data, 'a')), 
+	foobar.some_update='im the other update', users.name='ed2', users.some_update='im the update'
+	WHERE users.id = foobar.user_id AND users.name = 'ed';`
+	r := mustExec(c, s.testDB, testSQL)
+	checkResult(c, r, 3, 0)
 }

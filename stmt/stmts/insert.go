@@ -232,6 +232,12 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	insertValueCount := len(s.Lists[0])
+	toUpdateColumns, err0 := checkUpdateColumns(s.OnDuplicate, nil, t)
+	if err0 != nil {
+		return nil, errors.Trace(err0)
+	}
+
+	toUpdateArgs := map[interface{}]interface{}{}
 	for i, list := range s.Lists {
 		r := make([]interface{}, len(tableCols))
 		valueCount := len(list)
@@ -294,15 +300,20 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		// On duplicate key Update the duplicate row.
 		// Evaluate the updated value.
 		// TODO: report rows affected and last insert id.
-		toUpdateColumns, _, err := getUpdateColumns(t, s.OnDuplicate, false, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		data, err := t.Row(ctx, h)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = updateRecord(ctx, h, data, t, toUpdateColumns, s.OnDuplicate, r, nil)
+
+		toUpdateArgs[expression.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
+			c, err1 := findColumnByName(t, name)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			return r[c.Offset], nil
+		}
+
+		err = updateRecord(ctx, h, data, t, toUpdateColumns, toUpdateArgs, 0, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
