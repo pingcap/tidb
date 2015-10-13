@@ -29,11 +29,11 @@
 package server
 
 import (
-	"crypto/rand"
-	"io"
+	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -63,6 +63,19 @@ func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
+// Generate a random string using ASCII characters but avoid seperator character.
+// See: https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
+func randomBuf(size int) []byte {
+	buf := make([]byte, size)
+	for i := 0; i < size; i++ {
+		buf[i] = byte(rand.Intn(127))
+		if buf[i] == 0 || buf[i] == byte('$') {
+			buf[i]++
+		}
+	}
+	return buf
+}
+
 func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 	log.Info("newConn", conn.RemoteAddr().String())
 	cc = &clientConn{
@@ -74,13 +87,7 @@ func (s *Server) newConn(conn net.Conn) (cc *clientConn, err error) {
 		charset:      mysql.DefaultCharset,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
-	cc.salt = make([]byte, 20)
-	io.ReadFull(rand.Reader, cc.salt)
-	for i, b := range cc.salt {
-		if b == 0 {
-			cc.salt[i] = '0'
-		}
-	}
+	cc.salt = randomBuf(20)
 	return
 }
 
@@ -104,6 +111,8 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 		return nil, errors.Trace(err)
 	}
 
+	// Init rand seed for randomBuf()
+	rand.Seed(time.Now().UTC().UnixNano())
 	log.Infof("Server run MySql Protocol Listen at [%s]", s.cfg.Addr)
 	return s, nil
 }

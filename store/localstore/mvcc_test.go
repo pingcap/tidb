@@ -53,9 +53,7 @@ func (t *testMvccSuite) TestMvccEncode(c *C) {
 
 func (t *testMvccSuite) scanRawEngine(c *C, f func([]byte, []byte)) {
 	// scan raw db
-	s, err := t.s.(*dbStore).db.GetSnapshot()
-	c.Assert(err, IsNil)
-	it := s.NewIterator(nil)
+	it, _ := t.s.(*dbStore).db.Seek(nil)
 	for it.Next() {
 		f(it.Key(), it.Value())
 	}
@@ -171,6 +169,45 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	// Get version not exists
 	b, err = snapshot.MvccGet(testKey, kv.MinVersion)
 	c.Assert(err, NotNil)
+}
+
+func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
+	// update some new data
+	for i := 0; i < 10; i++ {
+		tx, _ := t.s.Begin()
+		err := tx.Set(encodeInt(5), encodeInt(100+i))
+		c.Assert(err, IsNil)
+		err = tx.Commit()
+		c.Assert(err, IsNil)
+	}
+	// we can always read newest data
+	tx, _ := t.s.Begin()
+	b, err := tx.Get(encodeInt(5))
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, string(encodeInt(100+9)))
+	// we can always scan newest data
+	it, err := tx.Seek(encodeInt(5), nil)
+	c.Assert(err, IsNil)
+	c.Assert(it.Valid(), IsTrue)
+	c.Assert(string(it.Value()), Equals, string(encodeInt(100+9)))
+	tx.Commit()
+
+	testKey := []byte("testKey")
+	txn0, _ := t.s.Begin()
+	txn0.Set(testKey, []byte("0"))
+	txn0.Commit()
+	txn1, _ := t.s.Begin()
+	{
+		// Commit another version
+		txn2, _ := t.s.Begin()
+		txn2.Set(testKey, []byte("2"))
+		txn2.Commit()
+	}
+	r, err := txn1.Get(testKey)
+	c.Assert(err, IsNil)
+	// Test isolation in transaction.
+	c.Assert(string(r), Equals, "0")
+	txn1.Commit()
 }
 
 func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {

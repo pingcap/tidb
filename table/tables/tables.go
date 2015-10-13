@@ -137,7 +137,7 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 		return float32(rec.(float64)), nil
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeDouble, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob,
-		mysql.TypeVarchar, mysql.TypeString, mysql.TypeBit:
+		mysql.TypeVarchar, mysql.TypeString:
 		return rec, nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t mysql.Time
@@ -152,6 +152,12 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 		return mysql.Duration{Duration: time.Duration(rec.(int64)), Fsp: col.Decimal}, nil
 	case mysql.TypeNewDecimal, mysql.TypeDecimal:
 		return mysql.ParseDecimal(rec.(string))
+	case mysql.TypeEnum:
+		return mysql.ParseEnumValue(col.Elems, rec.(uint64))
+	case mysql.TypeSet:
+		return mysql.ParseSetValue(col.Elems, rec.(uint64))
+	case mysql.TypeBit:
+		return mysql.Bit{Value: rec.(uint64), Width: col.Flen}, nil
 	}
 	log.Error(col.Tp, rec, reflect.TypeOf(rec))
 	return nil, nil
@@ -167,6 +173,12 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 		return int64(x.Duration), nil
 	case mysql.Decimal:
 		return x.String(), nil
+	case mysql.Enum:
+		return x.Value, nil
+	case mysql.Set:
+		return x.Value, nil
+	case mysql.Bit:
+		return x.Value, nil
 	default:
 		return data, nil
 	}
@@ -521,6 +533,10 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		return err
 	}
 	defer it.Close()
+
+	if !it.Valid() {
+		return nil
+	}
 
 	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
 

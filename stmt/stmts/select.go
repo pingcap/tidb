@@ -131,7 +131,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	} else if s.Fields != nil {
 		// Only evaluate fields values.
-		fr := &rsets.FieldRset{Fields: s.Fields}
+		fr := &rsets.SelectFromDualRset{Fields: s.Fields}
 		r, err = fr.Plan(ctx)
 		if err != nil {
 			return nil, err

@@ -869,3 +869,43 @@ func didPanic(f func()) bool {
 
 	return ret
 }
+
+func TestDecimalScientificNotation(t *testing.T) {
+	tbl := []struct {
+		Input    string
+		Expected float64
+	}{
+		{"314e-2", 3.14},
+		{"1e2", 100},
+		{"2E-1", 0.2},
+		{"2E0", 2},
+		{"2.2E-1", 0.22},
+	}
+
+	for _, c := range tbl {
+		n, err := ParseDecimal(c.Input)
+		if err != nil {
+			t.Error(err)
+		}
+
+		f, _ := n.Float64()
+		if f != c.Expected {
+			t.Errorf("%f != %f", f, c.Expected)
+		}
+	}
+
+	tblErr := []string{
+		"12ee",
+		"ae10",
+		"12e1a",
+		"12e1.2",
+		"e1",
+	}
+
+	for _, c := range tblErr {
+		_, err := ParseDecimal(c)
+		if err == nil {
+			t.Errorf("%s must be invalid decimal", c)
+		}
+	}
+}

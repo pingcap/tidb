@@ -96,23 +96,21 @@ func (s *dbStore) UUID() string {
 }
 
 func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
-	engineSnapshot, err := s.db.GetSnapshot()
+	currentVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// dbSnapshot implements MvccSnapshot interface.
-	return &dbSnapshot{engineSnapshot}, nil
+	return &dbSnapshot{
+		db:      s.db,
+		version: currentVer,
+	}, nil
 }
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	snapshot, err := s.db.GetSnapshot()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
 	beginVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
@@ -127,7 +125,10 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		snapshotVals: make(map[string][]byte),
 	}
 	log.Debugf("Begin txn:%d", txn.tID)
-	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{snapshot})
+	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{
+		db:      s.db,
+		version: beginVer,
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

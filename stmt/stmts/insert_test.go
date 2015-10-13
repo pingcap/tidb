@@ -77,6 +77,10 @@ func (s *testStmtSuite) TestInsert(c *C) {
 	insertSelectSQL := `create table insert_test_1 (id int, c1 int); insert insert_test_1 select id, c1 from insert_test;`
 	mustExec(c, s.testDB, insertSelectSQL)
 
+	insertSelectSQL = `create table insert_test_2 (id int, c1 int); 
+	insert insert_test_1 select id, c1 from insert_test union select id * 10, c1 * 10 from insert_test;`
+	mustExec(c, s.testDB, insertSelectSQL)
+
 	errInsertSelectSQL = `insert insert_test_1 select c1 from insert_test;`
 	tx = mustBegin(c, s.testDB)
 	_, err = tx.Exec(errInsertSelectSQL)

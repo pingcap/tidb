@@ -50,7 +50,7 @@ const (
 type InsertIntoStmt struct {
 	ColNames    []string
 	Lists       [][]expression.Expression
-	Sel         *SelectStmt
+	Sel         plan.Planner
 	TableIdent  table.Ident
 	Setlist     []*expression.Assignment
 	Priority    int

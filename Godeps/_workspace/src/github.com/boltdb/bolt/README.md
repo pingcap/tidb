@@ -617,5 +617,9 @@ Below is a list of public, open source projects that use Bolt:
 * [Consul](https://github.com/hashicorp/consul) - Consul is service discovery and configuration made easy. Distributed, highly available, and datacenter-aware.
 * [Kala](https://github.com/ajvb/kala) - Kala is a modern job scheduler optimized to run on a single node. It is persistant, JSON over HTTP API, ISO 8601 duration notation, and dependent jobs.
 * [drive](https://github.com/odeke-em/drive) - drive is an unofficial Google Drive command line client for \*NIX operating systems.
+* [stow](https://github.com/djherbis/stow) -  a persistence manager for objects
+  backed by boltdb.
+* [buckets](https://github.com/joyrexus/buckets) - a bolt wrapper streamlining
+  simple tx and key scans.
 
 If you are using Bolt in a project please send a pull request to add it to the list.

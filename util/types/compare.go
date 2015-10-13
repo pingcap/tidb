@@ -55,7 +55,7 @@ func CompareFloat64(x, y float64) int {
 	return 1
 }
 
-// CompareInteger  returns an integer comparing the int64 x to the uint64 y.
+// CompareInteger returns an integer comparing the int64 x to the uint64 y.
 func CompareInteger(x int64, y uint64) int {
 	if x < 0 {
 		return -1
@@ -74,24 +74,24 @@ func CompareString(x, y string) int {
 	return 1
 }
 
-// compareFloatString compares float a to float-formated string s.
+// compareFloatString compares float a with string s.
 // compareFloatString first parses s to a float value, if failed, returns error.
 func compareFloatString(a float64, s string) (int, error) {
-	// MySQL will convert string to a float point value
-	// MySQL use a very loose conversation, e.g, 123.abc -> 123
-	// we should do a trade off whether supporting this feature or using a strict mode
-	// now we use a strict mode
+	// MySQL will convert string to a float point value.
+	// MySQL uses a very loose conversation, e.g, 123.abc -> 123
+	// We should do a trade off whether supporting this feature or using a strict mode.
+	// Now we use a strict mode.
 	b, err := StrToFloat(s)
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	return CompareFloat64(a, b), nil
 }
 
-// compareStringFloat compares float-formated string s to float a.
+// compareStringFloat compares string s with float a.
 func compareStringFloat(s string, a float64) (int, error) {
 	n, err := compareFloatString(a, s)
-	return -n, err
+	return -n, errors.Trace(err)
 }
 
 func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
@@ -117,7 +117,7 @@ func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
 		err = errors.Errorf("invalid comapre type %T cmp %T", a, b)
 	}
 
-	return x, y, err
+	return x, y, errors.Trace(err)
 }
 
 func compareRow(a, b []interface{}) (int, error) {
@@ -136,7 +136,7 @@ func compareRow(a, b []interface{}) (int, error) {
 	return 0, nil
 }
 
-// Compare returns an integer comparing the interface a to b.
+// Compare returns an integer comparing the interface a with b.
 // a > b -> 1
 // a = b -> 0
 // a < b -> -1
@@ -166,7 +166,6 @@ func Compare(a, b interface{}) (int, error) {
 	}
 
 	// TODO: support compare time type with other int, float, decimal types.
-	// TODO: support hexadecimal type
 	switch x := a.(type) {
 	case float64:
 		switch y := b.(type) {
@@ -187,6 +186,10 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(float64(x), y.ToNumber()), nil
 		case mysql.Bit:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
 		}
 	case uint64:
 		switch y := b.(type) {
@@ -200,6 +203,10 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(float64(x), y.ToNumber()), nil
 		case mysql.Bit:
 			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(float64(x), y.ToNumber()), nil
 		}
 	case mysql.Decimal:
 		switch y := b.(type) {
@@ -208,7 +215,7 @@ func Compare(a, b interface{}) (int, error) {
 		case string:
 			f, err := mysql.ConvertToDecimal(y)
 			if err != nil {
-				return 0, err
+				return 0, errors.Trace(err)
 			}
 			return x.Cmp(f), nil
 		}
@@ -225,19 +232,23 @@ func Compare(a, b interface{}) (int, error) {
 		case mysql.Decimal:
 			f, err := mysql.ConvertToDecimal(x)
 			if err != nil {
-				return 0, err
+				return 0, errors.Trace(err)
 			}
 			return f.Cmp(y), nil
 		case mysql.Time:
 			n, err := y.CompareString(x)
-			return -n, err
+			return -n, errors.Trace(err)
 		case mysql.Duration:
 			n, err := y.CompareString(x)
-			return -n, err
+			return -n, errors.Trace(err)
 		case mysql.Hex:
 			return CompareString(x, y.ToString()), nil
 		case mysql.Bit:
 			return CompareString(x, y.ToString()), nil
+		case mysql.Enum:
+			return CompareString(x, y.String()), nil
+		case mysql.Set:
+			return CompareString(x, y.String()), nil
 		}
 	case mysql.Time:
 		switch y := b.(type) {
@@ -263,6 +274,12 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		case string:
 			return CompareString(x.ToString(), y), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		}
 	case mysql.Bit:
 		switch y := b.(type) {
@@ -274,6 +291,46 @@ func Compare(a, b interface{}) (int, error) {
 			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		case string:
 			return CompareString(x.ToString(), y), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		}
+	case mysql.Enum:
+		switch y := b.(type) {
+		case int64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case uint64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case string:
+			return CompareString(x.String(), y), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		}
+	case mysql.Set:
+		switch y := b.(type) {
+		case int64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case uint64:
+			return CompareFloat64(x.ToNumber(), float64(y)), nil
+		case mysql.Hex:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case string:
+			return CompareString(x.String(), y), nil
+		case mysql.Bit:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Enum:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
+		case mysql.Set:
+			return CompareFloat64(x.ToNumber(), y.ToNumber()), nil
 		}
 	}
 

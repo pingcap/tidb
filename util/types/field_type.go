@@ -38,6 +38,8 @@ type FieldType struct {
 	Decimal int
 	Charset string
 	Collate string
+	// Elems is the element list for enum and set type.
+	Elems []string
 }
 
 // NewFieldType returns a FieldType,
@@ -55,15 +57,22 @@ func NewFieldType(tp byte) *FieldType {
 func (ft *FieldType) String() string {
 	ts := FieldTypeToStr(ft.Tp, ft.Charset)
 	ans := []string{ts}
-	if ft.Flen != UnspecifiedLength {
-		if ft.Decimal == UnspecifiedLength {
-			ans = append(ans, fmt.Sprintf("(%d)", ft.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal))
+	switch ft.Tp {
+	case mysql.TypeEnum, mysql.TypeSet:
+		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
+		ans = append(ans, fmt.Sprintf("('%s')", strings.Join(ft.Elems, "','")))
+	default:
+		if ft.Flen != UnspecifiedLength {
+			if ft.Decimal == UnspecifiedLength {
+				ans = append(ans, fmt.Sprintf("(%d)", ft.Flen))
+			} else {
+				ans = append(ans, fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal))
+			}
+		} else if ft.Decimal != UnspecifiedLength {
+			ans = append(ans, fmt.Sprintf("(%d)", ft.Decimal))
 		}
-	} else if ft.Decimal != UnspecifiedLength {
-		ans = append(ans, fmt.Sprintf("(%d)", ft.Decimal))
 	}
+
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		ans = append(ans, "UNSIGNED")
 	}
@@ -73,13 +82,15 @@ func (ft *FieldType) String() string {
 	if mysql.HasBinaryFlag(ft.Flag) {
 		ans = append(ans, "BINARY")
 	}
-	if ft.Charset != "" && ft.Charset != charset.CharsetBin &&
-		(IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp)) {
-		ans = append(ans, fmt.Sprintf("CHARACTER SET %s", ft.Charset))
+
+	if IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) {
+		if ft.Charset != "" && ft.Charset != charset.CharsetBin {
+			ans = append(ans, fmt.Sprintf("CHARACTER SET %s", ft.Charset))
+		}
+		if ft.Collate != "" && ft.Collate != charset.CharsetBin {
+			ans = append(ans, fmt.Sprintf("COLLATE %s", ft.Collate))
+		}
 	}
-	if ft.Collate != "" && ft.Collate != charset.CharsetBin &&
-		(IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp)) {
-		ans = append(ans, fmt.Sprintf("COLLATE %s", ft.Collate))
-	}
+
 	return strings.Join(ans, " ")
 }

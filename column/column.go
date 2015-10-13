@@ -18,6 +18,7 @@
 package column
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -42,33 +42,6 @@ const PrimaryKeyName = "PRIMARY"
 type IndexedCol struct {
 	model.IndexInfo
 	X kv.Index
-}
-
-func (c *Col) getTypeStr() string {
-	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
-	if c.Flen != -1 {
-		if c.Decimal == -1 {
-			ans = append(ans, fmt.Sprintf("(%d)", c.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", c.Flen, c.Decimal))
-		}
-	}
-	if mysql.HasUnsignedFlag(c.Flag) {
-		ans = append(ans, "UNSIGNED")
-	}
-	if mysql.HasZerofillFlag(c.Flag) {
-		ans = append(ans, "ZEROFILL")
-	}
-	if mysql.HasBinaryFlag(c.Flag) {
-		ans = append(ans, "BINARY")
-	}
-	if c.Charset != "" && c.Charset != charset.CharsetBin {
-		ans = append(ans, fmt.Sprintf("CHARACTER SET %s", c.Charset))
-	}
-	if c.Collate != "" {
-		ans = append(ans, fmt.Sprintf("COLLATE %s", c.Collate))
-	}
-	return strings.Join(ans, " ")
 }
 
 // String implements fmt.Stringer interface.
@@ -108,7 +81,7 @@ func FindCols(cols []*Col, names []string) ([]*Col, error) {
 	return rcols, nil
 }
 
-// FindOnUpdateCols finds columns have OnUpdateNow flag.
+// FindOnUpdateCols finds columns which have OnUpdateNow flag.
 func FindOnUpdateCols(cols []*Col) []*Col {
 	var rcols []*Col
 	for _, c := range cols {
@@ -118,12 +91,6 @@ func FindOnUpdateCols(cols []*Col) []*Col {
 	}
 
 	return rcols
-}
-
-// TypeError returns error for invalid value type.
-func (c *Col) TypeError(v interface{}) error {
-	return errors.Errorf("cannot use %v (type %T) in assignment to, or comparison with, column %s (type %s)",
-		v, v, c.Name, types.FieldTypeToStr(c.Tp, c.Charset))
 }
 
 // CastValues casts values based on columns type.
@@ -152,19 +119,43 @@ type ColDesc struct {
 
 const defaultPrivileges string = "select,insert,update,references"
 
-func (c *Col) getTypeDesc() string {
-	ans := []string{types.FieldTypeToStr(c.Tp, c.Charset)}
-	if c.Flen != -1 {
-		if c.Decimal == -1 {
-			ans = append(ans, fmt.Sprintf("(%d)", c.Flen))
-		} else {
-			ans = append(ans, fmt.Sprintf("(%d, %d)", c.Flen, c.Decimal))
+// GetTypeDesc gets the description for column type.
+func (c *Col) GetTypeDesc() string {
+	var buf bytes.Buffer
+
+	buf.WriteString(types.FieldTypeToStr(c.Tp, c.Charset))
+	switch c.Tp {
+	case mysql.TypeSet, mysql.TypeEnum:
+		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
+		// If elem contain ', we will convert ' -> ''
+		elems := make([]string, len(c.Elems))
+		for i := range elems {
+			elems[i] = strings.Replace(c.Elems[i], "'", "''", -1)
+		}
+		buf.WriteString(fmt.Sprintf("('%s')", strings.Join(elems, "','")))
+	case mysql.TypeFloat, mysql.TypeDouble:
+		// if only float(M), we will use float. The same for double.
+		if c.Flen != -1 && c.Decimal != -1 {
+			buf.WriteString(fmt.Sprintf("(%d,%d)", c.Flen, c.Decimal))
+		}
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+		if c.Decimal != -1 && c.Decimal != 0 {
+			buf.WriteString(fmt.Sprintf("(%d)", c.Decimal))
+		}
+	default:
+		if c.Flen != -1 {
+			if c.Decimal == -1 {
+				buf.WriteString(fmt.Sprintf("(%d)", c.Flen))
+			} else {
+				buf.WriteString(fmt.Sprintf("(%d,%d)", c.Flen, c.Decimal))
+			}
 		}
 	}
+
 	if mysql.HasUnsignedFlag(c.Flag) {
-		ans = append(ans, "UNSIGNED")
+		buf.WriteString(" UNSIGNED")
 	}
-	return strings.Join(ans, " ")
+	return buf.String()
 }
 
 // NewColDesc returns a new ColDesc for a column.
@@ -200,7 +191,7 @@ func NewColDesc(col *Col) *ColDesc {
 
 	return &ColDesc{
 		Field:        name.O,
-		Type:         col.getTypeDesc(),
+		Type:         col.GetTypeDesc(),
 		Collation:    col.Collate,
 		Null:         nullFlag,
 		Key:          keyFlag,
@@ -247,7 +238,7 @@ func (c *Col) CheckNotNull(data interface{}) error {
 func CheckNotNull(cols []*Col, row []interface{}) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil

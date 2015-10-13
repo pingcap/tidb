@@ -50,7 +50,13 @@ type lexer struct {
 	prepare		bool 
 	ParamList	[]*expression.ParamMarker
 	stmtStartPos 	int
+	stringLit 	[]byte
+
+	// record token's offset of the input
+	tokenEndOffset   int
+	tokenStartOffset int
 }
+
 
 // NewLexer builds a new lexer.
 func NewLexer(src string) (l *lexer) {
@@ -103,6 +109,7 @@ func (l *lexer) unget(b byte) {
 	l.ungetBuf = append(l.ungetBuf, b)
 	l.i--
 	l.ncol--
+	l.tokenEndOffset--
 }
 
 func (l *lexer) next() int {
@@ -129,6 +136,7 @@ func (l *lexer) next() int {
 	default:
 		l.ncol++
 	}
+	l.tokenEndOffset++
 	return l.c
 }
 
@@ -174,13 +182,15 @@ func (l *lexer) stmtText() string {
 
 func (l *lexer) Lex(lval *yySymType) (r int) {
 	defer func() {
-		lval.line, lval.col = l.line, l.col
+		lval.line, lval.col, lval.offset = l.line, l.col, l.tokenStartOffset
+		l.tokenStartOffset = l.tokenEndOffset
 	}()
 	const (
 		INITIAL = iota
 		S1
 		S2
 		S3
+		S4
 	)
 
 	if n := l.inj; n != 0 {
@@ -242,6 +252,7 @@ as		{a}{s}
 asc		{a}{s}{c}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
 avg		{a}{v}{g}
+avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
 by		{b}{y}
@@ -249,19 +260,26 @@ case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
 character	{c}{h}{a}{r}{a}{c}{t}{e}{r}
 charset		{c}{h}{a}{r}{s}{e}{t}
+check 		{c}{h}{e}{c}{k}
+checksum 	{c}{h}{e}{c}{k}{s}{u}{m}
 coalesce	{c}{o}{a}{l}{e}{s}{c}{e}
 collate		{c}{o}{l}{l}{a}{t}{e}
 collation	{c}{o}{l}{l}{a}{t}{i}{o}{n}
 column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
+comment 	{c}{o}{m}{m}{e}{n}{t}
 commit		{c}{o}{m}{m}{i}{t}
+compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
+connection	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
 create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
+curdate 	{c}{u}{r}{d}{a}{t}{e}
+current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
@@ -313,19 +331,25 @@ into		{i}{n}{t}{o}
 is		{i}{s}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
+key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
+locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
+lower		{l}{o}{w}{e}{r}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
+max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
 minute		{m}{i}{n}{u}{t}{e}
+min_rows	{m}{i}{n}_{r}{o}{w}{s}
 mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
 names		{n}{a}{m}{e}{s}
+national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
@@ -336,6 +360,7 @@ password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
 quick		{q}{u}{i}{c}{k}
+rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
@@ -354,6 +379,7 @@ show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
+substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
 sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
@@ -368,6 +394,7 @@ union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
+upper		{u}{p}{p}{e}{r}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
@@ -440,9 +467,8 @@ user		{u}{s}{e}{r}
 using		{u}{s}{i}{n}{g}
 
 idchar0		[a-zA-Z_]
-idchars		{idchar0}|[0-9]
+idchars		{idchar0}|[0-9$] // See: https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 ident		{idchar0}{idchars}*
-quotedIdent	`{ident}`
 
 user_var	"@"{ident}
 sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
@@ -451,7 +477,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 %yyn c = l.next()
 %yyt l.sc
 
-%x S1 S2 S3
+%x S1 S2 S3 S4
 
 %%
 		l.val = l.val[:0]
@@ -480,9 +506,26 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 
 \"			l.sc = S1
 '			l.sc = S2
+`			l.sc = S4
 
-<S1>(\\.|[^\"])*\"	return l.str(lval, "\"")
-<S2>((\\')|[^']|\n)*'	return l.str(lval, "'")
+<S1>[^\"\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S1>\\.			l.stringLit = append(l.stringLit, l.val...)
+<S1>\"\"		l.stringLit = append(l.stringLit, '"')
+<S1>\"			l.stringLit = append(l.stringLit, '"')
+			l.sc = 0
+			return l.str(lval, "\"")	
+<S2>[^'\\]*		l.stringLit = append(l.stringLit, l.val...)	
+<S2>\\.			l.stringLit = append(l.stringLit, l.val...)
+<S2>''			l.stringLit = append(l.stringLit, '\'')
+<S2>'			l.stringLit = append(l.stringLit, '\'')
+			l.sc = 0
+			return l.str(lval, "'")
+<S4>[^`]*		l.stringLit = append(l.stringLit, l.val...)	
+<S4>``			l.stringLit = append(l.stringLit, '`')
+<S4>`			l.sc = 0
+			lval.item = string(l.stringLit)
+			l.stringLit = l.stringLit[0:0]
+			return identifier
 
 "&&"			return andand
 "&^"			return andnot
@@ -515,6 +558,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return autoIncrement
 {avg}			lval.item = string(l.val)
 			return avg
+{avg_row_length}	lval.item = string(l.val)
+			return avgRowLength
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
@@ -524,6 +569,9 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
+{check}			return check
+{checksum}		lval.item = string(l.val)
+			return checksum
 {coalesce}		lval.item = string(l.val)
 			return coalesce
 {collate}		return collate
@@ -532,18 +580,28 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {column}		return column
 {columns}		lval.item = string(l.val)
 			return columns
+{comment}		lval.item = string(l.val)
+			return comment
 {commit}		lval.item = string(l.val)
 			return commit
+{compression}		lval.item = string(l.val)
+			return compression
 {concat}		lval.item = string(l.val)
 			return concat
 {concat_ws}		lval.item = string(l.val)
 			return concatWs
+{connection}		lval.item = string(l.val)
+			return connection
 {constraint}		return constraint
 {convert}		return convert
 {count}			lval.item = string(l.val)
 			return count
 {create}		return create
 {cross}			return cross
+{curdate}		lval.item = string(l.val)
+			return curDate
+{current_date}		lval.item = string(l.val)
+			return currentDate
 {current_user}		lval.item = string(l.val)
 			return currentUser
 {database}		lval.item = string(l.val)
@@ -581,6 +639,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return engines
 {execute}		lval.item = string(l.val)
 			return execute
+{enum}			return enum
 {exists}		return exists
 {explain}		return explain
 {first}			lval.item = string(l.val)
@@ -615,6 +674,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {is}			return is
 {join}			return join
 {key}			return key
+{key_block_size}	lval.item = string(l.val)
+			return keyBlockSize
 {left}			lval.item = string(l.val)
 			return left
 {length}		lval.item = string(l.val)
@@ -623,16 +684,24 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {limit}			return limit
 {local}			lval.item = string(l.val)
 			return local
+{locate}		lval.item = string(l.val)
+			return locate
 {lock}			return lock
+{lower}			lval.item = string(l.val)
+			return lower
 {low_priority}		return lowPriority
 {max}			lval.item = string(l.val)
 			return max
+{max_rows}		lval.item = string(l.val)
+			return maxRows
 {microsecond}		lval.item = string(l.val)
 			return microsecond
 {min}			lval.item = string(l.val)
 			return min
 {minute}		lval.item = string(l.val)
 			return minute
+{min_rows}		lval.item = string(l.val)
+			return minRows
 {mod}			return mod
 {mode}			lval.item = string(l.val)
 			return mode
@@ -640,6 +709,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return month
 {names}			lval.item = string(l.val)
 			return names
+{national}		lval.item = string(l.val)
+			return national
 {not}			return not
 {offset}		lval.item = string(l.val)
 			return offset
@@ -670,6 +741,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return start
 {global}		lval.item = string(l.val)
 			return global
+{rand}			lval.item = string(l.val)
+			return rand
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp
@@ -690,6 +763,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {show}			return show
 {substring}		lval.item = string(l.val)
 			return substring
+{substring_index}	lval.item = string(l.val)
+			return substringIndex
 {sum}			lval.item = string(l.val)
 			return sum
 {sysdate}		lval.item = string(l.val)
@@ -709,6 +784,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {nullif}		lval.item = string(l.val)
 			return nullIf
 {update}		return update
+{upper}			lval.item = string(l.val)
+			return upper
 {use}			return use
 {user}			lval.item = string(l.val)
 			return user
@@ -859,9 +936,6 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {ident}			lval.item = string(l.val)
 			return identifier
 
-{quotedIdent}		lval.item = l.trimIdent(string(l.val))
-			return identifier
-
 .			return c0
 
 %%
@@ -878,13 +952,14 @@ func (l *lexer) npos() (line, col int) {
 
 func (l *lexer) str(lval *yySymType, pref string) int {
 	l.sc = 0
-	s := string(l.val)
 	// TODO: performance issue.
+	s := string(l.stringLit)
+	l.stringLit = l.stringLit[0:0]
 	if pref == "'" {
 		s = strings.Replace(s, "\\'", "'", -1)    
 		s = strings.TrimSuffix(s, "'") + "\""
 		pref = "\""
-	}
+	} 
 	v, err := strconv.Unquote(pref + s)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)

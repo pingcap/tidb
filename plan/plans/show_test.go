@@ -63,6 +63,23 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	variable.BindSessionVars(p)
 }
 
+func (p *testShowSuit) TestSimple(c *C) {
+	pln := &plans.ShowPlan{}
+	pln.Target = stmt.ShowWarnings
+	fls := pln.GetFields()
+	c.Assert(fls, HasLen, 3)
+	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeLong)
+
+	pln.Target = stmt.ShowCharset
+	fls = pln.GetFields()
+	c.Assert(fls, HasLen, 4)
+	c.Assert(fls[3].Col.Tp, Equals, mysql.TypeLonglong)
+
+	pln.Target = stmt.ShowCreateTable
+	fls = pln.GetFields()
+	c.Assert(fls, HasLen, 2)
+}
+
 func (p *testShowSuit) TestShowVariables(c *C) {
 	pln := &plans.ShowPlan{
 		Target:      stmt.ShowVariables,
@@ -137,17 +154,6 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	v, ok = ret["autocommit"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "on")
-
-	pln.Target = stmt.ShowWarnings
-	fls = pln.GetFields()
-	c.Assert(fls, HasLen, 3)
-	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeLong)
-
-	pln.Target = stmt.ShowCharset
-	fls = pln.GetFields()
-	c.Assert(fls, HasLen, 4)
-	c.Assert(fls[3].Col.Tp, Equals, mysql.TypeLonglong)
-
 }
 
 func (p *testShowSuit) TestShowCollation(c *C) {
@@ -156,7 +162,7 @@ func (p *testShowSuit) TestShowCollation(c *C) {
 	pln.Target = stmt.ShowCollation
 	fls := pln.GetFields()
 	c.Assert(fls, HasLen, 6)
-	c.Assert(fls[2].Col.Tp, Equals, mysql.TypeLong)
+	c.Assert(fls[2].Col.Tp, Equals, mysql.TypeLonglong)
 
 	pln.Pattern = &expression.PatternLike{
 		Pattern: &expression.Value{

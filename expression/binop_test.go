@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -205,16 +204,16 @@ func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 		{f("id"), opcode.EQ, Value{1}, true},
 		{f("id"), opcode.NE, Value{1}, true},
 		{f("id"), opcode.Plus, Value{1}, false},
-		{f("db.id"), opcode.NE, Value{1}, false},
+		{f("db.id"), opcode.NE, Value{1}, true},
 		{f("id"), opcode.LT, f("name"), false},
 		{Value{1}, opcode.NE, Value{1}, false},
 	}
 
-	for _, t := range relTbl {
+	for i, t := range relTbl {
 		expr := &BinaryOperation{Op: t.op, L: t.lhs, R: t.rhs}
-		b, _, _, err := expr.IsIdentRelOpVal()
+		b, _, _, err := expr.IsIdentCompareVal()
 		c.Assert(err, IsNil)
-		c.Assert(t.ret, Equals, b)
+		c.Assert(b, Equals, t.ret, Commentf("%d", i))
 	}
 }
 
@@ -396,6 +395,8 @@ func (s *testBinOpSuite) TestNumericOp(c *C) {
 		{1, opcode.Plus, []byte("1"), 2},
 		{1, opcode.Plus, mysql.Hex{Value: 1}, 2},
 		{1, opcode.Plus, mysql.Bit{Value: 1, Width: 1}, 2},
+		{1, opcode.Plus, mysql.Enum{Name: "a", Value: 1}, 2},
+		{1, opcode.Plus, mysql.Set{Name: "a", Value: 1}, 2},
 
 		// minus
 		{1, opcode.Minus, 1, 0},

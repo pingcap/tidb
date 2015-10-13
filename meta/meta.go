@@ -21,16 +21,24 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
-const (
+var (
 	// SchemaMetaPrefix is the prefix for database meta key prefix.
-	SchemaMetaPrefix = "mDB:"
+	SchemaMetaPrefix = string(MakeMetaKey("mDB:"))
+
 	// TableMetaPrefix is the prefix for table meta key prefix.
-	TableMetaPrefix = "mTable:"
+	TableMetaPrefix = MakeMetaKey("mTable:")
+
+	// SchemaMetaVersionKey is used as lock for changing schema
+	SchemaMetaVersionKey = MakeMetaKey("mSchemaVersion")
+
+	// globalIDPrefix is used as key of global ID
+	globalIDKey = MakeMetaKey("mNextGlobalID")
 )
 
-var (
-	nextGlobalIDPrefix = []byte("mNextGlobalID")
-)
+// MakeMetaKey creates meta key
+func MakeMetaKey(key string) []byte {
+	return append([]byte{0x0}, key...)
+}
 
 // GenID adds step to the value for key and returns the sum.
 func GenID(txn kv.Transaction, key []byte, step int) (int64, error) {
@@ -65,7 +73,7 @@ func AutoIDKey(tableID int64) string {
 // GenGlobalID generates the next id in the store scope.
 func GenGlobalID(store kv.Storage) (ID int64, err error) {
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		ID, err = GenID(txn, []byte(nextGlobalIDPrefix), 1)
+		ID, err = GenID(txn, globalIDKey, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}

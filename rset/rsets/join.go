@@ -47,8 +47,6 @@ func (t JoinType) String() string {
 		return plans.LeftJoin
 	case RightJoin:
 		return plans.RightJoin
-	case FullJoin:
-		return plans.FullJoin
 	}
 
 	return "Unknown"
@@ -61,8 +59,6 @@ const (
 	LeftJoin
 	// RightJoin is right Join type.
 	RightJoin
-	// FullJoin is full Join type.
-	FullJoin
 )
 
 // JoinRset is record set for table join.

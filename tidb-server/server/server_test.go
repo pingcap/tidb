@@ -236,3 +236,15 @@ func runTestAuth(c *C) {
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
 }
+
+func runTestIssues(c *C) {
+	// For issue #263
+	unExistsSchemaDsn := "root@tcp(localhost:4001)/unexists_schema?strict=true"
+	db, err := sql.Open("mysql", unExistsSchemaDsn)
+	c.Assert(db, NotNil)
+	c.Assert(err, IsNil)
+	// Open may just validate its arguments without creating a connection to the database. To verify that the data source name is valid, call Ping.
+	err = db.Ping()
+	c.Assert(err, NotNil, Commentf("Connecting to an unexists schema should be error"))
+	db.Close()
+}

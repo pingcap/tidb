@@ -90,6 +90,21 @@ func (s *ShowStmt) getDBName(ctx context.Context) string {
 		return s.DBName
 	}
 
-	// if s.DBName is empty, we should use current db name if possible.
+	// maybe db.table format
+	if len(s.TableIdent.Schema.O) > 0 {
+		return s.TableIdent.Schema.O
+	}
+
+	// try use current db name if possible.
 	return db.GetCurrentSchema(ctx)
+}
+
+// SetCondition binds like or where expression.
+func (s *ShowStmt) SetCondition(expr interface{}) {
+	switch x := expr.(type) {
+	case *expression.PatternLike:
+		s.Pattern = x
+	case expression.Expression:
+		s.Where = x
+	}
 }

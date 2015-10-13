@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/stmt/stmts"
 )
 
@@ -29,6 +30,23 @@ func TestT(t *testing.T) {
 var _ = Suite(&testParserSuite{})
 
 type testParserSuite struct {
+}
+
+func (s *testParserSuite) TestOriginText(c *C) {
+	src := `SELECT stuff.id 
+		FROM stuff 
+		WHERE stuff.value >= ALL (SELECT stuff.value 
+		FROM stuff)`
+
+	l := NewLexer(src)
+	c.Assert(yyParse(l), Equals, 0)
+	node := l.Stmts()[0].(*stmts.SelectStmt)
+	sq := node.Where.Expr.(*expression.CompareSubQuery).R
+	c.Assert(sq, NotNil)
+	subsel := sq.(*subquery.SubQuery)
+	c.Assert(subsel.Stmt.OriginText(), Equals,
+		`SELECT stuff.value 
+		FROM stuff`)
 }
 
 // TODO: table 43 and 50 parse failed
@@ -88,6 +106,10 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
+		{`SELECT stuff.id 
+		FROM stuff 
+		WHERE stuff.value >= ALL (SELECT stuff.value 
+		FROM stuff)`, true},
 		/*{`-- Examples
 		ALTER TABLE Stock ADD Qty int;
 
@@ -261,6 +283,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 
 		// For buildin functions
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT RAND();", true},
+		{"SELECT RAND(1);", true},
 
 		{"SELECT SUBSTRING('Quadratically',5);", true},
 		{"SELECT SUBSTRING('Quadratically',5, 3);", true},
@@ -273,6 +297,16 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"SELECT USER();", true},
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
+
+		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
+		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
+
+		{`SELECT LOWER("A"), UPPER("a")`, true},
+
+		{`SELECT LOCATE('bar', 'foobarbar');`, true},
+		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
+
+		{"select current_date, current_date(), curdate()", true},
 
 		// For delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
@@ -288,6 +322,7 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"select (1, 1,)", false},
 		{"select row(1, 1) > row(1, 1), row(1, 1, 1) > row(1, 1, 1)", true},
 		{"Select (1, 1) > (1, 1)", true},
+		{"create table t (row int)", true},
 
 		// For SHOW statement
 		{"SHOW VARIABLES LIKE 'character_set_results'", true},
@@ -354,6 +389,20 @@ func (s *testParserSuite) TestParser0(c *C) {
 		{"show collation like 'utf8%'", true},
 		{"show collation where Charset = 'utf8' and Collation = 'utf8_bin'", true},
 
+		// For drop datbase/schema
+		{"create database xxx", true},
+		{"create database if exists xxx", false},
+		{"create database if not exists xxx", true},
+		{"create schema xxx", true},
+		{"create schema if exists xxx", false},
+		{"create schema if not exists xxx", true},
+		{"drop database xxx", true},
+		{"drop database if exists xxx", true},
+		{"drop database if not exists xxx", false},
+		{"drop schema xxx", true},
+		{"drop schema if exists xxx", true},
+		{"drop schema if not exists xxx", false},
+
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
@@ -368,12 +417,104 @@ func (s *testParserSuite) TestParser0(c *C) {
 		// For dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
+
+		// For enum and set type
+		{"create table t (c1 enum('a', 'b'), c2 set('a', 'b'))", true},
+		{"create table t (c1 enum)", false},
+		{"create table t (c1 set)", false},
+
+		// For comment
+		{"create table t (c int comment 'comment')", true},
+		{"create table t (c int) comment = 'comment'", true},
+		{"create table t (c int) comment 'comment'", true},
+		{"create table t (c int) comment comment", false},
+		{"create table t (comment text)", true},
+
+		// For string literal
+		{`select '''a''', """a"""`, true},
+		{`select ''a''`, false},
+		{`select ""a""`, false},
+		{`select '''a''';`, true},
+		{`select '\'a\'';`, true},
+		{`select "\"a\"";`, true},
+		{`select """a""";`, true},
+
+		// For table option
+		{"create table t (c int) avg_row_length = 3", true},
+		{"create table t (c int) avg_row_length 3", true},
+		{"create table t (c int) checksum = 0", true},
+		{"create table t (c int) checksum 1", true},
+		{"create table t (c int) compression = none", true},
+		{"create table t (c int) compression lz4", true},
+		{"create table t (c int) connection = 'abc'", true},
+		{"create table t (c int) connection 'abc'", true},
+		{"create table t (c int) key_block_size = 1024", true},
+		{"create table t (c int) key_block_size 1024", true},
+		{"create table t (c int) max_rows = 1000", true},
+		{"create table t (c int) max_rows 1000", true},
+		{"create table t (c int) min_rows = 1000", true},
+		{"create table t (c int) min_rows 1000", true},
+		{"create table t (c int) password = 'abc'", true},
+		{"create table t (c int) password 'abc'", true},
+
+		// For show create table
+		{"show create table test.t", true},
+		{"show create table t", true},
+
+		// For national
+		{"create table t (c1 national char(2), c2 national varchar(2))", true},
+
+		// For blob and text field length
+		{"create table t (c1 blob(1024), c2 text(1024))", true},
+
+		// For check
+		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
+
+		// For year
+		{"create table t (y year(4), y1 year)", true},
+
+		// For quote identifier
+		{"select `a`, `a.b`, `a b` from t", true},
+
+		// For union
+		{"select c1 from t1 union select c2 from t2", true},
+		{"select c1 from t1 union (select c2 from t2)", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1", true},
+		{"select c1 from t1 union select c2 from t2 order by c2", true},
+		{"select c1 from t1 union (select c2 from t2) limit 1", true},
+		{"select c1 from t1 union (select c2 from t2) limit 1, 1", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1 limit 1", true},
+		{"(select c1 from t1) union distinct select c2 from t2", true},
+		{"(select c1 from t1) union all select c2 from t2", true},
+		{"(select c1 from t1) union (select c2 from t2) order by c1 union select c3 from t3", false},
+		{"(select c1 from t1) union (select c2 from t2) limit 1 union select c3 from t3", false},
+		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 limit 1", true},
+		{"select (select 1 union select 1) as a", true},
+		{"select * from (select 1 union select 2) as a", true},
+		{"insert into t select c1 from t1 union select c2 from t2", true},
+		{"insert into t (c) select c1 from t1 union select c2 from t2", true},
+
+		// For unquoted identifier
+		{"create table MergeContextTest$Simple (value integer not null, primary key (value))", true},
+
+		// For check clause
+		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
+
+		// For as
+		{"select 1 as a, 1 as `a`, 1 as \"a\", 1 as 'a'", true},
+		{`select 1 as a, 1 as "a", 1 as 'a'`, true},
+		{`select 1 a, 1 "a", 1 'a'`, true},
+		{`select * from t as "a"`, false},
+		{`select * from t a`, true},
+		{`select * from t as a`, true},
+		{"select 1 full, 1 row, 1 abs", true},
+		{"select * from t full, t1 row, t2 abs", true},
 	}
 
 	for _, t := range table {
 		l := NewLexer(t.src)
 		ok := yyParse(l) == 0
-		c.Assert(ok, Equals, t.ok, Commentf("source %v", t.src))
+		c.Assert(ok, Equals, t.ok, Commentf("source %v %v", t.src, l.errs))
 
 		switch ok {
 		case true:
@@ -390,7 +531,8 @@ func (s *testParserSuite) TestParser0(c *C) {
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
-		"collation",
+		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
+		"max_rows", "min_rows", "national", "row",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
