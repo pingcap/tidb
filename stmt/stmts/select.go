@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sql"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -243,6 +244,6 @@ func (s *SelectStmt) Exec(ctx context.Context) (rs rset.Recordset, err error) {
 	if err != nil {
 		return nil, err
 	}
-
+	ctx.(sql.MetaQueryer).QueryMeta(ctx, "select 1;")
 	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
 }
