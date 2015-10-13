@@ -82,6 +82,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
+	both		"BOTH"
 	by		"BY"
 	byteType	"BYTE"
 	caseKwd		"CASE"
@@ -133,9 +134,11 @@ import (
 	engines		"ENGINES"
 	enum 		"ENUM"
 	eq		"="
+	escape 		"ESCAPE"
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
+	extract		"EXTRACT"
 	falseKwd	"false"
 	first		"FIRST"
 	foreign		"FOREIGN"
@@ -165,6 +168,7 @@ import (
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	le		"<="
+	leading		"LEADING"
 	left		"LEFT"
 	length		"LENGTH"
 	like		"LIKE"
@@ -202,6 +206,7 @@ import (
 	placeholder	"PLACEHOLDER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
 	references	"REFERENCES"
@@ -232,7 +237,9 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	trailing	"TRAILING"
 	transaction	"TRANSACTION"
+	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
 	unknown 	"UNKNOWN"
@@ -316,12 +323,23 @@ import (
 
 	parseExpression	"parse expression prefix"
 
+	secondMicrosecond	"SECOND_MICROSECOND"
+	minuteMicrosecond	"MINUTE_MICROSECOND"
+	minuteSecond 		"MINUTE_SECOND"
+	hourMicrosecond		"HOUR_MICROSECOND"
+	hourSecond 		"HOUR_SECOND"
+	hourMinute 		"HOUR_MINUTE"
+	dayMicrosecond 		"DAY_MICROSECOND"
+	daySecond 		"DAY_SECOND"
+	dayMinute 		"DAY_MINUTE"
+	dayHour			"DAY_HOUR"
+	yearMonth		"YEAR_MONTH"
+
 %type   <item>
 	AlterTableStmt		"Alter table statement"
 	AlterSpecification	"Alter table specification"
 	AlterSpecificationList	"Alter table specification list"
 	AnyOrAll		"Any or All for subquery"
-	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
 	AssignmentListOpt	"assignment list opt"
@@ -380,9 +398,10 @@ import (
 	ExpressionListOpt	"expression list opt"
 	ExpressionListList	"expression list list"
 	Factor			"expression factor"
-	Factor1			"binary expression factor"
+	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
-	Field1			"field expression optional AS clause"
+	FieldAsName		"Field alias name"
+	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FromClause		"From clause"
 	Function		"function expr"
@@ -410,6 +429,7 @@ import (
 	JoinTable 		"join table"
 	JoinType		"join type"
 	KeyOrIndex		"{KEY|INDEX}"
+	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
 	logAnd			"logical and operator"
@@ -479,6 +499,8 @@ import (
 	TableOptListOpt		"create table option list opt"
 	TableRef 		"table reference"
 	TableRefs 		"table references"
+	TimeUnit		"Time unit"
+	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionSelect		"Union select/(select)"
@@ -570,6 +592,8 @@ import (
 %precedence '('
 %precedence lowerThanQuick
 %precedence quick
+%precedence lowerThanEscape
+%precedence escape
 %precedence lowerThanComma
 %precedence ','
 
@@ -1414,7 +1438,7 @@ Factor:
 	{
 		$$ = &expression.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
-|	Factor CompareOp Factor1 %prec eq
+|	Factor CompareOp PredicateExpr %prec eq
 	{
 		$$ = expression.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
 	}
@@ -1422,7 +1446,7 @@ Factor:
 	{
 		$$ = expression.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*subquery.SubQuery), $3.(bool))
 	}
-|	Factor1
+|	PredicateExpr
 
 CompareOp:
 	">="
@@ -1472,7 +1496,7 @@ AnyOrAll:
 		$$ = true
 	}
 
-Factor1:
+PredicateExpr:
 	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
 	{
 		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
@@ -1481,7 +1505,7 @@ Factor1:
 	{
 		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*subquery.SubQuery)}
 	}
-|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
+|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" PredicateExpr
 	{
 		var err error
 		$$, err = expression.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
@@ -1490,9 +1514,20 @@ Factor1:
 			return 1
 		}
 	}
-|	PrimaryFactor NotOpt "LIKE" PrimaryExpression
+|	PrimaryFactor NotOpt "LIKE" PrimaryExpression LikeEscapeOpt
 	{
-		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
+		escape := $5.(string)
+		if len(escape) > 1 {
+			yylex.(*lexer).errf("Incorrect arguments %s to ESCAPE", escape)
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &expression.PatternLike{
+			Expr: $1.(expression.Expression), 
+			Pattern: $4.(expression.Expression), 
+			Not: $2.(bool), 
+			Escape: escape[0]}
 	}
 |	PrimaryFactor NotOpt RegexpSym PrimaryExpression
 	{
@@ -1503,6 +1538,16 @@ Factor1:
 RegexpSym:
 	"REGEXP"
 |	"RLIKE"
+
+LikeEscapeOpt:
+	%prec lowerThanEscape
+	{
+		$$ = "\\"
+	}
+|	"ESCAPE" stringLit
+	{
+		$$ = $2
+	}
 
 NotOpt:
 	{
@@ -1518,26 +1563,23 @@ Field:
 	{
 		$$ = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("*")}}
 	}
-|	Expression Field1
+|	Expression FieldAsNameOpt
 	{
 		expr, name := expression.Expr($1), $2.(string)
-		if name == "" {
-			name = expr.String()
-		}
-		$$ = &field.Field{Expr: expr, Name: name}
+		$$ = &field.Field{Expr: expr, AsName: name}
 	}
 
-Field1:
+FieldAsNameOpt:
 	/* EMPTY */
 	{
 		$$ = ""
 	}
-|	AsOpt
+|	FieldAsName
 	{
 		$$ = $1
 	}
 
-AsOpt:
+FieldAsName:
 	Identifier
 	{
 		$$ = $1
@@ -1646,12 +1688,12 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2186,6 +2228,13 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
+	{
+		$$ = &expression.Extract{
+			Unit: $3.(string), 
+			Date: $5.(expression.Expression),
+		}
+	}
 |	"FOUND_ROWS" '(' ')'
 	{
 		args := []expression.Expression{}
@@ -2390,6 +2439,34 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"TRIM" '(' Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			RemStr: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' TrimDirection "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
+|	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $6.(expression.Expression), 
+			RemStr: $4.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
 |	"UPPER" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2432,6 +2509,20 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+
+TrimDirection:
+	"BOTH"
+	{
+		$$ = expression.TrimBoth
+	}
+|	"LEADING"
+	{
+		$$ = expression.TrimLeading
+	}
+|	"TRAILING"
+	{
+		$$ = expression.TrimTrailing
 	}
 
 FunctionCallAgg:
@@ -2512,6 +2603,12 @@ FuncDatetimePrec:
 	{
 		$$ = $2
 	}
+
+TimeUnit:
+	"MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" 
+|	"MONTH" | "QUARTER" | "YEAR" | "SECOND_MICROSECOND" | "MINUTE_MICROSECOND"
+|	"MINUTE_SECOND" | "HOUR_MICROSECOND" | "HOUR_SECOND" | "HOUR_MINUTE" 
+|	"DAY_MICROSECOND" | "DAY_SECOND" | "DAY_MINUTE" | "DAY_HOUR" | "YEAR_MONTH"
 
 ExpressionOpt:
 	{
@@ -3070,7 +3167,7 @@ SelectStmtCalcFoundRows:
 	}
 
 SelectStmtFieldList:
-	FieldList CommaOpt
+	FieldList
 	{
 		$$ = $1
 	}
@@ -3276,12 +3373,15 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowTables,
 			DBName: $4.(string),
-			Full: $2.(bool)}
+			Full: $2.(bool),
+		}
+		stmt.SetCondition($5)
+		$$ = stmt
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{
@@ -3406,6 +3506,12 @@ Statement:
 |	UnionStmt
 |	UpdateStmt
 |	UseStmt
+|	SubSelect
+	{
+		// `(select 1)`; is a valid select statement
+		// TODO: This is used to fix issue #320. There may be a better solution.
+		$$ = $1.(*subquery.SubQuery).Stmt
+	}
 
 ExplainableStmt:
 	SelectStmt
@@ -3650,6 +3756,16 @@ NumericType:
 		fopt := $2.(*coldef.FloatOpt)
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen 
+		if x.Tp == mysql.TypeFloat {
+			// Fix issue #312
+			if x.Flen > 53 {
+				yylex.(*lexer).errf("Float len(%d) should not be greater than 53", x.Flen)
+				return 1
+			}
+			if x.Flen > 24 { 
+				x.Tp = mysql.TypeDouble
+			}
+		}
 		x.Decimal =fopt.Decimal
 		for _, o := range $3.([]*field.Opt) {
 			if o.IsUnsigned {

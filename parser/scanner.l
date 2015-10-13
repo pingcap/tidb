@@ -255,6 +255,7 @@ avg		{a}{v}{g}
 avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
+both		{b}{o}{t}{h}
 by		{b}{y}
 case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
@@ -303,9 +304,11 @@ else		{e}{l}{s}{e}
 end		{e}{n}{d}
 engine		{e}{n}{g}{i}{n}{e}
 engines		{e}{n}{g}{i}{n}{e}{s}
+escape		{e}{s}{c}{a}{p}{e}
 execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
+extract		{e}{x}{t}{r}{a}{c}{t}
 first		{f}{i}{r}{s}{t}
 for		{f}{o}{r}
 foreign		{f}{o}{r}{e}{i}{g}{n}
@@ -332,6 +335,7 @@ is		{i}{s}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
 key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
+leading		{l}{e}{a}{d}{i}{n}{g}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
 like		{l}{i}{k}{e}
@@ -359,6 +363,7 @@ outer		{o}{u}{t}{e}{r}
 password	{p}{a}{s}{s}{w}{o}{r}{d}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
@@ -385,7 +390,9 @@ sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
+trailing	{t}{r}{a}{i}{l}{i}{n}{g}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
+trim		{t}{r}{i}{m}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
 max		{m}{a}{x}
 min		{m}{i}{n}
@@ -472,6 +479,18 @@ ident		{idchar0}{idchars}*
 
 user_var	"@"{ident}
 sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
+
+second_microsecond	{s}{e}{c}{o}{n}{d}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_microsecond	{m}{i}{n}{u}{t}{e}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+minute_second 		{m}{i}{n}{u}{t}{e}_{s}{e}{c}{o}{n}{d}
+hour_microsecond	{h}{o}{u}{r}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+hour_second 		{h}{o}{u}{r}_{s}{e}{c}{o}{n}{d}
+hour_minute		{h}{o}{u}{r}_{m}{i}{n}{u}{t}{e}
+day_microsecond		{d}{a}{y}_{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
+day_second 		{d}{a}{y}_{s}{e}{c}{o}{n}{d}
+day_minute		{d}{a}{y}_{m}{i}{n}{u}{t}{e}
+day_hour		{d}{a}{y}_{h}{o}{u}{r}
+year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 
 %yyc c
 %yyn c = l.next()
@@ -563,6 +582,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {begin}			lval.item = string(l.val)
 			return begin
 {between}		return between
+{both}			return both
 {by}			return by
 {case}			return caseKwd
 {cast}			return cast
@@ -615,6 +635,14 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return dayofmonth
 {dayofyear}		lval.item = string(l.val)
 			return dayofyear
+{day_hour}		lval.item = string(l.val)
+			return dayHour
+{day_microsecond}	lval.item = string(l.val)
+			return dayMicrosecond
+{day_minute}		lval.item = string(l.val)
+			return dayMinute
+{day_second}		lval.item = string(l.val)
+			return daySecond
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd
@@ -640,8 +668,12 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {execute}		lval.item = string(l.val)
 			return execute
 {enum}			return enum
+{escape}		lval.item = string(l.val)
+			return escape
 {exists}		return exists
 {explain}		return explain
+{extract}		lval.item = string(l.val)
+			return extract
 {first}			lval.item = string(l.val)
 			return first
 {for}			return forKwd
@@ -659,6 +691,12 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
 			return hour
+{hour_microsecond}	lval.item = string(l.val)
+			return hourMicrosecond
+{hour_minute}		lval.item = string(l.val)
+			return hourMinute
+{hour_second}		lval.item = string(l.val)
+			return hourSecond
 {identified}		lval.item = string(l.val)
 			return identified
 {if}			lval.item = string(l.val)
@@ -676,6 +714,7 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {key}			return key
 {key_block_size}	lval.item = string(l.val)
 			return keyBlockSize
+{leading}		return leading
 {left}			lval.item = string(l.val)
 			return left
 {length}		lval.item = string(l.val)
@@ -700,6 +739,10 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return min
 {minute}		lval.item = string(l.val)
 			return minute
+{minute_microsecond}	lval.item = string(l.val)
+			return minuteMicrosecond
+{minute_second}		lval.item = string(l.val)
+			return minuteSecond
 {min_rows}		lval.item = string(l.val)
 			return minRows
 {mod}			return mod
@@ -723,6 +766,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{quarter}		lval.item = string(l.val)
+			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
 {right}			return right
@@ -756,6 +801,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 			return userVar
 {second}		lval.item = string(l.val)
 			return second
+{second_microsecond}	lval.item= string(l.val)
+			return secondMicrosecond
 {select}		return selectKwd
 
 {set}			return set
@@ -773,8 +820,11 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {tables}		lval.item = string(l.val)
 			return tables
 {then}			return then
+{trailing}		return trailing
 {transaction}		lval.item = string(l.val)
 			return transaction
+{trim}			lval.item = string(l.val)
+			return trim
 {truncate}		lval.item = string(l.val)
 			return truncate
 {union}			return union
@@ -808,6 +858,8 @@ sys_var		"@@"(({global}".")|({session}".")|{local}".")?{ident}
 {xor}			return xor
 {yearweek}		lval.item = string(l.val)
 			return yearweek
+{year_month}		lval.item = string(l.val)
+			return yearMonth
 			
 {signed}		lval.item = string(l.val)
 			return signed

@@ -26,7 +26,7 @@ import (
 
 var (
 	_ Index         = (*kvIndex)(nil)
-	_ IndexIterator = (*IndexIter)(nil)
+	_ IndexIterator = (*indexIter)(nil)
 )
 
 func encodeHandle(h int64) []byte {
@@ -42,18 +42,18 @@ func decodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
-	return h, err
+	return h, errors.Trace(err)
 }
 
-// IndexIter is for KV store index iterator.
-type IndexIter struct {
+// indexIter is for KV store index iterator.
+type indexIter struct {
 	it     Iterator
 	idx    *kvIndex
 	prefix string
 }
 
 // Close does the clean up works when KV store index iterator is closed.
-func (c *IndexIter) Close() {
+func (c *indexIter) Close() {
 	if c.it != nil {
 		c.it.Close()
 		c.it = nil
@@ -61,18 +61,18 @@ func (c *IndexIter) Close() {
 }
 
 // Next returns current key and moves iterator to the next step.
-func (c *IndexIter) Next() (k []interface{}, h int64, err error) {
+func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 	if !c.it.Valid() {
-		return nil, 0, io.EOF
+		return nil, 0, errors.Trace(io.EOF)
 	}
 	if !strings.HasPrefix(c.it.Key(), c.prefix) {
-		return nil, 0, io.EOF
+		return nil, 0, errors.Trace(io.EOF)
 	}
 	// get indexedValues
 	buf := []byte(c.it.Key())[len(c.prefix):]
 	vv, err := DecodeValue(buf)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, errors.Trace(err)
 	}
 	// if index is *not* unique, the handle is in keybuf
 	if !c.idx.unique {
@@ -82,14 +82,14 @@ func (c *IndexIter) Next() (k []interface{}, h int64, err error) {
 		// otherwise handle is value
 		h, err = decodeHandle(c.it.Value())
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, errors.Trace(err)
 		}
 		k = vv
 	}
 	// update new iter to next
 	newIt, err := c.it.Next(hasPrefix([]byte(c.prefix)))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, errors.Trace(err)
 	}
 	c.it = newIt
 	return
@@ -149,7 +149,7 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 		}
 	}
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	buf := append([]byte(nil), []byte(c.prefix)...)
 	buf = append(buf, encVal...)
@@ -161,7 +161,7 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) error {
 	keyBuf, err := c.genIndexKey(indexedValues, h)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if !c.unique {
 		// TODO: reconsider value
@@ -183,10 +183,10 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 func (c *kvIndex) Delete(txn Transaction, indexedValues []interface{}, h int64) error {
 	keyBuf, err := c.genIndexKey(indexedValues, h)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	err = txn.Delete(keyBuf)
-	return err
+	return errors.Trace(err)
 }
 
 func hasPrefix(prefix []byte) FnKeyCmp {
@@ -200,9 +200,10 @@ func (c *kvIndex) Drop(txn Transaction) error {
 	prefix := []byte(c.prefix)
 	it, err := txn.Seek(Key(prefix), hasPrefix(prefix))
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer it.Close()
+
 	// remove all indices
 	for it.Valid() {
 		if !strings.HasPrefix(it.Key(), c.prefix) {
@@ -210,11 +211,11 @@ func (c *kvIndex) Drop(txn Transaction) error {
 		}
 		err := txn.Delete([]byte(it.Key()))
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		it, err = it.Next(hasPrefix(prefix))
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -224,26 +225,26 @@ func (c *kvIndex) Drop(txn Transaction) error {
 func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
 	keyBuf, err := c.genIndexKey(indexedValues, 0)
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
 	it, err := txn.Seek(keyBuf, hasPrefix([]byte(c.prefix)))
 	if err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
 	// check if hit
 	hit = false
 	if it.Valid() && it.Key() == string(keyBuf) {
 		hit = true
 	}
-	return &IndexIter{it: it, idx: c, prefix: c.prefix}, hit, nil
+	return &indexIter{it: it, idx: c, prefix: c.prefix}, hit, nil
 }
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
 func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 	prefix := []byte(c.prefix)
-	it, err := txn.Seek([]byte(c.prefix), hasPrefix(prefix))
+	it, err := txn.Seek(prefix, hasPrefix(prefix))
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	return &IndexIter{it: it, idx: c, prefix: c.prefix}, nil
+	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
 }

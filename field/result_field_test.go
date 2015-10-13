@@ -144,12 +144,12 @@ func (*testResultFieldSuite) TestMain(c *C) {
 
 	// For GetFieldIndex
 	f1 := &field.Field{
-		Expr: &expression.Ident{CIStr: model.NewCIStr("c1")},
-		Name: "a",
+		Expr:   &expression.Ident{CIStr: model.NewCIStr("c1")},
+		AsName: "a",
 	}
 	f2 := &field.Field{
-		Expr: &expression.Ident{CIStr: model.NewCIStr("c2")},
-		Name: "a",
+		Expr:   &expression.Ident{CIStr: model.NewCIStr("c2")},
+		AsName: "a",
 	}
 	fs := []*field.Field{f1, f2}
 	idxs := field.GetFieldIndex("c1", fs, field.OrgFieldNameFlag)
