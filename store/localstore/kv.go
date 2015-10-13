@@ -38,6 +38,7 @@ type dbStore struct {
 	keysLocked map[string]uint64
 	uuid       string
 	path       string
+	gc         *localstoreGC
 }
 
 type storeCache struct {
@@ -85,6 +86,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		uuid:       uuid.NewV4().String(),
 		path:       schema,
 		db:         db,
+		gc:         newLocalGC(),
 	}
 
 	mc.cache[schema] = s
