@@ -3481,6 +3481,12 @@ Statement:
 |	UnionStmt
 |	UpdateStmt
 |	UseStmt
+|	SubSelect
+	{
+		// `(select 1)`; is a valid select statement
+		// TODO: This is used to fix issue #320. There may be a better solution.
+		$$ = $1.(*subquery.SubQuery).Stmt
+	}
 
 ExplainableStmt:
 	SelectStmt
