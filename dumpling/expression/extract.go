@@ -24,7 +24,7 @@ import (
 )
 
 // Extract is for time extract function.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
+// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 type Extract struct {
 	Unit string
 	Date Expression
