@@ -258,14 +258,7 @@ func trimSQL(sql string) string {
 		break
 	}
 	// Trim leading '('. For `(select 1);` is also a query.
-	for {
-		s := strings.TrimPrefix(sql, "(")
-		if len(s) == len(sql) {
-			break
-		}
-		sql = s
-	}
-	return sql
+	return strings.TrimLeft(sql, "( ")
 }
 
 // IsQuery checks if a sql statement is a query statement.
