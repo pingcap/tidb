@@ -25,13 +25,17 @@ import (
 
 // Field is used for parsing column name from SQL.
 type Field struct {
-	Expr expression.Expression
-	Name string
+	Expr   expression.Expression
+	AsName string
 }
 
 // String implements fmt.Stringer interface.
 func (f *Field) String() string {
-	return fmt.Sprintf("Field.Name:%s, Field.Expr:%s", f.Name, f.Expr)
+	if len(f.AsName) > 0 {
+		return fmt.Sprintf("%s AS %s", f.Expr, f.AsName)
+	}
+
+	return f.Expr.String()
 }
 
 // Opt is used for parsing data type option from SQL.

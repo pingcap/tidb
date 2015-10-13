@@ -18,8 +18,6 @@
 package plans
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -62,7 +60,7 @@ func (r *GroupByDefaultPlan) Explain(w format.Formatter) {
 	r.Src.Explain(w)
 	w.Format("┌Evaluate")
 	for _, v := range r.Fields {
-		w.Format(" %s as %s,", v.Expr, fmt.Sprintf("%q", v.Name))
+		w.Format(" %s,", v)
 	}
 
 	switch {
@@ -125,7 +123,7 @@ func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, 
 
 func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{}) (interface{}, error) {
 	for i, f := range r.Fields[0:r.HiddenFieldOffset] {
-		if name == f.Name {
+		if name == f.AsName {
 			return out[i], nil
 		}
 	}
