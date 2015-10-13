@@ -128,7 +128,7 @@ func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
 func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 	encKey := codec.EncodeBytes(nil, it.startKey)
 	// max key
-	encEndKey := codec.EncodeBytes(nil, []byte{0xff, 0xff})
+	encEndKey := codec.EncodeBytes(nil, codec.InfiniteValue)
 	var retErr error
 	var engineIter engine.Iterator
 	for {
@@ -136,7 +136,7 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 		if retErr != nil {
 			return nil, errors.Trace(retErr)
 		}
-		// Check if overflow
+		// Check if overflow.
 		if !engineIter.Next() {
 			it.valid = false
 			break
@@ -169,7 +169,7 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 			it.startKey = key.Next()
 			break
 		}
-		// Release the iterator, and update key
+		// Release the iterator, and update key.
 		engineIter.Release()
 		// Current key's all versions are deleted, just go next key.
 		encKey = codec.EncodeBytes(nil, key.Next())

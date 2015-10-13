@@ -66,6 +66,7 @@ type Driver struct {
 func (d Driver) Open(schema string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
+
 	if store, ok := mc.cache[schema]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
 		log.Info("cache store", schema)
@@ -149,7 +150,7 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 	err := s.db.Commit(b)
 	if err != nil {
 		log.Error(err)
-		return err
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -159,7 +160,7 @@ func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
 }
 
-// Both lock and unlock are used for simulating scenario of percolator papers
+// Both lock and unlock are used for simulating scenario of percolator papers.
 func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,7 +200,7 @@ func (s *dbStore) unLockKeys(keys ...string) error {
 
 	for _, key := range keys {
 		if _, ok := s.keysLocked[key]; !ok {
-			return kv.ErrNotExist
+			return errors.Trace(kv.ErrNotExist)
 		}
 
 		delete(s.keysLocked, key)
