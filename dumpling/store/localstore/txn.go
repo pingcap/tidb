@@ -95,7 +95,6 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	return intVal, nil
 }
 
@@ -108,7 +107,6 @@ func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
 	return intVal, errors.Trace(err)
 }
@@ -130,7 +128,7 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	if len(val) == 0 {
 		return nil, errors.Trace(kv.ErrNotExist)
 	}
-
+	txn.store.gc.OnGet(k)
 	return val, nil
 }
 
@@ -143,7 +141,12 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 
 	log.Debugf("set key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
-	return txn.UnionStore.Set(k, data)
+	err := txn.UnionStore.Set(k, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn.store.gc.OnSet(k)
+	return nil
 }
 
 func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
