@@ -125,7 +125,7 @@ func (cc *clientConn) writeInitialHandshake() error {
 	data = append(data, byte(cc.connectionID), byte(cc.connectionID>>8), byte(cc.connectionID>>16), byte(cc.connectionID>>24))
 	// auth-plugin-data-part-1
 	data = append(data, cc.salt[0:8]...)
-	// filter [00]
+	// filler [00]
 	data = append(data, 0)
 	// capability flag lower 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability), byte(defaultCapability>>8))
@@ -136,13 +136,13 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability>>16), byte(defaultCapability>>24))
-	//filter [0x15], for wireshark dump, value is 0x15
+	// filler [0x15], for wireshark dump, value is 0x15
 	data = append(data, 0x15)
 	// reserved 10 [00]
 	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
-	// filter [00]
+	// filler [00]
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
