@@ -112,6 +112,7 @@ import (
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
+	dateAdd	"DATE_ADD"
 	day		"DAY"
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
@@ -162,6 +163,7 @@ import (
 	index		"INDEX"
 	inner 		"INNER"
 	insert		"INSERT"
+	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
 	join		"JOIN"
@@ -695,7 +697,6 @@ ColumnPosition:
 			RelativeColumn: $2.(string),
 		}
 	}
-
 
 AlterSpecificationList:
 	AlterSpecification
@@ -2226,6 +2227,14 @@ FunctionCallNonKeyword:
 			l := yylex.(*lexer)
 			l.err(err)
 			return 1
+		}
+	}
+|	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &expression.DateAdd{
+			Unit: $7.(string), 
+			Date: $3.(expression.Expression),
+			Interval: $6.(expression.Expression),
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
