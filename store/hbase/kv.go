@@ -25,9 +25,9 @@ import (
 
 const (
 	// ColFamily is the hbase col family name.
-	ColFamily    = "f"
+	ColFamily = "f"
 	// Qualifier is the hbase col name.
-	Qualifier    = "q"
+	Qualifier = "q"
 )
 
 var _ kv.Storage = (*hbaseStore)(nil)
@@ -91,7 +91,7 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 
 	storeName := "tidb"
 	if !c.TableExists(storeName) {
-		log.Warn("auto create table:"+storeName)
+		log.Warn("auto create table:" + storeName)
 		// create new hbase table for store
 		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(storeName))
 		cf := hbase.NewColumnFamilyDescriptor(ColFamily)

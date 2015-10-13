@@ -20,9 +20,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"flag"
+	"github.com/c4pt0r/go-hbase"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"flag"
 )
 
 const (
@@ -43,10 +44,22 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	flag.Parse()
+	//first drop table tidb from hbase, avoid old data effect
+	hbaseCli, err := hbase.NewClient([]string{*zk}, "/hbase")
+	c.Assert(err, IsNil)
+	t := hbase.NewTableNameWithDefaultNS("tidb")
+	if hbaseCli.TableExists("tidb") {
+		err = hbaseCli.DisableTable(t)
+		c.Assert(err, IsNil)
+		err = hbaseCli.DropTable(t)
+		c.Assert(err, IsNil)
+	}
+
 	d := Driver{}
 	store, err := d.Open(*zk)
 	c.Assert(err, IsNil)
 	s.s = store
+
 }
 
 func (s *testKVSuite) TearDownSuite(c *C) {
@@ -439,7 +452,6 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
-
 
 func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	var success int64

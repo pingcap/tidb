@@ -39,12 +39,12 @@ var (
 type hbaseTxn struct {
 	kv.UnionStore
 	*themis.Txn
-	store        *hbaseStore // for commit
-	storeName    string
-	startTs      time.Time
-	tID          uint64
-	valid        bool
-	version      kv.Version        // commit version
+	store     *hbaseStore // for commit
+	storeName string
+	startTs   time.Time
+	tID       uint64
+	valid     bool
+	version   kv.Version // commit version
 }
 
 // Implement transaction interface
@@ -243,11 +243,11 @@ func (txn *hbaseTxn) Rollback() error {
 }
 
 func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
-//	for _, key := range keys {
-//		key = kv.EncodeKey(key)
-//		if err := txn.markOrigin(key); err != nil {
-//			return err
-//		}
-//	}
+	//	for _, key := range keys {
+	//		key = kv.EncodeKey(key)
+	//		if err := txn.markOrigin(key); err != nil {
+	//			return err
+	//		}
+	//	}
 	return nil
 }
