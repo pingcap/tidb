@@ -18,7 +18,7 @@
 package stmts
 
 import (
-	"strings"
+	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -84,47 +84,52 @@ func (s *UpdateStmt) SetText(text string) {
 	s.Text = text
 }
 
-func getUpdateColumns(t table.Table, assignList []expression.Assignment, isMultipleTable bool, tblAliasMap map[string]string) ([]*column.Col, []expression.Assignment, error) {
-	// TODO: We should check the validate if assignList in somewhere else. Maybe in building plan.
-	// TODO: We should use field.GetFieldIndex to replace this function.
-	tcols := make([]*column.Col, 0, len(assignList))
-	tAsgns := make([]expression.Assignment, 0, len(assignList))
-	tname := t.TableName()
-	for _, asgn := range assignList {
-		if isMultipleTable {
-			if tblAliasMap != nil {
-				if alias, ok := tblAliasMap[asgn.TableName]; ok {
-					if !strings.EqualFold(tname.O, alias) {
-						continue
-					}
-				}
-			} else if !strings.EqualFold(tname.O, asgn.TableName) {
-				continue
-			}
-		}
-		col := column.FindCol(t.Cols(), asgn.ColName)
-		if col == nil {
-			if isMultipleTable {
-				continue
-			}
-			return nil, nil, errors.Errorf("UPDATE: unknown column %s", asgn.ColName)
-		}
-		tcols = append(tcols, col)
-		tAsgns = append(tAsgns, asgn)
+func findColumnByName(t table.Table, name string) (*column.Col, error) {
+	_, tableName, colName := field.SplitQualifiedName(name)
+	if len(tableName) > 0 && tableName != t.TableName().O {
+		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
-	return tcols, tAsgns, nil
+
+	c := column.FindCol(t.Cols(), colName)
+	if c == nil {
+		return nil, errors.Errorf("unknown field %s", colName)
+	}
+	return c, nil
 }
 
-func getInsertValue(name string, cols []*column.Col, row []interface{}) (interface{}, error) {
-	for i, col := range cols {
-		if col.Name.L == name {
-			return row[i], nil
+func checkUpdateColumns(assignList []expression.Assignment, fields []*field.ResultField, t table.Table) (map[int]expression.Assignment, error) {
+	m := make(map[int]expression.Assignment, len(assignList))
+
+	for _, v := range assignList {
+		if fields != nil {
+			name := v.ColName
+			if len(v.TableName) > 0 {
+				name = fmt.Sprintf("%s.%s", v.TableName, v.ColName)
+			}
+			// use result fields to check assign list, otherwise use origin table columns
+			idx := field.GetResultFieldIndex(name, fields, field.DefaultFieldFlag)
+			if n := len(idx); n > 1 {
+				return nil, errors.Errorf("ambiguous field %s", name)
+			} else if n == 0 {
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+
+			m[idx[0]] = v
+		} else {
+			c, err := findColumnByName(t, field.JoinQualifiedName("", v.TableName, v.ColName))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			m[c.Offset] = v
 		}
 	}
-	return nil, errors.Errorf("unknown field %s", name)
+
+	return m, nil
 }
 
-func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table, tcols []*column.Col, assignList []expression.Assignment, insertData []interface{}, args map[interface{}]interface{}) error {
+func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table,
+	updateColumns map[int]expression.Assignment, m map[interface{}]interface{},
+	offset int, onDuplicateUpdate bool) error {
 	if err := t.LockRow(ctx, h, true); err != nil {
 		return errors.Trace(err)
 	}
@@ -133,29 +138,27 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	touched := make([]bool, len(t.Cols()))
 	copy(oldData, data)
 
-	// Generate new values
-	m := args
-	if m == nil {
-		m = make(map[interface{}]interface{}, len(t.Cols()))
-		// Set parameter for evaluating expression.
-		for _, col := range t.Cols() {
-			m[col.Name.L] = data[col.Offset]
-		}
-	}
-	if insertData != nil {
-		m[expression.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
-			return getInsertValue(name, t.Cols(), insertData)
-		}
-	}
+	cols := t.Cols()
 
-	for i, asgn := range assignList {
+	assignExists := false
+	for i, asgn := range updateColumns {
+		if i < offset || i >= offset+len(cols) {
+			// The assign expression is for another table, not this.
+			continue
+		}
 		val, err := asgn.Expr.Eval(ctx, m)
 		if err != nil {
 			return err
 		}
-		colIndex := tcols[i].Offset
+		colIndex := i - offset
 		touched[colIndex] = true
 		data[colIndex] = val
+		assignExists = true
+	}
+
+	// no assign list for this table, no need to update.
+	if !assignExists {
+		return nil
 	}
 
 	// Check whether new value is valid.
@@ -198,7 +201,7 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 		return errors.Trace(err)
 	}
 	// Record affected rows.
-	if len(insertData) == 0 {
+	if !onDuplicateUpdate {
 		variable.GetSessionVars(ctx).AddAffectedRows(1)
 	} else {
 		variable.GetSessionVars(ctx).AddAffectedRows(2)
@@ -249,17 +252,16 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 	defer p.Close()
 	updatedRowKeys := make(map[string]bool)
-	// For single-table syntax, TableRef may contain multiple tables
-	isMultipleTable := s.MultipleTable || s.TableRefs.MultipleTable()
 
 	// Get table alias map.
 	fs := p.GetFields()
-	tblAliasMap := make(map[string]string)
-	for _, f := range fs {
-		if f.TableName != f.OrgTableName {
-			tblAliasMap[f.TableName] = f.OrgTableName
-		}
+
+	columns, err0 := checkUpdateColumns(s.List, fs, nil)
+	if err0 != nil {
+		return nil, errors.Trace(err0)
 	}
+
+	m := map[interface{}]interface{}{}
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {
@@ -274,15 +276,19 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			return nil, nil
 		}
 		// Set EvalIdentFunc
-		m := make(map[interface{}]interface{})
 		m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			return plans.GetIdentValue(name, p.GetFields(), rowData, field.DefaultFieldFlag)
 		}
+
 		// Update rows
-		start := 0
+		offset := 0
 		for _, entry := range row.RowKeys {
 			tbl := entry.Tbl
 			k := entry.Key
+			lastOffset := offset
+			offset += len(tbl.Cols())
+			data := rowData[lastOffset:offset]
+
 			_, ok := updatedRowKeys[k]
 			if ok {
 				// Each matching row is updated once, even if it matches the conditions multiple times.
@@ -293,23 +299,12 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
-			end := start + len(tbl.Cols())
-			data := rowData[start:end]
-			start = end
-			// For multiple table mode, get to-update cols and to-update assginments.
-			tcols, tAsgns, err2 := getUpdateColumns(tbl, s.List, isMultipleTable, tblAliasMap)
+
+			err2 = updateRecord(ctx, handle, data, tbl, columns, m, lastOffset, false)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
-			if len(tcols) == 0 {
-				// Nothing to update for this table.
-				continue
-			}
-			// Get data in the table
-			err2 = updateRecord(ctx, handle, data, tbl, tcols, tAsgns, nil, m)
-			if err2 != nil {
-				return nil, errors.Trace(err2)
-			}
+
 			updatedRowKeys[k] = true
 		}
 	}
