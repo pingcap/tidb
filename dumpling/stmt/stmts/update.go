@@ -97,31 +97,24 @@ func findColumnByName(t table.Table, name string) (*column.Col, error) {
 	return c, nil
 }
 
-func checkUpdateColumns(assignList []expression.Assignment, fields []*field.ResultField, t table.Table) (map[int]expression.Assignment, error) {
+func getUpdateColumns(assignList []expression.Assignment, fields []*field.ResultField) (map[int]expression.Assignment, error) {
 	m := make(map[int]expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
-		if fields != nil {
-			name := v.ColName
-			if len(v.TableName) > 0 {
-				name = fmt.Sprintf("%s.%s", v.TableName, v.ColName)
-			}
-			// use result fields to check assign list, otherwise use origin table columns
-			idx := field.GetResultFieldIndex(name, fields, field.DefaultFieldFlag)
-			if n := len(idx); n > 1 {
-				return nil, errors.Errorf("ambiguous field %s", name)
-			} else if n == 0 {
-				return nil, errors.Errorf("unknown field %s", name)
-			}
 
-			m[idx[0]] = v
-		} else {
-			c, err := findColumnByName(t, field.JoinQualifiedName("", v.TableName, v.ColName))
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			m[c.Offset] = v
+		name := v.ColName
+		if len(v.TableName) > 0 {
+			name = fmt.Sprintf("%s.%s", v.TableName, v.ColName)
 		}
+		// use result fields to check assign list, otherwise use origin table columns
+		idx := field.GetResultFieldIndex(name, fields, field.DefaultFieldFlag)
+		if n := len(idx); n > 1 {
+			return nil, errors.Errorf("ambiguous field %s", name)
+		} else if n == 0 {
+			return nil, errors.Errorf("unknown field %s", name)
+		}
+
+		m[idx[0]] = v
 	}
 
 	return m, nil
@@ -256,7 +249,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	// Get table alias map.
 	fs := p.GetFields()
 
-	columns, err0 := checkUpdateColumns(s.List, fs, nil)
+	columns, err0 := getUpdateColumns(s.List, fs)
 	if err0 != nil {
 		return nil, errors.Trace(err0)
 	}

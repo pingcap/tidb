@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/plan"
@@ -232,7 +233,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	insertValueCount := len(s.Lists[0])
-	toUpdateColumns, err0 := checkUpdateColumns(s.OnDuplicate, nil, t)
+	toUpdateColumns, err0 := getOnDuplicateUpdateColumns(s.OnDuplicate, t)
 	if err0 != nil {
 		return nil, errors.Trace(err0)
 	}
@@ -320,6 +321,19 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	return nil, nil
+}
+
+func getOnDuplicateUpdateColumns(assignList []expression.Assignment, t table.Table) (map[int]expression.Assignment, error) {
+	m := make(map[int]expression.Assignment, len(assignList))
+
+	for _, v := range assignList {
+		c, err := findColumnByName(t, field.JoinQualifiedName("", v.TableName, v.ColName))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m[c.Offset] = v
+	}
+	return m, nil
 }
 
 func (s *InsertIntoStmt) initDefaultValues(ctx context.Context, t table.Table, cols []*column.Col, row []interface{}, marked map[int]struct{}) error {
