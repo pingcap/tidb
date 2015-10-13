@@ -340,7 +340,6 @@ import (
 	AlterSpecification	"Alter table specification"
 	AlterSpecificationList	"Alter table specification list"
 	AnyOrAll		"Any or All for subquery"
-	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
 	AssignmentListOpt	"assignment list opt"
@@ -401,7 +400,8 @@ import (
 	Factor			"expression factor"
 	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
-	Field1			"field expression optional AS clause"
+	FieldAsName		"Field alias name"
+	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FromClause		"From clause"
 	Function		"function expr"
@@ -1563,23 +1563,23 @@ Field:
 	{
 		$$ = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("*")}}
 	}
-|	Expression Field1
+|	Expression FieldAsNameOpt
 	{
 		expr, name := expression.Expr($1), $2.(string)
 		$$ = &field.Field{Expr: expr, AsName: name}
 	}
 
-Field1:
+FieldAsNameOpt:
 	/* EMPTY */
 	{
 		$$ = ""
 	}
-|	AsOpt
+|	FieldAsName
 	{
 		$$ = $1
 	}
 
-AsOpt:
+FieldAsName:
 	Identifier
 	{
 		$$ = $1
