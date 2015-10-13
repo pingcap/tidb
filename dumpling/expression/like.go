@@ -45,6 +45,8 @@ type PatternLike struct {
 	patTypes []byte
 	// Not is true, the expression is "not like".
 	Not bool
+	// Escape is the special escaped character, default is \.
+	Escape byte
 }
 
 // Clone implements the Expression Clone interface.
@@ -57,6 +59,7 @@ func (p *PatternLike) Clone() Expression {
 		patChars: p.patChars,
 		patTypes: p.patTypes,
 		Not:      p.Not,
+		Escape:   p.Escape,
 	}
 }
 
@@ -67,6 +70,9 @@ func (p *PatternLike) IsStatic() bool {
 
 // String implements the Expression String interface.
 func (p *PatternLike) String() string {
+	if p.Escape != '\\' {
+		return fmt.Sprintf("%s LIKE %s ESCAPE '%c'", p.Expr, p.Pattern, p.Escape)
+	}
 	return fmt.Sprintf("%s LIKE %s", p.Expr, p.Pattern)
 }
 
@@ -104,7 +110,7 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 		default:
 			return nil, errors.Errorf("Pattern should be string or []byte in LIKE: %v (Value of type %T)", pattern, pattern)
 		}
-		p.patChars, p.patTypes = compilePattern(spattern)
+		p.patChars, p.patTypes = compilePattern(spattern, p.Escape)
 	}
 
 	match := doMatch(sexpr, p.patChars, p.patTypes)
@@ -120,7 +126,7 @@ func (p *PatternLike) Accept(v Visitor) (Expression, error) {
 }
 
 // handle escapes and wild cards convert pattern characters and pattern types,
-func compilePattern(pattern string) (patChars, patTypes []byte) {
+func compilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	var lastAny bool
 	patChars = make([]byte, len(pattern))
 	patTypes = make([]byte, len(pattern))
@@ -129,18 +135,23 @@ func compilePattern(pattern string) (patChars, patTypes []byte) {
 		var tp byte
 		var c = pattern[i]
 		switch c {
-		case '\\':
+		case escape:
 			lastAny = false
 			tp = patMatch
 			if i < len(pattern)-1 {
 				i++
 				c = pattern[i]
-				if c == '\\' || c == '_' || c == '%' {
+				if c == escape || c == '_' || c == '%' {
 					// valid escape.
 				} else {
-					// invalid escape, fall back to literal back slash
+					// invalid escape, fall back to escape byte
+					// mysql will treat escape character as the origin value even
+					// the escape sequence is invalid in Go or C.
+					// e.g, \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
+					// Following case is correct just for escape \, not for others like +.
+					// TODO: add more checks for other escapes.
 					i--
-					c = '\\'
+					c = escape
 				}
 			}
 		case '_':
