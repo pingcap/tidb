@@ -34,8 +34,8 @@ type testFieldSuite struct {
 
 func (*testFieldSuite) TestField(c *C) {
 	f := &field.Field{
-		Expr: expression.Value{Val: "c1+1"},
-		Name: "a",
+		Expr:   expression.Value{Val: "c1+1"},
+		AsName: "a",
 	}
 	s := f.String()
 	c.Assert(len(s), Greater, 0)

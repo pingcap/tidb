@@ -338,6 +338,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{"select current_date, current_date(), curdate()", true},
 
+		// For delete statement
+		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
+		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
+		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false},
+
+		// For time fsp
+		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
+
 		// For row
 		{"select row(1)", false},
 		{"select row(1, 1,)", false},
@@ -384,6 +392,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
+
+		// For trim
+		{`SELECT TRIM('  bar   ');`, true},
+		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
+		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
+		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
 	}
 	s.RunTest(c, table)
 }

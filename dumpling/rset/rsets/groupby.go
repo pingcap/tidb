@@ -87,7 +87,7 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 
 			index := position - 1
 			if _, ok := aggFields[index]; ok {
-				return nil, errors.Errorf("Can't group on '%s'", fields[index].Name)
+				return nil, errors.Errorf("Can't group on '%s'", fields[index])
 			}
 
 			// use Position expression for the associated field.

@@ -18,8 +18,6 @@
 package plans
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -46,7 +44,7 @@ func (r *SelectFieldsDefaultPlan) Explain(w format.Formatter) {
 	r.Src.Explain(w)
 	w.Format("┌Evaluate")
 	for _, v := range r.Fields {
-		w.Format(" %s as %s,", v.Expr, fmt.Sprintf("%q", v.Name))
+		w.Format(" %s,", v)
 	}
 	w.Format("\n└Output field names %v\n", field.RFQNames(r.ResultFields))
 }
@@ -110,8 +108,7 @@ func (s *SelectFromDualPlan) GetFields() []*field.ResultField {
 	ans := make([]*field.ResultField, 0, len(s.Fields))
 	if len(s.Fields) > 0 {
 		for _, f := range s.Fields {
-			nm := f.Name
-			ans = append(ans, &field.ResultField{Name: nm})
+			ans = append(ans, createEmptyResultField(f))
 		}
 	}
 

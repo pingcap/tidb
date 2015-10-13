@@ -233,16 +233,16 @@ func (tc *TableConstraint) String() string {
 	return strings.Join(tokens, " ")
 }
 
-// AuthOption is used for parsing create use statement.
+// AuthOption is used for parsing create user statement.
+// TODO: support auth_plugin
 type AuthOption struct {
 	// AuthString/HashString can be empty, so we need to decide which one to use.
 	ByAuthString bool
 	AuthString   string
 	HashString   string
-	// TODO: support auth_plugin
 }
 
-// UserSpecification is used for parsing create use statement.
+// UserSpecification is used for parsing create user statement.
 type UserSpecification struct {
 	User    string
 	AuthOpt *AuthOption
