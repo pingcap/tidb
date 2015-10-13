@@ -99,7 +99,7 @@ func (r *JoinPlan) explainNode(w format.Formatter, node plan.Plan) {
 
 func (r *JoinPlan) filterNode(ctx context.Context, expr expression.Expression, node plan.Plan) (plan.Plan, bool, error) {
 	if node == nil {
-		return r, false, nil
+		return nil, false, nil
 	}
 
 	e2 := expr.Clone()
@@ -112,14 +112,12 @@ func (r *JoinPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 	// TODO: do more optimization for join plan
 	// now we only use where expression for Filter, but for join
 	// we must use On expression too.
-	if r.Right == nil {
-		return r.Left.Filter(ctx, expr)
-	}
 	newPlan := &JoinPlan{
 		Fields: r.Fields,
 		Type:   r.Type,
 		On:     r.On,
 	}
+
 	p, filteredLeft, err := r.filterNode(ctx, expr, r.Left)
 	if err != nil {
 		return nil, false, errors.Trace(err)
