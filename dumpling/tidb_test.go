@@ -841,6 +841,12 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, 3.12)
+
+	mustExecSQL(c, se, `drop table if exists t;create table t (c int);insert into t values (1);`)
+	r = mustExecSQL(c, se, "select a.c from t as a where c between null and 2")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
