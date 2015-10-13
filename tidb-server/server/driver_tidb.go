@@ -272,8 +272,16 @@ func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 	ci.Schema = fld.DBName
 	ci.Flag = uint16(fld.Flag)
 	ci.Charset = uint16(mysql.CharsetIDs[fld.Charset])
-	ci.ColumnLength = uint32(fld.Flen)
-	ci.Decimal = uint8(fld.Decimal)
+	if fld.Flen == -1 {
+		ci.ColumnLength = 0
+	} else {
+		ci.ColumnLength = uint32(fld.Flen)
+	}
+	if fld.Decimal == -1 {
+		ci.Decimal = 0
+	} else {
+		ci.Decimal = uint8(fld.Decimal)
+	}
 	ci.Type = uint8(fld.Tp)
 	return
 }

@@ -361,8 +361,14 @@ func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 				if decimal == types.UnspecifiedLength {
 					decimal = 0
 				}
-				dataType := types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin)
-				columnType := fmt.Sprintf("%s(%d)", dataType, colLen)
+				columnType := types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin)
+				if col.Decimal == types.UnspecifiedLength {
+					if colLen != types.UnspecifiedLength {
+						columnType = fmt.Sprintf("%s(%d)", columnType, colLen)
+					}
+				} else {
+					columnType = fmt.Sprintf("%s(%d, %d)", columnType, colLen, col.Decimal)
+				}
 				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
 				var columnDefault interface{}
 				if columnDesc.DefaultValue != nil {

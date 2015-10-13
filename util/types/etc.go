@@ -89,22 +89,22 @@ func TypeStr(tp byte) (r string) {
 func TypeToStr(tp byte, binary bool) string {
 	switch tp {
 	case mysql.TypeBlob:
-		if binary {
+		if !binary {
 			return "text"
 		}
 		return "blob"
 	case mysql.TypeLongBlob:
-		if binary {
+		if !binary {
 			return "longtext"
 		}
 		return "longblob"
 	case mysql.TypeTinyBlob:
-		if binary {
+		if !binary {
 			return "tinytext"
 		}
 		return "tinyblob"
 	case mysql.TypeMediumBlob:
-		if binary {
+		if !binary {
 			return "mediumtext"
 		}
 		return "mediumblob"
