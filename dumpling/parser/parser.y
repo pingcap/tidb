@@ -1523,8 +1523,11 @@ Factor1:
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
-		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), 
-					Not: $2.(bool), Escape: escape[0]}
+		$$ = &expression.PatternLike{
+			Expr: $1.(expression.Expression), 
+			Pattern: $4.(expression.Expression), 
+			Not: $2.(bool), 
+			Escape: escape[0]}
 	}
 |	PrimaryFactor NotOpt RegexpSym PrimaryExpression
 	{
