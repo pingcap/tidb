@@ -367,7 +367,7 @@ func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 						columnType = fmt.Sprintf("%s(%d)", columnType, colLen)
 					}
 				} else {
-					columnType = fmt.Sprintf("%s(%d, %d)", columnType, colLen, col.Decimal)
+					columnType = fmt.Sprintf("%s(%d,%d)", columnType, colLen, col.Decimal)
 				}
 				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
 				var columnDefault interface{}
