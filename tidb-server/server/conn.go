@@ -136,8 +136,8 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability>>16), byte(defaultCapability>>24))
-	// not enable CLIENT_PLUGIN_AUTH
-	data = append(data, 0)
+	// filler [0x15], for wireshark dump, value is 0x15
+	data = append(data, 0x15)
 	// reserved 10 [00]
 	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
