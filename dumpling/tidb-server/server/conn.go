@@ -433,7 +433,6 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 			var rowData []byte
 			rowData, err = dumpRowValuesBinary(cc.alloc, columns, row)
 			if err != nil {
-				fmt.Println("[conn]", err)
 				return errors.Trace(err)
 			}
 			data = append(data, rowData...)
