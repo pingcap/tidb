@@ -60,7 +60,12 @@ func (ft *FieldType) CompactStr() string {
 	switch ft.Tp {
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
-		suffix = fmt.Sprintf("('%s')", strings.Join(ft.Elems, "','"))
+		es := make([]string, 0, len(ft.Elems))
+		for _, e := range ft.Elems {
+			e = strings.Replace(e, "'", "''", -1)
+			es = append(es, e)
+		}
+		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
 	default:
 		if ft.Flen != UnspecifiedLength {
 			if ft.Decimal == UnspecifiedLength {

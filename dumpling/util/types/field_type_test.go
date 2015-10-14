@@ -67,7 +67,15 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Elems = []string{"a", "b"}
 	c.Assert(ft.String(), Equals, "enum('a','b')")
 
+	ft = NewFieldType(mysql.TypeEnum)
+	ft.Elems = []string{"'a'", "'b'"}
+	c.Assert(ft.String(), Equals, "enum('''a''','''b''')")
+
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b"}
 	c.Assert(ft.String(), Equals, "set('a','b')")
+
+	ft = NewFieldType(mysql.TypeSet)
+	ft.Elems = []string{"'a'", "'b'"}
+	c.Assert(ft.String(), Equals, "set('''a''','''b''')")
 }
