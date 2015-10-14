@@ -361,7 +361,7 @@ func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 				if decimal == types.UnspecifiedLength {
 					decimal = 0
 				}
-				columnType := col.FieldType.TypeString()
+				columnType := col.FieldType.CompactStr()
 				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
 				var columnDefault interface{}
 				if columnDesc.DefaultValue != nil {
