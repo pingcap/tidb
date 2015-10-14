@@ -113,7 +113,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return mysql.NewDefaultError(mysql.ErUnknownStmtHandler,
+		return mysql.NewDefaultError(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
 
@@ -121,7 +121,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 	pos++
 	//now we only support CURSOR_TYPE_NO_CURSOR flag
 	if flag != 0 {
-		return mysql.NewError(mysql.ErUnknownError, fmt.Sprintf("unsupported flag %d", flag))
+		return mysql.NewError(mysql.ErrUnknownError, fmt.Sprintf("unsupported flag %d", flag))
 	}
 
 	//skip iteration-count, always 1
@@ -324,7 +324,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewDefaultError(mysql.ErUnknownStmtHandler,
+		return mysql.NewDefaultError(mysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_send_longdata")
 	}
 
@@ -340,7 +340,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewDefaultError(mysql.ErUnknownStmtHandler,
+		return mysql.NewDefaultError(mysql.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()

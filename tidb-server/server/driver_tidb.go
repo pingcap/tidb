@@ -78,7 +78,7 @@ func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) 
 // AppendParam implements IStatement AppendParam method.
 func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
-		return mysql.NewDefaultError(mysql.ErWrongArguments, "stmt_send_longdata")
+		return mysql.NewDefaultError(mysql.ErrWrongArguments, "stmt_send_longdata")
 	}
 	ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
 	return nil
