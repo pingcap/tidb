@@ -78,4 +78,30 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"'a'", "'b'"}
 	c.Assert(ft.String(), Equals, "set('''a''','''b''')")
+
+	ft = NewFieldType(mysql.TypeTimestamp)
+	ft.Flen = 8
+	ft.Decimal = 2
+	c.Assert(ft.String(), Equals, "timestamp(2)")
+	ft = NewFieldType(mysql.TypeTimestamp)
+	ft.Flen = 8
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "timestamp")
+
+	ft = NewFieldType(mysql.TypeDatetime)
+	ft.Flen = 8
+	ft.Decimal = 2
+	c.Assert(ft.String(), Equals, "datetime(2)")
+	ft = NewFieldType(mysql.TypeDatetime)
+	ft.Flen = 8
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "datetime")
+	ft = NewFieldType(mysql.TypeDate)
+	ft.Flen = 8
+	ft.Decimal = 2
+	c.Assert(ft.String(), Equals, "date(2)")
+	ft = NewFieldType(mysql.TypeDate)
+	ft.Flen = 8
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "date")
 }

@@ -18,8 +18,6 @@
 package column
 
 import (
-	"bytes"
-	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -121,41 +119,11 @@ const defaultPrivileges string = "select,insert,update,references"
 
 // GetTypeDesc gets the description for column type.
 func (c *Col) GetTypeDesc() string {
-	var buf bytes.Buffer
-
-	buf.WriteString(types.TypeToStr(c.Tp, c.Charset))
-	switch c.Tp {
-	case mysql.TypeSet, mysql.TypeEnum:
-		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
-		// If elem contain ', we will convert ' -> ''
-		elems := make([]string, len(c.Elems))
-		for i := range elems {
-			elems[i] = strings.Replace(c.Elems[i], "'", "''", -1)
-		}
-		buf.WriteString(fmt.Sprintf("('%s')", strings.Join(elems, "','")))
-	case mysql.TypeFloat, mysql.TypeDouble:
-		// if only float(M), we will use float. The same for double.
-		if c.Flen != -1 && c.Decimal != -1 {
-			buf.WriteString(fmt.Sprintf("(%d,%d)", c.Flen, c.Decimal))
-		}
-	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
-		if c.Decimal != -1 && c.Decimal != 0 {
-			buf.WriteString(fmt.Sprintf("(%d)", c.Decimal))
-		}
-	default:
-		if c.Flen != -1 {
-			if c.Decimal == -1 {
-				buf.WriteString(fmt.Sprintf("(%d)", c.Flen))
-			} else {
-				buf.WriteString(fmt.Sprintf("(%d,%d)", c.Flen, c.Decimal))
-			}
-		}
-	}
-
+	desc := c.FieldType.CompactStr()
 	if mysql.HasUnsignedFlag(c.Flag) {
-		buf.WriteString(" UNSIGNED")
+		desc += " UNSIGNED"
 	}
-	return buf.String()
+	return desc
 }
 
 // NewColDesc returns a new ColDesc for a column.
