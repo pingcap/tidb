@@ -132,7 +132,9 @@ func (s *ShowPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 // Next implements plan.Plan Next interface.
 func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if s.rows == nil {
-		s.fetchAll(ctx)
+		if err := s.fetchAll(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if s.cursor == len(s.rows) {
 		return
