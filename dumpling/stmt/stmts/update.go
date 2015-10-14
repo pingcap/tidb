@@ -255,6 +255,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 
 	m := map[interface{}]interface{}{}
+	var records []*plan.Row
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {
@@ -263,11 +264,16 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		if row == nil {
 			break
 		}
-		rowData := row.Data
 		if len(row.RowKeys) == 0 {
 			// Nothing to update
-			return nil, nil
+			continue
 		}
+		records = append(records, row)
+	}
+
+	for _, row := range records {
+		rowData := row.Data
+
 		// Set EvalIdentFunc
 		m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 			return plans.GetIdentValue(name, p.GetFields(), rowData, field.DefaultFieldFlag)

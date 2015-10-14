@@ -225,7 +225,7 @@ func (s *testStmtSuite) TestIssue345(c *C) {
 
 // See https://github.com/pingcap/tidb/issues/369
 func (s *testStmtSuite) TestIssue369(c *C) {
-	testSQL := `drop table if exists users, foobar;`
+	testSQL := `DROP TABLE IF EXISTS users, foobar;`
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = `CREATE TABLE users (
@@ -260,4 +260,59 @@ func (s *testStmtSuite) TestIssue369(c *C) {
 	WHERE users.id = foobar.user_id AND users.name = 'ed';`
 	r := mustExec(c, s.testDB, testSQL)
 	checkResult(c, r, 3, 0)
+}
+
+// See https://github.com/pingcap/tidb/issues/376
+func (s *testStmtSuite) TestIssue376(c *C) {
+	testSQL := `
+		DROP TABLE IF EXISTS users, foobar, addresses;
+		CREATE TABLE users (
+		    id INTEGER NOT NULL AUTO_INCREMENT, 
+		    name VARCHAR(30) NOT NULL, 
+		    some_update VARCHAR(30), 
+		    PRIMARY KEY (id)
+		)ENGINE=MyISAM;
+
+		CREATE TABLE foobar (
+		    id INTEGER NOT NULL AUTO_INCREMENT, 
+		    user_id INTEGER, 
+		    data VARCHAR(30), 
+		    some_update VARCHAR(30), 
+		    PRIMARY KEY (id), 
+		    FOREIGN KEY(user_id) REFERENCES users (id)
+		)ENGINE=MyISAM;
+
+		CREATE TABLE addresses (
+		    id INTEGER NOT NULL AUTO_INCREMENT, 
+		    user_id INTEGER, 
+		    email_address VARCHAR(50) NOT NULL, 
+		    PRIMARY KEY (id), 
+		    FOREIGN KEY(user_id) REFERENCES users (id)
+		)ENGINE=MyISAM;
+
+		INSERT INTO users (id, name, some_update) VALUES 
+		(8, 'ed', 'value'),
+		(9, 'fred', 'value');
+
+		INSERT INTO addresses (id, user_id, email_address) VALUES 
+		(2, 8, 'ed@wood.com'),
+		(3, 8, 'ed@bettyboop.com'),
+		(4, 9, 'fred@fred.com');
+
+		INSERT INTO foobar (id, user_id, data) VALUES 
+		(2, 8, 'd1'),
+		(3, 8, 'd2'),
+		(4, 9, 'd3');`
+
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `
+		UPDATE addresses, users SET users.name='ed2', users.some_update='im the update', 
+		addresses.email_address=users.name WHERE users.id = addresses.user_id AND users.name = 'ed';`
+	r := mustExec(c, s.testDB, testSQL)
+	checkResult(c, r, 3, 0)
+
+	testSQL = `SELECT addresses.id, addresses.user_id, addresses.email_address FROM addresses ORDER BY addresses.id;`
+	rows, err := s.testDB.Query(testSQL)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{2, 8, "ed"}, {3, 8, "ed"}, {4, 9, "fred@fred.com"}})
 }
