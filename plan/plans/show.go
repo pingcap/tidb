@@ -194,12 +194,13 @@ func (s *ShowPlan) getTable(ctx context.Context) (table.Table, error) {
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	dbName := model.NewCIStr(s.DBName)
 	if !is.SchemaExists(dbName) {
-		return nil, errors.Errorf("Can not find DB: %s", dbName)
+		// MySQL returns no such table here if database doesn't exist.
+		return nil, errors.Trace(mysql.NewErr(mysql.ErrNoSuchTable, s.DBName, s.TableName))
 	}
 	tbName := model.NewCIStr(s.TableName)
 	tb, err := is.TableByName(dbName, tbName)
 	if err != nil {
-		return nil, errors.Errorf("Can not find table: %s", s.TableName)
+		return nil, errors.Trace(mysql.NewErr(mysql.ErrNoSuchTable, s.DBName, s.TableName))
 	}
 	return tb, nil
 }
