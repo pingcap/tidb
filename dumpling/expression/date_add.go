@@ -72,13 +72,19 @@ func (da *DateAdd) Eval(ctx context.Context, args map[interface{}]interface{}) (
 		return nil, errors.Trace(err)
 	}
 
-	years, months, days, durations, err := extractTimeValue(da.Unit, format)
+	years, months, days, durations, err := mysql.ExtractTimeValue(da.Unit, strings.TrimSpace(format))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	t.Time = t.Time.Add(durations)
 	t.Time = t.Time.AddDate(int(years), int(months), int(days))
+
+	// "2011-11-11 10:10:20.000000" outputs "2011-11-11 10:10:20".
+	if t.Time.Nanosecond() == 0 {
+		t.Fsp = 0
+	}
+
 	return t, nil
 }
 
