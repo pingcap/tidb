@@ -20,6 +20,7 @@ import (
 )
 
 // Node is the basic element of the AST.
+// Interfaces embed Node should have 'Node' name suffix.
 type Node interface {
 	// Accept accepts Visitor to visit itself.
 	// The returned node should replace original node.
@@ -31,9 +32,10 @@ type Node interface {
 	SetText(text string)
 }
 
-// Expression is a node that can be evaluated.
-type Expression interface {
-	// Node is embeded in Expression.
+// ExprNode is a node that can be evaluated.
+// Name of implementations should have 'Expr' suffix.
+type ExprNode interface {
+	// Node is embeded in ExprNode.
 	Node
 	// IsStatic means it can be evaluated independently.
 	IsStatic() bool
@@ -41,6 +43,31 @@ type Expression interface {
 	SetType(tp *types.FieldType)
 	// GetType gets type of the expression.
 	GetType() *types.FieldType
+}
+
+// FuncNode represents function call expression node.
+type FuncNode interface {
+	ExprNode
+	functionExpression()
+}
+
+// StmtNode represents statement node.
+// Name of implementations should have 'Stmt' suffix.
+type StmtNode interface {
+	Node
+	statement()
+}
+
+// DDLNode represents DDL statement node.
+type DDLNode interface {
+	StmtNode
+	ddlStatement()
+}
+
+// DMLNode represents DML statement node.
+type DMLNode interface {
+	StmtNode
+	dmlStatement()
 }
 
 // Visitor visits a Node.

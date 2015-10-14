@@ -18,33 +18,16 @@ import (
 )
 
 var (
-	_ Node = &JoinNode{}
-	_ Node = &TableRef{}
-	_ Node = &TableSource{}
-	_ Node = &SelectNode{}
-	_ Node = &Assignment{}
-	_ Node = &InsertIntoStmt{}
-	_ Node = &DeleteStmt{}
-	_ Node = &UpdateStmt{}
-	_ Node = &TruncateTableStmt{}
-	_ Node = &UnionStmt{}
+	_ DMLNode = &InsertStmt{}
+	_ DMLNode = &DeleteStmt{}
+	_ DMLNode = &UpdateStmt{}
+	_ DMLNode = &SelectStmt{}
+	_ Node    = &Join{}
+	_ Node    = &Union{}
+	_ Node    = &TableRef{}
+	_ Node    = &TableSource{}
+	_ Node    = &Assignment{}
 )
-
-// txtNode is the struct implements partial node interface.
-// can be embeded by other nodes.
-type txtNode struct {
-	txt string
-}
-
-// SetText implements Node interface.
-func (bn *txtNode) SetText(text string) {
-	bn.txt = text
-}
-
-// Text implements Node interface.
-func (bn *txtNode) Text() string {
-	return bn.txt
-}
 
 // JoinType is join type, including cross/left/right/full.
 type JoinType int
@@ -58,9 +41,9 @@ const (
 	RightJoin
 )
 
-// JoinNode represents table join.
-type JoinNode struct {
-	txtNode
+// Join represents table join.
+type Join struct {
+	node
 
 	// Left table can be TableSource or JoinNode.
 	Left Node
@@ -71,33 +54,31 @@ type JoinNode struct {
 }
 
 // Accept implements Node Accept interface.
-func (jn *JoinNode) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(jn) {
-		return jn, false
+func (j *Join) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(j) {
+		return j, false
 	}
-	node, ok := jn.Left.Accept(v)
+	node, ok := j.Left.Accept(v)
 	if !ok {
-		return jn, false
+		return j, false
 	}
-	jn.Left = node
-	node, ok = jn.Right.Accept(v)
-	if !ok {
-		return jn, false
+	j.Left = node
+	if j.Right != nil {
+		node, ok = j.Right.Accept(v)
+		if !ok {
+			return j, false
+		}
+		j.Right = node
 	}
-	jn.Right = node
-	return v.Leave(jn)
-}
-
-type TableIdent struct {
-	Schema model.CIStr
-	Name   model.CIStr
+	return v.Leave(j)
 }
 
 // TableRef represents a reference to actual table.
 type TableRef struct {
-	txtNode
+	node
 
-	Ident TableIdent
+	Schema model.CIStr
+	Name   model.CIStr
 }
 
 // Accept implements Node Accept interface.
@@ -110,7 +91,7 @@ func (tr *TableRef) Accept(v Visitor) (Node, bool) {
 
 // TableSource represents table source with a name.
 type TableSource struct {
-	txtNode
+	node
 
 	// Source is the source of the data, can be a TableRef,
 	// a SubQuery, or a JoinNode.
@@ -133,44 +114,66 @@ func (ts *TableSource) Accept(v Visitor) (Node, bool) {
 	return v.Leave(ts)
 }
 
-// LockType is select lock type.
-type LockType int
+// Union represents union select statement.
+type Union struct {
+	node
 
-// Select Lock Type.
+	Select *SelectStmt
+}
+
+// Accept implements Node Accept interface.
+func (u *Union) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(u) {
+		return u, false
+	}
+	node, ok := u.Select.Accept(v)
+	if !ok {
+		return u, false
+	}
+	u.Select = node.(*SelectStmt)
+	return v.Leave(u)
+}
+
+// SelectLockType is the lock type for SelectStmt.
+type SelectLockType int
+
+// Select lock types.
 const (
-	SelectLockNone LockType = iota
+	SelectLockNone SelectLockType = iota
 	SelectLockForUpdate
 	SelectLockInShareMode
 )
 
-// SelectNode represents the select query node.
-type SelectNode struct {
-	txtNode
+// SelectStmt represents the select query node.
+type SelectStmt struct {
+	dmlNode
 
 	// Distinct represents if the select has distinct option.
 	Distinct bool
 	// Fields is the select expression list.
-	Fields []Expression
+	Fields []ExprNode
 	// From is the from clause of the query.
-	From *JoinNode
+	From *Join
 	// Where is the where clause in select statement.
-	Where Expression
+	Where ExprNode
 	// GroupBy is the group by expression list.
-	GroupBy []Expression
+	GroupBy []ExprNode
 	// Having is the having condition.
-	Having Expression
+	Having ExprNode
 	// OrderBy is the odering expression list.
-	OrderBy []Expression
+	OrderBy []ExprNode
 	// Offset is the offset value.
 	Offset int
 	// Limit is the limit value.
 	Limit int
 	// Lock is the lock type
-	LockTp LockType
+	LockTp SelectLockType
+	// Unions is the union select statement.
+	Unions []*Union
 }
 
 // Accept implements Node Accept interface.
-func (sn *SelectNode) Accept(v Visitor) (Node, bool) {
+func (sn *SelectStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(sn) {
 		return sn, false
 	}
@@ -179,52 +182,64 @@ func (sn *SelectNode) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return sn, false
 		}
-		sn.Fields[i] = node.(Expression)
+		sn.Fields[i] = node.(ExprNode)
 	}
-	node, ok := sn.From.Accept(v)
-	if !ok {
-		return sn, false
+	if sn.From != nil {
+		node, ok := sn.From.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.From = node.(*Join)
 	}
-	sn.From = node.(*JoinNode)
 
-	node, ok = sn.Where.Accept(v)
-	if !ok {
-		return sn, false
+	if sn.Where != nil {
+		node, ok := sn.Where.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.Where = node.(ExprNode)
 	}
-	sn.Where = node.(Expression)
 
 	for i, val := range sn.GroupBy {
-		node, ok = val.Accept(v)
+		node, ok := val.Accept(v)
 		if !ok {
 			return sn, false
 		}
-		sn.GroupBy[i] = node.(Expression)
+		sn.GroupBy[i] = node.(ExprNode)
 	}
-
-	node, ok = sn.Having.Accept(v)
-	if !ok {
-		return sn, false
+	if sn.Having != nil {
+		node, ok := sn.Having.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.Having = node.(ExprNode)
 	}
-	sn.Having = node.(Expression)
 
 	for i, val := range sn.OrderBy {
-		node, ok = val.Accept(v)
+		node, ok := val.Accept(v)
 		if !ok {
 			return sn, false
 		}
-		sn.OrderBy[i] = node.(Expression)
+		sn.OrderBy[i] = node.(ExprNode)
 	}
 
+	for i, val := range sn.Unions {
+		node, ok := val.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.Unions[i] = node.(*Union)
+	}
 	return v.Leave(sn)
 }
 
 // Assignment is the expression for assignment, like a = 1.
 type Assignment struct {
-	txtNode
+	node
 	// Column is the column reference to be assigned.
-	Column *ColumnRef
+	Column *ColumnRefExpr
 	// Expr is the expression assigning to ColName.
-	Expr Expression
+	Expr ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -236,22 +251,22 @@ func (as *Assignment) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return as, false
 	}
-	as.Column = node.(*ColumnRef)
+	as.Column = node.(*ColumnRefExpr)
 	node, ok = as.Expr.Accept(v)
 	if !ok {
 		return as, false
 	}
-	as.Expr = node.(Expression)
+	as.Expr = node.(ExprNode)
 	return v.Leave(as)
 }
 
-// InsertIntoStmt is a statement to insert new rows into an existing table.
+// InsertStmt is a statement to insert new rows into an existing table.
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
-type InsertIntoStmt struct {
-	txtNode
+type InsertStmt struct {
+	dmlNode
 
-	Columns     []*ColumnRef
-	Lists       [][]Expression
+	Columns     []*ColumnRefExpr
+	Lists       [][]ExprNode
 	Table       *TableRef
 	Setlist     []*Assignment
 	Priority    int
@@ -259,7 +274,7 @@ type InsertIntoStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (in *InsertIntoStmt) Accept(v Visitor) (Node, bool) {
+func (in *InsertStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(in) {
 		return in, false
 	}
@@ -268,7 +283,7 @@ func (in *InsertIntoStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return in, false
 		}
-		in.Columns[i] = node.(*ColumnRef)
+		in.Columns[i] = node.(*ColumnRefExpr)
 	}
 	for i, list := range in.Lists {
 		for j, val := range list {
@@ -276,7 +291,7 @@ func (in *InsertIntoStmt) Accept(v Visitor) (Node, bool) {
 			if !ok {
 				return in, false
 			}
-			in.Lists[i][j] = node.(Expression)
+			in.Lists[i][j] = node.(ExprNode)
 		}
 	}
 	for i, val := range in.Setlist {
@@ -299,11 +314,11 @@ func (in *InsertIntoStmt) Accept(v Visitor) (Node, bool) {
 // DeleteStmt is a statement to delete rows from table.
 // See: https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteStmt struct {
-	txtNode
+	dmlNode
 
 	Tables      []*TableRef
-	Where       Expression
-	Order       []Expression
+	Where       ExprNode
+	Order       []ExprNode
 	Limit       int
 	LowPriority bool
 	Ignore      bool
@@ -325,17 +340,20 @@ func (de *DeleteStmt) Accept(v Visitor) (Node, bool) {
 		de.Tables[i] = node.(*TableRef)
 	}
 
-	node, ok := de.Where.Accept(v)
-	if !ok {
-		return de, false
-	}
-	de.Where = node.(Expression)
-	for i, val := range de.Order {
-		node, ok = val.Accept(v)
+	if de.Where != nil {
+		node, ok := de.Where.Accept(v)
 		if !ok {
 			return de, false
 		}
-		de.Order[i] = node.(Expression)
+		de.Where = node.(ExprNode)
+	}
+
+	for i, val := range de.Order {
+		node, ok := val.Accept(v)
+		if !ok {
+			return de, false
+		}
+		de.Order[i] = node.(ExprNode)
 	}
 	return v.Leave(de)
 }
@@ -343,12 +361,12 @@ func (de *DeleteStmt) Accept(v Visitor) (Node, bool) {
 // UpdateStmt is a statement to update columns of existing rows in tables with new values.
 // See: https://dev.mysql.com/doc/refman/5.7/en/update.html
 type UpdateStmt struct {
-	txtNode
+	dmlNode
 
-	TableRefs     *JoinNode
+	TableRefs     *Join
 	List          []*Assignment
-	Where         Expression
-	Order         []Expression
+	Where         ExprNode
+	Order         []ExprNode
 	Limit         int
 	LowPriority   bool
 	Ignore        bool
@@ -364,7 +382,7 @@ func (up *UpdateStmt) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return up, false
 	}
-	up.TableRefs = node.(*JoinNode)
+	up.TableRefs = node.(*Join)
 	for i, val := range up.List {
 		node, ok = val.Accept(v)
 		if !ok {
@@ -372,37 +390,20 @@ func (up *UpdateStmt) Accept(v Visitor) (Node, bool) {
 		}
 		up.List[i] = node.(*Assignment)
 	}
-	node, ok = up.Where.Accept(v)
-	if !ok {
-		return up, false
+	if up.Where != nil {
+		node, ok = up.Where.Accept(v)
+		if !ok {
+			return up, false
+		}
+		up.Where = node.(ExprNode)
 	}
-	up.Where = node.(Expression)
+
 	for i, val := range up.Order {
 		node, ok = val.Accept(v)
 		if !ok {
 			return up, false
 		}
-		up.Order[i] = node.(Expression)
+		up.Order[i] = node.(ExprNode)
 	}
 	return v.Leave(up)
-}
-
-// TruncateTableStmt is a statement to empty a table completely.
-// See: https://dev.mysql.com/doc/refman/5.7/en/truncate-table.html
-type TruncateTableStmt struct {
-	txtNode
-
-	Table *TableRef
-}
-
-// UnionStmt is a statement to combine results from multiple SelectStmts.
-// See: https://dev.mysql.com/doc/refman/5.7/en/union.html
-type UnionStmt struct {
-	txtNode
-
-	Distincts []bool
-	Selects   []*SelectNode
-	Limit     int
-	Offset    int
-	OrderBy   []Expression
 }
