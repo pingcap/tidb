@@ -201,11 +201,11 @@ func (cc *clientConn) readHandshakeResponse() error {
 		addr := cc.conn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
-			return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, addr, "Yes"))
+			return errors.Trace(mysql.NewDefaultError(mysql.ErrAccessDenied, cc.user, addr, "Yes"))
 		}
 		user := fmt.Sprintf("%s@%s", cc.user, host)
 		if !cc.ctx.Auth(user, auth, cc.salt) {
-			return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, host, "Yes"))
+			return errors.Trace(mysql.NewDefaultError(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
 	return nil
@@ -284,7 +284,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 		return cc.handleStmtReset(data)
 	default:
 		msg := fmt.Sprintf("command %d not supported now", cmd)
-		return mysql.NewError(mysql.ErUnknownError, msg)
+		return mysql.NewError(mysql.ErrUnknown, msg)
 	}
 }
 
@@ -322,8 +322,9 @@ func (cc *clientConn) writeOK() error {
 func (cc *clientConn) writeError(e error) error {
 	var m *mysql.SQLError
 	var ok bool
-	if m, ok = e.(*mysql.SQLError); !ok {
-		m = mysql.NewError(mysql.ErUnknownError, e.Error())
+	originErr := errors.Cause(e)
+	if m, ok = originErr.(*mysql.SQLError); !ok {
+		m = mysql.NewError(mysql.ErrUnknown, e.Error())
 	}
 
 	data := make([]byte, 4, 16+len(m.Message))
