@@ -121,7 +121,7 @@ func (cc *clientConn) handleStmtExecute(data []byte) (err error) {
 	pos++
 	//now we only support CURSOR_TYPE_NO_CURSOR flag
 	if flag != 0 {
-		return mysql.NewError(mysql.ErrUnknownError, fmt.Sprintf("unsupported flag %d", flag))
+		return mysql.NewError(mysql.ErrUnknown, fmt.Sprintf("unsupported flag %d", flag))
 	}
 
 	//skip iteration-count, always 1
