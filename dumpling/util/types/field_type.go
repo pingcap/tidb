@@ -52,9 +52,9 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// TypeString only consider Tp/CharsetBin/Flen/Deimal.
+// CompactStr only consider Tp/CharsetBin/Flen/Deimal.
 // This is used for showing column type in infoschema.
-func (ft *FieldType) TypeString() string {
+func (ft *FieldType) CompactStr() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
 	suffix := ""
 	switch ft.Tp {
@@ -80,7 +80,7 @@ func (ft *FieldType) TypeString() string {
 // String joins the information of FieldType and
 // returns a string.
 func (ft *FieldType) String() string {
-	strs := []string{ft.TypeString()}
+	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		strs = append(strs, "UNSIGNED")
 	}
