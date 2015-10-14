@@ -42,6 +42,9 @@ type SessionVars struct {
 
 	// Current user
 	User string
+
+	// disable DDL commit or not
+	disableDDLCommit bool
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -115,6 +118,16 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 // SetCurrentUser saves the current user to the session context.
 func (s *SessionVars) SetCurrentUser(user string) {
 	s.User = user
+}
+
+// DisableDDLCommit is used for whether enable commit when meet DDL statement.
+func (s *SessionVars) DisableDDLCommit() {
+	s.disableDDLCommit = true
+}
+
+// AllowDDLCommit return true if need to commit DDL statement
+func (s *SessionVars) AllowDDLCommit() bool {
+	return !s.disableDDLCommit
 }
 
 // IsAutocommit checks if it is in the auto-commit mode.

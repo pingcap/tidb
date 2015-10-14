@@ -138,8 +138,9 @@ func dropPreparedStmt(ctx context.Context, stmtID uint32) error {
 func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.Recordset, error) {
 	var err error
 	var rs rset.Recordset
+	sv := variable.GetSessionVars(ctx)
 	// before every execution, we must clear affectedrows.
-	variable.GetSessionVars(ctx).SetAffectedRows(0)
+	sv.SetAffectedRows(0)
 	switch s.(type) {
 	case *stmts.PreparedStmt:
 		ps := s.(*stmts.PreparedStmt)
@@ -151,7 +152,7 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 			return nil, errors.Trace(err)
 		}
 	default:
-		if s.IsDDL() {
+		if s.IsDDL() && sv.AllowDDLCommit() {
 			err = ctx.FinishTxn(false)
 			if err != nil {
 				return nil, errors.Trace(err)
