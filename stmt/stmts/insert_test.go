@@ -89,4 +89,10 @@ func (s *testStmtSuite) TestInsert(c *C) {
 
 	insertSQL := `insert into insert_test (id, c2) values (1, 1) on duplicate key update c2=10;`
 	mustExec(c, s.testDB, insertSQL)
+
+	insertSQL = `insert into insert_test (id, c2) values (1, 1) on duplicate key update insert_test.c2=10;`
+	mustExec(c, s.testDB, insertSQL)
+
+	_, err = s.testDB.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
+	c.Assert(err, NotNil)
 }
