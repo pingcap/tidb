@@ -88,8 +88,10 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		db:         db,
 		gc:         newLocalGC(),
 	}
-
 	mc.cache[schema] = s
+
+	s.gc.store = s
+	s.gc.Start()
 
 	return s, nil
 }
@@ -141,6 +143,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 func (s *dbStore) Close() error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
+	s.gc.Stop()
 	delete(mc.cache, s.path)
 	return s.db.Close()
 }

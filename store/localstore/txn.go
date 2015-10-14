@@ -95,6 +95,7 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	txn.store.gc.OnSet(k)
 	return intVal, nil
 }
 
