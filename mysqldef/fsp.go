@@ -80,3 +80,13 @@ func parseFrac(s string, fsp int) (int, error) {
 	//  0.0312 round 2 -> 3 -> 30000
 	return int(round * math.Pow10(MaxFsp-fsp)), nil
 }
+
+// alignFrac is used to generate alignment frac, like `100` -> `100000`
+func alignFrac(s string, fsp int) string {
+	sl := len(s)
+	if sl < fsp {
+		return s + strings.Repeat("0", fsp-sl)
+	}
+
+	return s
+}
