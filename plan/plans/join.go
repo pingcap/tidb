@@ -289,6 +289,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			if r.curRow == nil {
 				return nil, nil
 			}
+
 			if r.On != nil {
 				tempExpr := r.On.Clone()
 				visitor := NewIdentEvalVisitor(r.Left.GetFields(), r.curRow.Data)
@@ -316,7 +317,11 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			r.tempPlan.Close()
 			continue
 		}
-		joinedRow := append(r.curRow.Data, rightRow.Data...)
+
+		// To prevent outer modify the slice. See comment above.
+		joinedRow := make([]interface{}, 0, len(r.curRow.Data)+len(rightRow.Data))
+		joinedRow = append(append(joinedRow, r.curRow.Data...), rightRow.Data...)
+
 		if r.On != nil {
 			r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
