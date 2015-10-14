@@ -52,7 +52,7 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// CompactStr only consider Tp/CharsetBin/Flen/Deimal.
+// CompactStr only considers Tp/CharsetBin/Flen/Deimal.
 // This is used for showing column type in infoschema.
 func (ft *FieldType) CompactStr() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
