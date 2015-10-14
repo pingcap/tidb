@@ -224,4 +224,9 @@ func (p *testShowSuit) TestShowTables(c *C) {
 	c.Assert(cnt, Equals, 2)
 	cnt = mustQuery(c, testDB, `show full tables where Table_type != 'VIEW';`)
 	c.Assert(cnt, Equals, 3)
+
+	mustQuery(c, testDB, `show create table tab00;`)
+	rows, _ := testDB.Query(`show create table abc;`)
+	rows.Next()
+	c.Assert(rows.Err(), NotNil)
 }
