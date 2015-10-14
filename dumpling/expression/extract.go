@@ -56,7 +56,7 @@ func (e *Extract) Eval(ctx context.Context, args map[interface{}]interface{}) (i
 		return nil, errors.Errorf("need time type, but got %T", v)
 	}
 
-	n, err1 := extractTimeNum(e.Unit, t)
+	n, err1 := mysql.ExtractTimeNum(e.Unit, t)
 	if err1 != nil {
 		return nil, errors.Trace(err1)
 	}

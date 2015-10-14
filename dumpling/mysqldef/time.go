@@ -979,3 +979,364 @@ func checkTimestamp(t Time) bool {
 
 	return true
 }
+
+// ExtractTimeNum extracts time value number from time unit and format.
+func ExtractTimeNum(unit string, t Time) (int64, error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return int64(t.Nanosecond() / 1000), nil
+	case "SECOND":
+		return int64(t.Second()), nil
+	case "MINUTE":
+		return int64(t.Minute()), nil
+	case "HOUR":
+		return int64(t.Hour()), nil
+	case "DAY":
+		return int64(t.Day()), nil
+	case "WEEK":
+		_, week := t.ISOWeek()
+		return int64(week), nil
+	case "MONTH":
+		return int64(t.Month()), nil
+	case "QUARTER":
+		m := int64(t.Month())
+		// 1 - 3 -> 1
+		// 4 - 6 -> 2
+		// 7 - 9 -> 3
+		// 10 - 12 -> 4
+		return (m + 2) / 3, nil
+	case "YEAR":
+		return int64(t.Year()), nil
+	case "SECOND_MICROSECOND":
+		return int64(t.Second())*1000000 + int64(t.Nanosecond())/1000, nil
+	case "MINUTE_MICROSECOND":
+		_, m, s := t.Clock()
+		return int64(m)*100000000 + int64(s)*1000000 + int64(t.Nanosecond())/1000, nil
+	case "MINUTE_SECOND":
+		_, m, s := t.Clock()
+		return int64(m*100 + s), nil
+	case "HOUR_MICROSECOND":
+		h, m, s := t.Clock()
+		return int64(h)*10000000000 + int64(m)*100000000 + int64(s)*1000000 + int64(t.Nanosecond())/1000, nil
+	case "HOUR_SECOND":
+		h, m, s := t.Clock()
+		return int64(h)*10000 + int64(m)*100 + int64(s), nil
+	case "HOUR_MINUTE":
+		h, m, _ := t.Clock()
+		return int64(h)*100 + int64(m), nil
+	case "DAY_MICROSECOND":
+		h, m, s := t.Clock()
+		d := t.Day()
+		return int64(d*1000000+h*10000+m*100+s)*1000000 + int64(t.Nanosecond())/1000, nil
+	case "DAY_SECOND":
+		h, m, s := t.Clock()
+		d := t.Day()
+		return int64(d)*1000000 + int64(h)*10000 + int64(m)*100 + int64(s), nil
+	case "DAY_MINUTE":
+		h, m, _ := t.Clock()
+		d := t.Day()
+		return int64(d)*10000 + int64(h)*100 + int64(m), nil
+	case "DAY_HOUR":
+		h, _, _ := t.Clock()
+		d := t.Day()
+		return int64(d)*100 + int64(h), nil
+	case "YEAR_MONTH":
+		y, m, _ := t.Date()
+		return int64(y)*100 + int64(m), nil
+	default:
+		return 0, errors.Errorf("invalid unit %s", unit)
+	}
+}
+
+func extractSingleTimeValue(unit string, format string) (int64, int64, int64, time.Duration, error) {
+	iv, err := strconv.ParseInt(format, 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	v := time.Duration(iv)
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return 0, 0, 0, v * time.Microsecond, nil
+	case "SECOND":
+		return 0, 0, 0, v * time.Second, nil
+	case "MINUTE":
+		return 0, 0, 0, v * time.Minute, nil
+	case "HOUR":
+		return 0, 0, 0, v * time.Hour, nil
+	case "DAY":
+		return 0, 0, iv, 0, nil
+	case "WEEK":
+		return 0, 0, 7 * iv, 0, nil
+	case "MONTH":
+		return 0, iv, 0, 0, nil
+	case "QUARTER":
+		return 0, 3 * iv, 0, 0, nil
+	case "YEAR":
+		return iv, 0, 0, 0, nil
+	}
+
+	return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
+}
+
+// Format is `SS.FFFFFF`.
+func extractSecondMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, ".")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	seconds, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	microsecond, err := strconv.ParseInt(alignFrac(fields[1], MaxFsp), 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, 0, time.Duration(seconds)*time.Second + time.Duration(microsecond)*time.Microsecond, nil
+}
+
+// Format is `MM:SS.FFFFFF`.
+func extractMinuteMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, ":")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	minutes, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	_, _, _, value, err := extractSecondMicrosecond(fields[1])
+	if err != nil {
+		return 0, 0, 0, 0, errors.Trace(err)
+	}
+
+	return 0, 0, 0, time.Duration(minutes)*time.Minute + value, nil
+}
+
+// Format is `MM:SS`.
+func extractMinuteSecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, ":")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	minutes, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	seconds, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, 0, time.Duration(minutes)*time.Minute + time.Duration(seconds)*time.Second, nil
+}
+
+// Format is `HH:MM:SS.FFFFFF`.
+func extractHourMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, ":")
+	if len(fields) != 3 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	hours, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	minutes, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	_, _, _, value, err := extractSecondMicrosecond(fields[2])
+	if err != nil {
+		return 0, 0, 0, 0, errors.Trace(err)
+	}
+
+	return 0, 0, 0, time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute + value, nil
+}
+
+// Format is `HH:MM:SS`.
+func extractHourSecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, ":")
+	if len(fields) != 3 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	hours, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	minutes, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	seconds, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, 0, time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute + time.Duration(seconds)*time.Second, nil
+}
+
+// Format is `HH:MM`.
+func extractHourMinute(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, ":")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	hours, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	minutes, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, 0, time.Duration(hours)*time.Hour + time.Duration(minutes)*time.Minute, nil
+}
+
+// Format is `DD HH:MM:SS.FFFFFF`.
+func extractDayMicrosecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, " ")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	days, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	_, _, _, value, err := extractHourMicrosecond(fields[1])
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, days, value, nil
+}
+
+// Format is `DD HH:MM:SS`.
+func extractDaySecond(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, " ")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	days, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	_, _, _, value, err := extractHourSecond(fields[1])
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, days, value, nil
+}
+
+// Format is `DD HH:MM`.
+func extractDayMinute(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, " ")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	days, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	_, _, _, value, err := extractHourMinute(fields[1])
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, days, value, nil
+}
+
+// Format is `DD HH`.
+func extractDayHour(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, " ")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	days, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	hours, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return 0, 0, days, time.Duration(hours) * time.Hour, nil
+}
+
+// Format is `YYYY-MM`.
+func extractYearMonth(format string) (int64, int64, int64, time.Duration, error) {
+	fields := strings.Split(format, "-")
+	if len(fields) != 2 {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	years, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	months, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
+	}
+
+	return years, months, 0, 0, nil
+}
+
+// ExtractTimeValue extracts time value from time unit and format.
+func ExtractTimeValue(unit string, format string) (int64, int64, int64, time.Duration, error) {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR":
+		return extractSingleTimeValue(unit, format)
+	case "SECOND_MICROSECOND":
+		return extractSecondMicrosecond(format)
+	case "MINUTE_MICROSECOND":
+		return extractMinuteMicrosecond(format)
+	case "MINUTE_SECOND":
+		return extractMinuteSecond(format)
+	case "HOUR_MICROSECOND":
+		return extractHourMicrosecond(format)
+	case "HOUR_SECOND":
+		return extractHourSecond(format)
+	case "HOUR_MINUTE":
+		return extractHourMinute(format)
+	case "DAY_MICROSECOND":
+		return extractDayMicrosecond(format)
+	case "DAY_SECOND":
+		return extractDaySecond(format)
+	case "DAY_MINUTE":
+		return extractDayMinute(format)
+	case "DAY_HOUR":
+		return extractDayHour(format)
+	case "YEAR_MONTH":
+		return extractYearMonth(format)
+	default:
+		return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
+	}
+}
