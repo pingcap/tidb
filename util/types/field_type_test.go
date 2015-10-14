@@ -38,6 +38,19 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 3
 	c.Assert(ft.String(), Equals, "float(10,3)")
+	ft = NewFieldType(mysql.TypeFloat)
+	ft.Flen = 10
+	ft.Decimal = -1
+	c.Assert(ft.String(), Equals, "float")
+
+	ft = NewFieldType(mysql.TypeDouble)
+	ft.Flen = 10
+	ft.Decimal = 3
+	c.Assert(ft.String(), Equals, "double(10,3)")
+	ft = NewFieldType(mysql.TypeDouble)
+	ft.Flen = 10
+	ft.Decimal = -1
+	c.Assert(ft.String(), Equals, "double")
 
 	ft = NewFieldType(mysql.TypeBlob)
 	ft.Flen = 10

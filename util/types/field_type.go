@@ -52,9 +52,9 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// SimpleString only consider Tp/CharsetBin/Flen/Deimal.
+// TypeString only consider Tp/CharsetBin/Flen/Deimal.
 // This is used for showing column type in infoschema.
-func (ft *FieldType) SimpleString() string {
+func (ft *FieldType) TypeString() string {
 	ts := TypeToStr(ft.Tp, ft.Charset)
 	suffix := ""
 	switch ft.Tp {
@@ -64,7 +64,9 @@ func (ft *FieldType) SimpleString() string {
 	default:
 		if ft.Flen != UnspecifiedLength {
 			if ft.Decimal == UnspecifiedLength {
-				suffix = fmt.Sprintf("(%d)", ft.Flen)
+				if ft.Tp != mysql.TypeFloat && ft.Tp != mysql.TypeDouble {
+					suffix = fmt.Sprintf("(%d)", ft.Flen)
+				}
 			} else {
 				suffix = fmt.Sprintf("(%d,%d)", ft.Flen, ft.Decimal)
 			}
@@ -78,7 +80,7 @@ func (ft *FieldType) SimpleString() string {
 // String joins the information of FieldType and
 // returns a string.
 func (ft *FieldType) String() string {
-	strs := []string{ft.SimpleString()}
+	strs := []string{ft.TypeString()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
 		strs = append(strs, "UNSIGNED")
 	}
