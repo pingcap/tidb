@@ -86,11 +86,10 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		uuid:       uuid.NewV4().String(),
 		path:       schema,
 		db:         db,
-		gc:         newLocalGC(),
+		gc:         newLocalGC(localGCDefaultPolicy, db),
 	}
 	mc.cache[schema] = s
 
-	s.gc.store = s
 	s.gc.Start()
 
 	return s, nil

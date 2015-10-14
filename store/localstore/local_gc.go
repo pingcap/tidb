@@ -8,15 +8,15 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/bytes"
 )
 
 var _ kv.GC = (*localstoreGC)(nil)
 
-const (
-	maxRetainVersions = 3
-	gcBatchDeleteSize = 100
-	gcInterval        = 1 * time.Second
-)
+var localGCDefaultPolicy = kv.GCPolicy{
+	MaxRetainVersions: 1,
+	TriggerInterval:   1 * time.Second,
+}
 
 type localstoreGC struct {
 	mu         sync.Mutex
@@ -24,9 +24,8 @@ type localstoreGC struct {
 	stopChan   chan struct{}
 	delChan    chan kv.EncodedKey
 	ticker     *time.Ticker
-	store      *dbStore
-	batch      engine.Batch
-	cnt        int
+	db         engine.DB
+	policy     kv.GCPolicy
 }
 
 func (gc *localstoreGC) OnSet(k kv.Key) {
@@ -36,6 +35,10 @@ func (gc *localstoreGC) OnSet(k kv.Key) {
 }
 
 func (gc *localstoreGC) OnGet(k kv.Key) {
+	// Do nothing now.
+}
+
+func (gc *localstoreGC) OnDelete(k kv.Key) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()
 	gc.recentKeys[string(k)] = struct{}{}
@@ -45,7 +48,7 @@ func (gc *localstoreGC) getAllVersions(k kv.Key) ([]kv.EncodedKey, error) {
 	startKey := MvccEncodeVersionKey(k, kv.MaxVersion)
 	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
 
-	it, err := gc.store.db.Seek(startKey)
+	it, err := gc.db.Seek(startKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -54,66 +57,56 @@ func (gc *localstoreGC) getAllVersions(k kv.Key) ([]kv.EncodedKey, error) {
 	var ret []kv.EncodedKey
 	for it.Next() {
 		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
-			ret = append(ret, kv.EncodedKey(it.Key()))
+			ret = append(ret, bytes.CloneBytes(kv.EncodedKey(it.Key())))
 		}
 	}
 	return ret, nil
 }
 
-func (gc *localstoreGC) Do(k kv.Key) {
+func (gc *localstoreGC) Compact(ctx interface{}, k kv.Key) error {
+	b := ctx.(engine.Batch)
 	keys, err := gc.getAllVersions(k)
 	if err != nil {
-		log.Error(err)
-		return
+		return err
 	}
-	if len(keys) > maxRetainVersions {
-		// remove keys[maxRetainVersion:]
-		for _, key := range keys[maxRetainVersions:] {
-			log.Warn("GC Key:", key)
-			gc.delChan <- key
+	if len(keys) > gc.policy.MaxRetainVersions {
+		for _, key := range keys[gc.policy.MaxRetainVersions:] {
+			b.Delete(bytes.CloneBytes(key))
 		}
 	}
+	return nil
 }
 
 func (gc *localstoreGC) Start() {
 	// time trigger
 	go func() {
+	L:
 		for {
 			select {
 			case <-gc.stopChan:
-				log.Debug("stop gc")
-				break
+				log.Debug("Stop GC")
+				break L
 			case <-gc.ticker.C:
-				log.Debug("gc trigger")
+				log.Debug("GC trigger")
 				gc.mu.Lock()
 				m := gc.recentKeys
 				gc.recentKeys = make(map[string]struct{})
 				gc.mu.Unlock()
 				// Do GC
-				for k, _ := range m {
-					gc.Do([]byte(k))
+				if len(m) > 0 {
+					batch := gc.db.NewBatch()
+					for k, _ := range m {
+						err := gc.Compact(batch, []byte(k))
+						if err != nil {
+							log.Error(err)
+						}
+					}
+					err := gc.db.Commit(batch)
+					if err != nil {
+						log.Error(err)
+					}
+					log.Debugf("GC clean: %d keys", len(m))
 				}
-			}
-		}
-	}()
-
-	// delete worker
-	go func() {
-		cnt := 0
-		batch := gc.store.db.NewBatch()
-		for k := range gc.delChan {
-			cnt++
-			batch.Delete(k)
-			if cnt == gcBatchDeleteSize {
-				// batch delete
-				err := gc.store.db.Commit(batch)
-				if err != nil {
-					// Ignore error
-					log.Error(err)
-				}
-				log.Debug("batch gc delete done")
-				batch = gc.store.newBatch()
-				cnt = 0
 			}
 		}
 	}()
@@ -125,12 +118,14 @@ func (gc *localstoreGC) Stop() {
 	close(gc.stopChan)
 }
 
-func newLocalGC() *localstoreGC {
+func newLocalGC(policy kv.GCPolicy, db engine.DB) *localstoreGC {
 	ret := &localstoreGC{
 		recentKeys: make(map[string]struct{}),
 		stopChan:   make(chan struct{}),
 		delChan:    make(chan kv.EncodedKey),
-		ticker:     time.NewTicker(gcInterval),
+		ticker:     time.NewTicker(policy.TriggerInterval),
+		policy:     policy,
+		db:         db,
 	}
 	return ret
 }
