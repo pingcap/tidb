@@ -888,7 +888,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "int", "YES", "", nil, "")
+	match(c, rows[0], "c", "int(11)", "YES", "", nil, "")
 
 	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
 	row, err = r.FirstRow()
@@ -1065,6 +1065,26 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 6)
+}
+
+func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
+	// If set unspecified column flen to 0, it will cause bug in union.
+	// This test is used to prevent the bug reappear.
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table t1 (c double);")
+	mustExecSQL(c, se, "create table t2 (c double);")
+	mustExecSQL(c, se, "insert into t1 value (73);")
+	mustExecSQL(c, se, "insert into t2 value (930);")
+	// The data in the second src will be casted as the type of the first src.
+	// If use flen=0, it will be truncated.
+	r := mustExecSQL(c, se, "select c from t1 union select c from t2;")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 2)
+	c.Assert(rows[1][0], Equals, float64(930))
+
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {

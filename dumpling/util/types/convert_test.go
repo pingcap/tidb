@@ -447,11 +447,11 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
-	v := FieldTypeToStr(mysql.TypeDecimal, "not binary")
+	v := TypeToStr(mysql.TypeDecimal, "not binary")
 	c.Assert(v, Equals, type2Str[mysql.TypeDecimal])
-	v = FieldTypeToStr(mysql.TypeBlob, charset.CharsetBin)
+	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
 	c.Assert(v, Equals, "blob")
-	v = FieldTypeToStr(mysql.TypeString, charset.CharsetBin)
+	v = TypeToStr(mysql.TypeString, charset.CharsetBin)
 	c.Assert(v, Equals, "binary")
 }
 

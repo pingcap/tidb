@@ -21,6 +21,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // TiDBDriver implements IDriver.
@@ -272,8 +273,16 @@ func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 	ci.Schema = fld.DBName
 	ci.Flag = uint16(fld.Flag)
 	ci.Charset = uint16(mysql.CharsetIDs[fld.Charset])
-	ci.ColumnLength = uint32(fld.Flen)
-	ci.Decimal = uint8(fld.Decimal)
+	if fld.Flen == types.UnspecifiedLength {
+		ci.ColumnLength = 0
+	} else {
+		ci.ColumnLength = uint32(fld.Flen)
+	}
+	if fld.Decimal == types.UnspecifiedLength {
+		ci.Decimal = 0
+	} else {
+		ci.Decimal = uint8(fld.Decimal)
+	}
 	ci.Type = uint8(fld.Tp)
 	return
 }
