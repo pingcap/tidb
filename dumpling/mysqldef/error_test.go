@@ -23,13 +23,13 @@ type testSQLErrorSuite struct {
 }
 
 func (s *testSQLErrorSuite) TestSQLError(c *C) {
-	e := NewError(ErrNoDbError, "no db error")
+	e := NewError(ErrNoDb, "no db error")
 	c.Assert(len(e.Error()), Greater, 0)
 
 	e = NewError(0, "customized error")
 	c.Assert(len(e.Error()), Greater, 0)
 
-	e = NewDefaultError(ErrNoDbError)
+	e = NewDefaultError(ErrNoDb)
 	c.Assert(len(e.Error()), Greater, 0)
 
 	e = NewDefaultError(0, "customized error")
