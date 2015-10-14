@@ -361,28 +361,21 @@ func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 				if decimal == types.UnspecifiedLength {
 					decimal = 0
 				}
-				columnType := types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin)
-				if col.Decimal == types.UnspecifiedLength {
-					if colLen != types.UnspecifiedLength {
-						columnType = fmt.Sprintf("%s(%d)", columnType, colLen)
-					}
-				} else {
-					columnType = fmt.Sprintf("%s(%d,%d)", columnType, colLen, col.Decimal)
-				}
+				columnType := col.FieldType.SimpleString()
 				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
 				var columnDefault interface{}
 				if columnDesc.DefaultValue != nil {
 					columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 				}
 				record := []interface{}{
-					catalogVal,                                                 // TABLE_CATALOG
-					schema.Name.O,                                              // TABLE_SCHEMA
-					table.Name.O,                                               // TABLE_NAME
-					col.Name.O,                                                 // COLUMN_NAME
-					i + 1,                                                      // ORIGINAL_POSITION
-					columnDefault,                                              // COLUMN_DEFAULT
-					columnDesc.Null,                                            // IS_NULLABLE
-					types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin), // DATA_TYPE
+					catalogVal,                           // TABLE_CATALOG
+					schema.Name.O,                        // TABLE_SCHEMA
+					table.Name.O,                         // TABLE_NAME
+					col.Name.O,                           // COLUMN_NAME
+					i + 1,                                // ORIGINAL_POSITION
+					columnDefault,                        // COLUMN_DEFAULT
+					columnDesc.Null,                      // IS_NULLABLE
+					types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
 					colLen,                            // CHARACTER_MAXIMUM_LENGTH
 					colLen,                            // CHARACTOR_OCTET_LENGTH
 					decimal,                           // NUMERIC_PRECISION

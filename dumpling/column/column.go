@@ -46,7 +46,7 @@ type IndexedCol struct {
 
 // String implements fmt.Stringer interface.
 func (c *Col) String() string {
-	ans := []string{c.Name.O, types.FieldTypeToStr(c.Tp, c.Charset)}
+	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}
 	if mysql.HasAutoIncrementFlag(c.Flag) {
 		ans = append(ans, "AUTO_INCREMENT")
 	}
@@ -123,7 +123,7 @@ const defaultPrivileges string = "select,insert,update,references"
 func (c *Col) GetTypeDesc() string {
 	var buf bytes.Buffer
 
-	buf.WriteString(types.FieldTypeToStr(c.Tp, c.Charset))
+	buf.WriteString(types.TypeToStr(c.Tp, c.Charset))
 	switch c.Tp {
 	case mysql.TypeSet, mysql.TypeEnum:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
