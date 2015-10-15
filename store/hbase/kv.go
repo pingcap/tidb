@@ -58,6 +58,7 @@ func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
 		Txn:       t,
 		valid:     true,
 		storeName: storeName,
+		tID:       t.GetStartTS(),
 	}
 }
 
