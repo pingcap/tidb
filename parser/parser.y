@@ -112,7 +112,7 @@ import (
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
-	dateAdd	"DATE_ADD"
+	dateAdd		"DATE_ADD"
 	day		"DAY"
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
