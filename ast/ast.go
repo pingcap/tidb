@@ -39,7 +39,7 @@ type ExprNode interface {
 	Node
 	// IsStatic means it can be evaluated independently.
 	IsStatic() bool
-	// SetType sets type to the expression.
+	// SetType sets evaluation type to the expression.
 	SetType(tp *types.FieldType)
 	// GetType gets the evaluation type of the expression.
 	GetType() *types.FieldType
