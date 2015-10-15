@@ -28,7 +28,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -40,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/sqlhelper"
 	"github.com/pingcap/tidb/util/errors2"
-	"github.com/pingcap/tidb/util/sqlhelper"
 )
 
 // Session context
@@ -230,10 +229,10 @@ func (s *session) Retry() error {
 	return nil
 }
 
-// ExecRestrictedSQL implements SQLHelper interface.
+// ExecRestrictedSQL implements.
 // This is used for execute some restricted sql statement.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
-	if ctx.Value(&sqlhelper.KeyType{}) != nil {
+func (s *session) ExecRestrictedSQL(sql string) ([]rset.Recordset, error) {
+	if ctx.Value(&sql.MetaQueryType{}) != nil {
 		return nil, nil
 	}
 	statements, err := Compile(sql)
@@ -242,19 +241,15 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 		return nil, errors.Trace(err)
 	}
 	if len(statements) == 0 {
-		log.Warnf("No statement to exec for %s", sql)
+		log.Warnf("Now statement to exec for %s", sql)
 	}
 	st := statements[0]
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	log.Infof("Executing %s [%s]", st, sql)
-	ctx.SetValue(&sqlhelper.KeyType{}, true)
-	defer ctx.ClearValue(&sqlhelper.KeyType{})
-	rs, err := st.Exec(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return rs, err
+	ctx.SetValue(&sql.MetaQueryType{}, true)
+	defer ctx.ClearValue(&sql.MetaQueryType{})
+	return st.Exec(ctx)
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
