@@ -240,7 +240,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	}
 	statements, err := Compile(sql)
 	if err != nil {
-		log.Errorf("Syntax error: %s", sql)
+		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
 	if len(statements) != 1 {
@@ -254,10 +254,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	ctx.SetValue(&sqlhelper.KeyType{}, true)
 	defer ctx.ClearValue(&sqlhelper.KeyType{})
 	rs, err := st.Exec(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return rs, err
+	return rs, errors.Trace(err)
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
