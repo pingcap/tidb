@@ -234,15 +234,18 @@ func (s *session) Retry() error {
 // This is used for execute some restricted sql statement.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
 	if ctx.Value(&sqlhelper.KeyType{}) != nil {
-		return nil, nil
+		// We do not support run this function concurrently.
+		// TODO: Maybe we should remove this restriction latter.
+		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
 	}
 	statements, err := Compile(sql)
 	if err != nil {
 		log.Errorf("Syntax error: %s", sql)
 		return nil, errors.Trace(err)
 	}
-	if len(statements) == 0 {
-		log.Warnf("No statement to exec for %s", sql)
+	if len(statements) != 1 {
+		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
+		return nil, errors.New("Wrong number of statement.")
 	}
 	st := statements[0]
 	// Check statement for some restriction
