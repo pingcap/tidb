@@ -23,7 +23,7 @@ var _ = Suite(&testDateAddSuite{})
 type testDateAddSuite struct {
 }
 
-func (t *testDateAddSuite) TestExtract(c *C) {
+func (t *testDateAddSuite) TestDateAdd(c *C) {
 	input := "2011-11-11 10:10:10"
 	e := &DateAdd{
 		Unit:     "DAY",
