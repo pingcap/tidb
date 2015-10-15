@@ -15,6 +15,7 @@ package meta
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -33,6 +34,10 @@ var (
 
 	// globalIDPrefix is used as key of global ID
 	globalIDKey = MakeMetaKey("mNextGlobalID")
+)
+
+var (
+	globalIDMutex sync.Mutex
 )
 
 // MakeMetaKey creates meta key
@@ -72,6 +77,8 @@ func AutoIDKey(tableID int64) string {
 
 // GenGlobalID generates the next id in the store scope.
 func GenGlobalID(store kv.Storage) (ID int64, err error) {
+	globalIDMutex.Lock()
+	defer globalIDMutex.Unlock()
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		ID, err = GenID(txn, globalIDKey, 1)
 		if err != nil {
