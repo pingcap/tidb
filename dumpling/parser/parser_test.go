@@ -278,6 +278,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
+		{"select 1 where exists (select 2)", false},
+		{"select 1 from dual where not exists (select 2)", true},
 
 		// For show create table
 		{"show create table test.t", true},
