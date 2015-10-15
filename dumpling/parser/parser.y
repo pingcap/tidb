@@ -2932,14 +2932,28 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
-			From:          nil,
-			Lock:	       $6.(coldef.LockType),
+			Lock:	       $5.(coldef.LockType),
 		}
+	}
+|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+		st := &stmts.SelectStmt {
+			Distinct:      $2.(bool),
+			Fields:        $3.([]*field.Field),
+			From:          nil,
+			Lock:	       $7.(coldef.LockType),
+		}
+
+		if $5 != nil {
+			st.Where = &rsets.WhereRset{Expr: $5.(expression.Expression)}
+		}
+
+		$$ = st
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
 	FromClause WhereClauseOptional SelectStmtGroup HavingClause SelectStmtOrder
@@ -2978,8 +2992,7 @@ SelectStmt:
 	}
 
 FromDual:
-	/* Empty */
-|	"FROM" "DUAL"
+	"FROM" "DUAL" 
 
 
 FromClause:
