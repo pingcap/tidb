@@ -28,6 +28,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sql"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/util"
@@ -226,6 +228,22 @@ func (s *session) Retry() error {
 	}
 
 	return nil
+}
+
+func (s *session) QueryMeta(ctx context.Context, strSql string) (rset.Recordset, error) {
+	if ctx.Value(&sql.MetaQueryType{}) != nil {
+		return nil, nil
+	}
+	statements, err := Compile(strSql)
+	if err != nil {
+		log.Errorf("Syntax error: %s", strSql)
+		return nil, errors.Trace(err)
+	}
+	st := statements[0]
+	log.Info("quering meta", st, strSql)
+	ctx.SetValue(&sql.MetaQueryType{}, true)
+	defer ctx.ClearValue(&sql.MetaQueryType{})
+	return st.Exec(ctx)
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {

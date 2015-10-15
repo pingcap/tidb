@@ -283,7 +283,6 @@ func (c *driverConn) Rollback() error {
 // Exec may return driver.ErrSkip.
 func (c *driverConn) Exec(query string, args []driver.Value) (driver.Result, error) {
 	return c.driverExec(query, args)
-
 }
 
 func (c *driverConn) getStmt(query string) (stmt driver.Stmt, err error) {
