@@ -64,12 +64,12 @@ func (gc *localstoreGC) getAllVersions(k kv.Key) ([]kv.EncodedKey, error) {
 }
 
 func (gc *localstoreGC) Compact(ctx interface{}, k kv.Key) error {
-	b := ctx.(engine.Batch)
 	keys, err := gc.getAllVersions(k)
 	if err != nil {
 		return err
 	}
 	if len(keys) > gc.policy.MaxRetainVersions {
+		b := ctx.(engine.Batch)
 		for _, key := range keys[gc.policy.MaxRetainVersions:] {
 			b.Delete(bytes.CloneBytes(key))
 		}
@@ -87,13 +87,13 @@ func (gc *localstoreGC) Start() {
 				log.Debug("Stop GC")
 				break L
 			case <-gc.ticker.C:
-				log.Debug("GC trigger")
 				gc.mu.Lock()
 				m := gc.recentKeys
 				gc.recentKeys = make(map[string]struct{})
 				gc.mu.Unlock()
 				// Do GC
 				if len(m) > 0 {
+					log.Error("GC trigger")
 					batch := gc.db.NewBatch()
 					for k, _ := range m {
 						err := gc.Compact(batch, []byte(k))
@@ -105,7 +105,7 @@ func (gc *localstoreGC) Start() {
 					if err != nil {
 						log.Error(err)
 					}
-					log.Debugf("GC clean: %d keys", len(m))
+					log.Errorf("GC clean: %d keys", len(m))
 				}
 			}
 		}

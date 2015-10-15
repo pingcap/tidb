@@ -14,6 +14,7 @@
 package localstore
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -196,6 +197,18 @@ func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte
 	s.keysLocked[key] = tID
 
 	return nil
+}
+
+func (s *dbStore) DumpRaw() {
+	startTs := time.Now()
+	it, _ := s.db.Seek([]byte{0})
+	defer it.Release()
+	cnt := 0
+	for it.Next() {
+		cnt++
+	}
+	elapse := time.Since(startTs)
+	fmt.Println(cnt, elapse)
 }
 
 func (s *dbStore) unLockKeys(keys ...string) error {
