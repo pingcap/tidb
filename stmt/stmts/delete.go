@@ -127,22 +127,26 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	defer p.Close()
 	tblIDMap := make(map[int64]bool, len(s.TableIdents))
 	// Get table alias map.
-	tblAliasMap := make(map[string]string)
+	tblNames := make(map[string]string)
 	if s.MultiTable {
 		// Delete from multiple tables should consider table ident list.
 		fs := p.GetFields()
 		for _, f := range fs {
 			if f.TableName != f.OrgTableName {
-				tblAliasMap[f.TableName] = f.OrgTableName
+				tblNames[f.TableName] = f.OrgTableName
+			} else {
+				tblNames[f.TableName] = f.TableName
 			}
 		}
 		for _, t := range s.TableIdents {
 			// Consider DBName.
-			oname, ok := tblAliasMap[t.Name.O]
-			if ok {
-				t.Name.O = oname
-				t.Name.L = strings.ToLower(oname)
+			oname, ok := tblNames[t.Name.O]
+			if !ok {
+				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
 			}
+
+			t.Name.O = oname
+			t.Name.L = strings.ToLower(oname)
 
 			var tbl table.Table
 			tbl, err = getTable(ctx, t)

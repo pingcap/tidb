@@ -62,6 +62,9 @@ func mustQuery(c *C, currDB *sql.DB, s string) int {
 		c.Assert(err, IsNil)
 		cnt++
 	}
+	c.Assert(r.Err(), IsNil)
+	r.Close()
+	mustCommit(c, tx)
 	return cnt
 }
 

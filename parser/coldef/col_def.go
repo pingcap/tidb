@@ -181,8 +181,11 @@ func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstra
 	}
 
 	// If flen is not assigned, assigned it by type.
-	if col.Flen == 0 {
+	if col.Flen == types.UnspecifiedLength {
 		col.Flen = mysql.GetDefaultFieldLength(col.Tp)
+	}
+	if col.Decimal == types.UnspecifiedLength {
+		col.Decimal = mysql.GetDefaultDecimal(col.Tp)
 	}
 
 	setOnUpdateNow := false
