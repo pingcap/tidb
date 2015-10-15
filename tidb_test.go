@@ -735,6 +735,21 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], 1)
+
+	mustExecSQL(c, se, "drop table if exists t1, t2")
+	mustExecSQL(c, se, `
+			create table t1 (c1 int, primary key(c1));
+			create table t2 (c2 int, primary key(c2));
+			insert into t1 values (1), (2);
+			insert into t2 values (2);`)
+
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 order by t1.c1")
+	rows, err = r.Rows(-1, 0)
+	matches(c, rows, [][]interface{}{{1, nil}, {2, 2}})
+
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 where t2.c2 < 10")
+	rows, err = r.Rows(-1, 0)
+	matches(c, rows, [][]interface{}{{2, 2}})
 }
 
 func (s *testSessionSuite) TestMySQLTypes(c *C) {
@@ -848,6 +863,20 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
+
+	mustExecSQL(c, se, "drop table if exists t1, t2, t3")
+	mustExecSQL(c, se, `
+		create table t1 (c1 int);
+		create table t2 (c2 int);
+		create table t3 (c3 int);
+		insert into t1 values (1), (2);
+		insert into t2 values (2);
+		insert into t3 values (3);`)
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1")
+	rows, err = r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
+
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
@@ -1149,5 +1178,12 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 		got := fmt.Sprintf("%v", row[i])
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
+	}
+}
+
+func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
+	c.Assert(len(rows), Equals, len(expected))
+	for i := 0; i < len(rows); i++ {
+		match(c, rows[i], expected[i]...)
 	}
 }
