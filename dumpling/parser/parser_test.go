@@ -442,6 +442,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
+		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE utf8_bin)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8)", true},
+		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
+
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
 		// For table option
