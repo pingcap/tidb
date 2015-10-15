@@ -3868,21 +3868,25 @@ BitValueType:
 	}
 
 StringType:
-	NationalOpt "CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
-|	NationalOpt "CHAR" OptBinary
+|	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
