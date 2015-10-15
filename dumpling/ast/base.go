@@ -18,17 +18,17 @@ import "github.com/pingcap/tidb/util/types"
 // node is the struct implements node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
-	txt string
+	text string
 }
 
 // SetText implements Node interface.
 func (n *node) SetText(text string) {
-	n.txt = text
+	n.text = text
 }
 
 // Text implements Node interface.
 func (n *node) Text() string {
-	return n.txt
+	return n.text
 }
 
 // stmtNode implements StmtNode interface.
