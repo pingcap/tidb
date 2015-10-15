@@ -30,6 +30,7 @@ import (
 	"strings"
 	
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
@@ -3523,9 +3524,15 @@ StatementList:
 	Statement
 	{
 		if $1 != nil {
-			s := $1.(stmt.Statement)
-			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = []stmt.Statement{ s }
+			n, ok := $1.(ast.Node)
+			if ok {
+				n.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{n}
+			} else {
+				s := $1.(stmt.Statement)
+				s.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{s}
+			}
 		}
 	}
 |	StatementList ';' Statement
