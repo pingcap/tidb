@@ -807,6 +807,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, 1, 2)
 
+	r = mustExecSQL(c, se, "select 1, 2 from dual where not exists (select * from t where c1=2)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
+
 	r = mustExecSQL(c, se, "select 1, 2")
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
