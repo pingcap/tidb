@@ -41,7 +41,7 @@ type ExprNode interface {
 	IsStatic() bool
 	// SetType sets type to the expression.
 	SetType(tp *types.FieldType)
-	// GetType returns type of the expression.
+	// GetType gets the evaluation type of the expression.
 	GetType() *types.FieldType
 }
 
