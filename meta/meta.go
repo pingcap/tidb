@@ -80,6 +80,8 @@ func GenGlobalID(store kv.Storage) (ID int64, err error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		log.Error("enter", txn.String())
+		defer log.Error("out", txn.String())
 		ID, err = GenID(txn, globalIDKey, 1)
 		if err != nil {
 			return errors.Trace(err)
