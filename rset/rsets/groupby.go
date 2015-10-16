@@ -77,6 +77,13 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 				return nil, errors.Errorf("Can't group on '%s'", e)
 			}
 
+			// TODO: check more ambiguous case
+			// Group by ambiguous rule:
+			//	select c1 as a, c2 as a from t group by a is ambiguous
+			//	select c1 as a, c2 as a from t group by a + 1 is ambiguous
+			//	select c1 as c2, c2 from t group by c2 is ambiguous
+			//	select c1 as c2, c2 from t group by c2 + 1 is ambiguous
+
 			// TODO: use visitor to check aggregate function
 			names := expression.MentionedColumns(e)
 			for _, name := range names {
