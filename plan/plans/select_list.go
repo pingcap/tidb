@@ -157,7 +157,7 @@ func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error
 	}
 
 	name := expr.String()
-	if strings.Contains(name, ".") {
+	if field.IsQualifiedName(name) {
 		// name is qualified, no need to check
 		return -1, nil
 	}
