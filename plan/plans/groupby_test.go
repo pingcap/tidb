@@ -69,7 +69,9 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 		Src:        tblPlan,
 		By: []expression.Expression{
 			&expression.Ident{
-				CIStr: model.NewCIStr("id"),
+				CIStr:      model.NewCIStr("id"),
+				ReferScope: expression.IdentReferFromTable,
+				ReferIndex: 0,
 			},
 		},
 	}

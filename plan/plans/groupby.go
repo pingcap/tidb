@@ -89,15 +89,11 @@ type groupRow struct {
 func (r *GroupByDefaultPlan) evalGroupKey(ctx context.Context, k []interface{}, outRow []interface{}, in []interface{}) error {
 	// group by items can not contain aggregate field, so we can eval them safely.
 	m := map[interface{}]interface{}{}
-	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
-		if err == nil {
-			return v, nil
-		}
-
-		v, err = r.getFieldValueByName(name, outRow)
-		if err == nil {
-			return v, nil
+	m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+		if scope == expression.IdentReferFromTable {
+			return in[index], nil
+		} else if scope == expression.IdentReferSelectList {
+			return outRow[index], nil
 		}
 
 		// try to find in outer query
