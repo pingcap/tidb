@@ -114,7 +114,8 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 	// We must add aggregate function to hidden select list
 	// and use a position expression to fetch its value later.
 	exprName := expr.String()
-	if !field.ContainFieldName(exprName, s.ResultFields, field.CheckFieldFlag) {
+	idx := field.GetResultFieldIndex(exprName, s.ResultFields, field.CheckFieldFlag)
+	if len(idx) == 0 {
 		f := &field.Field{Expr: expr}
 		resultField := &field.ResultField{Name: exprName}
 		s.AddField(f, resultField)
@@ -122,7 +123,7 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 		return &expression.Position{N: len(s.Fields), Name: exprName}, nil
 	}
 
-	return nil, nil
+	return &expression.Position{N: idx[0] + 1, Name: exprName}, nil
 }
 
 // CloneHiddenField checks and clones field and result field from table fields,

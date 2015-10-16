@@ -1146,11 +1146,23 @@ func (s *testSessionSuite) TestOrderBy(c *C) {
 
 	mustExecMatch(c, se, "select c1 as a, t.c1 as a from t order by a desc", [][]interface{}{{2, 2}, {1, 1}})
 	mustExecMatch(c, se, "select c1 as c2 from t order by c2", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select sum(c1) from t order by sum(c1)", [][]interface{}{{3}})
 
 	// TODO: now this test result is not same as MySQL, we will update it later.
 	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{1}, {2}})
 
 	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
+}
+
+func (s *testSessionSuite) TestHaving(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t values (1,2), (2, 1)")
+
+	mustExecMatch(c, se, "select sum(c1) from t group by c1 having sum(c1)", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select sum(c1) - 1 from t group by c1 having sum(c1) - 1", [][]interface{}{{1}})
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
