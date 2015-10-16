@@ -87,10 +87,6 @@ func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tab
 				// TODO: mysql has confused result for this, see #555.
 				// now we use select list then order by, later we should make it easier.
 				if field.ContainFieldName(name, selectList.ResultFields, field.CheckFieldFlag) {
-					// // check ambiguous fields, like `select c1 as c2, c2 from t order by c2`.
-					// if err := field.CheckAmbiguousField(name, selectList.ResultFields, field.DefaultFieldFlag); err != nil {
-					// 	return errors.Errorf("Column '%s' in order statement is ambiguous", name)
-					// }
 					continue
 				}
 

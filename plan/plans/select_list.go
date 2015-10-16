@@ -123,6 +123,7 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 		return &expression.Position{N: len(s.Fields), Name: exprName}, nil
 	}
 
+	// select list has this field, use it directly.
 	return &expression.Position{N: idx[0] + 1, Name: exprName}, nil
 }
 
