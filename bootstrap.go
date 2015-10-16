@@ -81,7 +81,14 @@ const (
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+
+	// SysInfoDB: database used internally
+	SysInfoDB = "sysinfo"
 )
+
+func initInternalSysDB(s Session) {
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS "+SysInfoDB)
+}
 
 // Bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
