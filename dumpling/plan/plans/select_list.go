@@ -165,7 +165,7 @@ func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error
 	lastIndex := -1
 	// only check origin select list, no hidden field.
 	for i := 0; i < s.HiddenFieldOffset; i++ {
-		if s.ResultFields[i].Name != name {
+		if !strings.EqualFold(s.ResultFields[i].Name, name) {
 			continue
 		} else if _, ok := s.Fields[i].Expr.(*expression.Ident); !ok {
 			// not identfier, no check
@@ -179,7 +179,7 @@ func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error
 		}
 
 		// check origin name, e,g. "select c1 as c2, c2 from t group by c2" is ambiguous.
-		if s.ResultFields[i].ColumnInfo.Name.O != s.ResultFields[lastIndex].ColumnInfo.Name.O {
+		if s.ResultFields[i].ColumnInfo.Name.L != s.ResultFields[lastIndex].ColumnInfo.Name.L {
 			return -1, errors.Errorf("refer %s is ambiguous", expr)
 		}
 
