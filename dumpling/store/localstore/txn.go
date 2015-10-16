@@ -30,7 +30,7 @@ var (
 	_ kv.Transaction = (*dbTxn)(nil)
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
 	ErrInvalidTxn = errors.New("invalid transaction")
-	// ErrCannotSetNilValue is the error when sets an empty value
+	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = errors.New("can not set nil value")
 )
 
@@ -48,17 +48,17 @@ type dbTxn struct {
 func (txn *dbTxn) markOrigin(k []byte) error {
 	keystr := string(k)
 
-	// Already exist, no nothing
+	// Already exist, do nothing.
 	if _, ok := txn.snapshotVals[keystr]; ok {
 		return nil
 	}
 
 	val, err := txn.Snapshot.Get(k)
 	if err != nil && !kv.IsErrNotFound(err) {
-		return err
+		return errors.Trace(err)
 	}
 
-	//log.Debugf("markOrigin, key:%q, value:%q", keystr, val)
+	// log.Debugf("markOrigin, key:%q, value:%q", keystr, val)
 	txn.snapshotVals[keystr] = val
 	return nil
 }
@@ -70,31 +70,30 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	k = kv.EncodeKey(k)
 
 	if err := txn.markOrigin(k); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
 		if err != nil {
-			return 0, err
+			return 0, errors.Trace(err)
 		}
 
 		return step, nil
 	}
-
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
 	if err != nil {
-		return intVal, err
+		return intVal, errors.Trace(err)
 	}
 
 	intVal += step
 	err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(intVal, 10)))
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	return intVal, nil
@@ -106,9 +105,8 @@ func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
 	if kv.IsErrNotFound(err) {
 		return 0, nil
 	}
-
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
@@ -124,14 +122,13 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
-		return nil, kv.ErrNotExist
+		return nil, errors.Trace(kv.ErrNotExist)
 	}
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-
 	if len(val) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, errors.Trace(kv.ErrNotExist)
 	}
 
 	return val, nil
@@ -139,9 +136,9 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if len(data) == 0 {
-		// Incase someone use it in the wrong way, we can figure it out immediately
+		// Incase someone use it in the wrong way, we can figure it out immediately.
 		debug.PrintStack()
-		return ErrCannotSetNilValue
+		return errors.Trace(ErrCannotSetNilValue)
 	}
 
 	log.Debugf("set key:%q, txn:%d", k, txn.tID)
@@ -150,14 +147,13 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 }
 
 func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
-	log.Debugf("seek %q txn:%d", k, txn.tID)
+	log.Debugf("seek key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 
 	iter, err := txn.UnionStore.Seek(k, txn)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-
 	if !iter.Valid() {
 		return &kv.UnionIter{}, nil
 	}
@@ -172,7 +168,7 @@ func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
-	log.Debugf("delete %q txn:%d", k, txn.tID)
+	log.Debugf("delete key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Delete(k)
 }
@@ -182,7 +178,7 @@ func (txn *dbTxn) each(f func(iterator.Iterator) error) error {
 	defer iter.Release()
 	for iter.Next() {
 		if err := f(iter); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -227,12 +223,14 @@ func (txn *dbTxn) doCommit() error {
 	}
 	// Update commit version.
 	txn.version = curVer
+	// Release read lock before write. Workaround for BoltDB.
+	txn.Snapshot.Release()
 	return txn.store.writeBatch(b)
 }
 
 func (txn *dbTxn) Commit() error {
 	if !txn.valid {
-		return ErrInvalidTxn
+		return errors.Trace(ErrInvalidTxn)
 	}
 	log.Infof("commit txn %d", txn.tID)
 	defer func() {
@@ -259,7 +257,7 @@ func (txn *dbTxn) close() error {
 
 func (txn *dbTxn) Rollback() error {
 	if !txn.valid {
-		return ErrInvalidTxn
+		return errors.Trace(ErrInvalidTxn)
 	}
 	log.Warnf("Rollback txn %d", txn.tID)
 	return txn.close()
@@ -269,7 +267,7 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
 		key = kv.EncodeKey(key)
 		if err := txn.markOrigin(key); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil

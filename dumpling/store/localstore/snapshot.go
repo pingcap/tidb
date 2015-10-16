@@ -14,12 +14,11 @@
 package localstore
 
 import (
-	"bytes"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/bytes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/errors2"
 )
@@ -32,7 +31,25 @@ var (
 
 type dbSnapshot struct {
 	db      engine.DB
+	rawIt   engine.Iterator
 	version kv.Version // transaction begin version
+}
+
+func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
+	if s.rawIt == nil {
+		var err error
+		s.rawIt, err = s.db.Seek([]byte{0})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	ok := s.rawIt.Seek(startKey)
+	if !ok {
+		s.rawIt.Release()
+		s.rawIt = nil
+		return nil, kv.ErrNotExist
+	}
+	return s.rawIt, nil
 }
 
 func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
@@ -53,32 +70,24 @@ func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	startKey := MvccEncodeVersionKey(k, ver)
 	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
 
-	// get raw iterator
-	it, err := s.db.Seek(startKey)
+	it, err := s.internalSeek(startKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer it.Release()
 
 	var rawKey []byte
 	var v []byte
-	if it.Next() {
-		// If scan exceed this key's all versions
-		// it.Key() > endKey.
-		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
-			// Check newest version of this key.
-			// If it's tombstone, just skip it.
-			if !isTombstone(it.Value()) {
-				rawKey = it.Key()
-				v = it.Value()
-			}
-		}
+	// Check if the scan is not exceed this key's all versions and the value is not
+	// tombstone.
+	if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 && !isTombstone(it.Value()) {
+		rawKey = it.Key()
+		v = it.Value()
 	}
 	// No such key (or it's tombstone).
 	if rawKey == nil {
 		return nil, kv.ErrNotExist
 	}
-	return v, nil
+	return bytes.CloneBytes(v), nil
 }
 
 func (s *dbSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
@@ -103,7 +112,12 @@ func (s *dbSnapshot) MvccRelease() {
 	s.Release()
 }
 
-func (s *dbSnapshot) Release() {}
+func (s *dbSnapshot) Release() {
+	if s.rawIt != nil {
+		s.rawIt.Release()
+		s.rawIt = nil
+	}
+}
 
 type dbIter struct {
 	s               *dbSnapshot
@@ -127,27 +141,18 @@ func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
 
 func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 	encKey := codec.EncodeBytes(nil, it.startKey)
-	// max key
-	encEndKey := codec.EncodeBytes(nil, []byte{0xff, 0xff})
 	var retErr error
 	var engineIter engine.Iterator
 	for {
-		engineIter, retErr = it.s.db.Seek(encKey)
-		if retErr != nil {
-			return nil, errors.Trace(retErr)
-		}
-		// Check if overflow
-		if !engineIter.Next() {
+		var err error
+		engineIter, err = it.s.internalSeek(encKey)
+		if err != nil {
 			it.valid = false
+			retErr = err
 			break
 		}
 
 		metaKey := engineIter.Key()
-		// Check if meet the end of table.
-		if bytes.Compare(metaKey, encEndKey) >= 0 {
-			it.valid = false
-			break
-		}
 		// Get real key from metaKey
 		key, _, err := MvccDecode(metaKey)
 		if err != nil {
@@ -164,17 +169,14 @@ func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
 			break
 		}
 		if val != nil {
-			it.k = key
-			it.v = val
+			it.k = bytes.CloneBytes(key)
+			it.v = bytes.CloneBytes(val)
 			it.startKey = key.Next()
 			break
 		}
-		// Release the iterator, and update key
-		engineIter.Release()
 		// Current key's all versions are deleted, just go next key.
 		encKey = codec.EncodeBytes(nil, key.Next())
 	}
-	engineIter.Release()
 	return it, errors.Trace(retErr)
 }
 

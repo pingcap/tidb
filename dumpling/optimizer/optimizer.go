@@ -11,27 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package optimizer
 
 import (
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/stmt"
 )
 
-var _ = Suite(&testSQLErrorSuite{})
-
-type testSQLErrorSuite struct {
+// Compile compiles a ast.Node into a executable statement.
+func Compile(node ast.Node) (stmt.Statement, error) {
+	switch v := node.(type) {
+	case *ast.SetStmt:
+		return compileSet(v)
+	}
+	return nil, nil
 }
 
-func (s *testSQLErrorSuite) TestSQLError(c *C) {
-	e := NewErrf(ErrNoDb, "no db error")
-	c.Assert(len(e.Error()), Greater, 0)
-
-	e = NewErrf(0, "customized error")
-	c.Assert(len(e.Error()), Greater, 0)
-
-	e = NewErr(ErrNoDb)
-	c.Assert(len(e.Error()), Greater, 0)
-
-	e = NewErr(0, "customized error")
-	c.Assert(len(e.Error()), Greater, 0)
+func compileSet(aset *ast.SetStmt) (stmt.Statement, error) {
+	return nil, nil
 }

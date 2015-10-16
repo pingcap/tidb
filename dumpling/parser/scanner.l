@@ -26,7 +26,6 @@ import (
 	"strings"
 	
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/stmt"
 	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
@@ -39,7 +38,7 @@ type lexer struct {
 	inj		int
 	lcol		int
 	line		int
-	list		[]stmt.Statement
+	list		[]interface{}
 	ncol		int
 	nline		int
 	sc		int
@@ -73,7 +72,7 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []stmt.Statement{
+func (l *lexer) Stmts() []interface{}{
 	return l.list
 }
 
@@ -304,6 +303,7 @@ else		{e}{l}{s}{e}
 end		{e}{n}{d}
 engine		{e}{n}{g}{i}{n}{e}
 engines		{e}{n}{g}{i}{n}{e}{s}
+escape		{e}{s}{c}{a}{p}{e}
 execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
@@ -670,6 +670,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {execute}		lval.item = string(l.val)
 			return execute
 {enum}			return enum
+{escape}		lval.item = string(l.val)
+			return escape
 {exists}		return exists
 {explain}		return explain
 {extract}		lval.item = string(l.val)

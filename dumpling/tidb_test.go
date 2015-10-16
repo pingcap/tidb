@@ -300,6 +300,7 @@ func (s *testMainSuite) TestIsQuery(c *C) {
 		{"/*comment*/ select 1;", true},
 		{"/*comment*/ /*comment*/ select 1;", true},
 		{"select /*comment*/ 1 /*comment*/;", true},
+		{"(select /*comment*/ 1 /*comment*/);", true},
 	}
 	for _, t := range tbl {
 		c.Assert(IsQuery(t.sql), Equals, t.ok, Commentf(t.sql))
@@ -734,6 +735,21 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], 1)
+
+	mustExecSQL(c, se, "drop table if exists t1, t2")
+	mustExecSQL(c, se, `
+			create table t1 (c1 int, primary key(c1));
+			create table t2 (c2 int, primary key(c2));
+			insert into t1 values (1), (2);
+			insert into t2 values (2);`)
+
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 order by t1.c1")
+	rows, err = r.Rows(-1, 0)
+	matches(c, rows, [][]interface{}{{1, nil}, {2, 2}})
+
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 where t2.c2 < 10")
+	rows, err = r.Rows(-1, 0)
+	matches(c, rows, [][]interface{}{{2, 2}})
 }
 
 func (s *testSessionSuite) TestMySQLTypes(c *C) {
@@ -791,6 +807,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, 1, 2)
 
+	r = mustExecSQL(c, se, "select 1, 2 from dual where not exists (select * from t where c1=2)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
+
 	r = mustExecSQL(c, se, "select 1, 2")
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
@@ -841,6 +862,26 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, 3.12)
+
+	mustExecSQL(c, se, `drop table if exists t;create table t (c int);insert into t values (1);`)
+	r = mustExecSQL(c, se, "select a.c from t as a where c between null and 2")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+
+	mustExecSQL(c, se, "drop table if exists t1, t2, t3")
+	mustExecSQL(c, se, `
+		create table t1 (c1 int);
+		create table t2 (c2 int);
+		create table t3 (c3 int);
+		insert into t1 values (1), (2);
+		insert into t2 values (2);
+		insert into t3 values (3);`)
+	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1")
+	rows, err = r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
+
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
@@ -881,7 +922,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
-	match(c, rows[0], "c", "int", "YES", "", nil, "")
+	match(c, rows[0], "c", "int(11)", "YES", "", nil, "")
 
 	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
 	row, err = r.FirstRow()
@@ -1060,6 +1101,37 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	c.Assert(rows, HasLen, 6)
 }
 
+func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
+	// If set unspecified column flen to 0, it will cause bug in union.
+	// This test is used to prevent the bug reappear.
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table t1 (c double);")
+	mustExecSQL(c, se, "create table t2 (c double);")
+	mustExecSQL(c, se, "insert into t1 value (73);")
+	mustExecSQL(c, se, "insert into t2 value (930);")
+	// The data in the second src will be casted as the type of the first src.
+	// If use flen=0, it will be truncated.
+	r := mustExecSQL(c, se, "select c from t1 union select c from t2;")
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	c.Assert(rows, HasLen, 2)
+	c.Assert(rows[1][0], Equals, float64(930))
+}
+
+func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName).(*session)
+	r, err := se.ExecRestrictedSQL(se, "select 1;")
+	c.Assert(r, NotNil)
+	c.Assert(err, IsNil)
+	_, err = se.ExecRestrictedSQL(se, "select 1; select 2;")
+	c.Assert(err, NotNil)
+	_, err = se.ExecRestrictedSQL(se, "")
+	c.Assert(err, NotNil)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
@@ -1122,5 +1194,12 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 		got := fmt.Sprintf("%v", row[i])
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
+	}
+}
+
+func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
+	c.Assert(len(rows), Equals, len(expected))
+	for i := 0; i < len(rows); i++ {
+		match(c, rows[i], expected[i]...)
 	}
 }

@@ -52,45 +52,62 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// String joins the information of FieldType and
-// returns a string.
-func (ft *FieldType) String() string {
-	ts := FieldTypeToStr(ft.Tp, ft.Charset)
-	ans := []string{ts}
+// CompactStr only considers Tp/CharsetBin/Flen/Deimal.
+// This is used for showing column type in infoschema.
+func (ft *FieldType) CompactStr() string {
+	ts := TypeToStr(ft.Tp, ft.Charset)
+	suffix := ""
 	switch ft.Tp {
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
-		ans = append(ans, fmt.Sprintf("('%s')", strings.Join(ft.Elems, "','")))
+		es := make([]string, 0, len(ft.Elems))
+		for _, e := range ft.Elems {
+			e = strings.Replace(e, "'", "''", -1)
+			es = append(es, e)
+		}
+		suffix = fmt.Sprintf("('%s')", strings.Join(es, "','"))
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate:
+		if ft.Decimal != UnspecifiedLength && ft.Decimal != 0 {
+			suffix = fmt.Sprintf("(%d)", ft.Decimal)
+		}
 	default:
 		if ft.Flen != UnspecifiedLength {
 			if ft.Decimal == UnspecifiedLength {
-				ans = append(ans, fmt.Sprintf("(%d)", ft.Flen))
+				if ft.Tp != mysql.TypeFloat && ft.Tp != mysql.TypeDouble {
+					suffix = fmt.Sprintf("(%d)", ft.Flen)
+				}
 			} else {
-				ans = append(ans, fmt.Sprintf("(%d, %d)", ft.Flen, ft.Decimal))
+				suffix = fmt.Sprintf("(%d,%d)", ft.Flen, ft.Decimal)
 			}
 		} else if ft.Decimal != UnspecifiedLength {
-			ans = append(ans, fmt.Sprintf("(%d)", ft.Decimal))
+			suffix = fmt.Sprintf("(%d)", ft.Decimal)
 		}
 	}
+	return ts + suffix
+}
 
+// String joins the information of FieldType and
+// returns a string.
+func (ft *FieldType) String() string {
+	strs := []string{ft.CompactStr()}
 	if mysql.HasUnsignedFlag(ft.Flag) {
-		ans = append(ans, "UNSIGNED")
+		strs = append(strs, "UNSIGNED")
 	}
 	if mysql.HasZerofillFlag(ft.Flag) {
-		ans = append(ans, "ZEROFILL")
+		strs = append(strs, "ZEROFILL")
 	}
 	if mysql.HasBinaryFlag(ft.Flag) {
-		ans = append(ans, "BINARY")
+		strs = append(strs, "BINARY")
 	}
 
 	if IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) {
 		if ft.Charset != "" && ft.Charset != charset.CharsetBin {
-			ans = append(ans, fmt.Sprintf("CHARACTER SET %s", ft.Charset))
+			strs = append(strs, fmt.Sprintf("CHARACTER SET %s", ft.Charset))
 		}
 		if ft.Collate != "" && ft.Collate != charset.CharsetBin {
-			ans = append(ans, fmt.Sprintf("COLLATE %s", ft.Collate))
+			strs = append(strs, fmt.Sprintf("COLLATE %s", ft.Collate))
 		}
 	}
 
-	return strings.Join(ans, " ")
+	return strings.Join(strs, " ")
 }

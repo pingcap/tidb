@@ -58,7 +58,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter",
+		"max_rows", "min_rows", "national", "row", "quarter", "escape",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -278,10 +278,15 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
+		{"select 1 where exists (select 2)", false},
+		{"select 1 from dual where not exists (select 2)", true},
 
 		// For show create table
 		{"show create table test.t", true},
 		{"show create table t", true},
+
+		// For https://github.com/pingcap/tidb/issues/320
+		{`(select 1);`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -439,6 +444,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
+		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE utf8_bin)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8)", true},
+		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
+
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
 		// For table option
@@ -587,5 +597,17 @@ func (s *testParserSuite) TestUnion(c *C) {
 		{"insert into t select c1 from t1 union select c2 from t2", true},
 		{"insert into t (c) select c1 from t1 union select c2 from t2", true},
 	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestLikeEscape(c *C) {
+	table := []testCase{
+		// For like escape
+		{`select "abc_" like "abc\\_" escape ''`, true},
+		{`select "abc_" like "abc\\_" escape '\\'`, true},
+		{`select "abc_" like "abc\\_" escape '||'`, false},
+		{`select "abc" like "escape" escape '+'`, true},
+	}
+
 	s.RunTest(c, table)
 }
