@@ -233,8 +233,16 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 		}
 
 		var result *field.ResultField
-		if err = field.CheckAllFieldNames(names, srcFields, field.DefaultFieldFlag); err != nil {
-			return nil, errors.Trace(err)
+		for _, name := range names {
+			idx := field.GetResultFieldIndex(name, srcFields, field.DefaultFieldFlag)
+			if len(idx) > 1 {
+				return nil, errors.Errorf("ambiguous field %s", name)
+			}
+
+			// TODO: must check in outer query too.
+			if len(idx) == 0 {
+				return nil, errors.Errorf("unknown field %s", name)
+			}
 		}
 
 		if _, ok := v.Expr.(*expression.Ident); ok {
