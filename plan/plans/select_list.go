@@ -183,7 +183,7 @@ func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error
 			return -1, errors.Errorf("refer %s is ambiguous", expr)
 		}
 
-		// check table name, e.g, "select t1.c1, c1 from t group by c1" is not ambiguous.
+		// check table name, e.g, "select t.c1, c1 from t group by c1" is not ambiguous.
 		if s.ResultFields[i].TableName != s.ResultFields[lastIndex].TableName {
 			return -1, errors.Errorf("refer %s is ambiguous", expr)
 		}
