@@ -63,10 +63,12 @@ func main() {
 
 	for i := 0; i < 100; i++ {
 		fmt.Printf("\n====== Round %d =====\n", i)
-		renew()
-		dump()
-		store.DumpRaw()
+		if i%2 == 0 {
+			renew()
+			dump()
+			store.DumpRaw()
+		}
 		fmt.Println("====================")
-		time.Sleep(5 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 }

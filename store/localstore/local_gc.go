@@ -13,6 +13,10 @@ import (
 
 var _ kv.GC = (*localstoreGC)(nil)
 
+const (
+	safeTimeInterval = 20 * time.Second
+)
+
 var localGCDefaultPolicy = kv.GCPolicy{
 	MaxRetainVersions: 1,
 	TriggerInterval:   1 * time.Second,
@@ -69,9 +73,8 @@ func (gc *localstoreGC) Compact(ctx interface{}, k kv.Key) error {
 		return err
 	}
 	if len(keys) > gc.policy.MaxRetainVersions {
-		b := ctx.(engine.Batch)
 		for _, key := range keys[gc.policy.MaxRetainVersions:] {
-			b.Delete(bytes.CloneBytes(key))
+			gc.delChan <- bytes.CloneBytes(key)
 		}
 	}
 	return nil
@@ -94,22 +97,47 @@ func (gc *localstoreGC) Start() {
 				// Do GC
 				if len(m) > 0 {
 					log.Error("GC trigger")
-					batch := gc.db.NewBatch()
 					for k, _ := range m {
-						err := gc.Compact(batch, []byte(k))
+						err := gc.Compact(nil, []byte(k))
 						if err != nil {
 							log.Error(err)
 						}
 					}
-					err := gc.db.Commit(batch)
-					if err != nil {
-						log.Error(err)
-					}
-					log.Errorf("GC clean: %d keys", len(m))
 				}
 			}
 		}
 	}()
+
+	go func() {
+		cnt := 0
+		batch := gc.db.NewBatch()
+		for key := range gc.delChan {
+			cnt++
+			batch.Delete(key)
+			if cnt == 500 {
+				gc.db.Commit(batch)
+				log.Error("GC batch delete")
+				batch = gc.db.NewBatch()
+				cnt = 0
+			}
+		}
+	}()
+
+	go func() {
+		cnt := 0
+		batch := gc.db.NewBatch()
+		for key := range gc.delChan {
+			cnt++
+			batch.Delete(key)
+			if cnt == 500 {
+				gc.db.Commit(batch)
+				log.Error("GC batch delete")
+				batch = gc.db.NewBatch()
+				cnt = 0
+			}
+		}
+	}()
+
 }
 
 func (gc *localstoreGC) Stop() {
@@ -122,7 +150,7 @@ func newLocalGC(policy kv.GCPolicy, db engine.DB) *localstoreGC {
 	ret := &localstoreGC{
 		recentKeys: make(map[string]struct{}),
 		stopChan:   make(chan struct{}),
-		delChan:    make(chan kv.EncodedKey),
+		delChan:    make(chan kv.EncodedKey, 100),
 		ticker:     time.NewTicker(policy.TriggerInterval),
 		policy:     policy,
 		db:         db,
