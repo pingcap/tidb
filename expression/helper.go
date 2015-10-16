@@ -45,13 +45,15 @@ const (
 	ExprEvalPositionFunc = "$positionFunc"
 	// ExprEvalValuesFunc is the key saving a function to retrieve value for column name.
 	ExprEvalValuesFunc = "$valuesFunc"
+	// ExprEvalIdentReferFunc is the key saving a function to retrieve value with identifier reference index.
+	ExprEvalIdentReferFunc = "$identReferFunc"
 )
 
 var (
 	// CurrentTimestamp is the keyword getting default value for datetime and timestamp type.
 	CurrentTimestamp = "CURRENT_TIMESTAMP"
 	// CurrentTimeExpr is the expression retireving default value for datetime and timestamp type.
-	CurrentTimeExpr = &Ident{model.NewCIStr(CurrentTimestamp)}
+	CurrentTimeExpr = &Ident{CIStr: model.NewCIStr(CurrentTimestamp)}
 	// ZeroTimestamp shows the zero datetime and timestamp.
 	ZeroTimestamp = "0000-00-00 00:00:00"
 )

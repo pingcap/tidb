@@ -186,7 +186,7 @@ func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 
 	f := func(name string) *Ident {
 		return &Ident{
-			model.NewCIStr(name),
+			CIStr: model.NewCIStr(name),
 		}
 	}
 
