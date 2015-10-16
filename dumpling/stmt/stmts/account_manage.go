@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/sqlhelper"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 /************************************************************************************
@@ -72,7 +72,7 @@ func (s *CreateUserStmt) SetText(text string) {
 
 func (s *CreateUserStmt) userExists(ctx context.Context, name string, host string) (bool, error) {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, name, host)
-	rs, err := ctx.(sqlhelper.SQLHelper).ExecRestrictedSQL(ctx, sql)
+	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -113,7 +113,7 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		return nil, nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
-	_, err := ctx.(sqlhelper.SQLHelper).ExecRestrictedSQL(ctx, sql)
+	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -157,6 +157,6 @@ func (s *SetPwdStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	host := strs[1]
 	// Update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
-	_, err := ctx.(sqlhelper.SQLHelper).ExecRestrictedSQL(ctx, sql)
+	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return nil, errors.Trace(err)
 }

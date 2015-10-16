@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
-	"github.com/pingcap/tidb/util/sqlhelper"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Session context
@@ -233,7 +233,7 @@ func (s *session) Retry() error {
 // ExecRestrictedSQL implements SQLHelper interface.
 // This is used for executing some restricted sql statements.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
-	if ctx.Value(&sqlhelper.KeyType{}) != nil {
+	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
 		// We do not support run this function concurrently.
 		// TODO: Maybe we should remove this restriction latter.
 		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
@@ -250,9 +250,10 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	st := statements[0]
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
+	// TODO: Add more restrictions.
 	log.Infof("Executing %s [%s]", st, sql)
-	ctx.SetValue(&sqlhelper.KeyType{}, true)
-	defer ctx.ClearValue(&sqlhelper.KeyType{})
+	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
+	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
 	return rs, errors.Trace(err)
 }
