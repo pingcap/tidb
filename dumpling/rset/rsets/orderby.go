@@ -80,6 +80,13 @@ func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tab
 				return errors.Errorf("Column '%s' in order statement is ambiguous", v.Expr)
 			}
 
+			// TODO: check more ambiguous case
+			// Order by ambiguous rule:
+			//	select c1 as a, c2 as a from t order by a is ambiguous
+			//	select c1 as a, c2 as a from t order by a + 1 is ambiguous
+			//	select c1 as c2, c2 from t order by c2 is ambiguous
+			//	select c1 as c2, c2 from t order by c2 + 1 is ambiguous
+
 			// TODO: use vistor to refactor all and combine following plan check.
 			names := expression.MentionedColumns(v.Expr)
 			for _, name := range names {
