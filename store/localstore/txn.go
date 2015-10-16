@@ -39,7 +39,7 @@ type dbTxn struct {
 	kv.UnionStore
 	store        *dbStore // for commit
 	startTs      time.Time
-	tID          uint64
+	tid          uint64
 	valid        bool
 	version      kv.Version        // commit version
 	snapshotVals map[string][]byte // origin version in snapshot
@@ -66,7 +66,7 @@ func (txn *dbTxn) markOrigin(k []byte) error {
 // Implement transaction interface
 
 func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
-	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tID)
+	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
 	k = kv.EncodeKey(k)
 
 	if err := txn.markOrigin(k); err != nil {
@@ -114,11 +114,11 @@ func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
 }
 
 func (txn *dbTxn) String() string {
-	return fmt.Sprintf("%d", txn.tID)
+	return fmt.Sprintf("%d", txn.tid)
 }
 
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
-	log.Debugf("get key:%q, txn:%d", k, txn.tID)
+	log.Debugf("get key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
@@ -141,13 +141,13 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
 
-	log.Debugf("set key:%q, txn:%d", k, txn.tID)
+	log.Debugf("set key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Set(k, data)
 }
 
 func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
-	log.Debugf("seek key:%q, txn:%d", k, txn.tID)
+	log.Debugf("seek key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 
 	iter, err := txn.UnionStore.Seek(k, txn)
@@ -168,7 +168,7 @@ func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
-	log.Debugf("delete key:%q, txn:%d", k, txn.tID)
+	log.Debugf("delete key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Delete(k)
 }
@@ -194,7 +194,7 @@ func (txn *dbTxn) doCommit() error {
 	}()
 	// Check locked keys
 	for k, v := range txn.snapshotVals {
-		err := txn.store.tryConditionLockKey(txn.tID, k, v)
+		err := txn.store.tryConditionLockKey(txn.tid, k, v)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -232,7 +232,7 @@ func (txn *dbTxn) Commit() error {
 	if !txn.valid {
 		return errors.Trace(ErrInvalidTxn)
 	}
-	log.Infof("commit txn %d", txn.tID)
+	log.Infof("commit txn %d", txn.tid)
 	defer func() {
 		txn.close()
 	}()
@@ -259,7 +259,7 @@ func (txn *dbTxn) Rollback() error {
 	if !txn.valid {
 		return errors.Trace(ErrInvalidTxn)
 	}
-	log.Warnf("Rollback txn %d", txn.tID)
+	log.Warnf("Rollback txn %d", txn.tid)
 	return txn.close()
 }
 
