@@ -32,6 +32,7 @@ type HavingPlan struct {
 	Src      plan.Plan
 	Expr     expression.Expression
 	evalArgs map[interface{}]interface{}
+	*SelectList
 }
 
 // Explain implements plan.Plan Explain interface.
