@@ -57,7 +57,7 @@ func (s *testHelperSuite) TestMentionedColumns(c *C) {
 	}{
 		{Value{1}, 0},
 		{&BinaryOperation{L: v, R: v}, 0},
-		{&Ident{model.NewCIStr("id")}, 1},
+		{&Ident{CIStr: model.NewCIStr("id")}, 1},
 		{&Call{F: "count", Args: []Expression{v}}, 0},
 		{&IsNull{Expr: v}, 0},
 		{&PExpr{Expr: v}, 0},
@@ -106,7 +106,7 @@ func (s *testHelperSuite) TestBase(c *C) {
 		{int64(1), int64(1)},
 		{&UnaryOperation{Op: opcode.Plus, V: Value{1}}, 1},
 		{&UnaryOperation{Op: opcode.Not, V: Value{1}}, nil},
-		{&UnaryOperation{Op: opcode.Plus, V: &Ident{model.NewCIStr("id")}}, nil},
+		{&UnaryOperation{Op: opcode.Plus, V: &Ident{CIStr: model.NewCIStr("id")}}, nil},
 		{nil, nil},
 	}
 
@@ -228,7 +228,7 @@ func (s *testHelperSuite) TestGetTimeValue(c *C) {
 		{Value{"2012-13-12 00:00:00"}},
 		{Value{0}},
 		{Value{int64(1)}},
-		{&Ident{model.NewCIStr("xxx")}},
+		{&Ident{CIStr: model.NewCIStr("xxx")}},
 		{NewUnaryOperation(opcode.Minus, Value{int64(1)})},
 	}
 

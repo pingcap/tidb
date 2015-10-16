@@ -29,10 +29,23 @@ var (
 	_ Expression = (*Ident)(nil)
 )
 
+const (
+	// IdentReferSelectList means the identifier reference is in select list.
+	IdentReferSelectList = 1
+	// IdentReferFromTable means the identifier reference is in FROM table.
+	IdentReferFromTable = 2
+)
+
 // Ident is the identifier expression.
 type Ident struct {
 	// model.CIStr contains origin identifier name and its lowercase name.
 	model.CIStr
+
+	// ReferScope means where the identifer reference is, select list or from.
+	ReferScope int
+
+	// ReferIndex is the index to get the identifer data.
+	ReferIndex int
 }
 
 // Clone implements the Expression Clone interface.
@@ -61,6 +74,12 @@ func (i *Ident) Eval(ctx context.Context, args map[interface{}]interface{}) (v i
 	if _, ok := args[builtin.ExprEvalArgAggEmpty]; ok {
 		// select c1, max(c1) from t where c1 = null, must get "NULL", "NULL" for empty table
 		return nil, nil
+	}
+
+	if f, ok := args[ExprEvalIdentReferFunc]; ok {
+		if got, ok := f.(func(string, int, int) (interface{}, error)); ok && (i.ReferScope == IdentReferSelectList || i.ReferScope == IdentReferFromTable) {
+			return got(i.L, i.ReferScope, i.ReferIndex)
+		}
 	}
 
 	if f, ok := args[ExprEvalIdentFunc]; ok {
