@@ -1134,6 +1134,25 @@ func (s *testSessionSuite) TestGroupBy(c *C) {
 	mustExecFailed(c, se, "select sum(c1) as a from t group by a + 1")
 }
 
+func (s *testSessionSuite) TestOrderBy(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t values (1,2), (2, 1)")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/337
+	mustExecMatch(c, se, "select c1 as a, c1 as b from t order by c1", [][]interface{}{{1, 1}, {2, 2}})
+
+	mustExecMatch(c, se, "select c1 as a, t.c1 as a from t order by a desc", [][]interface{}{{2, 2}, {1, 1}})
+	mustExecMatch(c, se, "select c1 as c2 from t order by c2", [][]interface{}{{1}, {2}})
+
+	// TODO: now this test result is not same as MySQL, we will update it later.
+	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{1}, {2}})
+
+	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
