@@ -76,16 +76,21 @@ func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tab
 
 			r.By[i].Expr = expr
 		} else {
+			if _, err := selectList.CheckReferAmbiguous(v.Expr); err != nil {
+				return errors.Errorf("Column '%s' in order statement is ambiguous", v.Expr)
+			}
+
+			// TODO: use vistor to refactor all and combine following plan check.
 			names := expression.MentionedColumns(v.Expr)
 			for _, name := range names {
 				// try to find in select list
 				// TODO: mysql has confused result for this, see #555.
 				// now we use select list then order by, later we should make it easier.
 				if field.ContainFieldName(name, selectList.ResultFields, field.CheckFieldFlag) {
-					// check ambiguous fields, like `select c1 as c2, c2 from t order by c2`.
-					if err := field.CheckAmbiguousField(name, selectList.ResultFields, field.DefaultFieldFlag); err != nil {
-						return errors.Errorf("Column '%s' in order statement is ambiguous", name)
-					}
+					// // check ambiguous fields, like `select c1 as c2, c2 from t order by c2`.
+					// if err := field.CheckAmbiguousField(name, selectList.ResultFields, field.DefaultFieldFlag); err != nil {
+					// 	return errors.Errorf("Column '%s' in order statement is ambiguous", name)
+					// }
 					continue
 				}
 
@@ -140,9 +145,16 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 				r.By[i].Expr = &expression.Position{N: position}
 			}
 		} else {
+			// Don't check ambiguous here, only check field exists or not.
+			// TODO: use visitor to refactor.
 			colNames := expression.MentionedColumns(e)
-			if err := field.CheckAllFieldNames(colNames, fields, field.CheckFieldFlag); err != nil {
-				return nil, errors.Trace(err)
+			for _, name := range colNames {
+				if idx := field.GetResultFieldIndex(name, r.SelectList.ResultFields, field.DefaultFieldFlag); len(idx) == 0 {
+					// find in from
+					if idx = field.GetResultFieldIndex(name, r.SelectList.FromFields, field.DefaultFieldFlag); len(idx) == 0 {
+						return nil, errors.Errorf("unknown field %s", name)
+					}
+				}
 			}
 		}
 
