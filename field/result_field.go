@@ -281,3 +281,8 @@ func CheckWildcardField(name string) (string, bool, error) {
 	_, table, field := SplitQualifiedName(name)
 	return table, field == "*", nil
 }
+
+// IsQualifiedName returns whether name contains "." or not.
+func IsQualifiedName(name string) bool {
+	return strings.Contains(name, ".")
+}
