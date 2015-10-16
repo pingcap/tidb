@@ -899,6 +899,8 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 	c.Assert(rows, HasLen, 2)
 	match(c, rows[0], 0)
 	match(c, rows[1], 2)
+
+	mustExecMatch(c, se, "select a.c1, a.c2 from (select c1 as c1, c1 as c2 from t1) as a", [][]interface{}{{1, 1}, {2, 2}})
 }
 
 func (s *testSessionSuite) TestShow(c *C) {
