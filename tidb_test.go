@@ -1116,6 +1116,24 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 
 }
 
+func (s *testSessionSuite) TestGroupBy(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t values (1,1), (2,2), (1,2), (1,3)")
+
+	mustExecMatch(c, se, "select c1 as c2, c2 from t group by c2 + 1", [][]interface{}{{1, 1}, {2, 2}, {1, 3}})
+	mustExecMatch(c, se, "select c1 as c2, count(c1) from t group by c2", [][]interface{}{{1, 1}, {2, 2}, {1, 1}})
+	mustExecMatch(c, se, "select t.c1, c1 from t group by c1", [][]interface{}{{1, 1}, {2, 2}})
+	mustExecMatch(c, se, "select t.c1 as a, c1 as a from t group by a", [][]interface{}{{1, 1}, {2, 2}})
+
+	mustExecFailed(c, se, "select c1 as a, c2 as a from t group by a")
+	mustExecFailed(c, se, "select c1 as c2, c2 from t group by c2")
+	mustExecFailed(c, se, "select sum(c1) as a from t group by a")
+	mustExecFailed(c, se, "select sum(c1) as a from t group by a + 1")
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
@@ -1186,4 +1204,16 @@ func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
 	for i := 0; i < len(rows); i++ {
 		match(c, rows[i], expected[i]...)
 	}
+}
+
+func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
+	r := mustExecSQL(c, se, sql)
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	matches(c, rows, expected)
+}
+
+func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
+	_, err := exec(c, se, sql, args...)
+	c.Assert(err, NotNil)
 }
