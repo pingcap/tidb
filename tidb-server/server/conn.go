@@ -125,7 +125,7 @@ func (cc *clientConn) writeInitialHandshake() error {
 	data = append(data, byte(cc.connectionID), byte(cc.connectionID>>8), byte(cc.connectionID>>16), byte(cc.connectionID>>24))
 	// auth-plugin-data-part-1
 	data = append(data, cc.salt[0:8]...)
-	// filter [00]
+	// filler [00]
 	data = append(data, 0)
 	// capability flag lower 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability), byte(defaultCapability>>8))
@@ -136,13 +136,13 @@ func (cc *clientConn) writeInitialHandshake() error {
 	// below 13 byte may not be used
 	// capability flag upper 2 bytes, using default capability here
 	data = append(data, byte(defaultCapability>>16), byte(defaultCapability>>24))
-	//filter [0x15], for wireshark dump, value is 0x15
+	// filler [0x15], for wireshark dump, value is 0x15
 	data = append(data, 0x15)
 	// reserved 10 [00]
 	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
-	// filter [00]
+	// filler [00]
 	data = append(data, 0)
 	err := cc.writePacket(data)
 	if err != nil {
@@ -201,11 +201,11 @@ func (cc *clientConn) readHandshakeResponse() error {
 		addr := cc.conn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
-			return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, addr, "Yes"))
+			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, addr, "Yes"))
 		}
 		user := fmt.Sprintf("%s@%s", cc.user, host)
 		if !cc.ctx.Auth(user, auth, cc.salt) {
-			return errors.Trace(mysql.NewDefaultError(mysql.ErAccessDeniedError, cc.user, host, "Yes"))
+			return errors.Trace(mysql.NewErr(mysql.ErrAccessDenied, cc.user, host, "Yes"))
 		}
 	}
 	return nil
@@ -283,8 +283,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtReset:
 		return cc.handleStmtReset(data)
 	default:
-		msg := fmt.Sprintf("command %d not supported now", cmd)
-		return mysql.NewError(mysql.ErUnknownError, msg)
+		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
 }
 
@@ -322,8 +321,9 @@ func (cc *clientConn) writeOK() error {
 func (cc *clientConn) writeError(e error) error {
 	var m *mysql.SQLError
 	var ok bool
-	if m, ok = e.(*mysql.SQLError); !ok {
-		m = mysql.NewError(mysql.ErUnknownError, e.Error())
+	originErr := errors.Cause(e)
+	if m, ok = originErr.(*mysql.SQLError); !ok {
+		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
 	}
 
 	data := make([]byte, 4, 16+len(m.Message))

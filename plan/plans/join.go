@@ -99,7 +99,7 @@ func (r *JoinPlan) explainNode(w format.Formatter, node plan.Plan) {
 
 func (r *JoinPlan) filterNode(ctx context.Context, expr expression.Expression, node plan.Plan) (plan.Plan, bool, error) {
 	if node == nil {
-		return r, false, nil
+		return nil, false, nil
 	}
 
 	e2 := expr.Clone()
@@ -112,14 +112,12 @@ func (r *JoinPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 	// TODO: do more optimization for join plan
 	// now we only use where expression for Filter, but for join
 	// we must use On expression too.
-	if r.Right == nil {
-		return r.Left.Filter(ctx, expr)
-	}
 	newPlan := &JoinPlan{
 		Fields: r.Fields,
 		Type:   r.Type,
 		On:     r.On,
 	}
+
 	p, filteredLeft, err := r.filterNode(ctx, expr, r.Left)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -291,6 +289,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			if r.curRow == nil {
 				return nil, nil
 			}
+
 			if r.On != nil {
 				tempExpr := r.On.Clone()
 				visitor := NewIdentEvalVisitor(r.Left.GetFields(), r.curRow.Data)
@@ -318,7 +317,11 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 			r.tempPlan.Close()
 			continue
 		}
-		joinedRow := append(r.curRow.Data, rightRow.Data...)
+
+		// To prevent outer modify the slice. See comment above.
+		joinedRow := make([]interface{}, 0, len(r.curRow.Data)+len(rightRow.Data))
+		joinedRow = append(append(joinedRow, r.curRow.Data...), rightRow.Data...)
+
 		if r.On != nil {
 			r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)

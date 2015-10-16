@@ -118,6 +118,14 @@ func (i *iterator) Next() bool {
 	return i.key != nil
 }
 
+func (i *iterator) Seek(startKey []byte) bool {
+	if i.Cursor == nil {
+		i.Cursor = i.tx.Bucket(bucketName).Cursor()
+	}
+	i.key, i.value = i.Cursor.Seek(startKey)
+	return i.key != nil
+}
+
 func (i *iterator) Key() []byte {
 	return i.key
 }

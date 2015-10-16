@@ -361,22 +361,21 @@ func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 				if decimal == types.UnspecifiedLength {
 					decimal = 0
 				}
-				dataType := types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin)
-				columnType := fmt.Sprintf("%s(%d)", dataType, colLen)
+				columnType := col.FieldType.CompactStr()
 				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
 				var columnDefault interface{}
 				if columnDesc.DefaultValue != nil {
 					columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 				}
 				record := []interface{}{
-					catalogVal,                                                 // TABLE_CATALOG
-					schema.Name.O,                                              // TABLE_SCHEMA
-					table.Name.O,                                               // TABLE_NAME
-					col.Name.O,                                                 // COLUMN_NAME
-					i + 1,                                                      // ORIGINAL_POSITION
-					columnDefault,                                              // COLUMN_DEFAULT
-					columnDesc.Null,                                            // IS_NULLABLE
-					types.TypeToStr(col.Tp, col.Charset == charset.CharsetBin), // DATA_TYPE
+					catalogVal,                           // TABLE_CATALOG
+					schema.Name.O,                        // TABLE_SCHEMA
+					table.Name.O,                         // TABLE_NAME
+					col.Name.O,                           // COLUMN_NAME
+					i + 1,                                // ORIGINAL_POSITION
+					columnDefault,                        // COLUMN_DEFAULT
+					columnDesc.Null,                      // IS_NULLABLE
+					types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
 					colLen,                            // CHARACTER_MAXIMUM_LENGTH
 					colLen,                            // CHARACTOR_OCTET_LENGTH
 					decimal,                           // NUMERIC_PRECISION

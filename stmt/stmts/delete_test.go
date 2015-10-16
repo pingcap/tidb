@@ -199,5 +199,8 @@ func (s *testStmtSuite) TestQualifedDelete(c *C) {
 	r = mustExec(c, s.testDB, "delete a, b from t1 as a join t2 as b where a.c2 = b.c1")
 	checkResult(c, r, 2, 0)
 
+	_, err = s.testDB.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
+	c.Assert(err, NotNil)
+
 	mustExec(c, s.testDB, "drop table t1, t2")
 }

@@ -30,6 +30,7 @@ import (
 	"strings"
 	
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
@@ -134,6 +135,7 @@ import (
 	engines		"ENGINES"
 	enum 		"ENUM"
 	eq		"="
+	escape 		"ESCAPE"
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
@@ -342,7 +344,6 @@ import (
 	AlterSpecification	"Alter table specification"
 	AlterSpecificationList	"Alter table specification list"
 	AnyOrAll		"Any or All for subquery"
-	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
 	AssignmentListOpt	"assignment list opt"
@@ -404,7 +405,8 @@ import (
 	Factor			"expression factor"
 	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
-	Field1			"field expression optional AS clause"
+	FieldAsName		"Field alias name"
+	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FromClause		"From clause"
 	Function		"function expr"
@@ -433,6 +435,7 @@ import (
 	JoinTable 		"join table"
 	JoinType		"join type"
 	KeyOrIndex		"{KEY|INDEX}"
+	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
 	logAnd			"logical and operator"
@@ -600,6 +603,8 @@ import (
 %precedence '('
 %precedence lowerThanQuick
 %precedence quick
+%precedence lowerThanEscape
+%precedence escape
 %precedence lowerThanComma
 %precedence ','
 
@@ -1520,9 +1525,20 @@ PredicateExpr:
 			return 1
 		}
 	}
-|	PrimaryFactor NotOpt "LIKE" PrimaryExpression
+|	PrimaryFactor NotOpt "LIKE" PrimaryExpression LikeEscapeOpt
 	{
-		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
+		escape := $5.(string)
+		if len(escape) > 1 {
+			yylex.(*lexer).errf("Incorrect arguments %s to ESCAPE", escape)
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &expression.PatternLike{
+			Expr: $1.(expression.Expression), 
+			Pattern: $4.(expression.Expression), 
+			Not: $2.(bool), 
+			Escape: escape[0]}
 	}
 |	PrimaryFactor NotOpt RegexpSym PrimaryExpression
 	{
@@ -1533,6 +1549,16 @@ PredicateExpr:
 RegexpSym:
 	"REGEXP"
 |	"RLIKE"
+
+LikeEscapeOpt:
+	%prec lowerThanEscape
+	{
+		$$ = "\\"
+	}
+|	"ESCAPE" stringLit
+	{
+		$$ = $2
+	}
 
 NotOpt:
 	{
@@ -1548,23 +1574,23 @@ Field:
 	{
 		$$ = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("*")}}
 	}
-|	Expression Field1
+|	Expression FieldAsNameOpt
 	{
 		expr, name := expression.Expr($1), $2.(string)
 		$$ = &field.Field{Expr: expr, AsName: name}
 	}
 
-Field1:
+FieldAsNameOpt:
 	/* EMPTY */
 	{
 		$$ = ""
 	}
-|	AsOpt
+|	FieldAsName
 	{
 		$$ = $1
 	}
 
-AsOpt:
+FieldAsName:
 	Identifier
 	{
 		$$ = $1
@@ -1673,7 +1699,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -2916,14 +2942,28 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
-			From:          nil,
-			Lock:	       $6.(coldef.LockType),
+			Lock:	       $5.(coldef.LockType),
 		}
+	}
+|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+		st := &stmts.SelectStmt {
+			Distinct:      $2.(bool),
+			Fields:        $3.([]*field.Field),
+			From:          nil,
+			Lock:	       $7.(coldef.LockType),
+		}
+
+		if $5 != nil {
+			st.Where = &rsets.WhereRset{Expr: $5.(expression.Expression)}
+		}
+
+		$$ = st
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
 	FromClause WhereClauseOptional SelectStmtGroup HavingClause SelectStmtOrder
@@ -2962,8 +3002,7 @@ SelectStmt:
 	}
 
 FromDual:
-	/* Empty */
-|	"FROM" "DUAL"
+	"FROM" "DUAL" 
 
 
 FromClause:
@@ -3492,6 +3531,12 @@ Statement:
 |	UnionStmt
 |	UpdateStmt
 |	UseStmt
+|	SubSelect
+	{
+		// `(select 1)`; is a valid select statement
+		// TODO: This is used to fix issue #320. There may be a better solution.
+		$$ = $1.(*subquery.SubQuery).Stmt
+	}
 
 ExplainableStmt:
 	SelectStmt
@@ -3503,9 +3548,15 @@ StatementList:
 	Statement
 	{
 		if $1 != nil {
-			s := $1.(stmt.Statement)
-			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = []stmt.Statement{ s }
+			n, ok := $1.(ast.Node)
+			if ok {
+				n.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{n}
+			} else {
+				s := $1.(stmt.Statement)
+				s.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{s}
+			}
 		}
 	}
 |	StatementList ';' Statement
@@ -3841,21 +3892,25 @@ BitValueType:
 	}
 
 StringType:
-	NationalOpt "CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
-|	NationalOpt "CHAR" OptBinary
+|	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate

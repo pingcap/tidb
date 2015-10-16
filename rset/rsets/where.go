@@ -18,6 +18,7 @@
 package rsets
 
 import (
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -188,13 +189,18 @@ func (r *WhereRset) Plan(ctx context.Context) (plan.Plan, error) {
 		return r.planStatic(ctx, expr)
 	}
 
+	var (
+		src = r.Src
+		err error
+	)
+
 	switch x := expr.(type) {
 	case *expression.BinaryOperation:
-		return r.planBinOp(ctx, x)
+		src, err = r.planBinOp(ctx, x)
 	case *expression.Ident:
-		return r.planIdent(ctx, x)
+		src, err = r.planIdent(ctx, x)
 	case *expression.IsNull:
-		return r.planIsNull(ctx, x)
+		src, err = r.planIsNull(ctx, x)
 	case *expression.PatternIn:
 		// TODO: optimize
 		// TODO: show plan
@@ -203,10 +209,22 @@ func (r *WhereRset) Plan(ctx context.Context) (plan.Plan, error) {
 	case *expression.PatternRegexp:
 		// TODO: optimize
 	case *expression.UnaryOperation:
-		return r.planUnaryOp(ctx, x)
+		src, err = r.planUnaryOp(ctx, x)
 	default:
 		log.Warnf("%v not supported in where rset now", r.Expr)
 	}
 
-	return &plans.FilterDefaultPlan{Plan: r.Src, Expr: expr}, nil
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if _, ok := src.(*plans.FilterDefaultPlan); ok {
+		return src, nil
+	}
+
+	// We must use a FilterDefaultPlan here to wrap filtered plan.
+	// Alghough we can check where condition using index plan, we still need
+	// to check again after the FROM phase if the FROM phase contains outer join.
+	// TODO: if FROM phase doesn't contain outer join, we can return filtered plan directly.
+	return &plans.FilterDefaultPlan{Plan: src, Expr: expr}, nil
 }
