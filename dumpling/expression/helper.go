@@ -149,20 +149,39 @@ func newMentionedAggregateFuncsVisitor() *mentionedAggregateFuncsVisitor {
 }
 
 func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) {
+	isAggregate, err := IsAggregateFunc(c.F)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if isAggregate {
+		v.exprs = append(v.exprs, c)
+	}
+
+	// iaggregate function can't use aggregate function as the arg.
+	n := len(v.exprs)
 	for _, e := range c.Args {
 		_, err := e.Accept(v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	f, ok := builtin.Funcs[strings.ToLower(c.F)]
-	if !ok {
-		return nil, errors.Errorf("unknown function %s", c.F)
+
+	if len(v.exprs) != n {
+		// here means we have aggregate function in arg.
+		return nil, errors.Errorf("Invalid use of group function")
 	}
-	if f.IsAggregate {
-		v.exprs = append(v.exprs, c)
-	}
+
 	return c, nil
+}
+
+// IsAggregateFunc checks whether name is an aggregate function or not.
+func IsAggregateFunc(name string) (bool, error) {
+	f, ok := builtin.Funcs[strings.ToLower(name)]
+	if !ok {
+		return false, errors.Errorf("unknown function %s", name)
+	}
+	return f.IsAggregate, nil
 }
 
 // MentionedColumns returns a list of names for Ident expression.

@@ -47,6 +47,15 @@ func (s *testHelperSuite) TestContainAggFunc(c *C) {
 		b := ContainAggregateFunc(t.Expr)
 		c.Assert(b, Equals, t.Expect)
 	}
+
+	expr := &Call{
+		F: "count",
+		Args: []Expression{
+			&Call{F: "count", Args: []Expression{v}},
+		},
+	}
+	_, err := MentionedAggregateFuncs(expr)
+	c.Assert(err, NotNil)
 }
 
 func (s *testHelperSuite) TestMentionedColumns(c *C) {
