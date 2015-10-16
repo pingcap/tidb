@@ -106,7 +106,7 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		} else {
 			pwd = util.EncodePassword(spec.AuthOpt.HashString)
 		}
-		user := fmt.Sprintf("(\"%s\", \"%s\", \"%s\")", host, userName, pwd)
+		user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
 		users = append(users, user)
 	}
 	if len(users) == 0 {
