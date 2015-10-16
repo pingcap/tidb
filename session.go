@@ -231,7 +231,7 @@ func (s *session) Retry() error {
 }
 
 // ExecRestrictedSQL implements SQLHelper interface.
-// This is used for execute some restricted sql statement.
+// This is used for executing some restricted sql statements.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
 	if ctx.Value(&sqlhelper.KeyType{}) != nil {
 		// We do not support run this function concurrently.
