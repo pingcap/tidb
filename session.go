@@ -28,6 +28,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	mysql "github.com/pingcap/tidb/mysqldef"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Session context
@@ -226,6 +228,34 @@ func (s *session) Retry() error {
 	}
 
 	return nil
+}
+
+// ExecRestrictedSQL implements SQLHelper interface.
+// This is used for executing some restricted sql statements.
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
+	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
+		// We do not support run this function concurrently.
+		// TODO: Maybe we should remove this restriction latter.
+		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
+	}
+	statements, err := Compile(sql)
+	if err != nil {
+		log.Errorf("Compile %s with error: %v", sql, err)
+		return nil, errors.Trace(err)
+	}
+	if len(statements) != 1 {
+		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
+		return nil, errors.New("Wrong number of statement.")
+	}
+	st := statements[0]
+	// Check statement for some restriction
+	// For example only support DML on system meta table.
+	// TODO: Add more restrictions.
+	log.Infof("Executing %s [%s]", st, sql)
+	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
+	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
+	rs, err := st.Exec(ctx)
+	return rs, errors.Trace(err)
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
