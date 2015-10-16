@@ -76,8 +76,10 @@ func (i *Ident) Eval(ctx context.Context, args map[interface{}]interface{}) (v i
 		return nil, nil
 	}
 
+	// TODO: we will unify ExprEvalIdentReferFunc and ExprEvalIdentFunc later,
+	// now just put them here for refactor step by step.
 	if f, ok := args[ExprEvalIdentReferFunc]; ok {
-		if got, ok := f.(func(string, int, int) (interface{}, error)); ok && (i.ReferScope == IdentReferSelectList || i.ReferScope == IdentReferFromTable) {
+		if got, ok := f.(func(string, int, int) (interface{}, error)); ok {
 			return got(i.L, i.ReferScope, i.ReferIndex)
 		}
 	}
