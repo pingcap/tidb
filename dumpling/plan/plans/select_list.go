@@ -150,24 +150,28 @@ func (s *SelectList) CloneHiddenField(name string, tableFields []*field.ResultFi
 // but "select c1 as a, c1 as a from t group by a" is not.
 // For MySQL "select c1 as a, c2 + 1 as a from t group by a" is not ambiguous too,
 // so we will only check identifier too.
-// If no ambiguous, -1 means expr refers none in select list, else an index in select list returns.
-func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error) {
+// If no ambiguous, nil means expr refers none in select list, else an indices for fields have the same name in select list returns.
+func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) ([]int, error) {
 	if _, ok := expr.(*expression.Ident); !ok {
-		return -1, nil
+		return nil, nil
 	}
 
 	name := expr.String()
 	if strings.Contains(name, ".") {
 		// name is qualified, no need to check
-		return -1, nil
+		return nil, nil
 	}
 
 	lastIndex := -1
+	var idx []int
 	// only check origin select list, no hidden field.
 	for i := 0; i < s.HiddenFieldOffset; i++ {
 		if s.ResultFields[i].Name != name {
 			continue
-		} else if _, ok := s.Fields[i].Expr.(*expression.Ident); !ok {
+		}
+
+		idx = append(idx, i)
+		if _, ok := s.Fields[i].Expr.(*expression.Ident); !ok {
 			// not identfier, no check
 			continue
 		}
@@ -180,18 +184,18 @@ func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error
 
 		// check origin name, e,g. "select c1 as c2, c2 from t group by c2" is ambiguous.
 		if s.ResultFields[i].ColumnInfo.Name.O != s.ResultFields[lastIndex].ColumnInfo.Name.O {
-			return -1, errors.Errorf("refer %s is ambiguous", expr)
+			return nil, errors.Errorf("refer %s is ambiguous", expr)
 		}
 
 		// check table name, e.g, "select t.c1, c1 from t group by c1" is not ambiguous.
 		if s.ResultFields[i].TableName != s.ResultFields[lastIndex].TableName {
-			return -1, errors.Errorf("refer %s is ambiguous", expr)
+			return nil, errors.Errorf("refer %s is ambiguous", expr)
 		}
 
 		// TODO: check database name if possible.
 	}
 
-	return lastIndex, nil
+	return idx, nil
 }
 
 // ResolveSelectList gets fields and result fields from selectFields and srcFields,
