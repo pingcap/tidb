@@ -28,8 +28,9 @@ var (
 
 // HavingRset is record set for having fields.
 type HavingRset struct {
-	Src  plan.Plan
-	Expr expression.Expression
+	Src        plan.Plan
+	Expr       expression.Expression
+	SelectList *plans.SelectList
 }
 
 // CheckAndUpdateSelectList checks having fields validity and set hidden fields to selectList.
@@ -90,7 +91,7 @@ func (r *HavingRset) CheckAndUpdateSelectList(selectList *plans.SelectList, grou
 
 // Plan gets HavingPlan.
 func (r *HavingRset) Plan(ctx context.Context) (plan.Plan, error) {
-	return &plans.HavingPlan{Src: r.Src, Expr: r.Expr}, nil
+	return &plans.HavingPlan{Src: r.Src, Expr: r.Expr, SelectList: r.SelectList}, nil
 }
 
 //  String implements fmt.Stringer interface.
