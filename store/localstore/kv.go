@@ -139,6 +139,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 func (s *dbStore) Close() error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
+
 	delete(mc.cache, s.path)
 	return s.db.Close()
 }
