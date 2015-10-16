@@ -39,32 +39,9 @@ type GroupByRset struct {
 	SelectList *plans.SelectList
 }
 
-// HasAmbiguousField checks whether have ambiguous group by fields.
-func (r *GroupByRset) HasAmbiguousField(indices []int, fields []*field.Field) bool {
-	columnNameMap := map[string]struct{}{}
-	for _, index := range indices {
-		expr := fields[index].Expr
-
-		// `select c1 + c2 as c1, c1 + c3 as c1 from t order by c1` is valid,
-		// if it is not `Ident` expression, ignore it.
-		v, ok := expr.(*expression.Ident)
-		if !ok {
-			continue
-		}
-
-		// `select c1 as c2, c1 as c2 from t order by c2` is valid,
-		// use a map for it here.
-		columnNameMap[v.L] = struct{}{}
-	}
-
-	return len(columnNameMap) > 1
-}
-
 // Plan gets GroupByDefaultPlan.
 func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	fields := r.SelectList.Fields
-	resultfields := r.SelectList.ResultFields
-	srcFields := r.Src.GetFields()
 
 	r.SelectList.AggFields = GetAggFields(fields)
 	aggFields := r.SelectList.AggFields
@@ -93,30 +70,25 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 			// use Position expression for the associated field.
 			r.By[i] = &expression.Position{N: position}
 		} else {
+			index, err := r.SelectList.CheckReferAmbiguous(e)
+			if err != nil {
+				return nil, errors.Errorf("Column '%s' in group statement is ambiguous", e)
+			} else if _, ok := aggFields[index]; ok {
+				return nil, errors.Errorf("Can't group on '%s'", e)
+			}
+
+			// TODO: check more ambiguous case
+			// Group by ambiguous rule:
+			//	select c1 as a, c2 as a from t group by a is ambiguous
+			//	select c1 as a, c2 as a from t group by a + 1 is ambiguous
+			//	select c1 as c2, c2 from t group by c2 is ambiguous
+			//	select c1 as c2, c2 from t group by c2 + 1 is ambiguous
+
+			// TODO: use visitor to check aggregate function
 			names := expression.MentionedColumns(e)
 			for _, name := range names {
-				if field.ContainFieldName(name, srcFields, field.DefaultFieldFlag) {
-					// check whether column is qualified, like `select t.c1 c1, t.c2 from t group by t.c1, t.c2`
-					// no need to check ambiguous field.
-					if expression.IsQualified(name) {
-						continue
-					}
-
-					// check ambiguous fields, like `select c1 as c2, c2 from t group by c2`.
-					if err := field.CheckAmbiguousField(name, resultfields, field.DefaultFieldFlag); err == nil {
-						continue
-					}
-				}
-
-				// check reference to group function name
-				indices := field.GetFieldIndex(name, fields[0:r.SelectList.HiddenFieldOffset], field.CheckFieldFlag)
-				if len(indices) > 1 {
-					// check ambiguous fields, like `select c1 as a, c2 as a from t group by a`,
-					// notice that `select c2 as c2, c2 as c2 from t group by c2;` is valid.
-					if r.HasAmbiguousField(indices, fields[0:r.SelectList.HiddenFieldOffset]) {
-						return nil, errors.Errorf("Column '%s' in group statement is ambiguous", name)
-					}
-				} else if len(indices) == 1 {
+				indices := field.GetFieldIndex(name, fields[0:r.SelectList.HiddenFieldOffset], field.DefaultFieldFlag)
+				if len(indices) == 1 {
 					// check reference to aggregate function, like `select c1, count(c1) as b from t group by b + 1`.
 					index := indices[0]
 					if _, ok := aggFields[index]; ok {
