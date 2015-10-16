@@ -82,11 +82,11 @@ func (s *testSelectListSuite) TestAmbiguous(c *C) {
 		Fields []pair
 		Name   string
 		Err    bool
-		Index  int
+		Index  []int
 	}{
-		{[]pair{{"id", ""}}, "id", false, 0},
-		{[]pair{{"id", "a"}, {"name", "a"}}, "a", true, -1},
-		{[]pair{{"id", "a"}, {"name", "a"}}, "id", false, -1},
+		{[]pair{{"id", ""}}, "id", false, []int{0}},
+		{[]pair{{"id", "a"}, {"name", "a"}}, "a", true, nil},
+		{[]pair{{"id", "a"}, {"name", "a"}}, "id", false, nil},
 	}
 
 	for _, t := range tbl {
@@ -96,7 +96,7 @@ func (s *testSelectListSuite) TestAmbiguous(c *C) {
 		sl, err := plans.ResolveSelectList(fs, rs)
 		c.Assert(err, IsNil)
 
-		index, err := sl.CheckReferAmbiguous(&expression.Ident{
+		idx, err := sl.CheckReferAmbiguous(&expression.Ident{
 			CIStr: model.NewCIStr(t.Name),
 		})
 
@@ -106,6 +106,6 @@ func (s *testSelectListSuite) TestAmbiguous(c *C) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(t.Index, Equals, index)
+		c.Assert(t.Index, DeepEquals, idx)
 	}
 }
