@@ -45,33 +45,6 @@ type groupByVisitor struct {
 	rootIdent  *expression.Ident
 }
 
-func (v *groupByVisitor) checkIdent(i *expression.Ident) (int, error) {
-	idx, err := v.selectList.CheckReferAmbiguous(i)
-	if err != nil {
-		return -1, errors.Errorf("Column '%s' in group statement is ambiguous", i)
-	} else if len(idx) == 0 {
-		return -1, nil
-	}
-
-	for _, index := range idx {
-		if _, ok := v.selectList.AggFields[index]; ok {
-			return -1, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
-		}
-	}
-
-	// this identifier may reference multi fields.
-	// e.g, select c1 as a, c2 + 1 as a from t group by a,
-	// we will use the first one which is not an identifer.
-	// so, for select c1 as a, c2 + 1 as a from t group by a, we will use c2 + 1.
-	for _, index := range idx {
-		if castIdent(v.selectList.Fields[index].Expr) == nil {
-			return index, nil
-		}
-	}
-
-	return idx[0], nil
-}
-
 func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
 	// Group by ambiguous rule:
 	//	select c1 as a, c2 as a from t group by a is ambiguous
@@ -86,7 +59,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent == i {
 		// The group by is an identifier, we must check it first.
-		index, err = v.checkIdent(i)
+		index, err = checkIdent(i, v.selectList, groupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -102,7 +75,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent != i {
 		// This identifier is the part of the group by, check ambiguous here.
-		index, err = v.checkIdent(i)
+		index, err = checkIdent(i, v.selectList, groupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -150,7 +123,7 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	visitor.selectList = r.SelectList
 
 	for i, e := range r.By {
-		pos, err := castPosition(e, r.SelectList, true)
+		pos, err := castPosition(e, r.SelectList, groupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

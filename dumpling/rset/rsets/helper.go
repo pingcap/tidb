@@ -46,8 +46,29 @@ func castIdent(e expression.Expression) *expression.Ident {
 	return i
 }
 
+type clauseType int
+
+const (
+	noneClause clauseType = iota
+	groupByClause
+	orderByClause
+	havingClause
+)
+
+func (clause clauseType) String() string {
+	switch clause {
+	case groupByClause:
+		return "group statement"
+	case orderByClause:
+		return "order clause"
+	case havingClause:
+		return "having clause"
+	}
+	return "none"
+}
+
 // castPosition returns an group/order by Position expression if e is a number.
-func castPosition(e expression.Expression, selectList *plans.SelectList, isGroupBy bool) (*expression.Position, error) {
+func castPosition(e expression.Expression, selectList *plans.SelectList, clause clauseType) (*expression.Position, error) {
 	v, ok := e.(expression.Value)
 	if !ok {
 		return nil, nil
@@ -64,13 +85,10 @@ func castPosition(e expression.Expression, selectList *plans.SelectList, isGroup
 	}
 
 	if position < 1 || position > selectList.HiddenFieldOffset {
-		if isGroupBy {
-			return nil, errors.Errorf("Unknown column '%d' in 'group statement'", position)
-		}
-		return nil, errors.Errorf("Unknown column '%d' in 'order clause'", position)
+		return nil, errors.Errorf("Unknown column '%d' in '%s'", position, clause)
 	}
 
-	if isGroupBy {
+	if clause == groupByClause {
 		index := position - 1
 		if _, ok := selectList.AggFields[index]; ok {
 			return nil, errors.Errorf("Can't group on '%s'", selectList.Fields[index])
@@ -79,4 +97,38 @@ func castPosition(e expression.Expression, selectList *plans.SelectList, isGroup
 
 	// use Position expression for the associated field.
 	return &expression.Position{N: position}, nil
+}
+
+func checkIdent(i *expression.Ident, selectList *plans.SelectList, clause clauseType) (int, error) {
+	idx, err := selectList.CheckReferAmbiguous(i)
+	if err != nil {
+		return -1, errors.Errorf("Column '%s' in %s is ambiguous", i, clause)
+	} else if len(idx) == 0 {
+		return -1, nil
+	}
+
+	// this identifier may reference multi fields.
+	// e.g, select c1 as a, c2 + 1 as a from t group by a,
+	// we will use the first one which is not an identifer.
+	// so, for select c1 as a, c2 + 1 as a from t group by a, we will use c2 + 1.
+
+	useIndex := 0
+	found := false
+	for _, index := range idx {
+		if clause == groupByClause {
+			// group by can not reference aggregate fields
+			if _, ok := selectList.AggFields[index]; ok {
+				return -1, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
+			}
+		}
+
+		if !found {
+			if castIdent(selectList.Fields[index].Expr) == nil {
+				useIndex = index
+				found = true
+			}
+		}
+	}
+
+	return idx[useIndex], nil
 }
