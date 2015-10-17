@@ -128,7 +128,14 @@ func (r *GroupByDefaultPlan) getFieldValueByName(name string, out []interface{})
 
 func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
-	m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+	m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+		if scope == expression.IdentReferFromTable {
+			return in[index], nil
+		} else if scope == expression.IdentReferSelectList {
+			return out[index], nil
+		}
+
+		// TODO: remove following getting later.
 		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 		if err == nil {
 			return v, nil
@@ -153,10 +160,18 @@ func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interf
 
 func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
+
 	// Eval aggregate field results in ctx
 	for i := range r.AggFields {
 		if i < r.HiddenFieldOffset {
-			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+				if scope == expression.IdentReferFromTable {
+					return in[index], nil
+				} else if scope == expression.IdentReferSelectList {
+					return out[index], nil
+				}
+
+				//TODO: remove following getting later
 				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 				if err == nil {
 					return v, nil
@@ -171,12 +186,20 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 			// 	select c1 as a from t having count(a) = 1
 			// because all the select list data is generated before, so we can get it
 			// when handling hidden field.
-			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+			m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+				if scope == expression.IdentReferFromTable {
+					return in[index], nil
+				} else if scope == expression.IdentReferSelectList {
+					return out[index], nil
+				}
+
+				// TODO: remove later
 				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
 				if err == nil {
 					return v, nil
 				}
 
+				// TODO: remove later
 				// if we can not find in table, we will try to find in un-hidden select list
 				// only hidden field can use this
 				v, err = r.getFieldValueByName(name, out)

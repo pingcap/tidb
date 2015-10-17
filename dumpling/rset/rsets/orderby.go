@@ -65,46 +65,112 @@ func (r *OrderByRset) String() string {
 	return strings.Join(a, ", ")
 }
 
-// CheckAndUpdateSelectList checks order by fields validity and set hidden fields to selectList.
-func (r *OrderByRset) CheckAndUpdateSelectList(selectList *plans.SelectList, tableFields []*field.ResultField) error {
+// CheckAggregate will check whether order by has aggregate function or not,
+// if has, we will add it to select list hidden field.
+func (r *OrderByRset) CheckAggregate(selectList *plans.SelectList) error {
 	for i, v := range r.By {
 		if expression.ContainAggregateFunc(v.Expr) {
-			expr, err := selectList.UpdateAggFields(v.Expr, tableFields)
+			expr, err := selectList.UpdateAggFields(v.Expr)
 			if err != nil {
 				return errors.Errorf("%s in 'order clause'", err.Error())
 			}
 
 			r.By[i].Expr = expr
-		} else {
-			if _, err := selectList.CheckReferAmbiguous(v.Expr); err != nil {
-				return errors.Errorf("Column '%s' in order statement is ambiguous", v.Expr)
-			}
+		}
+	}
+	return nil
+}
 
-			// TODO: check more ambiguous case
-			// Order by ambiguous rule:
-			//	select c1 as a, c2 as a from t order by a is ambiguous
-			//	select c1 as a, c2 as a from t order by a + 1 is ambiguous
-			//	select c1 as c2, c2 from t order by c2 is ambiguous
-			//	select c1 as c2, c2 from t order by c2 + 1 is ambiguous
+type orderByVisitor struct {
+	expression.BaseVisitor
+	selectList *plans.SelectList
+	rootIdent  *expression.Ident
+}
 
-			// TODO: use vistor to refactor all and combine following plan check.
-			names := expression.MentionedColumns(v.Expr)
-			for _, name := range names {
-				// try to find in select list
-				// TODO: mysql has confused result for this, see #555.
-				// now we use select list then order by, later we should make it easier.
-				if field.ContainFieldName(name, selectList.ResultFields, field.CheckFieldFlag) {
-					continue
-				}
+func (v *orderByVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	// Order by ambiguous rule:
+	//	select c1 as a, c2 as a from t order by a is ambiguous
+	//	select c1 as a, c2 as a from t order by a + 1 is ambiguous
+	//	select c1 as c2, c2 from t order by c2 is ambiguous
+	//	select c1 as c2, c2 from t order by c2 + 1 is not ambiguous
 
-				if !selectList.CloneHiddenField(name, tableFields) {
-					return errors.Errorf("Unknown column '%s' in 'order clause'", name)
-				}
-			}
+	// Order by identifier reference check
+	//	select c1 as c2 from t order by c2, c2 in order by references c1 in select field.
+	//	select c1 as c2 from t order by c2 + 1, c2 in order by c2 + 1 references t.c2 in from table.
+	//	select c1 as c2 from t order by sum(c2), c2 in order by sum(c2) references t.c2 in from table.
+	//	select c1 as c2 from t order by sum(1) + c2, c2 in order by sum(1) + c2 references t.c2 in from table.
+	//	select c1 as a from t order by a, a references c1 in select field.
+	//	select c1 as a from t order by sum(a), a in order by sum(a) references c1 in select field.
+
+	// TODO: unify VisitIdent for group by and order by visitor, they are little different.
+
+	var (
+		index int
+		err   error
+	)
+
+	if v.rootIdent == i {
+		// The order by is an identifier, we must check it first.
+		index, err = checkIdent(i, v.selectList, orderByClause)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if index >= 0 {
+			// identifier references a select field. use it directly.
+			// e,g. select c1 as c2 from t order by c2, here c2 references c1.
+			i.ReferScope = expression.IdentReferSelectList
+			i.ReferIndex = index
+			return i, nil
 		}
 	}
 
-	return nil
+	// find this identifier in FROM.
+	idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields, field.DefaultFieldFlag)
+	if len(idx) > 0 {
+		i.ReferScope = expression.IdentReferFromTable
+		i.ReferIndex = idx[0]
+		return i, nil
+	}
+
+	if v.rootIdent != i {
+		// This identifier is the part of the order by, check ambiguous here.
+		index, err = checkIdent(i, v.selectList, orderByClause)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// try to find in select list, we have got index using checkIdent before.
+	if index >= 0 {
+		// find in select list
+		i.ReferScope = expression.IdentReferSelectList
+		i.ReferIndex = index
+		return i, nil
+	}
+
+	// TODO: check in out query
+	// TODO: return unknown field error, but now just return directly.
+	// Because this may reference outer query.
+	return i, nil
+}
+
+func (v *orderByVisitor) VisitPosition(p *expression.Position) (expression.Expression, error) {
+	n := p.N
+	if p.N <= v.selectList.HiddenFieldOffset {
+		// this position expression is not in hidden field, no need to check
+		return p, nil
+	}
+
+	// we have added order by to hidden field before, now visit it here.
+	expr := v.selectList.Fields[n-1].Expr
+	e, err := expr.Accept(v)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v.selectList.Fields[n-1].Expr = e
+
+	return p, nil
 }
 
 // Plan get SrcPlan/OrderByDefaultPlan.
@@ -120,45 +186,28 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 		ascs []bool
 	)
 
-	fields := r.Src.GetFields()
+	visitor := &orderByVisitor{}
+	visitor.BaseVisitor.V = visitor
+	visitor.selectList = r.SelectList
+
 	for i := range r.By {
 		e := r.By[i].Expr
-		if v, ok := e.(expression.Value); ok {
-			var (
-				position   int
-				isPosition = true
-			)
 
-			switch u := v.Val.(type) {
-			case int64:
-				position = int(u)
-			case uint64:
-				position = int(u)
-			default:
-				isPosition = false
-				// only const value
-			}
+		pos, err := castPosition(e, r.SelectList, orderByClause)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
-			if isPosition {
-				if position < 1 || position > len(fields) {
-					return nil, errors.Errorf("Unknown column '%d' in 'order clause'", position)
-				}
-
-				// use Position expression for the associated field.
-				r.By[i].Expr = &expression.Position{N: position}
-			}
+		if pos != nil {
+			// use Position expression for the associated field.
+			r.By[i].Expr = pos
 		} else {
-			// Don't check ambiguous here, only check field exists or not.
-			// TODO: use visitor to refactor.
-			colNames := expression.MentionedColumns(e)
-			for _, name := range colNames {
-				if idx := field.GetResultFieldIndex(name, r.SelectList.ResultFields, field.DefaultFieldFlag); len(idx) == 0 {
-					// find in from
-					if idx = field.GetResultFieldIndex(name, r.SelectList.FromFields, field.DefaultFieldFlag); len(idx) == 0 {
-						return nil, errors.Errorf("unknown field %s", name)
-					}
-				}
+			visitor.rootIdent = castIdent(e)
+			e, err = e.Accept(visitor)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+			r.By[i].Expr = e
 		}
 
 		by = append(by, r.By[i].Expr)

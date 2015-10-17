@@ -22,7 +22,7 @@ import (
 
 // GetAggFields gets aggregate fields position map.
 func GetAggFields(fields []*field.Field) map[int]struct{} {
-	aggFields := map[int]struct{}{}
+	aggFields := make(map[int]struct{}, len(fields))
 	for i, v := range fields {
 		if expression.ContainAggregateFunc(v.Expr) {
 			aggFields[i] = struct{}{}
