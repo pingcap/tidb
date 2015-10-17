@@ -14,6 +14,7 @@
 package localstore
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -38,7 +39,7 @@ type dbStore struct {
 	keysLocked map[string]uint64
 	uuid       string
 	path       string
-	gc         *localstoreGC
+	compactor  *localstoreCompactor
 }
 
 type storeCache struct {
@@ -86,11 +87,10 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		uuid:       uuid.NewV4().String(),
 		path:       schema,
 		db:         db,
-		gc:         newLocalGC(),
+		compactor:  newLocalCompactor(localCompactorDefaultPolicy, db),
 	}
-
 	mc.cache[schema] = s
-
+	s.compactor.Start()
 	return s, nil
 }
 
@@ -141,6 +141,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 func (s *dbStore) Close() error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
+	s.compactor.Stop()
 	delete(mc.cache, s.path)
 	return s.db.Close()
 }
@@ -194,6 +195,18 @@ func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte
 	s.keysLocked[key] = tID
 
 	return nil
+}
+
+func (s *dbStore) DumpRaw() {
+	startTs := time.Now()
+	it, _ := s.db.Seek([]byte{0})
+	defer it.Release()
+	cnt := 0
+	for it.Next() {
+		cnt++
+	}
+	elapse := time.Since(startTs)
+	fmt.Println(cnt, elapse)
 }
 
 func (s *dbStore) unLockKeys(keys ...string) error {
