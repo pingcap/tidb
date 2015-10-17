@@ -39,7 +39,7 @@ type SelectFieldsRset struct {
 	SelectList *plans.SelectList
 }
 
-func fixSelectFieldsRefer(selectList *plans.SelectList) error {
+func updateSelectFieldsRefer(selectList *plans.SelectList) error {
 	visitor := newFromIdentVisitor(selectList.FromFields)
 
 	// we only fix un-hidden fields here, for hidden fields, it should be
@@ -58,7 +58,7 @@ func fixSelectFieldsRefer(selectList *plans.SelectList) error {
 // If all fields are equal to src plan fields, then gets SrcPlan.
 // Default gets SelectFieldsDefaultPlan.
 func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
-	if err := fixSelectFieldsRefer(r.SelectList); err != nil {
+	if err := updateSelectFieldsRefer(r.SelectList); err != nil {
 		return nil, errors.Trace(err)
 	}
 
