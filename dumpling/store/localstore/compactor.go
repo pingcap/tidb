@@ -135,6 +135,8 @@ L:
 
 func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.EncodedKey {
 	var ret []kv.EncodedKey
+	first := true
+	// keys are always in descending order.
 	for _, k := range keys {
 		_, ver, err := MvccDecode(k)
 		if err != nil {
@@ -145,6 +147,11 @@ func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.Enco
 		currentTs := time.Now().UnixNano() / int64(time.Millisecond)
 		// Check timeout keys.
 		if currentTs-int64(ts) >= int64(gc.policy.SafeTime) {
+			// Skip first version.
+			if first {
+				first = false
+				continue
+			}
 			ret = append(ret, k)
 		}
 	}
