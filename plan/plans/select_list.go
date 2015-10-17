@@ -124,24 +124,6 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression) (expression.Exp
 	return &expression.Position{N: index + 1, Name: name}, nil
 }
 
-// CloneHiddenField checks and clones field and result field from table fields,
-// and adds them to hidden field of select list.
-func (s *SelectList) CloneHiddenField(name string, tableFields []*field.ResultField) bool {
-	// Check and add hidden field.
-	if field.ContainFieldName(name, tableFields, field.CheckFieldFlag) {
-		resultField, _ := field.CloneFieldByName(name, tableFields, field.CheckFieldFlag)
-		f := &field.Field{
-			Expr: &expression.Ident{
-				CIStr: resultField.ColumnInfo.Name,
-			},
-		}
-		s.AddField(f, resultField)
-		return true
-	}
-
-	return false
-}
-
 // CheckReferAmbiguous checks whether an identifier reference is ambiguous or not in select list.
 // e,g, "select c1 as a, c2 as a from t group by a" is ambiguous,
 // but "select c1 as a, c1 as a from t group by a" is not.
@@ -235,6 +217,7 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 			continue
 		}
 
+		// TODO: use fromIdentVisitor to cleanup.
 		var result *field.ResultField
 		for _, name := range names {
 			idx := field.GetResultFieldIndex(name, srcFields, field.DefaultFieldFlag)
