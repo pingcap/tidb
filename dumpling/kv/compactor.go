@@ -15,15 +15,26 @@ package kv
 
 import "time"
 
+// CompactorPolicy defines gc policy of MVCC storage.
 type CompactorPolicy struct {
-	SafePoint       int
+	// SafePoint specifies
+	SafePoint int
+	// TriggerInterval specifies how often should the compactor
+	// scans outdated data.
 	TriggerInterval time.Duration
-	BatchDeleteSize int
+	// BatchDeleteCnt specifies the batch size for
+	// delete outdated data transaction.
+	BatchDeleteCnt int
 }
 
+// Compactor compacts MVCC storage.
 type Compactor interface {
+	// OnGet is the hook point on Txn.Get.
 	OnGet(k Key)
+	// OnSet is the hook point on Txn.Set
 	OnSet(k Key)
+	// OnDelete is the hook point on Txn.Delete
 	OnDelete(k Key)
+	// Compact is the function removes the given key.
 	Compact(ctx interface{}, k Key) error
 }

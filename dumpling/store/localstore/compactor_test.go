@@ -45,7 +45,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 
 	policy := kv.CompactorPolicy{
 		SafePoint:       500,
-		BatchDeleteSize: 1,
+		BatchDeleteCnt:  1,
 		TriggerInterval: 100 * time.Millisecond,
 	}
 	compactor := newLocalCompactor(policy, db)
