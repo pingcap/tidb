@@ -95,6 +95,7 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	txn.store.compactor.OnSet(k)
 	return intVal, nil
 }
 
@@ -128,7 +129,7 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	if len(val) == 0 {
 		return nil, errors.Trace(kv.ErrNotExist)
 	}
-	txn.store.gc.OnGet(k)
+	txn.store.compactor.OnGet(k)
 	return val, nil
 }
 
@@ -145,7 +146,7 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.store.gc.OnSet(k)
+	txn.store.compactor.OnSet(k)
 	return nil
 }
 

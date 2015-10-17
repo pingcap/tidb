@@ -41,3 +41,7 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 	l.n = 0
 	return kv.Version{Ver: ts}, nil
 }
+
+func LocalVersionToTimestamp(ver kv.Version) uint64 {
+	return ver.Ver >> timePrecisionOffset
+}
