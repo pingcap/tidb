@@ -132,3 +132,30 @@ func checkIdent(i *expression.Ident, selectList *plans.SelectList, clause clause
 
 	return idx[useIndex], nil
 }
+
+// fromIdentVisitor can only handle identifier which reference FROM table or outer query.
+// like in common select list, where or join on condition.
+type fromIdentVisitor struct {
+	expression.BaseVisitor
+	fromFields []*field.ResultField
+}
+
+func (v *fromIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	idx := field.GetResultFieldIndex(i.L, v.fromFields, field.DefaultFieldFlag)
+	if len(idx) > 0 {
+		i.ReferScope = expression.IdentReferFromTable
+		i.ReferIndex = idx[0]
+		return i, nil
+	}
+
+	// TODO: check in outer query
+	return i, nil
+}
+
+func newFromIdentVisitor(fromFields []*field.ResultField) *fromIdentVisitor {
+	visitor := &fromIdentVisitor{}
+	visitor.BaseVisitor.V = visitor
+	visitor.fromFields = fromFields
+
+	return visitor
+}
