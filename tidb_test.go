@@ -807,6 +807,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, 1, 2)
 
+	r = mustExecSQL(c, se, "select 1, 2 from dual where not exists (select * from t where c1=2)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
+
 	r = mustExecSQL(c, se, "select 1, 2")
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
@@ -1115,7 +1120,18 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 	c.Assert(rows[1][0], Equals, float64(930))
+}
 
+func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName).(*session)
+	r, err := se.ExecRestrictedSQL(se, "select 1;")
+	c.Assert(r, NotNil)
+	c.Assert(err, IsNil)
+	_, err = se.ExecRestrictedSQL(se, "select 1; select 2;")
+	c.Assert(err, NotNil)
+	_, err = se.ExecRestrictedSQL(se, "")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestGroupBy(c *C) {

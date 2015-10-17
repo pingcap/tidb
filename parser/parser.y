@@ -30,6 +30,7 @@ import (
 	"strings"
 	
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
@@ -2931,14 +2932,28 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
-			From:          nil,
-			Lock:	       $6.(coldef.LockType),
+			Lock:	       $5.(coldef.LockType),
 		}
+	}
+|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+		st := &stmts.SelectStmt {
+			Distinct:      $2.(bool),
+			Fields:        $3.([]*field.Field),
+			From:          nil,
+			Lock:	       $7.(coldef.LockType),
+		}
+
+		if $5 != nil {
+			st.Where = &rsets.WhereRset{Expr: $5.(expression.Expression)}
+		}
+
+		$$ = st
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
 	FromClause WhereClauseOptional SelectStmtGroup HavingClause SelectStmtOrder
@@ -2977,8 +2992,7 @@ SelectStmt:
 	}
 
 FromDual:
-	/* Empty */
-|	"FROM" "DUAL"
+	"FROM" "DUAL" 
 
 
 FromClause:
@@ -3523,9 +3537,15 @@ StatementList:
 	Statement
 	{
 		if $1 != nil {
-			s := $1.(stmt.Statement)
-			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = []stmt.Statement{ s }
+			n, ok := $1.(ast.Node)
+			if ok {
+				n.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{n}
+			} else {
+				s := $1.(stmt.Statement)
+				s.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{s}
+			}
 		}
 	}
 |	StatementList ';' Statement
@@ -3861,21 +3881,25 @@ BitValueType:
 	}
 
 StringType:
-	NationalOpt "CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
-|	NationalOpt "CHAR" OptBinary
+|	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate

@@ -207,8 +207,9 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if s := s.Having; s != nil {
 		if r, err = (&rsets.HavingRset{
-			Src:  r,
-			Expr: s.Expr}).Plan(ctx); err != nil {
+			Src:        r,
+			Expr:       s.Expr,
+			SelectList: selectList}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
