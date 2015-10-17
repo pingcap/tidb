@@ -50,6 +50,7 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
+	txn.UnionStore.TID = txn.tID
 	return txn, nil
 }
 

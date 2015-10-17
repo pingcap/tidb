@@ -190,8 +190,6 @@ func (txn *hbaseTxn) doCommit() error {
 		return nil
 	})
 
-	defer txn.close()
-
 	if err != nil {
 		return err
 	}

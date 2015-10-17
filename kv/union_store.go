@@ -21,6 +21,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/comparer"
 	"github.com/syndtr/goleveldb/leveldb/memdb"
 	"github.com/syndtr/goleveldb/leveldb/util"
+	"github.com/ngaut/log"
 )
 
 // conditionType is the type for condition consts.
@@ -60,11 +61,15 @@ func IsErrNotFound(err error) bool {
 type UnionStore struct {
 	Dirty    *memdb.DB // updates are buffered in memory
 	Snapshot Snapshot  // for read
+	TID      uint64    //transactionId
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) (UnionStore, error) {
+	//dirty := memdb.New(comparer.DefaultComparer, 1 * 1024 * 1024)
 	dirty := p.Get().(*memdb.DB)
+	log.Debugf("NewUnionStore dirty", dirty.Size())
+
 	return UnionStore{
 		Dirty:    dirty,
 		Snapshot: snapshot,
