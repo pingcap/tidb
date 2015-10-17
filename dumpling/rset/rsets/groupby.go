@@ -45,14 +45,6 @@ type groupByVisitor struct {
 	rootIdent  *expression.Ident
 }
 
-func castIdent(e expression.Expression) *expression.Ident {
-	i, ok := e.(*expression.Ident)
-	if !ok {
-		return nil
-	}
-	return i
-}
-
 func (v *groupByVisitor) checkIdent(i *expression.Ident) (int, error) {
 	idx, err := v.selectList.CheckReferAmbiguous(i)
 	if err != nil {
@@ -157,39 +149,24 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	visitor.BaseVisitor.V = visitor
 	visitor.selectList = r.SelectList
 
-	aggFields := r.SelectList.AggFields
-
 	for i, e := range r.By {
-		if v, ok := e.(expression.Value); ok {
-			var position int
-			switch u := v.Val.(type) {
-			case int64:
-				position = int(u)
-			case uint64:
-				position = int(u)
-			default:
-				continue
-			}
-
-			if position < 1 || position > len(fields) {
-				return nil, errors.Errorf("Unknown column '%d' in 'group statement'", position)
-			}
-
-			index := position - 1
-			if _, ok := aggFields[index]; ok {
-				return nil, errors.Errorf("Can't group on '%s'", fields[index])
-			}
-
-			// use Position expression for the associated field.
-			r.By[i] = &expression.Position{N: position}
-		} else {
-			visitor.rootIdent = castIdent(e)
-			by, err := e.Accept(visitor)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			r.By[i] = by
+		pos, err := castPosition(e, r.SelectList, true)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+
+		if pos != nil {
+			// use Position expression for the associated field.
+			r.By[i] = pos
+			continue
+		}
+
+		visitor.rootIdent = castIdent(e)
+		by, err := e.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.By[i] = by
 	}
 
 	return &plans.GroupByDefaultPlan{By: r.By, Src: r.Src,
