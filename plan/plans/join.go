@@ -167,7 +167,9 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			return nil, errors.Trace(err)
 		}
 		tempExpr := r.On.Clone()
-		visitor := NewIdentEvalVisitor(leftRow.Data)
+		// fill data to use whole row index for fast eval.
+		joined := append(leftRow.Data, make([]interface{}, len(r.Right.GetFields()))...)
+		visitor := NewIdentEvalVisitor(joined)
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -202,7 +204,9 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 		}
 
 		tempExpr := r.On.Clone()
-		visitor := NewIdentEvalVisitor(rightRow.Data)
+		// fill data to use whole row index for fast eval.
+		joined := append(make([]interface{}, len(r.Left.GetFields())), rightRow.Data...)
+		visitor := NewIdentEvalVisitor(joined)
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -297,7 +301,9 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 
 			if r.On != nil {
 				tempExpr := r.On.Clone()
-				visitor := NewIdentEvalVisitor(r.curRow.Data)
+				// fill data to use whole row index for fast eval.
+				joined := append(r.curRow.Data, make([]interface{}, len(r.Right.GetFields()))...)
+				visitor := NewIdentEvalVisitor(joined)
 				_, err = tempExpr.Accept(visitor)
 				if err != nil {
 					return nil, errors.Trace(err)
