@@ -70,5 +70,5 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	time.Sleep(1 * time.Second)
 	// Do background GC
 	t = count(db)
-	c.Assert(t, Equals, 2)
+	c.Assert(t, Equals, 3)
 }
