@@ -135,11 +135,11 @@ func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interf
 			return out[index], nil
 		}
 
-		// TODO: remove following getting later.
-		v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
-		if err == nil {
-			return v, nil
-		}
+		// // TODO: remove following getting later.
+		// v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
+		// if err == nil {
+		// 	return v, nil
+		// }
 
 		// try to find in outer query
 		return getIdentValueFromOuterQuery(ctx, name)
@@ -161,57 +161,19 @@ func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interf
 func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{},
 	m map[interface{}]interface{}, in []interface{}) error {
 
-	// Eval aggregate field results in ctx
-	for i := range r.AggFields {
-		if i < r.HiddenFieldOffset {
-			m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
-				if scope == expression.IdentReferFromTable {
-					return in[index], nil
-				} else if scope == expression.IdentReferSelectList {
-					return out[index], nil
-				}
-
-				//TODO: remove following getting later
-				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
-				if err == nil {
-					return v, nil
-				}
-
-				// try to find in outer query
-				return getIdentValueFromOuterQuery(ctx, name)
-			}
-		} else {
-			// having may contain aggregate function and we will add it to hidden field,
-			// and this field can retrieve the data in select list, e.g.
-			// 	select c1 as a from t having count(a) = 1
-			// because all the select list data is generated before, so we can get it
-			// when handling hidden field.
-			m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
-				if scope == expression.IdentReferFromTable {
-					return in[index], nil
-				} else if scope == expression.IdentReferSelectList {
-					return out[index], nil
-				}
-
-				// TODO: remove later
-				v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
-				if err == nil {
-					return v, nil
-				}
-
-				// TODO: remove later
-				// if we can not find in table, we will try to find in un-hidden select list
-				// only hidden field can use this
-				v, err = r.getFieldValueByName(name, out)
-				if err == nil {
-					return v, nil
-				}
-
-				// try to find in outer query
-				return getIdentValueFromOuterQuery(ctx, name)
-			}
+	m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+		if scope == expression.IdentReferFromTable {
+			return in[index], nil
+		} else if scope == expression.IdentReferSelectList {
+			return out[index], nil
 		}
 
+		// try to find in outer query
+		return getIdentValueFromOuterQuery(ctx, name)
+	}
+
+	// Eval aggregate field results in ctx
+	for i := range r.AggFields {
 		// we must evaluate aggregate function only, e.g, select col1 + count(*) in (count(*)),
 		// we cannot evaluate it directly here, because col1 + count(*) returns nil before AggDone phase,
 		// so we don't evaluate count(*) in In expression, and will get an invalid data in AggDone phase for it.

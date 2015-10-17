@@ -175,7 +175,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if s.Having != nil {
 		// `having` may contain aggregate functions, and we will add this to hidden fields.
-		if err = s.Having.CheckAndUpdateSelectList(selectList, groupBy, r.GetFields()); err != nil {
+		if err = s.Having.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -209,7 +209,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		if r, err = (&rsets.HavingRset{
 			Src:        r,
 			Expr:       s.Expr,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+			GroupBy:    groupBy}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
