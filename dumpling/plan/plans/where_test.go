@@ -45,7 +45,7 @@ func (t *testWhereSuit) TestWhere(c *C) {
 			Op: opcode.GE,
 			L: &expression.Ident{
 				CIStr:      model.NewCIStr("id"),
-				ReferScope: 2,
+				ReferScope: expression.IdentReferFromTable,
 				ReferIndex: 0,
 			},
 			R: expression.Value{
