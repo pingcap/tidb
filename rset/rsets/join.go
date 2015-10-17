@@ -98,6 +98,21 @@ func (r *JoinRset) formatNode(node interface{}) string {
 	panic(fmt.Sprintf("invalid join source %T", node))
 }
 
+func updateOnFieldsRefer(fields []*field.ResultField, e expression.Expression) (expression.Expression, error) {
+	if e == nil {
+		return nil, nil
+	}
+
+	visitor := newFromIdentVisitor(fields)
+
+	ne, err := e.Accept(visitor)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return ne, nil
+}
+
 func (r *JoinRset) buildJoinPlan(ctx context.Context, p *plans.JoinPlan, s *JoinRset) error {
 	left, leftFields, err := r.buildPlan(ctx, s.Left)
 	if err != nil {
@@ -111,7 +126,6 @@ func (r *JoinRset) buildJoinPlan(ctx context.Context, p *plans.JoinPlan, s *Join
 
 	p.Left = left
 	p.Right = right
-	p.On = s.On
 	p.Type = s.Type.String()
 
 	// if the left is not JoinPlan, the left is the leaf node,
@@ -139,6 +153,12 @@ func (r *JoinRset) buildJoinPlan(ctx context.Context, p *plans.JoinPlan, s *Join
 	} else {
 		// use right fields directly.
 		p.Fields = append(p.Fields, rightFields...)
+	}
+
+	// Update on fields refer expr by using fromIdentVisitor.
+	p.On, err = updateOnFieldsRefer(p.Fields, s.On)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil

@@ -167,7 +167,7 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			return nil, errors.Trace(err)
 		}
 		tempExpr := r.On.Clone()
-		visitor := NewIdentEvalVisitor(r.Left.GetFields(), leftRow.Data)
+		visitor := NewIdentEvalVisitor(leftRow.Data)
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -202,7 +202,7 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 		}
 
 		tempExpr := r.On.Clone()
-		visitor := NewIdentEvalVisitor(r.Right.GetFields(), rightRow.Data)
+		visitor := NewIdentEvalVisitor(rightRow.Data)
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -251,8 +251,13 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, p plan.Pl
 		} else {
 			joined = append(append(joined, row.Data...), cmpRow.Data...)
 		}
-		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
+
+		r.evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+			if scope == expression.IdentReferFromTable {
+				return joined[index], nil
+			}
+
+			return nil, errors.Errorf("invalid ident refer scope %d", scope)
 		}
 		var b bool
 		b, err = expression.EvalBoolExpr(ctx, r.On, r.evalArgs)
@@ -292,7 +297,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 
 			if r.On != nil {
 				tempExpr := r.On.Clone()
-				visitor := NewIdentEvalVisitor(r.Left.GetFields(), r.curRow.Data)
+				visitor := NewIdentEvalVisitor(r.curRow.Data)
 				_, err = tempExpr.Accept(visitor)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -323,8 +328,12 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 		joinedRow = append(append(joinedRow, r.curRow.Data...), rightRow.Data...)
 
 		if r.On != nil {
-			r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
+			r.evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+				if scope == expression.IdentReferFromTable {
+					return joinedRow[index], nil
+				}
+
+				return nil, errors.Errorf("invalid ident refer scope %d", scope)
 			}
 
 			b, err := expression.EvalBoolExpr(ctx, r.On, r.evalArgs)
@@ -359,24 +368,23 @@ func (r *JoinPlan) Close() error {
 // IdentEvalVisitor converts Ident expression to value expression.
 type IdentEvalVisitor struct {
 	expression.BaseVisitor
-	fields []*field.ResultField
-	row    []interface{}
+	row []interface{}
 }
 
 // NewIdentEvalVisitor creates a new IdentEvalVisitor.
-func NewIdentEvalVisitor(fields []*field.ResultField, row []interface{}) *IdentEvalVisitor {
-	iev := &IdentEvalVisitor{fields: fields, row: row}
+func NewIdentEvalVisitor(row []interface{}) *IdentEvalVisitor {
+	iev := &IdentEvalVisitor{row: row}
 	iev.BaseVisitor.V = iev
 	return iev
 }
 
 // VisitIdent implements Visitor interface.
 func (iev *IdentEvalVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
-	v, err := GetIdentValue(i.L, iev.fields, iev.row, field.CheckFieldFlag)
-	if err != nil {
+	if i.ReferScope == expression.IdentReferFromTable {
 		return i, nil
 	}
-	return expression.Value{Val: v}, nil
+
+	return expression.Value{Val: iev.row[i.ReferIndex]}, nil
 }
 
 // VisitBinaryOperation swaps the right side identifier to left side if left side expression is static.
