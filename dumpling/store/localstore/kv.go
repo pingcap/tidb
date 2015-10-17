@@ -103,7 +103,6 @@ func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// dbSnapshot implements MvccSnapshot interface.
 	return &dbSnapshot{
 		db:      s.db,
 		version: currentVer,
@@ -121,13 +120,13 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	}
 	txn := &dbTxn{
 		startTs:      time.Now(),
-		tID:          beginVer.Ver,
+		tid:          beginVer.Ver,
 		valid:        true,
 		store:        s,
 		version:      kv.MinVersion,
 		snapshotVals: make(map[string][]byte),
 	}
-	log.Debugf("Begin txn:%d", txn.tID)
+	log.Debugf("Begin txn:%d", txn.tid)
 	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{
 		db:      s.db,
 		version: beginVer,
@@ -164,7 +163,7 @@ func (s *dbStore) newBatch() engine.Batch {
 }
 
 // Both lock and unlock are used for simulating scenario of percolator papers.
-func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte) error {
+func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -187,12 +186,12 @@ func (s *dbStore) tryConditionLockKey(tID uint64, key string, snapshotVal []byte
 	}
 
 	// If there's newer version of this key, returns error.
-	if ver > tID {
-		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q, snapshotVal:%q", tID, key, currValue, snapshotVal)
+	if ver > tid {
+		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q, snapshotVal:%q", tid, key, currValue, snapshotVal)
 		return errors.Trace(kv.ErrConditionNotMatch)
 	}
 
-	s.keysLocked[key] = tID
+	s.keysLocked[key] = tid
 
 	return nil
 }

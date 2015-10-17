@@ -26,7 +26,6 @@ import (
 	"strings"
 	
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/stmt"
 	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
@@ -39,7 +38,7 @@ type lexer struct {
 	inj		int
 	lcol		int
 	line		int
-	list		[]stmt.Statement
+	list		[]interface{}
 	ncol		int
 	nline		int
 	sc		int
@@ -73,7 +72,7 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []stmt.Statement{
+func (l *lexer) Stmts() []interface{}{
 	return l.list
 }
 

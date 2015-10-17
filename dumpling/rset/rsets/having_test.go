@@ -35,12 +35,7 @@ func (s *testHavingRsetSuite) SetUpSuite(c *C) {
 	// expr `id > 1`
 	expr := expression.NewBinaryOperation(opcode.GT, &expression.Ident{CIStr: model.NewCIStr("id")}, expression.Value{Val: 1})
 
-	s.r = &HavingRset{Src: tblPlan, Expr: expr}
-}
-
-func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
-	resultFields := s.r.Src.GetFields()
-
+	resultFields := tblPlan.GetFields()
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
@@ -52,6 +47,13 @@ func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
 		ResultFields:      resultFields,
 		Fields:            fields,
 	}
+	s.r = &HavingRset{Src: tblPlan, Expr: expr, SelectList: selectList}
+}
+
+func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
+	resultFields := s.r.Src.GetFields()
+
+	selectList := s.r.SelectList
 
 	groupBy := []expression.Expression{}
 
