@@ -27,13 +27,13 @@ import (
 var _ kv.Compactor = (*localstoreCompactor)(nil)
 
 const (
-	deleteWorkerSize = 3
+	deleteWorkerCnt = 3
 )
 
 var localCompactorDefaultPolicy = kv.CompactorPolicy{
 	SafePoint:       20 * 1000, // in ms
 	TriggerInterval: 1 * time.Second,
-	BatchDeleteSize: 100,
+	BatchDeleteCnt:  100,
 }
 
 type localstoreCompactor struct {
@@ -94,7 +94,7 @@ L:
 				cnt++
 				batch.Delete(key)
 				// Batch delete.
-				if cnt == gc.policy.BatchDeleteSize {
+				if cnt == gc.policy.BatchDeleteCnt {
 					err := gc.db.Commit(batch)
 					if err != nil {
 						log.Error(err)
@@ -120,12 +120,10 @@ L:
 			gc.recentKeys = make(map[string]struct{})
 			gc.mu.Unlock()
 			// Do Compactor
-			if len(m) > 0 {
-				for k, _ := range m {
-					err := gc.Compact(nil, []byte(k))
-					if err != nil {
-						log.Error(err)
-					}
+			for k := range m {
+				err := gc.Compact(nil, []byte(k))
+				if err != nil {
+					log.Error(err)
 				}
 			}
 		}
@@ -143,7 +141,7 @@ func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.Enco
 			// Should not happen.
 			panic(err)
 		}
-		ts := LocalVersionToTimestamp(ver)
+		ts := localVersionToTimestamp(ver)
 		currentTs := time.Now().UnixNano() / int64(time.Millisecond)
 		// Check timeout keys.
 		if currentTs-int64(ts) >= int64(gc.policy.SafePoint) {
@@ -174,7 +172,7 @@ func (gc *localstoreCompactor) Compact(ctx interface{}, k kv.Key) error {
 func (gc *localstoreCompactor) Start() {
 	// Start workers.
 	go gc.checkExpiredKeysWorker()
-	for i := 0; i < deleteWorkerSize; i++ {
+	for i := 0; i < deleteWorkerCnt; i++ {
 		go gc.deleteWorker()
 	}
 }
