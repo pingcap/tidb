@@ -31,7 +31,7 @@ const (
 )
 
 var localCompactorDefaultPolicy = kv.CompactorPolicy{
-	SafeTime:        20 * 1000, // in ms
+	SafePoint:       20 * 1000, // in ms
 	TriggerInterval: 1 * time.Second,
 	BatchDeleteSize: 100,
 }
@@ -39,8 +39,8 @@ var localCompactorDefaultPolicy = kv.CompactorPolicy{
 type localstoreCompactor struct {
 	mu         sync.Mutex
 	recentKeys map[string]struct{}
-	stopChan   chan struct{}
-	delChan    chan kv.EncodedKey
+	stopCh     chan struct{}
+	delCh      chan kv.EncodedKey
 	ticker     *time.Ticker
 	db         engine.DB
 	policy     kv.CompactorPolicy
@@ -87,9 +87,9 @@ func (gc *localstoreCompactor) deleteWorker() {
 L:
 	for {
 		select {
-		case <-gc.stopChan:
+		case <-gc.stopCh:
 			break L
-		case key := <-gc.delChan:
+		case key := <-gc.delCh:
 			{
 				cnt++
 				batch.Delete(key)
@@ -111,7 +111,7 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 L:
 	for {
 		select {
-		case <-gc.stopChan:
+		case <-gc.stopCh:
 			break L
 		case <-gc.ticker.C:
 			log.Info("GC trigger")
@@ -146,7 +146,7 @@ func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.Enco
 		ts := LocalVersionToTimestamp(ver)
 		currentTs := time.Now().UnixNano() / int64(time.Millisecond)
 		// Check timeout keys.
-		if currentTs-int64(ts) >= int64(gc.policy.SafeTime) {
+		if currentTs-int64(ts) >= int64(gc.policy.SafePoint) {
 			// Skip first version.
 			if first {
 				first = false
@@ -166,7 +166,7 @@ func (gc *localstoreCompactor) Compact(ctx interface{}, k kv.Key) error {
 	for _, key := range gc.filterExpiredKeys(keys) {
 		// Send timeout key to deleteWorker.
 		log.Info("GC send key to deleteWorker", key)
-		gc.delChan <- key
+		gc.delCh <- key
 	}
 	return nil
 }
@@ -181,14 +181,14 @@ func (gc *localstoreCompactor) Start() {
 
 func (gc *localstoreCompactor) Stop() {
 	gc.ticker.Stop()
-	close(gc.stopChan)
+	close(gc.stopCh)
 }
 
 func newLocalCompactor(policy kv.CompactorPolicy, db engine.DB) *localstoreCompactor {
 	return &localstoreCompactor{
 		recentKeys: make(map[string]struct{}),
-		stopChan:   make(chan struct{}),
-		delChan:    make(chan kv.EncodedKey, 100),
+		stopCh:     make(chan struct{}),
+		delCh:      make(chan kv.EncodedKey, 100),
 		ticker:     time.NewTicker(policy.TriggerInterval),
 		policy:     policy,
 		db:         db,

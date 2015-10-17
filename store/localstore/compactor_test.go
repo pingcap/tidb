@@ -44,7 +44,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	store.(*dbStore).compactor.Stop()
 
 	policy := kv.CompactorPolicy{
-		SafeTime:        500,
+		SafePoint:       500,
 		BatchDeleteSize: 1,
 		TriggerInterval: 100 * time.Millisecond,
 	}
