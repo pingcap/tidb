@@ -381,10 +381,10 @@ func NewIdentEvalVisitor(row []interface{}) *IdentEvalVisitor {
 // VisitIdent implements Visitor interface.
 func (iev *IdentEvalVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
 	if i.ReferScope == expression.IdentReferFromTable {
-		return i, nil
+		return expression.Value{Val: iev.row[i.ReferIndex]}, nil
 	}
 
-	return expression.Value{Val: iev.row[i.ReferIndex]}, nil
+	return i, nil
 }
 
 // VisitBinaryOperation swaps the right side identifier to left side if left side expression is static.
