@@ -33,10 +33,25 @@ type HavingRset struct {
 	SelectList *plans.SelectList
 }
 
+// CheckAggregate will check whether order by has aggregate function or not,
+// if has, we will add it to select list hidden field.
+func (r *HavingRset) CheckAggregate(selectList *plans.SelectList) error {
+	if expression.ContainAggregateFunc(r.Expr) {
+		expr, err := selectList.UpdateAggFields(r.Expr)
+		if err != nil {
+			return errors.Errorf("%s in 'having clause'", err.Error())
+		}
+
+		r.Expr = expr
+	}
+
+	return nil
+}
+
 // CheckAndUpdateSelectList checks having fields validity and set hidden fields to selectList.
 func (r *HavingRset) CheckAndUpdateSelectList(selectList *plans.SelectList, groupBy []expression.Expression, tableFields []*field.ResultField) error {
 	if expression.ContainAggregateFunc(r.Expr) {
-		expr, err := selectList.UpdateAggFields(r.Expr, tableFields)
+		expr, err := selectList.UpdateAggFields(r.Expr)
 		if err != nil {
 			return errors.Errorf("%s in 'having clause'", err.Error())
 		}

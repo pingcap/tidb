@@ -95,36 +95,33 @@ func (s *SelectList) GetFields() []*field.ResultField {
 }
 
 // UpdateAggFields adds aggregate function resultfield to select result field list.
-func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*field.ResultField) (expression.Expression, error) {
-	// For aggregate function, the name can be in table or select list.
-	names := expression.MentionedColumns(expr)
-
-	for _, name := range names {
-		if field.ContainFieldName(name, tableFields, field.DefaultFieldFlag) {
-			continue
-		}
-
-		if field.ContainFieldName(name, s.ResultFields, field.DefaultFieldFlag) {
-			continue
-		}
-
-		return nil, errors.Errorf("Unknown column '%s'", name)
-	}
-
+func (s *SelectList) UpdateAggFields(expr expression.Expression) (expression.Expression, error) {
 	// We must add aggregate function to hidden select list
 	// and use a position expression to fetch its value later.
-	exprName := expr.String()
-	idx := field.GetResultFieldIndex(exprName, s.ResultFields, field.CheckFieldFlag)
-	if len(idx) == 0 {
-		f := &field.Field{Expr: expr}
-		resultField := &field.ResultField{Name: exprName}
-		s.AddField(f, resultField)
+	name := strings.ToLower(expr.String())
+	index := -1
+	for i := 0; i < s.HiddenFieldOffset; i++ {
+		// only check origin name, e,g. "select sum(c1) as a from t order by sum(c1)"
+		// or "select sum(c1) from t order by sum(c1)"
+		if s.ResultFields[i].ColumnInfo.Name.L == name {
+			index = i
+			break
+		}
+	}
 
-		return &expression.Position{N: len(s.Fields), Name: exprName}, nil
+	if index == -1 {
+		f := &field.Field{Expr: expr}
+		s.AddField(f, nil)
+
+		pos := len(s.Fields)
+
+		s.AggFields[pos-1] = struct{}{}
+
+		return &expression.Position{N: pos, Name: name}, nil
 	}
 
 	// select list has this field, use it directly.
-	return &expression.Position{N: idx[0] + 1, Name: exprName}, nil
+	return &expression.Position{N: index + 1, Name: name}, nil
 }
 
 // CloneHiddenField checks and clones field and result field from table fields,

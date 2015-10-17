@@ -50,7 +50,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 	//	select c1 as a, c2 as a from t group by a is ambiguous
 	//	select c1 as a, c2 as a from t group by a + 1 is ambiguous
 	//	select c1 as c2, c2 from t group by c2 is ambiguous
-	//	select c1 as c2, c2 from t group by c2 + 1 is ambiguous
+	//	select c1 as c2, c2 from t group by c2 + 1 is not ambiguous
 
 	var (
 		index int
@@ -115,9 +115,10 @@ func (v *groupByVisitor) VisitCall(c *expression.Call) (expression.Expression, e
 
 // Plan gets GroupByDefaultPlan.
 func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
-	fields := r.SelectList.Fields
+	if err := updateSelectFieldsRefer(r.SelectList); err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	r.SelectList.AggFields = GetAggFields(fields)
 	visitor := &groupByVisitor{}
 	visitor.BaseVisitor.V = visitor
 	visitor.selectList = r.SelectList
