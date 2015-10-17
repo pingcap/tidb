@@ -50,13 +50,22 @@ type clauseType int
 
 const (
 	noneClause clauseType = iota
+	onClause
+	whereClause
 	groupByClause
-	orderByClause
+	fieldListClause
 	havingClause
+	orderByClause
 )
 
 func (clause clauseType) String() string {
 	switch clause {
+	case onClause:
+		return "on clause"
+	case fieldListClause:
+		return "field list"
+	case whereClause:
+		return "where clause"
 	case groupByClause:
 		return "group statement"
 	case orderByClause:
@@ -138,24 +147,28 @@ func checkIdent(i *expression.Ident, selectList *plans.SelectList, clause clause
 type fromIdentVisitor struct {
 	expression.BaseVisitor
 	fromFields []*field.ResultField
+	clause     clauseType
 }
 
 func (v *fromIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
 	idx := field.GetResultFieldIndex(i.L, v.fromFields, field.DefaultFieldFlag)
-	if len(idx) > 0 {
+	if len(idx) == 1 {
 		i.ReferScope = expression.IdentReferFromTable
 		i.ReferIndex = idx[0]
 		return i, nil
+	} else if len(idx) > 1 {
+		return nil, errors.Errorf("Column '%s' in %s is ambiguous", i, v.clause)
 	}
 
 	// TODO: check in outer query
 	return i, nil
 }
 
-func newFromIdentVisitor(fromFields []*field.ResultField) *fromIdentVisitor {
+func newFromIdentVisitor(fromFields []*field.ResultField, clause clauseType) *fromIdentVisitor {
 	visitor := &fromIdentVisitor{}
 	visitor.BaseVisitor.V = visitor
 	visitor.fromFields = fromFields
+	visitor.clause = clause
 
 	return visitor
 }
