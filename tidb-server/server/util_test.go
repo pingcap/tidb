@@ -15,9 +15,31 @@ package server
 
 import (
 	. "github.com/pingcap/check"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 var _ = Suite(&testUtilSuite{})
 
 type testUtilSuite struct {
+}
+
+func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
+	t, err := mysql.ParseTimestamp("0000-00-00 00:00:00.0000000")
+	c.Assert(err, IsNil)
+	d := dumpBinaryDateTime(t, nil)
+	c.Assert(d, DeepEquals, []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0})
+	t, err = mysql.ParseDatetime("0000-00-00 00:00:00.0000000")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(t, nil)
+	c.Assert(d, DeepEquals, []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0})
+
+	t, err = mysql.ParseDate("0000-00-00")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(t, nil)
+	c.Assert(d, DeepEquals, []byte{4, 1, 0, 1, 1})
+
+	myDuration, err := mysql.ParseDuration("0000-00-00 00:00:00.0000000", 6)
+	c.Assert(err, IsNil)
+	d = dumpBinaryTime(myDuration.Duration)
+	c.Assert(d, DeepEquals, []byte{0})
 }
