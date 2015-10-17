@@ -26,11 +26,13 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -92,8 +94,20 @@ func Compile(src string) ([]stmt.Statement, error) {
 		log.Warnf("compiling %s, error: %v", src, l.Errors()[0])
 		return nil, errors.Trace(l.Errors()[0])
 	}
-
-	return l.Stmts(), nil
+	rawStmt := l.Stmts()
+	stmts := make([]stmt.Statement, len(rawStmt))
+	for i, v := range rawStmt {
+		if node, ok := v.(ast.Node); ok {
+			stm, err := optimizer.Compile(node)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			stmts[i] = stm
+		} else {
+			stmts[i] = v.(stmt.Statement)
+		}
+	}
+	return stmts, nil
 }
 
 // CompilePrepare compiles prepared statement, allows placeholder as expr.
@@ -112,7 +126,7 @@ func CompilePrepare(src string) (stmt.Statement, []*expression.ParamMarker, erro
 		return nil, nil, nil
 	}
 	sm := sms[0]
-	return sm, l.ParamList, nil
+	return sm.(stmt.Statement), l.ParamList, nil
 }
 
 func prepareStmt(ctx context.Context, sqlText string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {

@@ -106,11 +106,6 @@ func FastEval(v interface{}) interface{} {
 	}
 }
 
-// IsQualified returns whether name contains ".".
-func IsQualified(name string) bool {
-	return strings.Contains(name, ".")
-}
-
 // Eval is a helper function evaluates expression v and do a panic if evaluating error.
 func Eval(v Expression, ctx context.Context, env map[interface{}]interface{}) (y interface{}) {
 	var err error
