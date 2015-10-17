@@ -101,7 +101,6 @@ func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// dbSnapshot implements MvccSnapshot interface.
 	return &dbSnapshot{
 		db:      s.db,
 		version: currentVer,
