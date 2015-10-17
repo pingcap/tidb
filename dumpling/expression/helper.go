@@ -153,12 +153,11 @@ func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	if isAggregate {
 		v.exprs = append(v.exprs, c)
 	}
 
-	// iaggregate function can't use aggregate function as the arg.
+	// aggregate function can't use aggregate function as the arg.
 	n := len(v.exprs)
 	for _, e := range c.Args {
 		_, err := e.Accept(v)
