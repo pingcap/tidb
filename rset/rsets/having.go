@@ -143,6 +143,8 @@ func (v *havingVisitor) checkIdentInSelectList(i *expression.Ident) (*expression
 		return i, true, nil
 	}
 
+	lastIndex := -1
+	var lastFieldName string
 	// we may meet this select c1 as c2 from t having c1, so we must check origin field name too.
 	for index := 0; index < v.selectList.HiddenFieldOffset; index++ {
 		e := castIdent(v.selectList.Fields[index].Expr)
@@ -163,14 +165,25 @@ func (v *havingVisitor) checkIdentInSelectList(i *expression.Ident) (*expression
 			return i, true, nil
 		}
 
-		// we may meet select t1.c as a from t1, t2 having c, must check ambiguous here
-		idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields, field.DefaultFieldFlag)
-		if len(idx) > 1 {
+		if lastIndex == -1 {
+			lastIndex = index
+			lastFieldName = e.L
+			continue
+		}
+
+		// we may meet select t1.c as a, t2.c as b from t1, t2 having c, must check ambiguous here
+		if !field.CheckFieldsEqual(lastFieldName, e.L) {
 			return i, false, errors.Errorf("Column '%s' in having clause is ambiguous", i)
 		}
 
 		i.ReferScope = expression.IdentReferSelectList
 		i.ReferIndex = index
+		return i, true, nil
+	}
+
+	if lastIndex != -1 {
+		i.ReferScope = expression.IdentReferSelectList
+		i.ReferIndex = lastIndex
 		return i, true, nil
 	}
 
