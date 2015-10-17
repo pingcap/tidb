@@ -90,9 +90,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 	}
 
 	// TODO: check in out query
-	// TODO: return unknown field error, but now just return directly.
-	// Because this may reference outer query.
-	return i, nil
+	return i, errors.Errorf("Unknown column '%s' in 'group statement'", i)
 }
 
 func (v *groupByVisitor) VisitCall(c *expression.Call) (expression.Expression, error) {
