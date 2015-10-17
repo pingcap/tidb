@@ -174,7 +174,12 @@ func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error
 func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("delete key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
-	return txn.UnionStore.Delete(k)
+	err := txn.UnionStore.Delete(k)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn.store.compactor.OnDelete(k)
+	return nil
 }
 
 func (txn *dbTxn) each(f func(iterator.Iterator) error) error {

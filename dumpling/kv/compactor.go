@@ -16,7 +16,7 @@ package kv
 import "time"
 
 type CompactorPolicy struct {
-	SafeTime        int
+	SafePoint       int
 	TriggerInterval time.Duration
 	BatchDeleteSize int
 }

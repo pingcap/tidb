@@ -164,7 +164,6 @@ type Storage interface {
 	Close() error
 	// Storage's unique ID
 	UUID() string
-	DumpRaw()
 }
 
 // FnKeyCmp is the function for iterator the keys
