@@ -882,6 +882,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
 
+	mustExecFailed(c, se, "select * from t1 left join t2 on t1.c1 = t3.c3 left join on t3 on t1.c1 = t2.c2")
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
