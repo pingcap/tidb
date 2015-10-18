@@ -160,6 +160,11 @@ func (v *fromIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expressio
 		return nil, errors.Errorf("Column '%s' in %s is ambiguous", i, v.clause)
 	}
 
+	if v.clause == onClause {
+		// on clause can't check outer query.
+		return nil, errors.Errorf("Unknown column '%s' in '%s'", i, v.clause)
+	}
+
 	// TODO: check in outer query
 	return i, nil
 }
