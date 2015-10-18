@@ -155,7 +155,7 @@ func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 }
 
 func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) {
-	visitor := newJoinIdentVisitor(r.Left.GetFields(), 0)
+	visitor := newJoinIdentVisitor(0)
 	for {
 		if r.cursor < len(r.matchedRows) {
 			row = r.matchedRows[r.cursor]
@@ -190,7 +190,7 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 }
 
 func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error) {
-	visitor := newJoinIdentVisitor(r.Right.GetFields(), len(r.Left.GetFields()))
+	visitor := newJoinIdentVisitor(len(r.Left.GetFields()))
 	for {
 		if r.cursor < len(r.matchedRows) {
 			row = r.matchedRows[r.cursor]
@@ -282,7 +282,7 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, p plan.Pl
 }
 
 func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error) {
-	visitor := newJoinIdentVisitor(r.Left.GetFields(), 0)
+	visitor := newJoinIdentVisitor(0)
 	for {
 		if r.curRow == nil {
 			r.curRow, err = r.Left.Next(ctx)
@@ -362,14 +362,13 @@ func (r *JoinPlan) Close() error {
 // joinIdentVisitor converts Ident expression to value expression in ON expression.
 type joinIdentVisitor struct {
 	expression.BaseVisitor
-	fields []*field.ResultField
 	row    []interface{}
 	offset int
 }
 
 // newJoinIdentVisitor creates a new joinIdentVisitor.
-func newJoinIdentVisitor(fields []*field.ResultField, offset int) *joinIdentVisitor {
-	iev := &joinIdentVisitor{fields: fields, offset: offset}
+func newJoinIdentVisitor(offset int) *joinIdentVisitor {
+	iev := &joinIdentVisitor{offset: offset}
 	iev.BaseVisitor.V = iev
 	return iev
 }

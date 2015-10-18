@@ -135,12 +135,6 @@ func (r *GroupByDefaultPlan) evalNoneAggFields(ctx context.Context, out []interf
 			return out[index], nil
 		}
 
-		// // TODO: remove following getting later.
-		// v, err := GetIdentValue(name, r.Src.GetFields(), in, field.DefaultFieldFlag)
-		// if err == nil {
-		// 	return v, nil
-		// }
-
 		// try to find in outer query
 		return getIdentValueFromOuterQuery(ctx, name)
 	}
