@@ -241,11 +241,11 @@ func (txn *hbaseTxn) Rollback() error {
 }
 
 func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
-	//	for _, key := range keys {
-	//		key = kv.EncodeKey(key)
-	//		if err := txn.markOrigin(key); err != nil {
-	//			return err
-	//		}
-	//	}
+	for _, key := range keys {
+		key = kv.EncodeKey(key)
+		if err := txn.Txn.LockRow(txn.storeName, key); err != nil {
+			return err
+		}
+	}
 	return nil
 }
