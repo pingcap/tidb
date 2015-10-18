@@ -110,37 +110,21 @@ func castPosition(e expression.Expression, selectList *plans.SelectList, clause 
 }
 
 func checkIdent(i *expression.Ident, selectList *plans.SelectList, clause clauseType) (int, error) {
-	idx, err := selectList.CheckReferAmbiguous(i)
+	index, err := selectList.GetIndex(i)
 	if err != nil {
 		return -1, errors.Errorf("Column '%s' in %s is ambiguous", i, clause)
-	} else if len(idx) == 0 {
+	} else if index == -1 {
 		return -1, nil
 	}
 
-	// this identifier may reference multi fields.
-	// e.g, select c1 as a, c2 + 1 as a from t group by a,
-	// we will use the first one which is not an identifer.
-	// so, for select c1 as a, c2 + 1 as a from t group by a, we will use c2 + 1.
-
-	useIndex := 0
-	found := false
-	for _, index := range idx {
-		if clause == groupByClause {
-			// group by can not reference aggregate fields
-			if _, ok := selectList.AggFields[index]; ok {
-				return -1, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
-			}
-		}
-
-		if !found {
-			if castIdent(selectList.Fields[index].Expr) == nil {
-				useIndex = index
-				found = true
-			}
+	if clause == groupByClause {
+		// group by can not reference aggregate fields
+		if _, ok := selectList.AggFields[index]; ok {
+			return -1, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
 		}
 	}
 
-	return idx[useIndex], nil
+	return index, nil
 }
 
 // fromIdentVisitor can only handle identifier which reference FROM table or outer query.

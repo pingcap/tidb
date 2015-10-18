@@ -1142,6 +1142,9 @@ func (s *testSessionSuite) TestGroupBy(c *C) {
 	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
 	mustExecSQL(c, se, "insert into t values (1,1), (2,2), (1,2), (1,3)")
 	mustExecMatch(c, se, "select nullif (count(*), 2);", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select 1 as a, sum(c1) as a from t group by a", [][]interface{}{{1, 5}})
+	mustExecMatch(c, se, "select c1 as a, 1 as a, sum(c1) as a from t group by a", [][]interface{}{{1, 1, 5}})
+	mustExecMatch(c, se, "select c1 as a, 1 as a, c2 as a from t group by a;", [][]interface{}{{1, 1, 1}})
 
 	mustExecMatch(c, se, "select c1 as c2, c2 from t group by c2 + 1", [][]interface{}{{1, 1}, {2, 2}, {1, 3}})
 	mustExecMatch(c, se, "select c1 as c2, count(c1) from t group by c2", [][]interface{}{{1, 1}, {2, 2}, {1, 1}})

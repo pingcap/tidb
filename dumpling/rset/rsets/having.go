@@ -137,7 +137,7 @@ func (v *havingVisitor) checkIdentInSelectList(i *expression.Ident) (*expression
 
 	if index >= 0 {
 		// identifier references a select field. use it directly.
-		// e,g. select c1 as c2 from t order by c2, here c2 references c1.
+		// e,g. select c1 as c2 from t having c2, here c2 references c1.
 		i.ReferScope = expression.IdentReferSelectList
 		i.ReferIndex = index
 		return i, true, nil

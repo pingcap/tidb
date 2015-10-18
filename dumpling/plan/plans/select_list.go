@@ -124,35 +124,41 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression) (expression.Exp
 	return &expression.Position{N: index + 1, Name: name}, nil
 }
 
-// CheckReferAmbiguous checks whether an identifier reference is ambiguous or not in select list.
+// GetIndex tries to find the index where contains the indentifier.
+// It checks whether an identifier reference is ambiguous or not in select list.
 // e,g, "select c1 as a, c2 as a from t group by a" is ambiguous,
 // but "select c1 as a, c1 as a from t group by a" is not.
-// For MySQL "select c1 as a, c2 + 1 as a from t group by a" is not ambiguous too,
-// so we will only check identifier too.
-// If no ambiguous, nil means expr refers none in select list, else an indices for fields have the same name in select list returns.
-func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) ([]int, error) {
+// "select c1 as a, c2 + 1 as a from t group by a" is not ambiguous too,
+// If no ambiguous, -1 means expr refers none in select list, else an index for first match.
+// GetIndex will break the check when finding first matching which is not an indentifier,
+// or an index for an identifier field in the end, -1 means none found.
+func (s *SelectList) GetIndex(expr expression.Expression) (int, error) {
 	if _, ok := expr.(*expression.Ident); !ok {
-		return nil, nil
+		return -1, nil
 	}
 
 	name := expr.String()
 	if field.IsQualifiedName(name) {
 		// name is qualified, no need to check
-		return nil, nil
+		return -1, nil
 	}
 
+	//	select c1 as a, 1 as a, c2 as a from t order by a is not ambiguous.
+	//	select c1 as a, c2 as a from t order by a is ambiguous.
+	//	select 1 as a, c1 as a from t order by a is not ambiguous.
+	//	select c1 as a, sum(c1) as a from t group by a is error.
+	//	select c1 as a, 1 as a, sum(c1) as a from t group by a is not error.
+	// 	so we will break the check if matching a none identifier field.
 	lastIndex := -1
-	var idx []int
 	// only check origin select list, no hidden field.
 	for i := 0; i < s.HiddenFieldOffset; i++ {
 		if !strings.EqualFold(s.ResultFields[i].Name, name) {
 			continue
 		}
 
-		idx = append(idx, i)
 		if _, ok := s.Fields[i].Expr.(*expression.Ident); !ok {
-			// not identfier, no check
-			continue
+			// not identfier, return directly.
+			return i, nil
 		}
 
 		if lastIndex == -1 {
@@ -164,18 +170,18 @@ func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) ([]int, err
 		// check origin name, e,g. "select c1 as c2, c2 from t group by c2" is ambiguous.
 
 		if s.ResultFields[i].ColumnInfo.Name.L != s.ResultFields[lastIndex].ColumnInfo.Name.L {
-			return nil, errors.Errorf("refer %s is ambiguous", expr)
+			return -1, errors.Errorf("refer %s is ambiguous", expr)
 		}
 
 		// check table name, e.g, "select t.c1, c1 from t group by c1" is not ambiguous.
 		if s.ResultFields[i].TableName != s.ResultFields[lastIndex].TableName {
-			return nil, errors.Errorf("refer %s is ambiguous", expr)
+			return -1, errors.Errorf("refer %s is ambiguous", expr)
 		}
 
 		// TODO: check database name if possible.
 	}
 
-	return idx, nil
+	return lastIndex, nil
 }
 
 // ResolveSelectList gets fields and result fields from selectFields and srcFields,
