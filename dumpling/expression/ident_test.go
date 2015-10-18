@@ -57,7 +57,7 @@ func (s *testIdentSuite) TestIdent(c *C) {
 	c.Assert(v, Equals, 1)
 
 	delete(m, ExprEvalIdentFunc)
-	e.ReferScope = 1
+	e.ReferScope = IdentReferSelectList
 	e.ReferIndex = 1
 	m[ExprEvalIdentReferFunc] = func(string, int, int) (interface{}, error) {
 		return 2, nil
