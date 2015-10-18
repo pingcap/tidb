@@ -46,6 +46,7 @@ func castIdent(e expression.Expression) *expression.Ident {
 	return i
 }
 
+// TODO: export clause type and move to plan?
 type clauseType int
 
 const (
