@@ -152,7 +152,6 @@ func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) 
 		v.exprs = append(v.exprs, c)
 	}
 
-	// aggregate function can't use aggregate function as the arg.
 	n := len(v.exprs)
 	for _, e := range c.Args {
 		_, err := e.Accept(v)
@@ -161,7 +160,8 @@ func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) 
 		}
 	}
 
-	if len(v.exprs) != n {
+	if isAggregate && len(v.exprs) != n {
+		// aggregate function can't use aggregate function as the arg.
 		// here means we have aggregate function in arg.
 		return nil, errors.Errorf("Invalid use of group function")
 	}
