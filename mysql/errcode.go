@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package mysql
 
 // MySQL error code.
 // This value is numeric. It is not portable to other database systems.

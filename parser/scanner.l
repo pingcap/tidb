@@ -27,7 +27,7 @@ import (
 	
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/stringutil"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 type lexer struct {

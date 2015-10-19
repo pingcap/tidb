@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // FloatOpt is used for parsing floating-point type option from SQL.
