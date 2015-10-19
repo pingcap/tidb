@@ -59,8 +59,8 @@ type Join struct {
 
 // Accept implements Node Accept interface.
 func (j *Join) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(j) {
-		return j, v.OK()
+	if skipChildren, ok := v.Enter(j); skipChildren {
+		return j, ok
 	}
 	node, ok := j.Left.Accept(v)
 	if !ok {
@@ -94,8 +94,8 @@ type TableName struct {
 
 // Accept implements Node Accept interface.
 func (tr *TableName) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(tr) {
-		return tr, v.OK()
+	if skipChildren, ok := v.Enter(tr); skipChildren {
+		return tr, ok
 	}
 	return v.Leave(tr)
 }
@@ -114,8 +114,8 @@ type TableSource struct {
 
 // Accept implements Node Accept interface.
 func (ts *TableSource) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(ts) {
-		return ts, v.OK()
+	if skipChildren, ok := v.Enter(ts); skipChildren {
+		return ts, ok
 	}
 	node, ok := ts.Source.Accept(v)
 	if !ok {
@@ -135,8 +135,8 @@ type UnionClause struct {
 
 // Accept implements Node Accept interface.
 func (uc *UnionClause) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(uc) {
-		return uc, v.OK()
+	if skipChildren, ok := v.Enter(uc); skipChildren {
+		return uc, ok
 	}
 	node, ok := uc.Select.Accept(v)
 	if !ok {
@@ -165,8 +165,8 @@ type WildCardField struct {
 
 // Accept implements Node Accept interface.
 func (wf *WildCardField) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(wf) {
-		return wf, v.OK()
+	if skipChildren, ok := v.Enter(wf); skipChildren {
+		return wf, ok
 	}
 	if wf.Table != nil {
 		node, ok := wf.Table.Accept(v)
@@ -194,8 +194,8 @@ type SelectField struct {
 
 // Accept implements Node Accept interface.
 func (sf *SelectField) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(sf) {
-		return sf, v.OK()
+	if skipChildren, ok := v.Enter(sf); skipChildren {
+		return sf, ok
 	}
 	if sf.Expr != nil {
 		node, ok := sf.Expr.Accept(v)
@@ -217,8 +217,8 @@ type OrderByItem struct {
 
 // Accept implements Node Accept interface.
 func (ob *OrderByItem) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(ob) {
-		return ob, v.OK()
+	if skipChildren, ok := v.Enter(ob); skipChildren {
+		return ob, ok
 	}
 	node, ok := ob.Expr.Accept(v)
 	if !ok {
@@ -261,8 +261,8 @@ type SelectStmt struct {
 
 // Accept implements Node Accept interface.
 func (sn *SelectStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(sn) {
-		return sn, v.OK()
+	if skipChildren, ok := v.Enter(sn); skipChildren {
+		return sn, ok
 	}
 	for i, val := range sn.Fields {
 		node, ok := val.Accept(v)
@@ -331,8 +331,8 @@ type Assignment struct {
 
 // Accept implements Node Accept interface.
 func (as *Assignment) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(as) {
-		return as, v.OK()
+	if skipChildren, ok := v.Enter(as); skipChildren {
+		return as, ok
 	}
 	node, ok := as.Column.Accept(v)
 	if !ok {
@@ -372,8 +372,8 @@ type InsertStmt struct {
 
 // Accept implements Node Accept interface.
 func (in *InsertStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(in) {
-		return in, v.OK()
+	if skipChildren, ok := v.Enter(in); skipChildren {
+		return in, ok
 	}
 	for i, val := range in.Columns {
 		node, ok := val.Accept(v)
@@ -434,8 +434,8 @@ type DeleteStmt struct {
 
 // Accept implements Node Accept interface.
 func (de *DeleteStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(de) {
-		return de, v.OK()
+	if skipChildren, ok := v.Enter(de); skipChildren {
+		return de, ok
 	}
 
 	node, ok := de.TableRefs.Accept(v)
@@ -493,8 +493,8 @@ type UpdateStmt struct {
 
 // Accept implements Node Accept interface.
 func (up *UpdateStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(up) {
-		return up, v.OK()
+	if skipChildren, ok := v.Enter(up); skipChildren {
+		return up, ok
 	}
 	node, ok := up.TableRefs.Accept(v)
 	if !ok {
@@ -541,8 +541,8 @@ type Limit struct {
 
 // Accept implements Node Accept interface.
 func (l *Limit) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(l) {
-		return l, v.OK()
+	if skipChildren, ok := v.Enter(l); skipChildren {
+		return l, ok
 	}
 	return v.Leave(l)
 }
