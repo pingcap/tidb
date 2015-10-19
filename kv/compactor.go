@@ -23,7 +23,7 @@ type CompactPolicy struct {
 	// scans outdated data.
 	TriggerInterval time.Duration
 	// BatchDeleteCnt specifies the batch size for
-	// delete outdated data transaction.
+	// deleting outdated data transaction.
 	BatchDeleteCnt int
 }
 
@@ -31,9 +31,9 @@ type CompactPolicy struct {
 type Compactor interface {
 	// OnGet is the hook point on Txn.Get.
 	OnGet(k Key)
-	// OnSet is the hook point on Txn.Set
+	// OnSet is the hook point on Txn.Set.
 	OnSet(k Key)
-	// OnDelete is the hook point on Txn.Delete
+	// OnDelete is the hook point on Txn.Delete.
 	OnDelete(k Key)
 	// Compact is the function removes the given key.
 	Compact(ctx interface{}, k Key) error
