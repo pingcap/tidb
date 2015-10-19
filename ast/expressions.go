@@ -26,8 +26,9 @@ var (
 	_ ExprNode = &CaseExpr{}
 	_ ExprNode = &SubqueryExpr{}
 	_ ExprNode = &CompareSubqueryExpr{}
-	_ ExprNode = &ColumnRefExpr{}
+	_ ExprNode = &ColumnNameExpr{}
 	_ ExprNode = &DefaultExpr{}
+	_ ExprNode = &IdentifierExpr{}
 	_ ExprNode = &ExistsSubqueryExpr{}
 	_ ExprNode = &PatternInExpr{}
 	_ ExprNode = &IsNullExpr{}
@@ -58,7 +59,7 @@ func (val *ValueExpr) IsStatic() bool {
 // Accept implements Node interface.
 func (val *ValueExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(val) {
-		return val, false
+		return val, v.OK()
 	}
 	return v.Leave(val)
 }
@@ -79,7 +80,7 @@ type BetweenExpr struct {
 // Accept implements Node interface.
 func (b *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(b) {
-		return b, false
+		return b, v.OK()
 	}
 
 	node, ok := b.Expr.Accept(v)
@@ -122,7 +123,7 @@ type BinaryOperationExpr struct {
 // Accept implements Node interface.
 func (o *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(o) {
-		return o, false
+		return o, v.OK()
 	}
 
 	node, ok := o.L.Accept(v)
@@ -157,7 +158,7 @@ type WhenClause struct {
 // Accept implements Node Accept interface.
 func (w *WhenClause) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(w) {
-		return w, false
+		return w, v.OK()
 	}
 	node, ok := w.Expr.Accept(v)
 	if !ok {
@@ -192,7 +193,7 @@ type CaseExpr struct {
 // Accept implements Node Accept interface.
 func (f *CaseExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(f) {
-		return f, false
+		return f, v.OK()
 	}
 	if f.Value != nil {
 		node, ok := f.Value.Accept(v)
@@ -244,7 +245,7 @@ type SubqueryExpr struct {
 // Accept implements Node Accept interface.
 func (sq *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(sq) {
-		return sq, false
+		return sq, v.OK()
 	}
 	node, ok := sq.Query.Accept(v)
 	if !ok {
@@ -273,7 +274,7 @@ type CompareSubqueryExpr struct {
 // Accept implements Node Accept interface.
 func (cs *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(cs) {
-		return cs, false
+		return cs, v.OK()
 	}
 	node, ok := cs.L.Accept(v)
 	if !ok {
@@ -288,19 +289,40 @@ func (cs *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(cs)
 }
 
-// ColumnRefExpr represents a column reference.
-type ColumnRefExpr struct {
-	exprNode
-
-	// Name is the referenced column name.
-	Name model.CIStr
+// ColumnName represents column name.
+type ColumnName struct {
+	node
+	Schema model.CIStr
+	Table  model.CIStr
+	Name   model.CIStr
 }
 
 // Accept implements Node Accept interface.
-func (cr *ColumnRefExpr) Accept(v Visitor) (Node, bool) {
+func (cn *ColumnName) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(cn) {
+		return cn, v.OK()
+	}
+	return v.Leave(cn)
+}
+
+// ColumnNameExpr represents a column name expression.
+type ColumnNameExpr struct {
+	exprNode
+
+	// Name is the referenced column name.
+	Name *ColumnName
+}
+
+// Accept implements Node Accept interface.
+func (cr *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(cr) {
+		return cr, v.OK()
+	}
+	node, ok := cr.Name.Accept(v)
+	if !ok {
 		return cr, false
 	}
+	cr.Name = node.(*ColumnName)
 	return v.Leave(cr)
 }
 
@@ -308,15 +330,37 @@ func (cr *ColumnRefExpr) Accept(v Visitor) (Node, bool) {
 type DefaultExpr struct {
 	exprNode
 	// Name is the column name.
-	Name string
+	Name *ColumnName
 }
 
 // Accept implements Node Accept interface.
 func (d *DefaultExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(d) {
-		return d, false
+		return d, v.OK()
+	}
+	if d.Name != nil {
+		node, ok := d.Name.Accept(v)
+		if !ok {
+			return d, false
+		}
+		d.Name = node.(*ColumnName)
 	}
 	return v.Leave(d)
+}
+
+// IdentifierExpr represents an identifier expression.
+type IdentifierExpr struct {
+	exprNode
+	// Name is the identifier name.
+	Name model.CIStr
+}
+
+// Accept implements Node Accept interface.
+func (i *IdentifierExpr) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(i) {
+		return i, v.OK()
+	}
+	return v.Leave(i)
 }
 
 // ExistsSubqueryExpr is the expression for "exists (select ...)".
@@ -330,7 +374,7 @@ type ExistsSubqueryExpr struct {
 // Accept implements Node Accept interface.
 func (es *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(es) {
-		return es, false
+		return es, v.OK()
 	}
 	node, ok := es.Sel.Accept(v)
 	if !ok {
@@ -356,7 +400,7 @@ type PatternInExpr struct {
 // Accept implements Node Accept interface.
 func (pi *PatternInExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(pi) {
-		return pi, false
+		return pi, v.OK()
 	}
 	node, ok := pi.Expr.Accept(v)
 	if !ok {
@@ -392,7 +436,7 @@ type IsNullExpr struct {
 // Accept implements Node Accept interface.
 func (is *IsNullExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(is) {
-		return is, false
+		return is, v.OK()
 	}
 	node, ok := is.Expr.Accept(v)
 	if !ok {
@@ -421,7 +465,7 @@ type IsTruthExpr struct {
 // Accept implements Node Accept interface.
 func (is *IsTruthExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(is) {
-		return is, false
+		return is, v.OK()
 	}
 	node, ok := is.Expr.Accept(v)
 	if !ok {
@@ -445,12 +489,14 @@ type PatternLikeExpr struct {
 	Pattern ExprNode
 	// Not is true, the expression is "not like".
 	Not bool
+
+	Escape byte
 }
 
 // Accept implements Node Accept interface.
 func (pl *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(pl) {
-		return pl, false
+		return pl, v.OK()
 	}
 	node, ok := pl.Expr.Accept(v)
 	if !ok {
@@ -479,7 +525,7 @@ type ParamMarkerExpr struct {
 // Accept implements Node Accept interface.
 func (pm *ParamMarkerExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(pm) {
-		return pm, false
+		return pm, v.OK()
 	}
 	return v.Leave(pm)
 }
@@ -494,7 +540,7 @@ type ParenthesesExpr struct {
 // Accept implements Node Accept interface.
 func (p *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(p) {
-		return p, false
+		return p, v.OK()
 	}
 	if p.Expr != nil {
 		node, ok := p.Expr.Accept(v)
@@ -530,7 +576,7 @@ func (p *PositionExpr) IsStatic() bool {
 // Accept implements Node Accept interface.
 func (p *PositionExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(p) {
-		return p, false
+		return p, v.OK()
 	}
 	return v.Leave(p)
 }
@@ -549,7 +595,7 @@ type PatternRegexpExpr struct {
 // Accept implements Node Accept interface.
 func (p *PatternRegexpExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(p) {
-		return p, false
+		return p, v.OK()
 	}
 	node, ok := p.Expr.Accept(v)
 	if !ok {
@@ -580,7 +626,7 @@ type RowExpr struct {
 // Accept implements Node Accept interface.
 func (r *RowExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(r) {
-		return r, false
+		return r, v.OK()
 	}
 	for i, val := range r.Values {
 		node, ok := val.Accept(v)
@@ -614,7 +660,7 @@ type UnaryOperationExpr struct {
 // Accept implements Node Accept interface.
 func (u *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(u) {
-		return u, false
+		return u, v.OK()
 	}
 	node, ok := u.V.Accept(v)
 	if !ok {
@@ -633,19 +679,19 @@ func (u *UnaryOperationExpr) IsStatic() bool {
 type ValuesExpr struct {
 	exprNode
 	// model.CIStr is column name.
-	Column *ColumnRefExpr
+	Column *ColumnName
 }
 
 // Accept implements Node Accept interface.
 func (va *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(va) {
-		return va, false
+		return va, v.OK()
 	}
 	node, ok := va.Column.Accept(v)
 	if !ok {
 		return va, false
 	}
-	va.Column = node.(*ColumnRefExpr)
+	va.Column = node.(*ColumnName)
 	return v.Leave(va)
 }
 
@@ -663,7 +709,7 @@ type VariableExpr struct {
 // Accept implements Node Accept interface.
 func (va *VariableExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(va) {
-		return va, false
+		return va, v.OK()
 	}
 	return v.Leave(va)
 }
