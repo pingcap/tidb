@@ -475,8 +475,8 @@ import (
 	SubSelect		"Sub Select"
 	Symbol			"Constraint Symbol"
 	SystemVariable		"System defined variable name"
-	TableAlias		"table alias name"
-	TableAliasOpt 		"table alias name optional"
+	TableAsName		"table alias name"
+	TableAsNameOpt 		"table alias name optional"
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
 	TableFactor 		"table factor"
@@ -1503,13 +1503,13 @@ Field:
 	}
 |	Expression FieldAsNameOpt
 	{
-		$$ = &ast.SelectField{Expr: $1.(ast.ExprNode), Alias: $2.(string)}
+		$$ = &ast.SelectField{Expr: $1.(ast.ExprNode), AsName: $2.(model.CIStr)}
 	}
 
 FieldAsNameOpt:
 	/* EMPTY */
 	{
-		$$ = ""
+		$$ = model.CIStr{}
 	}
 |	FieldAsName
 	{
@@ -2668,36 +2668,36 @@ TableRef:
 	}
 
 TableFactor:
-	TableName TableAliasOpt
+	TableName TableAsNameOpt
 	{
-		$$ = &ast.TableSource{Source: $1.(*ast.TableName), Alias: $2.(string)}
+		$$ = &ast.TableSource{Source: $1.(*ast.TableName), AsName: $2.(model.CIStr)}
 	}
-|	'(' SelectStmt ')' TableAlias
+|	'(' SelectStmt ')' TableAsName
 	{
-		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), Alias: $4.(string)}
+		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
 |	'(' TableRefs ')'
 	{
 		$$ = $2
 	}
 
-TableAliasOpt:
+TableAsNameOpt:
 	{
-		$$ = ""
+		$$ = model.CIStr{}
 	}
-|	TableAlias 
+|	TableAsName
 	{
 		$$ = $1
 	}
 
-TableAlias:
+TableAsName:
 	Identifier
 	{
-		$$ = $1
+		$$ = model.NewCIStr($1.(string))
 	}
 |	"AS" Identifier
 	{
-		$$ = $2
+		$$ = model.NewCIStr($2.(string))
 	}
 
 JoinTable:

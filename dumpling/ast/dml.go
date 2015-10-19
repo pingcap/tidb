@@ -108,8 +108,8 @@ type TableSource struct {
 	// a SubQuery, or a JoinNode.
 	Source Node
 
-	// Alias is the alias name of the table source.
-	Alias string
+	// AsName is the as name of the table source.
+	AsName model.CIStr
 }
 
 // Accept implements Node Accept interface.
@@ -188,8 +188,8 @@ type SelectField struct {
 	WildCard *WildCardField
 	// If Expr is not nil, WildCard will be nil.
 	Expr ExprNode
-	// Alias name for Expr.
-	Alias string
+	// AsName name for Expr.
+	AsName model.CIStr
 }
 
 // Accept implements Node Accept interface.
@@ -213,6 +213,15 @@ type OrderByItem struct {
 
 	Expr ExprNode
 	Desc bool
+}
+
+// ResultField is computed from a parsed select statement.
+type ResultField struct {
+	Column       *model.ColumnInfo
+	ColumnAsName model.CIStr
+	Table        *model.TableInfo
+	TableAsName  model.CIStr
+	DBName       model.CIStr
 }
 
 // Accept implements Node Accept interface.
@@ -257,6 +266,9 @@ type SelectStmt struct {
 	UnionOrderBy []*OrderByItem
 	// Limit for union select.
 	UnionLimit *Limit
+
+	// ResultFields
+	ResultFields []*ResultField
 }
 
 // Accept implements Node Accept interface.
