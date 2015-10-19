@@ -158,10 +158,11 @@ func (r *OrderByDefaultPlan) fetchAll(ctx context.Context) error {
 		if row == nil {
 			break
 		}
-		evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			v, err := GetIdentValue(name, r.ResultFields, row.Data, field.CheckFieldFlag)
-			if err == nil {
-				return v, nil
+		evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+			if scope == expression.IdentReferFromTable {
+				return row.FromData[index], nil
+			} else if scope == expression.IdentReferSelectList {
+				return row.Data[index], nil
 			}
 
 			// try to find in outer query
