@@ -317,6 +317,28 @@ func (sn *SelectStmt) Accept(v Visitor) (Node, bool) {
 		}
 		sn.Limit = node.(*Limit)
 	}
+
+	for i, val := range sn.Unions {
+		node, ok := val.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.Unions[i] = node.(*UnionClause)
+	}
+	for i, val := range sn.UnionOrderBy {
+		node, ok := val.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.UnionOrderBy[i] = node.(*OrderByItem)
+	}
+	if sn.UnionLimit != nil {
+		node, ok := sn.UnionLimit.Accept(v)
+		if !ok {
+			return sn, false
+		}
+		sn.UnionLimit = node.(*Limit)
+	}
 	return v.Leave(sn)
 }
 
