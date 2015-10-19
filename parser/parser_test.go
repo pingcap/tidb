@@ -532,6 +532,17 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+
+		// For grant statement
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 	}
 	s.RunTest(c, table)
 }
