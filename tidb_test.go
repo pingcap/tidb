@@ -1199,6 +1199,7 @@ func (s *testSessionSuite) TestHaving(c *C) {
 
 	mustExecMatch(c, se, "select sum(c1) from t group by c1 having sum(c1)", [][]interface{}{{1}, {2}, {3}})
 	mustExecMatch(c, se, "select sum(c1) - 1 from t group by c1 having sum(c1) - 1", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select 1 from t group by c1 having sum(abs(c2 + c3)) = c1", [][]interface{}{{1}})
 
 	mustExecFailed(c, se, "select c1 from t having c2")
 	mustExecFailed(c, se, "select c1 from t having c2 + 1")
@@ -1211,6 +1212,7 @@ func (s *testSessionSuite) TestHaving(c *C) {
 	mustExecFailed(c, se, "select c1 + 1 from t having c1")
 	mustExecFailed(c, se, "select c1 + 1 from t having c1 + 1")
 	mustExecFailed(c, se, "select a.c1 as c, b.c1 as d from t as a, t as b having c1")
+	mustExecFailed(c, se, "select 1 from t having sum(avg(c1))")
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {

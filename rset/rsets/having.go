@@ -261,7 +261,15 @@ func (v *havingVisitor) VisitCall(c *expression.Call) (expression.Expression, er
 		return nil, errors.Trace(err)
 	}
 
-	v.inAggregate = isAggregate
+	if v.inAggregate && isAggregate {
+		// aggregate function can't contain aggregate function
+		return nil, errors.Errorf("Invalid use of group function")
+	}
+
+	if isAggregate {
+		// set true to let outer know we are in aggregate function.
+		v.inAggregate = true
+	}
 
 	for i, e := range c.Args {
 		c.Args[i], err = e.Accept(v)
@@ -270,7 +278,9 @@ func (v *havingVisitor) VisitCall(c *expression.Call) (expression.Expression, er
 		}
 	}
 
-	v.inAggregate = false
+	if isAggregate {
+		v.inAggregate = false
+	}
 
 	return c, nil
 }
