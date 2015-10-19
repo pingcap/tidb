@@ -17,6 +17,7 @@ import (
 	"github.com/c4pt0r/go-hbase"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
+	"github.com/juju/errors"
 )
 
 var (
@@ -35,7 +36,7 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	s.txn.Get(s.storeName, g)
 	r, err := s.txn.Get(s.storeName, g)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if r == nil {
 		return nil, kv.ErrNotExist

@@ -14,13 +14,13 @@
 package hbasekv
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/c4pt0r/go-hbase"
 	"github.com/ngaut/log"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
+	"github.com/juju/errors"
 )
 
 const (
@@ -48,7 +48,7 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	var err error
 	txn.UnionStore, err = kv.NewUnionStore(&hbaseSnapshot{t, s.storeName})
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	txn.UnionStore.TID = txn.tID
 	return txn, nil

@@ -57,25 +57,25 @@ func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 	if kv.IsErrNotFound(err) {
 		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
 		if err != nil {
-			return 0, err
+			return 0, errors.Trace(err)
 		}
 
 		return step, nil
 	}
 
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
 	if err != nil {
-		return intVal, err
+		return intVal, errors.Trace(err)
 	}
 
 	intVal += step
 	err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(intVal, 10)))
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	return intVal, nil
@@ -93,7 +93,7 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 		return nil, kv.ErrNotExist
 	}
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if len(val) == 0 {
@@ -112,7 +112,7 @@ func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
 	}
 
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
@@ -137,7 +137,7 @@ func (txn *hbaseTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, er
 
 	iter, err := txn.UnionStore.Seek(k, txn)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if !iter.Valid() {
@@ -164,7 +164,7 @@ func (txn *hbaseTxn) each(f func(iterator.Iterator) error) error {
 	defer iter.Release()
 	for iter.Next() {
 		if err := f(iter); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -191,13 +191,13 @@ func (txn *hbaseTxn) doCommit() error {
 	})
 
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	err = txn.Txn.Commit()
 	if err != nil {
 		log.Error(err)
-		return err
+		return errors.Trace(err)
 	}
 
 	txn.version = kv.NewVersion(txn.Txn.GetCommitTS())
