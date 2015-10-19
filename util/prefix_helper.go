@@ -28,12 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-func hasPrefix(prefix []byte) kv.FnKeyCmp {
-	return func(k kv.Key) bool {
-		return bytes.HasPrefix(k, prefix)
-	}
-}
-
 // ScanMetaWithPrefix scans metadata with the prefix.
 func ScanMetaWithPrefix(txn kv.Transaction, prefix string, filter func([]byte, []byte) bool) error {
 	iter, err := txn.Seek([]byte(prefix))
