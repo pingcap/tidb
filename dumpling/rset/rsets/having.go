@@ -199,8 +199,8 @@ func (v *havingVisitor) VisitIdent(i *expression.Ident) (expression.Expression, 
 	//	select c1 as c2, c2 from t having c2 is ambiguous
 	//	select c1 as c2, c2 from t having c2 + 1 is ambiguous
 
-	// The identifier in having must exist in group by, select list and outer query, so select c1 from t having c2 is wrong,
-	// the idenfitier will first try to find the reference in group by, then in select list and finally in outer query.
+	// The identifier in having must exist in group by, select list or outer query, so select c1 from t having c2 is wrong,
+	// the identifier will first try to find the reference in group by, then in select list and finally in outer query.
 
 	// Having identifier reference check
 	//	select c1 from t group by c2 having c2, c2 in having references group by c2.
