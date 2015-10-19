@@ -198,5 +198,5 @@ func statement(sql string) stmt.Statement {
 	log.Debug("Compile", sql)
 	lexer := parser.NewLexer(sql)
 	parser.YYParse(lexer)
-	return lexer.Stmts()[0]
+	return lexer.Stmts()[0].(stmt.Statement)
 }

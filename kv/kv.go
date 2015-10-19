@@ -25,7 +25,7 @@ type Key []byte
 
 // Next returns the next key in byte-order.
 func (k Key) Next() Key {
-	// add \x0 to the end of key
+	// add 0x0 to the end of key
 	buf := make([]byte, len([]byte(k))+1)
 	copy(buf, []byte(k))
 	return buf

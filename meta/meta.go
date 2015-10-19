@@ -72,7 +72,7 @@ func AutoIDKey(tableID int64) string {
 	if tableID == 0 {
 		log.Error("Invalid tableID")
 	}
-	return fmt.Sprintf("%s:%d_autoID", TableMetaPrefix, tableID)
+	return fmt.Sprintf("%s:%d_auto_id", TableMetaPrefix, tableID)
 }
 
 // GenGlobalID generates the next id in the store scope.

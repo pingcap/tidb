@@ -278,6 +278,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
+		{"select 1 where exists (select 2)", false},
+		{"select 1 from dual where not exists (select 2)", true},
 
 		// For show create table
 		{"show create table test.t", true},
@@ -442,6 +444,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) // foo", true},
 		{"CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
 		{"CREATE TABLE foo /* foo */ (a SMALLINT UNSIGNED, b INT UNSIGNED) /* foo */", true},
+		{"CREATE TABLE foo (name CHAR(50) BINARY)", true},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE utf8_bin)", true},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8)", true},
+		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true},
+
 		{"CREATE TABLE foo (a.b, b);", false},
 		{"CREATE TABLE foo (a, b.c);", false},
 		// For table option
@@ -525,6 +532,17 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+
+		// For grant statement
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 	}
 	s.RunTest(c, table)
 }
