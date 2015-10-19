@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package mysql
 
 // MySQLErrName maps error code to MySQL error messages.
 var MySQLErrName = map[uint16]string{

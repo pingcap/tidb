@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/util/charset"

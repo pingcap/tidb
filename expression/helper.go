@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
@@ -45,13 +45,15 @@ const (
 	ExprEvalPositionFunc = "$positionFunc"
 	// ExprEvalValuesFunc is the key saving a function to retrieve value for column name.
 	ExprEvalValuesFunc = "$valuesFunc"
+	// ExprEvalIdentReferFunc is the key saving a function to retrieve value with identifier reference index.
+	ExprEvalIdentReferFunc = "$identReferFunc"
 )
 
 var (
 	// CurrentTimestamp is the keyword getting default value for datetime and timestamp type.
 	CurrentTimestamp = "CURRENT_TIMESTAMP"
 	// CurrentTimeExpr is the expression retireving default value for datetime and timestamp type.
-	CurrentTimeExpr = &Ident{model.NewCIStr(CurrentTimestamp)}
+	CurrentTimeExpr = &Ident{CIStr: model.NewCIStr(CurrentTimestamp)}
 	// ZeroTimestamp shows the zero datetime and timestamp.
 	ZeroTimestamp = "0000-00-00 00:00:00"
 )
@@ -148,20 +150,38 @@ func newMentionedAggregateFuncsVisitor() *mentionedAggregateFuncsVisitor {
 }
 
 func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) {
+	isAggregate := IsAggregateFunc(c.F)
+
+	if isAggregate {
+		v.exprs = append(v.exprs, c)
+	}
+
+	n := len(v.exprs)
 	for _, e := range c.Args {
 		_, err := e.Accept(v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	f, ok := builtin.Funcs[strings.ToLower(c.F)]
-	if !ok {
-		return nil, errors.Errorf("unknown function %s", c.F)
+
+	if isAggregate && len(v.exprs) != n {
+		// aggregate function can't use aggregate function as the arg.
+		// here means we have aggregate function in arg.
+		return nil, errors.Errorf("Invalid use of group function")
 	}
-	if f.IsAggregate {
-		v.exprs = append(v.exprs, c)
-	}
+
 	return c, nil
+}
+
+// IsAggregateFunc checks whether name is an aggregate function or not.
+func IsAggregateFunc(name string) bool {
+	// TODO: use switch defined aggregate name "sum", "count", etc... directly.
+	// Maybe we can remove builtin IsAggregate field later.
+	f, ok := builtin.Funcs[strings.ToLower(name)]
+	if !ok {
+		return false
+	}
+	return f.IsAggregate
 }
 
 // MentionedColumns returns a list of names for Ident expression.
