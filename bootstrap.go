@@ -22,7 +22,7 @@ import (
 	"runtime/debug"
 
 	"github.com/ngaut/log"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
 )

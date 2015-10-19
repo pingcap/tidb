@@ -96,7 +96,7 @@ func (s *testSelectListSuite) TestAmbiguous(c *C) {
 		sl, err := plans.ResolveSelectList(fs, rs)
 		c.Assert(err, IsNil)
 
-		index, err := sl.CheckReferAmbiguous(&expression.Ident{
+		idx, err := sl.CheckAmbiguous(&expression.Ident{
 			CIStr: model.NewCIStr(t.Name),
 		})
 
@@ -106,6 +106,6 @@ func (s *testSelectListSuite) TestAmbiguous(c *C) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(t.Index, Equals, index)
+		c.Assert(t.Index, DeepEquals, idx)
 	}
 }

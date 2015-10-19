@@ -19,7 +19,7 @@ package types
 
 import (
 	"github.com/juju/errors"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // CompareInt64 returns an integer comparing the int64 x to y.
