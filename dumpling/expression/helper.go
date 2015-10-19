@@ -169,6 +169,8 @@ func (v *mentionedAggregateFuncsVisitor) VisitCall(c *Call) (Expression, error) 
 
 // IsAggregateFunc checks whether name is an aggregate function or not.
 func IsAggregateFunc(name string) bool {
+	// TODO: use switch defined aggregate name "sum", "count", etc... directly.
+	// Maybe we can remove builtin IsAggregate field later.
 	f, ok := builtin.Funcs[strings.ToLower(name)]
 	if !ok {
 		return false
