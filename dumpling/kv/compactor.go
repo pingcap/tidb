@@ -15,8 +15,8 @@ package kv
 
 import "time"
 
-// CompactorPolicy defines gc policy of MVCC storage.
-type CompactorPolicy struct {
+// CompactPolicy defines gc policy of MVCC storage.
+type CompactPolicy struct {
 	// SafePoint specifies
 	SafePoint int
 	// TriggerInterval specifies how often should the compactor

@@ -86,7 +86,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		uuid:       uuid.NewV4().String(),
 		path:       schema,
 		db:         db,
-		compactor:  newLocalCompactor(localCompactorDefaultPolicy, db),
+		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
 	}
 	mc.cache[schema] = s
 	s.compactor.Start()
