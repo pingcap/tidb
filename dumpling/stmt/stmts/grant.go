@@ -79,9 +79,7 @@ func (s *GrantStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	// Grant for each user
 	for _, user := range s.Users {
 		// Check if user exists.
-		strs := strings.Split(user.User, "@")
-		userName := strs[0]
-		host := strs[1]
+		userName, host := parseUser(user.User)
 		exists, err := userExists(ctx, userName, host)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -233,9 +231,7 @@ func (s *GrantStmt) grantGlobalPriv(ctx context.Context, priv *coldef.PrivElem, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	strs := strings.Split(user.User, "@")
-	userName := strs[0]
-	host := strs[1]
+	userName, host := parseUser(user.User)
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s"`, mysql.SystemDB, mysql.UserTable, asgns, userName, host)
 	_, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
@@ -251,9 +247,7 @@ func (s *GrantStmt) grantDBPriv(ctx context.Context, priv *coldef.PrivElem, user
 	if err != nil {
 		return errors.Trace(err)
 	}
-	strs := strings.Split(user.User, "@")
-	userName := strs[0]
-	host := strs[1]
+	userName, host := parseUser(user.User)
 	sql := fmt.Sprintf(`UPDATE %s.%s SET %s WHERE User="%s" AND Host="%s" AND DB="%s";`, mysql.SystemDB, mysql.DBTable, asgns, userName, host, db.Name.O)
 	_, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
@@ -265,9 +259,7 @@ func (s *GrantStmt) grantTablePriv(ctx context.Context, priv *coldef.PrivElem, u
 	if err != nil {
 		return errors.Trace(err)
 	}
-	strs := strings.Split(user.User, "@")
-	userName := strs[0]
-	host := strs[1]
+	userName, host := parseUser(user.User)
 	asgns, err := composeTablePrivUpdate(ctx, priv.Priv, userName, host, db.Name.O, tbl.TableName().O)
 	if err != nil {
 		return errors.Trace(err)
@@ -283,9 +275,7 @@ func (s *GrantStmt) grantColumnPriv(ctx context.Context, priv *coldef.PrivElem, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	strs := strings.Split(user.User, "@")
-	userName := strs[0]
-	host := strs[1]
+	userName, host := parseUser(user.User)
 	for _, c := range priv.Cols {
 		col := column.FindCol(tbl.Cols(), c)
 		if col == nil {
@@ -342,10 +332,7 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 
 // Compose update stmt assignment list for table scope privilege update.
 func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string) (string, error) {
-	var (
-		newTablePriv  string
-		newColumnPriv string
-	)
+	var newTablePriv, newColumnPriv string
 	if priv == mysql.AllPriv {
 		for _, p := range mysql.AllTablePrivs {
 			v, ok := mysql.Priv2SetStr[p]
@@ -368,7 +355,6 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 			} else {
 				newColumnPriv = fmt.Sprintf("%s,%s", newColumnPriv, v)
 			}
-
 		}
 	} else {
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
@@ -437,6 +423,7 @@ func recordExists(ctx context.Context, sql string) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	defer rs.Close()
 	row, err := rs.Next()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -470,14 +457,12 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 	if err != nil {
 		return "", "", errors.Trace(err)
 	}
+	defer rs.Close()
 	row, err := rs.Next()
 	if err != nil {
 		return "", "", errors.Trace(err)
 	}
-	var (
-		tPriv string
-		cPriv string
-	)
+	var tPriv, cPriv string
 	if row.Data[0] != nil {
 		tablePriv, ok := row.Data[0].(mysql.Set)
 		if !ok {
@@ -503,6 +488,7 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 	if err != nil {
 		return "", errors.Trace(err)
 	}
+	defer rs.Close()
 	row, err := rs.Next()
 	if err != nil {
 		return "", errors.Trace(err)
@@ -524,9 +510,9 @@ func (s *GrantStmt) getTargetSchema(ctx context.Context) (*model.DBInfo, error) 
 	if len(dbName) == 0 {
 		// Grant *, use current schema
 		dbName = db.GetCurrentSchema(ctx)
-	}
-	if len(dbName) == 0 {
-		return nil, errors.New("Miss DB name for grant privilege.")
+		if len(dbName) == 0 {
+			return nil, errors.New("Miss DB name for grant privilege.")
+		}
 	}
 	//check if db exists
 	schema := model.NewCIStr(dbName)
