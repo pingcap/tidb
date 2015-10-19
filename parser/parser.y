@@ -30,6 +30,7 @@ import (
 	"strings"
 	
 	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
@@ -82,6 +83,7 @@ import (
 	avgRowLength	"AVG_ROW_LENGTH"
 	begin		"BEGIN"
 	between		"BETWEEN"
+	both		"BOTH"
 	by		"BY"
 	byteType	"BYTE"
 	caseKwd		"CASE"
@@ -111,6 +113,7 @@ import (
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
+	dateAdd		"DATE_ADD"
 	day		"DAY"
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
@@ -133,6 +136,7 @@ import (
 	engines		"ENGINES"
 	enum 		"ENUM"
 	eq		"="
+	escape 		"ESCAPE"
 	execute		"EXECUTE"
 	exists		"EXISTS"
 	explain		"EXPLAIN"
@@ -147,6 +151,7 @@ import (
 	fulltext	"FULLTEXT"
 	ge		">="
 	global		"GLOBAL"
+	grant		"GRANT"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -160,12 +165,14 @@ import (
 	index		"INDEX"
 	inner 		"INNER"
 	insert		"INSERT"
+	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
 	join		"JOIN"
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
 	le		"<="
+	leading		"LEADING"
 	left		"LEFT"
 	length		"LENGTH"
 	like		"LIKE"
@@ -195,6 +202,7 @@ import (
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
+	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
 	oror		"||"
@@ -234,7 +242,10 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	to		"TO"
+	trailing	"TRAILING"
 	transaction	"TRANSACTION"
+	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
 	unknown 	"UNKNOWN"
@@ -335,7 +346,6 @@ import (
 	AlterSpecification	"Alter table specification"
 	AlterSpecificationList	"Alter table specification list"
 	AnyOrAll		"Any or All for subquery"
-	AsOpt			"as optional"
 	Assignment		"assignment"
 	AssignmentList		"assignment list"
 	AssignmentListOpt	"assignment list opt"
@@ -346,6 +356,7 @@ import (
 	CharsetName		"Charset Name"
 	CollationName		"Collation Name"
 	ColumnDef		"table column definition"
+	ColumnListOpt		"Optional column list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
@@ -394,9 +405,10 @@ import (
 	ExpressionListOpt	"expression list opt"
 	ExpressionListList	"expression list list"
 	Factor			"expression factor"
-	Factor1			"binary expression factor"
+	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
-	Field1			"field expression optional AS clause"
+	FieldAsName		"Field alias name"
+	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
 	FromClause		"From clause"
 	Function		"function expr"
@@ -407,6 +419,7 @@ import (
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
+	GrantStmt		"Grant statement"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
 	HashString		"Hashed string"
@@ -424,6 +437,7 @@ import (
 	JoinTable 		"join table"
 	JoinType		"join type"
 	KeyOrIndex		"{KEY|INDEX}"
+	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
 	logAnd			"logical and operator"
@@ -434,6 +448,7 @@ import (
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
+	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
@@ -453,6 +468,10 @@ import (
 	PrimaryExpression	"primary expression"
 	PrimaryFactor		"primary expression factor"
 	Priority		"insert statement priority"
+	PrivElem		"Privilege element"
+	PrivElemList		"Privilege element list"
+	PrivLevel		"Privilege scope"
+	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
 	RollbackStmt		"ROLLBACK statement"
@@ -494,6 +513,7 @@ import (
 	TableRef 		"table reference"
 	TableRefs 		"table references"
 	TimeUnit		"Time unit"
+	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionSelect		"Union select/(select)"
@@ -585,6 +605,8 @@ import (
 %precedence '('
 %precedence lowerThanQuick
 %precedence quick
+%precedence lowerThanEscape
+%precedence escape
 %precedence lowerThanComma
 %precedence ','
 
@@ -686,7 +708,6 @@ ColumnPosition:
 			RelativeColumn: $2.(string),
 		}
 	}
-
 
 AlterSpecificationList:
 	AlterSpecification
@@ -1429,7 +1450,7 @@ Factor:
 	{
 		$$ = &expression.IsNull{Expr: $1.(expression.Expression), Not: $3.(bool)}
 	}
-|	Factor CompareOp Factor1 %prec eq
+|	Factor CompareOp PredicateExpr %prec eq
 	{
 		$$ = expression.NewBinaryOperation($2.(opcode.Op), $1.(expression.Expression), $3.(expression.Expression))
 	}
@@ -1437,7 +1458,7 @@ Factor:
 	{
 		$$ = expression.NewCompareSubQuery($2.(opcode.Op), $1.(expression.Expression), $4.(*subquery.SubQuery), $3.(bool))
 	}
-|	Factor1
+|	PredicateExpr
 
 CompareOp:
 	">="
@@ -1487,7 +1508,7 @@ AnyOrAll:
 		$$ = true
 	}
 
-Factor1:
+PredicateExpr:
 	PrimaryFactor NotOpt "IN" '(' ExpressionList ')'
 	{
 		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), List: $5.([]expression.Expression)}
@@ -1496,7 +1517,7 @@ Factor1:
 	{
 		$$ = &expression.PatternIn{Expr: $1.(expression.Expression), Not: $2.(bool), Sel: $4.(*subquery.SubQuery)}
 	}
-|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" Factor1
+|	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" PredicateExpr
 	{
 		var err error
 		$$, err = expression.NewBetween($1.(expression.Expression), $4.(expression.Expression), $6.(expression.Expression), $2.(bool))
@@ -1505,9 +1526,20 @@ Factor1:
 			return 1
 		}
 	}
-|	PrimaryFactor NotOpt "LIKE" PrimaryExpression
+|	PrimaryFactor NotOpt "LIKE" PrimaryExpression LikeEscapeOpt
 	{
-		$$ = &expression.PatternLike{Expr: $1.(expression.Expression), Pattern: $4.(expression.Expression), Not: $2.(bool)}
+		escape := $5.(string)
+		if len(escape) > 1 {
+			yylex.(*lexer).errf("Incorrect arguments %s to ESCAPE", escape)
+			return 1
+		} else if len(escape) == 0 {
+			escape = "\\"
+		}
+		$$ = &expression.PatternLike{
+			Expr: $1.(expression.Expression), 
+			Pattern: $4.(expression.Expression), 
+			Not: $2.(bool), 
+			Escape: escape[0]}
 	}
 |	PrimaryFactor NotOpt RegexpSym PrimaryExpression
 	{
@@ -1518,6 +1550,16 @@ Factor1:
 RegexpSym:
 	"REGEXP"
 |	"RLIKE"
+
+LikeEscapeOpt:
+	%prec lowerThanEscape
+	{
+		$$ = "\\"
+	}
+|	"ESCAPE" stringLit
+	{
+		$$ = $2
+	}
 
 NotOpt:
 	{
@@ -1533,26 +1575,23 @@ Field:
 	{
 		$$ = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("*")}}
 	}
-|	Expression Field1
+|	Expression FieldAsNameOpt
 	{
 		expr, name := expression.Expr($1), $2.(string)
-		if name == "" {
-			name = expr.String()
-		}
-		$$ = &field.Field{Expr: expr, Name: name}
+		$$ = &field.Field{Expr: expr, AsName: name}
 	}
 
-Field1:
+FieldAsNameOpt:
 	/* EMPTY */
 	{
 		$$ = ""
 	}
-|	AsOpt
+|	FieldAsName
 	{
 		$$ = $1
 	}
 
-AsOpt:
+FieldAsName:
 	Identifier
 	{
 		$$ = $1
@@ -1661,12 +1700,12 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
 
 NotKeywordToken:
-	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
+	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2201,6 +2240,14 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &expression.DateAdd{
+			Unit: $7.(string), 
+			Date: $3.(expression.Expression),
+			Interval: $6.(expression.Expression),
+		}
+	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
 	{
 		$$ = &expression.Extract{
@@ -2412,6 +2459,34 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"TRIM" '(' Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			RemStr: $3.(expression.Expression),
+		}	
+	}
+|	"TRIM" '(' TrimDirection "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $5.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
+|	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
+	{
+		$$ = &expression.FunctionTrim{
+			Str: $6.(expression.Expression), 
+			RemStr: $4.(expression.Expression), 
+			Direction: $3.(int),
+		}	
+	}
 |	"UPPER" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2454,6 +2529,20 @@ FunctionCallNonKeyword:
 			l.err(err)
 			return 1
 		}
+	}
+
+TrimDirection:
+	"BOTH"
+	{
+		$$ = expression.TrimBoth
+	}
+|	"LEADING"
+	{
+		$$ = expression.TrimLeading
+	}
+|	"TRAILING"
+	{
+		$$ = expression.TrimTrailing
 	}
 
 FunctionCallAgg:
@@ -2862,14 +2951,28 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
-			From:          nil,
-			Lock:	       $6.(coldef.LockType),
+			Lock:	       $5.(coldef.LockType),
 		}
+	}
+|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+		st := &stmts.SelectStmt {
+			Distinct:      $2.(bool),
+			Fields:        $3.([]*field.Field),
+			From:          nil,
+			Lock:	       $7.(coldef.LockType),
+		}
+
+		if $5 != nil {
+			st.Where = &rsets.WhereRset{Expr: $5.(expression.Expression)}
+		}
+
+		$$ = st
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
 	FromClause WhereClauseOptional SelectStmtGroup HavingClause SelectStmtOrder
@@ -2908,8 +3011,7 @@ SelectStmt:
 	}
 
 FromDual:
-	/* Empty */
-|	"FROM" "DUAL"
+	"FROM" "DUAL" 
 
 
 FromClause:
@@ -3098,7 +3200,7 @@ SelectStmtCalcFoundRows:
 	}
 
 SelectStmtFieldList:
-	FieldList CommaOpt
+	FieldList
 	{
 		$$ = $1
 	}
@@ -3304,12 +3406,15 @@ ShowStmt:
 	{
 		$$ = &stmts.ShowStmt{Target: stmt.ShowCharset}
 	}
-|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt
+|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
-		$$ = &stmts.ShowStmt{
+		stmt := &stmts.ShowStmt{
 			Target: stmt.ShowTables,
 			DBName: $4.(string),
-			Full: $2.(bool)}
+			Full: $2.(bool),
+		}
+		stmt.SetCondition($5)
+		$$ = stmt
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableIdentOpt ShowDatabaseNameOpt
 	{
@@ -3424,6 +3529,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	GrantStmt
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -3434,6 +3540,12 @@ Statement:
 |	UnionStmt
 |	UpdateStmt
 |	UseStmt
+|	SubSelect
+	{
+		// `(select 1)`; is a valid select statement
+		// TODO: This is used to fix issue #320. There may be a better solution.
+		$$ = $1.(*subquery.SubQuery).Stmt
+	}
 
 ExplainableStmt:
 	SelectStmt
@@ -3445,9 +3557,15 @@ StatementList:
 	Statement
 	{
 		if $1 != nil {
-			s := $1.(stmt.Statement)
-			s.SetText(yylex.(*lexer).stmtText())
-			yylex.(*lexer).list = []stmt.Statement{ s }
+			n, ok := $1.(ast.Node)
+			if ok {
+				n.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{n}
+			} else {
+				s := $1.(stmt.Statement)
+				s.SetText(yylex.(*lexer).stmtText())
+				yylex.(*lexer).list = []interface{}{s}
+			}
 		}
 	}
 |	StatementList ';' Statement
@@ -3678,6 +3796,16 @@ NumericType:
 		fopt := $2.(*coldef.FloatOpt)
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen 
+		if x.Tp == mysql.TypeFloat {
+			// Fix issue #312
+			if x.Flen > 53 {
+				yylex.(*lexer).errf("Float len(%d) should not be greater than 53", x.Flen)
+				return 1
+			}
+			if x.Flen > 24 { 
+				x.Tp = mysql.TypeDouble
+			}
+		}
 		x.Decimal =fopt.Decimal
 		for _, o := range $3.([]*field.Opt) {
 			if o.IsUnsigned {
@@ -3773,21 +3901,25 @@ BitValueType:
 	}
 
 StringType:
-	NationalOpt "CHAR" FieldLen OptBinary
+	NationalOpt "CHAR" FieldLen OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		x.Flen = $3.(int)
 		if $4.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $5.(string)
+		x.Collate = $6.(string)
 		$$ = x
 	}
-|	NationalOpt "CHAR" OptBinary
+|	NationalOpt "CHAR" OptBinary OptCharset OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeString)
 		if $3.(bool) {
 			x.Flag |= mysql.BinaryFlag
 		}
+		x.Charset = $4.(string)
+		x.Collate = $5.(string)
 		$$ = x
 	}
 |	NationalOpt "VARCHAR" FieldLen OptBinary OptCharset OptCollate
@@ -4199,10 +4331,14 @@ CreateUserStmt:
 UserSpecification:
 	Username AuthOption	
 	{
-		$$ = &coldef.UserSpecification{
+		x := &coldef.UserSpecification{
 			User: $1.(string),
-			AuthOpt: $2.(*coldef.AuthOption),
 		}
+		if $2 != nil {
+			x.AuthOpt = $2.(*coldef.AuthOption)	
+		}
+		$$ = x
+
 	}
 
 UserSpecificationList:
@@ -4216,7 +4352,9 @@ UserSpecificationList:
 	}
 
 AuthOption:
-	{}
+	{
+		$$ = nil
+	}
 |	"IDENTIFIED" "BY" AuthString
 	{
 		$$ = &coldef.AuthOption {
@@ -4233,5 +4371,147 @@ AuthOption:
 
 HashString:
 	stringLit
+
+/*************************************************************************************
+ * Grant statement
+ * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ *************************************************************************************/
+GrantStmt:
+	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecificationList
+	 {
+		$$ = &stmts.GrantStmt{
+			Privs: $2.([]*coldef.PrivElem),
+			ObjectType: $4.(int),
+			Level: $5.(*coldef.GrantLevel),
+			Users: $7.([]*coldef.UserSpecification),
+		}	 	
+	 }
+
+PrivElem:
+	PrivType ColumnListOpt
+	{
+		$$ = &coldef.PrivElem{
+			Priv: $1.(mysql.PrivilegeType),
+			Cols: $2.([]string),
+		}
+	}
+
+ColumnListOpt:
+	{
+		$$ = []string{}
+	}
+|	'(' ColumnNameList ')'
+	{
+		$$ = $2
+	}
+
+PrivElemList:
+	PrivElem
+	{
+		$$ = []*coldef.PrivElem{$1.(*coldef.PrivElem)}
+	}
+|	PrivElemList ',' PrivElem
+	{
+		$$ = append($1.([]*coldef.PrivElem), $3.(*coldef.PrivElem))
+	}
+
+PrivType:
+	"ALL"
+	{
+		$$ = mysql.AllPriv
+	}
+|	"ALTER"
+	{
+		$$ = mysql.AlterPriv
+	}
+|	"CREATE"
+	{
+		$$ = mysql.CreatePriv
+	}
+|	"CREATE" "USER"
+	{
+		$$ = mysql.CreateUserPriv
+	}
+|	"DELETE"
+	{
+		$$ = mysql.DeletePriv
+	}
+|	"DROP"
+	{
+		$$ = mysql.DropPriv
+	}
+|	"EXECUTE"
+	{
+		$$ = mysql.ExecutePriv
+	}
+|	"INDEX"
+	{
+		$$ = mysql.IndexPriv
+	}
+|	"INSERT"
+	{
+		$$ = mysql.InsertPriv
+	}
+|	"SELECT"
+	{
+		$$ = mysql.SelectPriv
+	}
+|	"SHOW" "DATABASES"
+	{
+		$$ = mysql.ShowDBPriv
+	}
+|	"UPDATE"
+	{
+		$$ = mysql.UpdatePriv
+	}
+|	"GRANT" "OPTION"
+	{
+		$$ = mysql.GrantPriv
+	}
+	
+ObjectType:
+	{
+		$$ = coldef.ObjectTypeNone
+	}
+|	"TABLE"
+	{
+		$$ = coldef.ObjectTypeTable
+	}
+
+PrivLevel:
+	'*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelDB,
+		}		
+	}
+|	'*' '.' '*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelGlobal,
+		}		
+	}
+| 	Identifier '.' '*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelDB,
+			DBName: $1.(string),
+		}		
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelTable,
+			DBName: $1.(string),
+			TableName: $3.(string),
+		}		
+	}
+|	Identifier
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelTable,
+			TableName: $1.(string),
+		}		
+	}
 %%
 

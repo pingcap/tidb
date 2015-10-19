@@ -132,7 +132,9 @@ func (s *ShowPlan) Filter(ctx context.Context, expr expression.Expression) (plan
 // Next implements plan.Plan Next interface.
 func (s *ShowPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if s.rows == nil {
-		s.fetchAll(ctx)
+		if err := s.fetchAll(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if s.cursor == len(s.rows) {
 		return
@@ -192,12 +194,13 @@ func (s *ShowPlan) getTable(ctx context.Context) (table.Table, error) {
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	dbName := model.NewCIStr(s.DBName)
 	if !is.SchemaExists(dbName) {
-		return nil, errors.Errorf("Can not find DB: %s", dbName)
+		// MySQL returns no such table here if database doesn't exist.
+		return nil, errors.Trace(mysql.NewErr(mysql.ErrNoSuchTable, s.DBName, s.TableName))
 	}
 	tbName := model.NewCIStr(s.TableName)
 	tb, err := is.TableByName(dbName, tbName)
 	if err != nil {
-		return nil, errors.Errorf("Can not find table: %s", s.TableName)
+		return nil, errors.Trace(mysql.NewErr(mysql.ErrNoSuchTable, s.DBName, s.TableName))
 	}
 	return tb, nil
 }
@@ -312,12 +315,31 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 
 	sort.Strings(tableNames)
 
+	m := map[interface{}]interface{}{}
 	for _, v := range tableNames {
 		data := []interface{}{v}
 		if s.Full {
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
 			data = append(data, "BASE TABLE")
+		}
+		// Check like/where clause.
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: data[0]}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if s.Full && strings.EqualFold(name, "Table_type") {
+					return data[1], nil
+				}
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
 		}
 		s.rows = append(s.rows, &plan.Row{Data: data})
 	}

@@ -32,13 +32,13 @@ func (*testBtreeSuite) TestBtree(c *C) {
 		v := []interface{}{string(i + 1)}
 		t.Set(k, v)
 	}
-	for i := 0; i < 102400; i++ {
+	for i := 0; i < 1024; i++ {
 		k := []interface{}{i}
 		v := []interface{}{string(i)}
 		t.Set(k, v)
 	}
 	// Delete
-	for i := 512; i < 102400; i++ {
+	for i := 512; i < 1024; i++ {
 		k := []interface{}{i}
 		t.Delete(k)
 	}
@@ -51,7 +51,7 @@ func (*testBtreeSuite) TestBtree(c *C) {
 		c.Assert(v[0], Equals, string(i))
 	}
 	// Get unexists key
-	for i := 512; i < 102400; i++ {
+	for i := 512; i < 1024; i++ {
 		k := []interface{}{i}
 		v, ok := t.Get(k)
 		c.Assert(ok, IsFalse)

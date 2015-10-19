@@ -14,6 +14,7 @@
 package plans_test
 
 import (
+	"database/sql"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -61,6 +62,10 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	p.vars = map[string]interface{}{}
 	p.txn, _ = store.Begin()
 	variable.BindSessionVars(p)
+}
+
+func (p *testShowSuit) TearDownSuite(c *C) {
+	p.txn.Commit()
 }
 
 func (p *testShowSuit) TestSimple(c *C) {
@@ -207,6 +212,21 @@ func (p *testShowSuit) TestShowCollation(c *C) {
 	}
 }
 
-func (p *testShowSuit) TearDownSuite(c *C) {
-	p.txn.Commit()
+func (p *testShowSuit) TestShowTables(c *C) {
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test-show-table/test")
+	c.Assert(err, IsNil)
+	mustExec(c, testDB, "create table tab00 (id int);")
+	mustExec(c, testDB, "create table tab01 (id int);")
+	mustExec(c, testDB, "create table tab10 (id int);")
+	cnt := mustQuery(c, testDB, `show full tables;`)
+	c.Assert(cnt, Equals, 3)
+	cnt = mustQuery(c, testDB, `show full tables from test like 'tab0%';`)
+	c.Assert(cnt, Equals, 2)
+	cnt = mustQuery(c, testDB, `show full tables where Table_type != 'VIEW';`)
+	c.Assert(cnt, Equals, 3)
+
+	mustQuery(c, testDB, `show create table tab00;`)
+	rows, _ := testDB.Query(`show create table abc;`)
+	rows.Next()
+	c.Assert(rows.Err(), NotNil)
 }

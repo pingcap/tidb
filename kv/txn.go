@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-// IsRetryableError check if the err is not a fatal error and the under going operation is worth to retried.
-func IsRetryableError(err error) bool {
+// isRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
+func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -32,17 +32,17 @@ func IsRetryableError(err error) bool {
 	return false
 }
 
-// RunInNewTxn will run the f in a new transaction evnironment.
+// RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
 	for {
 		txn, err := store.Begin()
 		if err != nil {
-			log.Error(err)
+			log.Errorf("RunInNewTxn error - %v", err)
 			return errors.Trace(err)
 		}
 
 		err = f(txn)
-		if retryable && IsRetryableError(err) {
+		if retryable && isRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()
 			continue
@@ -52,7 +52,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		}
 
 		err = txn.Commit()
-		if retryable && IsRetryableError(err) {
+		if retryable && isRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()
 			continue
@@ -60,6 +60,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		break
 	}
 

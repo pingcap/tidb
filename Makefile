@@ -29,9 +29,9 @@ parser:
 	go get github.com/qiuyesuifeng/golex
 	a=`mktemp temp.XXXXXX`; \
 	goyacc -o /dev/null -xegen $$a parser/parser.y; \
-	goyacc -o parser/parser.go -xe $$a parser/parser.y; \
+	goyacc -o parser/parser.go -xe $$a parser/parser.y 2>&1 | grep "shift/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; exit 1;}}';  \
 	rm -f $$a; \
-	rm -f y.output
+	rm -f y.output 
 
 	@if [ $(ARCH) = $(LINUX) ]; \
 	then \

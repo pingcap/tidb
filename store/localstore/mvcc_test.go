@@ -245,3 +245,46 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	found = iterFunc(it)
 	c.Assert(found, IsFalse)
 }
+
+func (t *testMvccSuite) TestBufferedIterator(c *C) {
+	s := createMemStore()
+	tx, _ := s.Begin()
+	tx.Set([]byte{0x0, 0x0}, []byte("1"))
+	tx.Set([]byte{0x0, 0xff}, []byte("2"))
+	tx.Set([]byte{0x0, 0xee}, []byte("3"))
+	tx.Set([]byte{0x0, 0xee, 0xff}, []byte("4"))
+	tx.Set([]byte{0xff, 0xff, 0xee, 0xff}, []byte("5"))
+	tx.Set([]byte{0xff, 0xff, 0xff}, []byte("6"))
+	tx.Commit()
+
+	tx, _ = s.Begin()
+	iter, err := tx.Seek([]byte{0}, nil)
+	c.Assert(err, IsNil)
+	cnt := 0
+	for iter.Valid() {
+		iter, err = iter.Next(nil)
+		c.Assert(err, IsNil)
+		cnt++
+	}
+	tx.Commit()
+	c.Assert(cnt, Equals, 6)
+
+	tx, _ = s.Begin()
+	it, err := tx.Seek([]byte{0xff, 0xee}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(it.Valid(), IsTrue)
+	c.Assert(it.Key(), Equals, "\xff\xff\xee\xff")
+	tx.Commit()
+
+	// no such key
+	tx, _ = s.Begin()
+	it, err = tx.Seek([]byte{0xff, 0xff, 0xff, 0xff}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(it.Valid(), IsFalse)
+
+	it, err = tx.Seek([]byte{0x0, 0xff}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(it.Valid(), IsTrue)
+	c.Assert(it.Value(), DeepEquals, []byte("2"))
+	tx.Commit()
+}
