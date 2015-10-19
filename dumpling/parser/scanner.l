@@ -26,6 +26,7 @@ import (
 	"strings"
 	
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/util/stringutil"
 	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
@@ -1017,7 +1018,8 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 		s = strings.TrimSuffix(s, "'") + "\""
 		pref = "\""
 	} 
-	v, err := strconv.Unquote(pref + s)
+	v := stringutil.RemoveUselessBackslash(pref+s)
+	v, err := strconv.Unquote(v)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
