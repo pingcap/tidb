@@ -305,7 +305,7 @@ func composeGlobalPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 	}
 	col, ok := mysql.Priv2UserCol[priv]
 	if !ok {
-		return "", errors.Errorf("Unknown priv: %s", priv)
+		return "", errors.Errorf("Unknown priv: %v", priv)
 	}
 	return fmt.Sprintf(`%s="Y"`, col), nil
 }
@@ -317,7 +317,7 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 		for _, p := range mysql.AllDBPrivs {
 			v, ok := mysql.Priv2UserCol[p]
 			if !ok {
-				return "", errors.Errorf("Unknown db privilege %s", priv)
+				return "", errors.Errorf("Unknown db privilege %v", priv)
 			}
 			strs = append(strs, fmt.Sprintf(`%s="Y"`, v))
 		}
@@ -325,7 +325,7 @@ func composeDBPrivUpdate(priv mysql.PrivilegeType) (string, error) {
 	}
 	col, ok := mysql.Priv2UserCol[priv]
 	if !ok {
-		return "", errors.Errorf("Unknown priv: %s", priv)
+		return "", errors.Errorf("Unknown priv: %v", priv)
 	}
 	return fmt.Sprintf(`%s="Y"`, col), nil
 }
@@ -363,7 +363,7 @@ func composeTablePrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name 
 		}
 		p, ok := mysql.Priv2SetStr[priv]
 		if !ok {
-			return "", errors.Errorf("Unknown priv: %s", priv)
+			return "", errors.Errorf("Unknown priv: %v", priv)
 		}
 		if len(currTablePriv) == 0 {
 			newTablePriv = p
@@ -406,7 +406,7 @@ func composeColumnPrivUpdate(ctx context.Context, priv mysql.PrivilegeType, name
 		}
 		p, ok := mysql.Priv2SetStr[priv]
 		if !ok {
-			return "", errors.Errorf("Unknown priv: %s", priv)
+			return "", errors.Errorf("Unknown priv: %v", priv)
 		}
 		if len(currColumnPriv) == 0 {
 			newColumnPriv = p
