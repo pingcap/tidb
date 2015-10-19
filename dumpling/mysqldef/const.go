@@ -198,7 +198,7 @@ var Priv2Str = map[PrivilegeType]string{
 	IndexPriv:      "Index",
 }
 
-// Priv2Str is the map for privilege to string.
+// Priv2SetStr is the map for privilege to string.
 var Priv2SetStr = map[PrivilegeType]string{
 	CreatePriv:  "Create",
 	SelectPriv:  "Select",
