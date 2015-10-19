@@ -25,8 +25,8 @@ import (
 	"strings"
 	"unicode"
 
-	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 )
 
 type lexer struct {

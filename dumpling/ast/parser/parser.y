@@ -28,7 +28,7 @@ package parser
 import (
 	"strings"
 	
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
