@@ -1091,12 +1091,12 @@ func extractSecondMicrosecond(format string) (int64, int64, int64, time.Duration
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	microsecond, err := strconv.ParseInt(alignFrac(fields[1], MaxFsp), 10, 64)
+	microseconds, err := strconv.ParseInt(alignFrac(fields[1], MaxFsp), 10, 64)
 	if err != nil {
 		return 0, 0, 0, 0, errors.Errorf("invalid time format - %s", format)
 	}
 
-	return 0, 0, 0, time.Duration(seconds)*time.Second + time.Duration(microsecond)*time.Microsecond, nil
+	return 0, 0, 0, time.Duration(seconds)*time.Second + time.Duration(microseconds)*time.Microsecond, nil
 }
 
 // Format is `MM:SS.FFFFFF`.
