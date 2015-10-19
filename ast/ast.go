@@ -73,13 +73,11 @@ type DMLNode interface {
 // Visitor visits a Node.
 type Visitor interface {
 	// VisitEnter is called before children nodes is visited.
-	// visitChildren returns false means children nodes should be skipped
-	// and Leave will not be called. This is useful when work is done
-	// in Enter and there is no need to visit children.
-	Enter(n Node) (visitChildren bool)
+	// skipChildren returns true means children nodes should be skipped,
+	// this is useful when work is done in Enter and there is no need to visit children.
+	// ok returns false to stop visiting.
+	Enter(n Node) (skipChildren bool, ok bool)
 	// VisitLeave is called after children nodes has been visited.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
-	// If not OK, visitor should stop.
-	OK() bool
 }

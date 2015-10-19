@@ -43,8 +43,8 @@ type FuncCallExpr struct {
 
 // Accept implements Node interface.
 func (c *FuncCallExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(c) {
-		return c, v.OK()
+	if skipChildren, ok := v.Enter(c); skipChildren {
+		return c, ok
 	}
 	for i, val := range c.Args {
 		node, ok := val.Accept(v)
@@ -82,8 +82,8 @@ type FuncExtractExpr struct {
 
 // Accept implements Node Accept interface.
 func (ex *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(ex) {
-		return ex, v.OK()
+	if skipChildren, ok := v.Enter(ex); skipChildren {
+		return ex, ok
 	}
 	node, ok := ex.Date.Accept(v)
 	if !ok {
@@ -115,8 +115,8 @@ func (f *FuncConvertExpr) IsStatic() bool {
 
 // Accept implements Node Accept interface.
 func (f *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(f) {
-		return f, v.OK()
+	if skipChildren, ok := v.Enter(f); skipChildren {
+		return f, ok
 	}
 	node, ok := f.Expr.Accept(v)
 	if !ok {
@@ -155,8 +155,8 @@ func (f *FuncCastExpr) IsStatic() bool {
 
 // Accept implements Node Accept interface.
 func (f *FuncCastExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(f) {
-		return f, v.OK()
+	if skipChildren, ok := v.Enter(f); skipChildren {
+		return f, ok
 	}
 	node, ok := f.Expr.Accept(v)
 	if !ok {
@@ -178,8 +178,8 @@ type FuncSubstringExpr struct {
 
 // Accept implements Node Accept interface.
 func (sf *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(sf) {
-		return sf, v.OK()
+	if skipChildren, ok := v.Enter(sf); skipChildren {
+		return sf, ok
 	}
 	node, ok := sf.StrExpr.Accept(v)
 	if !ok {
@@ -216,8 +216,8 @@ type FuncSubstringIndexExpr struct {
 
 // Accept implements Node Accept interface.
 func (si *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(si) {
-		return si, v.OK()
+	if skipChildren, ok := v.Enter(si); skipChildren {
+		return si, ok
 	}
 	node, ok := si.StrExpr.Accept(v)
 	if !ok {
@@ -249,8 +249,8 @@ type FuncLocateExpr struct {
 
 // Accept implements Node Accept interface.
 func (le *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(le) {
-		return le, v.OK()
+	if skipChildren, ok := v.Enter(le); skipChildren {
+		return le, ok
 	}
 	node, ok := le.Str.Accept(v)
 	if !ok {
@@ -296,8 +296,8 @@ type FuncTrimExpr struct {
 
 // Accept implements Node Accept interface.
 func (tf *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(tf) {
-		return tf, v.OK()
+	if skipChildren, ok := v.Enter(tf); skipChildren {
+		return tf, ok
 	}
 	node, ok := tf.Str.Accept(v)
 	if !ok {

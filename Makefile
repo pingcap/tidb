@@ -13,7 +13,7 @@ TARGET = ""
 
 .PHONY: godep deps all build install parser clean todo test gotest interpreter server
 
-all: godep parser build test check
+all: godep parser ast-parser build test check
 
 godep:
 	go get github.com/tools/godep
@@ -49,6 +49,7 @@ ast-parser:
 	goyacc -o /dev/null -xegen $$a ast/parser/parser.y; \
 	goyacc -o ast/parser/parser.go -xe $$a ast/parser/parser.y 2>&1 | grep "shift/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; exit 1;}}';  \
 	rm -f $$a; \
+	rm -f y.output
 
 	@if [ $(ARCH) = $(LINUX) ]; \
 	then \

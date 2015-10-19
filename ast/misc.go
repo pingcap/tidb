@@ -51,8 +51,8 @@ type ExplainStmt struct {
 
 // Accept implements Node Accept interface.
 func (es *ExplainStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(es) {
-		return es, v.OK()
+	if skipChildren, ok := v.Enter(es); skipChildren {
+		return es, ok
 	}
 	node, ok := es.Stmt.Accept(v)
 	if !ok {
@@ -77,8 +77,8 @@ type PrepareStmt struct {
 
 // Accept implements Node Accept interface.
 func (ps *PrepareStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(ps) {
-		return ps, v.OK()
+	if skipChildren, ok := v.Enter(ps); skipChildren {
+		return ps, ok
 	}
 	node, ok := ps.SQLVar.Accept(v)
 	if !ok {
@@ -99,8 +99,8 @@ type DeallocateStmt struct {
 
 // Accept implements Node Accept interface.
 func (ds *DeallocateStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(ds) {
-		return ds, v.OK()
+	if skipChildren, ok := v.Enter(ds); skipChildren {
+		return ds, ok
 	}
 	return v.Leave(ds)
 }
@@ -117,8 +117,8 @@ type ExecuteStmt struct {
 
 // Accept implements Node Accept interface.
 func (es *ExecuteStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(es) {
-		return es, v.OK()
+	if skipChildren, ok := v.Enter(es); skipChildren {
+		return es, ok
 	}
 	for i, val := range es.UsingVars {
 		node, ok := val.Accept(v)
@@ -167,8 +167,8 @@ type ShowStmt struct {
 
 // Accept implements Node Accept interface.
 func (ss *ShowStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(ss) {
-		return ss, v.OK()
+	if skipChildren, ok := v.Enter(ss); skipChildren {
+		return ss, ok
 	}
 	if ss.Table != nil {
 		node, ok := ss.Table.Accept(v)
@@ -209,8 +209,8 @@ type BeginStmt struct {
 
 // Accept implements Node Accept interface.
 func (bs *BeginStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(bs) {
-		return bs, v.OK()
+	if skipChildren, ok := v.Enter(bs); skipChildren {
+		return bs, ok
 	}
 	return v.Leave(bs)
 }
@@ -223,8 +223,8 @@ type CommitStmt struct {
 
 // Accept implements Node Accept interface.
 func (cs *CommitStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(cs) {
-		return cs, v.OK()
+	if skipChildren, ok := v.Enter(cs); skipChildren {
+		return cs, ok
 	}
 	return v.Leave(cs)
 }
@@ -237,8 +237,8 @@ type RollbackStmt struct {
 
 // Accept implements Node Accept interface.
 func (rs *RollbackStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(rs) {
-		return rs, v.OK()
+	if skipChildren, ok := v.Enter(rs); skipChildren {
+		return rs, ok
 	}
 	return v.Leave(rs)
 }
@@ -253,8 +253,8 @@ type UseStmt struct {
 
 // Accept implements Node Accept interface.
 func (us *UseStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(us) {
-		return us, v.OK()
+	if skipChildren, ok := v.Enter(us); skipChildren {
+		return us, ok
 	}
 	return v.Leave(us)
 }
@@ -270,8 +270,8 @@ type VariableAssignment struct {
 
 // Accept implements Node interface.
 func (va *VariableAssignment) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(va) {
-		return va, v.OK()
+	if skipChildren, ok := v.Enter(va); skipChildren {
+		return va, ok
 	}
 	node, ok := va.Value.Accept(v)
 	if !ok {
@@ -290,8 +290,8 @@ type SetStmt struct {
 
 // Accept implements Node Accept interface.
 func (set *SetStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(set) {
-		return set, v.OK()
+	if skipChildren, ok := v.Enter(set); skipChildren {
+		return set, ok
 	}
 	for i, val := range set.Variables {
 		node, ok := val.Accept(v)
@@ -314,8 +314,8 @@ type SetCharsetStmt struct {
 
 // Accept implements Node Accept interface.
 func (set *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(set) {
-		return set, v.OK()
+	if skipChildren, ok := v.Enter(set); skipChildren {
+		return set, ok
 	}
 	return v.Leave(set)
 }
@@ -331,8 +331,8 @@ type SetPwdStmt struct {
 
 // Accept implements Node Accept interface.
 func (set *SetPwdStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(set) {
-		return set, v.OK()
+	if skipChildren, ok := v.Enter(set); skipChildren {
+		return set, ok
 	}
 	return v.Leave(set)
 }
@@ -360,16 +360,16 @@ type DoStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (set *DoStmt) Accept(v Visitor) (Node, bool) {
-	if !v.Enter(set) {
-		return set, v.OK()
+func (do *DoStmt) Accept(v Visitor) (Node, bool) {
+	if skipChildren, ok := v.Enter(do); skipChildren {
+		return do, ok
 	}
-	for i, val := range set.Exprs {
+	for i, val := range do.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
-			return set, false
+			return do, false
 		}
-		set.Exprs[i] = node.(ExprNode)
+		do.Exprs[i] = node.(ExprNode)
 	}
-	return v.Leave(set)
+	return v.Leave(do)
 }
