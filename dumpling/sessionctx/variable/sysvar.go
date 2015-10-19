@@ -27,7 +27,7 @@ const (
 	ScopeSession
 )
 
-// SysVar is for system variable
+// SysVar is for system variable.
 type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
@@ -39,7 +39,7 @@ type SysVar struct {
 	Value string
 }
 
-// Global sys vars map
+// SysVars is global sys vars map.
 var SysVars map[string]*SysVar
 
 // GetSysVar returns the sysvar value for the given name

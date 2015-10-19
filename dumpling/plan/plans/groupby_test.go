@@ -42,12 +42,16 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 		Fields: []*field.Field{
 			{
 				Expr: &expression.Ident{
-					CIStr: model.NewCIStr("id"),
+					CIStr:      model.NewCIStr("id"),
+					ReferScope: expression.IdentReferFromTable,
+					ReferIndex: 0,
 				},
 			},
 			{
 				Expr: &expression.Ident{
-					CIStr: model.NewCIStr("name"),
+					CIStr:      model.NewCIStr("name"),
+					ReferScope: expression.IdentReferFromTable,
+					ReferIndex: 1,
 				},
 			},
 			{
@@ -55,7 +59,9 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 					F: "sum",
 					Args: []expression.Expression{
 						&expression.Ident{
-							CIStr: model.NewCIStr("id"),
+							CIStr:      model.NewCIStr("id"),
+							ReferScope: expression.IdentReferFromTable,
+							ReferIndex: 0,
 						},
 					},
 				},
@@ -69,7 +75,9 @@ func (t *testGroupBySuite) TestGroupBy(c *C) {
 		Src:        tblPlan,
 		By: []expression.Expression{
 			&expression.Ident{
-				CIStr: model.NewCIStr("id"),
+				CIStr:      model.NewCIStr("id"),
+				ReferScope: expression.IdentReferFromTable,
+				ReferIndex: 0,
 			},
 		},
 	}

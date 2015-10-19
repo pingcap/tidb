@@ -403,6 +403,28 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
+
+		// For date_add
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 hour)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 day)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 week)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 month)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 quarter)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 year)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10.10" second_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10.10" minute_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10" minute_second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -532,6 +554,17 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+
+		// For grant statement
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 	}
 	s.RunTest(c, table)
 }

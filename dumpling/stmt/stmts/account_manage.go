@@ -23,7 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/stmt"
@@ -70,12 +70,13 @@ func (s *CreateUserStmt) SetText(text string) {
 	s.Text = text
 }
 
-func (s *CreateUserStmt) userExists(ctx context.Context, name string, host string) (bool, error) {
+func userExists(ctx context.Context, name string, host string) (bool, error) {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, name, host)
 	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	defer rs.Close()
 	row, err := rs.Next()
 	if err != nil {
 		return false, errors.Trace(err)
@@ -83,14 +84,19 @@ func (s *CreateUserStmt) userExists(ctx context.Context, name string, host strin
 	return row != nil, nil
 }
 
+// parse user string into username and host
+// root@localhost -> roor, localhost
+func parseUser(user string) (string, string) {
+	strs := strings.Split(user, "@")
+	return strs[0], strs[1]
+}
+
 // Exec implements the stmt.Statement Exec interface.
 func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
-		strs := strings.Split(spec.User, "@")
-		userName := strs[0]
-		host := strs[1]
-		exists, err1 := s.userExists(ctx, userName, host)
+		userName, host := parseUser(spec.User)
+		exists, err1 := userExists(ctx, userName, host)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -152,9 +158,7 @@ func (s *SetPwdStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *SetPwdStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	// TODO: If len(s.User) == 0, use CURRENT_USER()
-	strs := strings.Split(s.User, "@")
-	userName := strs[0]
-	host := strs[1]
+	userName, host := parseUser(s.User)
 	// Update mysql.user
 	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
 	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)

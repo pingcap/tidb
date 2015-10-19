@@ -21,7 +21,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 func TestT(t *testing.T) {
@@ -33,15 +33,18 @@ var _ = Suite(&testStmtSuite{})
 type testStmtSuite struct {
 	dbName string
 
-	testDB             *sql.DB
-	createDBSql        string
-	dropDBSql          string
-	useDBSql           string
-	createTableSql     string
-	insertSql          string
-	selectSql          string
-	createSystemDBSQL  string
-	createUserTableSQL string
+	testDB                   *sql.DB
+	createDBSql              string
+	dropDBSql                string
+	useDBSql                 string
+	createTableSql           string
+	insertSql                string
+	selectSql                string
+	createSystemDBSQL        string
+	createUserTableSQL       string
+	createDBPrivTableSQL     string
+	createTablePrivTableSQL  string
+	createColumnPrivTableSQL string
 }
 
 func (s *testStmtSuite) SetUpTest(c *C) {
@@ -65,9 +68,15 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 
 	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
 	s.createUserTableSQL = tidb.CreateUserTable
+	s.createDBPrivTableSQL = tidb.CreateDBPrivTable
+	s.createTablePrivTableSQL = tidb.CreateTablePrivTable
+	s.createColumnPrivTableSQL = tidb.CreateColumnPrivTable
 
 	mustExec(c, s.testDB, s.createSystemDBSQL)
 	mustExec(c, s.testDB, s.createUserTableSQL)
+	mustExec(c, s.testDB, s.createDBPrivTableSQL)
+	mustExec(c, s.testDB, s.createTablePrivTableSQL)
+	mustExec(c, s.testDB, s.createColumnPrivTableSQL)
 }
 
 func (s *testStmtSuite) TearDownTest(c *C) {
