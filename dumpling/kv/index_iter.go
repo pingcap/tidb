@@ -87,7 +87,7 @@ func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 		k = vv
 	}
 	// update new iter to next
-	newIt, err := c.it.Next(hasPrefix([]byte(c.prefix)))
+	newIt, err := c.it.Next()
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -198,7 +198,7 @@ func hasPrefix(prefix []byte) FnKeyCmp {
 // Drop removes the KV index from store.
 func (c *kvIndex) Drop(txn Transaction) error {
 	prefix := []byte(c.prefix)
-	it, err := txn.Seek(Key(prefix), hasPrefix(prefix))
+	it, err := txn.Seek(Key(prefix))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -213,7 +213,7 @@ func (c *kvIndex) Drop(txn Transaction) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		it, err = it.Next(hasPrefix(prefix))
+		it, err = it.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -227,7 +227,7 @@ func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter Index
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	it, err := txn.Seek(keyBuf, hasPrefix([]byte(c.prefix)))
+	it, err := txn.Seek(keyBuf)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -242,7 +242,7 @@ func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter Index
 // SeekFirst returns an iterator which points to the first entry of the KV index.
 func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 	prefix := []byte(c.prefix)
-	it, err := txn.Seek(prefix, hasPrefix(prefix))
+	it, err := txn.Seek(prefix)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
