@@ -24,6 +24,9 @@ var (
 	_ StmtNode = &RollbackStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &SetStmt{}
+	_ StmtNode = &SetCharsetStmt{}
+	_ StmtNode = &SetPwdStmt{}
+	_ StmtNode = &DoStmt{}
 
 	_ Node = &VariableAssignment{}
 )
@@ -43,13 +46,13 @@ type AuthOption struct {
 type ExplainStmt struct {
 	stmtNode
 
-	Stmt DMLNode
+	Stmt StmtNode
 }
 
 // Accept implements Node Accept interface.
 func (es *ExplainStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(es) {
-		return es, false
+		return es, v.OK()
 	}
 	node, ok := es.Stmt.Accept(v)
 	if !ok {
@@ -68,19 +71,20 @@ type PrepareStmt struct {
 	InPrepare bool // true for prepare mode, false for use mode
 	Name      string
 	ID        uint32 // For binary protocol, there is no Name but only ID
-	SQLStmt   Node   // The parsed statement from sql text with placeholder
+	SQLText   string
+	SQLVar    *VariableExpr
 }
 
 // Accept implements Node Accept interface.
 func (ps *PrepareStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ps) {
-		return ps, false
+		return ps, v.OK()
 	}
-	node, ok := ps.SQLStmt.Accept(v)
+	node, ok := ps.SQLVar.Accept(v)
 	if !ok {
 		return ps, false
 	}
-	ps.SQLStmt = node
+	ps.SQLVar = node.(*VariableExpr)
 	return v.Leave(ps)
 }
 
@@ -96,7 +100,7 @@ type DeallocateStmt struct {
 // Accept implements Node Accept interface.
 func (ds *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ds) {
-		return ds, false
+		return ds, v.OK()
 	}
 	return v.Leave(ds)
 }
@@ -114,7 +118,7 @@ type ExecuteStmt struct {
 // Accept implements Node Accept interface.
 func (es *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(es) {
-		return es, false
+		return es, v.OK()
 	}
 	for i, val := range es.UsingVars {
 		node, ok := val.Accept(v)
@@ -126,16 +130,33 @@ func (es *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(es)
 }
 
+// ShowStmtType is the type for SHOW statement.
+type ShowStmtType int
+
+// Show statement types.
+const (
+	ShowNone = iota
+	ShowEngines
+	ShowDatabases
+	ShowTables
+	ShowColumns
+	ShowWarnings
+	ShowCharset
+	ShowVariables
+	ShowCollation
+	ShowCreateTable
+)
+
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
 // See: https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
 	stmtNode
 
-	Target int // Databases/Tables/Columns/....
+	Tp     ShowStmtType // Databases/Tables/Columns/....
 	DBName string
-	Table  *TableRef      // Used for showing columns.
-	Column *ColumnRefExpr // Used for `desc table column`.
-	Flag   int            // Some flag parsed from sql, such as FULL.
+	Table  *TableName  // Used for showing columns.
+	Column *ColumnName // Used for `desc table column`.
+	Flag   int         // Some flag parsed from sql, such as FULL.
 	Full   bool
 
 	// Used by show variables
@@ -147,21 +168,21 @@ type ShowStmt struct {
 // Accept implements Node Accept interface.
 func (ss *ShowStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ss) {
-		return ss, false
+		return ss, v.OK()
 	}
 	if ss.Table != nil {
 		node, ok := ss.Table.Accept(v)
 		if !ok {
 			return ss, false
 		}
-		ss.Table = node.(*TableRef)
+		ss.Table = node.(*TableName)
 	}
 	if ss.Column != nil {
 		node, ok := ss.Column.Accept(v)
 		if !ok {
 			return ss, false
 		}
-		ss.Column = node.(*ColumnRefExpr)
+		ss.Column = node.(*ColumnName)
 	}
 	if ss.Pattern != nil {
 		node, ok := ss.Pattern.Accept(v)
@@ -189,7 +210,7 @@ type BeginStmt struct {
 // Accept implements Node Accept interface.
 func (bs *BeginStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(bs) {
-		return bs, false
+		return bs, v.OK()
 	}
 	return v.Leave(bs)
 }
@@ -203,7 +224,7 @@ type CommitStmt struct {
 // Accept implements Node Accept interface.
 func (cs *CommitStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(cs) {
-		return cs, false
+		return cs, v.OK()
 	}
 	return v.Leave(cs)
 }
@@ -217,7 +238,7 @@ type RollbackStmt struct {
 // Accept implements Node Accept interface.
 func (rs *RollbackStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(rs) {
-		return rs, false
+		return rs, v.OK()
 	}
 	return v.Leave(rs)
 }
@@ -233,7 +254,7 @@ type UseStmt struct {
 // Accept implements Node Accept interface.
 func (us *UseStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(us) {
-		return us, false
+		return us, v.OK()
 	}
 	return v.Leave(us)
 }
@@ -250,7 +271,7 @@ type VariableAssignment struct {
 // Accept implements Node interface.
 func (va *VariableAssignment) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(va) {
-		return va, false
+		return va, v.OK()
 	}
 	node, ok := va.Value.Accept(v)
 	if !ok {
@@ -270,7 +291,7 @@ type SetStmt struct {
 // Accept implements Node Accept interface.
 func (set *SetStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(set) {
-		return set, false
+		return set, v.OK()
 	}
 	for i, val := range set.Variables {
 		node, ok := val.Accept(v)
@@ -278,6 +299,77 @@ func (set *SetStmt) Accept(v Visitor) (Node, bool) {
 			return set, false
 		}
 		set.Variables[i] = node.(*VariableAssignment)
+	}
+	return v.Leave(set)
+}
+
+// SetCharsetStmt is a statement to assign values to character and collation variables.
+// See: https://dev.mysql.com/doc/refman/5.7/en/set-statement.html
+type SetCharsetStmt struct {
+	stmtNode
+
+	Charset string
+	Collate string
+}
+
+// Accept implements Node Accept interface.
+func (set *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(set) {
+		return set, v.OK()
+	}
+	return v.Leave(set)
+}
+
+// SetPwdStmt is a statement to assign a password to user account.
+// See: https://dev.mysql.com/doc/refman/5.7/en/set-password.html
+type SetPwdStmt struct {
+	stmtNode
+
+	User     string
+	Password string
+}
+
+// Accept implements Node Accept interface.
+func (set *SetPwdStmt) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(set) {
+		return set, v.OK()
+	}
+	return v.Leave(set)
+}
+
+// UserSpec is used for parsing create user statement.
+type UserSpec struct {
+	User    string
+	AuthOpt *AuthOption
+}
+
+// CreateUserStmt creates user account.
+// See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
+type CreateUserStmt struct {
+	IfNotExists bool
+	Specs       []*UserSpec
+
+	Text string
+}
+
+// DoStmt is the struct for DO statement.
+type DoStmt struct {
+	stmtNode
+
+	Exprs []ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (set *DoStmt) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(set) {
+		return set, v.OK()
+	}
+	for i, val := range set.Exprs {
+		node, ok := val.Accept(v)
+		if !ok {
+			return set, false
+		}
+		set.Exprs[i] = node.(ExprNode)
 	}
 	return v.Leave(set)
 }

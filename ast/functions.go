@@ -44,7 +44,7 @@ type FuncCallExpr struct {
 // Accept implements Node interface.
 func (c *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(c) {
-		return c, false
+		return c, v.OK()
 	}
 	for i, val := range c.Args {
 		node, ok := val.Accept(v)
@@ -83,7 +83,7 @@ type FuncExtractExpr struct {
 // Accept implements Node Accept interface.
 func (ex *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ex) {
-		return ex, false
+		return ex, v.OK()
 	}
 	node, ok := ex.Date.Accept(v)
 	if !ok {
@@ -116,7 +116,7 @@ func (f *FuncConvertExpr) IsStatic() bool {
 // Accept implements Node Accept interface.
 func (f *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(f) {
-		return f, false
+		return f, v.OK()
 	}
 	node, ok := f.Expr.Accept(v)
 	if !ok {
@@ -126,14 +126,14 @@ func (f *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(f)
 }
 
-// castOperatopr is the operator type for cast function.
-type castFunctionType int
+// CastFunctionType is the type for cast function.
+type CastFunctionType int
 
-// castFunction types
+// CastFunction types
 const (
-	CastFunction castFunctionType = iota + 1
-	ConvertFunction
-	BinaryOperator
+	CastFunction CastFunctionType = iota + 1
+	CastConvertFunction
+	CastBinaryOperator
 )
 
 // FuncCastExpr is the cast function converting value to another type, e.g, cast(expr AS signed).
@@ -145,7 +145,7 @@ type FuncCastExpr struct {
 	// Tp is the conversion type.
 	Tp *types.FieldType
 	// Cast, Convert and Binary share this struct.
-	FunctionType castFunctionType
+	FunctionType CastFunctionType
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
@@ -156,7 +156,7 @@ func (f *FuncCastExpr) IsStatic() bool {
 // Accept implements Node Accept interface.
 func (f *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(f) {
-		return f, false
+		return f, v.OK()
 	}
 	node, ok := f.Expr.Accept(v)
 	if !ok {
@@ -179,7 +179,7 @@ type FuncSubstringExpr struct {
 // Accept implements Node Accept interface.
 func (sf *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(sf) {
-		return sf, false
+		return sf, v.OK()
 	}
 	node, ok := sf.StrExpr.Accept(v)
 	if !ok {
@@ -204,11 +204,78 @@ func (sf *FuncSubstringExpr) IsStatic() bool {
 	return sf.StrExpr.IsStatic() && sf.Pos.IsStatic() && sf.Len.IsStatic()
 }
 
-type trimDirectionType int
+// FuncSubstringIndexExpr returns the substring as specified.
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
+type FuncSubstringIndexExpr struct {
+	funcNode
+
+	StrExpr ExprNode
+	Delim   ExprNode
+	Count   ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (si *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(si) {
+		return si, v.OK()
+	}
+	node, ok := si.StrExpr.Accept(v)
+	if !ok {
+		return si, false
+	}
+	si.StrExpr = node.(ExprNode)
+	node, ok = si.Delim.Accept(v)
+	if !ok {
+		return si, false
+	}
+	si.Delim = node.(ExprNode)
+	node, ok = si.Count.Accept(v)
+	if !ok {
+		return si, false
+	}
+	si.Count = node.(ExprNode)
+	return v.Leave(si)
+}
+
+// FuncLocateExpr returns the position of the first occurrence of substring.
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+type FuncLocateExpr struct {
+	funcNode
+
+	Str    ExprNode
+	SubStr ExprNode
+	Pos    ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (le *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
+	if !v.Enter(le) {
+		return le, v.OK()
+	}
+	node, ok := le.Str.Accept(v)
+	if !ok {
+		return le, false
+	}
+	le.Str = node.(ExprNode)
+	node, ok = le.SubStr.Accept(v)
+	if !ok {
+		return le, false
+	}
+	le.SubStr = node.(ExprNode)
+	node, ok = le.Pos.Accept(v)
+	if !ok {
+		return le, false
+	}
+	le.Pos = node.(ExprNode)
+	return v.Leave(le)
+}
+
+// TrimDirectionType is the type for trim direction.
+type TrimDirectionType int
 
 const (
 	// TrimBothDefault trims from both direction by default.
-	TrimBothDefault trimDirectionType = iota
+	TrimBothDefault TrimDirectionType = iota
 	// TrimBoth trims from both direction with explicit notation.
 	TrimBoth
 	// TrimLeading trims from left.
@@ -224,13 +291,13 @@ type FuncTrimExpr struct {
 
 	Str       ExprNode
 	RemStr    ExprNode
-	Direction trimDirectionType
+	Direction TrimDirectionType
 }
 
 // Accept implements Node Accept interface.
 func (tf *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(tf) {
-		return tf, false
+		return tf, v.OK()
 	}
 	node, ok := tf.Str.Accept(v)
 	if !ok {
@@ -249,3 +316,6 @@ func (tf *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
 func (tf *FuncTrimExpr) IsStatic() bool {
 	return tf.Str.IsStatic() && tf.RemStr.IsStatic()
 }
+
+// TypeStar is a special type for "*".
+type TypeStar string
