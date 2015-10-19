@@ -37,13 +37,14 @@ var localCompactDefaultPolicy = kv.CompactPolicy{
 }
 
 type localstoreCompactor struct {
-	mu         sync.Mutex
-	recentKeys map[string]struct{}
-	stopCh     chan struct{}
-	delCh      chan kv.EncodedKey
-	ticker     *time.Ticker
-	db         engine.DB
-	policy     kv.CompactPolicy
+	mu              sync.Mutex
+	recentKeys      map[string]struct{}
+	stopCh          chan struct{}
+	delCh           chan kv.EncodedKey
+	workerWaitGroup sync.WaitGroup
+	ticker          *time.Ticker
+	db              engine.DB
+	policy          kv.CompactPolicy
 }
 
 func (gc *localstoreCompactor) OnSet(k kv.Key) {
@@ -82,6 +83,8 @@ func (gc *localstoreCompactor) getAllVersions(k kv.Key) ([]kv.EncodedKey, error)
 }
 
 func (gc *localstoreCompactor) deleteWorker() {
+	gc.workerWaitGroup.Add(1)
+	defer gc.workerWaitGroup.Done()
 	cnt := 0
 	batch := gc.db.NewBatch()
 	for {
@@ -107,6 +110,8 @@ func (gc *localstoreCompactor) deleteWorker() {
 }
 
 func (gc *localstoreCompactor) checkExpiredKeysWorker() {
+	gc.workerWaitGroup.Add(1)
+	defer gc.workerWaitGroup.Done()
 	for {
 		select {
 		case <-gc.stopCh:
@@ -178,6 +183,8 @@ func (gc *localstoreCompactor) Start() {
 func (gc *localstoreCompactor) Stop() {
 	gc.ticker.Stop()
 	close(gc.stopCh)
+	// Wait for all workers to finish.
+	gc.workerWaitGroup.Wait()
 }
 
 func newLocalCompactor(policy kv.CompactPolicy, db engine.DB) *localstoreCompactor {
