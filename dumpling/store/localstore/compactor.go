@@ -145,9 +145,9 @@ func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.Enco
 			panic(err)
 		}
 		ts := localVersionToTimestamp(ver)
-		currentTs := time.Now().UnixNano() / int64(time.Millisecond)
+		currentTS := time.Now().UnixNano() / int64(time.Millisecond)
 		// Check timeout keys.
-		if currentTs-int64(ts) >= int64(gc.policy.SafePoint) {
+		if currentTS-int64(ts) >= int64(gc.policy.SafePoint) {
 			// Skip first version.
 			if first {
 				first = false

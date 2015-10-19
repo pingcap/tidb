@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strconv"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -38,7 +37,6 @@ var (
 type dbTxn struct {
 	kv.UnionStore
 	store        *dbStore // for commit
-	startTs      time.Time
 	tid          uint64
 	valid        bool
 	version      kv.Version        // commit version

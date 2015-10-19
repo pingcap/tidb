@@ -15,7 +15,6 @@ package localstore
 
 import (
 	"sync"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -118,7 +117,6 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, err
 	}
 	txn := &dbTxn{
-		startTs:      time.Now(),
 		tid:          beginVer.Ver,
 		valid:        true,
 		store:        s,
