@@ -150,6 +150,7 @@ import (
 	fulltext	"FULLTEXT"
 	ge		">="
 	global		"GLOBAL"
+	grant		"GRANT"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -199,6 +200,7 @@ import (
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
+	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
 	oror		"||"
@@ -238,6 +240,7 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	to		"TO"
 	trailing	"TRAILING"
 	transaction	"TRANSACTION"
 	trim		"TRIM"
@@ -351,6 +354,7 @@ import (
 	CharsetName		"Charset Name"
 	CollationName		"Collation Name"
 	ColumnDef		"table column definition"
+	ColumnListOpt		"Optional column list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
@@ -413,6 +417,7 @@ import (
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
+	GrantStmt		"Grant statement"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
 	HashString		"Hashed string"
@@ -441,6 +446,7 @@ import (
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
+	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
@@ -460,6 +466,10 @@ import (
 	PrimaryExpression	"primary expression"
 	PrimaryFactor		"primary expression factor"
 	Priority		"insert statement priority"
+	PrivElem		"Privilege element"
+	PrivElemList		"Privilege element list"
+	PrivLevel		"Privilege scope"
+	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
 	RollbackStmt		"ROLLBACK statement"
@@ -3510,6 +3520,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	GrantStmt
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -4311,10 +4322,14 @@ CreateUserStmt:
 UserSpecification:
 	Username AuthOption	
 	{
-		$$ = &coldef.UserSpecification{
+		x := &coldef.UserSpecification{
 			User: $1.(string),
-			AuthOpt: $2.(*coldef.AuthOption),
 		}
+		if $2 != nil {
+			x.AuthOpt = $2.(*coldef.AuthOption)	
+		}
+		$$ = x
+
 	}
 
 UserSpecificationList:
@@ -4328,7 +4343,9 @@ UserSpecificationList:
 	}
 
 AuthOption:
-	{}
+	{
+		$$ = nil
+	}
 |	"IDENTIFIED" "BY" AuthString
 	{
 		$$ = &coldef.AuthOption {
@@ -4345,5 +4362,147 @@ AuthOption:
 
 HashString:
 	stringLit
+
+/*************************************************************************************
+ * Grant statement
+ * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ *************************************************************************************/
+GrantStmt:
+	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecificationList
+	 {
+		$$ = &stmts.GrantStmt{
+			Privs: $2.([]*coldef.PrivElem),
+			ObjectType: $4.(int),
+			Level: $5.(*coldef.GrantLevel),
+			Users: $7.([]*coldef.UserSpecification),
+		}	 	
+	 }
+
+PrivElem:
+	PrivType ColumnListOpt
+	{
+		$$ = &coldef.PrivElem{
+			Priv: $1.(mysql.PrivilegeType),
+			Cols: $2.([]string),
+		}
+	}
+
+ColumnListOpt:
+	{
+		$$ = []string{}
+	}
+|	'(' ColumnNameList ')'
+	{
+		$$ = $2
+	}
+
+PrivElemList:
+	PrivElem
+	{
+		$$ = []*coldef.PrivElem{$1.(*coldef.PrivElem)}
+	}
+|	PrivElemList ',' PrivElem
+	{
+		$$ = append($1.([]*coldef.PrivElem), $3.(*coldef.PrivElem))
+	}
+
+PrivType:
+	"ALL"
+	{
+		$$ = mysql.AllPriv
+	}
+|	"ALTER"
+	{
+		$$ = mysql.AlterPriv
+	}
+|	"CREATE"
+	{
+		$$ = mysql.CreatePriv
+	}
+|	"CREATE" "USER"
+	{
+		$$ = mysql.CreateUserPriv
+	}
+|	"DELETE"
+	{
+		$$ = mysql.DeletePriv
+	}
+|	"DROP"
+	{
+		$$ = mysql.DropPriv
+	}
+|	"EXECUTE"
+	{
+		$$ = mysql.ExecutePriv
+	}
+|	"INDEX"
+	{
+		$$ = mysql.IndexPriv
+	}
+|	"INSERT"
+	{
+		$$ = mysql.InsertPriv
+	}
+|	"SELECT"
+	{
+		$$ = mysql.SelectPriv
+	}
+|	"SHOW" "DATABASES"
+	{
+		$$ = mysql.ShowDBPriv
+	}
+|	"UPDATE"
+	{
+		$$ = mysql.UpdatePriv
+	}
+|	"GRANT" "OPTION"
+	{
+		$$ = mysql.GrantPriv
+	}
+	
+ObjectType:
+	{
+		$$ = coldef.ObjectTypeNone
+	}
+|	"TABLE"
+	{
+		$$ = coldef.ObjectTypeTable
+	}
+
+PrivLevel:
+	'*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelDB,
+		}		
+	}
+|	'*' '.' '*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelGlobal,
+		}		
+	}
+| 	Identifier '.' '*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelDB,
+			DBName: $1.(string),
+		}		
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelTable,
+			DBName: $1.(string),
+			TableName: $3.(string),
+		}		
+	}
+|	Identifier
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelTable,
+			TableName: $1.(string),
+		}		
+	}
 %%
 

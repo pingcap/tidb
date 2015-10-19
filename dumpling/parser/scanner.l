@@ -317,6 +317,7 @@ from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
+grant		{g}{r}{a}{n}{t}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
@@ -357,6 +358,7 @@ national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
+option		{o}{p}{t}{i}{o}{n}
 or		{o}{r}
 order		{o}{r}{d}{e}{r}
 outer		{o}{u}{t}{e}{r}
@@ -390,6 +392,7 @@ sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
+to		{t}{o}
 trailing	{t}{r}{a}{i}{l}{i}{n}{g}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
 trim		{t}{r}{i}{m}
@@ -684,6 +687,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {full}			lval.item = string(l.val)
 			return full
 {fulltext}		return fulltext
+{grant}			return grant
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
@@ -758,6 +762,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {offset}		lval.item = string(l.val)
 			return offset
 {on}			return on
+{option}		return option
 {order}			return order
 {or}			return or
 {outer}			return outer
@@ -820,6 +825,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {tables}		lval.item = string(l.val)
 			return tables
 {then}			return then
+{to}			return to
 {trailing}		return trailing
 {transaction}		lval.item = string(l.val)
 			return transaction
