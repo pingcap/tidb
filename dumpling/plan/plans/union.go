@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv/memkv"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
