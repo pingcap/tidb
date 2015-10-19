@@ -48,7 +48,9 @@ func (t *testOrderBySuit) TestOrderBy(c *C) {
 		Src: tblPlan,
 		By: []expression.Expression{
 			&expression.Ident{
-				CIStr: model.NewCIStr("id"),
+				CIStr:      model.NewCIStr("id"),
+				ReferScope: expression.IdentReferSelectList,
+				ReferIndex: 0,
 			},
 		},
 		Ascs: []bool{false},

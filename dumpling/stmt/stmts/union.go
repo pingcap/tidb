@@ -92,13 +92,14 @@ func (s *UnionStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	selectList := &plans.SelectList{}
 	selectList.ResultFields = make([]*field.ResultField, len(fields))
 	selectList.HiddenFieldOffset = len(fields)
+	selectList.Fields = s.Selects[0].Fields
 
 	// Union uses first select return column names and ignores table name.
 	// We only care result name and type here.
 	for i, f := range fields {
-		nf := &field.ResultField{}
-		nf.Name = f.Name
-		nf.FieldType = f.FieldType
+		nf := f.Clone()
+		nf.OrgTableName = ""
+		nf.TableName = ""
 		selectList.ResultFields[i] = nf
 	}
 
@@ -109,6 +110,7 @@ func (s *UnionStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	r = &plans.UnionPlan{Srcs: srcs, Distincts: s.Distincts, RFields: selectList.ResultFields}
 
+	// TODO: check aggregate function later.
 	if s := s.OrderBy; s != nil {
 		if r, err = (&rsets.OrderByRset{By: s.By,
 			Src:        r,
