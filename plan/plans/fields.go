@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
@@ -83,7 +84,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 		}
 		di, ok := d.(*types.DataItem)
 		if ok {
-			if r.ResultFields[i].Col.Tp == 0 {
+			if r.ResultFields[i].Col.Tp == mysql.UnInitializedType {
 				r.ResultFields[i].Col.FieldType = *di.Type
 			}
 			row.Data[i] = di.Data
