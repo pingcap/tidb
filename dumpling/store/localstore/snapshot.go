@@ -29,6 +29,7 @@ var (
 	_ kv.Iterator     = (*dbIter)(nil)
 )
 
+// dbSnapshot implements MvccSnapshot interface.
 type dbSnapshot struct {
 	db      engine.DB
 	rawIt   engine.Iterator

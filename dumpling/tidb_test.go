@@ -883,6 +883,16 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
 
 	mustExecFailed(c, se, "select * from t1 left join t2 on t1.c1 = t3.c3 left join on t3 on t1.c1 = t2.c2")
+
+	// For issue 393
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (b blob)")
+	mustExecSQL(c, se, `insert t values('\x01')`)
+
+	r = mustExecSQL(c, se, `select length(b) from t`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 3)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
