@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	mysql "github.com/pingcap/tidb/mysqldef"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -89,14 +88,6 @@ func ColToResultField(col *column.Col, tableName string) *ResultField {
 		TableName:    tableName,
 		OrgTableName: tableName,
 	}
-
-	if rf.Col.Flen == types.UnspecifiedLength {
-		rf.Col.Flen = 0
-	}
-	if rf.Col.Decimal == types.UnspecifiedLength {
-		rf.Col.Decimal = 0
-	}
-
 	// Keep things compatible for old clients.
 	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
 	if rf.Tp == mysql.TypeVarchar {
@@ -233,7 +224,7 @@ func GetFieldIndex(name string, fields []*Field, flag uint32) []int {
 	// Check alias field name.
 	if flag&FieldNameFlag > 0 {
 		for i, f := range fields {
-			if CheckFieldsEqual(name, f.Name) {
+			if CheckFieldsEqual(name, f.AsName) {
 				indices = append(indices, i)
 				continue
 			}
@@ -289,4 +280,9 @@ func CloneFieldByName(name string, fields []*ResultField, flag uint32) (*ResultF
 func CheckWildcardField(name string) (string, bool, error) {
 	_, table, field := SplitQualifiedName(name)
 	return table, field == "*", nil
+}
+
+// IsQualifiedName returns whether name contains "." or not.
+func IsQualifiedName(name string) bool {
+	return strings.Contains(name, ".")
 }

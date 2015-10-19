@@ -18,21 +18,18 @@
 package stmts
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/coldef"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/rset"
-	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 /************************************************************************************
@@ -73,60 +70,33 @@ func (s *CreateUserStmt) SetText(text string) {
 	s.Text = text
 }
 
-func composeUserTableFilter(name string, host string) expression.Expression {
-	nameMatch := expression.NewBinaryOperation(opcode.EQ, &expression.Ident{CIStr: model.NewCIStr("User")}, &expression.Value{Val: name})
-	hostMatch := expression.NewBinaryOperation(opcode.EQ, &expression.Ident{CIStr: model.NewCIStr("Host")}, &expression.Value{Val: host})
-	return expression.NewBinaryOperation(opcode.AndAnd, nameMatch, hostMatch)
-}
-
-func composeUserTableRset() *rsets.JoinRset {
-	return &rsets.JoinRset{
-		Left: &rsets.TableSource{
-			Source: table.Ident{
-				Name:   model.NewCIStr(mysql.UserTable),
-				Schema: model.NewCIStr(mysql.SystemDB),
-			},
-		},
-	}
-}
-
-func (s *CreateUserStmt) userExists(ctx context.Context, name string, host string) (bool, error) {
-	r := composeUserTableRset()
-	p, err := r.Plan(ctx)
+func userExists(ctx context.Context, name string, host string) (bool, error) {
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, name, host)
+	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	where := &rsets.WhereRset{
-		Src:  p,
-		Expr: composeUserTableFilter(name, host),
-	}
-	p, err = where.Plan(ctx)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	defer p.Close()
-	row, err := p.Next(ctx)
+	defer rs.Close()
+	row, err := rs.Next()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return row != nil, nil
 }
 
+// parse user string into username and host
+// root@localhost -> roor, localhost
+func parseUser(user string) (string, string) {
+	strs := strings.Split(user, "@")
+	return strs[0], strs[1]
+}
+
 // Exec implements the stmt.Statement Exec interface.
 func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
-	st := &InsertIntoStmt{
-		TableIdent: table.Ident{
-			Name:   model.NewCIStr(mysql.UserTable),
-			Schema: model.NewCIStr(mysql.SystemDB),
-		},
-		ColNames: []string{"Host", "User", "Password"},
-	}
-	values := make([][]expression.Expression, 0, len(s.Specs))
+	users := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
-		strs := strings.Split(spec.User, "@")
-		userName := strs[0]
-		host := strs[1]
-		exists, err1 := s.userExists(ctx, userName, host)
+		userName, host := parseUser(spec.User)
+		exists, err1 := userExists(ctx, userName, host)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -136,22 +106,20 @@ func (s *CreateUserStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 			}
 			continue
 		}
-		value := make([]expression.Expression, 0, 3)
-		value = append(value, expression.Value{Val: host})
-		value = append(value, expression.Value{Val: userName})
+		pwd := ""
 		if spec.AuthOpt.ByAuthString {
-			value = append(value, expression.Value{Val: util.EncodePassword(spec.AuthOpt.AuthString)})
+			pwd = util.EncodePassword(spec.AuthOpt.AuthString)
 		} else {
-			// TODO: Maybe we should hash the string here?
-			value = append(value, expression.Value{Val: util.EncodePassword(spec.AuthOpt.HashString)})
+			pwd = util.EncodePassword(spec.AuthOpt.HashString)
 		}
-		values = append(values, value)
+		user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
+		users = append(users, user)
 	}
-	if len(values) == 0 {
+	if len(users) == 0 {
 		return nil, nil
 	}
-	st.Lists = values
-	_, err := st.Exec(ctx)
+	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
+	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -188,20 +156,11 @@ func (s *SetPwdStmt) SetText(text string) {
 }
 
 // Exec implements the stmt.Statement Exec interface.
-func (s *SetPwdStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	// If len(s.User) == 0, use CURRENT_USER()
-	strs := strings.Split(s.User, "@")
-	userName := strs[0]
-	host := strs[1]
+func (s *SetPwdStmt) Exec(ctx context.Context) (rset.Recordset, error) {
+	// TODO: If len(s.User) == 0, use CURRENT_USER()
+	userName, host := parseUser(s.User)
 	// Update mysql.user
-	asgn := expression.Assignment{
-		ColName: "Password",
-		Expr:    expression.Value{Val: util.EncodePassword(s.Password)},
-	}
-	st := &UpdateStmt{
-		TableRefs: composeUserTableRset(),
-		List:      []expression.Assignment{asgn},
-		Where:     composeUserTableFilter(userName, host),
-	}
-	return st.Exec(ctx)
+	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
+	_, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	return nil, errors.Trace(err)
 }

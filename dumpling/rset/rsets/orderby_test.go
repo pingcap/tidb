@@ -35,7 +35,7 @@ func (s *testOrderByRsetSuite) SetUpSuite(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}}
 	}
 
 	selectList := &plans.SelectList{
@@ -53,7 +53,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	fields := make([]*field.Field, len(resultFields))
 	for i, resultField := range resultFields {
 		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}, Name: name}
+		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}}
 	}
 
 	selectList := &plans.SelectList{
@@ -72,7 +72,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 	c.Assert(err, IsNil)
 
 	// `select id, name as id from t order by id`
-	selectList.Fields[1].Name = "id"
+	selectList.Fields[1].AsName = "id"
 	selectList.ResultFields[1].Name = "id"
 
 	err = r.CheckAndUpdateSelectList(selectList, resultFields)
@@ -98,7 +98,7 @@ func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
 
 	// `select id, name from t order by xxx`
 	r.By[0].Expr = &expression.Ident{CIStr: model.NewCIStr("xxx")}
-	selectList.Fields[1].Name = "name"
+	selectList.Fields[1].AsName = "name"
 	selectList.ResultFields[1].Name = "name"
 
 	err = r.CheckAndUpdateSelectList(selectList, resultFields)

@@ -21,6 +21,7 @@ import (
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // TiDBDriver implements IDriver.
@@ -78,7 +79,7 @@ func (ts *TiDBStatement) Execute(args ...interface{}) (rs ResultSet, err error) 
 // AppendParam implements IStatement AppendParam method.
 func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
-		return mysql.NewDefaultError(mysql.ErWrongArguments, "stmt_send_longdata")
+		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
 	}
 	ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
 	return nil
@@ -272,8 +273,16 @@ func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 	ci.Schema = fld.DBName
 	ci.Flag = uint16(fld.Flag)
 	ci.Charset = uint16(mysql.CharsetIDs[fld.Charset])
-	ci.ColumnLength = uint32(fld.Flen)
-	ci.Decimal = uint8(fld.Decimal)
+	if fld.Flen == types.UnspecifiedLength {
+		ci.ColumnLength = 0
+	} else {
+		ci.ColumnLength = uint32(fld.Flen)
+	}
+	if fld.Decimal == types.UnspecifiedLength {
+		ci.Decimal = 0
+	} else {
+		ci.Decimal = uint8(fld.Decimal)
+	}
 	ci.Type = uint8(fld.Tp)
 	return
 }

@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	mysql "github.com/pingcap/tidb/mysqldef"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/charset"
@@ -85,84 +84,13 @@ func TypeStr(tp byte) (r string) {
 	return type2Str[tp]
 }
 
-// TypeToStr converts tp to a string with an extra binary.
-func TypeToStr(tp byte, binary bool) string {
-	switch tp {
-	case mysql.TypeBlob:
-		if binary {
-			return "text"
-		}
-		return "blob"
-	case mysql.TypeLongBlob:
-		if binary {
-			return "longtext"
-		}
-		return "longblob"
-	case mysql.TypeTinyBlob:
-		if binary {
-			return "tinytext"
-		}
-		return "tinyblob"
-	case mysql.TypeMediumBlob:
-		if binary {
-			return "mediumtext"
-		}
-		return "mediumblob"
-	case mysql.TypeVarchar:
-		if binary {
-			return "varbinary"
-		}
-		return "varchar"
-	case mysql.TypeString:
-		if binary {
-			return "binary"
-		}
-		return "char"
-	case mysql.TypeTiny:
-		return "tinyint"
-	case mysql.TypeShort:
-		return "smallint"
-	case mysql.TypeInt24:
-		return "mediumint"
-	case mysql.TypeLong:
-		return "int"
-	case mysql.TypeLonglong:
-		return "bigint"
-	case mysql.TypeFloat:
-		return "float"
-	case mysql.TypeDouble:
-		return "double"
-	case mysql.TypeDecimal, mysql.TypeNewDecimal:
-		return "decimal"
-	case mysql.TypeYear:
-		return "year"
-	case mysql.TypeDuration:
-		return "time"
-	case mysql.TypeDatetime:
-		return "datetime"
-	case mysql.TypeDate:
-		return "date"
-	case mysql.TypeTimestamp:
-		return "timestamp"
-	case mysql.TypeBit:
-		return "bit"
-	case mysql.TypeEnum:
-		return "enum"
-	case mysql.TypeSet:
-		return "set"
-	default:
-		log.Errorf("unkown type %d, binary %v", tp, binary)
-	}
-	return ""
-}
-
-// FieldTypeToStr converts a field to a string.
+// TypeToStr converts a field to a string.
 // It is used for converting Text to Blob,
 // or converting Char to Binary.
 // Args:
 //	tp: type enum
 //	cs: charset
-func FieldTypeToStr(tp byte, cs string) (r string) {
+func TypeToStr(tp byte, cs string) (r string) {
 	ts := type2Str[tp]
 	if cs != charset.CharsetBin {
 		return ts

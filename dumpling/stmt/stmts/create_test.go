@@ -33,15 +33,18 @@ var _ = Suite(&testStmtSuite{})
 type testStmtSuite struct {
 	dbName string
 
-	testDB             *sql.DB
-	createDBSql        string
-	dropDBSql          string
-	useDBSql           string
-	createTableSql     string
-	insertSql          string
-	selectSql          string
-	createSystemDBSQL  string
-	createUserTableSQL string
+	testDB                   *sql.DB
+	createDBSql              string
+	dropDBSql                string
+	useDBSql                 string
+	createTableSql           string
+	insertSql                string
+	selectSql                string
+	createSystemDBSQL        string
+	createUserTableSQL       string
+	createDBPrivTableSQL     string
+	createTablePrivTableSQL  string
+	createColumnPrivTableSQL string
 }
 
 func (s *testStmtSuite) SetUpTest(c *C) {
@@ -65,9 +68,15 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 
 	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
 	s.createUserTableSQL = tidb.CreateUserTable
+	s.createDBPrivTableSQL = tidb.CreateDBPrivTable
+	s.createTablePrivTableSQL = tidb.CreateTablePrivTable
+	s.createColumnPrivTableSQL = tidb.CreateColumnPrivTable
 
 	mustExec(c, s.testDB, s.createSystemDBSQL)
 	mustExec(c, s.testDB, s.createUserTableSQL)
+	mustExec(c, s.testDB, s.createDBPrivTableSQL)
+	mustExec(c, s.testDB, s.createTablePrivTableSQL)
+	mustExec(c, s.testDB, s.createColumnPrivTableSQL)
 }
 
 func (s *testStmtSuite) TearDownTest(c *C) {
@@ -103,6 +112,44 @@ func (s *testStmtSuite) TestCreateTable(c *C) {
 
 	// Test "if not exist"
 	mustExec(c, s.testDB, "CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+
+	// Testcase for https://github.com/pingcap/tidb/issues/312
+	mustExec(c, s.testDB, `create table issue312_1 (c float(24));`)
+	mustExec(c, s.testDB, `create table issue312_2 (c float(25));`)
+	tx = mustBegin(c, s.testDB)
+	rows, err := tx.Query(`desc issue312_1`)
+	c.Assert(err, IsNil)
+	for rows.Next() {
+		var (
+			c1 string
+			c2 string
+			c3 string
+			c4 string
+			c5 string
+			c6 string
+		)
+		rows.Scan(&c1, &c2, &c3, &c4, &c5, &c6)
+		c.Assert(c2, Equals, "float")
+	}
+	rows.Close()
+	mustCommit(c, tx)
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`desc issue312_2`)
+	c.Assert(err, IsNil)
+	for rows.Next() {
+		var (
+			c1 string
+			c2 string
+			c3 string
+			c4 string
+			c5 string
+			c6 string
+		)
+		rows.Scan(&c1, &c2, &c3, &c4, &c5, &c6)
+		c.Assert(c2, Equals, "double")
+	}
+	rows.Close()
+	mustCommit(c, tx)
 }
 
 func (s *testStmtSuite) TestCreateIndex(c *C) {

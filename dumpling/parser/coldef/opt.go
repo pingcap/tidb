@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
+	mysql "github.com/pingcap/tidb/mysqldef"
 )
 
 // FloatOpt is used for parsing floating-point type option from SQL.
@@ -232,17 +233,48 @@ func (tc *TableConstraint) String() string {
 	return strings.Join(tokens, " ")
 }
 
-// AuthOption is used for parsing create use statement.
+// AuthOption is used for parsing create user statement.
+// TODO: support auth_plugin
 type AuthOption struct {
 	// AuthString/HashString can be empty, so we need to decide which one to use.
 	ByAuthString bool
 	AuthString   string
 	HashString   string
-	// TODO: support auth_plugin
 }
 
-// UserSpecification is used for parsing create use statement.
+// UserSpecification is used for parsing create user statement.
 type UserSpecification struct {
 	User    string
 	AuthOpt *AuthOption
+}
+
+// PrivElem is the privilege type and optional column list.
+type PrivElem struct {
+	Priv mysql.PrivilegeType
+	Cols []string
+}
+
+const (
+	// ObjectTypeNone is for empty object type.
+	ObjectTypeNone = iota
+	// ObjectTypeTable means the following object is a table.
+	ObjectTypeTable
+)
+
+const (
+	// GrantLevelNone is the dummy const for default value.
+	GrantLevelNone = iota
+	// GrantLevelGlobal means the privileges are administrative or apply to all databases on a given server.
+	GrantLevelGlobal
+	// GrantLevelDB means the privileges apply to all objects in a given database.
+	GrantLevelDB
+	// GrantLevelTable means the privileges apply to all columns in a given table.
+	GrantLevelTable
+)
+
+// GrantLevel is used for store the privilege scope.
+type GrantLevel struct {
+	Level     int
+	DBName    string
+	TableName string
 }

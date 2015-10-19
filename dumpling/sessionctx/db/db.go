@@ -20,19 +20,19 @@ import (
 // currentDBKeyType is a dummy type to avoid naming collision in context.
 type currentDBKeyType int
 
-// define a Stringer function for debugging and pretty printting
+// String defines a Stringer function for debugging and pretty printing.
 func (k currentDBKeyType) String() string {
 	return "current_db"
 }
 
 const currentDBKey currentDBKeyType = 0
 
-// BindCurrentSchema saves parameter schema as current schema name value into context
+// BindCurrentSchema saves parameter schema as current schema name value into context.
 func BindCurrentSchema(ctx context.Context, schema string) {
 	ctx.SetValue(currentDBKey, schema)
 }
 
-// GetCurrentSchema gets current schema name from context
+// GetCurrentSchema gets current schema name from context.
 func GetCurrentSchema(ctx context.Context) string {
 	v, ok := ctx.Value(currentDBKey).(string)
 	if !ok {

@@ -40,15 +40,15 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-// Pre-defined errors
+// Pre-defined errors.
 var (
-	// ErrExists returned for creating an exist schema or table.
+	// ErrExists returns for creating an exist schema or table.
 	ErrExists = errors.Errorf("DDL:exists")
-	// ErrNotExists returned for dropping a not exist schema or table.
+	// ErrNotExists returns for dropping a not exist schema or table.
 	ErrNotExists = errors.Errorf("DDL:not exists")
 )
 
-// DDL is responsible for updating schema in data store and maintain in-memory InfoSchema cache.
+// DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr) error
 	DropSchema(ctx context.Context, schema model.CIStr) error
@@ -66,10 +66,10 @@ type ddl struct {
 	onDDLChange OnDDLChange
 }
 
-// OnDDLChange is used as hook function when schema changed
+// OnDDLChange is used as hook function when schema changed.
 type OnDDLChange func(err error) error
 
-// NewDDL create new DDL
+// NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
 	d := &ddl{
 		store:       store,
@@ -115,10 +115,10 @@ func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int6
 		return errors.Trace(err)
 	}
 	if curVer != schemaMetaVersion {
-		return errors.Errorf("Schema changed, our version %d, got %d", schemaMetaVersion, curVer)
+		return errors.Errorf("Schema changed, our version %d, but got %d", schemaMetaVersion, curVer)
 	}
 
-	// Increment version
+	// Increment version.
 	_, err = txn.Inc(meta.SchemaMetaVersionKey, 1)
 	if err != nil {
 		return errors.Trace(err)
@@ -146,7 +146,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		}
 	}
 
-	// Remove data
+	// Remove data.
 	txn, err := ctx.GetTxn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -157,7 +157,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// remove indices
+		// Remove indices.
 		for _, v := range t.Indices() {
 			if v != nil && v.X != nil {
 				if err = v.X.Drop(txn); err != nil {
@@ -167,7 +167,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		}
 	}
 
-	// Delete meta key
+	// Delete meta key.
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
 		if err != nil {
@@ -186,10 +186,9 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 }
 
 func getDefaultCharsetAndCollate() (string, string) {
-	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset
-	// TODO: change TableOption parser to parse collate
-	// This is a tmp solution
-	//return "latin1", "latin1_swedish_ci"
+	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
+	// TODO: change TableOption parser to parse collate.
+	// This is a tmp solution.
 	return "utf8", "utf8_unicode_ci"
 }
 
@@ -199,25 +198,25 @@ func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *coldef.TableC
 		for _, key := range v.Keys {
 			c, ok := colMap[strings.ToLower(key.ColumnName)]
 			if !ok {
-				// TODO: table constraint on unknown column
+				// TODO: table constraint on unknown column.
 				continue
 			}
 			c.Flag |= mysql.PriKeyFlag
-			// primary key can not be NULL
+			// Primary key can not be NULL.
 			c.Flag |= mysql.NotNullFlag
 		}
 	case coldef.ConstrUniq, coldef.ConstrUniqIndex, coldef.ConstrUniqKey:
 		for i, key := range v.Keys {
 			c, ok := colMap[strings.ToLower(key.ColumnName)]
 			if !ok {
-				// TODO: table constraint on unknown column
+				// TODO: table constraint on unknown column.
 				continue
 			}
 			if i == 0 {
 				// Only the first column can be set
 				// if unique index has multi columns,
 				// the flag should be MultipleKeyFlag.
-				// see https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
+				// See: https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
 				if len(v.Keys) > 1 {
 					c.Flag |= mysql.MultipleKeyFlag
 				} else {
@@ -229,12 +228,11 @@ func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *coldef.TableC
 		for i, key := range v.Keys {
 			c, ok := colMap[strings.ToLower(key.ColumnName)]
 			if !ok {
-				// TODO: table constraint on unknown column
+				// TODO: table constraint on unknown column.
 				continue
 			}
-
 			if i == 0 {
-				// Only the first column can be set
+				// Only the first column can be set.
 				c.Flag |= mysql.MultipleKeyFlag
 			}
 		}
@@ -298,7 +296,7 @@ func checkDuplicateColumn(colDefs []*coldef.ColumnDef) error {
 func checkConstraintNames(constraints []*coldef.TableConstraint) error {
 	constrNames := map[string]bool{}
 
-	// Check not empty constraint name do not have duplication.
+	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.ConstrName != "" {
 			nameLower := strings.ToLower(constr.ConstrName)
@@ -414,7 +412,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterSpecification) (err error) {
-	//Get database and table
+	// Get database and table.
 	is := d.GetInformationSchema()
 	if !is.SchemaExists(ident.Schema) {
 		return errors.Trace(qerror.ErrDatabaseNotExist)
@@ -426,7 +424,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			if err := d.addColumn(ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
+			if err := d.addColumn(ctx, ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
 				return errors.Trace(err)
 			}
 		default:
@@ -438,12 +436,12 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 }
 
 // Add a column into table
-func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
+func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
 	// Find position
 	cols := tbl.Cols()
 	position := len(cols)
 	name := spec.Column.Name
-	// Check column name duplicate
+	// Check column name duplicate.
 	dc := column.FindCol(cols, name)
 	if dc != nil {
 		return errors.Errorf("Try to add a column with the same name of an already exists column.")
@@ -451,15 +449,15 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 	if spec.Position.Type == ColumnPositionFirst {
 		position = 0
 	} else if spec.Position.Type == ColumnPositionAfter {
-		// Find the mentioned column
+		// Find the mentioned column.
 		c := column.FindCol(cols, spec.Position.RelativeColumn)
 		if c == nil {
 			return errors.Errorf("No such column: %v", name)
 		}
-		// insert position is after the mentioned column
+		// Insert position is after the mentioned column.
 		position = c.Offset + 1
 	}
-	// TODO: Set constraint
+	// TODO: set constraint
 	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
 	if err != nil {
 		return errors.Trace(err)
@@ -488,10 +486,13 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 	}
 	tb := tbl.(*tables.Table)
 	tb.Columns = newCols
-	// TODO: update index
-	// TODO: update default value
-	// update infomation schema
 
+	// TODO: update index
+	if err = updateOldRows(ctx, tb, col); err != nil {
+		return errors.Trace(err)
+	}
+
+	// update infomation schema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		err := d.verifySchemaMetaVersion(txn, schemaMetaVersion)
 		if err != nil {
@@ -506,7 +507,41 @@ func (d *ddl) addColumn(schema model.CIStr, tbl table.Table, spec *AlterSpecific
 	return errors.Trace(err)
 }
 
-// drop table will proceed even if some table in the list does not exists
+func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	it, err := txn.Seek([]byte(t.FirstKey()), nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	prefix := t.KeyPrefix()
+	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
+		if err0 != nil {
+			return errors.Trace(err0)
+		}
+		k := t.RecordKey(handle, col)
+
+		// TODO: check and get timestamp/datetime default value.
+		// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
+		if err0 = t.SetColValue(txn, k, col.DefaultValue); err0 != nil {
+			return errors.Trace(err0)
+		}
+
+		rk := t.RecordKey(handle, nil)
+		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
+			return errors.Trace(err0)
+		}
+	}
+
+	return nil
+}
+
+// DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	is := d.GetInformationSchema()
 	tb, err := is.TableByName(ti.Schema, ti.Name)
@@ -550,7 +585,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 }
 
 func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
-	// Remove data
+	// Remove data.
 	err := t.Truncate(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -559,7 +594,7 @@ func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Remove indices
+	// Remove indices.
 	for _, v := range t.Indices() {
 		if v != nil && v.X != nil {
 			if err = v.X.Drop(txn); err != nil {
@@ -567,7 +602,7 @@ func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
 			}
 		}
 	}
-	// Remove auto ID key
+	// Remove auto ID key.
 	err = txn.Delete([]byte(meta.AutoIDKey(t.TableID())))
 
 	// Auto ID meta is created when the first time used, so it may not exist.

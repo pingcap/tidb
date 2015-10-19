@@ -103,6 +103,12 @@ type Visitor interface {
 
 	// VisitExtract visits Extract expression.
 	VisitExtract(v *Extract) (Expression, error)
+
+	// VisitFunctionTrim visits FunctionTrim expression.
+	VisitFunctionTrim(v *FunctionTrim) (Expression, error)
+
+	// VisitDateAdd visits DateAdd expression.
+	VisitDateAdd(da *DateAdd) (Expression, error)
 }
 
 // BaseVisitor is the base implementation of Visitor.
@@ -453,9 +459,41 @@ func (bv *BaseVisitor) VisitWhenClause(w *WhenClause) (Expression, error) {
 	return w, nil
 }
 
-// VisitExtract implements Visitor
+// VisitExtract implements Visitor interface.
 func (bv *BaseVisitor) VisitExtract(v *Extract) (Expression, error) {
 	var err error
 	v.Date, err = v.Date.Accept(bv.V)
 	return v, errors.Trace(err)
+}
+
+// VisitFunctionTrim implements Visitor interface.
+func (bv *BaseVisitor) VisitFunctionTrim(ss *FunctionTrim) (Expression, error) {
+	var err error
+	ss.Str, err = ss.Str.Accept(bv.V)
+	if err != nil {
+		return ss, errors.Trace(err)
+	}
+	if ss.RemStr != nil {
+		ss.RemStr, err = ss.RemStr.Accept(bv.V)
+		if err != nil {
+			return ss, errors.Trace(err)
+		}
+	}
+	return ss, nil
+}
+
+// VisitDateAdd implements Visitor interface.
+func (bv *BaseVisitor) VisitDateAdd(da *DateAdd) (Expression, error) {
+	var err error
+	da.Date, err = da.Date.Accept(bv.V)
+	if err != nil {
+		return da, errors.Trace(err)
+	}
+
+	da.Interval, err = da.Interval.Accept(bv.V)
+	if err != nil {
+		return da, errors.Trace(err)
+	}
+
+	return da, nil
 }

@@ -141,6 +141,7 @@ func indexCompare(a interface{}, b interface{}) int {
 	} else if b == nil {
 		return -1
 	}
+
 	// a and b both not nil
 	if a == minNotNullVal && b == minNotNullVal {
 		return 0
@@ -191,8 +192,9 @@ func (r *indexPlan) GetFields() []*field.ResultField {
 }
 
 // Filter implements plan.Plan Filter interface.
-// Filter merges BinaryOperations, and determines the lower and upper bound.
+// Filter merges BinaryOperations and determines the lower and upper bound.
 func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (plan.Plan, bool, error) {
+	var spans []*indexSpan
 	switch x := expr.(type) {
 	case *expression.BinaryOperation:
 		ok, name, val, err := x.IsIdentCompareVal()
@@ -213,14 +215,12 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		r.spans = filterSpans(r.spans, toSpans(x.Op, val, seekVal))
-		return r, true, nil
+		spans = filterSpans(r.spans, toSpans(x.Op, val, seekVal))
 	case *expression.Ident:
 		if r.col.Name.L != x.L {
 			break
 		}
-		r.spans = filterSpans(r.spans, toSpans(opcode.GE, minNotNullVal, nil))
-		return r, true, nil
+		spans = filterSpans(r.spans, toSpans(opcode.GE, minNotNullVal, nil))
 	case *expression.UnaryOperation:
 		if x.Op != '!' {
 			break
@@ -233,16 +233,25 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 		if r.col.Name.L != cname.L {
 			break
 		}
-		r.spans = filterSpans(r.spans, toSpans(opcode.EQ, nil, nil))
-		return r, true, nil
+		spans = filterSpans(r.spans, toSpans(opcode.EQ, nil, nil))
 	}
 
-	return r, false, nil
+	if spans == nil {
+		return r, false, nil
+	}
+
+	return &indexPlan{
+		src:     r.src,
+		col:     r.col,
+		idxName: r.idxName,
+		idx:     r.idx,
+		spans:   spans,
+	}, true, nil
 }
 
 // return the intersection range between origin and filter.
 func filterSpans(origin []*indexSpan, filter []*indexSpan) []*indexSpan {
-	var newSpans []*indexSpan
+	newSpans := make([]*indexSpan, 0, len(filter))
 	for _, fSpan := range filter {
 		for _, oSpan := range origin {
 			newSpan := oSpan.cutOffLow(fSpan.lowVal, fSpan.lowExclude)
