@@ -40,7 +40,7 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
 )
 

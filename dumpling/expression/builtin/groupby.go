@@ -24,7 +24,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv/memkv"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
