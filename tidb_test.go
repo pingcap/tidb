@@ -1193,6 +1193,20 @@ func (s *testSessionSuite) TestHaving(c *C) {
 	mustExecMatch(c, se, "select sum(c1) - 1 from t group by c1 having sum(c1) - 1", [][]interface{}{{1}})
 }
 
+func (s *testSessionSuite) TestResultType(c *C) {
+	// Testcase for https://github.com/pingcap/tidb/issues/325
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	rs := mustExecSQL(c, se, `select cast(null as char(30))`)
+	c.Assert(rs, NotNil)
+	row, err := rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0], IsNil)
+	fs, err := rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fs[0].Col.FieldType.Tp, Equals, mysql.TypeString)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
