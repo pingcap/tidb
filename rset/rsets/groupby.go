@@ -99,13 +99,12 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 }
 
 func (v *groupByVisitor) VisitCall(c *expression.Call) (expression.Expression, error) {
-	ok, err := expression.IsAggregateFunc(c.F)
-	if err != nil {
-		return nil, errors.Trace(err)
-	} else if ok {
+	ok := expression.IsAggregateFunc(c.F)
+	if ok {
 		return nil, errors.Errorf("group by cannot contain aggregate function %s", c)
 	}
 
+	var err error
 	for i, e := range c.Args {
 		c.Args[i], err = e.Accept(v)
 		if err != nil {

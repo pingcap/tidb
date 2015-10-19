@@ -256,10 +256,7 @@ func (v *havingVisitor) VisitPosition(p *expression.Position) (expression.Expres
 }
 
 func (v *havingVisitor) VisitCall(c *expression.Call) (expression.Expression, error) {
-	isAggregate, err := expression.IsAggregateFunc(c.F)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	isAggregate := expression.IsAggregateFunc(c.F)
 
 	if v.inAggregate && isAggregate {
 		// aggregate function can't contain aggregate function
@@ -271,6 +268,7 @@ func (v *havingVisitor) VisitCall(c *expression.Call) (expression.Expression, er
 		v.inAggregate = true
 	}
 
+	var err error
 	for i, e := range c.Args {
 		c.Args[i], err = e.Accept(v)
 		if err != nil {
