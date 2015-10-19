@@ -16,7 +16,6 @@ package localstore
 import (
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -32,7 +31,6 @@ func count(db engine.DB) int {
 	defer it.Release()
 	totalCnt := 0
 	for it.Next() {
-		log.Error(it.Key())
 		totalCnt++
 	}
 	return totalCnt
@@ -43,7 +41,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	db := store.(*dbStore).db
 	store.(*dbStore).compactor.Stop()
 
-	policy := kv.CompactorPolicy{
+	policy := kv.CompactPolicy{
 		SafePoint:       500,
 		BatchDeleteCnt:  1,
 		TriggerInterval: 100 * time.Millisecond,
@@ -84,4 +82,6 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	// Do background GC
 	t = count(db)
 	c.Assert(t, Equals, 3)
+
+	compactor.Stop()
 }

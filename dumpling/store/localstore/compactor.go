@@ -84,11 +84,10 @@ func (gc *localstoreCompactor) getAllVersions(k kv.Key) ([]kv.EncodedKey, error)
 func (gc *localstoreCompactor) deleteWorker() {
 	cnt := 0
 	batch := gc.db.NewBatch()
-L:
 	for {
 		select {
 		case <-gc.stopCh:
-			break L
+			return
 		case key := <-gc.delCh:
 			{
 				cnt++
@@ -108,11 +107,11 @@ L:
 }
 
 func (gc *localstoreCompactor) checkExpiredKeysWorker() {
-L:
 	for {
 		select {
 		case <-gc.stopCh:
-			break L
+			log.Info("GC stopped")
+			return
 		case <-gc.ticker.C:
 			log.Info("GC trigger")
 			gc.mu.Lock()
@@ -128,7 +127,6 @@ L:
 			}
 		}
 	}
-	log.Info("GC Stopped")
 }
 
 func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.EncodedKey {
