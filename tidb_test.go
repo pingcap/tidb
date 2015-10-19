@@ -882,6 +882,16 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
 
+	// For issue 393
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (b blob)")
+	mustExecSQL(c, se, `insert t values('\x01')`)
+
+	r = mustExecSQL(c, se, `select length(b) from t`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 3)
+
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
