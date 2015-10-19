@@ -138,11 +138,11 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 
 func (t *testMvccSuite) TestMvccNext(c *C) {
 	txn, _ := t.s.Begin()
-	it, err := txn.Seek(encodeInt(2), nil)
+	it, err := txn.Seek(encodeInt(2))
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	for it.Valid() {
-		it, err = it.Next(nil)
+		it, err = it.Next()
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
@@ -199,7 +199,7 @@ func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, string(encodeInt(100+9)))
 	// we can always scan newest data
-	it, err := tx.Seek(encodeInt(5), nil)
+	it, err := tx.Seek(encodeInt(5))
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(string(it.Value()), Equals, string(encodeInt(100+9)))
@@ -244,7 +244,7 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 			if string(it.Value()) == "new" {
 				found = true
 			}
-			it, err = it.Next(nil)
+			it, err = it.Next()
 			c.Assert(err, IsNil)
 		}
 		return found
@@ -271,11 +271,11 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	tx.Commit()
 
 	tx, _ = s.Begin()
-	iter, err := tx.Seek([]byte{0}, nil)
+	iter, err := tx.Seek([]byte{0})
 	c.Assert(err, IsNil)
 	cnt := 0
 	for iter.Valid() {
-		iter, err = iter.Next(nil)
+		iter, err = iter.Next()
 		c.Assert(err, IsNil)
 		cnt++
 	}
@@ -283,7 +283,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(cnt, Equals, 6)
 
 	tx, _ = s.Begin()
-	it, err := tx.Seek([]byte{0xff, 0xee}, nil)
+	it, err := tx.Seek([]byte{0xff, 0xee})
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(it.Key(), Equals, "\xff\xff\xee\xff")
@@ -291,11 +291,11 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 
 	// no such key
 	tx, _ = s.Begin()
-	it, err = tx.Seek([]byte{0xff, 0xff, 0xff, 0xff}, nil)
+	it, err = tx.Seek([]byte{0xff, 0xff, 0xff, 0xff})
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsFalse)
 
-	it, err = tx.Seek([]byte{0x0, 0xff}, nil)
+	it, err = tx.Seek([]byte{0x0, 0xff})
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	c.Assert(it.Value(), DeepEquals, []byte("2"))

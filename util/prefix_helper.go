@@ -36,7 +36,7 @@ func hasPrefix(prefix []byte) kv.FnKeyCmp {
 
 // ScanMetaWithPrefix scans metadata with the prefix.
 func ScanMetaWithPrefix(txn kv.Transaction, prefix string, filter func([]byte, []byte) bool) error {
-	iter, err := txn.Seek([]byte(prefix), hasPrefix([]byte(prefix)))
+	iter, err := txn.Seek([]byte(prefix))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -51,7 +51,7 @@ func ScanMetaWithPrefix(txn kv.Transaction, prefix string, filter func([]byte, [
 			if !filter([]byte(iter.Key()), iter.Value()) {
 				break
 			}
-			iter, err = iter.Next(hasPrefix([]byte(prefix)))
+			iter, err = iter.Next()
 		} else {
 			break
 		}
@@ -68,7 +68,7 @@ func DelKeyWithPrefix(ctx context.Context, prefix string) error {
 	}
 
 	var keys []string
-	iter, err := txn.Seek([]byte(prefix), hasPrefix([]byte(prefix)))
+	iter, err := txn.Seek([]byte(prefix))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -81,7 +81,7 @@ func DelKeyWithPrefix(ctx context.Context, prefix string) error {
 
 		if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
 			keys = append(keys, iter.Key())
-			iter, err = iter.Next(hasPrefix([]byte(prefix)))
+			iter, err = iter.Next()
 		} else {
 			break
 		}

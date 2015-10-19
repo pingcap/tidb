@@ -530,7 +530,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		return err
 	}
 
-	it, err := txn.Seek([]byte(startKey), nil)
+	it, err := txn.Seek([]byte(startKey))
 	if err != nil {
 		return err
 	}
