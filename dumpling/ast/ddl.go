@@ -35,10 +35,35 @@ var (
 	_ Node    = &AlterTableSpec{}
 )
 
+// FloatOpt is used for parsing floating-point type option from SQL.
+// TODO: add reference doc.
+type FloatOpt struct {
+	Flen    int
+	Decimal int
+}
+
 // CharsetOpt is used for parsing charset option from SQL.
 type CharsetOpt struct {
 	Chs string
 	Col string
+}
+
+// DatabaseOptionType is the type for database options.
+type DatabaseOptionType int
+
+// Database option types.
+const (
+	DatabaseOptionNone DatabaseOptionType = iota
+	DatabaseOptionCharset
+	DatabaseOptionCollate
+)
+
+// DatabaseOption represents database option.
+type DatabaseOption struct {
+	node
+
+	Tp    DatabaseOptionType
+	Value string
 }
 
 // CreateDatabaseStmt is a statement to create a database.
@@ -48,13 +73,13 @@ type CreateDatabaseStmt struct {
 
 	IfNotExists bool
 	Name        string
-	Opt         *CharsetOpt
+	Options     []*DatabaseOption
 }
 
 // Accept implements Node Accept interface.
 func (cd *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(cd) {
-		return cd, false
+		return cd, v.OK()
 	}
 	return v.Leave(cd)
 }
@@ -71,7 +96,7 @@ type DropDatabaseStmt struct {
 // Accept implements Node Accept interface.
 func (dd *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(dd) {
-		return dd, false
+		return dd, v.OK()
 	}
 	return v.Leave(dd)
 }
@@ -80,20 +105,20 @@ func (dd *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type IndexColName struct {
 	node
 
-	Column *ColumnRefExpr
+	Column *ColumnName
 	Length int
 }
 
 // Accept implements Node Accept interface.
 func (ic *IndexColName) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ic) {
-		return ic, false
+		return ic, v.OK()
 	}
 	node, ok := ic.Column.Accept(v)
 	if !ok {
 		return ic, false
 	}
-	ic.Column = node.(*ColumnRefExpr)
+	ic.Column = node.(*ColumnName)
 	return v.Leave(ic)
 }
 
@@ -102,20 +127,20 @@ func (ic *IndexColName) Accept(v Visitor) (Node, bool) {
 type ReferenceDef struct {
 	node
 
-	Table         *TableRef
+	Table         *TableName
 	IndexColNames []*IndexColName
 }
 
 // Accept implements Node Accept interface.
 func (rd *ReferenceDef) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(rd) {
-		return rd, false
+		return rd, v.OK()
 	}
 	node, ok := rd.Table.Accept(v)
 	if !ok {
 		return rd, false
 	}
-	rd.Table = node.(*TableRef)
+	rd.Table = node.(*TableName)
 	for i, val := range rd.IndexColNames {
 		node, ok = val.Accept(v)
 		if !ok {
@@ -153,20 +178,20 @@ type ColumnOption struct {
 
 	Tp ColumnOptionType
 	// The value For Default or On Update.
-	Val ExprNode
+	Expr ExprNode
 }
 
 // Accept implements Node Accept interface.
 func (co *ColumnOption) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(co) {
-		return co, false
+		return co, v.OK()
 	}
-	if co.Val != nil {
-		node, ok := co.Val.Accept(v)
+	if co.Expr != nil {
+		node, ok := co.Expr.Accept(v)
 		if !ok {
 			return co, false
 		}
-		co.Val = node.(ExprNode)
+		co.Expr = node.(ExprNode)
 	}
 	return v.Leave(co)
 }
@@ -184,6 +209,7 @@ const (
 	ConstraintUniqKey
 	ConstraintUniqIndex
 	ConstraintForeignKey
+	ConstraintFulltext
 )
 
 // Constraint is constraint for table definition.
@@ -203,7 +229,7 @@ type Constraint struct {
 // Accept implements Node Accept interface.
 func (tc *Constraint) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(tc) {
-		return tc, false
+		return tc, v.OK()
 	}
 	for i, val := range tc.Keys {
 		node, ok := val.Accept(v)
@@ -226,7 +252,7 @@ func (tc *Constraint) Accept(v Visitor) (Node, bool) {
 type ColumnDef struct {
 	node
 
-	Name    string
+	Name    *ColumnName
 	Tp      *types.FieldType
 	Options []*ColumnOption
 }
@@ -234,8 +260,13 @@ type ColumnDef struct {
 // Accept implements Node Accept interface.
 func (cd *ColumnDef) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(cd) {
+		return cd, v.OK()
+	}
+	node, ok := cd.Name.Accept(v)
+	if !ok {
 		return cd, false
 	}
+	cd.Name = node.(*ColumnName)
 	for i, val := range cd.Options {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -252,7 +283,7 @@ type CreateTableStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Table       *TableRef
+	Table       *TableName
 	Cols        []*ColumnDef
 	Constraints []*Constraint
 	Options     []*TableOption
@@ -261,13 +292,13 @@ type CreateTableStmt struct {
 // Accept implements Node Accept interface.
 func (ct *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ct) {
-		return ct, false
+		return ct, v.OK()
 	}
 	node, ok := ct.Table.Accept(v)
 	if !ok {
 		return ct, false
 	}
-	ct.Table = node.(*TableRef)
+	ct.Table = node.(*TableName)
 	for i, val := range ct.Cols {
 		node, ok = val.Accept(v)
 		if !ok {
@@ -290,21 +321,21 @@ func (ct *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 type DropTableStmt struct {
 	ddlNode
 
-	IfExists  bool
-	TableRefs []*TableRef
+	IfExists bool
+	Tables   []*TableName
 }
 
 // Accept implements Node Accept interface.
 func (dt *DropTableStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(dt) {
-		return dt, false
+		return dt, v.OK()
 	}
-	for i, val := range dt.TableRefs {
+	for i, val := range dt.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
 			return dt, false
 		}
-		dt.TableRefs[i] = node.(*TableRef)
+		dt.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(dt)
 }
@@ -315,7 +346,7 @@ type CreateIndexStmt struct {
 	ddlNode
 
 	IndexName     string
-	Table         *TableRef
+	Table         *TableName
 	Unique        bool
 	IndexColNames []*IndexColName
 }
@@ -323,13 +354,13 @@ type CreateIndexStmt struct {
 // Accept implements Node Accept interface.
 func (ci *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ci) {
-		return ci, false
+		return ci, v.OK()
 	}
 	node, ok := ci.Table.Accept(v)
 	if !ok {
 		return ci, false
 	}
-	ci.Table = node.(*TableRef)
+	ci.Table = node.(*TableName)
 	for i, val := range ci.IndexColNames {
 		node, ok = val.Accept(v)
 		if !ok {
@@ -347,13 +378,19 @@ type DropIndexStmt struct {
 
 	IfExists  bool
 	IndexName string
+	Table     *TableName
 }
 
 // Accept implements Node Accept interface.
 func (di *DropIndexStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(di) {
+		return di, v.OK()
+	}
+	node, ok := di.Table.Accept(v)
+	if !ok {
 		return di, false
 	}
+	di.Table = node.(*TableName)
 	return v.Leave(di)
 }
 
@@ -401,19 +438,21 @@ type ColumnPosition struct {
 	// ColumnPositionNone | ColumnPositionFirst | ColumnPositionAfter
 	Tp ColumnPositionType
 	// RelativeColumn is the column the newly added column after if type is ColumnPositionAfter
-	RelativeColumn *ColumnRefExpr
+	RelativeColumn *ColumnName
 }
 
 // Accept implements Node Accept interface.
 func (cp *ColumnPosition) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(cp) {
-		return cp, false
+		return cp, v.OK()
 	}
-	node, ok := cp.RelativeColumn.Accept(v)
-	if !ok {
-		return cp, false
+	if cp.RelativeColumn != nil {
+		node, ok := cp.RelativeColumn.Accept(v)
+		if !ok {
+			return cp, false
+		}
+		cp.RelativeColumn = node.(*ColumnName)
 	}
-	cp.RelativeColumn = node.(*ColumnRefExpr)
 	return v.Leave(cp)
 }
 
@@ -440,15 +479,16 @@ type AlterTableSpec struct {
 	Tp         AlterTableType
 	Name       string
 	Constraint *Constraint
-	TableOpts  []*TableOption
+	Options    []*TableOption
 	Column     *ColumnDef
+	ColumnName *ColumnName
 	Position   *ColumnPosition
 }
 
 // Accept implements Node Accept interface.
 func (as *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(as) {
-		return as, false
+		return as, v.OK()
 	}
 	if as.Constraint != nil {
 		node, ok := as.Constraint.Accept(v)
@@ -463,6 +503,13 @@ func (as *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return as, false
 		}
 		as.Column = node.(*ColumnDef)
+	}
+	if as.ColumnName != nil {
+		node, ok := as.ColumnName.Accept(v)
+		if !ok {
+			return as, false
+		}
+		as.ColumnName = node.(*ColumnName)
 	}
 	if as.Position != nil {
 		node, ok := as.Position.Accept(v)
@@ -479,20 +526,20 @@ func (as *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 type AlterTableStmt struct {
 	ddlNode
 
-	Table *TableRef
+	Table *TableName
 	Specs []*AlterTableSpec
 }
 
 // Accept implements Node Accept interface.
 func (at *AlterTableStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(at) {
-		return at, false
+		return at, v.OK()
 	}
 	node, ok := at.Table.Accept(v)
 	if !ok {
 		return at, false
 	}
-	at.Table = node.(*TableRef)
+	at.Table = node.(*TableName)
 	for i, val := range at.Specs {
 		node, ok = val.Accept(v)
 		if !ok {
@@ -508,18 +555,18 @@ func (at *AlterTableStmt) Accept(v Visitor) (Node, bool) {
 type TruncateTableStmt struct {
 	ddlNode
 
-	Table *TableRef
+	Table *TableName
 }
 
 // Accept implements Node Accept interface.
 func (ts *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	if !v.Enter(ts) {
-		return ts, false
+		return ts, v.OK()
 	}
 	node, ok := ts.Table.Accept(v)
 	if !ok {
 		return ts, false
 	}
-	ts.Table = node.(*TableRef)
+	ts.Table = node.(*TableName)
 	return v.Leave(ts)
 }
