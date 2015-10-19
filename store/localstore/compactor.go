@@ -30,7 +30,7 @@ const (
 	deleteWorkerCnt = 3
 )
 
-var localCompactorDefaultPolicy = kv.CompactorPolicy{
+var localCompactDefaultPolicy = kv.CompactPolicy{
 	SafePoint:       20 * 1000, // in ms
 	TriggerInterval: 1 * time.Second,
 	BatchDeleteCnt:  100,
@@ -43,7 +43,7 @@ type localstoreCompactor struct {
 	delCh      chan kv.EncodedKey
 	ticker     *time.Ticker
 	db         engine.DB
-	policy     kv.CompactorPolicy
+	policy     kv.CompactPolicy
 }
 
 func (gc *localstoreCompactor) OnSet(k kv.Key) {
@@ -182,7 +182,7 @@ func (gc *localstoreCompactor) Stop() {
 	close(gc.stopCh)
 }
 
-func newLocalCompactor(policy kv.CompactorPolicy, db engine.DB) *localstoreCompactor {
+func newLocalCompactor(policy kv.CompactPolicy, db engine.DB) *localstoreCompactor {
 	return &localstoreCompactor{
 		recentKeys: make(map[string]struct{}),
 		stopCh:     make(chan struct{}),
