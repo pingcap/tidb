@@ -15,7 +15,7 @@ package variable
 
 import (
 	"github.com/pingcap/tidb/context"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // SessionVars is to handle user-defined or global variables in current session.

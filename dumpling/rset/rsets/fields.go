@@ -39,10 +39,29 @@ type SelectFieldsRset struct {
 	SelectList *plans.SelectList
 }
 
+func updateSelectFieldsRefer(selectList *plans.SelectList) error {
+	visitor := newFromIdentVisitor(selectList.FromFields, fieldListClause)
+
+	// we only fix un-hidden fields here, for hidden fields, it should be
+	// handled in their own clause, in order by or having.
+	for i, f := range selectList.Fields[0:selectList.HiddenFieldOffset] {
+		e, err := f.Expr.Accept(visitor)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		selectList.Fields[i].Expr = e
+	}
+	return nil
+}
+
 // Plan gets SrcPlan/SelectFieldsDefaultPlan.
 // If all fields are equal to src plan fields, then gets SrcPlan.
 // Default gets SelectFieldsDefaultPlan.
 func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
+	if err := updateSelectFieldsRefer(r.SelectList); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	fields := r.SelectList.Fields
 	srcFields := r.Src.GetFields()
 	if len(fields) == len(srcFields) {
@@ -97,6 +116,7 @@ func (r *SelectFromDualRset) Plan(ctx context.Context) (plan.Plan, error) {
 	// field cannot contain identifier
 	for _, f := range r.Fields {
 		if cs := expression.MentionedColumns(f.Expr); len(cs) > 0 {
+			// TODO: check in outer query, like select * from t where t.c = (select c limit 1);
 			return nil, errors.Errorf("Unknown column '%s' in 'field list'", cs[0])
 		}
 	}

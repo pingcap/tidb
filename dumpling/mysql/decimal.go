@@ -57,7 +57,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package mysql
 
 // Decimal implements an arbitrary precision fixed-point decimal.
 //

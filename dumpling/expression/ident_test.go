@@ -26,7 +26,7 @@ type testIdentSuite struct {
 
 func (s *testIdentSuite) TestIdent(c *C) {
 	e := Ident{
-		model.NewCIStr("id"),
+		CIStr: model.NewCIStr("id"),
 	}
 
 	c.Assert(e.IsStatic(), IsFalse)
@@ -55,4 +55,14 @@ func (s *testIdentSuite) TestIdent(c *C) {
 	v, err = e.Eval(nil, m)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, 1)
+
+	delete(m, ExprEvalIdentFunc)
+	e.ReferScope = IdentReferSelectList
+	e.ReferIndex = 1
+	m[ExprEvalIdentReferFunc] = func(string, int, int) (interface{}, error) {
+		return 2, nil
+	}
+	v, err = e.Eval(nil, m)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, 2)
 }

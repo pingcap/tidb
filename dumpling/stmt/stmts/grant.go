@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
@@ -221,7 +221,7 @@ func (s *GrantStmt) grantPriv(ctx context.Context, priv *coldef.PrivElem, user *
 		}
 		return s.grantColumnPriv(ctx, priv, user)
 	default:
-		return errors.Errorf("Unknown grant level: %s", s.Level)
+		return errors.Errorf("Unknown grant level: %#v", s.Level)
 	}
 }
 
