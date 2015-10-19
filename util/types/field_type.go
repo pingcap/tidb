@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 )
 
