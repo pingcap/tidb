@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
