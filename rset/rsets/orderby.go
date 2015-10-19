@@ -111,7 +111,7 @@ func (v *orderByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent == i {
 		// The order by is an identifier, we must check it first.
-		index, err = checkIdent(i, v.selectList, orderByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, orderByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -135,13 +135,13 @@ func (v *orderByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent != i {
 		// This identifier is the part of the order by, check ambiguous here.
-		index, err = checkIdent(i, v.selectList, orderByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, orderByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
-	// try to find in select list, we have got index using checkIdent before.
+	// try to find in select list, we have got index using checkIdentAmbiguous before.
 	if index >= 0 {
 		// find in select list
 		i.ReferScope = expression.IdentReferSelectList

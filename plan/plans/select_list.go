@@ -124,15 +124,14 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression) (expression.Exp
 	return &expression.Position{N: index + 1, Name: name}, nil
 }
 
-// GetIndex tries to find the index where contains the indentifier.
-// It checks whether an identifier reference is ambiguous or not in select list.
+// CheckAmbiguous checks whether an identifier reference is ambiguous or not in select list.
 // e,g, "select c1 as a, c2 as a from t group by a" is ambiguous,
 // but "select c1 as a, c1 as a from t group by a" is not.
 // "select c1 as a, c2 + 1 as a from t group by a" is not ambiguous too,
 // If no ambiguous, -1 means expr refers none in select list, else an index for first match.
-// GetIndex will break the check when finding first matching which is not an indentifier,
+// CheckAmbiguous will break the check when finding first matching which is not an indentifier,
 // or an index for an identifier field in the end, -1 means none found.
-func (s *SelectList) GetIndex(expr expression.Expression) (int, error) {
+func (s *SelectList) CheckAmbiguous(expr expression.Expression) (int, error) {
 	if _, ok := expr.(*expression.Ident); !ok {
 		return -1, nil
 	}

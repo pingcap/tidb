@@ -59,7 +59,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent == i {
 		// The group by is an identifier, we must check it first.
-		index, err = checkIdent(i, v.selectList, groupByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, groupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -75,7 +75,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent != i {
 		// This identifier is the part of the group by, check ambiguous here.
-		index, err = checkIdent(i, v.selectList, groupByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, groupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -83,6 +83,11 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	// try to find in select list, we have got index using checkIdent before.
 	if index >= 0 {
+		// group by can not reference aggregate fields
+		if _, ok := v.selectList.AggFields[index]; ok {
+			return nil, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
+		}
+
 		// find in select list
 		i.ReferScope = expression.IdentReferSelectList
 		i.ReferIndex = index
