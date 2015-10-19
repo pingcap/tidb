@@ -51,7 +51,7 @@ func (iter *UnionIter) dirtyNext() {
 
 // Go next and update valid status.
 func (iter *UnionIter) snapshotNext() {
-	iter.snapshotIt, _ = iter.snapshotIt.Next(nil)
+	iter.snapshotIt, _ = iter.snapshotIt.Next()
 	iter.snapshotValid = iter.snapshotIt.Valid()
 }
 
@@ -116,7 +116,7 @@ func (iter *UnionIter) updateCur() {
 }
 
 // Next implements the Iterator Next interface.
-func (iter *UnionIter) Next(f FnKeyCmp) (Iterator, error) {
+func (iter *UnionIter) Next() (Iterator, error) {
 	if !iter.curIsDirty {
 		iter.snapshotNext()
 	} else {
