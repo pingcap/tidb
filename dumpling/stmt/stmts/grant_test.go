@@ -33,11 +33,7 @@ func (s *testStmtSuite) TestGrantGlobal(c *C) {
 		tx = mustBegin(c, s.testDB)
 		rows, err := tx.Query(sql)
 		c.Assert(err, IsNil)
-		rows.Next()
-		var p string
-		rows.Scan(&p)
-		c.Assert(p, Equals, "N")
-		c.Assert(rows.Next(), IsFalse)
+		matchRows(c, rows, [][]interface{}{{"N"}})
 		rows.Close()
 		mustCommit(c, tx)
 	}
@@ -50,11 +46,7 @@ func (s *testStmtSuite) TestGrantGlobal(c *C) {
 		tx = mustBegin(c, s.testDB)
 		rows, err := tx.Query(sql)
 		c.Assert(err, IsNil)
-		rows.Next()
-		var p string
-		rows.Scan(&p)
-		c.Assert(p, Equals, "Y")
-		c.Assert(rows.Next(), IsFalse)
+		matchRows(c, rows, [][]interface{}{{"Y"}})
 		rows.Close()
 		mustCommit(c, tx)
 	}
@@ -71,11 +63,7 @@ func (s *testStmtSuite) TestGrantGlobal(c *C) {
 		tx = mustBegin(c, s.testDB)
 		rows, err := tx.Query(sql)
 		c.Assert(err, IsNil)
-		rows.Next()
-		var p string
-		rows.Scan(&p)
-		c.Assert(p, Equals, "Y")
-		c.Assert(rows.Next(), IsFalse)
+		matchRows(c, rows, [][]interface{}{{"Y"}})
 		rows.Close()
 		mustCommit(c, tx)
 	}
@@ -103,11 +91,7 @@ func (s *testStmtSuite) TestGrantDBScope(c *C) {
 		tx = mustBegin(c, s.testDB)
 		rows, err := tx.Query(sql)
 		c.Assert(err, IsNil)
-		rows.Next()
-		var p string
-		rows.Scan(&p)
-		c.Assert(p, Equals, "Y")
-		c.Assert(rows.Next(), IsFalse)
+		matchRows(c, rows, [][]interface{}{{"Y"}})
 		rows.Close()
 		mustCommit(c, tx)
 	}
@@ -125,11 +109,7 @@ func (s *testStmtSuite) TestGrantDBScope(c *C) {
 		tx = mustBegin(c, s.testDB)
 		rows, err := tx.Query(sql)
 		c.Assert(err, IsNil)
-		rows.Next()
-		var p string
-		rows.Scan(&p)
-		c.Assert(p, Equals, "Y")
-		c.Assert(rows.Next(), IsFalse)
+		matchRows(c, rows, [][]interface{}{{"Y"}})
 		rows.Close()
 		mustCommit(c, tx)
 	}
