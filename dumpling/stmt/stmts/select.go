@@ -188,7 +188,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	switch {
-	case !rsets.HasAggFields(selectList.Fields) && s.GroupBy == nil:
+	case len(selectList.AggFields) == 0 && s.GroupBy == nil:
 		// If no group by and no aggregate functions, we will use SelectFieldsPlan.
 		if r, err = (&rsets.SelectFieldsRset{Src: r,
 			SelectList: selectList,

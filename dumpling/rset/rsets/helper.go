@@ -109,19 +109,12 @@ func castPosition(e expression.Expression, selectList *plans.SelectList, clause 
 	return &expression.Position{N: position}, nil
 }
 
-func checkIdent(i *expression.Ident, selectList *plans.SelectList, clause clauseType) (int, error) {
-	index, err := selectList.GetIndex(i)
+func checkIdentAmbiguous(i *expression.Ident, selectList *plans.SelectList, clause clauseType) (int, error) {
+	index, err := selectList.CheckAmbiguous(i)
 	if err != nil {
 		return -1, errors.Errorf("Column '%s' in %s is ambiguous", i, clause)
 	} else if index == -1 {
 		return -1, nil
-	}
-
-	if clause == groupByClause {
-		// group by can not reference aggregate fields
-		if _, ok := selectList.AggFields[index]; ok {
-			return -1, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
-		}
 	}
 
 	return index, nil
