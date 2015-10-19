@@ -44,7 +44,9 @@ func (t *testWhereSuit) TestWhere(c *C) {
 		Expr: &expression.BinaryOperation{
 			Op: opcode.GE,
 			L: &expression.Ident{
-				CIStr: model.NewCIStr("id"),
+				CIStr:      model.NewCIStr("id"),
+				ReferScope: expression.IdentReferFromTable,
+				ReferIndex: 0,
 			},
 			R: expression.Value{
 				Val: 30,
