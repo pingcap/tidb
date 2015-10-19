@@ -59,10 +59,13 @@ func (s *SelectList) updateFields(table string, resultFields []*field.ResultFiel
 
 func createEmptyResultField(f *field.Field) *field.ResultField {
 	result := &field.ResultField{}
+	// Set origin name
+	result.ColumnInfo.Name = model.NewCIStr(f.Expr.String())
+
 	if len(f.AsName) > 0 {
 		result.Name = f.AsName
 	} else {
-		result.Name = f.Expr.String()
+		result.Name = result.ColumnInfo.Name.O
 	}
 	return result
 }
@@ -111,7 +114,8 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 	// We must add aggregate function to hidden select list
 	// and use a position expression to fetch its value later.
 	exprName := expr.String()
-	if !field.ContainFieldName(exprName, s.ResultFields, field.CheckFieldFlag) {
+	idx := field.GetResultFieldIndex(exprName, s.ResultFields, field.CheckFieldFlag)
+	if len(idx) == 0 {
 		f := &field.Field{Expr: expr}
 		resultField := &field.ResultField{Name: exprName}
 		s.AddField(f, resultField)
@@ -119,7 +123,8 @@ func (s *SelectList) UpdateAggFields(expr expression.Expression, tableFields []*
 		return &expression.Position{N: len(s.Fields), Name: exprName}, nil
 	}
 
-	return nil, nil
+	// select list has this field, use it directly.
+	return &expression.Position{N: idx[0] + 1, Name: exprName}, nil
 }
 
 // CloneHiddenField checks and clones field and result field from table fields,
@@ -138,6 +143,55 @@ func (s *SelectList) CloneHiddenField(name string, tableFields []*field.ResultFi
 	}
 
 	return false
+}
+
+// CheckReferAmbiguous checks whether an identifier reference is ambiguous or not in select list.
+// e,g, "select c1 as a, c2 as a from t group by a" is ambiguous,
+// but "select c1 as a, c1 as a from t group by a" is not.
+// For MySQL "select c1 as a, c2 + 1 as a from t group by a" is not ambiguous too,
+// so we will only check identifier too.
+// If no ambiguous, -1 means expr refers none in select list, else an index in select list returns.
+func (s *SelectList) CheckReferAmbiguous(expr expression.Expression) (int, error) {
+	if _, ok := expr.(*expression.Ident); !ok {
+		return -1, nil
+	}
+
+	name := expr.String()
+	if field.IsQualifiedName(name) {
+		// name is qualified, no need to check
+		return -1, nil
+	}
+
+	lastIndex := -1
+	// only check origin select list, no hidden field.
+	for i := 0; i < s.HiddenFieldOffset; i++ {
+		if !strings.EqualFold(s.ResultFields[i].Name, name) {
+			continue
+		} else if _, ok := s.Fields[i].Expr.(*expression.Ident); !ok {
+			// not identfier, no check
+			continue
+		}
+
+		if lastIndex == -1 {
+			// first match, continue
+			lastIndex = i
+			continue
+		}
+
+		// check origin name, e,g. "select c1 as c2, c2 from t group by c2" is ambiguous.
+		if s.ResultFields[i].ColumnInfo.Name.L != s.ResultFields[lastIndex].ColumnInfo.Name.L {
+			return -1, errors.Errorf("refer %s is ambiguous", expr)
+		}
+
+		// check table name, e.g, "select t.c1, c1 from t group by c1" is not ambiguous.
+		if s.ResultFields[i].TableName != s.ResultFields[lastIndex].TableName {
+			return -1, errors.Errorf("refer %s is ambiguous", expr)
+		}
+
+		// TODO: check database name if possible.
+	}
+
+	return lastIndex, nil
 }
 
 // ResolveSelectList gets fields and result fields from selectFields and srcFields,
@@ -180,8 +234,16 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 		}
 
 		var result *field.ResultField
-		if err = field.CheckAllFieldNames(names, srcFields, field.DefaultFieldFlag); err != nil {
-			return nil, errors.Trace(err)
+		for _, name := range names {
+			idx := field.GetResultFieldIndex(name, srcFields, field.DefaultFieldFlag)
+			if len(idx) > 1 {
+				return nil, errors.Errorf("ambiguous field %s", name)
+			}
+
+			// TODO: must check in outer query too.
+			if len(idx) == 0 {
+				return nil, errors.Errorf("unknown field %s", name)
+			}
 		}
 
 		if _, ok := v.Expr.(*expression.Ident); ok {

@@ -24,31 +24,22 @@ type testUtilSuite struct {
 }
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
-	tests := []struct {
-		Input  string
-		Expect []byte
-	}{
-		{"0000-00-00 00:00:00.0000000", []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0}},
-		{"0000-00-00", []byte{4, 1, 0, 1, 1}},
-		{"0000-00-00 00:00:00.0000000", []byte{0}},
-	}
-
-	t, err := mysql.ParseTimestamp(tests[0].Input)
+	t, err := mysql.ParseTimestamp("0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d := dumpBinaryDateTime(t, nil)
-	c.Assert(string(d), Equals, string(tests[0].Expect))
-	t, err = mysql.ParseDatetime(tests[0].Input)
+	c.Assert(d, DeepEquals, []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0})
+	t, err = mysql.ParseDatetime("0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(t, nil)
-	c.Assert(string(d), Equals, string(tests[0].Expect))
+	c.Assert(d, DeepEquals, []byte{11, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0})
 
-	t, err = mysql.ParseDate(tests[1].Input)
+	t, err = mysql.ParseDate("0000-00-00")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(t, nil)
-	c.Assert(string(d), Equals, string(tests[1].Expect))
+	c.Assert(d, DeepEquals, []byte{4, 1, 0, 1, 1})
 
-	myDuration, err := mysql.ParseDuration(tests[2].Input, 6)
+	myDuration, err := mysql.ParseDuration("0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
-	c.Assert(string(d), Equals, string(tests[2].Expect))
+	c.Assert(d, DeepEquals, []byte{0})
 }

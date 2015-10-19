@@ -117,7 +117,7 @@ func (iter *UnionIter) updateCur() {
 
 // Next implements the Iterator Next interface.
 func (iter *UnionIter) Next(f FnKeyCmp) (Iterator, error) {
-	if iter.curIsDirty == false {
+	if !iter.curIsDirty {
 		iter.snapshotNext()
 	} else {
 		iter.dirtyNext()
@@ -129,7 +129,7 @@ func (iter *UnionIter) Next(f FnKeyCmp) (Iterator, error) {
 // Value implements the Iterator Value interface.
 // Multi columns
 func (iter *UnionIter) Value() []byte {
-	if iter.curIsDirty == false {
+	if !iter.curIsDirty {
 		return iter.snapshotIt.Value()
 	}
 	return iter.dirtyIt.Value()
@@ -137,7 +137,7 @@ func (iter *UnionIter) Value() []byte {
 
 // Key implements the Iterator Key interface.
 func (iter *UnionIter) Key() string {
-	if iter.curIsDirty == false {
+	if !iter.curIsDirty {
 		return string(DecodeKey([]byte(iter.snapshotIt.Key())))
 	}
 	return string(DecodeKey(iter.dirtyIt.Key()))

@@ -28,6 +28,7 @@ const (
 func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	var ts uint64
 	ts = uint64((time.Now().UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
 	if l.lastTimeStampTs == uint64(ts) {
