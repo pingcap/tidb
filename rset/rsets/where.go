@@ -162,7 +162,6 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 	if err != nil {
 		return nil, err
 	}
-
 	if val == nil {
 		// like `select * from t where null`.
 		return &plans.NullPlan{Fields: r.Src.GetFields()}, nil
@@ -172,7 +171,6 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 	if err != nil {
 		return nil, err
 	}
-
 	if n == 0 {
 		// like `select * from t where 0`.
 		return &plans.NullPlan{Fields: r.Src.GetFields()}, nil
@@ -181,8 +179,25 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 	return &plans.FilterDefaultPlan{Plan: r.Src, Expr: e}, nil
 }
 
+func (r *WhereRset) updateWhereFieldsRefer() error {
+	visitor := newFromIdentVisitor(r.Src.GetFields(), whereClause)
+
+	e, err := r.Expr.Accept(visitor)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	r.Expr = e
+	return nil
+}
+
 // Plan gets NullPlan/FilterDefaultPlan.
 func (r *WhereRset) Plan(ctx context.Context) (plan.Plan, error) {
+	// Update where fields refer expr by using fromIdentVisitor.
+	if err := r.updateWhereFieldsRefer(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	expr := r.Expr.Clone()
 	if expr.IsStatic() {
 		// IsStaic means we have a const value for where condition, and we don't need any index.

@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package mysql
 
 // GetDefaultFieldLength is used for Interger Types, Flen is the display length.
 // Call this when no Flen assigned in ddl.

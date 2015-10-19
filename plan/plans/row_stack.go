@@ -199,5 +199,5 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 		}
 	}
 
-	return nil, errors.Trace(err)
+	return nil, errors.Errorf("unknown field %s", name)
 }

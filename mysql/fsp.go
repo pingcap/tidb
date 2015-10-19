@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package mysql
 
 import (
 	"math"
@@ -79,4 +79,14 @@ func parseFrac(s string, fsp int) (int, error) {
 	//  0.1236 round 3 -> 124 -> 123000
 	//  0.0312 round 2 -> 3 -> 30000
 	return int(round * math.Pow10(MaxFsp-fsp)), nil
+}
+
+// alignFrac is used to generate alignment frac, like `100` -> `100000`
+func alignFrac(s string, fsp int) string {
+	sl := len(s)
+	if sl < fsp {
+		return s + strings.Repeat("0", fsp-sl)
+	}
+
+	return s
 }

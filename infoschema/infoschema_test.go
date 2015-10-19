@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/types"
@@ -51,7 +51,7 @@ func (*testSuite) TestT(c *C) {
 		ID:        3,
 		Name:      colName,
 		Offset:    0,
-		FieldType: *types.NewFieldType(mysqldef.TypeLonglong),
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
 	}
 
 	idxInfo := &model.IndexInfo{

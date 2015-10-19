@@ -11,29 +11,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package stringutil
 
-import "testing"
+import (
+	"testing"
 
-func TestGetFieldLength(t *testing.T) {
-	tbl := []struct {
-		Type   byte
-		Length int
+	. "github.com/pingcap/check"
+)
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testStringUtilSuite{})
+
+type testStringUtilSuite struct {
+}
+
+func (s *testStringUtilSuite) TestRemoveUselessBackslash(c *C) {
+	table := []struct {
+		str    string
+		expect string
 	}{
-		{TypeTiny, 4},
-		{TypeShort, 6},
-		{TypeInt24, 9},
-		{TypeLong, 11},
-		{TypeLonglong, 21},
-		{TypeBit, -1},
-		{TypeBlob, -1},
-		{TypeNull, -1},
+		{"xxxx", "xxxx"},
+		{`\x01`, `x01`},
+		{`\b01`, `\b01`},
+		{`\B01`, `B01`},
+		{`'\'a\''`, `'\'a\''`},
 	}
 
-	for _, test := range tbl {
-		l := GetDefaultFieldLength(test.Type)
-		if l != test.Length {
-			t.Fatalf("invalid field length %d != %d", l, test.Length)
-		}
+	for _, t := range table {
+		x := RemoveUselessBackslash(t.str)
+		c.Assert(x, Equals, t.expect)
 	}
 }
