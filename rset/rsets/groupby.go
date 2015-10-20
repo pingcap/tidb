@@ -59,7 +59,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent == i {
 		// The group by is an identifier, we must check it first.
-		index, err = checkIdentAmbiguous(i, v.selectList, groupByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, GroupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -75,7 +75,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent != i {
 		// This identifier is the part of the group by, check ambiguous here.
-		index, err = checkIdentAmbiguous(i, v.selectList, groupByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, GroupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -126,7 +126,7 @@ func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	visitor.selectList = r.SelectList
 
 	for i, e := range r.By {
-		pos, err := castPosition(e, r.SelectList, groupByClause)
+		pos, err := castPosition(e, r.SelectList, GroupByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
