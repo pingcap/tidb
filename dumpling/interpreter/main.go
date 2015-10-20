@@ -21,6 +21,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -54,6 +55,7 @@ func saveHistory() {
 }
 
 func executeLine(tx *sql.Tx, txnLine string) error {
+	start := time.Now()
 	if tidb.IsQuery(txnLine) {
 		rows, err := tx.Query(txnLine)
 		if err != nil {
@@ -94,6 +96,17 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		// no need to check return validity.
 		result, _ := printer.GetPrintResult(cols, datas)
 		fmt.Printf("%s", result)
+
+		// report elapsed time and rows in set
+		elapsed := time.Since(start).Seconds()
+		switch len(datas) {
+		case 0:
+			fmt.Printf("Empty set (%.2f sec)\n", elapsed)
+		case 1:
+			fmt.Printf("1 row in set (%.2f sec)\n", elapsed)
+		default:
+			fmt.Printf("%v rows in set (%.2f sec)\n", len(datas), elapsed)
+		}
 
 		if err := rows.Err(); err != nil {
 			return errors.Trace(err)
