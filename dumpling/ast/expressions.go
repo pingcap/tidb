@@ -255,6 +255,16 @@ func (sq *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(sq)
 }
 
+// SetResultFields implements ResultSet interface.
+func (sq *SubqueryExpr) SetResultFields(rfs []*ResultField) {
+	sq.Query.SetResultFields(rfs)
+}
+
+// GetResultFields implements ResultSet interface.
+func (sq *SubqueryExpr) GetResultFields() []*ResultField {
+	return sq.Query.GetResultFields()
+}
+
 // CompareSubqueryExpr is the expression for "expr cmp (select ...)".
 // See: https://dev.mysql.com/doc/refman/5.7/en/comparisons-using-subqueries.html
 // See: https://dev.mysql.com/doc/refman/5.7/en/any-in-some-subqueries.html
@@ -295,6 +305,10 @@ type ColumnName struct {
 	Schema model.CIStr
 	Table  model.CIStr
 	Name   model.CIStr
+
+	DBInfo     *model.DBInfo
+	TableInfo  *model.TableInfo
+	ColumnInfo *model.ColumnInfo
 }
 
 // Accept implements Node Accept interface.
