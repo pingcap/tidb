@@ -180,7 +180,7 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 
 		// first try to get from outer table reference.
 		if t.FromData != nil {
-			v, err = GetIdentValue(name, t.FromDataFields, t.FromData, field.DefaultFieldFlag)
+			v, err = GetIdentValue(name, t.FromDataFields, t.FromData)
 			if err == nil {
 				// tell current subquery using outer query
 				subquery.SetOuterQueryUsed(ctx)
@@ -190,7 +190,7 @@ func getIdentValueFromOuterQuery(ctx context.Context, name string) (interface{},
 
 		// then try to get from outer select list.
 		if t.OutData != nil {
-			v, err = GetIdentValue(name, t.OutDataFields, t.OutData, field.FieldNameFlag)
+			v, err = GetIdentValue(name, t.OutDataFields, t.OutData)
 			if err == nil {
 				// tell current subquery using outer query
 				subquery.SetOuterQueryUsed(ctx)
