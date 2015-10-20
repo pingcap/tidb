@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -512,7 +512,7 @@ func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	it, err := txn.Seek([]byte(t.FirstKey()), nil)
+	it, err := txn.Seek([]byte(t.FirstKey()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -685,7 +685,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 	if err != nil {
 		return errors.Trace(err)
 	}
-	it, err := txn.Seek([]byte(firstKey), nil)
+	it, err := txn.Seek([]byte(firstKey))
 	if err != nil {
 		return errors.Trace(err)
 	}

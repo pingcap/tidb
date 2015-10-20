@@ -38,7 +38,9 @@ func (t *testHavingPlan) TestHaving(c *C) {
 		Expr: &expression.BinaryOperation{
 			Op: opcode.GE,
 			L: &expression.Ident{
-				CIStr: model.NewCIStr("id"),
+				CIStr:      model.NewCIStr("id"),
+				ReferScope: expression.IdentReferSelectList,
+				ReferIndex: 0,
 			},
 			R: &expression.Value{
 				Val: 20,

@@ -15,7 +15,6 @@ package localstore
 
 import (
 	"sync"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -38,6 +37,7 @@ type dbStore struct {
 	keysLocked map[string]uint64
 	uuid       string
 	path       string
+	compactor  *localstoreCompactor
 }
 
 type storeCache struct {
@@ -85,10 +85,10 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		uuid:       uuid.NewV4().String(),
 		path:       schema,
 		db:         db,
+		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
 	}
-
 	mc.cache[schema] = s
-
+	s.compactor.Start()
 	return s, nil
 }
 
@@ -117,7 +117,6 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, err
 	}
 	txn := &dbTxn{
-		startTs:      time.Now(),
 		tid:          beginVer.Ver,
 		valid:        true,
 		store:        s,
@@ -138,7 +137,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 func (s *dbStore) Close() error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-
+	s.compactor.Stop()
 	delete(mc.cache, s.path)
 	return s.db.Close()
 }

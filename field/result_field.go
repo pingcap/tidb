@@ -23,7 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 const (

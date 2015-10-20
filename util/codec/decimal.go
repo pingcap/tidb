@@ -18,7 +18,7 @@ import (
 	"math/big"
 
 	"github.com/juju/errors"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 const (
