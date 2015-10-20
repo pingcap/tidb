@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -29,9 +30,10 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
+	store kv.Storage
 }
 
-func (*testSuite) TestT(c *C) {
+func (s *testSuite) TestT(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
@@ -65,4 +67,100 @@ func (*testSuite) TestT(c *C) {
 	id, err = meta.GenGlobalID(store)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
+}
+
+func (s *testSuite) TestMeta(c *C) {
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory")
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	m := meta.NewMeta(store)
+
+	t, err := m.Begin()
+	c.Assert(err, IsNil)
+
+	defer t.Rollback()
+
+	n, err := t.GenGlobalID()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	n, err = t.GenAutoTableID(1, 10)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+
+	n, err = t.GetSchemaVersion()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(0))
+
+	n, err = t.GenSchemaVersion()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	n, err = t.GetSchemaVersion()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	err = t.CreateDatabase(1, []byte("a"))
+	c.Assert(err, IsNil)
+
+	err = t.CreateDatabase(1, []byte("a"))
+	c.Assert(err, NotNil)
+
+	v, err := t.GetDatabase(1)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("a"))
+
+	err = t.UpdateDatabase(1, []byte("aa"))
+	c.Assert(err, IsNil)
+
+	v, err = t.GetDatabase(1)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("aa"))
+
+	ids, err := t.ListDatabaseIDs()
+	c.Assert(err, IsNil)
+	c.Assert(ids, DeepEquals, []int64{1})
+
+	err = t.CreateTable(1, 1, []byte("b"))
+	c.Assert(err, IsNil)
+
+	err = t.CreateTable(1, 1, []byte("b"))
+	c.Assert(err, NotNil)
+
+	err = t.UpdateTable(1, 1, []byte("c"))
+	c.Assert(err, IsNil)
+
+	v, err = t.GetTable(1, 1)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("c"))
+
+	v, err = t.GetTable(1, 2)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+
+	err = t.CreateTable(1, 2, []byte("bb"))
+	c.Assert(err, IsNil)
+
+	ids, err = t.ListTableIDs(1)
+	c.Assert(err, IsNil)
+	c.Assert(ids, DeepEquals, []int64{1, 2})
+
+	err = t.DropTable(1, 2)
+	c.Assert(err, IsNil)
+
+	ids, err = t.ListTableIDs(1)
+	c.Assert(err, IsNil)
+	c.Assert(ids, DeepEquals, []int64{1})
+
+	err = t.DropDatabase(1)
+	c.Assert(err, IsNil)
+
+	ids, err = t.ListDatabaseIDs()
+	c.Assert(err, IsNil)
+	c.Assert(ids, HasLen, 0)
+
+	err = t.Commit()
+	c.Assert(err, IsNil)
 }
