@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
@@ -29,7 +28,7 @@ func TestStructure(t *testing.T) {
 var _ = Suite(&testStructureSuite{})
 
 type testStructureSuite struct {
-	s kv.Storage
+	s *TStore
 }
 
 func (s *testStructureSuite) SetUpSuite(c *C) {
@@ -39,16 +38,16 @@ func (s *testStructureSuite) SetUpSuite(c *C) {
 	}
 	store, err := d.Open(path)
 	c.Assert(err, IsNil)
-	s.s = store
+	s.s = NewStore(store, []byte{0x00})
 }
 
 func (s *testStructureSuite) TearDownSuite(c *C) {
-	err := s.s.Close()
+	err := s.s.store.Close()
 	c.Assert(err, IsNil)
 }
 
 func (s *testStructureSuite) TestString(c *C) {
-	tx, err := Begin(s.s)
+	tx, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
 	defer tx.Rollback()
@@ -82,7 +81,7 @@ func (s *testStructureSuite) TestString(c *C) {
 }
 
 func (s *testStructureSuite) TestList(c *C) {
-	tx, err := Begin(s.s)
+	tx, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
 	defer tx.Rollback()
@@ -153,7 +152,7 @@ func (s *testStructureSuite) TestList(c *C) {
 }
 
 func (s *testStructureSuite) TestHash(c *C) {
-	tx, err := Begin(s.s)
+	tx, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
 	defer tx.Rollback()
@@ -179,6 +178,7 @@ func (s *testStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 
 	keys, err := tx.HKeys(key)
+	c.Assert(err, IsNil)
 	c.Assert(keys, DeepEquals, [][]byte{[]byte("1"), []byte("2")})
 
 	err = tx.HDel(key, []byte("1"))

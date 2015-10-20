@@ -52,7 +52,7 @@ func (t *TStructure) listPush(key []byte, left bool, values ...[]byte) error {
 		return nil
 	}
 
-	metaKey := encodeListMetaKey(key)
+	metaKey := t.encodeListMetaKey(key)
 	m, err := t.loadListMeta(metaKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -68,7 +68,7 @@ func (t *TStructure) listPush(key []byte, left bool, values ...[]byte) error {
 			m.RIndex++
 		}
 
-		dataKey := encodeListDataKey(key, index)
+		dataKey := t.encodeListDataKey(key, index)
 		if err = t.txn.Set(dataKey, v); err != nil {
 			return errors.Trace(err)
 		}
@@ -88,7 +88,7 @@ func (t *TStructure) RPop(key []byte) ([]byte, error) {
 }
 
 func (t *TStructure) listPop(key []byte, left bool) ([]byte, error) {
-	metaKey := encodeListMetaKey(key)
+	metaKey := t.encodeListMetaKey(key)
 	m, err := t.loadListMeta(metaKey)
 	if err != nil || m.IsEmpty() {
 		return nil, errors.Trace(err)
@@ -103,7 +103,7 @@ func (t *TStructure) listPop(key []byte, left bool) ([]byte, error) {
 		index = m.RIndex
 	}
 
-	dataKey := encodeListDataKey(key, index)
+	dataKey := t.encodeListDataKey(key, index)
 
 	var data []byte
 	data, err = t.txn.Get(dataKey)
@@ -126,14 +126,14 @@ func (t *TStructure) listPop(key []byte, left bool) ([]byte, error) {
 
 // LLen gets the length of a list.
 func (t *TStructure) LLen(key []byte) (int64, error) {
-	metaKey := encodeListMetaKey(key)
+	metaKey := t.encodeListMetaKey(key)
 	m, err := t.loadListMeta(metaKey)
 	return m.RIndex - m.LIndex, errors.Trace(err)
 }
 
 // LIndex gets an element from a list by its index.
 func (t *TStructure) LIndex(key []byte, index int64) ([]byte, error) {
-	metaKey := encodeListMetaKey(key)
+	metaKey := t.encodeListMetaKey(key)
 	m, err := t.loadListMeta(metaKey)
 	if err != nil || m.IsEmpty() {
 		return nil, errors.Trace(err)
@@ -142,21 +142,21 @@ func (t *TStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	index = adjustIndex(index, m.LIndex, m.RIndex)
 
 	if index >= m.LIndex && index < m.RIndex {
-		return t.txn.Get(encodeListDataKey(key, index))
+		return t.txn.Get(t.encodeListDataKey(key, index))
 	}
 	return nil, nil
 }
 
 // LClear removes the list of the key.
 func (t *TStructure) LClear(key []byte) error {
-	metaKey := encodeListMetaKey(key)
+	metaKey := t.encodeListMetaKey(key)
 	m, err := t.loadListMeta(metaKey)
 	if err != nil || m.IsEmpty() {
 		return errors.Trace(err)
 	}
 
 	for index := m.LIndex; index < m.RIndex; index++ {
-		dataKey := encodeListDataKey(key, index)
+		dataKey := t.encodeListDataKey(key, index)
 		if err = t.txn.Delete(dataKey); err != nil {
 			return errors.Trace(err)
 		}
