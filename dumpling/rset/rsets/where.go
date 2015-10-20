@@ -180,7 +180,7 @@ func (r *WhereRset) planStatic(ctx context.Context, e expression.Expression) (pl
 }
 
 func (r *WhereRset) updateWhereFieldsRefer() error {
-	visitor := newFromIdentVisitor(r.Src.GetFields(), whereClause)
+	visitor := NewFromIdentVisitor(r.Src.GetFields(), WhereClause)
 
 	e, err := r.Expr.Accept(visitor)
 	if err != nil {

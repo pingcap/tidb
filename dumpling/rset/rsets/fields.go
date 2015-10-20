@@ -40,7 +40,7 @@ type SelectFieldsRset struct {
 }
 
 func updateSelectFieldsRefer(selectList *plans.SelectList) error {
-	visitor := newFromIdentVisitor(selectList.FromFields, fieldListClause)
+	visitor := NewFromIdentVisitor(selectList.FromFields, FieldListClause)
 
 	// we only fix un-hidden fields here, for hidden fields, it should be
 	// handled in their own clause, in order by or having.

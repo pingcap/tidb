@@ -74,7 +74,7 @@ func (v *havingVisitor) visitIdentInAggregate(i *expression.Ident) (expression.E
 	}
 
 	// check in select list.
-	index, err := checkIdentAmbiguous(i, v.selectList, havingClause)
+	index, err := checkIdentAmbiguous(i, v.selectList, HavingClause)
 	if err != nil {
 		return i, errors.Trace(err)
 	}
@@ -129,7 +129,7 @@ func (v *havingVisitor) checkIdentInGroupBy(i *expression.Ident) (*expression.Id
 }
 
 func (v *havingVisitor) checkIdentInSelectList(i *expression.Ident) (*expression.Ident, bool, error) {
-	index, err := checkIdentAmbiguous(i, v.selectList, havingClause)
+	index, err := checkIdentAmbiguous(i, v.selectList, HavingClause)
 	if err != nil {
 		return i, false, errors.Trace(err)
 	}

@@ -46,39 +46,44 @@ func castIdent(e expression.Expression) *expression.Ident {
 	return i
 }
 
+// ClauseType is clause type.
 // TODO: export clause type and move to plan?
-type clauseType int
+type ClauseType int
 
+// Clause Types.
 const (
-	noneClause clauseType = iota
-	onClause
-	whereClause
-	groupByClause
-	fieldListClause
-	havingClause
-	orderByClause
+	NoneClause ClauseType = iota
+	OnClause
+	WhereClause
+	GroupByClause
+	FieldListClause
+	HavingClause
+	OrderByClause
+	UpdateClause
 )
 
-func (clause clauseType) String() string {
+func (clause ClauseType) String() string {
 	switch clause {
-	case onClause:
+	case OnClause:
 		return "on clause"
-	case fieldListClause:
-		return "field list"
-	case whereClause:
+	case WhereClause:
 		return "where clause"
-	case groupByClause:
+	case GroupByClause:
 		return "group statement"
-	case orderByClause:
-		return "order clause"
-	case havingClause:
+	case FieldListClause:
+		return "field list"
+	case HavingClause:
 		return "having clause"
+	case OrderByClause:
+		return "order clause"
+	case UpdateClause:
+		return "update clause"
 	}
 	return "none"
 }
 
 // castPosition returns an group/order by Position expression if e is a number.
-func castPosition(e expression.Expression, selectList *plans.SelectList, clause clauseType) (*expression.Position, error) {
+func castPosition(e expression.Expression, selectList *plans.SelectList, clause ClauseType) (*expression.Position, error) {
 	v, ok := e.(expression.Value)
 	if !ok {
 		return nil, nil
@@ -98,7 +103,7 @@ func castPosition(e expression.Expression, selectList *plans.SelectList, clause 
 		return nil, errors.Errorf("Unknown column '%d' in '%s'", position, clause)
 	}
 
-	if clause == groupByClause {
+	if clause == GroupByClause {
 		index := position - 1
 		if _, ok := selectList.AggFields[index]; ok {
 			return nil, errors.Errorf("Can't group on '%s'", selectList.Fields[index])
@@ -109,7 +114,7 @@ func castPosition(e expression.Expression, selectList *plans.SelectList, clause 
 	return &expression.Position{N: position}, nil
 }
 
-func checkIdentAmbiguous(i *expression.Ident, selectList *plans.SelectList, clause clauseType) (int, error) {
+func checkIdentAmbiguous(i *expression.Ident, selectList *plans.SelectList, clause ClauseType) (int, error) {
 	index, err := selectList.CheckAmbiguous(i)
 	if err != nil {
 		return -1, errors.Errorf("Column '%s' in %s is ambiguous", i, clause)
@@ -120,38 +125,40 @@ func checkIdentAmbiguous(i *expression.Ident, selectList *plans.SelectList, clau
 	return index, nil
 }
 
-// fromIdentVisitor can only handle identifier which reference FROM table or outer query.
+// FromIdentVisitor can only handle identifier which reference FROM table or outer query.
 // like in common select list, where or join on condition.
-type fromIdentVisitor struct {
+type FromIdentVisitor struct {
 	expression.BaseVisitor
-	fromFields []*field.ResultField
-	clause     clauseType
+	FromFields []*field.ResultField
+	Clause     ClauseType
 }
 
-func (v *fromIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
-	idx := field.GetResultFieldIndex(i.L, v.fromFields)
+// VisitIdent implements Visitor interface.
+func (v *FromIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	idx := field.GetResultFieldIndex(i.L, v.FromFields)
 	if len(idx) == 1 {
 		i.ReferScope = expression.IdentReferFromTable
 		i.ReferIndex = idx[0]
 		return i, nil
 	} else if len(idx) > 1 {
-		return nil, errors.Errorf("Column '%s' in %s is ambiguous", i, v.clause)
+		return nil, errors.Errorf("Column '%s' in %s is ambiguous", i, v.Clause)
 	}
 
-	if v.clause == onClause {
+	if v.Clause == OnClause {
 		// on clause can't check outer query.
-		return nil, errors.Errorf("Unknown column '%s' in '%s'", i, v.clause)
+		return nil, errors.Errorf("Unknown column '%s' in '%s'", i, v.Clause)
 	}
 
 	// TODO: check in outer query
 	return i, nil
 }
 
-func newFromIdentVisitor(fromFields []*field.ResultField, clause clauseType) *fromIdentVisitor {
-	visitor := &fromIdentVisitor{}
+// NewFromIdentVisitor creates a new FromIdentVisitor.
+func NewFromIdentVisitor(fromFields []*field.ResultField, clause ClauseType) *FromIdentVisitor {
+	visitor := &FromIdentVisitor{}
 	visitor.BaseVisitor.V = visitor
-	visitor.fromFields = fromFields
-	visitor.clause = clause
+	visitor.FromFields = fromFields
+	visitor.Clause = clause
 
 	return visitor
 }
