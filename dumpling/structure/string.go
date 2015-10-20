@@ -14,6 +14,8 @@
 package structure
 
 import (
+	"strconv"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/errors2"
@@ -37,6 +39,17 @@ func (t *TStructure) Get(key []byte) ([]byte, error) {
 		err = nil
 	}
 	return value, errors.Trace(err)
+}
+
+// GetInt64 gets the int64 value of a key.
+func (t *TStructure) GetInt64(key []byte) (int64, error) {
+	v, err := t.Get(key)
+	if err != nil || v == nil {
+		return 0, errors.Trace(err)
+	}
+
+	n, err := strconv.ParseInt(string(v), 10, 64)
+	return n, errors.Trace(err)
 }
 
 // Inc increments the integer value of a key by step, returns
