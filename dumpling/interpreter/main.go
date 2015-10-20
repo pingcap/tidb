@@ -55,9 +55,10 @@ func saveHistory() {
 }
 
 func executeLine(tx *sql.Tx, txnLine string) error {
-	start := time.Now()
 	if tidb.IsQuery(txnLine) {
+		start := time.Now()
 		rows, err := tx.Query(txnLine)
+		elapsed := time.Since(start).Seconds()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -97,7 +98,6 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		result, _ := printer.GetPrintResult(cols, datas)
 		fmt.Printf("%s", result)
 
-		// report elapsed time and rows in set
 		switch len(datas) {
 		case 0:
 			fmt.Printf("Empty set")
@@ -106,13 +106,15 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		default:
 			fmt.Printf("%v rows in set", len(datas))
 		}
-
+		fmt.Printf(" (%.2f sec)\n", elapsed)
 		if err := rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		// TODO: rows affected and last insert id
+		// TODO: last insert id
+		start := time.Now()
 		res, err := tx.Exec(txnLine)
+		elapsed := time.Since(start).Seconds()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -128,8 +130,8 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		default:
 			fmt.Printf("Query OK, %v rows affected", cnt)
 		}
+		fmt.Printf(" (%.2f sec)\n", elapsed)
 	}
-	fmt.Printf(" (%.2f sec)\n", time.Since(start).Seconds())
 	return nil
 }
 
