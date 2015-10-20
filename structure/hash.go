@@ -15,22 +15,57 @@ package structure
 
 import (
 	"bytes"
+	"encoding/binary"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
+type hashMeta struct {
+	Length int64
+}
+
+func (m hashMeta) Value() []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf[0:8], uint64(m.Length))
+	return buf
+}
+
+func (m hashMeta) IsEmpty() bool {
+	return m.Length <= 0
+}
+
 // HSet sets the string value of a hash field.
 func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
-	dateKey := encodeHashDataKey(key, field)
-	return t.txn.Set(dateKey, value)
+	metaKey := encodeHashMetaKey(key)
+	meta, err := t.loadHashMeta(metaKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	dataKey := encodeHashDataKey(key, field)
+	var oldValue []byte
+	oldValue, err = t.loadHashValue(dataKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if oldValue == nil {
+		meta.Length++
+	}
+
+	if err = t.txn.Set(dataKey, value); err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(t.txn.Set(metaKey, meta.Value()))
 }
 
 // HGet gets the value of a hash field.
 func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
-	dateKey := encodeHashDataKey(key, field)
-	value, err := t.txn.Get(dateKey)
+	dataKey := encodeHashDataKey(key, field)
+	value, err := t.txn.Get(dataKey)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	}
@@ -39,28 +74,47 @@ func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
 
 // HLen gets the number of fields in a hash.
 func (t *TStructure) HLen(key []byte) (int64, error) {
-	// TODO: in our scenario, we may use this rarely, so here
-	// just using iteration, not another meta key, if we really need
-	// this, we will update it.
-	cnt := int64(0)
-
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
-		cnt++
-		return nil
-	})
-
-	return cnt, errors.Trace(err)
+	metaKey := encodeHashMetaKey(key)
+	meta, err := t.loadHashMeta(metaKey)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return meta.Length, nil
 }
 
 // HDel deletes one or more hash fields.
 func (t *TStructure) HDel(key []byte, fields ...[]byte) error {
+	metaKey := encodeHashMetaKey(key)
+	meta, err := t.loadHashMeta(metaKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var value []byte
 	for _, field := range fields {
 		dataKey := encodeHashDataKey(key, field)
-		if err := t.txn.Delete(dataKey); err != nil {
+
+		value, err = t.loadHashValue(dataKey)
+		if err != nil {
 			return errors.Trace(err)
 		}
+
+		if value != nil {
+			if err = t.txn.Delete(dataKey); err != nil {
+				return errors.Trace(err)
+			}
+
+			meta.Length--
+		}
 	}
-	return nil
+
+	if meta.IsEmpty() {
+		err = t.txn.Delete(metaKey)
+	} else {
+		err = t.txn.Set(metaKey, meta.Value())
+	}
+
+	return errors.Trace(err)
 }
 
 // HKeys gets all the fields in a hash.
@@ -76,17 +130,31 @@ func (t *TStructure) HKeys(key []byte) ([][]byte, error) {
 
 // HClear removes the hash value of the key.
 func (t *TStructure) HClear(key []byte) error {
-	err := t.iterateHash(key, func(field []byte, value []byte) error {
-		// TODO: optimize
+	metaKey := encodeHashMetaKey(key)
+	meta, err := t.loadHashMeta(metaKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if meta.IsEmpty() {
+		return nil
+	}
+
+	err = t.iterateHash(key, func(field []byte, value []byte) error {
 		k := encodeHashDataKey(key, field)
 		return errors.Trace(t.txn.Delete(k))
 	})
-	return errors.Trace(err)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(t.txn.Delete(metaKey))
 }
 
 func (t *TStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := hashDataKeyPrefix(key)
-	it, err := t.txn.Seek(dataPrefix, nil)
+	it, err := t.txn.Seek(dataPrefix)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -108,11 +176,44 @@ func (t *TStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) 
 			return errors.Trace(err)
 		}
 
-		it, err = it.Next(nil)
+		it, err = it.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	return nil
+}
+
+func (t *TStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
+	v, err := t.txn.Get(metaKey)
+	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+		err = nil
+	} else if err != nil {
+		return hashMeta{}, errors.Trace(err)
+	}
+
+	meta := hashMeta{Length: 0}
+	if v == nil {
+		return meta, nil
+	}
+
+	if len(v) != 8 {
+		return meta, errors.Errorf("invalid list meta data")
+	}
+
+	meta.Length = int64(binary.BigEndian.Uint64(v[0:8]))
+	return meta, nil
+}
+
+func (t *TStructure) loadHashValue(dataKey []byte) ([]byte, error) {
+	v, err := t.txn.Get(dataKey)
+	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+		err = nil
+		v = nil
+	} else if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return v, nil
 }
