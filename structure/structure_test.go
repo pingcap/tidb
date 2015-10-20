@@ -35,7 +35,7 @@ type testStructureSuite struct {
 func (s *testStructureSuite) SetUpSuite(c *C) {
 	path := "memory:"
 	d := localstore.Driver{
-		goleveldb.MemoryDriver{},
+		Driver: goleveldb.MemoryDriver{},
 	}
 	store, err := d.Open(path)
 	c.Assert(err, IsNil)

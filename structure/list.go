@@ -190,7 +190,7 @@ func (t *TStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 func adjustIndex(index int64, min, max int64) int64 {
 	if index >= 0 {
 		return index + min
-	} else {
-		return index + max
 	}
+
+	return index + max
 }
