@@ -48,9 +48,11 @@ const (
 	TypeGeometry
 )
 
-// UnInitializedType is an uninitialized type code.
+// IsUninitializedType check if a type code is uninitialized.
 // TypeDecimal is the old type code for decimal and not be used in the new mysql version.
-const UnInitializedType = TypeDecimal
+func IsUninitializedType(tp byte) bool {
+	return tp == TypeDecimal
+}
 
 // Flag informations.
 const (

@@ -84,7 +84,7 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 		}
 		di, ok := d.(*types.DataItem)
 		if ok {
-			if r.ResultFields[i].Col.Tp == mysql.UnInitializedType {
+			if mysql.IsUninitializedType(r.ResultFields[i].Col.Tp) {
 				r.ResultFields[i].Col.FieldType = *di.Type
 			}
 			row.Data[i] = di.Data
