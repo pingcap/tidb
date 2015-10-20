@@ -22,12 +22,18 @@ import (
 type TypeFlag byte
 
 const (
+	// StringMeta is the flag for string meta.
 	StringMeta TypeFlag = 'S'
+	// StringData is the flag for string data.
 	StringData TypeFlag = 's'
-	HashMeta   TypeFlag = 'H'
-	HashData   TypeFlag = 'h'
-	ListMeta   TypeFlag = 'L'
-	ListData   TypeFlag = 'l'
+	// HashMeta is the flag for hash meta.
+	HashMeta TypeFlag = 'H'
+	// HashData is the flag for hash data.
+	HashData TypeFlag = 'h'
+	// ListMeta is the flag for list meta.
+	ListMeta TypeFlag = 'L'
+	// ListData is the flag for list data.
+	ListData TypeFlag = 'l'
 )
 
 func encodeStringDataKey(key []byte) []byte {
