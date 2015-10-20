@@ -31,6 +31,13 @@ var (
 	_ Node = &VariableAssignment{}
 )
 
+// FloatOpt is used for parsing floating-point type option from SQL.
+// TODO: add reference doc.
+type FloatOpt struct {
+	Flen    int
+	Decimal int
+}
+
 // AuthOption is used for parsing create use statement.
 type AuthOption struct {
 	// AuthString/HashString can be empty, so we need to decide which one to use.

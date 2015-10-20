@@ -16,6 +16,7 @@
 package ast
 
 import (
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -68,6 +69,24 @@ type DDLNode interface {
 type DMLNode interface {
 	StmtNode
 	dmlStatement()
+}
+
+// ResultField is computed from a parsed select statement.
+type ResultField struct {
+	Column       *model.ColumnInfo
+	ColumnAsName model.CIStr
+	Table        *model.TableInfo
+	TableAsName  model.CIStr
+	DBName       model.CIStr
+}
+
+// ResultSetNode has result fields
+type ResultSetNode interface {
+	Node
+	// GetResultFields gets result fields of the result set node.
+	GetResultFields() []*ResultField
+	// SetResultFields sets result fields of the result set node.
+	SetResultFields(fields []*ResultField)
 }
 
 // Visitor visits a Node.

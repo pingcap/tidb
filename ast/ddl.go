@@ -35,13 +35,6 @@ var (
 	_ Node    = &AlterTableSpec{}
 )
 
-// FloatOpt is used for parsing floating-point type option from SQL.
-// TODO: add reference doc.
-type FloatOpt struct {
-	Flen    int
-	Decimal int
-}
-
 // CharsetOpt is used for parsing charset option from SQL.
 type CharsetOpt struct {
 	Chs string

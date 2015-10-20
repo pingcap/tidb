@@ -46,11 +46,12 @@ const (
 // Join represents table join.
 type Join struct {
 	node
+	resultSetNode
 
 	// Left table can be TableSource or JoinNode.
-	Left Node
+	Left ResultSetNode
 	// Right table can be TableSource or JoinNode or nil.
-	Right Node
+	Right ResultSetNode
 	// Tp represents join type.
 	Tp JoinType
 	// On represents join on condition.
@@ -66,13 +67,13 @@ func (j *Join) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return j, false
 	}
-	j.Left = node
+	j.Left = node.(ResultSetNode)
 	if j.Right != nil {
 		node, ok = j.Right.Accept(v)
 		if !ok {
 			return j, false
 		}
-		j.Right = node
+		j.Right = node.(ResultSetNode)
 	}
 	if j.On != nil {
 		node, ok = j.On.Accept(v)
@@ -87,9 +88,13 @@ func (j *Join) Accept(v Visitor) (Node, bool) {
 // TableName represents a table name.
 type TableName struct {
 	node
+	resultSetNode
 
 	Schema model.CIStr
 	Name   model.CIStr
+
+	DBInfo    *model.DBInfo
+	TableInfo *model.TableInfo
 }
 
 // Accept implements Node Accept interface.
@@ -106,7 +111,7 @@ type TableSource struct {
 
 	// Source is the source of the data, can be a TableName,
 	// a SubQuery, or a JoinNode.
-	Source Node
+	Source ResultSetNode
 
 	// AsName is the as name of the table source.
 	AsName model.CIStr
@@ -123,6 +128,16 @@ func (ts *TableSource) Accept(v Visitor) (Node, bool) {
 	}
 	ts.Source = node
 	return v.Leave(ts)
+}
+
+// SetResultFields implements ResultSet interface.
+func (ts *TableSource) SetResultFields(rfs []*ResultField) {
+	ts.Source.SetResultFields(rfs)
+}
+
+// GetResultFields implements ResultSet interface.
+func (ts *TableSource) GetResultFields() []*ResultField {
+	return ts.Source.GetResultFields()
 }
 
 // UnionClause represents a single "UNION SELECT ..." or "UNION (SELECT ...)" clause.
@@ -215,15 +230,6 @@ type OrderByItem struct {
 	Desc bool
 }
 
-// ResultField is computed from a parsed select statement.
-type ResultField struct {
-	Column       *model.ColumnInfo
-	ColumnAsName model.CIStr
-	Table        *model.TableInfo
-	TableAsName  model.CIStr
-	DBName       model.CIStr
-}
-
 // Accept implements Node Accept interface.
 func (ob *OrderByItem) Accept(v Visitor) (Node, bool) {
 	if skipChildren, ok := v.Enter(ob); skipChildren {
@@ -240,6 +246,7 @@ func (ob *OrderByItem) Accept(v Visitor) (Node, bool) {
 // SelectStmt represents the select query node.
 type SelectStmt struct {
 	dmlNode
+	resultSetNode
 
 	// Distinct represents if the select has distinct option.
 	Distinct bool
@@ -266,9 +273,6 @@ type SelectStmt struct {
 	UnionOrderBy []*OrderByItem
 	// Limit for union select.
 	UnionLimit *Limit
-
-	// ResultFields
-	ResultFields []*ResultField
 }
 
 // Accept implements Node Accept interface.
