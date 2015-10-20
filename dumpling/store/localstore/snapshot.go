@@ -136,11 +136,11 @@ func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
 		valid:           true,
 		exceptedVersion: exceptedVer,
 	}
-	it.Next(nil)
+	it.Next()
 	return it
 }
 
-func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
+func (it *dbIter) Next() (kv.Iterator, error) {
 	encKey := codec.EncodeBytes(nil, it.startKey)
 	var retErr error
 	var engineIter engine.Iterator

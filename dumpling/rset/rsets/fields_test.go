@@ -69,6 +69,7 @@ func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 
 	oldFld := s.sr.SelectList.Fields[1]
 	s.sr.SelectList.Fields = s.sr.SelectList.Fields[:1]
+	s.sr.SelectList.HiddenFieldOffset = len(s.sr.SelectList.Fields)
 
 	p, err = s.sr.Plan(nil)
 	c.Assert(err, IsNil)
@@ -81,6 +82,7 @@ func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 	s.sr.Src = tdp
 
 	s.sr.SelectList.Fields = []*field.Field{fld}
+	s.sr.SelectList.HiddenFieldOffset = len(s.sr.SelectList.Fields)
 
 	p, err = s.sr.Plan(nil)
 	c.Assert(err, IsNil)
@@ -94,6 +96,7 @@ func (s *testSelectFieldsPlannerSuite) TestDistinctPlanner(c *C) {
 
 	// cover isConst check, like `select 1, c1 from t`
 	s.sr.SelectList.Fields = []*field.Field{fld, oldFld}
+	s.sr.SelectList.HiddenFieldOffset = len(s.sr.SelectList.Fields)
 	p, err = s.sr.Plan(nil)
 	c.Assert(err, IsNil)
 

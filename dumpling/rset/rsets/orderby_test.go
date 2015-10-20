@@ -47,64 +47,6 @@ func (s *testOrderByRsetSuite) SetUpSuite(c *C) {
 	s.r = &OrderByRset{Src: tblPlan, SelectList: selectList}
 }
 
-func (s *testOrderByRsetSuite) TestOrderByRsetCheckAndUpdateSelectList(c *C) {
-	resultFields := s.r.Src.GetFields()
-
-	fields := make([]*field.Field, len(resultFields))
-	for i, resultField := range resultFields {
-		name := resultField.Name
-		fields[i] = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr(name)}}
-	}
-
-	selectList := &plans.SelectList{
-		HiddenFieldOffset: len(resultFields),
-		ResultFields:      resultFields,
-		Fields:            fields,
-	}
-
-	expr := &expression.Ident{CIStr: model.NewCIStr("id")}
-	orderByItem := OrderByItem{Expr: expr, Asc: true}
-	by := []OrderByItem{orderByItem}
-	r := &OrderByRset{By: by, SelectList: selectList}
-
-	// `select id, name from t order by id`
-	err := r.CheckAndUpdateSelectList(selectList, resultFields)
-	c.Assert(err, IsNil)
-
-	// `select id, name as id from t order by id`
-	selectList.Fields[1].AsName = "id"
-	selectList.ResultFields[1].Name = "id"
-
-	err = r.CheckAndUpdateSelectList(selectList, resultFields)
-	c.Assert(err, NotNil)
-
-	// `select id, name from t order by count(1) > 1`
-	aggExpr, err := expression.NewCall("count", []expression.Expression{expression.Value{Val: 1}}, false)
-	c.Assert(err, IsNil)
-
-	r.By[0].Expr = aggExpr
-
-	err = r.CheckAndUpdateSelectList(selectList, resultFields)
-	c.Assert(err, IsNil)
-
-	// `select id, name from t order by count(xxx) > 1`
-	aggExpr, err = expression.NewCall("count", []expression.Expression{&expression.Ident{CIStr: model.NewCIStr("xxx")}}, false)
-	c.Assert(err, IsNil)
-
-	r.By[0].Expr = aggExpr
-
-	err = r.CheckAndUpdateSelectList(selectList, resultFields)
-	c.Assert(err, NotNil)
-
-	// `select id, name from t order by xxx`
-	r.By[0].Expr = &expression.Ident{CIStr: model.NewCIStr("xxx")}
-	selectList.Fields[1].AsName = "name"
-	selectList.ResultFields[1].Name = "name"
-
-	err = r.CheckAndUpdateSelectList(selectList, resultFields)
-	c.Assert(err, NotNil)
-}
-
 func (s *testOrderByRsetSuite) TestOrderByRsetPlan(c *C) {
 	// `select id, name from t`
 	_, err := s.r.Plan(nil)
@@ -144,12 +86,6 @@ func (s *testOrderByRsetSuite) TestOrderByRsetPlan(c *C) {
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, IsNil)
-
-	// `select id, name from t order by xxx`
-	s.r.By[0].Expr = &expression.Ident{CIStr: model.NewCIStr("xxx")}
-
-	_, err = s.r.Plan(nil)
-	c.Assert(err, NotNil)
 
 	// check src plan is NullPlan
 	s.r.Src = &plans.NullPlan{Fields: s.r.SelectList.ResultFields}

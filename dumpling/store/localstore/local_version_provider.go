@@ -15,9 +15,11 @@ var ErrOverflow = errors.New("overflow when allocating new version")
 
 // LocalVersionProvider uses local timestamp for version.
 type LocalVersionProvider struct {
-	mu              sync.Mutex
-	lastTimeStampTs uint64
-	n               uint64
+	mu            sync.Mutex
+	lastTimestamp uint64
+	// logical guaranteed version's monotonic increasing for calls when lastTimestamp
+	// are equal.
+	logical uint64
 }
 
 const (
@@ -31,14 +33,18 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 
 	var ts uint64
 	ts = uint64((time.Now().UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
-	if l.lastTimeStampTs == uint64(ts) {
-		l.n++
-		if l.n >= 1<<timePrecisionOffset {
+	if l.lastTimestamp == uint64(ts) {
+		l.logical++
+		if l.logical >= 1<<timePrecisionOffset {
 			return kv.Version{}, ErrOverflow
 		}
-		return kv.Version{Ver: ts + l.n}, nil
+		return kv.Version{Ver: ts + l.logical}, nil
 	}
-	l.lastTimeStampTs = ts
-	l.n = 0
+	l.lastTimestamp = ts
+	l.logical = 0
 	return kv.Version{Ver: ts}, nil
+}
+
+func localVersionToTimestamp(ver kv.Version) uint64 {
+	return ver.Ver >> timePrecisionOffset
 }

@@ -37,7 +37,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/arena"
 )
 

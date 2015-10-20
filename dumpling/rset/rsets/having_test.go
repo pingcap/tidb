@@ -50,59 +50,6 @@ func (s *testHavingRsetSuite) SetUpSuite(c *C) {
 	s.r = &HavingRset{Src: tblPlan, Expr: expr, SelectList: selectList}
 }
 
-func (s *testHavingRsetSuite) TestHavingRsetCheckAndUpdateSelectList(c *C) {
-	resultFields := s.r.Src.GetFields()
-
-	selectList := s.r.SelectList
-
-	groupBy := []expression.Expression{}
-
-	// `select id, name from t having id > 1`
-	err := s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
-	c.Assert(err, IsNil)
-
-	// `select name from t group by id having id > 1`
-	selectList.ResultFields = selectList.ResultFields[1:]
-	selectList.Fields = selectList.Fields[1:]
-
-	groupBy = []expression.Expression{&expression.Ident{CIStr: model.NewCIStr("id")}}
-	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
-	c.Assert(err, IsNil)
-
-	// `select name from t group by id + 1 having id > 1`
-	expr := expression.NewBinaryOperation(opcode.Plus, &expression.Ident{CIStr: model.NewCIStr("id")}, expression.Value{Val: 1})
-
-	groupBy = []expression.Expression{expr}
-	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
-	c.Assert(err, IsNil)
-
-	// `select name from t group by id + 1 having count(1) > 1`
-	aggExpr, err := expression.NewCall("count", []expression.Expression{expression.Value{Val: 1}}, false)
-	c.Assert(err, IsNil)
-
-	s.r.Expr = aggExpr
-
-	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
-	c.Assert(err, IsNil)
-
-	// `select name from t group by id + 1 having count(xxx) > 1`
-	aggExpr, err = expression.NewCall("count", []expression.Expression{&expression.Ident{CIStr: model.NewCIStr("xxx")}}, false)
-	c.Assert(err, IsNil)
-
-	s.r.Expr = aggExpr
-
-	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
-	c.Assert(err, NotNil)
-
-	// `select name from t group by id having xxx > 1`
-	expr = expression.NewBinaryOperation(opcode.GT, &expression.Ident{CIStr: model.NewCIStr("xxx")}, expression.Value{Val: 1})
-
-	s.r.Expr = expr
-
-	err = s.r.CheckAndUpdateSelectList(selectList, groupBy, resultFields)
-	c.Assert(err, NotNil)
-}
-
 func (s *testHavingRsetSuite) TestHavingRsetPlan(c *C) {
 	p, err := s.r.Plan(nil)
 	c.Assert(err, IsNil)

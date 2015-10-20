@@ -141,6 +141,17 @@ func (r *JoinRset) buildJoinPlan(ctx context.Context, p *plans.JoinPlan, s *Join
 		p.Fields = append(p.Fields, rightFields...)
 	}
 
+	if p.On != nil {
+		visitor := newFromIdentVisitor(p.Fields, onClause)
+
+		e, err := p.On.Accept(visitor)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		p.On = e
+	}
+
 	return nil
 }
 

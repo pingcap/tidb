@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -186,7 +186,7 @@ func (s *testBinOpSuite) TestIdentRelOp(c *C) {
 
 	f := func(name string) *Ident {
 		return &Ident{
-			model.NewCIStr(name),
+			CIStr: model.NewCIStr(name),
 		}
 	}
 

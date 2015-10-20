@@ -175,20 +175,20 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if s.Having != nil {
 		// `having` may contain aggregate functions, and we will add this to hidden fields.
-		if err = s.Having.CheckAndUpdateSelectList(selectList, groupBy, r.GetFields()); err != nil {
+		if err = s.Having.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
 	if s.OrderBy != nil {
 		// `order by` may contain aggregate functions, and we will add this to hidden fields.
-		if err = s.OrderBy.CheckAndUpdateSelectList(selectList, r.GetFields()); err != nil {
+		if err = s.OrderBy.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
 	switch {
-	case !rsets.HasAggFields(selectList.Fields) && s.GroupBy == nil:
+	case len(selectList.AggFields) == 0 && s.GroupBy == nil:
 		// If no group by and no aggregate functions, we will use SelectFieldsPlan.
 		if r, err = (&rsets.SelectFieldsRset{Src: r,
 			SelectList: selectList,
@@ -209,7 +209,8 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		if r, err = (&rsets.HavingRset{
 			Src:        r,
 			Expr:       s.Expr,
-			SelectList: selectList}).Plan(ctx); err != nil {
+			SelectList: selectList,
+			GroupBy:    groupBy}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
