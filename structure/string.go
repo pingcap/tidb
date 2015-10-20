@@ -22,6 +22,10 @@ import (
 // Set sets the string value of the key.
 func (t *TStructure) Set(key []byte, value []byte) error {
 	ek := t.encodeStringDataKey(key)
+	if err := t.txn.LockKeys(ek); err != nil {
+		return errors.Trace(err)
+	}
+
 	return t.txn.Set(ek, value)
 }
 
@@ -39,6 +43,10 @@ func (t *TStructure) Get(key []byte) ([]byte, error) {
 // the value after the increment.
 func (t *TStructure) Inc(key []byte, step int64) (int64, error) {
 	ek := t.encodeStringDataKey(key)
+	if err := t.txn.LockKeys(ek); err != nil {
+		return 0, errors.Trace(err)
+	}
+
 	n, err := t.txn.Inc(ek, step)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
@@ -49,6 +57,10 @@ func (t *TStructure) Inc(key []byte, step int64) (int64, error) {
 // Clear removes the string value of the key.
 func (t *TStructure) Clear(key []byte) error {
 	ek := t.encodeStringDataKey(key)
+	if err := t.txn.LockKeys(ek); err != nil {
+		return errors.Trace(err)
+	}
+
 	err := t.txn.Delete(ek)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
