@@ -42,6 +42,9 @@ func builtinAbs(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 		// TODO: handle overflow if x is MinInt64
 		return -v, nil
+	case *types.DataItem:
+		args[0] = x.Data
+		return builtinAbs(args, ctx)
 	default:
 		// we will try to convert other types to float
 		// TODO: if time has no precision, it will be a integer

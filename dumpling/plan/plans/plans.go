@@ -131,7 +131,7 @@ func setResultFieldInfo(fields []*field.ResultField, values []interface{}) error
 		return errors.Errorf("Fields and Values length unmatch %d VS %d", len(fields), len(values))
 	}
 	for i, rf := range fields {
-		if rf.Col.Tp == 0 {
+		if mysql.IsUninitializedType(rf.Col.Tp) {
 			// 0 == TypeDecimal, Tp maybe uninitialized
 			rf.Col.Charset = charset.CharsetBin
 			rf.Col.Collate = charset.CharsetBin
@@ -157,6 +157,8 @@ func setResultFieldInfo(fields []*field.ResultField, values []interface{}) error
 				rf.Col.Tp = mysql.TypeDuration
 			case mysql.Decimal:
 				rf.Col.Tp = mysql.TypeDecimal
+			case nil:
+				rf.Col.Tp = mysql.TypeNull
 			default:
 				return errors.Errorf("Unknown type %T", c)
 			}
