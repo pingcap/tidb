@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-// isRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
-func isRetryableError(err error) bool {
+// IsRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
+func IsRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -42,7 +42,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		}
 
 		err = f(txn)
-		if retryable && isRetryableError(err) {
+		if retryable && IsRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()
 			continue
@@ -52,7 +52,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		}
 
 		err = txn.Commit()
-		if retryable && isRetryableError(err) {
+		if retryable && IsRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()
 			continue
