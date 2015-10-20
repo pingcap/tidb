@@ -44,6 +44,10 @@ func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
 		return errors.Trace(err)
 	}
 
+	if err = t.txn.LockKeys(metaKey); err != nil {
+		return errors.Trace(err)
+	}
+
 	dataKey := t.encodeHashDataKey(key, field)
 	var oldValue []byte
 	oldValue, err = t.loadHashValue(dataKey)
@@ -90,6 +94,10 @@ func (t *TStructure) HDel(key []byte, fields ...[]byte) error {
 		return errors.Trace(err)
 	}
 
+	if err = t.txn.LockKeys(metaKey); err != nil {
+		return errors.Trace(err)
+	}
+
 	var value []byte
 	for _, field := range fields {
 		dataKey := t.encodeHashDataKey(key, field)
@@ -132,12 +140,12 @@ func (t *TStructure) HKeys(key []byte) ([][]byte, error) {
 func (t *TStructure) HClear(key []byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
-	if err != nil {
+	if err != nil || meta.IsEmpty() {
 		return errors.Trace(err)
 	}
 
-	if meta.IsEmpty() {
-		return nil
+	if err = t.txn.LockKeys(metaKey); err != nil {
+		return errors.Trace(err)
 	}
 
 	err = t.iterateHash(key, func(field []byte, value []byte) error {
