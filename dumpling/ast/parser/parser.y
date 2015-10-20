@@ -1142,7 +1142,7 @@ DeleteFromStmt:
 	{
 		// Single Table
 		x := &ast.DeleteStmt{
-			TableRefs:	&ast.Join{Left: &ast.TableSource{Source: $6.(ast.Node)}, Right: nil},
+			TableRefs:	&ast.Join{Left: &ast.TableSource{Source: $6.(ast.ResultSetNode)}, Right: nil},
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
@@ -2634,13 +2634,13 @@ TableRefs:
 			// if $1 is JoinRset, use it directly
 			$$ = j
 		} else {
-			$$ = &ast.Join{Left: $1.(ast.Node), Right: nil}
+			$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: nil}
 		}
 	}
 |	TableRefs ',' EscapedTableRef
 	{
 		/* from a, b is default cross join */
-		$$ = &ast.Join{Left: $1.(ast.Node), Right: $3.(ast.Node), Tp: ast.CrossJoin}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
 	}
 
 EscapedTableRef:
@@ -2704,15 +2704,15 @@ JoinTable:
 	/* Use %prec to evaluate production TableRef before cross join */
 	TableRef CrossOpt TableRef %prec tableRefPriority
 	{
-		$$ = &ast.Join{Left: $1.(ast.Node), Right: $3.(ast.Node), Tp: ast.CrossJoin}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin}
 	}
 |	TableRef CrossOpt TableRef "ON" Expression
 	{
-		$$ = &ast.Join{Left: $1.(ast.Node), Right: $3.(ast.Node), Tp: ast.CrossJoin, On: $5.(ast.ExprNode)}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, On: $5.(ast.ExprNode)}
 	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
 	{	
-		$$ = &ast.Join{Left: $1.(ast.Node), Right: $5.(ast.Node), Tp: $2.(ast.JoinType), On: $7.(ast.ExprNode)}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), On: $7.(ast.ExprNode)}
 	}
 	/* Support Using */
 
@@ -3794,7 +3794,7 @@ UpdateStmt:
 	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single-table syntax
-		r := &ast.Join{Left: $4.(ast.Node), Right: nil}
+		r := &ast.Join{Left: $4.(ast.ResultSetNode), Right: nil}
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	r,
