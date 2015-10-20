@@ -126,7 +126,7 @@ func (ts *TableSource) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return ts, false
 	}
-	ts.Source = node
+	ts.Source = node.(ResultSetNode)
 	return v.Leave(ts)
 }
 
