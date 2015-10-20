@@ -512,7 +512,7 @@ func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	it, err := txn.Seek([]byte(t.FirstKey()), nil)
+	it, err := txn.Seek([]byte(t.FirstKey()))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -685,7 +685,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 	if err != nil {
 		return errors.Trace(err)
 	}
-	it, err := txn.Seek([]byte(firstKey), nil)
+	it, err := txn.Seek([]byte(firstKey))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -148,7 +148,7 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	return nil
 }
 
-func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
+func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 
@@ -158,12 +158,6 @@ func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error
 	}
 	if !iter.Valid() {
 		return &kv.UnionIter{}, nil
-	}
-
-	if fnKeyCmp != nil {
-		if fnKeyCmp([]byte(iter.Key())[:1]) {
-			return &kv.UnionIter{}, nil
-		}
 	}
 
 	return iter, nil
