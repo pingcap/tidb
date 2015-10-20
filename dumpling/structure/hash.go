@@ -16,6 +16,7 @@ package structure
 import (
 	"bytes"
 	"encoding/binary"
+	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -38,6 +39,53 @@ func (m hashMeta) IsEmpty() bool {
 
 // HSet sets the string value of a hash field.
 func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
+	return t.updateHash(key, field, func([]byte) ([]byte, error) {
+		return value, nil
+	})
+}
+
+// HGet gets the value of a hash field.
+func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
+	dataKey := t.encodeHashDataKey(key, field)
+	value, err := t.txn.Get(dataKey)
+	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+		err = nil
+	}
+	return value, errors.Trace(err)
+}
+
+// HInc increments the integer value of a hash field, by step, returns
+// the value after the increment.
+func (t *TStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
+	base := int64(0)
+	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
+		if oldValue != nil {
+			var err error
+			base, err = strconv.ParseInt(string(oldValue), 10, 64)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		base += step
+		return []byte(strconv.FormatInt(base, 10)), nil
+	})
+
+	return base, errors.Trace(err)
+}
+
+// HGetInt64 gets int64 value of a hash field.
+func (t *TStructure) HGetInt64(key []byte, field []byte) (int64, error) {
+	value, err := t.HGet(key, field)
+	if err != nil || value == nil {
+		return 0, errors.Trace(err)
+	}
+
+	var n int64
+	n, err = strconv.ParseInt(string(value), 10, 64)
+	return n, errors.Trace(err)
+}
+
+func (t *TStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
@@ -59,21 +107,17 @@ func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
 		meta.Length++
 	}
 
-	if err = t.txn.Set(dataKey, value); err != nil {
+	var newValue []byte
+	newValue, err = fn(oldValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = t.txn.Set(dataKey, newValue); err != nil {
 		return errors.Trace(err)
 	}
 
 	return errors.Trace(t.txn.Set(metaKey, meta.Value()))
-}
-
-// HGet gets the value of a hash field.
-func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
-	dataKey := t.encodeHashDataKey(key, field)
-	value, err := t.txn.Get(dataKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
-		err = nil
-	}
-	return value, errors.Trace(err)
 }
 
 // HLen gets the number of fields in a hash.

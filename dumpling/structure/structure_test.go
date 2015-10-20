@@ -190,11 +190,31 @@ func (s *testStructureSuite) TestHash(c *C) {
 
 	value, err = tx.HGet(key, []byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
+	c.Assert(value, IsNil)
 
 	l, err = tx.HLen(key)
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(1))
+
+	n, err := tx.HInc(key, []byte("1"), 1)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(2))
+
+	n, err = tx.HInc(key, []byte("1"), 1)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(2))
+
+	n, err = tx.HGetInt64(key, []byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(2))
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(2))
 
 	err = tx.HClear(key)
 	c.Assert(err, IsNil)
