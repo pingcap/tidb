@@ -66,7 +66,7 @@ func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 	}
 
 	// first find this identifier in FROM.
-	idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields, field.DefaultFieldFlag)
+	idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields)
 	if len(idx) > 0 {
 		i.ReferScope = expression.IdentReferFromTable
 		i.ReferIndex = idx[0]

@@ -16,7 +16,6 @@ package field_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -95,10 +94,6 @@ func (*testResultFieldSuite) TestMain(c *C) {
 	c.Assert(rs[2].Tp, Equals, mysql.TypeVarString)
 	c.Assert(rs[3].Tp, Equals, mysql.TypeBlob)
 
-	// For CheckAmbiguousField
-	err := field.CheckAmbiguousField("c1", rs, field.OrgFieldNameFlag)
-	c.Assert(err, IsNil)
-
 	col4 := column.Col{
 		ColumnInfo: model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeVarchar),
@@ -113,51 +108,20 @@ func (*testResultFieldSuite) TestMain(c *C) {
 		DBName:       "test",
 	}
 	rs = []*field.ResultField{r, r1, r2}
-	// r1 and r2 are ambiguous: same column name but different table names
-	err = field.CheckAmbiguousField("c2", rs, field.OrgFieldNameFlag)
-	c.Assert(err, NotNil)
-	// r1 and r2 with different alias name
-	err = field.CheckAmbiguousField("c2", rs, field.FieldNameFlag)
-	c.Assert(err, IsNil)
 
 	// For CloneFieldByName
-	_, err = field.CloneFieldByName("cx", rs, field.OrgFieldNameFlag)
+	_, err := field.CloneFieldByName("cx", rs)
 	c.Assert(err, NotNil)
-	_, err = field.CloneFieldByName("c2", rs, field.OrgFieldNameFlag)
-	c.Assert(err, IsNil)
-
-	// For check all fields name
-	names := []string{"cx"}
-	err = field.CheckAllFieldNames(names, rs, field.OrgFieldNameFlag)
-	c.Assert(err, NotNil)
-	names = []string{"c1"}
-	err = field.CheckAllFieldNames(names, rs, field.OrgFieldNameFlag)
+	_, err = field.CloneFieldByName("c2", rs)
 	c.Assert(err, IsNil)
 
 	// For ContainAllFieldNames
-	names = []string{"cx", "c2"}
-	b := field.ContainAllFieldNames(names, rs, field.OrgFieldNameFlag)
+	names := []string{"cx", "c2"}
+	b := field.ContainAllFieldNames(names, rs)
 	c.Assert(b, IsFalse)
 	names = []string{"c2", "c1"}
-	b = field.ContainAllFieldNames(names, rs, field.OrgFieldNameFlag)
+	b = field.ContainAllFieldNames(names, rs)
 	c.Assert(b, IsTrue)
-
-	// For GetFieldIndex
-	f1 := &field.Field{
-		Expr:   &expression.Ident{CIStr: model.NewCIStr("c1")},
-		AsName: "a",
-	}
-	f2 := &field.Field{
-		Expr:   &expression.Ident{CIStr: model.NewCIStr("c2")},
-		AsName: "a",
-	}
-	fs := []*field.Field{f1, f2}
-	idxs := field.GetFieldIndex("c1", fs, field.OrgFieldNameFlag)
-	c.Assert(idxs, HasLen, 1)
-
-	idxs = field.GetFieldIndex("a", fs, field.FieldNameFlag)
-	c.Assert(idxs, HasLen, 2)
-
 }
 
 func (*testResultFieldSuite) TestCheckWildcard(c *C) {
