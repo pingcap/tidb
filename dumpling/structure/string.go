@@ -21,13 +21,13 @@ import (
 
 // Set sets the string value of the key.
 func (t *TStructure) Set(key []byte, value []byte) error {
-	ek := encodeStringDataKey(key)
+	ek := t.encodeStringDataKey(key)
 	return t.txn.Set(ek, value)
 }
 
 // Get gets the string value of a key.
 func (t *TStructure) Get(key []byte) ([]byte, error) {
-	ek := encodeStringDataKey(key)
+	ek := t.encodeStringDataKey(key)
 	value, err := t.txn.Get(ek)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
@@ -38,7 +38,7 @@ func (t *TStructure) Get(key []byte) ([]byte, error) {
 // Inc increments the integer value of a key by step, returns
 // the value after the increment.
 func (t *TStructure) Inc(key []byte, step int64) (int64, error) {
-	ek := encodeStringDataKey(key)
+	ek := t.encodeStringDataKey(key)
 	n, err := t.txn.Inc(ek, step)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
@@ -48,7 +48,7 @@ func (t *TStructure) Inc(key []byte, step int64) (int64, error) {
 
 // Clear removes the string value of the key.
 func (t *TStructure) Clear(key []byte) error {
-	ek := encodeStringDataKey(key)
+	ek := t.encodeStringDataKey(key)
 	err := t.txn.Delete(ek)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil

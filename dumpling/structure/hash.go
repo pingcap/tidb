@@ -38,13 +38,13 @@ func (m hashMeta) IsEmpty() bool {
 
 // HSet sets the string value of a hash field.
 func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
-	metaKey := encodeHashMetaKey(key)
+	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	dataKey := encodeHashDataKey(key, field)
+	dataKey := t.encodeHashDataKey(key, field)
 	var oldValue []byte
 	oldValue, err = t.loadHashValue(dataKey)
 	if err != nil {
@@ -64,7 +64,7 @@ func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
 
 // HGet gets the value of a hash field.
 func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
-	dataKey := encodeHashDataKey(key, field)
+	dataKey := t.encodeHashDataKey(key, field)
 	value, err := t.txn.Get(dataKey)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
@@ -74,7 +74,7 @@ func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
 
 // HLen gets the number of fields in a hash.
 func (t *TStructure) HLen(key []byte) (int64, error) {
-	metaKey := encodeHashMetaKey(key)
+	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -84,7 +84,7 @@ func (t *TStructure) HLen(key []byte) (int64, error) {
 
 // HDel deletes one or more hash fields.
 func (t *TStructure) HDel(key []byte, fields ...[]byte) error {
-	metaKey := encodeHashMetaKey(key)
+	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -92,7 +92,7 @@ func (t *TStructure) HDel(key []byte, fields ...[]byte) error {
 
 	var value []byte
 	for _, field := range fields {
-		dataKey := encodeHashDataKey(key, field)
+		dataKey := t.encodeHashDataKey(key, field)
 
 		value, err = t.loadHashValue(dataKey)
 		if err != nil {
@@ -130,7 +130,7 @@ func (t *TStructure) HKeys(key []byte) ([][]byte, error) {
 
 // HClear removes the hash value of the key.
 func (t *TStructure) HClear(key []byte) error {
-	metaKey := encodeHashMetaKey(key)
+	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -141,7 +141,7 @@ func (t *TStructure) HClear(key []byte) error {
 	}
 
 	err = t.iterateHash(key, func(field []byte, value []byte) error {
-		k := encodeHashDataKey(key, field)
+		k := t.encodeHashDataKey(key, field)
 		return errors.Trace(t.txn.Delete(k))
 	})
 
@@ -153,7 +153,7 @@ func (t *TStructure) HClear(key []byte) error {
 }
 
 func (t *TStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
-	dataPrefix := hashDataKeyPrefix(key)
+	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.txn.Seek(dataPrefix)
 	if err != nil {
 		return errors.Trace(err)
@@ -167,7 +167,7 @@ func (t *TStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) 
 			break
 		}
 
-		_, field, err = decodeHashDataKey(k)
+		_, field, err = t.decodeHashDataKey(k)
 		if err != nil {
 			return errors.Trace(err)
 		}

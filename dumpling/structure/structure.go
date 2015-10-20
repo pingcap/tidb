@@ -21,24 +21,40 @@ import (
 // ErrTxDone is the error return after transaction has already been committed or rolled back.
 var ErrTxDone = errors.Errorf("Transaction has already been committed or rolled back")
 
-// TStructure supports some simple data structure like string, hash, list, etc... and
-// you can use these in a transaction.
-type TStructure struct {
-	txn  kv.Transaction
-	done bool
+// TStore is the storage for data structure.
+type TStore struct {
+	store  kv.Storage
+	prefix []byte
 }
 
-// Begin starts a new transaction.
-func Begin(store kv.Storage) (*TStructure, error) {
-	t := &TStructure{done: false}
+// NewStore creates a TStore with kv storage and special key prefix.
+func NewStore(store kv.Storage, prefix []byte) *TStore {
+	s := &TStore{
+		store:  store,
+		prefix: prefix,
+	}
+	return s
+}
+
+// Begin creates a TStructure for calling structure APIs in a transaction later.
+func (s *TStore) Begin() (*TStructure, error) {
+	t := &TStructure{done: false, prefix: s.prefix}
 
 	var err error
-	t.txn, err = store.Begin()
+	t.txn, err = s.store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return t, nil
+}
+
+// TStructure supports some simple data structure like string, hash, list, etc... and
+// you can use these in a transaction.
+type TStructure struct {
+	txn    kv.Transaction
+	done   bool
+	prefix []byte
 }
 
 // Commit commits the transaction.
