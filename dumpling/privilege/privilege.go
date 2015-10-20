@@ -44,8 +44,3 @@ func GetPrivilegeChecker(ctx context.Context) Privilege {
 	}
 	return v
 }
-
-type Privilege struct {
-	// Scope
-
-}
