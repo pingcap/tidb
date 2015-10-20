@@ -98,14 +98,13 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		fmt.Printf("%s", result)
 
 		// report elapsed time and rows in set
-		elapsed := time.Since(start).Seconds()
 		switch len(datas) {
 		case 0:
-			fmt.Printf("Empty set (%.2f sec)\n", elapsed)
+			fmt.Printf("Empty set")
 		case 1:
-			fmt.Printf("1 row in set (%.2f sec)\n", elapsed)
+			fmt.Printf("1 row in set")
 		default:
-			fmt.Printf("%v rows in set (%.2f sec)\n", len(datas), elapsed)
+			fmt.Printf("%v rows in set", len(datas))
 		}
 
 		if err := rows.Err(); err != nil {
@@ -113,11 +112,24 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		}
 	} else {
 		// TODO: rows affected and last insert id
-		_, err := tx.Exec(txnLine)
+		res, err := tx.Exec(txnLine)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cnt, err := res.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		switch cnt {
+		case 0:
+			fmt.Printf("Query OK, 0 row affected")
+		case 1:
+			fmt.Printf("Query OK, 1 row affected")
+		default:
+			fmt.Printf("Query OK, %v rows affected", cnt)
+		}
 	}
+	fmt.Printf(" (%.2f sec)\n", time.Since(start).Seconds())
 	return nil
 }
 
