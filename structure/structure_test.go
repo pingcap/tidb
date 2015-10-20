@@ -69,6 +69,10 @@ func (s *testStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("2"))
 
+	n, err = tx.GetInt64(key)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(2))
+
 	err = tx.Clear(key)
 	c.Assert(err, IsNil)
 
