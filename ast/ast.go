@@ -80,7 +80,8 @@ type ResultField struct {
 	DBName       model.CIStr
 }
 
-// ResultSetNode has result fields
+// ResultSetNode interface has ResultFields property which is computed and set by visitor.
+// Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
 	// GetResultFields gets result fields of the result set node.
