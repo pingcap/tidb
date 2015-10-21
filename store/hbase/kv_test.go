@@ -36,7 +36,7 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testKVSuite{})
-var zk *string = flag.String("zk", "cuiqiu-pc:2222", "hbase zookeeper info")
+var zk *string = flag.String("zk", "localhost", "hbase zookeeper info")
 
 type testKVSuite struct {
 	s kv.Storage

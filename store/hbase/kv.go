@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
 	"github.com/juju/errors"
+	"sync"
 )
 
 const (
@@ -28,17 +29,32 @@ const (
 	ColFamily = "f"
 	// Qualifier is the hbase col name.
 	Qualifier = "q"
+	FmlAndQual = ColFamily+":"+Qualifier
 )
 
 var _ kv.Storage = (*hbaseStore)(nil)
 
 type hbaseStore struct {
-	zkPaths   []string
+	mu    	  sync.Mutex
+	zkInfo    string
 	storeName string
 	cli       hbase.HBaseClient
 }
 
+type storeCache struct {
+	mu    sync.Mutex
+	cache map[string]*hbaseStore
+}
+
+var mc storeCache
+func init() {
+	mc.cache = make(map[string]*hbaseStore)
+}
+
 func (s *hbaseStore) Begin() (kv.Transaction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.cli == nil {
 		return nil, errors.New("error zk connection")
 	}
@@ -64,7 +80,11 @@ func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
 }
 
 func (s *hbaseStore) Close() error {
-	return nil
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	delete(mc.cache, s.zkInfo)
+	return s.Close()
 }
 
 func (s *hbaseStore) UUID() string {
@@ -81,14 +101,24 @@ type Driver struct {
 
 // Open opens or creates a storage database with given path.
 func (d Driver) Open(zkInfo string) (kv.Storage, error) {
-	zks := strings.Split(zkInfo, ",")
-	if zks == nil {
-		log.Fatal("db uri is error, has not zk info, zkInfo:" + zkInfo)
-		return nil, nil
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+
+	if len(zkInfo) == 0 {
+		log.Error("db uri is error, has not zk info")
+		return nil, errors.New("must has zk info")
 	}
+
+	if store, ok := mc.cache[zkInfo]; ok {
+		// TODO: check the cache store has the same engine with this Driver.
+		log.Info("cache store", zkInfo)
+		return store, nil
+	}
+
+	zks := strings.Split(zkInfo, ",")
 	c, err := hbase.NewClient(zks, "/hbase")
 	if err != nil {
-		log.Fatal(err)
+		return nil, errors.Trace(err)
 	}
 
 	storeName := "tidb"
@@ -102,13 +132,15 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 		//TODO: specify split?
 		err := c.CreateTable(t, nil)
 		if err != nil {
-			log.Fatal(err)
+			return nil, errors.Trace(err)
 		}
 	}
 
-	return &hbaseStore{
-		zkPaths:   zks,
+	s := &hbaseStore{
+		zkInfo:   zkInfo,
 		storeName: storeName,
 		cli:       c,
-	}, nil
+	}
+	mc.cache[zkInfo] = s
+	return s, nil
 }

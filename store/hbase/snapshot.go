@@ -18,10 +18,12 @@ import (
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 )
 
 var (
 	_ kv.Snapshot = (*hbaseSnapshot)(nil)
+	_ kv.MvccSnapshot = (*hbaseSnapshot)(nil)
 	_ kv.Iterator = (*hbaseIter)(nil)
 )
 
@@ -33,24 +35,61 @@ type hbaseSnapshot struct {
 func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	g := hbase.NewGet([]byte(k))
 	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
-	s.txn.Get(s.storeName, g)
+	v, err := innerGet(s, g)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+// MvccGet returns the specific version of given key, if the version doesn't
+// exist, returns the nearest(lower) version's data.
+func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
+	g := hbase.NewGet([]byte(k))
+	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
+	g.TsRangeFrom = 0
+	g.TsRangeTo = ver.Ver+1
+	v, err := innerGet(s, g)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+func innerGet(s *hbaseSnapshot, g hbase.Get) ([]byte, error) {
 	r, err := s.txn.Get(s.storeName, g)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if r == nil {
+	if r == nil || len(r.Columns) == 0 {
 		return nil, kv.ErrNotExist
 	}
-	return r.Columns[ColFamily+":"+Qualifier].Value, nil
+	return r.Columns[FmlAndQual].Value, nil
 }
 
-func (s *hbaseSnapshot) NewIterator(startKey interface{}) kv.Iterator {
-	scanner := s.txn.GetScanner([]byte(s.storeName), startKey.([]byte), nil)
-	it := &hbaseIter{
+func (s *hbaseSnapshot) NewIterator(param interface{}) kv.Iterator {
+	k, ok := param.([]byte)
+	if !ok {
+		log.Errorf("hbase iterator parameter error, %+v", param)
+		return nil
+	}
+
+	scanner := s.txn.GetScanner([]byte(s.storeName), k, nil)
+	return innerNewIterator(scanner)
+}
+
+// MvccIterator seeks to the key in the specific version's snapshot, if the
+// version doesn't exist, returns the nearest(lower) version's snaphot.
+func (s *hbaseSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
+	scanner := s.txn.GetScanner([]byte(s.storeName), k, nil)
+	scanner.SetTimeRange(0, ver.Ver)
+	return innerNewIterator(scanner)
+}
+
+func innerNewIterator(scanner *themis.ThemisScanner) kv.Iterator {
+	return &hbaseIter{
 		ThemisScanner: scanner,
 	}
-	r, _ := it.Next(nil)
-	return r
 }
 
 func (s *hbaseSnapshot) Release() {
@@ -60,15 +99,20 @@ func (s *hbaseSnapshot) Release() {
 	}
 }
 
+// Release releases this snapshot.
+func (s *hbaseSnapshot) MvccRelease() {
+	s.Release()
+}
+
 type hbaseIter struct {
 	*themis.ThemisScanner
 	rs    *hbase.ResultRow
 	valid bool
 }
 
-func (it *hbaseIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
+func (it *hbaseIter) Next() (kv.Iterator, error) {
 	it.rs = it.ThemisScanner.Next()
-	it.valid = it.rs != nil && !it.ThemisScanner.Closed()
+	it.valid = it.rs != nil && len(it.rs.Columns) > 0 && !it.ThemisScanner.Closed()
 	return it, nil
 }
 
@@ -81,7 +125,7 @@ func (it *hbaseIter) Key() string {
 }
 
 func (it *hbaseIter) Value() []byte {
-	return it.rs.Columns[ColFamily+":"+Qualifier].Value
+	return it.rs.Columns[FmlAndQual].Value
 }
 
 func (it *hbaseIter) Close() {

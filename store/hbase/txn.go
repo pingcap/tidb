@@ -41,7 +41,6 @@ type hbaseTxn struct {
 	*themis.Txn
 	store     *hbaseStore // for commit
 	storeName string
-	startTs   time.Time
 	tID       uint64
 	valid     bool
 	version   kv.Version // commit version
@@ -89,15 +88,11 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("get key:%q, txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) {
+	if kv.IsErrNotFound(err) || len(val) == 0 {
 		return nil, kv.ErrNotExist
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if len(val) == 0 {
-		return nil, kv.ErrNotExist
 	}
 
 	return val, nil
@@ -131,23 +126,12 @@ func (txn *hbaseTxn) Set(k kv.Key, data []byte) error {
 	return txn.UnionStore.Set(k, data)
 }
 
-func (txn *hbaseTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
+func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek %q txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
-
 	iter, err := txn.UnionStore.Seek(k, txn)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if !iter.Valid() {
-		return &kv.UnionIter{}, nil
-	}
-
-	if fnKeyCmp != nil {
-		if fnKeyCmp([]byte(iter.Key())[:1]) {
-			return &kv.UnionIter{}, nil
-		}
 	}
 
 	return iter, nil
@@ -156,7 +140,11 @@ func (txn *hbaseTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, er
 func (txn *hbaseTxn) Delete(k kv.Key) error {
 	log.Debugf("delete %q txn:%d", k, txn.tID)
 	k = kv.EncodeKey(k)
-	return txn.UnionStore.Delete(k)
+	err := txn.UnionStore.Delete(k)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (txn *hbaseTxn) each(f func(iterator.Iterator) error) error {
@@ -244,7 +232,7 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
 		key = kv.EncodeKey(key)
 		if err := txn.Txn.LockRow(txn.storeName, key); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
