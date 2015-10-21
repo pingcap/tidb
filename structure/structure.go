@@ -49,6 +49,16 @@ func (s *TStore) Begin() (*TStructure, error) {
 	return t, nil
 }
 
+// RunInNewTxn runs f in a new transaction
+func (s *TStore) RunInNewTxn(retryable bool, f func(t *TStructure) error) error {
+	fn := func(txn kv.Transaction) error {
+		t := &TStructure{done: false, prefix: s.prefix, txn: txn}
+		return errors.Trace(f(t))
+	}
+	err := kv.RunInNewTxn(s.store, retryable, fn)
+	return errors.Trace(err)
+}
+
 // TStructure supports some simple data structure like string, hash, list, etc... and
 // you can use these in a transaction.
 type TStructure struct {
