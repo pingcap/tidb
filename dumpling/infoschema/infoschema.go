@@ -14,11 +14,11 @@
 package infoschema
 
 import (
-	"encoding/json"
 	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
@@ -183,11 +183,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemas {
-		// TODO: this is a temporary solution, change to real clone later.
-		b, _ := json.Marshal(v)
-		var newInfo model.DBInfo
-		json.Unmarshal(b, &newInfo)
-		result = append(result, &newInfo)
+		result = append(result, v.Clone())
 	}
 	return
 }
@@ -195,13 +191,13 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 // Handle handles information schema, including getting and setting.
 type Handle struct {
 	value atomic.Value
-	store kv.Storage
+	meta  *meta.Meta
 }
 
 // NewHandle creates a new Handle.
 func NewHandle(store kv.Storage) *Handle {
 	return &Handle{
-		store: store,
+		meta: meta.NewMeta(store),
 	}
 }
 
@@ -222,7 +218,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 		info.schemas[di.ID] = di
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
-			alloc := autoid.NewAllocator(h.store)
+			alloc := autoid.NewAllocator(h.meta, di.ID)
 			info.tables[t.ID] = table.TableFromMeta(di.Name.L, alloc, t)
 			tname := tableName{di.Name.L, t.Name.L}
 			info.tableNameToID[tname] = t.ID
