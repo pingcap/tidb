@@ -16,6 +16,7 @@
 package ast
 
 import (
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -70,11 +71,32 @@ type DMLNode interface {
 	dmlStatement()
 }
 
+// ResultField is computed from a parsed select statement.
+type ResultField struct {
+	Column       *model.ColumnInfo
+	ColumnAsName model.CIStr
+	Table        *model.TableInfo
+	TableAsName  model.CIStr
+	DBName       model.CIStr
+}
+
+// ResultSetNode interface has ResultFields property which is computed and set by visitor.
+// Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
+type ResultSetNode interface {
+	Node
+	// GetResultFields gets result fields of the result set node.
+	GetResultFields() []*ResultField
+	// SetResultFields sets result fields of the result set node.
+	SetResultFields(fields []*ResultField)
+}
+
 // Visitor visits a Node.
 type Visitor interface {
 	// VisitEnter is called before children nodes is visited.
+	// skipChildren returns true means children nodes should be skipped,
+	// this is useful when work is done in Enter and there is no need to visit children.
 	// ok returns false to stop visiting.
-	Enter(n Node) (ok bool)
+	Enter(n Node) (skipChildren bool, ok bool)
 	// VisitLeave is called after children nodes has been visited.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
