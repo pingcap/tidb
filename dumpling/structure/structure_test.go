@@ -225,4 +225,16 @@ func (s *testStructureSuite) TestHash(c *C) {
 
 	err = tx.Commit()
 	c.Assert(err, IsNil)
+
+	fn := func(t *TStructure) error {
+		err = t.Set(key, []byte("abc"))
+		c.Assert(err, IsNil)
+
+		value, err = t.Get(key)
+		c.Assert(err, IsNil)
+		c.Assert(value, DeepEquals, []byte("abc"))
+		return nil
+	}
+	err = s.s.RunInNewTxn(false, fn)
+	c.Assert(err, IsNil)
 }

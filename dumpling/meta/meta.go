@@ -162,36 +162,14 @@ func (m *Meta) Begin() (*TMeta, error) {
 }
 
 // RunInNewTxn runs fn in a new transaction.
-func (m *Meta) RunInNewTxn(retryable bool, fn func(t *TMeta) error) error {
-	const maxRetryNum = 10
-	for i := 0; i < maxRetryNum; i++ {
-		txn, err := m.Begin()
-		if err != nil {
-			log.Errorf("RunInNewTxn error - %v", err)
-			return errors.Trace(err)
-		}
-
-		err = fn(txn)
-		if retryable && kv.IsRetryableError(err) {
-			log.Warnf("Retry txn %v", txn)
-			txn.Rollback()
-			continue
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = txn.Commit()
-		if retryable && kv.IsRetryableError(err) {
-			log.Warnf("Retry txn %v", txn)
-			txn.Rollback()
-			continue
-		}
-
-		return errors.Trace(err)
+func (m *Meta) RunInNewTxn(retryable bool, f func(t *TMeta) error) error {
+	fn := func(txn *structure.TStructure) error {
+		t := &TMeta{txn: txn}
+		return errors.Trace(f(t))
 	}
 
-	return errors.Errorf("retry too many times")
+	err := m.store.RunInNewTxn(retryable, fn)
+	return errors.Trace(err)
 }
 
 // GenGlobalID generates next id globally.
@@ -202,9 +180,19 @@ func (m *TMeta) GenGlobalID() (int64, error) {
 	return m.txn.Inc(globalIDKey, 1)
 }
 
+// GetGlobalID gets current global id.
+func (m *TMeta) GetGlobalID() (int64, error) {
+	return m.txn.GetInt64(globalIDKey)
+}
+
 // GenAutoTableID adds step to the auto id of the table and returns the sum.
 func (m *TMeta) GenAutoTableID(tableID int64, step int64) (int64, error) {
 	return m.txn.Inc([]byte(AutoIDKey(tableID)), step)
+}
+
+// GetAutoTableID gets current auto id with table id.
+func (m *TMeta) GetAutoTableID(tableID int64) (int64, error) {
+	return m.txn.GetInt64([]byte(AutoIDKey(tableID)))
 }
 
 // GetSchemaVersion gets current global schema version.

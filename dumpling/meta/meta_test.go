@@ -86,7 +86,15 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
+	n, err = t.GetGlobalID()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
 	n, err = t.GenAutoTableID(1, 10)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+
+	n, err = t.GetAutoTableID(1)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
@@ -162,5 +170,18 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(ids, HasLen, 0)
 
 	err = t.Commit()
+	c.Assert(err, IsNil)
+
+	fn := func(txn *meta.TMeta) error {
+		n, err = txn.GenSchemaVersion()
+		c.Assert(err, IsNil)
+
+		n1, err := txn.GetSchemaVersion()
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, n1)
+		return nil
+	}
+
+	err = m.RunInNewTxn(false, fn)
 	c.Assert(err, IsNil)
 }
