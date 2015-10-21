@@ -1,5 +1,7 @@
 /parser/parser.go
 /parser/scanner.go
+/ast/parser/parser.go
+/ast/parser/scanner.go
 /interpreter/interpreter
 /interpreter/test
 /tidb-server/tidb-server
