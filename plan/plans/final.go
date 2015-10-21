@@ -56,14 +56,6 @@ func (r *SelectFinalPlan) Filter(ctx context.Context, expr expression.Expression
 	return r, false, nil
 }
 
-func getInternalData(data interface{}) interface{} {
-	switch v := data.(type) {
-	case *types.DataItem:
-		return getInternalData(v.Data)
-	}
-	return data
-}
-
 // Next implements plan.Plan Next interface.
 func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	// push a new rowStackItem into RowStack
@@ -83,7 +75,7 @@ func (r *SelectFinalPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	// we should not output hidden fields to client.
 	row.Data = row.Data[:r.HiddenFieldOffset]
 	for i, o := range row.Data {
-		d := getInternalData(o)
+		d := types.RawData(o)
 		switch v := d.(type) {
 		case bool:
 			// Convert bool field to int
