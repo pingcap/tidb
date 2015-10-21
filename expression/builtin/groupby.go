@@ -129,7 +129,7 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	if data == nil {
 		return sum, nil
 	}
-	data = types.GetRealData(data)
+	data = types.RawData(data)
 	switch x := sum.(type) {
 	case nil:
 		return data, nil
@@ -247,12 +247,12 @@ func builtinMax(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	max := ctx[fn]
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
 	// Notice: for max, `nil < non nil`
-	if max == nil {
+	if types.IsNil(max) {
 		max = y
 	} else {
 		n, err := types.Compare(max, y)
@@ -284,12 +284,12 @@ func builtinMin(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	min := ctx[fn]
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
 	// Notice: for min, `nil > non nil`
-	if min == nil {
+	if types.IsNil(min) {
 		min = y
 	} else {
 		n, err := types.Compare(min, y)
@@ -324,7 +324,7 @@ func builtinSum(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	sum := ctx[fn]
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
@@ -353,14 +353,14 @@ func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v 
 	distinct := getDistinct(ctx, fn)
 	if _, ok := ctx[ExprAggDone]; ok {
 		distinct.clear()
-		if v, _ := ctx[fn]; v != nil {
+		if v, _ := ctx[fn]; !types.IsNil(v) {
 			return v.(string), nil
 		}
 		return nil, nil
 	}
 
 	var buf bytes.Buffer
-	if v := ctx[fn]; v != nil {
+	if v := ctx[fn]; !types.IsNil(v) {
 		s := v.(string)
 		// now use comma separator
 		buf.WriteString(s)
@@ -374,7 +374,7 @@ func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v 
 	}
 
 	for i := 0; i < len(args); i++ {
-		if args[i] == nil {
+		if types.IsNil(args[i]) {
 			// if any is nil, we will not concat
 			return
 		}

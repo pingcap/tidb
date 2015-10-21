@@ -137,7 +137,7 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 	switch op := u.Op; op {
 	case opcode.Not:
 		a := Eval(u.V, ctx, args)
-		a = types.GetRealData(a)
+		a = types.RawData(a)
 		if a == nil {
 			return
 		}
@@ -150,7 +150,7 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		return int64(0), nil
 	case opcode.BitNeg:
 		a := Eval(u.V, ctx, args)
-		a = types.GetRealData(a)
+		a = types.RawData(a)
 		if a == nil {
 			return
 		}
@@ -163,7 +163,7 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		return uint64(^n), nil
 	case opcode.Plus:
 		a := Eval(u.V, ctx, args)
-		a = types.GetRealData(a)
+		a = types.RawData(a)
 		if a == nil {
 			return
 		}
@@ -222,7 +222,7 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		}
 	case opcode.Minus:
 		a := Eval(u.V, ctx, args)
-		a = types.GetRealData(a)
+		a = types.RawData(a)
 		if a == nil {
 			return
 		}
