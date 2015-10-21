@@ -115,6 +115,10 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 		data, err = mysql.ConvertToDecimal(v)
 	case mysql.Decimal:
 		data = y
+	case *types.DataItem:
+		return calculateSum(sum, y.Data)
+	case nil:
+		data = nil
 	default:
 		data, err = types.ToFloat64(v)
 	}
@@ -122,7 +126,10 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	if data == nil {
+		return sum, nil
+	}
+	data = types.GetRealData(data)
 	switch x := sum.(type) {
 	case nil:
 		return data, nil
@@ -160,12 +167,13 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 		}
 
 		switch x := data.sum.(type) {
+		case nil:
+			return nil, nil
 		case float64:
 			return float64(x) / float64(data.n), nil
 		case mysql.Decimal:
 			return x.Div(mysql.NewDecimalFromUint(data.n, 0)), nil
 		}
-
 		panic("should not happend")
 	}
 
@@ -210,7 +218,7 @@ func builtinCount(args []interface{}, ctx map[interface{}]interface{}) (v interf
 
 	n, _ := ctx[fn].(int64)
 
-	if args[0] != nil {
+	if !types.IsNil(args[0]) {
 		ok, err := distinct.isDistinct(args...)
 		if err != nil || !ok {
 			// if err or not distinct, return
