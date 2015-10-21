@@ -122,12 +122,10 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 			return errors.Trace(err)
 		}
 		switch cnt {
-		case 0:
-			fmt.Printf("Query OK, 0 row affected")
-		case 1:
-			fmt.Printf("Query OK, 1 row affected")
+		case 0, 1:
+			fmt.Printf("Query OK, %d row affected", cnt)
 		default:
-			fmt.Printf("Query OK, %v rows affected", cnt)
+			fmt.Printf("Query OK, %d rows affected", cnt)
 		}
 		fmt.Printf(" (%.2f sec)\n", elapsed)
 	}
