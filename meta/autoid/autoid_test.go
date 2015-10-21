@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -37,7 +38,17 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	alloc := autoid.NewAllocator(store)
+	m := meta.NewMeta(store)
+	err = m.RunInNewTxn(false, func(txn *meta.TMeta) error {
+		err = txn.CreateDatabase(1, []byte("a"))
+		c.Assert(err, IsNil)
+		err = txn.CreateTable(1, 1, []byte("b"))
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	alloc := autoid.NewAllocator(m, 1)
 	c.Assert(alloc, NotNil)
 
 	id, err := alloc.Alloc(1)

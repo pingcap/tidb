@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -32,25 +31,46 @@ type Domain struct {
 	store      kv.Storage
 	infoHandle *infoschema.Handle
 	ddl        ddl.DDL
+	meta       *meta.Meta
 }
 
-func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
-	var schemas []*model.DBInfo
-	err = util.ScanMetaWithPrefix(txn, meta.SchemaMetaPrefix, func(key []byte, value []byte) bool {
+func (do *Domain) loadInfoSchema(txn *meta.TMeta) (err error) {
+	res, err := txn.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	schemas := make([]*model.DBInfo, 0, len(res))
+	for _, value := range res {
 		di := &model.DBInfo{}
-		err := json.Unmarshal(value, di)
+		err = json.Unmarshal(value, di)
 		if err != nil {
 			log.Fatal(err)
 		}
 		schemas = append(schemas, di)
-		return true
-	})
+	}
+
+	for _, di := range schemas {
+		res, err = txn.ListTables(di.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		tables := make([]*model.TableInfo, 0, len(res))
+		for _, value := range res {
+			ti := &model.TableInfo{}
+			err = json.Unmarshal(value, ti)
+			if err != nil {
+				log.Fatal(err)
+			}
+			tables = append(tables, ti)
+		}
+		di.Tables = tables
+	}
+
+	schemaMetaVersion, err := txn.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
-	}
-	schemaMetaVersion, err := txn.GetInt64(meta.SchemaMetaVersionKey)
-	if err != nil {
-		return
 	}
 	log.Infof("loadInfoSchema %d", schemaMetaVersion)
 	do.infoHandle.Set(schemas, schemaMetaVersion)
@@ -82,7 +102,7 @@ func (do *Domain) onDDLChange(err error) error {
 }
 
 func (do *Domain) reload() error {
-	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
+	err := do.meta.RunInNewTxn(false, do.loadInfoSchema)
 	return errors.Trace(err)
 }
 
@@ -90,6 +110,7 @@ func (do *Domain) reload() error {
 func NewDomain(store kv.Storage) (d *Domain, err error) {
 	d = &Domain{
 		store: store,
+		meta:  meta.NewMeta(store),
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)

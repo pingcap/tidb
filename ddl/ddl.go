@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	qerror "github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 // Pre-defined errors.
@@ -61,9 +60,9 @@ type DDL interface {
 }
 
 type ddl struct {
-	store       kv.Storage
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
+	meta        *meta.Meta
 }
 
 // OnDDLChange is used as hook function when schema changed.
@@ -72,9 +71,9 @@ type OnDDLChange func(err error) error
 // NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
 	d := &ddl{
-		store:       store,
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
+		meta:        meta.NewMeta(store),
 	}
 	return d
 }
@@ -90,17 +89,25 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 		return errors.Trace(ErrExists)
 	}
 	info := &model.DBInfo{Name: schema}
-	info.ID, err = meta.GenGlobalID(d.store)
+	info.ID, err = d.meta.GenGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = d.meta.RunInNewTxn(false, func(txn *meta.TMeta) error {
 		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.writeSchemaInfo(info, txn)
+		var b []byte
+		b, err = json.Marshal(info)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = txn.CreateDatabase(info.ID, b)
+
+		log.Warnf("save schema %s", b)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -109,8 +116,8 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int64) error {
-	curVer, err := txn.GetInt64(meta.SchemaMetaVersionKey)
+func (d *ddl) verifySchemaMetaVersion(txn *meta.TMeta, schemaMetaVersion int64) error {
+	curVer, err := txn.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -119,14 +126,7 @@ func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int6
 	}
 
 	// Increment version.
-	_, err = txn.Inc(meta.SchemaMetaVersionKey, 1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err := txn.LockKeys(meta.SchemaMetaVersionKey); err != nil {
-		return errors.Trace(err)
-	}
+	_, err = txn.GenSchemaVersion()
 	return errors.Trace(err)
 }
 
@@ -168,16 +168,14 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	}
 
 	// Delete meta key.
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = d.meta.RunInNewTxn(false, func(txn *meta.TMeta) error {
 		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		key := []byte(meta.DBMetaKey(old.ID))
-		if err := txn.LockKeys(key); err != nil {
-			return errors.Trace(err)
-		}
-		return txn.Delete(key)
+
+		err = txn.DropDatabase(old.ID)
+		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
@@ -274,7 +272,7 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	col.ID, err = meta.GenGlobalID(d.store)
+	col.ID, err = d.meta.GenGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -329,7 +327,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
-	tbInfo.ID, err = meta.GenGlobalID(d.store)
+	tbInfo.ID, err = d.meta.GenGlobalID()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -396,12 +394,13 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	}
 	log.Infof("New table: %+v", tbInfo)
 
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = d.meta.RunInNewTxn(false, func(txn *meta.TMeta) error {
 		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.updateInfoSchema(ident.Schema, tbInfo, txn)
+
+		err = d.updateInfoSchema(ident.Schema, tbInfo, txn, true)
 		return errors.Trace(err)
 	})
 
@@ -493,12 +492,12 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 	}
 
 	// update infomation schema
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = d.meta.RunInNewTxn(false, func(txn *meta.TMeta) error {
 		err := d.verifySchemaMetaVersion(txn, schemaMetaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.updateInfoSchema(schema, tb.Meta(), txn)
+		err = d.updateInfoSchema(schema, tb.Meta(), txn, false)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -551,7 +550,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	// update InfoSchema before delete all the table data.
 	clonedInfo := is.Clone()
 
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = d.meta.RunInNewTxn(false, func(txn *meta.TMeta) error {
 		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
@@ -560,13 +559,16 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 			if info.Name == ti.Schema {
 				var newTableInfos []*model.TableInfo
 				// append other tables.
+				var tableID int64
 				for _, tbInfo := range info.Tables {
 					if tbInfo.Name.L != ti.Name.L {
 						newTableInfos = append(newTableInfos, tbInfo)
+					} else {
+						tableID = tbInfo.ID
 					}
 				}
 				info.Tables = newTableInfos
-				err = d.writeSchemaInfo(info, txn)
+				err = txn.DropTable(info.ID, tableID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -602,14 +604,8 @@ func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
 			}
 		}
 	}
-	// Remove auto ID key.
-	err = txn.Delete([]byte(meta.AutoIDKey(t.TableID())))
 
-	// Auto ID meta is created when the first time used, so it may not exist.
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
-		return nil
-	}
-	return errors.Trace(err)
+	return nil
 }
 
 func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) error {
@@ -663,12 +659,12 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	}
 
 	// update InfoSchema
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = d.meta.RunInNewTxn(false, func(txn *meta.TMeta) error {
 		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.updateInfoSchema(ti.Schema, tbInfo, txn)
+		err = d.updateInfoSchema(ti.Schema, tbInfo, txn, false)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -739,23 +735,7 @@ func (d *ddl) DropIndex(ctx context.Context, schema, tableName, indexNmae model.
 	return nil
 }
 
-func (d *ddl) writeSchemaInfo(info *model.DBInfo, txn kv.Transaction) error {
-	var b []byte
-	b, err := json.Marshal(info)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	key := []byte(meta.DBMetaKey(info.ID))
-	if err := txn.LockKeys(key); err != nil {
-		return errors.Trace(err)
-	}
-	txn.Set(key, b)
-	log.Warn("save schema", string(b))
-
-	return errors.Trace(err)
-}
-
-func (d *ddl) updateInfoSchema(schema model.CIStr, tbInfo *model.TableInfo, txn kv.Transaction) error {
+func (d *ddl) updateInfoSchema(schema model.CIStr, tbInfo *model.TableInfo, txn *meta.TMeta, create bool) error {
 	is := d.GetInformationSchema()
 	clonedInfo := is.Clone()
 	for _, info := range clonedInfo {
@@ -770,7 +750,18 @@ func (d *ddl) updateInfoSchema(schema model.CIStr, tbInfo *model.TableInfo, txn 
 			if !match {
 				info.Tables = append(info.Tables, tbInfo)
 			}
-			err := d.writeSchemaInfo(info, txn)
+
+			b, err := json.Marshal(tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if create {
+				err = txn.CreateTable(info.ID, tbInfo.ID, b)
+			} else {
+				err = txn.UpdateTable(info.ID, tbInfo.ID, b)
+			}
+
 			if err != nil {
 				return errors.Trace(err)
 			}

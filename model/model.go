@@ -28,6 +28,12 @@ type ColumnInfo struct {
 	types.FieldType `json:"type"`
 }
 
+// Clone clones ColumnInfo
+func (c *ColumnInfo) Clone() *ColumnInfo {
+	nc := *c
+	return &nc
+}
+
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	ID      int64  `json:"id"`
@@ -39,11 +45,33 @@ type TableInfo struct {
 	Indices []*IndexInfo  `json:"index_info"`
 }
 
+// Clone clones TableInfo
+func (t *TableInfo) Clone() *TableInfo {
+	nt := *t
+	nt.Columns = make([]*ColumnInfo, len(t.Columns))
+	nt.Indices = make([]*IndexInfo, len(t.Indices))
+
+	for i := range t.Columns {
+		nt.Columns[i] = t.Columns[i].Clone()
+	}
+
+	for i := range t.Indices {
+		nt.Indices[i] = t.Indices[i].Clone()
+	}
+	return &nt
+}
+
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
 	Offset int   `json:"offset"` // Index offset
 	Length int   `json:"length"` // Index length
+}
+
+// Clone clones IndexColumn
+func (i *IndexColumn) Clone() *IndexColumn {
+	ni := *i
+	return &ni
 }
 
 // IndexInfo provides meta data describing a DB index.
@@ -57,13 +85,33 @@ type IndexInfo struct {
 	Primary bool           `json:"is_primary"` // Whether the index is primary key.
 }
 
+// Clone clones IndexInfo
+func (index *IndexInfo) Clone() *IndexInfo {
+	ni := *index
+	ni.Columns = make([]*IndexColumn, len(index.Columns))
+	for i := range index.Columns {
+		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	return &ni
+}
+
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
 	ID      int64        `json:"id"`      // Database ID
 	Name    CIStr        `json:"db_name"` // DB name.
 	Charset string       `json:"charset"`
 	Collate string       `json:"collate"`
-	Tables  []*TableInfo `json:"tables"` // Tables in the DB.
+	Tables  []*TableInfo `json:"-"` // Tables in the DB.
+}
+
+// Clone clones DBInfo
+func (db *DBInfo) Clone() *DBInfo {
+	newInfo := *db
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	for i := range db.Tables {
+		newInfo.Tables[i] = db.Tables[i].Clone()
+	}
+	return &newInfo
 }
 
 // CIStr is case insensitve string.

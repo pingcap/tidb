@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -30,43 +29,6 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store kv.Storage
-}
-
-func (s *testSuite) TestT(c *C) {
-	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory")
-	c.Assert(err, IsNil)
-	defer store.Close()
-
-	// For GenID
-	txn, err := store.Begin()
-	c.Assert(err, IsNil)
-	key := []byte(meta.AutoIDKey(1))
-	id, err := meta.GenID(txn, key, 1)
-	c.Assert(id, Equals, int64(1))
-	id, err = meta.GenID(txn, key, 2)
-	c.Assert(id, Equals, int64(3))
-	id, err = meta.GenID(txn, []byte{}, 1)
-	c.Assert(err, NotNil)
-
-	// For DBMetaKey
-	mkey := []byte(meta.DBMetaKey(1))
-	c.Assert(mkey, DeepEquals, meta.MakeMetaKey("mDB::1"))
-
-	//For AutoIDKey
-	mkey = []byte(meta.AutoIDKey(1))
-	c.Assert(mkey, DeepEquals, meta.MakeMetaKey("mTable::1_auto_id"))
-	mkey = []byte(meta.AutoIDKey(0))
-	c.Assert(mkey, DeepEquals, meta.MakeMetaKey("mTable::0_auto_id"))
-
-	// For GenGlobalID
-	id, err = meta.GenGlobalID(store)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(1))
-	id, err = meta.GenGlobalID(store)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(2))
 }
 
 func (s *testSuite) TestMeta(c *C) {
@@ -183,7 +145,8 @@ func (s *testSuite) TestMeta(c *C) {
 		n, err = txn.GenSchemaVersion()
 		c.Assert(err, IsNil)
 
-		n1, err := txn.GetSchemaVersion()
+		var n1 int64
+		n1, err = txn.GetSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(n, Equals, n1)
 		return nil
@@ -191,4 +154,10 @@ func (s *testSuite) TestMeta(c *C) {
 
 	err = m.RunInNewTxn(false, fn)
 	c.Assert(err, IsNil)
+
+	n, err = m.GenGlobalID()
+	c.Assert(err, IsNil)
+	n1, err := m.GenGlobalID()
+	c.Assert(err, IsNil)
+	c.Assert(n1, Equals, n+1)
 }
