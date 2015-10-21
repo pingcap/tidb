@@ -23,6 +23,11 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
+type HashPair struct {
+	Field []byte
+	Value []byte
+}
+
 type hashMeta struct {
 	Length int64
 }
@@ -178,6 +183,21 @@ func (t *TStructure) HKeys(key []byte) ([][]byte, error) {
 	})
 
 	return keys, errors.Trace(err)
+}
+
+// HGetAll gets all the fields and values in a hash.
+func (t *TStructure) HGetAll(key []byte) ([]HashPair, error) {
+	var res []HashPair
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
+		pair := HashPair{
+			Field: append([]byte{}, field...),
+			Value: append([]byte{}, value...),
+		}
+		res = append(res, pair)
+		return nil
+	})
+
+	return res, errors.Trace(err)
 }
 
 // HClear removes the hash value of the key.

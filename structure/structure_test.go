@@ -185,6 +185,12 @@ func (s *testStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(keys, DeepEquals, [][]byte{[]byte("1"), []byte("2")})
 
+	res, err := tx.HGetAll(key)
+	c.Assert(err, IsNil)
+	c.Assert(res, DeepEquals, []HashPair{
+		HashPair{[]byte("1"), []byte("1")},
+		HashPair{[]byte("2"), []byte("2")}})
+
 	err = tx.HDel(key, []byte("1"))
 	c.Assert(err, IsNil)
 

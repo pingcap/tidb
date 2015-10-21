@@ -90,14 +90,6 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	n, err = t.GenAutoTableID(1, 10)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
-
-	n, err = t.GetAutoTableID(1)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
-
 	n, err = t.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(0))
@@ -127,12 +119,22 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("aa"))
 
-	ids, err := t.ListDatabaseIDs()
+	dbs, err := t.ListDatabases()
 	c.Assert(err, IsNil)
-	c.Assert(ids, DeepEquals, []int64{1})
+	c.Assert(dbs, DeepEquals, map[int64][]byte{
+		1: []byte("aa"),
+	})
 
 	err = t.CreateTable(1, 1, []byte("b"))
 	c.Assert(err, IsNil)
+
+	n, err = t.GenAutoTableID(1, 1, 10)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
+
+	n, err = t.GetAutoTableID(1, 1)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(10))
 
 	err = t.CreateTable(1, 1, []byte("b"))
 	c.Assert(err, NotNil)
@@ -151,23 +153,28 @@ func (s *testSuite) TestMeta(c *C) {
 	err = t.CreateTable(1, 2, []byte("bb"))
 	c.Assert(err, IsNil)
 
-	ids, err = t.ListTableIDs(1)
+	tables, err := t.ListTables(1)
 	c.Assert(err, IsNil)
-	c.Assert(ids, DeepEquals, []int64{1, 2})
+	c.Assert(tables, DeepEquals, map[int64][]byte{
+		1: []byte("c"),
+		2: []byte("bb"),
+	})
 
 	err = t.DropTable(1, 2)
 	c.Assert(err, IsNil)
 
-	ids, err = t.ListTableIDs(1)
+	tables, err = t.ListTables(1)
 	c.Assert(err, IsNil)
-	c.Assert(ids, DeepEquals, []int64{1})
+	c.Assert(tables, DeepEquals, map[int64][]byte{
+		1: []byte("c"),
+	})
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)
 
-	ids, err = t.ListDatabaseIDs()
+	dbs, err = t.ListDatabases()
 	c.Assert(err, IsNil)
-	c.Assert(ids, HasLen, 0)
+	c.Assert(dbs, HasLen, 0)
 
 	err = t.Commit()
 	c.Assert(err, IsNil)
