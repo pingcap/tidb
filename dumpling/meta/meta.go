@@ -37,9 +37,6 @@ var (
 
 	// globalIDPrefix is used as the key of global ID.
 	globalIDKey = MakeMetaKey("mNextGlobalID")
-
-	// globalSchemaKey is used as the hash key for all schemas.
-	globalSchemaKey = MakeMetaKey("mDBs")
 )
 
 var (
@@ -73,29 +70,9 @@ func DBMetaKey(databaseID int64) string {
 	return fmt.Sprintf("%s:%d", SchemaMetaPrefix, databaseID)
 }
 
-func parseDBMetaKey(key string) (int64, error) {
-	seps := strings.Split(key, "::")
-	if len(seps) != 2 {
-		return 0, errors.Errorf("invalid db meta key %s", key)
-	}
-
-	n, err := strconv.ParseInt(seps[1], 10, 64)
-	return n, errors.Trace(err)
-}
-
 // TableMetaKey generates table meta key according to tableID.
 func TableMetaKey(tableID int64) string {
 	return fmt.Sprintf("%s:%d", TableMetaPrefix, tableID)
-}
-
-func parseTableMetaKey(key string) (int64, error) {
-	seps := strings.Split(key, "::")
-	if len(seps) != 2 {
-		return 0, errors.Errorf("invalid db meta key %s", key)
-	}
-
-	n, err := strconv.ParseInt(seps[1], 10, 64)
-	return n, errors.Trace(err)
 }
 
 // AutoIDKey generates table autoID meta key according to tableID.
@@ -123,6 +100,30 @@ func GenGlobalID(store kv.Storage) (ID int64, err error) {
 
 	return
 }
+
+// Meta structure:
+//	mNextGlobalID -> int64
+//	mSchemaVersion -> int64
+//	mDBs -> {
+//		mDB:1 -> db meta data []byte
+//		mDB:2 -> db meta data []byte
+//	}
+//	mDB:1 -> {
+//		mTable:1 -> table meta data []byte
+//		mTable:2 -> table meta data []byte
+//		mTID:1 -> int64
+//		mTID:2 -> int64
+//	}
+//
+
+var (
+	mNextGlobalIDKey  = []byte("mNextGlobalID")
+	mSchemaVersionKey = []byte("mSchemaVersionKey")
+	mDBs              = []byte("mDBs")
+	mDBPrefix         = "mDB"
+	mTablePrefix      = "mTable"
+	mTableIDPrefix    = "mTID"
+)
 
 var (
 	ErrDBExists       = errors.New("database already exists")
@@ -185,28 +186,72 @@ func (m *TMeta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(globalIDKey)
 }
 
+func (m *TMeta) dbKey(dbID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
+}
+
+func (m *TMeta) parseDatabaseID(key string) (int64, error) {
+	seps := strings.Split(key, ":")
+	if len(seps) != 2 {
+		return 0, errors.Errorf("invalid db key %s", key)
+	}
+
+	n, err := strconv.ParseInt(seps[1], 10, 64)
+	return n, errors.Trace(err)
+}
+
+func (m *TMeta) autoTalbeIDKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+}
+
+func (m *TMeta) tableKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
+}
+
+func (m *TMeta) parseTableID(key string) (int64, error) {
+	seps := strings.Split(key, ":")
+	if len(seps) != 2 {
+		return 0, errors.Errorf("invalid db meta key %s", key)
+	}
+
+	n, err := strconv.ParseInt(seps[1], 10, 64)
+	return n, errors.Trace(err)
+}
+
 // GenAutoTableID adds step to the auto id of the table and returns the sum.
-func (m *TMeta) GenAutoTableID(tableID int64, step int64) (int64, error) {
-	return m.txn.Inc([]byte(AutoIDKey(tableID)), step)
+func (m *TMeta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
+	// check db exists
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	// check table exists
+	tableKey := m.tableKey(tableID)
+	if err := m.checkTableExists(dbKey, tableKey); err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return m.txn.HInc(dbKey, m.autoTalbeIDKey(tableID), step)
 }
 
 // GetAutoTableID gets current auto id with table id.
-func (m *TMeta) GetAutoTableID(tableID int64) (int64, error) {
-	return m.txn.GetInt64([]byte(AutoIDKey(tableID)))
+func (m *TMeta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTalbeIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
 func (m *TMeta) GetSchemaVersion() (int64, error) {
-	return m.txn.GetInt64(SchemaMetaVersionKey)
+	return m.txn.GetInt64(mSchemaVersionKey)
 }
 
 // GenSchemaVersion generates next schema version.
 func (m *TMeta) GenSchemaVersion() (int64, error) {
-	return m.txn.Inc(SchemaMetaVersionKey, 1)
+	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
 func (m *TMeta) checkDBExists(dbKey []byte) error {
-	v, err := m.txn.HGet(globalSchemaKey, dbKey)
+	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
 		return err
 	} else if v == nil {
@@ -217,7 +262,7 @@ func (m *TMeta) checkDBExists(dbKey []byte) error {
 }
 
 func (m *TMeta) checkDBNotExists(dbKey []byte) error {
-	v, err := m.txn.HGet(globalSchemaKey, dbKey)
+	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
 		return err
 	} else if v != nil {
@@ -251,35 +296,35 @@ func (m *TMeta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 
 // CreateDatabase creates a database with id and some information.
 func (m *TMeta) CreateDatabase(dbID int64, data []byte) error {
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 
 	if err := m.checkDBNotExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(globalSchemaKey, dbKey, data)
+	return m.txn.HSet(mDBs, dbKey, data)
 }
 
 // UpdateDatabase updates a database with id and some information.
 func (m *TMeta) UpdateDatabase(dbID int64, data []byte) error {
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(globalSchemaKey, dbKey, data)
+	return m.txn.HSet(mDBs, dbKey, data)
 }
 
 // CreateTable creates a table with tableID in database.
 func (m *TMeta) CreateTable(dbID int64, tableID int64, data []byte) error {
 	// first check db exists or not.
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	tableKey := []byte(TableMetaKey(tableID))
+	tableKey := m.tableKey(tableID)
 	// then check table exists or not
 	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
@@ -291,25 +336,13 @@ func (m *TMeta) CreateTable(dbID int64, tableID int64, data []byte) error {
 // DropDatabase drops whole database.
 func (m *TMeta) DropDatabase(dbID int64) error {
 	// first check db exists or not.
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 
-	ids, err := m.ListTableIDs(dbID)
-	if err != nil {
+	if err := m.txn.HClear(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	// remove auto id.
-	for _, tableID := range ids {
-		if err = m.txn.Clear([]byte(AutoIDKey(tableID))); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if err = m.txn.HClear(dbKey); err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = m.txn.HDel(globalSchemaKey, dbKey); err != nil {
+	if err := m.txn.HDel(mDBs, dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -319,12 +352,12 @@ func (m *TMeta) DropDatabase(dbID int64) error {
 // DropTable drops table in database.
 func (m *TMeta) DropTable(dbID int64, tableID int64) error {
 	// first check db exists or not.
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	tableKey := []byte(TableMetaKey(tableID))
+	tableKey := m.tableKey(tableID)
 
 	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
@@ -335,7 +368,7 @@ func (m *TMeta) DropTable(dbID int64, tableID int64) error {
 		return errors.Trace(err)
 	}
 
-	if err := m.txn.Clear([]byte(AutoIDKey(tableID))); err != nil {
+	if err := m.txn.HDel(dbKey, m.autoTalbeIDKey(tableID)); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -345,12 +378,12 @@ func (m *TMeta) DropTable(dbID int64, tableID int64) error {
 // UpdateTable updates the table with tableID in database.
 func (m *TMeta) UpdateTable(dbID int64, tableID int64, data []byte) error {
 	// first check db exists or not.
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	tableKey := []byte(TableMetaKey(tableID))
+	tableKey := m.tableKey(tableID)
 
 	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
@@ -363,65 +396,71 @@ func (m *TMeta) UpdateTable(dbID int64, tableID int64, data []byte) error {
 }
 
 // ListTables shows all table IDs in database.
-func (m *TMeta) ListTableIDs(dbID int64) ([]int64, error) {
-	dbKey := []byte(DBMetaKey(dbID))
+func (m *TMeta) ListTables(dbID int64) (map[int64][]byte, error) {
+	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	keys, err := m.txn.HKeys(dbKey)
+	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	ids := make([]int64, 0, len(keys)/2)
-	for _, key := range keys {
+	tables := make(map[int64][]byte, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
 		var id int64
-		id, err = parseTableMetaKey(string(key))
+		id, err = m.parseTableID(tableKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		ids = append(ids, id)
+		tables[id] = r.Value
 	}
 
-	return ids, nil
+	return tables, nil
 }
 
-// ListDatabases shows all database IDs.
-func (m *TMeta) ListDatabaseIDs() ([]int64, error) {
-	keys, err := m.txn.HKeys(globalSchemaKey)
+// ListDatabases shows all databases.
+func (m *TMeta) ListDatabases() (map[int64][]byte, error) {
+	res, err := m.txn.HGetAll(mDBs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	ids := make([]int64, 0, len(keys))
-	for _, key := range keys {
+	dbs := make(map[int64][]byte, len(res))
+	for _, r := range res {
 		var id int64
-		id, err = parseDBMetaKey(string(key))
+		id, err = m.parseDatabaseID(string(r.Field))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ids = append(ids, id)
+		dbs[id] = r.Value
 	}
-	return ids, nil
+	return dbs, nil
 }
 
 // GetDatabase gets the database value with ID.
 func (m *TMeta) GetDatabase(dbID int64) ([]byte, error) {
-	dbKey := []byte(DBMetaKey(dbID))
-	return m.txn.HGet(globalSchemaKey, dbKey)
+	dbKey := m.dbKey(dbID)
+	return m.txn.HGet(mDBs, dbKey)
 }
 
 // GetTable gets the table value in database with tableID.
 func (m *TMeta) GetTable(dbID int64, tableID int64) ([]byte, error) {
 	// first check db exists or not.
-	dbKey := []byte(DBMetaKey(dbID))
+	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	tableKey := []byte(TableMetaKey(tableID))
+	tableKey := m.tableKey(tableID)
 
 	return m.txn.HGet(dbKey, tableKey)
 }
