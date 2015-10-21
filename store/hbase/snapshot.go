@@ -15,16 +15,16 @@ package hbasekv
 
 import (
 	"github.com/c4pt0r/go-hbase"
-	"github.com/pingcap/go-themis"
-	"github.com/pingcap/tidb/kv"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/go-themis"
+	"github.com/pingcap/tidb/kv"
 )
 
 var (
-	_ kv.Snapshot = (*hbaseSnapshot)(nil)
+	_ kv.Snapshot     = (*hbaseSnapshot)(nil)
 	_ kv.MvccSnapshot = (*hbaseSnapshot)(nil)
-	_ kv.Iterator = (*hbaseIter)(nil)
+	_ kv.Iterator     = (*hbaseIter)(nil)
 )
 
 type hbaseSnapshot struct {
@@ -48,7 +48,7 @@ func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	g := hbase.NewGet([]byte(k))
 	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
 	g.TsRangeFrom = 0
-	g.TsRangeTo = ver.Ver+1
+	g.TsRangeTo = ver.Ver + 1
 	v, err := innerGet(s, g)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -56,7 +56,7 @@ func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	return v, nil
 }
 
-func innerGet(s *hbaseSnapshot, g hbase.Get) ([]byte, error) {
+func innerGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 	r, err := s.txn.Get(s.storeName, g)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -82,14 +82,16 @@ func (s *hbaseSnapshot) NewIterator(param interface{}) kv.Iterator {
 // version doesn't exist, returns the nearest(lower) version's snaphot.
 func (s *hbaseSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
 	scanner := s.txn.GetScanner([]byte(s.storeName), k, nil)
-	scanner.SetTimeRange(0, ver.Ver)
+	scanner.SetTimeRange(0, ver.Ver+1)
 	return innerNewIterator(scanner)
 }
 
 func innerNewIterator(scanner *themis.ThemisScanner) kv.Iterator {
-	return &hbaseIter{
+	it := &hbaseIter{
 		ThemisScanner: scanner,
 	}
+	it.Next()
+	return it
 }
 
 func (s *hbaseSnapshot) Release() {
@@ -133,4 +135,5 @@ func (it *hbaseIter) Close() {
 		it.ThemisScanner.Close()
 		it.ThemisScanner = nil
 	}
+	it.rs = nil
 }

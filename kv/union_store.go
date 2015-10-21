@@ -66,7 +66,6 @@ type UnionStore struct {
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) (UnionStore, error) {
-	//dirty := memdb.New(comparer.DefaultComparer, 1 * 1024 * 1024)
 	dirty := p.Get().(*memdb.DB)
 	log.Debugf("NewUnionStore dirty", dirty.Size())
 

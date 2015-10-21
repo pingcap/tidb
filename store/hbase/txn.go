@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strconv"
-	"time"
 
 	"github.com/c4pt0r/go-hbase"
 	"github.com/juju/errors"
@@ -133,7 +132,6 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return iter, nil
 }
 

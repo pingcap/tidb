@@ -17,10 +17,10 @@ import (
 	"strings"
 
 	"github.com/c4pt0r/go-hbase"
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
-	"github.com/juju/errors"
 	"sync"
 )
 
@@ -28,14 +28,18 @@ const (
 	// ColFamily is the hbase col family name.
 	ColFamily = "f"
 	// Qualifier is the hbase col name.
-	Qualifier = "q"
-	FmlAndQual = ColFamily+":"+Qualifier
+	Qualifier  = "q"
+	FmlAndQual = ColFamily + ":" + Qualifier
 )
 
-var _ kv.Storage = (*hbaseStore)(nil)
+var (
+	// ErrHasNotZk is used when has not zookeeper info.
+	ErrHasNotZk            = errors.New("Error: has not zookeeper info")
+	_           kv.Storage = (*hbaseStore)(nil)
+)
 
 type hbaseStore struct {
-	mu    	  sync.Mutex
+	mu        sync.Mutex
 	zkInfo    string
 	storeName string
 	cli       hbase.HBaseClient
@@ -47,6 +51,7 @@ type storeCache struct {
 }
 
 var mc storeCache
+
 func init() {
 	mc.cache = make(map[string]*hbaseStore)
 }
@@ -54,10 +59,6 @@ func init() {
 func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if s.cli == nil {
-		return nil, errors.New("error zk connection")
-	}
 
 	t := themis.NewTxn(s.cli)
 	txn := newHbaseTxn(t, s.storeName)
@@ -84,11 +85,11 @@ func (s *hbaseStore) Close() error {
 	defer mc.mu.Unlock()
 
 	delete(mc.cache, s.zkInfo)
-	return s.Close()
+	return s.cli.Close()
 }
 
 func (s *hbaseStore) UUID() string {
-	return "hbase." + s.storeName
+	return "hbase." + s.storeName + "." + s.zkInfo
 }
 
 func (s *hbaseStore) GetSnapshot() (kv.MvccSnapshot, error) {
@@ -106,7 +107,7 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 
 	if len(zkInfo) == 0 {
 		log.Error("db uri is error, has not zk info")
-		return nil, errors.New("must has zk info")
+		return nil, ErrHasNotZk
 	}
 
 	if store, ok := mc.cache[zkInfo]; ok {
@@ -137,7 +138,7 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 	}
 
 	s := &hbaseStore{
-		zkInfo:   zkInfo,
+		zkInfo:    zkInfo,
 		storeName: storeName,
 		cli:       c,
 	}

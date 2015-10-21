@@ -47,6 +47,7 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 	//first drop table tidb from hbase, avoid old data effect
 	hbaseCli, err := hbase.NewClient([]string{*zk}, "/hbase")
 	c.Assert(err, IsNil)
+
 	t := hbase.NewTableNameWithDefaultNS("tidb")
 	if hbaseCli.TableExists("tidb") {
 		err = hbaseCli.DisableTable(t)
@@ -59,7 +60,6 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 	store, err := d.Open(*zk)
 	c.Assert(err, IsNil)
 	s.s = store
-
 }
 
 func (s *testKVSuite) TearDownSuite(c *C) {
@@ -101,7 +101,7 @@ func valToStr(c *C, iter kv.Iterator) string {
 func checkSeek(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i)
-		iter, err := txn.Seek(val, nil)
+		iter, err := txn.Seek(val)
 		c.Assert(err, IsNil)
 		c.Assert(iter.Key(), Equals, string(val))
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i)
@@ -111,12 +111,12 @@ func checkSeek(c *C, txn kv.Transaction) {
 	// Test iterator Next()
 	for i := startIndex; i < testCount-1; i++ {
 		val := encodeInt(i)
-		iter, err := txn.Seek(val, nil)
+		iter, err := txn.Seek(val)
 		c.Assert(err, IsNil)
 		c.Assert(iter.Key(), Equals, string(val))
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
-		next, err := iter.Next(nil)
+		next, err := iter.Next()
 		c.Assert(err, IsNil)
 		c.Assert(next.Valid(), IsTrue)
 
@@ -127,7 +127,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 	}
 
 	// Non exist seek test
-	iter, err := txn.Seek(encodeInt(testCount), nil)
+	iter, err := txn.Seek(encodeInt(testCount))
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsFalse)
 	iter.Close()
@@ -271,19 +271,19 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	it, err := txn.Seek([]byte("DATA_test_tbl_department_record__0000000001_0003"), nil)
+	it, err := txn.Seek([]byte("DATA_test_tbl_department_record__0000000001_0003"))
 	c.Assert(err, IsNil)
 	for it.Valid() {
 		err = txn.Delete([]byte(it.Key()))
 		c.Assert(err, IsNil)
-		it, err = it.Next(nil)
+		it, err = it.Next()
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	it, _ = txn.Seek([]byte("DATA_test_tbl_department_record__000000000"), nil)
+	it, _ = txn.Seek([]byte("DATA_test_tbl_department_record__000000000"))
 	c.Assert(it.Valid(), IsFalse)
 	txn.Commit()
 
@@ -306,7 +306,7 @@ func (s *testKVSuite) TestBasicSeek(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Commit()
 
-	it, err := txn.Seek([]byte("2"), nil)
+	it, err := txn.Seek([]byte("2"))
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), Equals, false)
 	txn.Delete([]byte("1"))
@@ -326,31 +326,30 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 
 	err = txn.Set([]byte("1"), []byte("1"))
 	c.Assert(err, IsNil)
-
-	it, err := txn.Seek([]byte("0"), nil)
+	it, err := txn.Seek([]byte("0"))
 	c.Assert(err, IsNil)
 	c.Assert(it.Key(), Equals, "1")
 
 	err = txn.Set([]byte("0"), []byte("0"))
 	c.Assert(err, IsNil)
-	it, err = txn.Seek([]byte("0"), nil)
+	it, err = txn.Seek([]byte("0"))
 	c.Assert(err, IsNil)
 	c.Assert(it.Key(), Equals, "0")
 	err = txn.Delete([]byte("0"))
 	c.Assert(err, IsNil)
 
 	txn.Delete([]byte("1"))
-	it, err = txn.Seek([]byte("0"), nil)
+	it, err = txn.Seek([]byte("0"))
 	c.Assert(err, IsNil)
 	c.Assert(it.Key(), Equals, "2")
 
 	err = txn.Delete([]byte("3"))
 	c.Assert(err, IsNil)
-	it, err = txn.Seek([]byte("2"), nil)
+	it, err = txn.Seek([]byte("2"))
 	c.Assert(err, IsNil)
 	c.Assert(it.Key(), Equals, "2")
 
-	it, err = txn.Seek([]byte("3"), nil)
+	it, err = txn.Seek([]byte("3"))
 	c.Assert(err, IsNil)
 	c.Assert(it.Key(), Equals, "4")
 	err = txn.Delete([]byte("2"))
@@ -383,7 +382,6 @@ func (s *testKVSuite) TestRollback(c *C) {
 	c.Assert(err, IsNil)
 	defer txn.Commit()
 	mustNotGet(c, txn)
-
 }
 
 func (s *testKVSuite) TestSeekMin(c *C) {
@@ -405,13 +403,13 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 		txn.Set([]byte(kv.key), []byte(kv.value))
 	}
 
-	it, err := txn.Seek(nil, nil)
+	it, err := txn.Seek(nil)
 	for it.Valid() {
 		fmt.Printf("%s, %s\n", it.Key(), it.Value())
-		it, _ = it.Next(nil)
+		it, _ = it.Next()
 	}
 
-	it, err = txn.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
+	it, err = txn.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))
 	c.Assert(err, IsNil)
 	c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 
