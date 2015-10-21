@@ -129,7 +129,7 @@ type fromIdentVisitor struct {
 }
 
 func (v *fromIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
-	idx := field.GetResultFieldIndex(i.L, v.fromFields, field.DefaultFieldFlag)
+	idx := field.GetResultFieldIndex(i.L, v.fromFields)
 	if len(idx) == 1 {
 		i.ReferScope = expression.IdentReferFromTable
 		i.ReferIndex = idx[0]

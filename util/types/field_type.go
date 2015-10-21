@@ -111,3 +111,13 @@ func (ft *FieldType) String() string {
 
 	return strings.Join(strs, " ")
 }
+
+// DataItem is wrapped data with type info.
+type DataItem struct {
+	Type *FieldType
+	Data interface{}
+}
+
+func (di *DataItem) String() string {
+	return fmt.Sprintf("%s", di.Data)
+}

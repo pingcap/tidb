@@ -87,12 +87,18 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 	if err != nil {
 		return nil, err
 	}
-
+	v, ok := value.(*types.DataItem)
+	if ok {
+		value = v.Data
+	}
+	d := &types.DataItem{Type: f.Tp}
 	// Casting nil to any type returns null
 	if value == nil {
-		return nil, nil
+		d.Data = nil
+		return d, nil
 	}
-	return types.Cast(value, f.Tp), nil
+	d.Data = types.Cast(value, f.Tp)
+	return d, nil
 }
 
 // Accept implements Expression Accept interface.
