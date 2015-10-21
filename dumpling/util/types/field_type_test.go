@@ -105,3 +105,16 @@ func (s *testFieldTypeSuite) TestFieldType(c *check.C) {
 	ft.Decimal = 0
 	c.Assert(ft.String(), check.Equals, "date")
 }
+
+func (s *testFieldTypeSuite) TestDataItem(c *check.C) {
+	ft := NewFieldType(mysql.TypeBlob)
+	d := &DataItem{
+		Type: ft,
+	}
+	c.Assert(RawData(d), check.IsNil)
+	c.Assert(IsNil(d), check.IsTrue)
+
+	d.Data = "string"
+	c.Assert(RawData(d), check.Equals, "string")
+	c.Assert(IsNil(d), check.IsFalse)
+}
