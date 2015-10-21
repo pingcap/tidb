@@ -118,11 +118,13 @@ type DataItem struct {
 	Data interface{}
 }
 
+// String implements Stringer interface.
 func (di *DataItem) String() string {
 	return fmt.Sprintf("%s", di.Data)
 }
 
-func GetRealData(d interface{}) interface{} {
+// RawData returns the raw data for DataItem.
+func RawData(d interface{}) interface{} {
 	v, ok := d.(*DataItem)
 	if ok {
 		return v.Data
@@ -130,6 +132,7 @@ func GetRealData(d interface{}) interface{} {
 	return d
 }
 
+// IsNil checks if the raw data is nil.
 func IsNil(d interface{}) bool {
-	return GetRealData(d) == nil
+	return RawData(d) == nil
 }
