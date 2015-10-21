@@ -121,3 +121,15 @@ type DataItem struct {
 func (di *DataItem) String() string {
 	return fmt.Sprintf("%s", di.Data)
 }
+
+func GetRealData(d interface{}) interface{} {
+	v, ok := d.(*DataItem)
+	if ok {
+		return v.Data
+	}
+	return d
+}
+
+func IsNil(d interface{}) bool {
+	return GetRealData(d) == nil
+}
