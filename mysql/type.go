@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mysqldef
+package mysql
 
 // MySQL type informations.
 const (
@@ -47,6 +47,12 @@ const (
 	TypeString
 	TypeGeometry
 )
+
+// IsUninitializedType check if a type code is uninitialized.
+// TypeDecimal is the old type code for decimal and not be used in the new mysql version.
+func IsUninitializedType(tp byte) bool {
+	return tp == TypeDecimal
+}
 
 // Flag informations.
 const (

@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
@@ -530,7 +530,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		return err
 	}
 
-	it, err := txn.Seek([]byte(startKey), nil)
+	it, err := txn.Seek([]byte(startKey))
 	if err != nil {
 		return err
 	}

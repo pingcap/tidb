@@ -50,6 +50,11 @@ func (s *testGroupByRsetSuite) SetUpSuite(c *C) {
 	s.r = &GroupByRset{Src: tblPlan, SelectList: selectList, By: by}
 }
 
+func resetAggFields(selectList *plans.SelectList) {
+	fields := selectList.Fields
+	selectList.AggFields = GetAggFields(fields)
+}
+
 func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	// `select id, name from t group by name`
 	p, err := s.r.Plan(nil)
@@ -88,6 +93,8 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	fld := &field.Field{Expr: fldExpr, AsName: "a"}
 	s.r.SelectList.Fields[0] = fld
 
+	resetAggFields(s.r.SelectList)
+
 	s.r.By[0] = expression.Value{Val: int64(1)}
 
 	_, err = s.r.Plan(nil)
@@ -114,6 +121,8 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	s.r.SelectList.Fields[0] = fld
 	s.r.SelectList.ResultFields[0].Col.Name = model.NewCIStr("count(id)")
 	s.r.SelectList.ResultFields[0].Name = "a"
+
+	resetAggFields(s.r.SelectList)
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)

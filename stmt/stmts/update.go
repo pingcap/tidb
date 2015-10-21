@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
@@ -107,7 +107,7 @@ func getUpdateColumns(assignList []expression.Assignment, fields []*field.Result
 			name = fmt.Sprintf("%s.%s", v.TableName, v.ColName)
 		}
 		// use result fields to check assign list, otherwise use origin table columns
-		idx := field.GetResultFieldIndex(name, fields, field.DefaultFieldFlag)
+		idx := field.GetResultFieldIndex(name, fields)
 		if n := len(idx); n > 1 {
 			return nil, errors.Errorf("ambiguous field %s", name)
 		} else if n == 0 {
@@ -276,7 +276,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 
 		// Set EvalIdentFunc
 		m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return plans.GetIdentValue(name, p.GetFields(), rowData, field.DefaultFieldFlag)
+			return plans.GetIdentValue(name, p.GetFields(), rowData)
 		}
 
 		// Update rows

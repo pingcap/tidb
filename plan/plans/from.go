@@ -68,7 +68,7 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.iter, err = txn.Seek([]byte(r.T.FirstKey()), nil)
+		r.iter, err = txn.Seek([]byte(r.T.FirstKey()))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -238,7 +238,7 @@ func (r *TableDefaultPlan) filter(ctx context.Context, expr expression.Expressio
 		colNames := expression.MentionedColumns(expr)
 		// make sure all mentioned column names are in Fields
 		// if not, e.g. the expr has two table like t1.c1 = t2.c2, we can't use filter
-		if !field.ContainAllFieldNames(colNames, r.Fields, field.DefaultFieldFlag) {
+		if !field.ContainAllFieldNames(colNames, r.Fields) {
 			return r, false, nil
 		}
 	}
@@ -274,7 +274,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.iter, err = txn.Seek([]byte(r.T.FirstKey()), nil)
+		r.iter, err = txn.Seek([]byte(r.T.FirstKey()))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -39,7 +39,7 @@ Read the [Roadmap](./ROADMAP.md).
 
 Go environment. Currently a 64-bit version of go >= 1.5 is required.
 ```
-go get -d github.com/pingcap/tidb
+git clone https://github.com/pingcap/tidb.git $GOPATH/src/github.com/pingcap/tidb
 cd $GOPATH/src/github.com/pingcap/tidb
 make
 ```

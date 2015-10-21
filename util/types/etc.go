@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/errors2"

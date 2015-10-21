@@ -23,7 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -710,6 +710,15 @@ func (o *BinaryOperation) evalArithmeticOp(ctx context.Context, args map[interfa
 	a, b, err := o.get2(ctx, args)
 	if err != nil {
 		return nil, err
+	}
+
+	adi, ok := a.(*types.DataItem)
+	if ok {
+		a = adi.Data
+	}
+	bdi, ok := b.(*types.DataItem)
+	if ok {
+		b = bdi.Data
 	}
 
 	if a == nil || b == nil {

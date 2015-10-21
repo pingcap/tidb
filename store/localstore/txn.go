@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strconv"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -38,7 +37,6 @@ var (
 type dbTxn struct {
 	kv.UnionStore
 	store        *dbStore // for commit
-	startTs      time.Time
 	tid          uint64
 	valid        bool
 	version      kv.Version        // commit version
@@ -95,7 +93,7 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
+	txn.store.compactor.OnSet(k)
 	return intVal, nil
 }
 
@@ -108,7 +106,6 @@ func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
 	return intVal, errors.Trace(err)
 }
@@ -130,7 +127,7 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	if len(val) == 0 {
 		return nil, errors.Trace(kv.ErrNotExist)
 	}
-
+	txn.store.compactor.OnGet(k)
 	return val, nil
 }
 
@@ -143,10 +140,15 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 
 	log.Debugf("set key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
-	return txn.UnionStore.Set(k, data)
+	err := txn.UnionStore.Set(k, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn.store.compactor.OnSet(k)
+	return nil
 }
 
-func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error) {
+func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 
@@ -158,19 +160,18 @@ func (txn *dbTxn) Seek(k kv.Key, fnKeyCmp func(kv.Key) bool) (kv.Iterator, error
 		return &kv.UnionIter{}, nil
 	}
 
-	if fnKeyCmp != nil {
-		if fnKeyCmp([]byte(iter.Key())[:1]) {
-			return &kv.UnionIter{}, nil
-		}
-	}
-
 	return iter, nil
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("delete key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
-	return txn.UnionStore.Delete(k)
+	err := txn.UnionStore.Delete(k)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	txn.store.compactor.OnDelete(k)
+	return nil
 }
 
 func (txn *dbTxn) each(f func(iterator.Iterator) error) error {

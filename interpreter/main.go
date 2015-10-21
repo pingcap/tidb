@@ -21,6 +21,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -54,8 +55,10 @@ func saveHistory() {
 }
 
 func executeLine(tx *sql.Tx, txnLine string) error {
+	start := time.Now()
 	if tidb.IsQuery(txnLine) {
 		rows, err := tx.Query(txnLine)
+		elapsed := time.Since(start).Seconds()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -95,15 +98,38 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		result, _ := printer.GetPrintResult(cols, datas)
 		fmt.Printf("%s", result)
 
+		switch len(datas) {
+		case 0:
+			fmt.Printf("Empty set")
+		case 1:
+			fmt.Printf("1 row in set")
+		default:
+			fmt.Printf("%v rows in set", len(datas))
+		}
+		fmt.Printf(" (%.2f sec)\n", elapsed)
 		if err := rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		// TODO: rows affected and last insert id
-		_, err := tx.Exec(txnLine)
+		// TODO: last insert id
+		res, err := tx.Exec(txnLine)
+		elapsed := time.Since(start).Seconds()
 		if err != nil {
 			return errors.Trace(err)
 		}
+		cnt, err := res.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		switch cnt {
+		case 0:
+			fmt.Printf("Query OK, 0 row affected")
+		case 1:
+			fmt.Printf("Query OK, 1 row affected")
+		default:
+			fmt.Printf("Query OK, %v rows affected", cnt)
+		}
+		fmt.Printf(" (%.2f sec)\n", elapsed)
 	}
 	return nil
 }

@@ -39,70 +39,110 @@ type GroupByRset struct {
 	SelectList *plans.SelectList
 }
 
+type groupByVisitor struct {
+	expression.BaseVisitor
+	selectList *plans.SelectList
+	rootIdent  *expression.Ident
+}
+
+func (v *groupByVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	// Group by ambiguous rule:
+	//	select c1 as a, c2 as a from t group by a is ambiguous
+	//	select c1 as a, c2 as a from t group by a + 1 is ambiguous
+	//	select c1 as c2, c2 from t group by c2 is ambiguous
+	//	select c1 as c2, c2 from t group by c2 + 1 is not ambiguous
+
+	var (
+		index int
+		err   error
+	)
+
+	if v.rootIdent == i {
+		// The group by is an identifier, we must check it first.
+		index, err = checkIdentAmbiguous(i, v.selectList, groupByClause)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// first find this identifier in FROM.
+	idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields)
+	if len(idx) > 0 {
+		i.ReferScope = expression.IdentReferFromTable
+		i.ReferIndex = idx[0]
+		return i, nil
+	}
+
+	if v.rootIdent != i {
+		// This identifier is the part of the group by, check ambiguous here.
+		index, err = checkIdentAmbiguous(i, v.selectList, groupByClause)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	// try to find in select list, we have got index using checkIdent before.
+	if index >= 0 {
+		// group by can not reference aggregate fields
+		if _, ok := v.selectList.AggFields[index]; ok {
+			return nil, errors.Errorf("Reference '%s' not supported (reference to group function)", i)
+		}
+
+		// find in select list
+		i.ReferScope = expression.IdentReferSelectList
+		i.ReferIndex = index
+		return i, nil
+	}
+
+	// TODO: check in out query
+	return i, errors.Errorf("Unknown column '%s' in 'group statement'", i)
+}
+
+func (v *groupByVisitor) VisitCall(c *expression.Call) (expression.Expression, error) {
+	ok := expression.IsAggregateFunc(c.F)
+	if ok {
+		return nil, errors.Errorf("group by cannot contain aggregate function %s", c)
+	}
+
+	var err error
+	for i, e := range c.Args {
+		c.Args[i], err = e.Accept(v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return c, nil
+}
+
 // Plan gets GroupByDefaultPlan.
 func (r *GroupByRset) Plan(ctx context.Context) (plan.Plan, error) {
-	fields := r.SelectList.Fields
+	if err := updateSelectFieldsRefer(r.SelectList); err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	r.SelectList.AggFields = GetAggFields(fields)
-	aggFields := r.SelectList.AggFields
+	visitor := &groupByVisitor{}
+	visitor.BaseVisitor.V = visitor
+	visitor.selectList = r.SelectList
 
 	for i, e := range r.By {
-		if v, ok := e.(expression.Value); ok {
-			var position int
-			switch u := v.Val.(type) {
-			case int64:
-				position = int(u)
-			case uint64:
-				position = int(u)
-			default:
-				continue
-			}
-
-			if position < 1 || position > len(fields) {
-				return nil, errors.Errorf("Unknown column '%d' in 'group statement'", position)
-			}
-
-			index := position - 1
-			if _, ok := aggFields[index]; ok {
-				return nil, errors.Errorf("Can't group on '%s'", fields[index])
-			}
-
-			// use Position expression for the associated field.
-			r.By[i] = &expression.Position{N: position}
-		} else {
-			index, err := r.SelectList.CheckReferAmbiguous(e)
-			if err != nil {
-				return nil, errors.Errorf("Column '%s' in group statement is ambiguous", e)
-			} else if _, ok := aggFields[index]; ok {
-				return nil, errors.Errorf("Can't group on '%s'", e)
-			}
-
-			// TODO: check more ambiguous case
-			// Group by ambiguous rule:
-			//	select c1 as a, c2 as a from t group by a is ambiguous
-			//	select c1 as a, c2 as a from t group by a + 1 is ambiguous
-			//	select c1 as c2, c2 from t group by c2 is ambiguous
-			//	select c1 as c2, c2 from t group by c2 + 1 is ambiguous
-
-			// TODO: use visitor to check aggregate function
-			names := expression.MentionedColumns(e)
-			for _, name := range names {
-				indices := field.GetFieldIndex(name, fields[0:r.SelectList.HiddenFieldOffset], field.DefaultFieldFlag)
-				if len(indices) == 1 {
-					// check reference to aggregate function, like `select c1, count(c1) as b from t group by b + 1`.
-					index := indices[0]
-					if _, ok := aggFields[index]; ok {
-						return nil, errors.Errorf("Reference '%s' not supported (reference to group function)", name)
-					}
-				}
-			}
-
-			// group by should be an expression, a qualified field name or a select field position,
-			// but can not contain any aggregate function.
-			if e := r.By[i]; expression.ContainAggregateFunc(e) {
-				return nil, errors.Errorf("group by cannot contain aggregate function %s", e.String())
-			}
+		pos, err := castPosition(e, r.SelectList, groupByClause)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+
+		if pos != nil {
+			// use Position expression for the associated field.
+			r.By[i] = pos
+			continue
+		}
+
+		visitor.rootIdent = castIdent(e)
+		by, err := e.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.By[i] = by
 	}
 
 	return &plans.GroupByDefaultPlan{By: r.By, Src: r.Src,

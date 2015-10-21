@@ -56,15 +56,15 @@ func (r *FilterDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error)
 		if row == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			v, err0 := GetIdentValue(name, r.GetFields(), row.Data, field.DefaultFieldFlag)
-			if err0 == nil {
-				return v, nil
+		r.evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+			if scope == expression.IdentReferFromTable {
+				return row.Data[index], nil
 			}
 
 			// try to find in outer query
 			return getIdentValueFromOuterQuery(ctx, name)
 		}
+
 		var meet bool
 		meet, err = r.meetCondition(ctx)
 		if err != nil {

@@ -155,6 +155,7 @@ func (r *JoinPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 }
 
 func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) {
+	visitor := newJoinIdentVisitor(0)
 	for {
 		if r.cursor < len(r.matchedRows) {
 			row = r.matchedRows[r.cursor]
@@ -167,7 +168,7 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 			return nil, errors.Trace(err)
 		}
 		tempExpr := r.On.Clone()
-		visitor := NewIdentEvalVisitor(r.Left.GetFields(), leftRow.Data)
+		visitor.row = leftRow.Data
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -189,6 +190,7 @@ func (r *JoinPlan) nextLeftJoin(ctx context.Context) (row *plan.Row, err error) 
 }
 
 func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error) {
+	visitor := newJoinIdentVisitor(len(r.Left.GetFields()))
 	for {
 		if r.cursor < len(r.matchedRows) {
 			row = r.matchedRows[r.cursor]
@@ -202,7 +204,7 @@ func (r *JoinPlan) nextRightJoin(ctx context.Context) (row *plan.Row, err error)
 		}
 
 		tempExpr := r.On.Clone()
-		visitor := NewIdentEvalVisitor(r.Right.GetFields(), rightRow.Data)
+		visitor.row = rightRow.Data
 		_, err = tempExpr.Accept(visitor)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -251,8 +253,8 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, p plan.Pl
 		} else {
 			joined = append(append(joined, row.Data...), cmpRow.Data...)
 		}
-		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return GetIdentValue(name, r.Fields, joined, field.DefaultFieldFlag)
+		r.evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+			return joined[index], nil
 		}
 		var b bool
 		b, err = expression.EvalBoolExpr(ctx, r.On, r.evalArgs)
@@ -280,6 +282,7 @@ func (r *JoinPlan) findMatchedRows(ctx context.Context, row *plan.Row, p plan.Pl
 }
 
 func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error) {
+	visitor := newJoinIdentVisitor(0)
 	for {
 		if r.curRow == nil {
 			r.curRow, err = r.Left.Next(ctx)
@@ -292,7 +295,7 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 
 			if r.On != nil {
 				tempExpr := r.On.Clone()
-				visitor := NewIdentEvalVisitor(r.Left.GetFields(), r.curRow.Data)
+				visitor.row = r.curRow.Data
 				_, err = tempExpr.Accept(visitor)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -323,8 +326,8 @@ func (r *JoinPlan) nextCrossJoin(ctx context.Context) (row *plan.Row, err error)
 		joinedRow = append(append(joinedRow, r.curRow.Data...), rightRow.Data...)
 
 		if r.On != nil {
-			r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-				return GetIdentValue(name, r.Fields, joinedRow, field.DefaultFieldFlag)
+			r.evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+				return joinedRow[index], nil
 			}
 
 			b, err := expression.EvalBoolExpr(ctx, r.On, r.evalArgs)
@@ -356,32 +359,34 @@ func (r *JoinPlan) Close() error {
 	return r.Left.Close()
 }
 
-// IdentEvalVisitor converts Ident expression to value expression.
-type IdentEvalVisitor struct {
+// joinIdentVisitor converts Ident expression to value expression in ON expression.
+type joinIdentVisitor struct {
 	expression.BaseVisitor
-	fields []*field.ResultField
 	row    []interface{}
+	offset int
 }
 
-// NewIdentEvalVisitor creates a new IdentEvalVisitor.
-func NewIdentEvalVisitor(fields []*field.ResultField, row []interface{}) *IdentEvalVisitor {
-	iev := &IdentEvalVisitor{fields: fields, row: row}
+// newJoinIdentVisitor creates a new joinIdentVisitor.
+func newJoinIdentVisitor(offset int) *joinIdentVisitor {
+	iev := &joinIdentVisitor{offset: offset}
 	iev.BaseVisitor.V = iev
 	return iev
 }
 
 // VisitIdent implements Visitor interface.
-func (iev *IdentEvalVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
-	v, err := GetIdentValue(i.L, iev.fields, iev.row, field.CheckFieldFlag)
-	if err != nil {
+func (iev *joinIdentVisitor) VisitIdent(i *expression.Ident) (expression.Expression, error) {
+	// the row here may be just left part or right part, but identifier may reference another part,
+	// so here we must check its reference index validation.
+	if i.ReferIndex < iev.offset || i.ReferIndex >= iev.offset+len(iev.row) {
 		return i, nil
 	}
+	v := iev.row[i.ReferIndex-iev.offset]
 	return expression.Value{Val: v}, nil
 }
 
 // VisitBinaryOperation swaps the right side identifier to left side if left side expression is static.
 // So it can be used in index plan.
-func (iev *IdentEvalVisitor) VisitBinaryOperation(binop *expression.BinaryOperation) (expression.Expression, error) {
+func (iev *joinIdentVisitor) VisitBinaryOperation(binop *expression.BinaryOperation) (expression.Expression, error) {
 	var err error
 	binop.L, err = binop.L.Accept(iev)
 	if err != nil {
