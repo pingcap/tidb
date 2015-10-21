@@ -73,7 +73,7 @@ func (is *IsTruth) Eval(ctx context.Context, args map[interface{}]interface{}) (
 		return
 	}
 
-	if val == nil {
+	if types.IsNil(val) {
 		// null is true/false -> false
 		// null is not true/false -> true
 		return is.Not, nil

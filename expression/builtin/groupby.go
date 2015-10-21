@@ -179,7 +179,7 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	data, _ := ctx[fn].(avg)
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
@@ -189,7 +189,7 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 		return nil, err
 	}
 
-	if data.sum == nil {
+	if types.IsNil(data.sum) {
 		data.n = 0
 	}
 

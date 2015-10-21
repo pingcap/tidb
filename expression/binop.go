@@ -712,14 +712,8 @@ func (o *BinaryOperation) evalArithmeticOp(ctx context.Context, args map[interfa
 		return nil, err
 	}
 
-	adi, ok := a.(*types.DataItem)
-	if ok {
-		a = adi.Data
-	}
-	bdi, ok := b.(*types.DataItem)
-	if ok {
-		b = bdi.Data
-	}
+	a = types.RawData(a)
+	b = types.RawData(b)
 
 	if a == nil || b == nil {
 		// TODO: for <=>, if a and b are both nil, return true
