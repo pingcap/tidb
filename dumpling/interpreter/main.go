@@ -55,8 +55,8 @@ func saveHistory() {
 }
 
 func executeLine(tx *sql.Tx, txnLine string) error {
+	start := time.Now()
 	if tidb.IsQuery(txnLine) {
-		start := time.Now()
 		rows, err := tx.Query(txnLine)
 		elapsed := time.Since(start).Seconds()
 		if err != nil {
@@ -112,7 +112,6 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 		}
 	} else {
 		// TODO: last insert id
-		start := time.Now()
 		res, err := tx.Exec(txnLine)
 		elapsed := time.Since(start).Seconds()
 		if err != nil {
