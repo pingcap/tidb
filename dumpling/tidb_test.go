@@ -1245,6 +1245,14 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(fs[0].Col.FieldType.Tp, Equals, mysql.TypeString)
 }
 
+func (s *testSessionSuite) TestBuiltin(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	// Testcase for https://github.com/pingcap/tidb/issues/382
+	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
