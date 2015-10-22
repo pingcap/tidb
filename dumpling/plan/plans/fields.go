@@ -87,10 +87,8 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 			if mysql.IsUninitializedType(r.ResultFields[i].Col.Tp) {
 				r.ResultFields[i].Col.FieldType = *di.Type
 			}
-			row.Data[i] = di.Data
-		} else {
-			row.Data[i] = d
 		}
+		row.Data[i] = d
 	}
 	updateRowStack(ctx, row.Data, row.FromData)
 	return

@@ -44,7 +44,7 @@ func builtinLength(args []interface{}, _ map[interface{}]interface{}) (v interfa
 func builtinConcat(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
 	var s []byte
 	for _, a := range args {
-		if a == nil {
+		if types.IsNil(a) {
 			return nil, nil
 		}
 		ss, err := types.ToString(a)
@@ -62,7 +62,7 @@ func builtinConcatWS(args []interface{}, ctx map[interface{}]interface{}) (v int
 	var sep string
 	s := make([]string, 0, len(args))
 	for i, a := range args {
-		if a == nil {
+		if types.IsNil(a) {
 			if i == 0 {
 				return nil, nil
 			}

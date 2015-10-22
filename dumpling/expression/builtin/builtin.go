@@ -17,7 +17,10 @@
 
 package builtin
 
-import "github.com/juju/errors"
+import (
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/types"
+)
 
 const (
 	// ExprEvalFn is the key saving Call expression.
@@ -113,7 +116,7 @@ func invArg(arg interface{}, s string) error {
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
 	for _, v := range args {
-		if v != nil {
+		if !types.IsNil(v) {
 			return v, nil
 		}
 	}

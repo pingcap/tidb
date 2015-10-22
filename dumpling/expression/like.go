@@ -82,7 +82,7 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if expr == nil {
+	if types.IsNil(expr) {
 		return nil, nil
 	}
 
@@ -98,7 +98,7 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if pattern == nil {
+		if types.IsNil(pattern) {
 			return nil, nil
 		}
 		var spattern string
