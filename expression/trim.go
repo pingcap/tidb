@@ -98,7 +98,7 @@ func (f *FunctionTrim) Eval(ctx context.Context, args map[interface{}]interface{
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if fs == nil {
+	if types.IsNil(fs) {
 		return nil, nil
 	}
 	str, err := types.ToString(fs)
@@ -112,7 +112,7 @@ func (f *FunctionTrim) Eval(ctx context.Context, args map[interface{}]interface{
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if fs == nil {
+		if types.IsNil(fs) {
 			return nil, nil
 		}
 		remstr, err = types.ToString(fs)

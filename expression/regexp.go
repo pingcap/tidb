@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -80,7 +81,7 @@ func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface
 			return nil, err
 		}
 
-		if expr == nil {
+		if types.IsNil(expr) {
 			return nil, nil
 		}
 
@@ -102,7 +103,7 @@ func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface
 			return nil, err
 		}
 
-		if pattern == nil {
+		if types.IsNil(pattern) {
 			return nil, nil
 		}
 
