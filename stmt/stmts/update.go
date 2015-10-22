@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -101,7 +100,6 @@ func getUpdateColumns(assignList []expression.Assignment, fields []*field.Result
 	m := make(map[int]expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
-
 		name := v.ColName
 		if len(v.TableName) > 0 {
 			name = fmt.Sprintf("%s.%s", v.TableName, v.ColName)
@@ -234,6 +232,17 @@ func (s *UpdateStmt) plan(ctx context.Context) (plan.Plan, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	visitor := rsets.NewFromIdentVisitor(r.GetFields(), rsets.UpdateClause)
+	for i := range s.List {
+		e, err := s.List[i].Expr.Accept(visitor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		s.List[i].Expr = e
+	}
+
 	return r, nil
 }
 
@@ -274,9 +283,9 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	for _, row := range records {
 		rowData := row.Data
 
-		// Set EvalIdentFunc
-		m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			return plans.GetIdentValue(name, p.GetFields(), rowData)
+		// Set ExprEvalIdentReferFunc
+		m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+			return rowData[index], nil
 		}
 
 		// Update rows

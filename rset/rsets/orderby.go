@@ -111,7 +111,7 @@ func (v *orderByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent == i {
 		// The order by is an identifier, we must check it first.
-		index, err = checkIdentAmbiguous(i, v.selectList, orderByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, OrderByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -135,7 +135,7 @@ func (v *orderByVisitor) VisitIdent(i *expression.Ident) (expression.Expression,
 
 	if v.rootIdent != i {
 		// This identifier is the part of the order by, check ambiguous here.
-		index, err = checkIdentAmbiguous(i, v.selectList, orderByClause)
+		index, err = checkIdentAmbiguous(i, v.selectList, OrderByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -191,7 +191,7 @@ func (r *OrderByRset) Plan(ctx context.Context) (plan.Plan, error) {
 	for i := range r.By {
 		e := r.By[i].Expr
 
-		pos, err := castPosition(e, r.SelectList, orderByClause)
+		pos, err := castPosition(e, r.SelectList, OrderByClause)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
