@@ -265,7 +265,7 @@ func isCastType(tp byte) bool {
 // Cast casts val to certain types and does not return error.
 func Cast(val interface{}, target *FieldType) (interface{}, error) {
 	if !isCastType(target.Tp) {
-		panic("unknown cast type, should never happen")
+		return nil, errors.Errorf("unknown cast type - %v", target)
 	}
 
 	return Convert(val, target)
