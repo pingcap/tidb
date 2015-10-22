@@ -14,10 +14,9 @@
 package types
 
 import (
+	"fmt"
 	"math"
 	"time"
-
-	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
