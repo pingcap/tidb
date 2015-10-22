@@ -373,6 +373,7 @@ rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
+replace		{r}{e}{p}{l}{a}{c}{e}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
@@ -802,6 +803,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return repeat
 {regexp}		return regexp
 {references}		return references
+{replace}		return replace
 {rlike}			return rlike
 
 {sys_var}		lval.item = string(l.val)
