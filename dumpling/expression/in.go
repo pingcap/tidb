@@ -137,7 +137,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		return nil, err
 	}
 
-	if lhs == nil {
+	if types.IsNil(lhs) {
 		return nil, nil
 	}
 
