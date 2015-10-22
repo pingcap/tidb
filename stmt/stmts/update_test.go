@@ -30,7 +30,7 @@ func (s *testStmtSuite) TestUpdate(c *C) {
 	updateStr := `UPDATE test SET name = "abc" where id > 0;`
 
 	// Test compile
-	stmtList, err := tidb.Compile(updateStr)
+	stmtList, err := tidb.Compile(s.ctx, updateStr)
 	c.Assert(err, IsNil)
 
 	str := stmtList[0].OriginText()

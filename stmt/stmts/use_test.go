@@ -24,7 +24,7 @@ func (s *testStmtSuite) TestUse(c *C) {
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = `use test;`
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

@@ -24,7 +24,7 @@ func (s *testStmtSuite) TestShow(c *C) {
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = "show columns from show_test;"
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -35,7 +35,7 @@ func (s *testStmtSuite) TestShow(c *C) {
 	c.Assert(len(testStmt.OriginText()), Greater, 0)
 
 	testSQL = "show create table show_test;"
-	stmtList, err = tidb.Compile(testSQL)
+	stmtList, err = tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 	testStmt, ok = stmtList[0].(*stmts.ShowStmt)
@@ -46,7 +46,7 @@ func (s *testStmtSuite) TestShow(c *C) {
 	c.Assert(mf.Len(), Greater, 0)
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
-	stmtList, err = tidb.Compile(testSQL)
+	stmtList, err = tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 	testStmt, ok = stmtList[0].(*stmts.ShowStmt)

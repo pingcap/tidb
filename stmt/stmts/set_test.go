@@ -23,7 +23,7 @@ func (s *testStmtSuite) TestSet(c *C) {
 	testSQL := "SET @a = 1;"
 	mustExec(c, s.testDB, testSQL)
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -47,7 +47,7 @@ func (s *testStmtSuite) TestSet(c *C) {
 	testSQL = "SET @@global.autocommit = 1;"
 	mustExec(c, s.testDB, testSQL)
 
-	stmtList, err = tidb.Compile(testSQL)
+	stmtList, err = tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -68,7 +68,7 @@ func (s *testStmtSuite) TestSet(c *C) {
 	testSQL = "SET @@autocommit = 1;"
 	mustExec(c, s.testDB, testSQL)
 
-	stmtList, err = tidb.Compile(testSQL)
+	stmtList, err = tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -120,7 +120,7 @@ func (s *testStmtSuite) TestSet(c *C) {
 func (s *testStmtSuite) TestSetCharsetStmt(c *C) {
 	testSQL := `SET NAMES utf8;`
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
