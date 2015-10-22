@@ -189,7 +189,7 @@ func (o *BinaryOperation) evalAndAnd(ctx context.Context, args map[interface{}]i
 		return nil, o.traceErr(err)
 	}
 
-	if a != nil {
+	if !types.IsNil(a) {
 		var x int64
 		x, err = types.ToBool(a)
 		if err != nil {
@@ -205,7 +205,7 @@ func (o *BinaryOperation) evalAndAnd(ctx context.Context, args map[interface{}]i
 		return nil, o.traceErr(err)
 	}
 
-	if b != nil {
+	if !types.IsNil(b) {
 		var y int64
 		y, err = types.ToBool(b)
 		if err != nil {
@@ -217,7 +217,7 @@ func (o *BinaryOperation) evalAndAnd(ctx context.Context, args map[interface{}]i
 
 	// here x and y are all not false
 	// if a or b is nil
-	if a == nil || b == nil {
+	if types.IsNil(a) || types.IsNil(b) {
 		return nil, nil
 	}
 
@@ -235,7 +235,7 @@ func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]int
 		y int64
 	)
 
-	if a != nil {
+	if !types.IsNil(a) {
 		x, err = types.ToBool(a)
 		if err != nil {
 			return nil, o.traceErr(err)
@@ -250,7 +250,7 @@ func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]int
 		return nil, o.traceErr(err)
 	}
 
-	if b != nil {
+	if !types.IsNil(b) {
 		y, err = types.ToBool(b)
 		if err != nil {
 			return nil, o.traceErr(err)
@@ -261,7 +261,7 @@ func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]int
 
 	// here x and y are all not true
 	// if a or b is nil
-	if a == nil || b == nil {
+	if types.IsNil(a) || types.IsNil(b) {
 		return nil, nil
 	}
 
@@ -270,7 +270,7 @@ func (o *BinaryOperation) evalOrOr(ctx context.Context, args map[interface{}]int
 
 func (o *BinaryOperation) evalLogicXor(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	a, err := o.L.Eval(ctx, args)
-	if err != nil || a == nil {
+	if err != nil || types.IsNil(a) {
 		return nil, o.traceErr(err)
 	}
 
@@ -280,7 +280,7 @@ func (o *BinaryOperation) evalLogicXor(ctx context.Context, args map[interface{}
 	}
 
 	b, err := o.R.Eval(ctx, args)
-	if err != nil || b == nil {
+	if err != nil || types.IsNil(b) {
 		return nil, o.traceErr(err)
 	}
 
@@ -309,7 +309,7 @@ func (o *BinaryOperation) evalBitOp(ctx context.Context, args map[interface{}]in
 		return nil, err
 	}
 
-	if a == nil || b == nil {
+	if types.IsNil(a) || types.IsNil(b) {
 		return nil, nil
 	}
 
@@ -385,11 +385,11 @@ func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interfa
 		return nil, err
 	}
 
-	if a == nil || b == nil {
+	if types.IsNil(a) || types.IsNil(b) {
 		// for <=>, if a and b are both nil, return true.
 		// if a or b is nil, return false.
 		if o.Op == opcode.NullEQ {
-			return a == b, nil
+			return types.IsNil(a) && types.IsNil(b), nil
 		}
 
 		return nil, nil
@@ -712,14 +712,8 @@ func (o *BinaryOperation) evalArithmeticOp(ctx context.Context, args map[interfa
 		return nil, err
 	}
 
-	adi, ok := a.(*types.DataItem)
-	if ok {
-		a = adi.Data
-	}
-	bdi, ok := b.(*types.DataItem)
-	if ok {
-		b = bdi.Data
-	}
+	a = types.RawData(a)
+	b = types.RawData(b)
 
 	if a == nil || b == nil {
 		// TODO: for <=>, if a and b are both nil, return true

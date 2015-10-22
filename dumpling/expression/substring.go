@@ -244,7 +244,7 @@ func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if fs == nil {
+	if types.IsNil(fs) {
 		return nil, nil
 	}
 	str, err := types.ToString(fs)
@@ -256,7 +256,7 @@ func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if fs == nil {
+	if types.IsNil(fs) {
 		return nil, nil
 	}
 	substr, err := types.ToString(fs)
