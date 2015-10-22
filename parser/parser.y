@@ -217,6 +217,7 @@ import (
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
+	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
@@ -432,7 +433,7 @@ import (
 	IndexName		"index name"
 	IndexType		"index type"
 	InsertIntoStmt		"INSERT INTO statement"
-	InsertRest		"Rest part of INSERT INTO statement"
+	InsertRest		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
 	JoinTable 		"join table"
 	JoinType		"join type"
@@ -474,6 +475,8 @@ import (
 	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
+	ReplaceIntoStmt		"REPLACE INTO statement"
+	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
@@ -1823,7 +1826,40 @@ OnDuplicateKeyUpdate:
 		$$ = $5
 	}
 
-/***********************************Insert Statments END************************************/
+/************************************************************************************
+ *
+ *  Replace Statments
+ *
+ *  TODO: support PARTITION
+ **********************************************************************************/
+ReplaceIntoStmt:
+	"REPLACE" ReplacePriority IntoOpt TableIdent InsertRest
+	{
+		
+		x := &stmts.ReplaceIntoStmt{ColNames: $5.(*stmts.InsertIntoStmt).ColNames, 
+					       Lists: $5.(*stmts.InsertIntoStmt).Lists, 
+					     	 Sel: $5.(*stmts.InsertIntoStmt).Sel,
+					     SetList: $5.(*stmts.InsertIntoStmt).Setlist}
+		x.Priority = $2.(int)
+		x.TableIdent = $4.(table.Ident)
+		$$ = x
+		if yylex.(*lexer).root {
+			break
+		}
+	}
+
+ReplacePriority:
+	{
+		$$ = stmts.NoPriority
+	}
+|	"LOW_PRIORITY"
+	{
+		$$ = stmts.LowPriority
+	}
+|	"DELAYED"
+	{
+		$$ = stmts.DelayedPriority
+	}
 
 Literal:
 	"false"
@@ -2776,7 +2812,6 @@ PrimaryFactor:
 	}
 |	PrimaryExpression
 
-
 Priority:
 	{
 		$$ = stmts.NoPriority
@@ -3533,6 +3568,7 @@ Statement:
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
+|	ReplaceIntoStmt
 |	SelectStmt
 |	SetStmt
 |	ShowStmt
@@ -3552,6 +3588,7 @@ ExplainableStmt:
 |	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 StatementList:
 	Statement
