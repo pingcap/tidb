@@ -85,28 +85,28 @@ func (t *testPrivilegeSuite) TearDownTest(c *C) {
 func (t *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	se := newSession(c, t.store, t.dbName)
 	mustExec(c, se, `CREATE USER 'test'@'localhost' identified by '123';`)
-	pc := &privileges.PrivilegeCheck{}
+	pc := &privileges.UserPrivileges{}
 	db := &model.DBInfo{
 		Name: model.NewCIStr("test"),
 	}
 	ctx, _ := se.(context.Context)
 	variable.GetSessionVars(ctx).User = "test@localhost"
-	r, err := pc.CheckDBPrivilege(ctx, db, mysql.SelectPriv)
+	r, err := pc.Check(ctx, db, nil, mysql.SelectPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
 
 	mustExec(c, se, `GRANT SELECT ON *.* TO  'test'@'localhost';`)
-	pc = &privileges.PrivilegeCheck{}
-	r, err = pc.CheckDBPrivilege(ctx, db, mysql.SelectPriv)
+	pc = &privileges.UserPrivileges{}
+	r, err = pc.Check(ctx, db, nil, mysql.SelectPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
-	r, err = pc.CheckDBPrivilege(ctx, db, mysql.UpdatePriv)
+	r, err = pc.Check(ctx, db, nil, mysql.UpdatePriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
 
 	mustExec(c, se, `GRANT Update ON test.* TO  'test'@'localhost';`)
-	pc = &privileges.PrivilegeCheck{}
-	r, err = pc.CheckDBPrivilege(ctx, db, mysql.UpdatePriv)
+	pc = &privileges.UserPrivileges{}
+	r, err = pc.Check(ctx, db, nil, mysql.UpdatePriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
 }
@@ -114,7 +114,7 @@ func (t *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 func (t *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	se := newSession(c, t.store, t.dbName)
 	mustExec(c, se, `CREATE USER 'test1'@'localhost' identified by '123';`)
-	pc := &privileges.PrivilegeCheck{}
+	pc := &privileges.UserPrivileges{}
 	db := &model.DBInfo{
 		Name: model.NewCIStr("test"),
 	}
@@ -123,31 +123,31 @@ func (t *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	}
 	ctx, _ := se.(context.Context)
 	variable.GetSessionVars(ctx).User = "test1@localhost"
-	r, err := pc.CheckTablePrivilege(ctx, db, tbl, mysql.SelectPriv)
+	r, err := pc.Check(ctx, db, tbl, mysql.SelectPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
 
 	mustExec(c, se, `GRANT SELECT ON *.* TO  'test1'@'localhost';`)
-	pc = &privileges.PrivilegeCheck{}
-	r, err = pc.CheckTablePrivilege(ctx, db, tbl, mysql.SelectPriv)
+	pc = &privileges.UserPrivileges{}
+	r, err = pc.Check(ctx, db, tbl, mysql.SelectPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
-	r, err = pc.CheckTablePrivilege(ctx, db, tbl, mysql.UpdatePriv)
+	r, err = pc.Check(ctx, db, tbl, mysql.UpdatePriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
 
 	mustExec(c, se, `GRANT Update ON test.* TO  'test1'@'localhost';`)
-	pc = &privileges.PrivilegeCheck{}
-	r, err = pc.CheckTablePrivilege(ctx, db, tbl, mysql.UpdatePriv)
+	pc = &privileges.UserPrivileges{}
+	r, err = pc.Check(ctx, db, tbl, mysql.UpdatePriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
-	r, err = pc.CheckTablePrivilege(ctx, db, tbl, mysql.IndexPriv)
+	r, err = pc.Check(ctx, db, tbl, mysql.IndexPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsFalse)
 
 	mustExec(c, se, `GRANT Index ON test.test TO  'test1'@'localhost';`)
-	pc = &privileges.PrivilegeCheck{}
-	r, err = pc.CheckTablePrivilege(ctx, db, tbl, mysql.IndexPriv)
+	pc = &privileges.UserPrivileges{}
+	r, err = pc.Check(ctx, db, tbl, mysql.IndexPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
 }

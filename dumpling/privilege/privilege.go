@@ -27,18 +27,20 @@ func (k keyType) String() string {
 
 // Checker is the interface for check privileges.
 type Checker interface {
-	CheckDBPrivilege(ctx context.Context, db *model.DBInfo, privilege mysql.PrivilegeType) (bool, error)
-	CheckTablePrivilege(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error)
+	// Check checks privilege.
+	// If tbl is nil, only check global/db scope privileges.
+	// If tbl is not nil, check global/db/table scope privileges.
+	Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error)
 }
 
 const key keyType = 0
 
-// BindPrivilegeChecker binds domain to context.
+// BindPrivilegeChecker binds Checker to context.
 func BindPrivilegeChecker(ctx context.Context, pc Checker) {
 	ctx.SetValue(key, pc)
 }
 
-// GetPrivilegeChecker gets domain from context.
+// GetPrivilegeChecker gets Checker from context.
 func GetPrivilegeChecker(ctx context.Context) Checker {
 	v, ok := ctx.Value(key).(Checker)
 	if !ok {
