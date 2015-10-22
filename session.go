@@ -481,7 +481,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 		storeBootstrapped[store.UUID()] = true
 	}
 	// TODO: Add auth here
-	privChecker := &privileges.PrivilegeCheck{}
+	privChecker := &privileges.UserPrivileges{}
 	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
 }
