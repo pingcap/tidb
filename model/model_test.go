@@ -48,11 +48,12 @@ func (*testSuite) TestClone(c *C) {
 	index := &IndexInfo{
 		Name:  NewCIStr("key"),
 		Table: NewCIStr("t"),
-		Columns: []*IndexColumn{&IndexColumn{
-			Name:   NewCIStr("c"),
-			Offset: 0,
-			Length: 10,
-		}},
+		Columns: []*IndexColumn{
+			{
+				Name:   NewCIStr("c"),
+				Offset: 0,
+				Length: 10,
+			}},
 		Unique:  true,
 		Primary: true,
 	}

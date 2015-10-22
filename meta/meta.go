@@ -53,9 +53,13 @@ var (
 )
 
 var (
-	ErrDBExists       = errors.New("database already exists")
-	ErrDBNotExists    = errors.New("database doesn't exist")
-	ErrTableExists    = errors.New("table already exists")
+	// ErrDBExists is the error for db exists.
+	ErrDBExists = errors.New("database already exists")
+	// ErrDBNotExists is the error for db not exists
+	ErrDBNotExists = errors.New("database doesn't exist")
+	// ErrTableExists is the error for table exists
+	ErrTableExists = errors.New("table already exists")
+	// ErrTableNotExists is the error for table not exists
 	ErrTableNotExists = errors.New("table doesn't exist")
 )
 
@@ -69,6 +73,7 @@ type TMeta struct {
 	txn *structure.TStructure
 }
 
+// NewMeta creates a Meta with kv storage.
 func NewMeta(store kv.Storage) *Meta {
 	m := &Meta{}
 

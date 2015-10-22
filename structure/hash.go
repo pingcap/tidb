@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
+// HashPair is the pair for (field, value) in a hash.
 type HashPair struct {
 	Field []byte
 	Value []byte
