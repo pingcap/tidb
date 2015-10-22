@@ -87,7 +87,7 @@ var (
 )
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(src string) ([]stmt.Statement, error) {
+func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
 	log.Debug("compiling", src)
 	l := parser.NewLexer(src)
 	if parser.YYParse(l) != 0 {
@@ -112,7 +112,7 @@ func Compile(src string) ([]stmt.Statement, error) {
 
 // CompilePrepare compiles prepared statement, allows placeholder as expr.
 // The return values are compiled statement, parameter list and error.
-func CompilePrepare(src string) (stmt.Statement, []*expression.ParamMarker, error) {
+func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*expression.ParamMarker, error) {
 	log.Debug("compiling prepared", src)
 	l := parser.NewLexer(src)
 	l.SetPrepare()
@@ -205,7 +205,7 @@ func runPreparedStmt(ctx context.Context, ps *stmts.PreparedStmt) (rset.Recordse
 		return nil, nil
 	}
 	// compile SQLText
-	stmt, params, err := CompilePrepare(SQLText)
+	stmt, params, err := CompilePrepare(ctx, SQLText)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

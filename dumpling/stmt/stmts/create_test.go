@@ -21,7 +21,9 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func TestT(t *testing.T) {
@@ -45,6 +47,8 @@ type testStmtSuite struct {
 	createDBPrivTableSQL     string
 	createTablePrivTableSQL  string
 	createColumnPrivTableSQL string
+
+	ctx context.Context
 }
 
 func (s *testStmtSuite) SetUpTest(c *C) {
@@ -77,6 +81,8 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 	mustExec(c, s.testDB, s.createDBPrivTableSQL)
 	mustExec(c, s.testDB, s.createTablePrivTableSQL)
 	mustExec(c, s.testDB, s.createColumnPrivTableSQL)
+
+	s.ctx = mock.NewContext()
 }
 
 func (s *testStmtSuite) TearDownTest(c *C) {
@@ -85,7 +91,7 @@ func (s *testStmtSuite) TearDownTest(c *C) {
 }
 
 func (s *testStmtSuite) TestCreateTable(c *C) {
-	stmtList, err := tidb.Compile(s.createDBSql + " CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+	stmtList, err := tidb.Compile(s.ctx, s.createDBSql+" CREATE TABLE if not exists test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 	c.Assert(err, IsNil)
 
 	for _, stmt := range stmtList {
@@ -154,7 +160,7 @@ func (s *testStmtSuite) TestCreateTable(c *C) {
 
 func (s *testStmtSuite) TestCreateIndex(c *C) {
 	mustExec(c, s.testDB, s.createTableSql)
-	stmtList, err := tidb.Compile("CREATE index name_idx on test (name)")
+	stmtList, err := tidb.Compile(s.ctx, "CREATE index name_idx on test (name)")
 	c.Assert(err, IsNil)
 
 	str := stmtList[0].OriginText()

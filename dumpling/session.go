@@ -238,7 +238,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 		// TODO: Maybe we should remove this restriction latter.
 		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
 	}
-	statements, err := Compile(sql)
+	statements, err := Compile(ctx, sql)
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
@@ -259,7 +259,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
-	statements, err := Compile(sql)
+	statements, err := Compile(s, sql)
 	if err != nil {
 		log.Errorf("Syntax error: %s", sql)
 		log.Errorf("Error occurs at %s.", err)
