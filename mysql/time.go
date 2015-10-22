@@ -310,14 +310,41 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
 }
 
+func parseDateFormat(format string) []string {
+	format = strings.TrimSpace(format)
+
+	start := 0
+	seps := []string{}
+	for i := 0; i < len(format); i++ {
+		// Date fromat must start and end with number.
+		if i == 0 || i == len(format)-1 {
+			if !unicode.IsNumber(rune(format[i])) {
+				return nil
+			}
+
+			continue
+		}
+
+		// Sep can be only one none-number char.
+		if !unicode.IsNumber(rune(format[i])) {
+			if !unicode.IsNumber(rune(format[i-1])) {
+				return nil
+			}
+
+			seps = append(seps, format[start:i])
+			start = i + 1
+		}
+
+	}
+
+	seps = append(seps, format[start:])
+	return seps
+}
+
 func parseDatetime(str string, fsp int) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
-	seps := strings.FieldsFunc(str, func(c rune) bool {
-		return !unicode.IsNumber(c)
-	})
-
 	var (
 		year    int
 		month   int
@@ -330,6 +357,9 @@ func parseDatetime(str string, fsp int) (Time, error) {
 
 		err error
 	)
+
+	seps := parseDateFormat(str)
+
 	switch len(seps) {
 	case 1:
 		// No delimiter.
