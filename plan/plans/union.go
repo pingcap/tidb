@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv/memkv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
@@ -152,7 +153,9 @@ func (p *UnionPlan) fetchSrc(ctx context.Context, i int, t memkv.Temp) error {
 			if srcRf.Flen > rf.Col.Flen {
 				rf.Col.Flen = srcRf.Col.Flen
 			}
-			if rf.Col.FieldType.Tp > 0 {
+			// For select nul union select "abc", we should not convert "abc" to nil.
+			// And the result field type should be VARCHAR.
+			if rf.Col.FieldType.Tp > 0 && rf.Col.FieldType.Tp != mysql.TypeNull {
 				row.Data[i], err = types.Convert(row.Data[i], &rf.Col.FieldType)
 			} else {
 				// First select result doesn't contain enough type information, e,g, select null union select 1.

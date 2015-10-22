@@ -111,3 +111,28 @@ func (ft *FieldType) String() string {
 
 	return strings.Join(strs, " ")
 }
+
+// DataItem is wrapped data with type info.
+type DataItem struct {
+	Type *FieldType
+	Data interface{}
+}
+
+// String implements Stringer interface.
+func (di *DataItem) String() string {
+	return fmt.Sprintf("%s", di.Data)
+}
+
+// RawData returns the raw data for DataItem.
+func RawData(d interface{}) interface{} {
+	v, ok := d.(*DataItem)
+	if ok {
+		return v.Data
+	}
+	return d
+}
+
+// IsNil checks if the raw data is nil.
+func IsNil(d interface{}) bool {
+	return RawData(d) == nil
+}

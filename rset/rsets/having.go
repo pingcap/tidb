@@ -66,7 +66,7 @@ func (v *havingVisitor) visitIdentInAggregate(i *expression.Ident) (expression.E
 	// then in select list, and outer query finally.
 
 	// find this identifier in FROM.
-	idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields, field.DefaultFieldFlag)
+	idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields)
 	if len(idx) > 0 {
 		i.ReferScope = expression.IdentReferFromTable
 		i.ReferIndex = idx[0]
@@ -115,8 +115,7 @@ func (v *havingVisitor) checkIdentInGroupBy(i *expression.Ident) (*expression.Id
 
 		// having is unqualified name, e.g, select * from t1, t2 group by t1.c having c.
 		// both t1 and t2 have column c, we must check ambiguous here.
-
-		idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields, field.DefaultFieldFlag)
+		idx := field.GetResultFieldIndex(i.L, v.selectList.FromFields)
 		if len(idx) > 1 {
 			return i, false, errors.Errorf("Column '%s' in having clause is ambiguous", i)
 		}

@@ -225,7 +225,7 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 		// TODO: use fromIdentVisitor to cleanup.
 		var result *field.ResultField
 		for _, name := range names {
-			idx := field.GetResultFieldIndex(name, srcFields, field.DefaultFieldFlag)
+			idx := field.GetResultFieldIndex(name, srcFields)
 			if len(idx) > 1 {
 				return nil, errors.Errorf("ambiguous field %s", name)
 			}
@@ -238,7 +238,7 @@ func ResolveSelectList(selectFields []*field.Field, srcFields []*field.ResultFie
 
 		if _, ok := v.Expr.(*expression.Ident); ok {
 			// Field is ident.
-			if result, err = field.CloneFieldByName(name, srcFields, field.DefaultFieldFlag); err != nil {
+			if result, err = field.CloneFieldByName(name, srcFields); err != nil {
 				return nil, errors.Trace(err)
 			}
 
