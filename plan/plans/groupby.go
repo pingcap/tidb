@@ -179,7 +179,7 @@ func (r *GroupByDefaultPlan) evalAggFields(ctx context.Context, out []interface{
 		}
 		for _, agg := range aggs {
 			if _, err := agg.Eval(ctx, m); err != nil {
-				return err
+				return errors.Trace(err)
 			}
 		}
 	}
@@ -195,7 +195,7 @@ func (r *GroupByDefaultPlan) evalAggDone(ctx context.Context, out []interface{},
 	// Eval aggregate field results done in ctx
 	for i := range r.AggFields {
 		if out[i], err = r.Fields[i].Expr.Eval(ctx, m); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
