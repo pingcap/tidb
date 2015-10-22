@@ -310,7 +310,7 @@ func (t Time) RoundFrac(fsp int) (Time, error) {
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
 }
 
-func parseDateFromat(format string) []string {
+func parseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
@@ -358,7 +358,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 		err error
 	)
 
-	seps := parseDateFromat(str)
+	seps := parseDateFormat(str)
 
 	switch len(seps) {
 	case 1:
