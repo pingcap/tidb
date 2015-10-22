@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -68,7 +70,6 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 		if scope == expression.IdentReferFromTable {
 			return srcRow.FromData[index], nil
 		}
-
 		return getIdentValueFromOuterQuery(ctx, name)
 	}
 	row = &plan.Row{
@@ -77,10 +78,17 @@ func (r *SelectFieldsDefaultPlan) Next(ctx context.Context) (row *plan.Row, err 
 		FromData: srcRow.Data,
 	}
 	for i, fld := range r.Fields {
-		var err error
-		if row.Data[i], err = fld.Expr.Eval(ctx, r.evalArgs); err != nil {
+		d, err := fld.Expr.Eval(ctx, r.evalArgs)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		di, ok := d.(*types.DataItem)
+		if ok {
+			if mysql.IsUninitializedType(r.ResultFields[i].Col.Tp) {
+				r.ResultFields[i].Col.FieldType = *di.Type
+			}
+		}
+		row.Data[i] = d
 	}
 	updateRowStack(ctx, row.Data, row.FromData)
 	return

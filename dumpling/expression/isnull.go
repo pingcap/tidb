@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -63,7 +64,7 @@ func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (v
 		return
 	}
 
-	return (val == nil) != is.Not, nil
+	return types.IsNil(val) != is.Not, nil
 }
 
 // Accept implements Expression Accept interface.
