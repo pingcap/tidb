@@ -487,8 +487,8 @@ func (m *TMeta) SetDDLOwner(o *model.Owner) error {
 	return m.txn.Set(mDDLOwnerKey, b)
 }
 
-// PushDDLJob adds a DDL job to the list.
-func (m *TMeta) PushDDLJob(job *model.Job) error {
+// EnQueueDDLJob adds a DDL job to the list.
+func (m *TMeta) EnQueueDDLJob(job *model.Job) error {
 	b, err := json.Marshal(job)
 	if err != nil {
 		return errors.Trace(err)
@@ -496,8 +496,8 @@ func (m *TMeta) PushDDLJob(job *model.Job) error {
 	return m.txn.RPush(mDDLJobListKey, b)
 }
 
-// PopDDLJob pops a DDL job in the list.
-func (m *TMeta) PopDDLJob() (*model.Job, error) {
+// DeQueueDDLJob pops a DDL job in the list.
+func (m *TMeta) DeQueueDDLJob() (*model.Job, error) {
 	value, err := m.txn.LPop(mDDLJobListKey)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)

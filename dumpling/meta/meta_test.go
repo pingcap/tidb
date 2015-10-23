@@ -191,7 +191,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(owner, DeepEquals, ov)
 
 	job := &model.Job{ID: 1}
-	err = t.PushDDLJob(job)
+	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
 	n, err := t.DDLJobLength()
 	c.Assert(err, IsNil)
@@ -209,7 +209,7 @@ func (s *testSuite) TestDDL(c *C) {
 	err = t.UpdateDDLJob(0, job)
 	c.Assert(err, IsNil)
 
-	v, err = t.PopDDLJob()
+	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
