@@ -90,7 +90,7 @@ const (
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
 	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.global_variables(
-		VARIABLE_NAME  VARCHAR(64) Not Null,
+		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 )
 
