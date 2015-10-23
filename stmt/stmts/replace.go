@@ -14,13 +14,19 @@
 package stmts
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // ReplaceIntoStmt is a statement works exactly like insert, except that if
@@ -32,7 +38,7 @@ type ReplaceIntoStmt struct {
 	Lists      [][]expression.Expression
 	Sel        plan.Planner
 	TableIdent table.Ident
-	SetList    []*expression.Assignment
+	Setlist    []*expression.Assignment
 	Priority   int
 
 	Text string
@@ -61,7 +67,7 @@ func (s *ReplaceIntoStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	stmt := &InsertIntoStmt{ColNames: s.ColNames, Lists: s.Lists, Priority: s.Priority,
-		Sel: s.Sel, Setlist: s.SetList, TableIdent: s.TableIdent, Text: s.Text}
+		Sel: s.Sel, Setlist: s.Setlist, TableIdent: s.TableIdent, Text: s.Text}
 	t, err := getTable(ctx, stmt.TableIdent)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -76,7 +82,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		return stmt.execSelect(t, cols, ctx)
 	}
 	// Process `replace ... set x=y ...`
-	if err = stmt.getSetList(); err != nil {
+	if err = stmt.getSetlist(); err != nil {
 		return nil, errors.Trace(err)
 	}
 	m, err := stmt.getDefaultValues(ctx, t.Cols())
@@ -89,11 +95,101 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		if err = stmt.checkValueCount(replaceValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		// TODO: remove that has the same value as a new row for a PRIMARY KEY or a UNIQUE index.
-		if _, _, err = stmt.addRecord(ctx, t, cols, list, m); err != nil {
+		row, err := stmt.getRow(ctx, t, cols, list, m)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if err = removeExistRow(ctx, t, row); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if _, err = t.AddRecord(ctx, row); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
 	return nil, nil
+}
+
+func removeExistRow(ctx context.Context, t table.Table, replaceRow []interface{}) error {
+	indices := make([]*column.IndexedCol, 0, len(t.Indices()))
+	for _, idx := range t.Indices() {
+		// TODO: handles the idx is composite primary key the affected rows.
+		if idx.Unique || idx.Primary && len(idx.Columns) >= 1 {
+			indices = append(indices, idx)
+		}
+	}
+	if len(indices) == 0 {
+		return nil
+	}
+
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	it, err := txn.Seek([]byte(t.FirstKey()))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	prefix := t.KeyPrefix()
+	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
+		if err0 != nil {
+			return errors.Trace(err0)
+		}
+		row, err0 := t.Row(ctx, handle)
+		if err0 != nil {
+			return errors.Trace(err0)
+		}
+		for _, idx := range indices {
+			v, err1 := compareIndex(t.Cols(), idx, row, replaceRow)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			if v != 0 {
+				continue
+			}
+			if err = removeRow(ctx, t, handle, row); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		rk := t.RecordKey(handle, nil)
+		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
+			return errors.Trace(err0)
+		}
+	}
+
+	return nil
+}
+
+// compareIndex returns an integer comparing the idx old with new.
+// old > new -> 1
+// old = new -> 0
+// old < new -> -1
+func compareIndex(cols []*column.Col, idx *column.IndexedCol, row, replaceRow []interface{}) (v int, err error) {
+	nulls := 0
+	for _, idxCol := range idx.Columns {
+		col := column.FindCol(cols, idxCol.Name.L)
+		if col == nil {
+			return 0, errors.Errorf("No such column: %v", idx)
+		}
+		v, err = types.Compare(row[col.Offset], replaceRow[col.Offset])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if v != 0 {
+			break
+		}
+		if row[col.Offset] == nil {
+			nulls++
+		}
+	}
+	if nulls == len(idx.Columns) {
+		v = -1
+	}
+
+	return v, nil
 }
