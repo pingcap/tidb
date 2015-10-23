@@ -169,3 +169,57 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n1, Equals, n+1)
 }
+
+func (s *testSuite) TestDDL(c *C) {
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory")
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	m := meta.NewMeta(store)
+
+	t, err := m.Begin()
+	c.Assert(err, IsNil)
+
+	defer t.Rollback()
+
+	owner := &model.Owner{OwnerID: "1"}
+	err = t.SetDDLOwner(owner)
+	c.Assert(err, IsNil)
+	ov, err := t.GetDDLOwner()
+	c.Assert(err, IsNil)
+	c.Assert(owner, DeepEquals, ov)
+
+	job := &model.Job{ID: 1}
+	err = t.PushDDLJob(job)
+	c.Assert(err, IsNil)
+	n, err := t.DDLJobLength()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	v, err := t.GetDDLJob(0)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, job)
+
+	v, err = t.GetDDLJob(1)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+
+	job.ID = 2
+	err = t.UpdateDDLJob(0, job)
+	c.Assert(err, IsNil)
+
+	v, err = t.PopDDLJob()
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, job)
+
+	err = t.AddHistoryDDLJob(job)
+	c.Assert(err, IsNil)
+
+	v, err = t.GetHistoryDDLJob(2)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, job)
+
+	err = t.Commit()
+	c.Assert(err, IsNil)
+}
