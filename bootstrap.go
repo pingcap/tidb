@@ -20,9 +20,11 @@ package tidb
 import (
 	"fmt"
 	"runtime/debug"
+	"strings"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
 )
@@ -83,6 +85,13 @@ const (
 		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+	// CreateGloablVariablesTable is the SQL statement creates global variable table in system db.
+	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
+	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
+	// Maybe we will put it back to INFORMATION_SCHEMA.
+	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.global_variables(
+		VARIABLE_NAME  VARCHAR(64) Not Null,
+		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 )
 
 // Bootstrap initiates system DB for a store.
@@ -101,6 +110,7 @@ func bootstrap(s Session) {
 	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
 	initUserTable(s)
 	initPrivTables(s)
+	initGlobalVariables(s)
 }
 
 func initUserTable(s Session) {
@@ -116,6 +126,18 @@ func initPrivTables(s Session) {
 	mustExecute(s, CreateDBPrivTable)
 	mustExecute(s, CreateTablePrivTable)
 	mustExecute(s, CreateColumnPrivTable)
+}
+
+// Initiates global system variables table.
+func initGlobalVariables(s Session) {
+	mustExecute(s, CreateGloablVariablesTable)
+	values := make([]string, 0, len(variable.SysVars))
+	for k, v := range variable.SysVars {
+		value := fmt.Sprintf(`("%s", "%s")`, k, v.Value)
+		values = append(values, value)
+	}
+	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable, strings.Join(values, ", "))
+	mustExecute(s, sql)
 }
 
 func mustExecute(s Session, sql string) {
