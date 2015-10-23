@@ -102,6 +102,16 @@ func (s *testStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("2"))
 
+	err = tx.LSet(key, 1, []byte("4"))
+	c.Assert(err, IsNil)
+
+	value, err = tx.LIndex(key, 1)
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("4"))
+
+	err = tx.LSet(key, 1, []byte("2"))
+	c.Assert(err, IsNil)
+
 	value, err = tx.LIndex(key, -1)
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("3"))

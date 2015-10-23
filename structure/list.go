@@ -155,6 +155,22 @@ func (t *TStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	return nil, nil
 }
 
+// LSet updates an element in the list by its index.
+func (t *TStructure) LSet(key []byte, index int64, value []byte) error {
+	metaKey := t.encodeListMetaKey(key)
+	m, err := t.loadListMeta(metaKey)
+	if err != nil || m.IsEmpty() {
+		return errors.Trace(err)
+	}
+
+	index = adjustIndex(index, m.LIndex, m.RIndex)
+
+	if index >= m.LIndex && index < m.RIndex {
+		return t.txn.Set(t.encodeListDataKey(key, index), value)
+	}
+	return errors.Errorf("invalid index %d", index)
+}
+
 // LClear removes the list of the key.
 func (t *TStructure) LClear(key []byte) error {
 	metaKey := t.encodeListMetaKey(key)
