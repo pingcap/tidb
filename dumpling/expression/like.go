@@ -107,6 +107,8 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 			spattern = v
 		case []byte:
 			spattern = string(v)
+		case *types.DataItem:
+			spattern = v.Data.(string)
 		default:
 			return nil, errors.Errorf("Pattern should be string or []byte in LIKE: %v (Value of type %T)", pattern, pattern)
 		}
