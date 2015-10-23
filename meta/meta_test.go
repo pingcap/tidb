@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
@@ -64,30 +65,37 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	err = t.CreateDatabase(1, []byte("a"))
+	dbInfo := &model.DBInfo{
+		ID:   1,
+		Name: model.NewCIStr("a"),
+	}
+	err = t.CreateDatabase(dbInfo)
 	c.Assert(err, IsNil)
 
-	err = t.CreateDatabase(1, []byte("a"))
+	err = t.CreateDatabase(dbInfo)
 	c.Assert(err, NotNil)
 
 	v, err := t.GetDatabase(1)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("a"))
+	c.Assert(v, DeepEquals, dbInfo)
 
-	err = t.UpdateDatabase(1, []byte("aa"))
+	dbInfo.Name = model.NewCIStr("aa")
+	err = t.UpdateDatabase(dbInfo)
 	c.Assert(err, IsNil)
 
 	v, err = t.GetDatabase(1)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("aa"))
+	c.Assert(v, DeepEquals, dbInfo)
 
 	dbs, err := t.ListDatabases()
 	c.Assert(err, IsNil)
-	c.Assert(dbs, DeepEquals, map[int64][]byte{
-		1: []byte("aa"),
-	})
+	c.Assert(dbs, DeepEquals, []*model.DBInfo{dbInfo})
 
-	err = t.CreateTable(1, 1, []byte("b"))
+	tbInfo := &model.TableInfo{
+		ID:   1,
+		Name: model.NewCIStr("t"),
+	}
+	err = t.CreateTable(1, tbInfo)
 	c.Assert(err, IsNil)
 
 	n, err = t.GenAutoTableID(1, 1, 10)
@@ -98,38 +106,38 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(10))
 
-	err = t.CreateTable(1, 1, []byte("b"))
+	err = t.CreateTable(1, tbInfo)
 	c.Assert(err, NotNil)
 
-	err = t.UpdateTable(1, 1, []byte("c"))
+	tbInfo.Name = model.NewCIStr("tt")
+	err = t.UpdateTable(1, tbInfo)
 	c.Assert(err, IsNil)
 
-	v, err = t.GetTable(1, 1)
+	table, err := t.GetTable(1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("c"))
+	c.Assert(table, DeepEquals, tbInfo)
 
-	v, err = t.GetTable(1, 2)
+	table, err = t.GetTable(1, 2)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(table, IsNil)
 
-	err = t.CreateTable(1, 2, []byte("bb"))
+	tbInfo2 := &model.TableInfo{
+		ID:   2,
+		Name: model.NewCIStr("bb"),
+	}
+	err = t.CreateTable(1, tbInfo2)
 	c.Assert(err, IsNil)
 
 	tables, err := t.ListTables(1)
 	c.Assert(err, IsNil)
-	c.Assert(tables, DeepEquals, map[int64][]byte{
-		1: []byte("c"),
-		2: []byte("bb"),
-	})
+	c.Assert(tables, DeepEquals, []*model.TableInfo{tbInfo, tbInfo2})
 
 	err = t.DropTable(1, 2)
 	c.Assert(err, IsNil)
 
 	tables, err = t.ListTables(1)
 	c.Assert(err, IsNil)
-	c.Assert(tables, DeepEquals, map[int64][]byte{
-		1: []byte("c"),
-	})
+	c.Assert(tables, DeepEquals, []*model.TableInfo{tbInfo})
 
 	err = t.DropDatabase(1)
 	c.Assert(err, IsNil)

@@ -15,6 +15,7 @@ package meta
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/structure"
 )
 
@@ -242,39 +244,54 @@ func (m *TMeta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	return nil
 }
 
-// CreateDatabase creates a database with id and some information.
-func (m *TMeta) CreateDatabase(dbID int64, data []byte) error {
-	dbKey := m.dbKey(dbID)
+// CreateDatabase creates a database with db info.
+func (m *TMeta) CreateDatabase(dbInfo *model.DBInfo) error {
+	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBNotExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(mDBs, dbKey, data)
-}
-
-// UpdateDatabase updates a database with id and some information.
-func (m *TMeta) UpdateDatabase(dbID int64, data []byte) error {
-	dbKey := m.dbKey(dbID)
-
-	if err := m.checkDBExists(dbKey); err != nil {
+	data, err := json.Marshal(dbInfo)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
 	return m.txn.HSet(mDBs, dbKey, data)
 }
 
-// CreateTable creates a table with tableID in database.
-func (m *TMeta) CreateTable(dbID int64, tableID int64, data []byte) error {
+// UpdateDatabase updates a database with db info.
+func (m *TMeta) UpdateDatabase(dbInfo *model.DBInfo) error {
+	dbKey := m.dbKey(dbInfo.ID)
+
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(dbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return m.txn.HSet(mDBs, dbKey, data)
+}
+
+// CreateTable creates a table with tableInfo in database.
+func (m *TMeta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	tableKey := m.tableKey(tableID)
+	tableKey := m.tableKey(tableInfo.ID)
 	// then check table exists or not
 	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(tableInfo)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -323,28 +340,33 @@ func (m *TMeta) DropTable(dbID int64, tableID int64) error {
 	return nil
 }
 
-// UpdateTable updates the table with tableID in database.
-func (m *TMeta) UpdateTable(dbID int64, tableID int64, data []byte) error {
+// UpdateTable updates the table with table info.
+func (m *TMeta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	tableKey := m.tableKey(tableID)
+	tableKey := m.tableKey(tableInfo.ID)
 
 	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := m.txn.HSet(dbKey, tableKey, data)
+	data, err := json.Marshal(tableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = m.txn.HSet(dbKey, tableKey, data)
 
 	return errors.Trace(err)
 }
 
-// ListTables shows all table IDs in database.
-func (m *TMeta) ListTables(dbID int64) (map[int64][]byte, error) {
+// ListTables shows all tables in database.
+func (m *TMeta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -355,7 +377,7 @@ func (m *TMeta) ListTables(dbID int64) (map[int64][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	tables := make(map[int64][]byte, len(res)/2)
+	tables := make([]*model.TableInfo, 0, len(res)/2)
 	for _, r := range res {
 		// only handle table meta
 		tableKey := string(r.Field)
@@ -363,45 +385,52 @@ func (m *TMeta) ListTables(dbID int64) (map[int64][]byte, error) {
 			continue
 		}
 
-		var id int64
-		id, err = m.parseTableID(tableKey)
+		var tbInfo model.TableInfo
+		err = json.Unmarshal(r.Value, &tbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		tables[id] = r.Value
+		tables = append(tables, &tbInfo)
 	}
 
 	return tables, nil
 }
 
 // ListDatabases shows all databases.
-func (m *TMeta) ListDatabases() (map[int64][]byte, error) {
+func (m *TMeta) ListDatabases() ([]*model.DBInfo, error) {
 	res, err := m.txn.HGetAll(mDBs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	dbs := make(map[int64][]byte, len(res))
+	dbs := make([]*model.DBInfo, 0, len(res))
 	for _, r := range res {
-		var id int64
-		id, err = m.parseDatabaseID(string(r.Field))
+		var dbInfo model.DBInfo
+		err = json.Unmarshal(r.Value, &dbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		dbs[id] = r.Value
+		dbs = append(dbs, &dbInfo)
 	}
 	return dbs, nil
 }
 
 // GetDatabase gets the database value with ID.
-func (m *TMeta) GetDatabase(dbID int64) ([]byte, error) {
+func (m *TMeta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbKey := m.dbKey(dbID)
-	return m.txn.HGet(mDBs, dbKey)
+	value, err := m.txn.HGet(mDBs, dbKey)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	var dbInfo model.DBInfo
+	err = json.Unmarshal(value, &dbInfo)
+	return &dbInfo, errors.Trace(err)
 }
 
 // GetTable gets the table value in database with tableID.
-func (m *TMeta) GetTable(dbID int64, tableID int64) ([]byte, error) {
+func (m *TMeta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -410,7 +439,14 @@ func (m *TMeta) GetTable(dbID int64, tableID int64) ([]byte, error) {
 
 	tableKey := m.tableKey(tableID)
 
-	return m.txn.HGet(dbKey, tableKey)
+	value, err := m.txn.HGet(dbKey, tableKey)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	var tableInfo model.TableInfo
+	err = json.Unmarshal(value, &tableInfo)
+	return &tableInfo, errors.Trace(err)
 }
 
 // DDL structure

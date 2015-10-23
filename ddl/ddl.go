@@ -18,7 +18,6 @@
 package ddl
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -110,15 +109,10 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		var b []byte
-		b, err = json.Marshal(info)
-		if err != nil {
-			return errors.Trace(err)
-		}
 
-		err = txn.CreateDatabase(info.ID, b)
+		err = txn.CreateDatabase(info)
 
-		log.Warnf("save schema %s", b)
+		log.Warnf("save schema %s", info)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -412,13 +406,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 			return errors.Trace(err)
 		}
 
-		var b []byte
-		b, err = json.Marshal(tbInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = txn.CreateTable(schema.ID, tbInfo.ID, b)
+		err = txn.CreateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 
@@ -519,7 +507,7 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 			return errors.Trace(err)
 		}
 
-		err = d.updateTableInfo(schema, tb.Meta(), txn)
+		err = txn.UpdateTable(schema.ID, tb.Meta())
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -678,7 +666,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 			return errors.Trace(err)
 		}
 
-		err = d.updateTableInfo(schema, tbInfo, txn)
+		err = txn.UpdateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -747,13 +735,4 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 func (d *ddl) DropIndex(ctx context.Context, schema, tableName, indexNmae model.CIStr) error {
 	// TODO: implement
 	return nil
-}
-
-func (d *ddl) updateTableInfo(schema *model.DBInfo, tbInfo *model.TableInfo, txn *meta.TMeta) error {
-	b, err := json.Marshal(tbInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return txn.UpdateTable(schema.ID, tbInfo.ID, b)
 }

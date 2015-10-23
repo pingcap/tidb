@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
@@ -40,9 +41,9 @@ func (*testSuite) TestT(c *C) {
 
 	m := meta.NewMeta(store)
 	err = m.RunInNewTxn(false, func(txn *meta.TMeta) error {
-		err = txn.CreateDatabase(1, []byte("a"))
+		err = txn.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
-		err = txn.CreateTable(1, 1, []byte("b"))
+		err = txn.CreateTable(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		c.Assert(err, IsNil)
 		return nil
 	})

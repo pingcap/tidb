@@ -14,7 +14,6 @@
 package domain
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/juju/errors"
@@ -23,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -48,36 +46,17 @@ func (do *Domain) loadInfoSchema(txn *meta.TMeta) (err error) {
 		return nil
 	}
 
-	res, err := txn.ListDatabases()
+	schemas, err := txn.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	schemas := make([]*model.DBInfo, 0, len(res))
-	for _, value := range res {
-		di := &model.DBInfo{}
-		err = json.Unmarshal(value, di)
-		if err != nil {
-			log.Fatal(err)
-		}
-		schemas = append(schemas, di)
-	}
-
 	for _, di := range schemas {
-		res, err = txn.ListTables(di.ID)
+		tables, err := txn.ListTables(di.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		tables := make([]*model.TableInfo, 0, len(res))
-		for _, value := range res {
-			ti := &model.TableInfo{}
-			err = json.Unmarshal(value, ti)
-			if err != nil {
-				log.Fatal(err)
-			}
-			tables = append(tables, ti)
-		}
 		di.Tables = tables
 	}
 
