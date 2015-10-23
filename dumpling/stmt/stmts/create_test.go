@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -83,6 +84,7 @@ func (s *testStmtSuite) SetUpTest(c *C) {
 	mustExec(c, s.testDB, s.createColumnPrivTableSQL)
 
 	s.ctx = mock.NewContext()
+	variable.BindSessionVars(s.ctx)
 }
 
 func (s *testStmtSuite) TearDownTest(c *C) {
