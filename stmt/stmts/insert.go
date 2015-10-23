@@ -200,7 +200,7 @@ func (s *InsertIntoStmt) getDefaultValues(ctx context.Context, cols []*column.Co
 	return m, nil
 }
 
-func (s *InsertIntoStmt) getSetList() error {
+func (s *InsertIntoStmt) getSetlist() error {
 	if len(s.Setlist) > 0 {
 		if len(s.Lists) > 0 {
 			return errors.Errorf("INSERT INTO %s: set type should not use values", s.TableIdent)
@@ -233,7 +233,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	// Process `insert ... set x=y...`
-	if err = s.getSetList(); err != nil {
+	if err = s.getSetlist(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
