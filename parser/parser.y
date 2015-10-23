@@ -1838,6 +1838,16 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		l := yylex.(*lexer)
+		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		d := &types.DataItem{
+			Type: tp,
+			Data: $1.(string),
+		}
+		$$ = d
+	}
 |	hexLit
 |	bitLit
 

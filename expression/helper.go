@@ -294,6 +294,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 			}
 		}
 	case Value:
+		x.Val = types.RawData(x.Val)
 		switch xval := x.Val.(type) {
 		case string:
 			value, err = mysql.ParseTime(xval, tp, fsp)
