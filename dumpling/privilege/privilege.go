@@ -42,9 +42,8 @@ func BindPrivilegeChecker(ctx context.Context, pc Checker) {
 
 // GetPrivilegeChecker gets Checker from context.
 func GetPrivilegeChecker(ctx context.Context) Checker {
-	v, ok := ctx.Value(key).(Checker)
-	if !ok {
-		return nil
+	if v, ok := ctx.Value(key).(Checker); ok {
+		return v
 	}
-	return v
+	return nil
 }
