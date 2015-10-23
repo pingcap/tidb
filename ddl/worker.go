@@ -29,8 +29,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	// alloc a global job id.
-	// add this job to job queue.
+	// Create a new job and queue it.
 	err := d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
 		var err error
 		job.ID, err = m.GenGlobalID()
@@ -50,7 +49,6 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	// notice worker that we push a new job and wait the job done.
 	syncNotify(d.jobCh)
 
-	// check
 	jobID := job.ID
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
