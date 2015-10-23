@@ -149,12 +149,12 @@ func (s *testSuite) TestMeta(c *C) {
 	err = t.Commit()
 	c.Assert(err, IsNil)
 
-	fn := func(txn *meta.TMeta) error {
-		n, err = txn.GenSchemaVersion()
+	fn := func(m *meta.TMeta) error {
+		n, err = m.GenSchemaVersion()
 		c.Assert(err, IsNil)
 
 		var n1 int64
-		n1, err = txn.GetSchemaVersion()
+		n1, err = m.GetSchemaVersion()
 		c.Assert(err, IsNil)
 		c.Assert(n, Equals, n1)
 		return nil
