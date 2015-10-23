@@ -95,9 +95,10 @@ var (
 // have their own collation, which has a higher collation precedence.
 // See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func getCtxCharsetInfo(ctx context.Context) (string, string) {
-	charset := variable.GetSysVar("character_set_connection")
-	collation := variable.GetSysVar("collation_connection")
-	return charset.Value, collation.Value
+	sessionVars := variable.GetSessionVars(ctx)
+	charset := sessionVars.Systems["character_set_connection"]
+	collation := sessionVars.Systems["collation_connection"]
+	return charset, collation
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
