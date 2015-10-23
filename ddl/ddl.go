@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	qerror "github.com/pingcap/tidb/util/errors"
+	"github.com/twinj/uuid"
 )
 
 // Pre-defined errors.
@@ -64,8 +65,11 @@ type ddl struct {
 	onDDLChange OnDDLChange
 	meta        *meta.Meta
 	// schema lease seconds.
-	lease int
-	uuid  string
+	lease     int
+	uuid      string
+	jobCh     chan struct{}
+	jobDoneCh chan struct{}
+	owner     *Owner
 }
 
 // OnDDLChange is used as hook function when schema changed.
@@ -78,8 +82,11 @@ func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 		onDDLChange: hook,
 		meta:        meta.NewMeta(store),
 		lease:       lease,
-		uuid:uuid.NewV4().Size(),
+		uuid:        uuid.NewV4().String(),
+		jobCh:       make(chan struct{}, 1),
+		jobDoneCh:   make(chan struct{}, 1),
 	}
+	go d.onWorker()
 	return d
 }
 
