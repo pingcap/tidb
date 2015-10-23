@@ -63,17 +63,22 @@ type ddl struct {
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
 	meta        *meta.Meta
+	// schema lease seconds.
+	lease int
+	uuid  string
 }
 
 // OnDDLChange is used as hook function when schema changed.
 type OnDDLChange func(err error) error
 
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
+func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease int) DDL {
 	d := &ddl{
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
 		meta:        meta.NewMeta(store),
+		lease:       lease,
+		uuid:uuid.NewV4().Size(),
 	}
 	return d
 }

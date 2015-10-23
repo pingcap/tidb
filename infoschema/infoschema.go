@@ -241,5 +241,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 
 // Get gets information schema from Handle.
 func (h *Handle) Get() InfoSchema {
-	return h.value.Load().(InfoSchema)
+	v := h.value.Load()
+	schema, _ := v.(InfoSchema)
+	return schema
 }

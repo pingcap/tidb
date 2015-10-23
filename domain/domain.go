@@ -15,6 +15,7 @@ package domain
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -32,9 +33,21 @@ type Domain struct {
 	infoHandle *infoschema.Handle
 	ddl        ddl.DDL
 	meta       *meta.Meta
+	lease      int
 }
 
 func (do *Domain) loadInfoSchema(txn *meta.TMeta) (err error) {
+	schemaMetaVersion, err := txn.GetSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	info := do.infoHandle.Get()
+	if info != nil && schemaMetaVersion > 0 && schemaMetaVersion == info.SchemaMetaVersion() {
+		log.Debugf("schema version is still %d, no need reload", schemaMetaVersion)
+		return nil
+	}
+
 	res, err := txn.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
@@ -68,10 +81,6 @@ func (do *Domain) loadInfoSchema(txn *meta.TMeta) (err error) {
 		di.Tables = tables
 	}
 
-	schemaMetaVersion, err := txn.GetSchemaVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
 	log.Infof("loadInfoSchema %d", schemaMetaVersion)
 	do.infoHandle.Set(schemas, schemaMetaVersion)
 	return
@@ -106,15 +115,40 @@ func (do *Domain) reload() error {
 	return errors.Trace(err)
 }
 
+func (do *Domain) loadSchemaInLoop() {
+	if do.lease <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(time.Duration(do.lease) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := do.reload(); err != nil {
+				log.Fatalf("reload schema err %v", err)
+			}
+		}
+	}
+}
+
 // NewDomain creates a new domain.
-func NewDomain(store kv.Storage) (d *Domain, err error) {
+func NewDomain(store kv.Storage, lease int) (d *Domain, err error) {
 	d = &Domain{
 		store: store,
 		meta:  meta.NewMeta(store),
+		lease: lease,
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, d.onDDLChange)
+	d.ddl = ddl.NewDDL(d.store, d.infoHandle, d.onDDLChange, lease)
 	err = d.reload()
-	return d, errors.Trace(err)
+	if err != nil {
+		log.Fatalf("load schema err %v", err)
+	}
+
+	go d.loadSchemaInLoop()
+
+	return d, nil
 }

@@ -19,6 +19,23 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// SchemaState is the state for schema elements.
+type SchemaState byte
+
+const (
+	// NoneState means this schema element is absent and can't be used.
+	NoneState SchemaState = iota
+	// DeleteOnlyState means we can only delete items for this schema element.
+	DeleteOnlyState
+	// WriteOnlyState means we can use any write operation on this schema element,
+	// but outer can't read the changed data.
+	WriteOnlyState
+	// ReOrgnizationState meas we are re-orgnizating whole data for this shema changed.
+	ReOrgnizationState
+	// PublicState means this schema element is ok for all write and read operations.
+	PublicState
+)
+
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
 	ID              int64       `json:"id"`
@@ -26,6 +43,7 @@ type ColumnInfo struct {
 	Offset          int         `json:"offset"`
 	DefaultValue    interface{} `json:"default"`
 	types.FieldType `json:"type"`
+	State           SchemaState `json:"state"`
 }
 
 // Clone clones ColumnInfo
@@ -43,6 +61,7 @@ type TableInfo struct {
 	// Columns are listed in the order in which they appear in the schema.
 	Columns []*ColumnInfo `json:"cols"`
 	Indices []*IndexInfo  `json:"index_info"`
+	State   SchemaState   `json:"state"`
 }
 
 // Clone clones TableInfo
@@ -83,6 +102,7 @@ type IndexInfo struct {
 	Columns []*IndexColumn `json:"idx_cols"`   // Index columns.
 	Unique  bool           `json:"is_unique"`  // Whether the index is unique.
 	Primary bool           `json:"is_primary"` // Whether the index is primary key.
+	State   SchemaState    `json:"state"`
 }
 
 // Clone clones IndexInfo
@@ -102,6 +122,7 @@ type DBInfo struct {
 	Charset string       `json:"charset"`
 	Collate string       `json:"collate"`
 	Tables  []*TableInfo `json:"-"` // Tables in the DB.
+	State   SchemaState  `json:"state"`
 }
 
 // Clone clones DBInfo
