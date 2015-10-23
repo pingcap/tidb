@@ -1017,6 +1017,11 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
 	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	// Check privilege tables.
+	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
+	v, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
