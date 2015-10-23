@@ -14,78 +14,16 @@
 package ddl
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 )
 
-// ActionType is the type for DDL action.
-type ActionType byte
-
-// List DDL actions.
-const (
-	ActionNone ActionType = iota
-	ActionCreateSchema
-	ActionDropSchema
-	ActionCreateTable
-	ActionDropTable
-	ActionAddColumn
-	ActionDropColumn
-	ActionAddIndex
-	ActionDropIndex
-	ActionAddConstraint
-	ActionDropConstraint
-)
-
-// Job is for a DDL operation.
-type Job struct {
-	ID   int64      `json:"id"`
-	Type ActionType `json:"type"`
-	// SchemaID is 0 if creating schema.
-	SchemaID int64 `json:"schema_id"`
-	// TableID is 0 if creating table.
-	TableID int64         `json:"table_id"`
-	Args    []interface{} `json:"args"`
-	State   JobState      `json:"state"`
-	Error   string        `json:"err"`
-}
-
-// JobState is for job.
-type JobState byte
-
-// List job states.
-const (
-	JobNone JobState = iota
-	JobRunning
-	JobDone
-	JobCancelled
-)
-
-// String implements fmt.Stringer interface.
-func (s JobState) String() string {
-	switch s {
-	case JobRunning:
-		return "running"
-	case JobDone:
-		return "done"
-	case JobCancelled:
-		return "cancelled"
-	default:
-		return "none"
-	}
-}
-
-// Owner is for DDL Owner.
-type Owner struct {
-	OwnerID      string `json:"owner_id"`
-	LastUpdateTS int64  `json:"last_update_ts"`
-}
-
-func (d *ddl) startJob(ctx context.Context, job *Job) error {
+func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	// for every DDL, we must commit current transaction.
 	if err := ctx.FinishTxn(false); err != nil {
 		return errors.Trace(err)
@@ -100,13 +38,7 @@ func (d *ddl) startJob(ctx context.Context, job *Job) error {
 			return errors.Trace(err)
 		}
 
-		var b []byte
-		b, err = json.Marshal(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.PushDDLJob(b)
+		err = t.PushDDLJob(job)
 
 		return errors.Trace(err)
 	})
@@ -138,7 +70,7 @@ func (d *ddl) startJob(ctx context.Context, job *Job) error {
 		}
 
 		// if a job is a history table, the state must be JobDone or JobCancel.
-		if job.State == JobDone {
+		if job.State == model.JobDone {
 			return nil
 		}
 
@@ -146,32 +78,16 @@ func (d *ddl) startJob(ctx context.Context, job *Job) error {
 	}
 }
 
-func (d *ddl) getHistoryJob(id int64) (*Job, error) {
-	var (
-		job   Job
-		found = false
-	)
+func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
+	var job *model.Job
+
 	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		b, err1 := t.GetHistoryDDLJob(id)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-
-		err1 = json.Unmarshal(b, &job)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-
-		found = true
-
-		return nil
+		var err1 error
+		job, err1 = t.GetHistoryDDLJob(id)
+		return errors.Trace(err1)
 	})
 
-	if err != nil || !found {
-		return nil, errors.Trace(err)
-	}
-
-	return &job, nil
+	return job, errors.Trace(err)
 }
 
 func asyncNotice(ch chan struct{}) {
@@ -182,55 +98,38 @@ func asyncNotice(ch chan struct{}) {
 }
 
 func (d *ddl) verifyOwner(t *meta.TMeta) (bool, error) {
-	var o Owner
-
-	value, err := t.GetDDLOwner()
+	owner, err := t.GetDDLOwner()
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 
-	if value == nil {
+	if owner == nil {
+		owner = &model.Owner{}
 		// try to set onwer
-		o.OwnerID = d.uuid
-	} else {
-		err = json.Unmarshal(value, &o)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
+		owner.OwnerID = d.uuid
 	}
 
 	now := time.Now().Unix()
 	maxTimeout := int64(4 * d.lease)
-	if o.OwnerID == d.uuid || now-o.LastUpdateTS > maxTimeout {
-		o.OwnerID = d.uuid
-		o.LastUpdateTS = now
-
-		value, err = json.Marshal(o)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
+	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
+		owner.OwnerID = d.uuid
+		owner.LastUpdateTS = now
 
 		// update or try to set itself as owner.
-		err = t.SetDDLOwner(value)
+		err = t.SetDDLOwner(owner)
 	}
 
-	return o.OwnerID == d.uuid, errors.Trace(err)
+	return owner.OwnerID == d.uuid, errors.Trace(err)
 }
 
 // every time we enter another state, we must call this function.
-func (d *ddl) updateJob(t *meta.TMeta, j *Job) error {
+func (d *ddl) updateJob(t *meta.TMeta, j *model.Job) error {
 	isOwner, err := d.verifyOwner(t)
 	if !isOwner {
 		return errors.Errorf("not owner, can't update job")
 	}
 
-	var b []byte
-	b, err = json.Marshal(j)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = t.UpdateDDLJob(0, b)
+	err = t.UpdateDDLJob(0, j)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,38 +137,23 @@ func (d *ddl) updateJob(t *meta.TMeta, j *Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) getFirstJob() (*Job, error) {
-	var (
-		job   Job
-		found = false
-	)
+func (d *ddl) getFirstJob() (*model.Job, error) {
+	var job *model.Job
 
 	err := d.meta.RunInNewTxn(true, func(t *meta.TMeta) error {
-		b, err := t.GetDDLJob(0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if b == nil {
-			return nil
-		}
-
-		err = json.Unmarshal(b, &job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		found = true
-		return nil
+		var err1 error
+		job, err1 = t.GetDDLJob(0)
+		return errors.Trace(err1)
 	})
 
-	if err != nil || !found {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return &job, nil
+	return job, nil
 }
 
-func (d *ddl) finishJob(job *Job) error {
+func (d *ddl) finishJob(job *model.Job) error {
 	// done, notice and run next job.
 	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
 		isOwner, err := d.verifyOwner(t)
@@ -282,14 +166,7 @@ func (d *ddl) finishJob(job *Job) error {
 			return errors.Trace(err)
 		}
 
-		// add job to job history
-		var b []byte
-		b, err = json.Marshal(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.AddHistoryDDLJob(job.ID, b)
+		err = t.AddHistoryDDLJob(job)
 
 		return errors.Trace(err)
 	})
@@ -319,7 +196,7 @@ func (d *ddl) handleJobQueue() error {
 
 		// become the owner
 		// get the first job and run
-		var job *Job
+		var job *model.Job
 		job, err = d.getFirstJob()
 		if job == nil || err != nil {
 			return errors.Trace(err)
@@ -358,32 +235,32 @@ func (d *ddl) onWorker() {
 	}
 }
 
-func (d *ddl) runJob(job *Job) error {
-	if job.State == JobDone || job.State == JobCancelled {
+func (d *ddl) runJob(job *model.Job) error {
+	if job.State == model.JobDone || job.State == model.JobCancelled {
 		return nil
 	}
 
-	job.State = JobRunning
+	job.State = model.JobRunning
 
 	var err error
 	switch job.Type {
-	case ActionCreateSchema:
-	case ActionDropSchema:
-	case ActionCreateTable:
-	case ActionDropTable:
-	case ActionAddColumn:
-	case ActionDropColumn:
-	case ActionAddIndex:
-	case ActionDropIndex:
-	case ActionAddConstraint:
-	case ActionDropConstraint:
+	case model.ActionCreateSchema:
+	case model.ActionDropSchema:
+	case model.ActionCreateTable:
+	case model.ActionDropTable:
+	case model.ActionAddColumn:
+	case model.ActionDropColumn:
+	case model.ActionAddIndex:
+	case model.ActionDropIndex:
+	case model.ActionAddConstraint:
+	case model.ActionDropConstraint:
 	default:
 		return errors.Errorf("invalid job %v", job)
 	}
 
 	// if err and inner doesn't cancel job, return err.
 	if err != nil {
-		if job.State != JobCancelled {
+		if job.State != model.JobCancelled {
 			return errors.Trace(err)
 		}
 
@@ -391,7 +268,7 @@ func (d *ddl) runJob(job *Job) error {
 	}
 
 	if err == nil {
-		job.State = JobDone
+		job.State = model.JobDone
 	}
 
 	return nil

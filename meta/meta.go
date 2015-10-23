@@ -467,33 +467,66 @@ var (
 )
 
 // GetDDLOwner gets the current owner for DDL.
-func (m *TMeta) GetDDLOwner() ([]byte, error) {
-	return m.txn.Get(mDDLOwnerKey)
+func (m *TMeta) GetDDLOwner() (*model.Owner, error) {
+	value, err := m.txn.Get(mDDLOwnerKey)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	var owner model.Owner
+	err = json.Unmarshal(value, &owner)
+	return &owner, errors.Trace(err)
 }
 
 // SetDDLOwner sets the current owner for DDL.
-func (m *TMeta) SetDDLOwner(b []byte) error {
+func (m *TMeta) SetDDLOwner(o *model.Owner) error {
+	b, err := json.Marshal(o)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return m.txn.Set(mDDLOwnerKey, b)
 }
 
 // PushDDLJob adds a DDL job to the list.
-func (m *TMeta) PushDDLJob(b []byte) error {
+func (m *TMeta) PushDDLJob(job *model.Job) error {
+	b, err := json.Marshal(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return m.txn.RPush(mDDLJobListKey, b)
 }
 
 // PopDDLJob pops a DDL job in the list.
-func (m *TMeta) PopDDLJob() ([]byte, error) {
-	return m.txn.LPop(mDDLJobListKey)
+func (m *TMeta) PopDDLJob() (*model.Job, error) {
+	value, err := m.txn.LPop(mDDLJobListKey)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	var job model.Job
+	err = json.Unmarshal(value, &job)
+	return &job, errors.Trace(err)
 }
 
 // GetDDLJob returns the DDL job with index.
-func (m *TMeta) GetDDLJob(index int64) ([]byte, error) {
-	return m.txn.LIndex(mDDLJobListKey, index)
+func (m *TMeta) GetDDLJob(index int64) (*model.Job, error) {
+	value, err := m.txn.LIndex(mDDLJobListKey, index)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	var job model.Job
+	err = json.Unmarshal(value, &job)
+	return &job, errors.Trace(err)
 }
 
 // UpdateDDLJob updates the DDL job with index.
-func (m *TMeta) UpdateDDLJob(index int64, value []byte) error {
-	return m.txn.LSet(mDDLJobListKey, index, value)
+func (m *TMeta) UpdateDDLJob(index int64, job *model.Job) error {
+	b, err := json.Marshal(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.LSet(mDDLJobListKey, index, b)
 }
 
 // DDLJobLength returns the DDL job length.
@@ -508,13 +541,24 @@ func (m *TMeta) jobIDKey(id int64) []byte {
 }
 
 // AddHistoryDDLJob adds DDL job to history.
-func (m *TMeta) AddHistoryDDLJob(id int64, b []byte) error {
-	return m.txn.HSet(mDDLJobHistoryKey, m.jobIDKey(id), b)
+func (m *TMeta) AddHistoryDDLJob(job *model.Job) error {
+	b, err := json.Marshal(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mDDLJobHistoryKey, m.jobIDKey(job.ID), b)
 }
 
 // GetHistoryDDLJob gets a history DDL job.
-func (m *TMeta) GetHistoryDDLJob(id int64) ([]byte, error) {
-	return m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
+func (m *TMeta) GetHistoryDDLJob(id int64) (*model.Job, error) {
+	value, err := m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	var job model.Job
+	err = json.Unmarshal(value, &job)
+	return &job, errors.Trace(err)
 }
 
 // Commit commits the transaction.
