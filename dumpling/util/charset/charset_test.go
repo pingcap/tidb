@@ -34,11 +34,20 @@ func testValidCharset(c *C, charset string, collation string, expect bool) {
 }
 
 func (s *testCharsetSuite) TestValidCharset(c *C) {
-	testValidCharset(c, "utf8", "utf8_general_ci", true)
-	testValidCharset(c, "", "utf8_general_ci", true)
-	testValidCharset(c, "latin1", "", true)
-	testValidCharset(c, "utf8", "utf8_invalid_ci", false)
-	testValidCharset(c, "gb2312", "gb2312_chinese_ci", false)
+	tbl := []struct {
+		cs   string
+		co   string
+		succ bool
+	}{
+		{"utf8", "utf8_general_ci", true},
+		{"", "utf8_general_ci", true},
+		{"latin1", "", true},
+		{"utf8", "utf8_invalid_ci", false},
+		{"gb2312", "gb2312_chinese_ci", false},
+	}
+	for _, t := range tbl {
+		testValidCharset(c, t.cs, t.co, t.succ)
+	}
 }
 
 func (s *testCharsetSuite) TestGetAllCharsets(c *C) {
@@ -46,4 +55,29 @@ func (s *testCharsetSuite) TestGetAllCharsets(c *C) {
 	charsetInfos = append(charsetInfos, charset)
 	descs := GetAllCharsets()
 	c.Assert(len(descs), Equals, len(charsetInfos)-1)
+}
+
+func testGetDefaultCollation(c *C, charset string, expectCollation string, succ bool) {
+	b, err := GetDefaultCollation(charset)
+	if !succ {
+		c.Assert(err, NotNil)
+		return
+	}
+	c.Assert(b, Equals, expectCollation)
+}
+
+func (s *testCharsetSuite) TestGetDefaultCollation(c *C) {
+	tbl := []struct {
+		cs   string
+		co   string
+		succ bool
+	}{
+		{"utf8", "utf8_general_ci", true},
+		{"latin1", "latin1_swedish_ci", true},
+		{"invalid_cs", "", false},
+		{"", "utf8_general_ci", false},
+	}
+	for _, t := range tbl {
+		testGetDefaultCollation(c, t.cs, t.co, t.succ)
+	}
 }

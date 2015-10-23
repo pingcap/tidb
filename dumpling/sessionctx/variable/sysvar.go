@@ -559,3 +559,15 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
 }
+
+// SetNamesVariables is the system variable names related to set names statements.
+var SetNamesVariables = []string{
+	"character_set_client",
+	"character_set_connection",
+	"character_set_results",
+}
+
+const (
+	// CollationConnection is the name for collation_connection system variable.
+	CollationConnection = "collation_connection"
+)
