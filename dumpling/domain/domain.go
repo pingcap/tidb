@@ -34,8 +34,8 @@ type Domain struct {
 	lease      int
 }
 
-func (do *Domain) loadInfoSchema(txn *meta.TMeta) (err error) {
-	schemaMetaVersion, err := txn.GetSchemaVersion()
+func (do *Domain) loadInfoSchema(m *meta.TMeta) (err error) {
+	schemaMetaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -46,13 +46,13 @@ func (do *Domain) loadInfoSchema(txn *meta.TMeta) (err error) {
 		return nil
 	}
 
-	schemas, err := txn.ListDatabases()
+	schemas, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, di := range schemas {
-		tables, err := txn.ListTables(di.ID)
+		tables, err := m.ListTables(di.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}

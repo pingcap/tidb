@@ -48,9 +48,9 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
-		err := alloc.m.RunInNewTxn(true, func(txn *meta.TMeta) error {
+		err := alloc.m.RunInNewTxn(true, func(m *meta.TMeta) error {
 			// err1 is used for passing `go tool vet --shadow` check.
-			end, err1 := txn.GenAutoTableID(alloc.dbID, tableID, step)
+			end, err1 := m.GenAutoTableID(alloc.dbID, tableID, step)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}

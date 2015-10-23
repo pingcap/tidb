@@ -40,10 +40,10 @@ func (*testSuite) TestT(c *C) {
 	defer store.Close()
 
 	m := meta.NewMeta(store)
-	err = m.RunInNewTxn(false, func(txn *meta.TMeta) error {
-		err = txn.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+	err = m.RunInNewTxn(false, func(m *meta.TMeta) error {
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
-		err = txn.CreateTable(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		err = m.CreateTable(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		c.Assert(err, IsNil)
 		return nil
 	})
