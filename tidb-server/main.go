@@ -25,6 +25,9 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/rcrowley/go-metrics"
+	"github.com/pingcap/go-themis"
 )
 
 var (
@@ -35,6 +38,9 @@ var (
 )
 
 func main() {
+	tidb_metrics.RegMetircs(metrics.NewRegistry())
+	themis.RegMetircs(metrics.NewRegistry())
+
 	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())
 

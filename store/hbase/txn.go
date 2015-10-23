@@ -24,6 +24,9 @@ import (
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
+	"github.com/rcrowley/go-metrics"
+	"github.com/pingcap/tidb/metrics"
+	"time"
 )
 
 var (
@@ -32,6 +35,7 @@ var (
 	ErrInvalidTxn = errors.New("invalid transaction")
 	// ErrCannotSetNilValue is the error when sets an empty value
 	ErrCannotSetNilValue = errors.New("can not set nil value")
+	r = metrics.NewRegistry()
 )
 
 // dbTxn is not thread safe
@@ -48,9 +52,11 @@ type hbaseTxn struct {
 // Implement transaction interface
 
 func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
+	defer tidb_metrics.RecordMetrics(tidb_metrics.HbaseStoreIncCounter, tidb_metrics.HbaseStoreIncTimeSum,
+		tidb_metrics.HbaseStoreIncAverageTime, time.Now())
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tID)
-	k = kv.EncodeKey(k)
 
+	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
