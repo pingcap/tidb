@@ -425,7 +425,6 @@ func (m *TMeta) GetTable(dbID int64, tableID int64) ([]byte, error) {
 
 var (
 	mDDLOwnerKey      = []byte("mDDLOwner")
-	mDDLJobIDKey      = []byte("mDDLJobID")
 	mDDLJobListKey    = []byte("mDDLJobList")
 	mDDLJobHistoryKey = []byte("mDDLJobHistory")
 	mDDLMRJobKey      = []byte("mDDLMRJob")
@@ -439,11 +438,6 @@ func (m *TMeta) GetDDLOwner() ([]byte, error) {
 // SetDDLOwner sets the current owner for DDL.
 func (m *TMeta) SetDDLOwner(b []byte) error {
 	return m.txn.Set(mDDLOwnerKey, b)
-}
-
-// GenDDLJobID generates next id for DDL job.
-func (m *TMeta) GenDDLJobID() (int64, error) {
-	return m.txn.Inc(mDDLJobIDKey, 1)
 }
 
 // PushDDLJob adds a DDL job to the list.

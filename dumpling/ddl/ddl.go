@@ -69,7 +69,6 @@ type ddl struct {
 	uuid      string
 	jobCh     chan struct{}
 	jobDoneCh chan struct{}
-	owner     *Owner
 }
 
 // OnDDLChange is used as hook function when schema changed.

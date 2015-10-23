@@ -82,7 +82,7 @@ func (s JobState) String() string {
 // Owner is for DDL Owner.
 type Owner struct {
 	OwnerID      string `json:"owner_id"`
-	LastUpdateTs int64  `json:"last_update_ts"`
+	LastUpdateTS int64  `json:"last_update_ts"`
 }
 
 func (d *ddl) startJob(ctx context.Context, job *Job) error {
@@ -95,7 +95,7 @@ func (d *ddl) startJob(ctx context.Context, job *Job) error {
 	// add this job to job queue.
 	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
 		var err error
-		job.ID, err = t.GenDDLJobID()
+		job.ID, err = t.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -181,55 +181,51 @@ func asyncNotice(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) checkOwner() (*Owner, error) {
+func (d *ddl) verifyOwner(t *meta.TMeta) (bool, error) {
 	var o Owner
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		value, err := t.GetDDLOwner()
-		if err != nil {
-			return errors.Trace(err)
-		}
 
-		if value == nil {
-			// try to set onwer
-			o.OwnerID = d.uuid
-		} else {
-			err = json.Unmarshal(value, &o)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		now := time.Now().Unix()
-		maxTimeout := int64(4 * d.lease)
-		if o.OwnerID == d.uuid || now-o.LastUpdateTs > maxTimeout {
-			o.OwnerID = d.uuid
-			o.LastUpdateTs = now
-
-			value, err = json.Marshal(o)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			// update or try to set itself as owner.
-			err = t.SetDDLOwner(value)
-		}
-
-		return errors.Trace(err)
-	})
-
+	value, err := t.GetDDLOwner()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
-	return &o, nil
+	if value == nil {
+		// try to set onwer
+		o.OwnerID = d.uuid
+	} else {
+		err = json.Unmarshal(value, &o)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	}
+
+	now := time.Now().Unix()
+	maxTimeout := int64(4 * d.lease)
+	if o.OwnerID == d.uuid || now-o.LastUpdateTS > maxTimeout {
+		o.OwnerID = d.uuid
+		o.LastUpdateTS = now
+
+		value, err = json.Marshal(o)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		// update or try to set itself as owner.
+		err = t.SetDDLOwner(value)
+	}
+
+	return o.OwnerID == d.uuid, errors.Trace(err)
 }
 
+// every time we enter another state, we must call this function.
 func (d *ddl) updateJob(t *meta.TMeta, j *Job) error {
-	if d.owner == nil {
-		return errors.Errorf("not owner, can't run job")
+	isOwner, err := d.verifyOwner(t)
+	if !isOwner {
+		return errors.Errorf("not owner, can't update job")
 	}
 
-	b, err := json.Marshal(j)
+	var b []byte
+	b, err = json.Marshal(j)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,14 +234,6 @@ func (d *ddl) updateJob(t *meta.TMeta, j *Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	d.owner.LastUpdateTs = time.Now().Unix()
-	b, err = json.Marshal(d.owner)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = t.SetDDLOwner(b)
 
 	return errors.Trace(err)
 }
@@ -284,41 +272,50 @@ func (d *ddl) getFirstJob() (*Job, error) {
 func (d *ddl) finishJob(job *Job) error {
 	// done, notice and run next job.
 	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		var err1 error
-		_, err1 = t.PopDDLJob()
-		if err1 != nil {
-			return errors.Trace(err1)
+		isOwner, err := d.verifyOwner(t)
+		if !isOwner {
+			return errors.Errorf("not owner, can't finish job")
+		}
+
+		_, err = t.PopDDLJob()
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		// add job to job history
 		var b []byte
-		b, err1 = json.Marshal(job)
-		if err1 != nil {
-			return errors.Trace(err1)
+		b, err = json.Marshal(job)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
-		err1 = t.AddHistoryDDLJob(job.ID, b)
+		err = t.AddHistoryDDLJob(job.ID, b)
 
-		return errors.Trace(err1)
+		return errors.Trace(err)
 	})
 
 	return errors.Trace(err)
 }
 
+func (d *ddl) checkOwner() (bool, error) {
+	var isOwner bool
+	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		var err1 error
+		isOwner, err1 = d.verifyOwner(t)
+		return errors.Trace(err1)
+	})
+
+	return isOwner, errors.Trace(err)
+}
+
 func (d *ddl) handleJobQueue() error {
 	for {
-		owner, err := d.checkOwner()
-		if err != nil {
-			return errors.Errorf("check ddl owner err %v", err)
-		}
+		isOwner, err := d.checkOwner()
 
-		if owner.OwnerID != d.uuid {
-			d.owner = nil
-			// not the owner
-			return nil
+		if err != nil || !isOwner {
+			// error or not owner
+			return errors.Trace(err)
 		}
-
-		d.owner = owner
 
 		// become the owner
 		// get the first job and run
