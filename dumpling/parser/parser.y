@@ -1839,7 +1839,7 @@ ReplaceIntoStmt:
 		x := &stmts.ReplaceIntoStmt{ColNames: $5.(*stmts.InsertIntoStmt).ColNames, 
 					       Lists: $5.(*stmts.InsertIntoStmt).Lists, 
 					     	 Sel: $5.(*stmts.InsertIntoStmt).Sel,
-					     SetList: $5.(*stmts.InsertIntoStmt).Setlist}
+					     Setlist: $5.(*stmts.InsertIntoStmt).Setlist}
 		x.Priority = $2.(int)
 		x.TableIdent = $4.(table.Ident)
 		$$ = x
