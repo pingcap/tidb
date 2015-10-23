@@ -31,14 +31,14 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 
 	// alloc a global job id.
 	// add this job to job queue.
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
 		var err error
-		job.ID, err = t.GenGlobalID()
+		job.ID, err = m.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = t.PushDDLJob(job)
+		err = m.EnQueueDDLJob(job)
 
 		return errors.Trace(err)
 	})
@@ -48,7 +48,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// notice worker that we push a new job and wait the job done.
-	asyncNotice(d.jobCh)
+	syncNotify(d.jobCh)
 
 	// check
 	jobID := job.ID
@@ -90,7 +90,7 @@ func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func asyncNotice(ch chan struct{}) {
+func syncNotify(ch chan struct{}) {
 	select {
 	case ch <- struct{}{}:
 	default:
@@ -161,7 +161,7 @@ func (d *ddl) finishJob(job *model.Job) error {
 			return errors.Errorf("not owner, can't finish job")
 		}
 
-		_, err = t.PopDDLJob()
+		_, err = t.DeQueueDDLJob()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -212,7 +212,7 @@ func (d *ddl) handleJobQueue() error {
 			return errors.Trace(err)
 		}
 
-		asyncNotice(d.jobDoneCh)
+		syncNotify(d.jobDoneCh)
 	}
 }
 
