@@ -36,6 +36,22 @@ const (
 	PublicState
 )
 
+// String implements fmt.Stringer interface.
+func (s SchemaState) String() string {
+	switch s {
+	case DeleteOnlyState:
+		return "delete only"
+	case WriteOnlyState:
+		return "write only"
+	case ReOrgnizationState:
+		return "reorgnization"
+	case PublicState:
+		return "public"
+	default:
+		return "none"
+	}
+}
+
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
 	ID              int64       `json:"id"`

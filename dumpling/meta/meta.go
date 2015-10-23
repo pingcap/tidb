@@ -14,6 +14,7 @@
 package meta
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -410,6 +411,80 @@ func (m *TMeta) GetTable(dbID int64, tableID int64) ([]byte, error) {
 	tableKey := m.tableKey(tableID)
 
 	return m.txn.HGet(dbKey, tableKey)
+}
+
+// DDL structure
+//	mDDLOnwer: []byte
+//	mDDLJobID: int64
+//	mDDLJobList: list jobs
+//	mDDLJobHistory: hash
+//	mDDLMRJobs: list jobs
+//
+// for multi DDL workers, only one can become the owner
+// to operate DDL jobs, and dispatch them to MR Jobs.
+
+var (
+	mDDLOwnerKey      = []byte("mDDLOwner")
+	mDDLJobIDKey      = []byte("mDDLJobID")
+	mDDLJobListKey    = []byte("mDDLJobList")
+	mDDLJobHistoryKey = []byte("mDDLJobHistory")
+	mDDLMRJobKey      = []byte("mDDLMRJob")
+)
+
+// GetDDLOwner gets the current owner for DDL.
+func (m *TMeta) GetDDLOwner() ([]byte, error) {
+	return m.txn.Get(mDDLOwnerKey)
+}
+
+// SetDDLOwner sets the current owner for DDL.
+func (m *TMeta) SetDDLOwner(b []byte) error {
+	return m.txn.Set(mDDLOwnerKey, b)
+}
+
+// GenDDLJobID generates next id for DDL job.
+func (m *TMeta) GenDDLJobID() (int64, error) {
+	return m.txn.Inc(mDDLJobIDKey, 1)
+}
+
+// PushDDLJob adds a DDL job to the list.
+func (m *TMeta) PushDDLJob(b []byte) error {
+	return m.txn.RPush(mDDLJobListKey, b)
+}
+
+// PopDDLJob pops a DDL job in the list.
+func (m *TMeta) PopDDLJob() ([]byte, error) {
+	return m.txn.LPop(mDDLJobListKey)
+}
+
+// GetDDLJob returns the DDL job with index.
+func (m *TMeta) GetDDLJob(index int64) ([]byte, error) {
+	return m.txn.LIndex(mDDLJobListKey, index)
+}
+
+// UpdateDDLJob updates the DDL job with index.
+func (m *TMeta) UpdateDDLJob(index int64, value []byte) error {
+	return m.txn.LSet(mDDLJobListKey, index, value)
+}
+
+// DDLJobLength returns the DDL job length.
+func (m *TMeta) DDLJobLength() (int64, error) {
+	return m.txn.LLen(mDDLJobListKey)
+}
+
+func (m *TMeta) jobIDKey(id int64) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	return b
+}
+
+// AddHistoryDDLJob adds DDL job to history.
+func (m *TMeta) AddHistoryDDLJob(id int64, b []byte) error {
+	return m.txn.HSet(mDDLJobHistoryKey, m.jobIDKey(id), b)
+}
+
+// GetHistoryDDLJob gets a history DDL job.
+func (m *TMeta) GetHistoryDDLJob(id int64) ([]byte, error) {
+	return m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
 }
 
 // Commit commits the transaction.
