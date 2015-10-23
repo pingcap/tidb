@@ -128,6 +128,8 @@ const (
 	TablePrivTable = "Tables_priv"
 	// ColumnPrivTable is the table in system db contains column scope privilege info.
 	ColumnPrivTable = "Columns_priv"
+	// GlobalVariablesTable is the table contains global system variables.
+	GlobalVariablesTable = "GLOBAL_VARIABLES"
 )
 
 // PrivilegeType  privilege
