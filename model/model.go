@@ -23,29 +23,29 @@ import (
 type SchemaState byte
 
 const (
-	// NoneState means this schema element is absent and can't be used.
-	NoneState SchemaState = iota
-	// DeleteOnlyState means we can only delete items for this schema element.
-	DeleteOnlyState
-	// WriteOnlyState means we can use any write operation on this schema element,
+	// StateNone means this schema element is absent and can't be used.
+	StateNone SchemaState = iota
+	// StateDeleteOnly means we can only delete items for this schema element.
+	StateDeleteOnly
+	// StateWriteOnly means we can use any write operation on this schema element,
 	// but outer can't read the changed data.
-	WriteOnlyState
-	// ReOrgnizationState meas we are re-orgnizating whole data for this shema changed.
-	ReOrgnizationState
-	// PublicState means this schema element is ok for all write and read operations.
-	PublicState
+	StateWriteOnly
+	// StateReOrgnization meas we are re-orgnizating whole data for this shema changed.
+	StateReOrgnization
+	// StatePublic means this schema element is ok for all write and read operations.
+	StatePublic
 )
 
 // String implements fmt.Stringer interface.
 func (s SchemaState) String() string {
 	switch s {
-	case DeleteOnlyState:
+	case StateDeleteOnly:
 		return "delete only"
-	case WriteOnlyState:
+	case StateWriteOnly:
 		return "write only"
-	case ReOrgnizationState:
+	case StateReOrgnization:
 		return "reorgnization"
-	case PublicState:
+	case StatePublic:
 		return "public"
 	default:
 		return "none"

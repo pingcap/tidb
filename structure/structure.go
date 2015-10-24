@@ -36,9 +36,9 @@ func NewStore(store kv.Storage, prefix []byte) *TStore {
 	return s
 }
 
-// Begin creates a TStructure for calling structure APIs in a transaction later.
-func (s *TStore) Begin() (*TStructure, error) {
-	t := &TStructure{done: false, prefix: s.prefix}
+// Begin creates a TxStructure for calling structure APIs in a transaction later.
+func (s *TStore) Begin() (*TxStructure, error) {
+	t := &TxStructure{done: false, prefix: s.prefix}
 
 	var err error
 	t.txn, err = s.store.Begin()
@@ -50,25 +50,25 @@ func (s *TStore) Begin() (*TStructure, error) {
 }
 
 // RunInNewTxn runs f in a new transaction
-func (s *TStore) RunInNewTxn(retryable bool, f func(t *TStructure) error) error {
+func (s *TStore) RunInNewTxn(retryable bool, f func(t *TxStructure) error) error {
 	fn := func(txn kv.Transaction) error {
-		t := &TStructure{done: false, prefix: s.prefix, txn: txn}
+		t := &TxStructure{done: false, prefix: s.prefix, txn: txn}
 		return errors.Trace(f(t))
 	}
 	err := kv.RunInNewTxn(s.store, retryable, fn)
 	return errors.Trace(err)
 }
 
-// TStructure supports some simple data structure like string, hash, list, etc... and
+// TxStructure supports some simple data structure like string, hash, list, etc... and
 // you can use these in a transaction.
-type TStructure struct {
+type TxStructure struct {
 	txn    kv.Transaction
 	done   bool
 	prefix []byte
 }
 
 // Commit commits the transaction.
-func (t *TStructure) Commit() error {
+func (t *TxStructure) Commit() error {
 	if t.done {
 		return ErrTxDone
 	}
@@ -79,7 +79,7 @@ func (t *TStructure) Commit() error {
 }
 
 // Rollback rolls back the transaction.
-func (t *TStructure) Rollback() error {
+func (t *TxStructure) Rollback() error {
 	if t.done {
 		return ErrTxDone
 	}

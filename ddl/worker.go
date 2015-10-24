@@ -47,7 +47,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// notice worker that we push a new job and wait the job done.
-	syncNotify(d.jobCh)
+	asyncNotify(d.jobCh)
 
 	jobID := job.ID
 	ticker := time.NewTicker(10 * time.Second)
@@ -88,7 +88,7 @@ func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func syncNotify(ch chan struct{}) {
+func asyncNotify(ch chan struct{}) {
 	select {
 	case ch <- struct{}{}:
 	default:
@@ -138,9 +138,9 @@ func (d *ddl) updateJob(t *meta.TMeta, j *model.Job) error {
 func (d *ddl) getFirstJob() (*model.Job, error) {
 	var job *model.Job
 
-	err := d.meta.RunInNewTxn(true, func(t *meta.TMeta) error {
+	err := d.meta.RunInNewTxn(true, func(m *meta.TMeta) error {
 		var err1 error
-		job, err1 = t.GetDDLJob(0)
+		job, err1 = m.GetDDLJob(0)
 		return errors.Trace(err1)
 	})
 
@@ -210,10 +210,12 @@ func (d *ddl) handleJobQueue() error {
 			return errors.Trace(err)
 		}
 
-		syncNotify(d.jobDoneCh)
+		asyncNotify(d.jobDoneCh)
 	}
 }
 
+// onWorker is for async online schema change, it will try to become the owner first,
+// then wait or pull the job queue to handle a schema change job.
 func (d *ddl) onWorker() {
 	checkTime := 10 * time.Second
 	ticker := time.NewTicker(checkTime)
