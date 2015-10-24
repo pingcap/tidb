@@ -44,14 +44,14 @@ func (m hashMeta) IsEmpty() bool {
 }
 
 // HSet sets the string value of a hash field.
-func (t *TStructure) HSet(key []byte, field []byte, value []byte) error {
+func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 	return t.updateHash(key, field, func([]byte) ([]byte, error) {
 		return value, nil
 	})
 }
 
 // HGet gets the value of a hash field.
-func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
+func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
 	value, err := t.txn.Get(dataKey)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
@@ -62,7 +62,7 @@ func (t *TStructure) HGet(key []byte, field []byte) ([]byte, error) {
 
 // HInc increments the integer value of a hash field, by step, returns
 // the value after the increment.
-func (t *TStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
+func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
 	base := int64(0)
 	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
 		if oldValue != nil {
@@ -80,7 +80,7 @@ func (t *TStructure) HInc(key []byte, field []byte, step int64) (int64, error) {
 }
 
 // HGetInt64 gets int64 value of a hash field.
-func (t *TStructure) HGetInt64(key []byte, field []byte) (int64, error) {
+func (t *TxStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 	value, err := t.HGet(key, field)
 	if err != nil || value == nil {
 		return 0, errors.Trace(err)
@@ -91,7 +91,7 @@ func (t *TStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-func (t *TStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
+func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
@@ -127,7 +127,7 @@ func (t *TStructure) updateHash(key []byte, field []byte, fn func(oldValue []byt
 }
 
 // HLen gets the number of fields in a hash.
-func (t *TStructure) HLen(key []byte) (int64, error) {
+func (t *TxStructure) HLen(key []byte) (int64, error) {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
@@ -137,7 +137,7 @@ func (t *TStructure) HLen(key []byte) (int64, error) {
 }
 
 // HDel deletes one or more hash fields.
-func (t *TStructure) HDel(key []byte, fields ...[]byte) error {
+func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
@@ -176,7 +176,7 @@ func (t *TStructure) HDel(key []byte, fields ...[]byte) error {
 }
 
 // HKeys gets all the fields in a hash.
-func (t *TStructure) HKeys(key []byte) ([][]byte, error) {
+func (t *TxStructure) HKeys(key []byte) ([][]byte, error) {
 	var keys [][]byte
 	err := t.iterateHash(key, func(field []byte, value []byte) error {
 		keys = append(keys, append([]byte{}, field...))
@@ -187,7 +187,7 @@ func (t *TStructure) HKeys(key []byte) ([][]byte, error) {
 }
 
 // HGetAll gets all the fields and values in a hash.
-func (t *TStructure) HGetAll(key []byte) ([]HashPair, error) {
+func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	var res []HashPair
 	err := t.iterateHash(key, func(field []byte, value []byte) error {
 		pair := HashPair{
@@ -202,7 +202,7 @@ func (t *TStructure) HGetAll(key []byte) ([]HashPair, error) {
 }
 
 // HClear removes the hash value of the key.
-func (t *TStructure) HClear(key []byte) error {
+func (t *TxStructure) HClear(key []byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
@@ -225,7 +225,7 @@ func (t *TStructure) HClear(key []byte) error {
 	return errors.Trace(t.txn.Delete(metaKey))
 }
 
-func (t *TStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
+func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
 	it, err := t.txn.Seek(dataPrefix)
 	if err != nil {
@@ -258,7 +258,7 @@ func (t *TStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) 
 	return nil
 }
 
-func (t *TStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
+func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	v, err := t.txn.Get(metaKey)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
@@ -279,7 +279,7 @@ func (t *TStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	return meta, nil
 }
 
-func (t *TStructure) loadHashValue(dataKey []byte) ([]byte, error) {
+func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
 	v, err := t.txn.Get(dataKey)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil

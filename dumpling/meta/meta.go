@@ -73,7 +73,7 @@ type Meta struct {
 
 // TMeta is for handling meta information in a transaction.
 type TMeta struct {
-	txn *structure.TStructure
+	txn *structure.TxStructure
 }
 
 // NewMeta creates a Meta with kv storage.
@@ -99,7 +99,7 @@ func (m *Meta) Begin() (*TMeta, error) {
 
 // RunInNewTxn runs fn in a new transaction.
 func (m *Meta) RunInNewTxn(retryable bool, f func(t *TMeta) error) error {
-	fn := func(txn *structure.TStructure) error {
+	fn := func(txn *structure.TxStructure) error {
 		t := &TMeta{txn: txn}
 		return errors.Trace(f(t))
 	}

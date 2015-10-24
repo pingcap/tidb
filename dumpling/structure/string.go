@@ -22,7 +22,7 @@ import (
 )
 
 // Set sets the string value of the key.
-func (t *TStructure) Set(key []byte, value []byte) error {
+func (t *TxStructure) Set(key []byte, value []byte) error {
 	ek := t.encodeStringDataKey(key)
 	if err := t.txn.LockKeys(ek); err != nil {
 		return errors.Trace(err)
@@ -32,7 +32,7 @@ func (t *TStructure) Set(key []byte, value []byte) error {
 }
 
 // Get gets the string value of a key.
-func (t *TStructure) Get(key []byte) ([]byte, error) {
+func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.encodeStringDataKey(key)
 	value, err := t.txn.Get(ek)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
@@ -42,7 +42,7 @@ func (t *TStructure) Get(key []byte) ([]byte, error) {
 }
 
 // GetInt64 gets the int64 value of a key.
-func (t *TStructure) GetInt64(key []byte) (int64, error) {
+func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 	v, err := t.Get(key)
 	if err != nil || v == nil {
 		return 0, errors.Trace(err)
@@ -54,7 +54,7 @@ func (t *TStructure) GetInt64(key []byte) (int64, error) {
 
 // Inc increments the integer value of a key by step, returns
 // the value after the increment.
-func (t *TStructure) Inc(key []byte, step int64) (int64, error) {
+func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	ek := t.encodeStringDataKey(key)
 	if err := t.txn.LockKeys(ek); err != nil {
 		return 0, errors.Trace(err)
@@ -68,7 +68,7 @@ func (t *TStructure) Inc(key []byte, step int64) (int64, error) {
 }
 
 // Clear removes the string value of the key.
-func (t *TStructure) Clear(key []byte) error {
+func (t *TxStructure) Clear(key []byte) error {
 	ek := t.encodeStringDataKey(key)
 	if err := t.txn.LockKeys(ek); err != nil {
 		return errors.Trace(err)

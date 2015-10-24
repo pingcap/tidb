@@ -38,21 +38,21 @@ const (
 	ListData TypeFlag = 'l'
 )
 
-func (t *TStructure) encodeStringDataKey(key []byte) []byte {
+func (t *TxStructure) encodeStringDataKey(key []byte) []byte {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+4)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
-func (t *TStructure) encodeHashMetaKey(key []byte) []byte {
+func (t *TxStructure) encodeHashMetaKey(key []byte) []byte {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+4)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashMeta))
 }
 
-func (t *TStructure) encodeHashDataKey(key []byte, field []byte) []byte {
+func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) []byte {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+len(field)+6)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
@@ -60,7 +60,7 @@ func (t *TStructure) encodeHashDataKey(key []byte, field []byte) []byte {
 	return codec.EncodeBytes(ek, field)
 }
 
-func (t *TStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
+func (t *TxStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
 	var (
 		key   []byte
 		field []byte
@@ -90,21 +90,21 @@ func (t *TStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
 	return key, field, errors.Trace(err)
 }
 
-func (t *TStructure) hashDataKeyPrefix(key []byte) []byte {
+func (t *TxStructure) hashDataKeyPrefix(key []byte) []byte {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+4)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashData))
 }
 
-func (t *TStructure) encodeListMetaKey(key []byte) []byte {
+func (t *TxStructure) encodeListMetaKey(key []byte) []byte {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+4)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(ListMeta))
 }
 
-func (t *TStructure) encodeListDataKey(key []byte, index int64) []byte {
+func (t *TxStructure) encodeListDataKey(key []byte, index int64) []byte {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+13)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)

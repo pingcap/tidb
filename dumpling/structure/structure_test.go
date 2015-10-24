@@ -21,17 +21,17 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
 
-func TestStructure(t *testing.T) {
+func TesTxStructure(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testStructureSuite{})
+var _ = Suite(&tesTxStructureSuite{})
 
-type testStructureSuite struct {
+type tesTxStructureSuite struct {
 	s *TStore
 }
 
-func (s *testStructureSuite) SetUpSuite(c *C) {
+func (s *tesTxStructureSuite) SetUpSuite(c *C) {
 	path := "memory:"
 	d := localstore.Driver{
 		Driver: goleveldb.MemoryDriver{},
@@ -41,12 +41,12 @@ func (s *testStructureSuite) SetUpSuite(c *C) {
 	s.s = NewStore(store, []byte{0x00})
 }
 
-func (s *testStructureSuite) TearDownSuite(c *C) {
+func (s *tesTxStructureSuite) TearDownSuite(c *C) {
 	err := s.s.store.Close()
 	c.Assert(err, IsNil)
 }
 
-func (s *testStructureSuite) TestString(c *C) {
+func (s *tesTxStructureSuite) TestString(c *C) {
 	tx, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -84,7 +84,7 @@ func (s *testStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStructureSuite) TestList(c *C) {
+func (s *tesTxStructureSuite) TestList(c *C) {
 	tx, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -165,7 +165,7 @@ func (s *testStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStructureSuite) TestHash(c *C) {
+func (s *tesTxStructureSuite) TestHash(c *C) {
 	tx, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -242,7 +242,7 @@ func (s *testStructureSuite) TestHash(c *C) {
 	err = tx.Commit()
 	c.Assert(err, IsNil)
 
-	fn := func(t *TStructure) error {
+	fn := func(t *TxStructure) error {
 		err = t.Set(key, []byte("abc"))
 		c.Assert(err, IsNil)
 
