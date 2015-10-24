@@ -93,6 +93,11 @@ func (s *testStmtSuite) TestReplace(c *C) {
 	ret := mustExec(c, s.testDB, replaceUniqueIndexSQL)
 	rows, err := ret.RowsAffected()
 	c.Assert(err, IsNil)
+	c.Assert(rows, Equals, int64(1))
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=1, c2=1;`
+	ret = mustExec(c, s.testDB, replaceUniqueIndexSQL)
+	rows, err = ret.RowsAffected()
+	c.Assert(err, IsNil)
 	c.Assert(rows, Equals, int64(2))
 
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
@@ -119,5 +124,5 @@ func (s *testStmtSuite) TestReplace(c *C) {
 	ret = mustExec(c, s.testDB, replacePrimaryKeySQL)
 	rows, err = ret.RowsAffected()
 	c.Assert(err, IsNil)
-	c.Assert(rows, Equals, int64(2))
+	c.Assert(rows, Equals, int64(1))
 }
