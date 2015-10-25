@@ -55,34 +55,36 @@ type Join struct {
 	// Tp represents join type.
 	Tp JoinType
 	// On represents join on condition.
-	On ExprNode
+	On *OnCondition
 }
 
 // Accept implements Node Accept interface.
-func (j *Join) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(j); skipChildren {
-		return j, ok
+func (nod *Join) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := j.Left.Accept(v)
+	nod = newNod.(*Join)
+	node, ok := nod.Left.Accept(v)
 	if !ok {
-		return j, false
+		return nod, false
 	}
-	j.Left = node.(ResultSetNode)
-	if j.Right != nil {
-		node, ok = j.Right.Accept(v)
+	nod.Left = node.(ResultSetNode)
+	if nod.Right != nil {
+		node, ok = nod.Right.Accept(v)
 		if !ok {
-			return j, false
+			return nod, false
 		}
-		j.Right = node.(ResultSetNode)
+		nod.Right = node.(ResultSetNode)
 	}
-	if j.On != nil {
-		node, ok = j.On.Accept(v)
+	if nod.On != nil {
+		node, ok = nod.On.Accept(v)
 		if !ok {
-			return j, false
+			return nod, false
 		}
-		j.On = node.(ExprNode)
+		nod.On = node.(*OnCondition)
 	}
-	return v.Leave(j)
+	return v.Leave(nod)
 }
 
 // TableName represents a table name.
@@ -98,11 +100,13 @@ type TableName struct {
 }
 
 // Accept implements Node Accept interface.
-func (tr *TableName) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(tr); skipChildren {
-		return tr, ok
+func (nod *TableName) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(tr)
+	nod = newNod.(*TableName)
+	return v.Leave(nod)
 }
 
 // TableSource represents table source with a name.
@@ -118,47 +122,50 @@ type TableSource struct {
 }
 
 // Accept implements Node Accept interface.
-func (ts *TableSource) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ts); skipChildren {
-		return ts, ok
+func (nod *TableSource) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ts.Source.Accept(v)
+	nod = newNod.(*TableSource)
+	node, ok := nod.Source.Accept(v)
 	if !ok {
-		return ts, false
+		return nod, false
 	}
-	ts.Source = node.(ResultSetNode)
-	return v.Leave(ts)
+	nod.Source = node.(ResultSetNode)
+	return v.Leave(nod)
 }
 
-// SetResultFields implements ResultSet interface.
-func (ts *TableSource) SetResultFields(rfs []*ResultField) {
-	ts.Source.SetResultFields(rfs)
-}
-
-// GetResultFields implements ResultSet interface.
-func (ts *TableSource) GetResultFields() []*ResultField {
-	return ts.Source.GetResultFields()
-}
-
-// UnionClause represents a single "UNION SELECT ..." or "UNION (SELECT ...)" clause.
-type UnionClause struct {
+// OnCondition represetns JOIN on condition.
+type OnCondition struct {
 	node
 
-	Distinct bool
-	Select   *SelectStmt
+	Expr ExprNode
 }
 
 // Accept implements Node Accept interface.
-func (uc *UnionClause) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(uc); skipChildren {
-		return uc, ok
+func (nod *OnCondition) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := uc.Select.Accept(v)
+	nod = newNod.(*OnCondition)
+	node, ok := nod.Expr.Accept(v)
 	if !ok {
-		return uc, false
+		return nod, false
 	}
-	uc.Select = node.(*SelectStmt)
-	return v.Leave(uc)
+	nod.Expr = node.(ExprNode)
+	return v.Leave(nod)
+}
+
+// SetResultFields implements ResultSet interface.
+func (nod *TableSource) SetResultFields(rfs []*ResultField) {
+	nod.Source.SetResultFields(rfs)
+}
+
+// GetResultFields implements ResultSet interface.
+func (nod *TableSource) GetResultFields() []*ResultField {
+	return nod.Source.GetResultFields()
 }
 
 // SelectLockType is the lock type for SelectStmt.
@@ -175,22 +182,18 @@ const (
 type WildCardField struct {
 	node
 
-	Table *TableName
+	Table  model.CIStr
+	Schema model.CIStr
 }
 
 // Accept implements Node Accept interface.
-func (wf *WildCardField) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(wf); skipChildren {
-		return wf, ok
+func (nod *WildCardField) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if wf.Table != nil {
-		node, ok := wf.Table.Accept(v)
-		if !ok {
-			return wf, false
-		}
-		wf.Table = node.(*TableName)
-	}
-	return v.Leave(wf)
+	nod = newNod.(*WildCardField)
+	return v.Leave(nod)
 }
 
 // SelectField represents fields in select statement.
@@ -208,22 +211,70 @@ type SelectField struct {
 }
 
 // Accept implements Node Accept interface.
-func (sf *SelectField) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(sf); skipChildren {
-		return sf, ok
+func (nod *SelectField) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if sf.Expr != nil {
-		node, ok := sf.Expr.Accept(v)
+	nod = newNod.(*SelectField)
+	if nod.Expr != nil {
+		node, ok := nod.Expr.Accept(v)
 		if !ok {
-			return sf, false
+			return nod, false
 		}
-		sf.Expr = node.(ExprNode)
+		nod.Expr = node.(ExprNode)
 	}
-	return v.Leave(sf)
+	return v.Leave(nod)
 }
 
-// OrderByItem represents a single order by item.
-type OrderByItem struct {
+// FieldList represents field list in select statement.
+type FieldList struct {
+	node
+
+	Fields []*SelectField
+}
+
+// Accept implements Node Accept interface.
+func (nod *FieldList) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*FieldList)
+	for i, val := range nod.Fields {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Fields[i] = node.(*SelectField)
+	}
+	return v.Leave(nod)
+}
+
+// TableRefsClause represents table references clause in dml statement.
+type TableRefsClause struct {
+	node
+
+	TableRefs *Join
+}
+
+// Accept implements Node Accept interface.
+func (nod *TableRefsClause) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*TableRefsClause)
+	node, ok := nod.TableRefs.Accept(v)
+	if !ok {
+		return nod, false
+	}
+	nod.TableRefs = node.(*Join)
+	return v.Leave(nod)
+}
+
+// ByItem represents an item in order by or group by.
+type ByItem struct {
 	node
 
 	Expr ExprNode
@@ -231,131 +282,236 @@ type OrderByItem struct {
 }
 
 // Accept implements Node Accept interface.
-func (ob *OrderByItem) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ob); skipChildren {
-		return ob, ok
+func (nod *ByItem) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ob.Expr.Accept(v)
+	nod = newNod.(*ByItem)
+	node, ok := nod.Expr.Accept(v)
 	if !ok {
-		return ob, false
+		return nod, false
 	}
-	ob.Expr = node.(ExprNode)
-	return v.Leave(ob)
+	nod.Expr = node.(ExprNode)
+	return v.Leave(nod)
+}
+
+// GroupByClause represents group by clause.
+type GroupByClause struct {
+	node
+	Items []*ByItem
+}
+
+// Accept implements Node Accept interface.
+func (nod *GroupByClause) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*GroupByClause)
+	for i, val := range nod.Items {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Items[i] = node.(*ByItem)
+	}
+	return v.Leave(nod)
+}
+
+// HavingClause represents having clause.
+type HavingClause struct {
+	node
+	Expr ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (nod *HavingClause) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*HavingClause)
+	node, ok := nod.Expr.Accept(v)
+	if !ok {
+		return nod, false
+	}
+	nod.Expr = node.(ExprNode)
+	return v.Leave(nod)
+}
+
+// OrderByClause represents order by clause.
+type OrderByClause struct {
+	node
+	Items    []*ByItem
+	ForUnion bool
+}
+
+// Accept implements Node Accept interface.
+func (nod *OrderByClause) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*OrderByClause)
+	for i, val := range nod.Items {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Items[i] = node.(*ByItem)
+	}
+	return v.Leave(nod)
 }
 
 // SelectStmt represents the select query node.
+// See: https://dev.mysql.com/doc/refman/5.7/en/select.html
 type SelectStmt struct {
 	dmlNode
 	resultSetNode
 
 	// Distinct represents if the select has distinct option.
 	Distinct bool
-	// Fields is the select expression list.
-	Fields []*SelectField
 	// From is the from clause of the query.
-	From *Join
+	From *TableRefsClause
 	// Where is the where clause in select statement.
 	Where ExprNode
+	// Fields is the select expression list.
+	Fields *FieldList
 	// GroupBy is the group by expression list.
-	GroupBy []ExprNode
+	GroupBy *GroupByClause
 	// Having is the having condition.
-	Having ExprNode
-	// OrderBy is the odering expression list.
-	OrderBy []*OrderByItem
+	Having *HavingClause
+	// OrderBy is the ordering expression list.
+	OrderBy *OrderByClause
 	// Limit is the limit clause.
 	Limit *Limit
 	// Lock is the lock type
 	LockTp SelectLockType
-
-	// Union clauses.
-	Unions []*UnionClause
-	// Order by for union select.
-	UnionOrderBy []*OrderByItem
-	// Limit for union select.
-	UnionLimit *Limit
 }
 
 // Accept implements Node Accept interface.
-func (sn *SelectStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(sn); skipChildren {
-		return sn, ok
+func (nod *SelectStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range sn.Fields {
-		node, ok := val.Accept(v)
+	nod = newNod.(*SelectStmt)
+
+	if nod.From != nil {
+		node, ok := nod.From.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.Fields[i] = node.(*SelectField)
-	}
-	if sn.From != nil {
-		node, ok := sn.From.Accept(v)
-		if !ok {
-			return sn, false
-		}
-		sn.From = node.(*Join)
+		nod.From = node.(*TableRefsClause)
 	}
 
-	if sn.Where != nil {
-		node, ok := sn.Where.Accept(v)
+	if nod.Where != nil {
+		node, ok := nod.Where.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.Where = node.(ExprNode)
+		nod.Where = node.(ExprNode)
 	}
 
-	for i, val := range sn.GroupBy {
-		node, ok := val.Accept(v)
+	if nod.Fields != nil {
+		node, ok := nod.Fields.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.GroupBy[i] = node.(ExprNode)
-	}
-	if sn.Having != nil {
-		node, ok := sn.Having.Accept(v)
-		if !ok {
-			return sn, false
-		}
-		sn.Having = node.(ExprNode)
+		nod.Fields = node.(*FieldList)
 	}
 
-	for i, val := range sn.OrderBy {
-		node, ok := val.Accept(v)
+	if nod.GroupBy != nil {
+		node, ok := nod.GroupBy.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.OrderBy[i] = node.(*OrderByItem)
+		nod.GroupBy = node.(*GroupByClause)
 	}
 
-	if sn.Limit != nil {
-		node, ok := sn.Limit.Accept(v)
+	if nod.Having != nil {
+		node, ok := nod.Having.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.Limit = node.(*Limit)
+		nod.Having = node.(*HavingClause)
 	}
 
-	for i, val := range sn.Unions {
+	if nod.OrderBy != nil {
+		node, ok := nod.OrderBy.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.OrderBy = node.(*OrderByClause)
+	}
+
+	if nod.Limit != nil {
+		node, ok := nod.Limit.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Limit = node.(*Limit)
+	}
+	return v.Leave(nod)
+}
+
+// UnionClause represents a single "UNION SELECT ..." or "UNION (SELECT ...)" clause.
+type UnionClause struct {
+	node
+
+	Distinct bool
+	Select   *SelectStmt
+}
+
+// Accept implements Node Accept interface.
+func (nod *UnionClause) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*UnionClause)
+	node, ok := nod.Select.Accept(v)
+	if !ok {
+		return nod, false
+	}
+	nod.Select = node.(*SelectStmt)
+	return v.Leave(nod)
+}
+
+// UnionStmt represents "union statement"
+// See: https://dev.mysql.com/doc/refman/5.7/en/union.html
+type UnionStmt struct {
+	dmlNode
+	resultSetNode
+
+	Distinct bool
+	Selects  []*SelectStmt
+	Limit    *Limit
+}
+
+// Accept implements Node Accept interface.
+func (nod *UnionStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*UnionStmt)
+	for i, val := range nod.Selects {
 		node, ok := val.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.Unions[i] = node.(*UnionClause)
+		nod.Selects[i] = node.(*SelectStmt)
 	}
-	for i, val := range sn.UnionOrderBy {
-		node, ok := val.Accept(v)
+	if nod.Limit != nil {
+		node, ok := nod.Limit.Accept(v)
 		if !ok {
-			return sn, false
+			return nod, false
 		}
-		sn.UnionOrderBy[i] = node.(*OrderByItem)
+		nod.Limit = node.(*Limit)
 	}
-	if sn.UnionLimit != nil {
-		node, ok := sn.UnionLimit.Accept(v)
-		if !ok {
-			return sn, false
-		}
-		sn.UnionLimit = node.(*Limit)
-	}
-	return v.Leave(sn)
+	return v.Leave(nod)
 }
 
 // Assignment is the expression for assignment, like a = 1.
@@ -368,21 +524,23 @@ type Assignment struct {
 }
 
 // Accept implements Node Accept interface.
-func (as *Assignment) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(as); skipChildren {
-		return as, ok
+func (nod *Assignment) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := as.Column.Accept(v)
+	nod = newNod.(*Assignment)
+	node, ok := nod.Column.Accept(v)
 	if !ok {
-		return as, false
+		return nod, false
 	}
-	as.Column = node.(*ColumnName)
-	node, ok = as.Expr.Accept(v)
+	nod.Column = node.(*ColumnName)
+	node, ok = nod.Expr.Accept(v)
 	if !ok {
-		return as, false
+		return nod, false
 	}
-	as.Expr = node.(ExprNode)
-	return v.Leave(as)
+	nod.Expr = node.(ExprNode)
+	return v.Leave(nod)
 }
 
 // Priority const values.
@@ -399,9 +557,9 @@ const (
 type InsertStmt struct {
 	dmlNode
 
+	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
-	Table       *TableName
 	Setlist     []*Assignment
 	Priority    int
 	OnDuplicate []*Assignment
@@ -409,48 +567,57 @@ type InsertStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (in *InsertStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(in); skipChildren {
-		return in, ok
+func (nod *InsertStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range in.Columns {
+	nod = newNod.(*InsertStmt)
+
+	node, ok := nod.Table.Accept(v)
+	if !ok {
+		return nod, false
+	}
+	nod.Table = node.(*TableRefsClause)
+
+	for i, val := range nod.Columns {
 		node, ok := val.Accept(v)
 		if !ok {
-			return in, false
+			return nod, false
 		}
-		in.Columns[i] = node.(*ColumnName)
+		nod.Columns[i] = node.(*ColumnName)
 	}
-	for i, list := range in.Lists {
+	for i, list := range nod.Lists {
 		for j, val := range list {
 			node, ok := val.Accept(v)
 			if !ok {
-				return in, false
+				return nod, false
 			}
-			in.Lists[i][j] = node.(ExprNode)
+			nod.Lists[i][j] = node.(ExprNode)
 		}
 	}
-	for i, val := range in.Setlist {
+	for i, val := range nod.Setlist {
 		node, ok := val.Accept(v)
 		if !ok {
-			return in, false
+			return nod, false
 		}
-		in.Setlist[i] = node.(*Assignment)
+		nod.Setlist[i] = node.(*Assignment)
 	}
-	for i, val := range in.OnDuplicate {
+	for i, val := range nod.OnDuplicate {
 		node, ok := val.Accept(v)
 		if !ok {
-			return in, false
+			return nod, false
 		}
-		in.OnDuplicate[i] = node.(*Assignment)
+		nod.OnDuplicate[i] = node.(*Assignment)
 	}
-	if in.Select != nil {
-		node, ok := in.Select.Accept(v)
+	if nod.Select != nil {
+		node, ok := nod.Select.Accept(v)
 		if !ok {
-			return in, false
+			return nod, false
 		}
-		in.Select = node.(*SelectStmt)
+		nod.Select = node.(*SelectStmt)
 	}
-	return v.Leave(in)
+	return v.Leave(nod)
 }
 
 // DeleteStmt is a statement to delete rows from table.
@@ -458,10 +625,12 @@ func (in *InsertStmt) Accept(v Visitor) (Node, bool) {
 type DeleteStmt struct {
 	dmlNode
 
-	TableRefs   *Join
+	// Used in both single table and multiple table delete statement.
+	TableRefs *TableRefsClause
+	// Only used in multiple table delete statement.
 	Tables      []*TableName
 	Where       ExprNode
-	Order       []*OrderByItem
+	Order       []*ByItem
 	Limit       *Limit
 	LowPriority bool
 	Ignore      bool
@@ -471,47 +640,49 @@ type DeleteStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (de *DeleteStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(de); skipChildren {
-		return de, ok
+func (nod *DeleteStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
+	nod = newNod.(*DeleteStmt)
 
-	node, ok := de.TableRefs.Accept(v)
+	node, ok := nod.TableRefs.Accept(v)
 	if !ok {
-		return de, false
+		return nod, false
 	}
-	de.TableRefs = node.(*Join)
+	nod.TableRefs = node.(*TableRefsClause)
 
-	for i, val := range de.Tables {
+	for i, val := range nod.Tables {
 		node, ok = val.Accept(v)
 		if !ok {
-			return de, false
+			return nod, false
 		}
-		de.Tables[i] = node.(*TableName)
+		nod.Tables[i] = node.(*TableName)
 	}
 
-	if de.Where != nil {
-		node, ok = de.Where.Accept(v)
+	if nod.Where != nil {
+		node, ok = nod.Where.Accept(v)
 		if !ok {
-			return de, false
+			return nod, false
 		}
-		de.Where = node.(ExprNode)
+		nod.Where = node.(ExprNode)
 	}
 
-	for i, val := range de.Order {
+	for i, val := range nod.Order {
 		node, ok = val.Accept(v)
 		if !ok {
-			return de, false
+			return nod, false
 		}
-		de.Order[i] = node.(*OrderByItem)
+		nod.Order[i] = node.(*ByItem)
 	}
 
-	node, ok = de.Limit.Accept(v)
+	node, ok = nod.Limit.Accept(v)
 	if !ok {
-		return de, false
+		return nod, false
 	}
-	de.Limit = node.(*Limit)
-	return v.Leave(de)
+	nod.Limit = node.(*Limit)
+	return v.Leave(nod)
 }
 
 // UpdateStmt is a statement to update columns of existing rows in tables with new values.
@@ -519,10 +690,10 @@ func (de *DeleteStmt) Accept(v Visitor) (Node, bool) {
 type UpdateStmt struct {
 	dmlNode
 
-	TableRefs     *Join
+	TableRefs     *TableRefsClause
 	List          []*Assignment
 	Where         ExprNode
-	Order         []*OrderByItem
+	Order         []*ByItem
 	Limit         *Limit
 	LowPriority   bool
 	Ignore        bool
@@ -530,43 +701,45 @@ type UpdateStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (up *UpdateStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(up); skipChildren {
-		return up, ok
+func (nod *UpdateStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := up.TableRefs.Accept(v)
+	nod = newNod.(*UpdateStmt)
+	node, ok := nod.TableRefs.Accept(v)
 	if !ok {
-		return up, false
+		return nod, false
 	}
-	up.TableRefs = node.(*Join)
-	for i, val := range up.List {
+	nod.TableRefs = node.(*TableRefsClause)
+	for i, val := range nod.List {
 		node, ok = val.Accept(v)
 		if !ok {
-			return up, false
+			return nod, false
 		}
-		up.List[i] = node.(*Assignment)
+		nod.List[i] = node.(*Assignment)
 	}
-	if up.Where != nil {
-		node, ok = up.Where.Accept(v)
+	if nod.Where != nil {
+		node, ok = nod.Where.Accept(v)
 		if !ok {
-			return up, false
+			return nod, false
 		}
-		up.Where = node.(ExprNode)
+		nod.Where = node.(ExprNode)
 	}
 
-	for i, val := range up.Order {
+	for i, val := range nod.Order {
 		node, ok = val.Accept(v)
 		if !ok {
-			return up, false
+			return nod, false
 		}
-		up.Order[i] = node.(*OrderByItem)
+		nod.Order[i] = node.(*ByItem)
 	}
-	node, ok = up.Limit.Accept(v)
+	node, ok = nod.Limit.Accept(v)
 	if !ok {
-		return up, false
+		return nod, false
 	}
-	up.Limit = node.(*Limit)
-	return v.Leave(up)
+	nod.Limit = node.(*Limit)
+	return v.Leave(nod)
 }
 
 // Limit is the limit clause.
@@ -578,9 +751,11 @@ type Limit struct {
 }
 
 // Accept implements Node Accept interface.
-func (l *Limit) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(l); skipChildren {
-		return l, ok
+func (nod *Limit) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(l)
+	nod = newNod.(*Limit)
+	return v.Leave(nod)
 }

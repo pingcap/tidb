@@ -56,8 +56,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 	st := l.Stmts()[0]
 	ss, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
-	c.Assert(len(ss.Fields), Equals, 1)
-	cv, ok := ss.Fields[0].Expr.(*ast.FuncCastExpr)
+	c.Assert(len(ss.Fields.Fields), Equals, 1)
+	cv, ok := ss.Fields.Fields[0].Expr.(*ast.FuncCastExpr)
 	c.Assert(ok, IsTrue)
 	c.Assert(cv.FunctionType, Equals, ast.CastConvertFunction)
 
