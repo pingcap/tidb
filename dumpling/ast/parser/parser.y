@@ -394,7 +394,7 @@ import (
 	FieldAsName		"Field alias name"
 	FieldAsNameOpt		"Field alias name opt"
 	FieldList		"field expression list"
-	FromClause		"From clause"
+	TableRefsClause		"Table references clause"
 	Function		"function expr"
 	FunctionCallAgg		"Function call on aggregate data"
 	FunctionCallConflict	"Function call with reserved keyword as function name"
@@ -404,7 +404,6 @@ import (
 	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
 	GroupByClause		"GROUP BY clause"
-	GroupByList		"GROUP BY list"
 	HashString		"Hashed string"
 	HavingClause		"HAVING clause"
 	IfExists		"If Exists"
@@ -437,9 +436,9 @@ import (
 	OptInteger		"Optional Integer keyword"
 	Order			"ORDER BY clause optional collation specification"
 	OrderBy			"ORDER BY clause"
-	OrderByItem		"ORDER BY list item"
+	ByItem			"BY item"
 	OrderByOptional		"Optional ORDER BY clause optional"
-	OrderByList 		"ORDER BY list"
+	ByList 			"BY list"
 	OuterOpt		"optional OUTER clause"
 	QuickOptional		"QUICK or empty"
 	PasswordOpt		"Password option"
@@ -452,7 +451,6 @@ import (
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
 	RollbackStmt		"ROLLBACK statement"
-	SelectBasic		"Basic SELECT statement without parentheses and union"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
 	SelectStmtCalcFoundRows	"SELECT statement optional SQL_CALC_FOUND_ROWS"
@@ -491,9 +489,8 @@ import (
 	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
-	UnionClause		"Union select"
+	UnionStmt		"Union select state ment"
 	UnionClauseList		"Union select clause list"
-	UnionClauseP		"Union (select)"
 	UnionClausePList	"Union (select) clause list"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
@@ -1141,12 +1138,13 @@ DeleteFromStmt:
 	"DELETE" LowPriorityOptional QuickOptional IgnoreOptional "FROM" TableName WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
+		join := &ast.Join{Left: &ast.TableSource{Source: $6.(ast.ResultSetNode)}, Right: nil}
 		x := &ast.DeleteStmt{
-			TableRefs:	&ast.Join{Left: &ast.TableSource{Source: $6.(ast.ResultSetNode)}, Right: nil},
+			TableRefs:	&ast.TableRefsClause{TableRefs: join},
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
-			Order:		$8.([]*ast.OrderByItem),
+			Order:		$8.([]*ast.ByItem),
 		}
 		if $7 != nil {
 			x.Where = $7.(ast.ExprNode)
@@ -1171,7 +1169,7 @@ DeleteFromStmt:
 			MultiTable:	true,
 			BeforeFrom:	true,
 			Tables:		$5.([]*ast.TableName),
-			TableRefs:	$7.(*ast.Join),
+			TableRefs:	&ast.TableRefsClause{TableRefs: $7.(*ast.Join)},
 		}
 		if $8 != nil {
 			x.Where = $8.(ast.ExprNode)
@@ -1190,7 +1188,7 @@ DeleteFromStmt:
 			Ignore:		$4.(bool),
 			MultiTable:	true,
 			Tables:		$6.([]*ast.TableName),
-			TableRefs:	$8.(*ast.Join),
+			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
 		}
 		if $9 != nil {
 			x.Where = $9.(ast.ExprNode)
@@ -1493,13 +1491,13 @@ Field:
 	}
 |	Identifier '.' '*'
 	{
-		tn := &ast.TableName{Name:model.NewCIStr($1.(string))}
-		$$ = &ast.SelectField{WildCard: &ast.WildCardField{Table: tn}}
+		wildCard := &ast.WildCardField{Table: model.NewCIStr($1.(string))}
+		$$ = &ast.SelectField{WildCard: wildCard}
 	}
 |	Identifier '.' Identifier '.' '*'
 	{
-		tn := &ast.TableName{Schema:model.NewCIStr($1.(string)), Name:model.NewCIStr($3.(string))}
-		$$ = &ast.SelectField{WildCard: &ast.WildCardField{Table: tn}}
+		wildCard := &ast.WildCardField{Schema: model.NewCIStr($1.(string)), Table: model.NewCIStr($3.(string))}
+		$$ = &ast.SelectField{WildCard: wildCard}
 	}
 |	Expression FieldAsNameOpt
 	{
@@ -1545,19 +1543,9 @@ FieldList:
 	}
 
 GroupByClause:
-	"GROUP" "BY" GroupByList
+	"GROUP" "BY" ByList
 	{
-		$$ = $3.([]ast.ExprNode)
-	}
-
-GroupByList:
-	Expression
-	{
-		$$ = []ast.ExprNode{$1.(ast.ExprNode)}
-	}
-|	GroupByList ',' Expression
-	{
-		$$ = append($1.([]ast.ExprNode), $3.(ast.ExprNode))
+		$$ = &ast.GroupByClause{Items: $3.([]*ast.ByItem)}
 	}
 
 HavingClause:
@@ -1566,7 +1554,7 @@ HavingClause:
 	}
 |	"HAVING" Expression
 	{
-		$$ = $2.(ast.ExprNode)
+		$$ = &ast.HavingClause{Expr: $2.(ast.ExprNode)}
 	}
 
 IfExists:
@@ -1643,7 +1631,9 @@ InsertIntoStmt:
 	{
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(int)
-		x.Table = $5.(*ast.TableName)
+		// Wraps many layers here so that it can be processed the same way as select statement.
+		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
+		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
 		if $7 != nil {
 			x.OnDuplicate = $7.([]*ast.Assignment)
 		}
@@ -1804,25 +1794,25 @@ Operand:
 	}
 
 OrderBy:
-	"ORDER" "BY" OrderByList
+	"ORDER" "BY" ByList
 	{
-		$$ = $3.([]*ast.OrderByItem)
+		$$ = &ast.OrderByClause{Items: $3.([]*ast.ByItem)}
 	}
 
-OrderByList:
-	OrderByItem
+ByList:
+	ByItem
 	{
-		$$ = []*ast.OrderByItem{$1.(*ast.OrderByItem)}
+		$$ = []*ast.ByItem{$1.(*ast.ByItem)}
 	}
-|	OrderByList ',' OrderByItem
+|	ByList ',' ByItem
 	{
-		$$ = append($1.([]*ast.OrderByItem), $3.(*ast.OrderByItem))
+		$$ = append($1.([]*ast.ByItem), $3.(*ast.ByItem))
 	}
 
-OrderByItem:
+ByItem:
 	Expression Order 
 	{
-		$$ = &ast.OrderByItem{Expr: $1.(ast.ExprNode), Desc: $2.(bool)}
+		$$ = &ast.ByItem{Expr: $1.(ast.ExprNode), Desc: $2.(bool)}
 	}
 
 Order:
@@ -2556,40 +2546,23 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	SelectBasic
-|	SelectBasic UnionClauseList
-	{
-		st := $1.(*ast.SelectStmt)
-		st.Unions = $2.([]*ast.UnionClause)
-		$$ = st
-	}
-|	SubSelect UnionClausePList OrderByOptional SelectStmtLimit
-	{
-		st := $1.(*ast.SubqueryExpr).Query
-		st.Unions = $2.([]*ast.UnionClause)
-		st.UnionOrderBy = $3.([]*ast.OrderByItem)
-		st.UnionLimit = $4.(*ast.Limit)
-		$$ = st
-	}
-
-SelectBasic:
 	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
 	{
 		$$ = &ast.SelectStmt {
 			Distinct:      $2.(bool),
-			Fields:        $3.([]*ast.SelectField),
+			Fields:        $3.(*ast.FieldList),
 			From:          nil,
 			LockTp:	       $6.(ast.SelectLockType),
 		}
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM"
-	FromClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
+	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
 	SelectStmtLimit SelectLockOpt
 	{
 		st := &ast.SelectStmt{
 			Distinct:	$2.(bool),
-			Fields:		$3.([]*ast.SelectField),
-			From:		$5.(*ast.Join),
+			Fields:		$3.(*ast.FieldList),
+			From:		$5.(*ast.TableRefsClause),
 			LockTp:		$11.(ast.SelectLockType),
 		}
 
@@ -2598,15 +2571,15 @@ SelectBasic:
 		}
 
 		if $7 != nil {
-			st.GroupBy = $7.([]ast.ExprNode)
+			st.GroupBy = $7.(*ast.GroupByClause)
 		}
 
 		if $8 != nil {
-			st.Having = $8.(ast.ExprNode)
+			st.Having = $8.(*ast.HavingClause)
 		}
 
 		if $9 != nil {
-			st.OrderBy = $9.([]*ast.OrderByItem)
+			st.OrderBy = $9.(*ast.OrderByClause)
 		}
 
 		if $10 != nil {
@@ -2621,17 +2594,17 @@ FromDual:
 |	"FROM" "DUAL"
 
 
-FromClause:
+TableRefsClause:
 	TableRefs
 	{
-		$$ = $1
+		$$ = &ast.TableRefsClause{TableRefs: $1.(*ast.Join)}
 	}
 
 TableRefs:
 	EscapedTableRef
 	{
 		if j, ok := $1.(*ast.Join); ok {
-			// if $1 is JoinRset, use it directly
+			// if $1 is Join, use it directly
 			$$ = j
 		} else {
 			$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: nil}
@@ -2708,11 +2681,13 @@ JoinTable:
 	}
 |	TableRef CrossOpt TableRef "ON" Expression
 	{
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, On: $5.(ast.ExprNode)}
+		on := &ast.OnCondition{Expr: $5.(ast.ExprNode)}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $3.(ast.ResultSetNode), Tp: ast.CrossJoin, On: on}
 	}
 |	TableRef JoinType OuterOpt "JOIN" TableRef "ON" Expression
-	{	
-		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), On: $7.(ast.ExprNode)}
+	{
+		on := &ast.OnCondition{Expr: $7.(ast.ExprNode)}
+		$$ = &ast.Join{Left: $1.(ast.ResultSetNode), Right: $5.(ast.ResultSetNode), Tp: $2.(ast.JoinType), On: on}
 	}
 	/* Support Using */
 
@@ -2799,7 +2774,7 @@ SelectStmtCalcFoundRows:
 SelectStmtFieldList:
 	FieldList
 	{
-		$$ = $1
+		$$ = &ast.FieldList{Fields: $1.([]*ast.SelectField)}
 	}
 
 SelectStmtGroup:
@@ -2836,36 +2811,61 @@ SelectLockOpt:
 	}
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/union.html
-UnionClause:
-	"UNION" UnionOpt SelectBasic
+UnionStmt:
+	UnionClauseList
 	{
-		$$ = &ast.UnionClause{Distinct: $2.(bool), Select: $3.(*ast.SelectStmt)}
+		$$ = $1.(*ast.UnionStmt)
 	}
-
-UnionClauseP:
-	"UNION" UnionOpt SubSelect
+|	UnionClausePList OrderByOptional SelectStmtLimit
 	{
-		$$ = &ast.UnionClause{Distinct: $2.(bool), Select: $3.(*ast.SubqueryExpr).Query}
+		union := $1.(*ast.UnionStmt)
+		if $2 != nil {
+			// push union order by into select statements.
+			orderBy := $2.(*ast.OrderByClause)
+			cloner := &ast.Cloner{}
+			for _, s := range union.Selects {
+				node, _ := orderBy.Accept(cloner)
+				s.OrderBy = node.(*ast.OrderByClause)
+			}
+		}
+		if $3 != nil {
+			union.Limit = $3.(*ast.Limit)
+		}
+		$$ = union
 	}
 
 UnionClauseList:
-	UnionClause
+	SelectStmt "UNION" UnionOpt SelectStmt
 	{
-		$$ = []*ast.UnionClause{$1.(*ast.UnionClause)}
+		selects := []*ast.SelectStmt{$1.(*ast.SelectStmt), $4.(*ast.SelectStmt)}
+		$$ = &ast.UnionStmt{
+			Distinct: $3.(bool),
+			Selects: selects,
+		}
 	}
-|	UnionClauseList UnionClause
+|	UnionClauseList "UNION" UnionOpt SelectStmt
 	{
-		$$ = append($1.([]*ast.UnionClause), $2.(*ast.UnionClause))
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
+		$$ = union
 	}
 
 UnionClausePList:
-	UnionClauseP
+	'(' SelectStmt ')' "UNION" UnionOpt '(' SelectStmt ')'
 	{
-		$$ = []*ast.UnionClause{$1.(*ast.UnionClause)}
+		selects := []*ast.SelectStmt{$2.(*ast.SelectStmt), $7.(*ast.SelectStmt)}
+		$$ = &ast.UnionStmt{
+			Distinct: $5.(bool),
+			Selects: selects,
+		}
 	}
-|	UnionClausePList UnionClauseP
+|	UnionClausePList "UNION" UnionOpt '(' SelectStmt ')'
 	{
-		$$ = append($1.([]*ast.UnionClause), $2.(*ast.UnionClause))
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		union.Selects = append(union.Selects, $5.(*ast.SelectStmt))
+		$$ = union
 	}
 
 UnionOpt:
@@ -3071,7 +3071,7 @@ ShowStmt:
 			Where:  $3.(ast.ExprNode),
 		}
 	}
-|	"SHOW" "CREATE" "TABLE" TableName 
+|	"SHOW" "CREATE" "TABLE" TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:     ast.ShowCreateTable,
@@ -3794,17 +3794,17 @@ UpdateStmt:
 	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single-table syntax
-		r := &ast.Join{Left: $4.(ast.ResultSetNode), Right: nil}
+		join := &ast.Join{Left: &ast.TableSource{Source:$4.(ast.ResultSetNode)}, Right: nil}
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	r,
+			TableRefs:	&ast.TableRefsClause{TableRefs: join},
 			List:		$6.([]*ast.Assignment),
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
 		}
 		if $8 != nil {
-			 st.Order = $8.([]*ast.OrderByItem)
+			st.Order = $8.([]*ast.ByItem)
 		}
 		if $9 != nil {
 			st.Limit = $9.(*ast.Limit)
@@ -3819,7 +3819,7 @@ UpdateStmt:
 		// Multiple-table syntax
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	$4.(*ast.Join),
+			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
 			List:		$6.([]*ast.Assignment),
 			MultipleTable:	true,
 		}
