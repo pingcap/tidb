@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Session context
@@ -256,6 +257,35 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
 	return rs, errors.Trace(err)
+}
+
+// GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
+func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	rs, err := s.ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer rs.Close()
+	row, err := rs.Next()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if row == nil {
+		return "", fmt.Errorf("Unknown sys var: %s", name)
+	}
+	value, err := types.ToString(row.Data[0])
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return value, nil
+}
+
+// SetGlobalSysVar implements RestrictedSQLExecutor.SetGlobalSysVar interface.
+func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) error {
+	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, value, name)
+	_, err := s.ExecRestrictedSQL(ctx, sql)
+	return errors.Trace(err)
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
