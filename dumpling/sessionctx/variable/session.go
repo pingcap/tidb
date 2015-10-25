@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 )
@@ -121,7 +122,12 @@ func (s *SessionVars) SetCurrentUser(user string) {
 func IsAutocommit(ctx context.Context) bool {
 	autocommit, ok := GetSessionVars(ctx).Systems["autocommit"]
 	if !ok {
-		autocommit = GetSysVar("autocommit").Value
+		var err error
+		autocommit, err = ctx.(GlobalSysVarAccessor).GetGlobalSysVar(ctx, "autocommit")
+		if err != nil {
+			log.Errorf("Get global sys var error: %v", err)
+			return false
+		}
 		ok = true
 	}
 	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
@@ -139,6 +145,5 @@ func ShouldAutocommit(ctx context.Context) bool {
 	if IsAutocommit(ctx) && GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 {
 		return true
 	}
-
 	return false
 }

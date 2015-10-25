@@ -37,8 +37,8 @@ func (k *RestrictedSQLExecutorKeyType) String() string {
 // We hope this could be used with some restrictions such as only allowing system tables as target,
 // do not allowing recursion call.
 // For more infomation please refer to the comments in session.ExecRestrictedSQL().
+// This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	// This is implemented in session.go.
 	ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error)
 }
