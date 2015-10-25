@@ -38,7 +38,6 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 		}
 
 		err = m.EnQueueDDLJob(job)
-
 		return errors.Trace(err)
 	})
 
