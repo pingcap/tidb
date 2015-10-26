@@ -33,9 +33,8 @@ type UnionIter struct {
 
 func newUnionIter(dirtyIt Iterator, snapshotIt Iterator) *UnionIter {
 	it := &UnionIter{
-		dirtyIt:    dirtyIt,
-		snapshotIt: snapshotIt,
-		// leveldb use next for checking valid...
+		dirtyIt:       dirtyIt,
+		snapshotIt:    snapshotIt,
 		dirtyValid:    dirtyIt.Valid(),
 		snapshotValid: snapshotIt.Valid(),
 	}
