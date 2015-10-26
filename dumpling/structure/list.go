@@ -26,15 +26,15 @@ type listMeta struct {
 	RIndex int64
 }
 
-func (m listMeta) Value() []byte {
+func (meta listMeta) Value() []byte {
 	buf := make([]byte, 16)
-	binary.BigEndian.PutUint64(buf[0:8], uint64(m.LIndex))
-	binary.BigEndian.PutUint64(buf[8:16], uint64(m.RIndex))
+	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.LIndex))
+	binary.BigEndian.PutUint64(buf[8:16], uint64(meta.RIndex))
 	return buf
 }
 
-func (m listMeta) IsEmpty() bool {
-	return m.LIndex >= m.RIndex
+func (meta listMeta) IsEmpty() bool {
+	return meta.LIndex >= meta.RIndex
 }
 
 // LPush prepends one or multiple values to a list.
@@ -53,7 +53,7 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 	}
 
 	metaKey := t.encodeListMetaKey(key)
-	m, err := t.loadListMeta(metaKey)
+	meta, err := t.loadListMeta(metaKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -65,11 +65,11 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 	index := int64(0)
 	for _, v := range values {
 		if left {
-			m.LIndex--
-			index = m.LIndex
+			meta.LIndex--
+			index = meta.LIndex
 		} else {
-			index = m.RIndex
-			m.RIndex++
+			index = meta.RIndex
+			meta.RIndex++
 		}
 
 		dataKey := t.encodeListDataKey(key, index)
@@ -78,7 +78,7 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 		}
 	}
 
-	return t.txn.Set(metaKey, m.Value())
+	return t.txn.Set(metaKey, meta.Value())
 }
 
 // LPop removes and gets the first element in a list.
@@ -93,8 +93,8 @@ func (t *TxStructure) RPop(key []byte) ([]byte, error) {
 
 func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
-	m, err := t.loadListMeta(metaKey)
-	if err != nil || m.IsEmpty() {
+	meta, err := t.loadListMeta(metaKey)
+	if err != nil || meta.IsEmpty() {
 		return nil, errors.Trace(err)
 	}
 
@@ -104,11 +104,11 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 
 	index := int64(0)
 	if left {
-		index = m.LIndex
-		m.LIndex++
+		index = meta.LIndex
+		meta.LIndex++
 	} else {
-		m.RIndex--
-		index = m.RIndex
+		meta.RIndex--
+		index = meta.RIndex
 	}
 
 	dataKey := t.encodeListDataKey(key, index)
@@ -123,8 +123,8 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if m.LIndex < m.RIndex {
-		err = t.txn.Set(metaKey, m.Value())
+	if !meta.IsEmpty() {
+		err = t.txn.Set(metaKey, meta.Value())
 	} else {
 		err = t.txn.Delete(metaKey)
 	}
@@ -135,21 +135,21 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 // LLen gets the length of a list.
 func (t *TxStructure) LLen(key []byte) (int64, error) {
 	metaKey := t.encodeListMetaKey(key)
-	m, err := t.loadListMeta(metaKey)
-	return m.RIndex - m.LIndex, errors.Trace(err)
+	meta, err := t.loadListMeta(metaKey)
+	return meta.RIndex - meta.LIndex, errors.Trace(err)
 }
 
 // LIndex gets an element from a list by its index.
 func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
-	m, err := t.loadListMeta(metaKey)
-	if err != nil || m.IsEmpty() {
+	meta, err := t.loadListMeta(metaKey)
+	if err != nil || meta.IsEmpty() {
 		return nil, errors.Trace(err)
 	}
 
-	index = adjustIndex(index, m.LIndex, m.RIndex)
+	index = adjustIndex(index, meta.LIndex, meta.RIndex)
 
-	if index >= m.LIndex && index < m.RIndex {
+	if index >= meta.LIndex && index < meta.RIndex {
 		return t.txn.Get(t.encodeListDataKey(key, index))
 	}
 	return nil, nil
@@ -158,14 +158,14 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 // LSet updates an element in the list by its index.
 func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	metaKey := t.encodeListMetaKey(key)
-	m, err := t.loadListMeta(metaKey)
-	if err != nil || m.IsEmpty() {
+	meta, err := t.loadListMeta(metaKey)
+	if err != nil || meta.IsEmpty() {
 		return errors.Trace(err)
 	}
 
-	index = adjustIndex(index, m.LIndex, m.RIndex)
+	index = adjustIndex(index, meta.LIndex, meta.RIndex)
 
-	if index >= m.LIndex && index < m.RIndex {
+	if index >= meta.LIndex && index < meta.RIndex {
 		return t.txn.Set(t.encodeListDataKey(key, index), value)
 	}
 	return errors.Errorf("invalid index %d", index)
@@ -174,8 +174,8 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 // LClear removes the list of the key.
 func (t *TxStructure) LClear(key []byte) error {
 	metaKey := t.encodeListMetaKey(key)
-	m, err := t.loadListMeta(metaKey)
-	if err != nil || m.IsEmpty() {
+	meta, err := t.loadListMeta(metaKey)
+	if err != nil || meta.IsEmpty() {
 		return errors.Trace(err)
 	}
 
@@ -183,7 +183,7 @@ func (t *TxStructure) LClear(key []byte) error {
 		return errors.Trace(err)
 	}
 
-	for index := m.LIndex; index < m.RIndex; index++ {
+	for index := meta.LIndex; index < meta.RIndex; index++ {
 		dataKey := t.encodeListDataKey(key, index)
 		if err = t.txn.Delete(dataKey); err != nil {
 			return errors.Trace(err)

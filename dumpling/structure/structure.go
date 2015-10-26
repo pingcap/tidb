@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
-// ErrTxDone is the error return after transaction has already been committed or rolled back.
-var ErrTxDone = errors.Errorf("Transaction has already been committed or rolled back")
+// ErrTxDone is the error returned after transaction has already been committed or rolled back.
+var ErrTxDone = errors.New("Transaction has already been committed or rolled back")
 
 // TStore is the storage for data structure.
 type TStore struct {
@@ -59,7 +59,7 @@ func (s *TStore) RunInNewTxn(retryable bool, f func(t *TxStructure) error) error
 	return errors.Trace(err)
 }
 
-// TxStructure supports some simple data structure like string, hash, list, etc... and
+// TxStructure supports some simple data structures like string, hash, list, etc... and
 // you can use these in a transaction.
 type TxStructure struct {
 	txn    kv.Transaction
