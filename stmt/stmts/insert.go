@@ -46,15 +46,20 @@ const (
 	DelayedPriority
 )
 
+// InsertRest is the rest part of insert/replace into statement.
+type InsertRest struct {
+	ColNames   []string
+	Lists      [][]expression.Expression
+	Sel        plan.Planner
+	TableIdent table.Ident
+	Setlist    []*expression.Assignment
+	Priority   int
+}
+
 // InsertIntoStmt is a statement to insert new rows into an existing table.
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
 type InsertIntoStmt struct {
-	ColNames    []string
-	Lists       [][]expression.Expression
-	Sel         plan.Planner
-	TableIdent  table.Ident
-	Setlist     []*expression.Assignment
-	Priority    int
+	InsertRest
 	OnDuplicate []expression.Assignment
 
 	Text string
@@ -81,7 +86,7 @@ func (s *InsertIntoStmt) SetText(text string) {
 }
 
 // execExecSelect implements `insert table select ... from ...`.
-func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (rset.Recordset, error) {
+func (s *InsertRest) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (rset.Recordset, error) {
 	r, err := s.Sel.Plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -144,7 +149,7 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
-func (s *InsertIntoStmt) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
+func (s *InsertRest) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
 	var cols []*column.Col
 	var err error
 
@@ -185,7 +190,7 @@ func (s *InsertIntoStmt) getColumns(tableCols []*column.Col) ([]*column.Col, err
 	return cols, nil
 }
 
-func (s *InsertIntoStmt) getDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
+func (s *InsertRest) getDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
 	m := map[interface{}]interface{}{}
 	for _, v := range cols {
 		if value, ok, err := getDefaultValue(ctx, v); ok {
@@ -200,7 +205,7 @@ func (s *InsertIntoStmt) getDefaultValues(ctx context.Context, cols []*column.Co
 	return m, nil
 }
 
-func (s *InsertIntoStmt) getSetlist() error {
+func (s *InsertRest) fillValueList() error {
 	if len(s.Setlist) > 0 {
 		if len(s.Lists) > 0 {
 			return errors.Errorf("INSERT INTO %s: set type should not use values", s.TableIdent)
@@ -233,7 +238,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	// Process `insert ... set x=y...`
-	if err = s.getSetlist(); err != nil {
+	if err = s.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -278,7 +283,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	return nil, nil
 }
 
-func (s *InsertIntoStmt) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
+func (s *InsertRest) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
@@ -297,7 +302,7 @@ func (s *InsertIntoStmt) checkValueCount(insertValueCount, valueCount, num int, 
 	return nil
 }
 
-func (s *InsertIntoStmt) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, error) {
+func (s *InsertRest) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, error) {
 	r := make([]interface{}, len(t.Cols()))
 	marked := make(map[int]struct{}, len(list))
 	for i, expr := range list {
@@ -367,7 +372,7 @@ func getOnDuplicateUpdateColumns(assignList []expression.Assignment, t table.Tab
 	return m, nil
 }
 
-func (s *InsertIntoStmt) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
+func (s *InsertRest) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
 	var err error
 	var defaultValueCols []*column.Col
 	for i, c := range t.Cols() {
