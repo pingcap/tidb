@@ -14,9 +14,7 @@
 package variable
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/mysql"
 )
 
 // SessionVars is to handle user-defined or global variables in current session.
@@ -116,34 +114,4 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 // SetCurrentUser saves the current user to the session context.
 func (s *SessionVars) SetCurrentUser(user string) {
 	s.User = user
-}
-
-// IsAutocommit checks if it is in the auto-commit mode.
-func IsAutocommit(ctx context.Context) bool {
-	autocommit, ok := GetSessionVars(ctx).Systems["autocommit"]
-	if !ok {
-		var err error
-		autocommit, err = ctx.(GlobalSysVarAccessor).GetGlobalSysVar(ctx, "autocommit")
-		if err != nil {
-			log.Errorf("Get global sys var error: %v", err)
-			return false
-		}
-		ok = true
-	}
-	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
-		GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-		return true
-	}
-	GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	return false
-}
-
-// ShouldAutocommit checks if it should be auto-commit.
-func ShouldAutocommit(ctx context.Context) bool {
-	// With START TRANSACTION, autocommit remains disabled until you end
-	// the transaction with COMMIT or ROLLBACK.
-	if IsAutocommit(ctx) && GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 {
-		return true
-	}
-	return false
 }

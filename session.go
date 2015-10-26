@@ -110,6 +110,7 @@ type session struct {
 	store   kv.Storage
 	sid     int64
 	history stmtHistory
+	initing bool
 }
 
 func (s *session) Status() uint16 {
@@ -261,6 +262,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 
 // GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	log.Infof("GetGlobalSysVar")
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -278,6 +280,7 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 	if err != nil {
 		return "", errors.Trace(err)
 	}
+	log.Infof("GetGlobalSysVar over")
 	return value, nil
 }
 
@@ -286,6 +289,44 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, value, name)
 	_, err := s.ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
+}
+
+// IsAutocommit checks if it is in the auto-commit mode.
+func (s *session) isAutocommit(ctx context.Context) bool {
+	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
+		return false
+	}
+	autocommit, ok := variable.GetSessionVars(ctx).Systems["autocommit"]
+	if !ok {
+		if s.initing {
+			return false
+		}
+		var err error
+		autocommit, err = s.GetGlobalSysVar(ctx, "autocommit")
+		if err != nil {
+			log.Errorf("Get global sys var error: %v", err)
+			return false
+		}
+		ok = true
+	}
+	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
+		variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+		return true
+	}
+	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	return false
+}
+
+func (s *session) ShouldAutocommit(ctx context.Context) bool {
+	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
+		return false
+	}
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK.
+	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && s.isAutocommit(ctx) {
+		return true
+	}
+	return false
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
@@ -399,7 +440,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !variable.IsAutocommit(s) {
+		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
@@ -416,7 +457,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !variable.IsAutocommit(s) {
+		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
@@ -505,7 +546,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	_, ok := storeBootstrapped[store.UUID()]
 	if !ok {
+		s.initing = true
 		bootstrap(s)
+		s.initing = false
 		storeBootstrapped[store.UUID()] = true
 	}
 	// Add auth here

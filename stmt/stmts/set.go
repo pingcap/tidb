@@ -119,6 +119,9 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			return nil, nil
 		}
 		sysVar := variable.GetSysVar(name)
+		if sysVar == nil {
+			return nil, errors.Errorf("Unknown system variable '%s'", name)
+		}
 		if sysVar.Scope == variable.ScopeNone {
 			return nil, errors.Errorf("Variable '%s' is a read only variable", name)
 		}
@@ -144,7 +147,7 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			if value, err := v.getValue(ctx); err != nil {
 				return nil, errors.Trace(err)
 			} else if value == nil {
-				sysVar.Value = ""
+				sessionVars.Systems[name] = ""
 			} else {
 				sessionVars.Systems[name] = fmt.Sprintf("%v", value)
 			}
