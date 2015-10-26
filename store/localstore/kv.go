@@ -114,7 +114,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 
 	beginVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	txn := &dbTxn{
 		tid:          beginVer.Ver,
@@ -124,13 +124,10 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		snapshotVals: make(map[string][]byte),
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
-	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{
+	txn.UnionStore = kv.NewUnionStore(&dbSnapshot{
 		db:      s.db,
 		version: beginVer,
 	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	return txn, nil
 }
 

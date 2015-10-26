@@ -20,9 +20,11 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -35,6 +37,7 @@ var (
 )
 
 func main() {
+	metric.RunMetric(3 * time.Second)
 	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
