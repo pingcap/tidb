@@ -155,7 +155,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 func (s *testKVSuite) TestBasicNewIterator(c *C) {
 	for _, buffer := range s.bs {
 		it := buffer.NewIterator([]byte("2"))
-		c.Assert(it.Valid(), Equals, false)
+		c.Assert(it.Valid(), IsFalse)
 		buffer.Release()
 	}
 }
@@ -177,17 +177,18 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 			buffer.Set([]byte(kv.key), []byte(kv.value))
 		}
 
+		cnt := 0
 		it := buffer.NewIterator(nil)
 		for it.Valid() {
-			fmt.Printf("%s, %s\n", it.Key(), it.Value())
+			cnt++
 			it, _ = it.Next()
 		}
+		c.Assert(cnt, Equals, 6)
 
 		it = buffer.NewIterator([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))
 		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 
 		buffer.Release()
-
 	}
 }
 
