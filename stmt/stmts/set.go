@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -117,8 +118,6 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			}
 			return nil, nil
 		}
-
-		// TODO: should get global sys var from db.
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
 			return nil, errors.Errorf("Unknown system variable '%s'", name)
@@ -126,7 +125,6 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		if sysVar.Scope == variable.ScopeNone {
 			return nil, errors.Errorf("Variable '%s' is a read only variable", name)
 		}
-
 		if v.IsGlobal {
 			if sysVar.Scope&variable.ScopeGlobal > 0 {
 				value, err := v.getValue(ctx)
@@ -134,13 +132,14 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 					return nil, errors.Trace(err)
 				}
 				if value == nil {
-					sysVar.Value = ""
-				} else {
-					// TODO: set global variables in db, now we only change memory global sys var map.
-					// TODO: check sys variable type if possible.
-					sysVar.Value = fmt.Sprintf("%v", value)
+					value = ""
 				}
-				return nil, nil
+				svalue, err := types.ToString(value)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				err = ctx.(variable.GlobalSysVarAccessor).SetGlobalSysVar(ctx, name, svalue)
+				return nil, errors.Trace(err)
 			}
 			return nil, errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
 		}
@@ -148,9 +147,8 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			if value, err := v.getValue(ctx); err != nil {
 				return nil, errors.Trace(err)
 			} else if value == nil {
-				sysVar.Value = ""
+				sessionVars.Systems[name] = ""
 			} else {
-				// TODO: check sys variable type if possible.
 				sessionVars.Systems[name] = fmt.Sprintf("%v", value)
 			}
 			return nil, nil
