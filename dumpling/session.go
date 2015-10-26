@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -541,6 +542,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+
+	// session implements autocommit.Checker. Bind it to ctx
+	autocommit.BindAutocommitChecker(s, s)
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 

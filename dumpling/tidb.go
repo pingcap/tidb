@@ -177,7 +177,7 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		stmt.ClearExecArgs(ctx)
 	}
 	// MySQL DDL should be auto-commit
-	if err == nil && (s.IsDDL() || ctx.(autocommit.Checker).ShouldAutocommit(ctx)) {
+	if err == nil && (s.IsDDL() || autocommit.GetAutocommitChecker(ctx).ShouldAutocommit(ctx)) {
 		err = ctx.FinishTxn(false)
 	}
 	return rs, errors.Trace(err)
