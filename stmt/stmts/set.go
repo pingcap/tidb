@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -190,9 +191,23 @@ func (s *SetCharsetStmt) SetText(text string) {
 }
 
 // Exec implements the stmt.Statement Exec interface.
+// SET NAMES sets the three session system variables character_set_client, character_set_connection,
+// and character_set_results to the given character set. Setting character_set_connection to charset_name
+// also sets collation_connection to the default collation for charset_name.
+// The optional COLLATE clause may be used to specify a collation explicitly.
 func (s *SetCharsetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	// TODO: finish this
 	log.Debug("Set charset to ", s.Charset)
-	// ctx.Charset = s.Charset
+	collation := s.Collate
+	if len(collation) == 0 {
+		collation, err = charset.GetDefaultCollation(s.Charset)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	sessionVars := variable.GetSessionVars(ctx)
+	for _, v := range variable.SetNamesVariables {
+		sessionVars.Systems[v] = s.Charset
+	}
+	sessionVars.Systems[variable.CollationConnection] = collation
 	return nil, nil
 }
