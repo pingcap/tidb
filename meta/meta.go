@@ -160,7 +160,7 @@ func (m *TMeta) tableKey(tableID int64) []byte {
 func (m *TMeta) parseTableID(key string) (int64, error) {
 	seps := strings.Split(key, ":")
 	if len(seps) != 2 {
-		return 0, errors.Errorf("invalid db meta key %s", key)
+		return 0, errors.Errorf("invalid table meta key %s", key)
 	}
 
 	n, err := strconv.ParseInt(seps[1], 10, 64)
@@ -202,7 +202,7 @@ func (m *TMeta) GenSchemaVersion() (int64, error) {
 func (m *TMeta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	} else if v == nil {
 		return ErrDBNotExists
 	}
@@ -213,7 +213,7 @@ func (m *TMeta) checkDBExists(dbKey []byte) error {
 func (m *TMeta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	} else if v != nil {
 		return ErrDBExists
 	}
@@ -224,7 +224,7 @@ func (m *TMeta) checkDBNotExists(dbKey []byte) error {
 func (m *TMeta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	} else if v == nil {
 		return ErrTableNotExists
 	}
@@ -235,7 +235,7 @@ func (m *TMeta) checkTableExists(dbKey []byte, tableKey []byte) error {
 func (m *TMeta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	} else if v != nil {
 		return ErrTableExists
 	}
