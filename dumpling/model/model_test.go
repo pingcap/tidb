@@ -78,3 +78,27 @@ func (*testSuite) TestClone(c *C) {
 	n := dbInfo.Clone()
 	c.Assert(n, DeepEquals, dbInfo)
 }
+
+func (*testSuite) TestJobCodec(c *C) {
+	type A struct {
+		Name string
+	}
+	job := &Job{
+		ID:   1,
+		Args: []interface{}{NewCIStr("a"), A{Name: "abc"}},
+	}
+
+	b, err := job.Encode()
+	c.Assert(err, IsNil)
+
+	newJob := &Job{}
+	err = newJob.Decode(b)
+	c.Assert(err, IsNil)
+
+	name := CIStr{}
+	a := A{}
+	err = newJob.DecodeArgs(&name, &a)
+	c.Assert(err, IsNil)
+	c.Assert(name, DeepEquals, NewCIStr("a"))
+	c.Assert(a, DeepEquals, A{Name: "abc"})
+}

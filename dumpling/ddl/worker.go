@@ -71,7 +71,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 			return nil
 		}
 
-		return errors.Errorf("job is %s, err :%v", job.State, job.Error)
+		return errors.Errorf(job.Error)
 	}
 }
 
@@ -107,6 +107,9 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 	}
 
 	now := time.Now().Unix()
+	// we must wait 2 * lease time to guarantee other servers update the schema,
+	// the owner will update its owner status every 2 * lease time, so here we use
+	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
 		owner.OwnerID = d.uuid
@@ -125,38 +128,21 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 	return nil
 }
 
-// every time we enter another state, we must call this function.
-func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
-	err := d.verifyOwner(t)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = t.UpdateDDLJob(0, job)
-	return errors.Trace(err)
-}
-
-func (d *ddl) getFirstJob() (*model.Job, error) {
-	var job *model.Job
-
-	err := d.meta.RunInNewTxn(true, func(t *meta.TMeta) error {
-		var err1 error
-		job, err1 = t.GetDDLJob(0)
-		return errors.Trace(err1)
-	})
-
+func (d *ddl) getFirstJob(t *meta.TMeta) (*model.Job, error) {
+	job, err := t.GetDDLJob(0)
 	return job, errors.Trace(err)
 }
 
-func (d *ddl) finishJob(job *model.Job) error {
+// every time we enter another state except final state, we must call this function.
+func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
+	err := t.UpdateDDLJob(0, job)
+	return errors.Trace(err)
+}
+
+func (d *ddl) finishJob(t *meta.TMeta, job *model.Job) error {
 	// done, notice and run next job.
 	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		err := d.verifyOwner(t)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		_, err = t.DeQueueDDLJob()
+		_, err := t.DeQueueDDLJob()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -168,42 +154,56 @@ func (d *ddl) finishJob(job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) checkOwner() error {
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		return errors.Trace(d.verifyOwner(t))
-	})
-
-	return errors.Trace(err)
-}
-
 // ErrNotOwner means we are not owner and can't handle DDL jobs.
 var ErrNotOwner = errors.New("DDL: not owner")
 
 func (d *ddl) handleJobQueue() error {
 	for {
-		err := d.checkOwner()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// become the owner
-		// get the first job and run
 		var job *model.Job
-		job, err = d.getFirstJob()
-		if job == nil || err != nil {
+		err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+			err := d.verifyOwner(t)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// become the owner
+			// get the first job and run
+			job, err = d.getFirstJob(t)
+			if job == nil || err != nil {
+				return errors.Trace(err)
+			}
+
+			log.Warnf("run job %v", job)
+			err = d.runJob(t, job)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if job.State == model.JobDone || job.State == model.JobCancelled {
+				err = d.finishJob(t, job)
+				if err == nil {
+					asyncNotify(d.jobDoneCh)
+				}
+			} else {
+				err = d.updateJob(t, job)
+			}
+
 			return errors.Trace(err)
+		})
+
+		if err != nil {
+			return errors.Trace(err)
+		} else if job == nil {
+			// no job now, return and retry get later.
+			return nil
 		}
 
-		err = d.runJob(job)
-		if err != nil {
-			return errors.Errorf("run job %v failed, err %v", job, err)
+		// here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
+		// if the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
+		// the newest schema.
+		if job.State == model.JobRunning || job.State == model.JobDone {
+			d.waitSchemaChanged()
 		}
-		// done, notice and run next job.
-		err = d.finishJob(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		asyncNotify(d.jobDoneCh)
 	}
 }
 
@@ -228,7 +228,7 @@ func (d *ddl) onWorker() {
 	}
 }
 
-func (d *ddl) runJob(job *model.Job) error {
+func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
 	if job.State == model.JobDone || job.State == model.JobCancelled {
 		return nil
 	}
@@ -238,6 +238,7 @@ func (d *ddl) runJob(job *model.Job) error {
 	var err error
 	switch job.Type {
 	case model.ActionCreateSchema:
+		err = d.onSchemaCreate(t, job)
 	case model.ActionDropSchema:
 	case model.ActionCreateTable:
 	case model.ActionDropTable:
@@ -248,7 +249,9 @@ func (d *ddl) runJob(job *model.Job) error {
 	case model.ActionAddConstraint:
 	case model.ActionDropConstraint:
 	default:
-		return errors.Errorf("invalid job %v", job)
+		// invalid job, cancel it.
+		job.State = model.JobCancelled
+		err = errors.Errorf("invalid job %v", job)
 	}
 
 	// if err and inner doesn't cancel job, return err.
@@ -258,9 +261,15 @@ func (d *ddl) runJob(job *model.Job) error {
 		}
 
 		job.Error = err.Error()
-	} else {
-		job.State = model.JobDone
 	}
 
 	return nil
+}
+
+// for every lease seconds, we will re-update the whole schema, so we will wait 2 * lease time
+// to guarantee that all servers have already updated schema.
+func (d *ddl) waitSchemaChanged() {
+	if d.lease > 0 {
+		time.Sleep(time.Duration(d.lease) * time.Second * 2)
+	}
 }
