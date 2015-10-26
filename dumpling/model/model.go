@@ -62,7 +62,7 @@ type ColumnInfo struct {
 	State           SchemaState `json:"state"`
 }
 
-// Clone clones ColumnInfo
+// Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
 	nc := *c
 	return &nc
@@ -80,7 +80,7 @@ type TableInfo struct {
 	State   SchemaState   `json:"state"`
 }
 
-// Clone clones TableInfo
+// Clone clones TableInfo.
 func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
@@ -103,7 +103,7 @@ type IndexColumn struct {
 	Length int   `json:"length"` // Index length
 }
 
-// Clone clones IndexColumn
+// Clone clones IndexColumn.
 func (i *IndexColumn) Clone() *IndexColumn {
 	ni := *i
 	return &ni
@@ -121,7 +121,7 @@ type IndexInfo struct {
 	State   SchemaState    `json:"state"`
 }
 
-// Clone clones IndexInfo
+// Clone clones IndexInfo.
 func (index *IndexInfo) Clone() *IndexInfo {
 	ni := *index
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
@@ -141,7 +141,7 @@ type DBInfo struct {
 	State   SchemaState  `json:"state"`
 }
 
-// Clone clones DBInfo
+// Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
 	newInfo.Tables = make([]*TableInfo, len(db.Tables))
