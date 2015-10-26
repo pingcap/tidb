@@ -17,7 +17,8 @@ import (
 	"github.com/pingcap/tidb/context"
 )
 
-// Checker is the interface check if should autocommit in the context.
+// Checker is the interface checks if it should autocommit in the context.
+// TODO: Choose a better name.
 type Checker interface {
 	// ShouldAutocommit returns true if it should autocommit in the context.
 	ShouldAutocommit(ctx context.Context) bool
