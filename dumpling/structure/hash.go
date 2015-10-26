@@ -272,7 +272,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	}
 
 	if len(v) != 8 {
-		return meta, errors.Errorf("invalid list meta data")
+		return meta, errors.New("invalid list meta data")
 	}
 
 	meta.Length = int64(binary.BigEndian.Uint64(v[0:8]))
