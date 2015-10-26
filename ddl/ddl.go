@@ -73,8 +73,16 @@ type ddl struct {
 // OnDDLChange is used as hook function when schema changed.
 type OnDDLChange func(err error) error
 
+func fakeOnDDLChange(err error) error {
+	return err
+}
+
 // NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease int) DDL {
+	if hook == nil {
+		hook = fakeOnDDLChange
+	}
+
 	d := &ddl{
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
@@ -92,32 +100,27 @@ func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
-func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) {
+func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) error {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return errors.Trace(ErrExists)
 	}
-	info := &model.DBInfo{Name: schema}
-	info.ID, err = d.meta.GenGlobalID()
+
+	schemaID, err := d.meta.GenGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.CreateDatabase(info)
-
-		log.Warnf("save schema %s", info)
-		return errors.Trace(err)
-	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
+	job := &model.Job{
+		SchemaID: schemaID,
+		Type:     model.ActionCreateSchema,
+		Args:     []interface{}{schema},
 	}
+
+	err = d.startJob(ctx, job)
+	err = d.onDDLChange(err)
+
 	return errors.Trace(err)
 }
 
@@ -181,9 +184,8 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		err = t.DropDatabase(old.ID)
 		return errors.Trace(err)
 	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
+
+	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
 
@@ -409,9 +411,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 		return errors.Trace(err)
 	})
 
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
+	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
 
@@ -509,9 +509,8 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 		err = t.UpdateTable(schema.ID, tb.Meta())
 		return errors.Trace(err)
 	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
+
+	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
 
@@ -571,12 +570,12 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		err = t.DropTable(schema.ID, tb.Meta().ID)
 		return errors.Trace(err)
 	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-		if err != nil {
-			return errors.Trace(err)
-		}
+
+	err = d.onDDLChange(err)
+	if err != nil {
+		return errors.Trace(err)
 	}
+
 	err = d.deleteTableData(ctx, tb)
 	return errors.Trace(err)
 }
@@ -668,9 +667,8 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 		err = t.UpdateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
+
+	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
 

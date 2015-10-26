@@ -13,6 +13,12 @@
 
 package model
 
+import (
+	"encoding/json"
+
+	"github.com/juju/errors"
+)
+
 // ActionType is the type for DDL action.
 type ActionType byte
 
@@ -33,15 +39,42 @@ const (
 
 // Job is for a DDL operation.
 type Job struct {
-	ID   int64      `json:"id"`
-	Type ActionType `json:"type"`
-	// SchemaID is 0 if creating schema.
-	SchemaID int64 `json:"schema_id"`
-	// TableID is 0 if creating table.
-	TableID int64         `json:"table_id"`
-	Args    []interface{} `json:"args"`
-	State   JobState      `json:"state"`
-	Error   string        `json:"error"`
+	ID       int64         `json:"id"`
+	Type     ActionType    `json:"type"`
+	SchemaID int64         `json:"schema_id"`
+	TableID  int64         `json:"table_id"`
+	State    JobState      `json:"state"`
+	Error    string        `json:"err"`
+	Args     []interface{} `json:"-"`
+	// we must use json raw message for delay parsing special args.
+	RawArgs json.RawMessage `json:"raw_args"`
+}
+
+// Encode encodes job with json format.
+func (j *Job) Encode() ([]byte, error) {
+	var err error
+	j.RawArgs, err = json.Marshal(j.Args)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var b []byte
+	b, err = json.Marshal(j)
+	return b, errors.Trace(err)
+}
+
+// Decode decodes job from the json buffer, we must use DecodeArgs later to
+// decode special args for this job.
+func (j *Job) Decode(b []byte) error {
+	err := json.Unmarshal(b, j)
+	return errors.Trace(err)
+}
+
+// DecodeArgs decodes job args.
+func (j *Job) DecodeArgs(args ...interface{}) error {
+	j.Args = args
+	err := json.Unmarshal(j.RawArgs, &j.Args)
+	return errors.Trace(err)
 }
 
 // JobState is for job state.

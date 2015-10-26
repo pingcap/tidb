@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func TestT(t *testing.T) {
@@ -37,12 +38,14 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
+	ctx := mock.NewContext()
+
 	dom, err := NewDomain(store, 0)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
-	err = dd.CreateSchema(nil, model.NewCIStr("aaa"))
+	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"))
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)

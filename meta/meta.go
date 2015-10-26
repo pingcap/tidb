@@ -485,7 +485,7 @@ func (m *TMeta) SetDDLOwner(o *model.Owner) error {
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *TMeta) EnQueueDDLJob(job *model.Job) error {
-	b, err := json.Marshal(job)
+	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -500,7 +500,7 @@ func (m *TMeta) DeQueueDDLJob() (*model.Job, error) {
 	}
 
 	job := &model.Job{}
-	err = json.Unmarshal(value, job)
+	err = job.Decode(value)
 	return job, errors.Trace(err)
 }
 
@@ -512,13 +512,13 @@ func (m *TMeta) GetDDLJob(index int64) (*model.Job, error) {
 	}
 
 	job := &model.Job{}
-	err = json.Unmarshal(value, job)
+	err = job.Decode(value)
 	return job, errors.Trace(err)
 }
 
 // UpdateDDLJob updates the DDL job with index.
 func (m *TMeta) UpdateDDLJob(index int64, job *model.Job) error {
-	b, err := json.Marshal(job)
+	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -538,7 +538,7 @@ func (m *TMeta) jobIDKey(id int64) []byte {
 
 // AddHistoryDDLJob adds DDL job to history.
 func (m *TMeta) AddHistoryDDLJob(job *model.Job) error {
-	b, err := json.Marshal(job)
+	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -553,7 +553,7 @@ func (m *TMeta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	}
 
 	job := &model.Job{}
-	err = json.Unmarshal(value, job)
+	err = job.Decode(value)
 	return job, errors.Trace(err)
 }
 
