@@ -23,3 +23,27 @@ type Checker interface {
 	// ShouldAutocommit returns true if it should autocommit in the context.
 	ShouldAutocommit(ctx context.Context) bool
 }
+
+// keyType is a dummy type to avoid naming collision in context.
+type keyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k keyType) String() string {
+	return "autocommit_checker"
+}
+
+const key keyType = 0
+
+// BindAutocommitChecker binds autocommit checker to context.
+func BindAutocommitChecker(ctx context.Context, checker Checker) {
+	ctx.SetValue(key, checker)
+}
+
+// GetAutocommitChecker gets autocommit checker from context.
+func GetAutocommitChecker(ctx context.Context) Checker {
+	v, ok := ctx.Value(key).(Checker)
+	if !ok {
+		return nil
+	}
+	return v
+}
