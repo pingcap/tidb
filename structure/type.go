@@ -39,6 +39,8 @@ const (
 )
 
 func (t *TxStructure) encodeStringDataKey(key []byte) []byte {
+	// for codec Encode, we may add extra bytes data, so here and following encode
+	// we will use extra length like 4 for a little optimization.
 	ek := make([]byte, 0, len(t.prefix)+len(key)+4)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
