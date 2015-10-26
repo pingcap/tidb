@@ -33,14 +33,14 @@ type hashMeta struct {
 	Length int64
 }
 
-func (m hashMeta) Value() []byte {
+func (meta hashMeta) Value() []byte {
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf[0:8], uint64(m.Length))
+	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.Length))
 	return buf
 }
 
-func (m hashMeta) IsEmpty() bool {
-	return m.Length <= 0
+func (meta hashMeta) IsEmpty() bool {
+	return meta.Length <= 0
 }
 
 // HSet sets the string value of a hash field.

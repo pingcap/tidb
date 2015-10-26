@@ -71,7 +71,7 @@ func (t *TxStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
 	)
 
 	if !bytes.HasPrefix(ek, t.prefix) {
-		return nil, nil, errors.Errorf("invalid encoded hash data key prefix")
+		return nil, nil, errors.New("invalid encoded hash data key prefix")
 	}
 
 	ek = ek[len(t.prefix):]
