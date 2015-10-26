@@ -58,11 +58,11 @@ var (
 var (
 	// ErrDBExists is the error for db exists.
 	ErrDBExists = errors.New("database already exists")
-	// ErrDBNotExists is the error for db not exists
+	// ErrDBNotExists is the error for db not exists.
 	ErrDBNotExists = errors.New("database doesn't exist")
-	// ErrTableExists is the error for table exists
+	// ErrTableExists is the error for table exists.
 	ErrTableExists = errors.New("table already exists")
-	// ErrTableNotExists is the error for table not exists
+	// ErrTableNotExists is the error for table not exists.
 	ErrTableNotExists = errors.New("table doesn't exist")
 )
 
@@ -78,23 +78,22 @@ type TMeta struct {
 
 // NewMeta creates a Meta with kv storage.
 func NewMeta(store kv.Storage) *Meta {
-	m := &Meta{}
-
-	m.store = structure.NewStore(store, []byte{0x00})
-
+	m := &Meta{
+		store: structure.NewStore(store, []byte{0x00}),
+	}
 	return m
 }
 
 // Begin creates a TMeta object and you can handle meta information in a transaction.
 func (m *Meta) Begin() (*TMeta, error) {
-	txn := &TMeta{}
+	t := &TMeta{}
 
 	var err error
-	txn.txn, err = m.store.Begin()
+	t.txn, err = m.store.Begin()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return txn, nil
+	return t, nil
 }
 
 // RunInNewTxn runs fn in a new transaction.

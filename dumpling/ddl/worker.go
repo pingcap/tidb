@@ -30,14 +30,14 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// Create a new job and queue it.
-	err := d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
+	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
 		var err error
-		job.ID, err = m.GenGlobalID()
+		job.ID, err = t.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.EnQueueDDLJob(job)
+		err = t.EnQueueDDLJob(job)
 		return errors.Trace(err)
 	})
 
@@ -113,12 +113,12 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 		owner.LastUpdateTS = now
 
 		// update or try to set itself as owner.
-		err = t.SetDDLOwner(owner)
+		if err = t.SetDDLOwner(owner); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	if err != nil {
-		return errors.Trace(err)
-	} else if owner.OwnerID != d.uuid {
+	if owner.OwnerID != d.uuid {
 		return errors.Trace(ErrNotOwner)
 	}
 
@@ -126,34 +126,26 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 }
 
 // every time we enter another state, we must call this function.
-func (d *ddl) updateJob(t *meta.TMeta, j *model.Job) error {
+func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
 	err := d.verifyOwner(t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = t.UpdateDDLJob(0, j)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+	err = t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
 
 func (d *ddl) getFirstJob() (*model.Job, error) {
 	var job *model.Job
 
-	err := d.meta.RunInNewTxn(true, func(m *meta.TMeta) error {
+	err := d.meta.RunInNewTxn(true, func(t *meta.TMeta) error {
 		var err1 error
-		job, err1 = m.GetDDLJob(0)
+		job, err1 = t.GetDDLJob(0)
 		return errors.Trace(err1)
 	})
 
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return job, nil
+	return job, errors.Trace(err)
 }
 
 func (d *ddl) finishJob(job *model.Job) error {
@@ -170,7 +162,6 @@ func (d *ddl) finishJob(job *model.Job) error {
 		}
 
 		err = t.AddHistoryDDLJob(job)
-
 		return errors.Trace(err)
 	})
 
@@ -192,7 +183,6 @@ func (d *ddl) handleJobQueue() error {
 	for {
 		err := d.checkOwner()
 		if err != nil {
-			// error
 			return errors.Trace(err)
 		}
 		// become the owner
@@ -268,9 +258,7 @@ func (d *ddl) runJob(job *model.Job) error {
 		}
 
 		job.Error = err.Error()
-	}
-
-	if err == nil {
+	} else {
 		job.State = model.JobDone
 	}
 

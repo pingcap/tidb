@@ -104,13 +104,13 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 		return errors.Trace(err)
 	}
 
-	err = d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(m, is.SchemaMetaVersion())
+	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.CreateDatabase(info)
+		err = t.CreateDatabase(info)
 
 		log.Warnf("save schema %s", info)
 		return errors.Trace(err)
@@ -121,8 +121,8 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(m *meta.TMeta, schemaMetaVersion int64) error {
-	curVer, err := m.GetSchemaVersion()
+func (d *ddl) verifySchemaMetaVersion(t *meta.TMeta, schemaMetaVersion int64) error {
+	curVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,7 +131,7 @@ func (d *ddl) verifySchemaMetaVersion(m *meta.TMeta, schemaMetaVersion int64) er
 	}
 
 	// Increment version.
-	_, err = m.GenSchemaVersion()
+	_, err = t.GenSchemaVersion()
 	return errors.Trace(err)
 }
 
@@ -172,13 +172,13 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		}
 	}
 
-	err = d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(m, is.SchemaMetaVersion())
+	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.DropDatabase(old.ID)
+		err = t.DropDatabase(old.ID)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -399,13 +399,13 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	}
 	log.Infof("New table: %+v", tbInfo)
 
-	err = d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(m, is.SchemaMetaVersion())
+	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.CreateTable(schema.ID, tbInfo)
+		err = t.CreateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 
@@ -500,13 +500,13 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 	}
 
 	// update infomation schema
-	err = d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(m, schemaMetaVersion)
+	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := d.verifySchemaMetaVersion(t, schemaMetaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.UpdateTable(schema.ID, tb.Meta())
+		err = t.UpdateTable(schema.ID, tb.Meta())
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -562,13 +562,13 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		return errors.Trace(err)
 	}
 
-	err = d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(m, is.SchemaMetaVersion())
+	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.DropTable(schema.ID, tb.Meta().ID)
+		err = t.DropTable(schema.ID, tb.Meta().ID)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -659,13 +659,13 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	}
 
 	// update InfoSchema
-	err = d.meta.RunInNewTxn(false, func(m *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(m, is.SchemaMetaVersion())
+	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = m.UpdateTable(schema.ID, tbInfo)
+		err = t.UpdateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
