@@ -325,7 +325,7 @@ func parseDateFormat(format string) []string {
 			continue
 		}
 
-		// Sep can be only one none-number char.
+		// Seperator is a single none-number char.
 		if !unicode.IsNumber(rune(format[i])) {
 			if !unicode.IsNumber(rune(format[i-1])) {
 				return nil
