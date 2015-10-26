@@ -16,8 +16,8 @@ package expression
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -85,7 +85,7 @@ func (f *FunctionCast) String() string {
 func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	value, err := f.Expr.Eval(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	value = types.RawData(value)
 	d := &types.DataItem{Type: f.Tp}
@@ -94,7 +94,12 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 		d.Data = nil
 		return d, nil
 	}
-	d.Data = types.Cast(value, f.Tp)
+
+	d.Data, err = types.Cast(value, f.Tp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return d, nil
 }
 

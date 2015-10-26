@@ -16,7 +16,9 @@ package stmts_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testStmtSuite) TestSet(c *C) {
@@ -130,8 +132,18 @@ func (s *testStmtSuite) TestSetCharsetStmt(c *C) {
 	c.Assert(testStmt.IsDDL(), IsFalse)
 	c.Assert(len(testStmt.OriginText()), Greater, 0)
 
-	_, err = testStmt.Exec(nil)
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	sessionVars := variable.GetSessionVars(ctx)
+	for _, v := range variable.SetNamesVariables {
+		c.Assert(sessionVars.Systems[v] != "utf8", IsTrue)
+	}
+	_, err = testStmt.Exec(ctx)
 	c.Assert(err, IsNil)
+	for _, v := range variable.SetNamesVariables {
+		c.Assert(sessionVars.Systems[v], Equals, "utf8")
+	}
+	c.Assert(sessionVars.Systems[variable.CollationConnection], Equals, "utf8_general_ci")
 
 	mf := newMockFormatter()
 	testStmt.Explain(nil, mf)

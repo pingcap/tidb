@@ -97,19 +97,23 @@ func convertIntToInt(val, lowerBound, upperBound int64, tp byte) (converted int6
 	return
 }
 
+func convertUintToInt(val uint64, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+	if val > uint64(upperBound) {
+		converted = upperBound
+		err = overflow(val, tp)
+		return
+	}
+	converted = int64(val)
+	return
+}
+
 func convertToInt(val interface{}, target *FieldType) (converted int64, err error) {
 	tp := target.Tp
 	lowerBound := signedLowerBound[tp]
 	upperBound := signedUpperBound[tp]
 	switch v := val.(type) {
 	case uint64:
-		if v > uint64(upperBound) {
-			converted = upperBound
-			err = overflow(val, tp)
-			return
-		}
-		converted = int64(v)
-		return
+		return convertUintToInt(v, lowerBound, upperBound, tp)
 	case int:
 		return convertIntToInt(int64(v), lowerBound, upperBound, tp)
 	case int64:
@@ -124,6 +128,20 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 			return 0, errors.Trace(err)
 		}
 		return convertFloatToInt(fval, lowerBound, upperBound, tp)
+	case []byte:
+		fval, err := StrToFloat(string(v))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return convertFloatToInt(fval, lowerBound, upperBound, tp)
+	case mysql.Time:
+		// 2011-11-10 11:11:11.999999 -> 20111110111112
+		ival := v.ToNumber().Round(0).IntPart()
+		return convertIntToInt(ival, lowerBound, upperBound, tp)
+	case mysql.Duration:
+		// 11:11:11.999999 -> 111112
+		ival := v.ToNumber().Round(0).IntPart()
+		return convertIntToInt(ival, lowerBound, upperBound, tp)
 	case mysql.Decimal:
 		fval, _ := v.Float64()
 		return convertFloatToInt(fval, lowerBound, upperBound, tp)
@@ -154,6 +172,16 @@ func convertIntToUint(val int64, upperBound uint64, tp byte) (converted uint64, 
 	return
 }
 
+func convertUintToUint(val uint64, upperBound uint64, tp byte) (converted uint64, err error) {
+	if val > upperBound {
+		converted = upperBound
+		err = overflow(val, tp)
+		return
+	}
+	converted = val
+	return
+}
+
 func convertFloatToUint(val float64, upperBound uint64, tp byte) (converted uint64, err error) {
 	val = RoundFloat(val)
 	if val < 0 {
@@ -175,13 +203,7 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 	upperBound := unsignedUpperBound[tp]
 	switch v := val.(type) {
 	case uint64:
-		if v > upperBound {
-			converted = upperBound
-			err = overflow(val, tp)
-			return
-		}
-		converted = v
-		return
+		return convertUintToUint(v, upperBound, tp)
 	case int:
 		return convertIntToUint(int64(v), upperBound, tp)
 	case int64:
@@ -196,6 +218,20 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 			return 0, errors.Trace(err)
 		}
 		return convertFloatToUint(float64(fval), upperBound, tp)
+	case []byte:
+		fval, err := StrToFloat(string(v))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return convertFloatToUint(float64(fval), upperBound, tp)
+	case mysql.Time:
+		// 2011-11-10 11:11:11.999999 -> 20111110111112
+		ival := v.ToNumber().Round(0).IntPart()
+		return convertIntToUint(ival, upperBound, tp)
+	case mysql.Duration:
+		// 11:11:11.999999 -> 111112
+		ival := v.ToNumber().Round(0).IntPart()
+		return convertIntToUint(ival, upperBound, tp)
 	case mysql.Decimal:
 		fval, _ := v.Float64()
 		return convertFloatToUint(fval, upperBound, tp)
@@ -217,75 +253,22 @@ func typeError(v interface{}, target *FieldType) error {
 		v, v, target.String())
 }
 
-// Cast casts val to certain types and does not return error.
-func Cast(val interface{}, target *FieldType) (v interface{}) {
-	tp := target.Tp
+func isCastType(tp byte) bool {
 	switch tp {
-	case mysql.TypeString:
-		x, _ := ToString(val)
-		// TODO: consider target.Charset/Collate
-		x = truncateStr(x, target.Flen)
-		if target.Charset == charset.CharsetBin {
-			return []byte(x)
-		}
-		return x
-	case mysql.TypeDuration:
-		var dur mysql.Duration
-		fsp := mysql.DefaultFsp
-		if target.Decimal != UnspecifiedLength {
-			fsp = target.Decimal
-		}
-		switch x := val.(type) {
-		case mysql.Duration:
-			dur, _ = x.RoundFrac(fsp)
-		case mysql.Time:
-			dur, _ = x.ConvertToDuration()
-			dur, _ = dur.RoundFrac(fsp)
-		case string:
-			dur, _ = mysql.ParseDuration(x, fsp)
-		case *DataItem:
-			return Cast(x.Data, target)
-		}
-		return dur
-	case mysql.TypeDatetime, mysql.TypeDate:
-		fsp := mysql.DefaultFsp
-		if target.Decimal != UnspecifiedLength {
-			fsp = target.Decimal
-		}
-		var t mysql.Time
-		t.Type = tp
-		switch x := val.(type) {
-		case mysql.Time:
-			t, _ = x.Convert(tp)
-			t, _ = t.RoundFrac(fsp)
-		case mysql.Duration:
-			t, _ = x.ConvertToTime(tp)
-			t, _ = t.RoundFrac(fsp)
-		case string:
-			t, _ = mysql.ParseTime(x, tp, fsp)
-		case int64:
-			t, _ = mysql.ParseTimeFromNum(x, tp, fsp)
-		case *DataItem:
-			return Cast(x.Data, target)
-		}
-		return t
-	case mysql.TypeLonglong:
-		if mysql.HasUnsignedFlag(target.Flag) {
-			v, _ = ToUint64(val)
-		} else {
-			v, _ = ToInt64(val)
-		}
-		return
-	case mysql.TypeNewDecimal:
-		x, _ := ToDecimal(val)
-		if target.Decimal != UnspecifiedLength {
-			x = x.Round(int32(target.Decimal))
-		}
-		// TODO: check Flen
-		return x
-	default:
-		panic("should never happen")
+	case mysql.TypeString, mysql.TypeDuration, mysql.TypeDatetime,
+		mysql.TypeDate, mysql.TypeLonglong, mysql.TypeNewDecimal:
+		return true
 	}
+	return false
+}
+
+// Cast casts val to certain types and does not return error.
+func Cast(val interface{}, target *FieldType) (interface{}, error) {
+	if !isCastType(target.Tp) {
+		return nil, errors.Errorf("unknown cast type - %v", target)
+	}
+
+	return Convert(val, target)
 }
 
 // Convert converts the val with type tp.

@@ -13,6 +13,10 @@
 
 package charset
 
+import (
+	"fmt"
+)
+
 // Charset is a charset.
 // Now we only support MySQL.
 type Charset struct {
@@ -108,6 +112,15 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	}
 
 	return true
+}
+
+// GetDefaultCollation returns the default collation for charset
+func GetDefaultCollation(charset string) (string, error) {
+	c, ok := charsets[charset]
+	if !ok {
+		return "", fmt.Errorf("Unkown charset %s", charset)
+	}
+	return c.DefaultCollation.Name, nil
 }
 
 // GetCollations returns a list for all collations.

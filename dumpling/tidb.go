@@ -200,8 +200,6 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 }
 
 func runExecute(ctx context.Context, es *stmts.ExecuteStmt, args ...interface{}) (rset.Recordset, error) {
-	// TODO: if the args are passed by binary protocol, we should set execute args from arg parameters into es.
-	// Then call es.Exec(ctx)
 	if len(args) > 0 {
 		es.UsingVars = make([]expression.Expression, 0, len(args))
 		for _, v := range args {
