@@ -104,11 +104,9 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 		spattern, err := types.ToString(pattern)
 		if err != nil {
 			return nil, errors.Trace(err)
-			//errors.Errorf("Pattern should be string or []byte in LIKE: %v (Value of type %T)", pattern, pattern)
 		}
 		p.patChars, p.patTypes = compilePattern(spattern, p.Escape)
 	}
-
 	match := doMatch(sexpr, p.patChars, p.patTypes)
 	if p.Not {
 		return !match, nil
