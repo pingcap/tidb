@@ -95,7 +95,6 @@ func (i *btreeIter) Value() []byte {
 // Next implements Iterator Next.
 func (i *btreeIter) Next() (Iterator, error) {
 	k, v, err := i.e.Next()
-	// find the first non-nil key
 	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), err == nil
 	return i, err
 }
