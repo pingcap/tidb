@@ -39,11 +39,11 @@ func BindAutocommitChecker(ctx context.Context, checker Checker) {
 	ctx.SetValue(key, checker)
 }
 
-// GetAutocommitChecker gets autocommit checker from context.
-func GetAutocommitChecker(ctx context.Context) Checker {
+// ShouldAutocommit gets checker from ctx and checks if it should autocommit.
+func ShouldAutocommit(ctx context.Context) bool {
 	v, ok := ctx.Value(key).(Checker)
 	if !ok {
-		return nil
+		panic("Miss autocommit checker")
 	}
-	return v
+	return v.ShouldAutocommit(ctx)
 }
