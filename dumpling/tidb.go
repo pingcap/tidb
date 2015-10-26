@@ -65,7 +65,19 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if d != nil {
 		return
 	}
-	d, err = domain.NewDomain(store)
+
+	if SchemaLease <= minSchemaLease {
+		SchemaLease = minSchemaLease
+	}
+
+	lease := SchemaLease
+	// if storage is local storage, we may in test environment or
+	// run server in single machine mode, so we don't need wait
+	// 2 * lease time for DDL operation.
+	if localstore.IsLocalStore(store) {
+		lease = 0
+	}
+	d, err = domain.NewDomain(store, lease)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -84,6 +96,12 @@ var (
 	PprofAddr = "localhost:8888"
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
+
+	// SchemaLease is the time(seconds) for re-updating remote schema.
+	// In online DDL, we must wait 2 * SchemaLease time to guarantee
+	// all servers get the neweset schema.
+	SchemaLease    = 300
+	minSchemaLease = 120
 )
 
 // Compile is safe for concurrent use by multiple goroutines.

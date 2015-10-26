@@ -14,7 +14,7 @@
 package domain
 
 import (
-	"encoding/json"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -32,26 +30,36 @@ type Domain struct {
 	store      kv.Storage
 	infoHandle *infoschema.Handle
 	ddl        ddl.DDL
+	meta       *meta.Meta
+	lease      int
 }
 
-func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
-	var schemas []*model.DBInfo
-	err = util.ScanMetaWithPrefix(txn, meta.SchemaMetaPrefix, func(key []byte, value []byte) bool {
-		di := &model.DBInfo{}
-		err := json.Unmarshal(value, di)
-		if err != nil {
-			log.Fatal(err)
-		}
-		schemas = append(schemas, di)
-		return true
-	})
+func (do *Domain) loadInfoSchema(m *meta.TMeta) (err error) {
+	schemaMetaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	schemaMetaVersion, err := txn.GetInt64(meta.SchemaMetaVersionKey)
-	if err != nil {
-		return
+
+	info := do.infoHandle.Get()
+	if info != nil && schemaMetaVersion > 0 && schemaMetaVersion == info.SchemaMetaVersion() {
+		log.Debugf("schema version is still %d, no need reload", schemaMetaVersion)
+		return nil
 	}
+
+	schemas, err := m.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, di := range schemas {
+		tables, err := m.ListTables(di.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		di.Tables = tables
+	}
+
 	log.Infof("loadInfoSchema %d", schemaMetaVersion)
 	do.infoHandle.Set(schemas, schemaMetaVersion)
 	return
@@ -82,18 +90,44 @@ func (do *Domain) onDDLChange(err error) error {
 }
 
 func (do *Domain) reload() error {
-	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
+	err := do.meta.RunInNewTxn(false, do.loadInfoSchema)
 	return errors.Trace(err)
 }
 
+func (do *Domain) loadSchemaInLoop() {
+	if do.lease <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(time.Duration(do.lease) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := do.reload(); err != nil {
+				log.Fatalf("reload schema err %v", err)
+			}
+		}
+	}
+}
+
 // NewDomain creates a new domain.
-func NewDomain(store kv.Storage) (d *Domain, err error) {
+func NewDomain(store kv.Storage, lease int) (d *Domain, err error) {
 	d = &Domain{
 		store: store,
+		meta:  meta.NewMeta(store),
+		lease: lease,
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, d.onDDLChange)
+	d.ddl = ddl.NewDDL(d.store, d.infoHandle, d.onDDLChange, lease)
 	err = d.reload()
-	return d, errors.Trace(err)
+	if err != nil {
+		log.Fatalf("load schema err %v", err)
+	}
+
+	go d.loadSchemaInLoop()
+
+	return d, nil
 }

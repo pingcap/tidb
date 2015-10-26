@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 )
 
@@ -33,10 +32,11 @@ type Allocator interface {
 }
 
 type allocator struct {
-	mu    sync.Mutex
-	base  int64
-	end   int64
-	store kv.Storage
+	mu   sync.Mutex
+	base int64
+	end  int64
+	m    *meta.Meta
+	dbID int64
 }
 
 // Alloc allocs the next autoID for table with tableID.
@@ -45,13 +45,12 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
 		return 0, errors.New("Invalid tableID")
 	}
-	metaKey := meta.AutoIDKey(tableID)
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		err := alloc.m.RunInNewTxn(true, func(m *meta.TMeta) error {
 			// err1 is used for passing `go tool vet --shadow` check.
-			end, err1 := meta.GenID(txn, []byte(metaKey), step)
+			end, err1 := m.GenAutoTableID(alloc.dbID, tableID, step)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -67,13 +66,14 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	}
 
 	alloc.base++
-	log.Infof("Alloc id %d, table ID:%d, from %p, store ID:%s", alloc.base, tableID, alloc, alloc.store.UUID())
+	log.Infof("Alloc id %d, table ID:%d, from %p, database ID:%s", alloc.base, tableID, alloc, alloc.dbID)
 	return alloc.base, nil
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage) Allocator {
+func NewAllocator(m *meta.Meta, dbID int64) Allocator {
 	return &allocator{
-		store: store,
+		m:    m,
+		dbID: dbID,
 	}
 }
