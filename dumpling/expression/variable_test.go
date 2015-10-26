@@ -15,17 +15,19 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testVariableSuite{})
 
 type testVariableSuite struct {
-	ctx *mockCtx
+	ctx context.Context
 }
 
 func (s *testVariableSuite) SetUpSuite(c *C) {
-	s.ctx = newMockCtx()
+	s.ctx = mock.NewContext()
 	variable.BindSessionVars(s.ctx)
 }
 

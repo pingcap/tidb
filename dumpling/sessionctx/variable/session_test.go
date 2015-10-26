@@ -11,10 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package variable
+package variable_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -26,9 +27,9 @@ type testSessionSuite struct {
 func (*testSessionSuite) TestSession(c *C) {
 	ctx := mock.NewContext()
 
-	BindSessionVars(ctx)
+	variable.BindSessionVars(ctx)
 
-	v := GetSessionVars(ctx)
+	v := variable.GetSessionVars(ctx)
 	c.Assert(v, NotNil)
 
 	// For AffectedRows

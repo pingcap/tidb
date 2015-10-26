@@ -371,12 +371,17 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 			continue
 		}
 
-		value := v.Value
+		var value string
 		if !s.GlobalScope {
 			// Try to get Session Scope variable value
 			sv, ok := sessionVars.Systems[v.Name]
 			if ok {
 				value = sv
+			}
+		} else {
+			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		row := &plan.Row{Data: []interface{}{v.Name, value}}
