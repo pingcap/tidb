@@ -28,6 +28,7 @@ import (
 const (
 	startIndex = 0
 	testCount  = 2
+	indexStep  = 2
 )
 
 func TestT(t *testing.T) {
@@ -61,7 +62,7 @@ func (s *testKVSuite) TearDownSuite(c *C) {
 
 func insertData(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
-		val := encodeInt(i)
+		val := encodeInt(i * indexStep)
 		err := txn.Set(val, val)
 		c.Assert(err, IsNil)
 	}
@@ -69,7 +70,7 @@ func insertData(c *C, txn kv.Transaction) {
 
 func mustDel(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
-		val := encodeInt(i)
+		val := encodeInt(i * indexStep)
 		err := txn.Delete(val)
 		c.Assert(err, IsNil)
 	}
@@ -92,17 +93,17 @@ func valToStr(c *C, iter kv.Iterator) string {
 
 func checkSeek(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
-		val := encodeInt(i)
+		val := encodeInt(i * indexStep)
 		iter, err := txn.Seek(val)
 		c.Assert(err, IsNil)
 		c.Assert(iter.Key(), Equals, string(val))
-		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i)
+		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
 		iter.Close()
 	}
 
 	// Test iterator Next()
 	for i := startIndex; i < testCount-1; i++ {
-		val := encodeInt(i)
+		val := encodeInt(i * indexStep)
 		iter, err := txn.Seek(val)
 		c.Assert(err, IsNil)
 		c.Assert(iter.Key(), Equals, string(val))
@@ -112,22 +113,32 @@ func checkSeek(c *C, txn kv.Transaction) {
 		c.Assert(err, IsNil)
 		c.Assert(next.Valid(), IsTrue)
 
-		val = encodeInt(i + 1)
+		val = encodeInt((i + 1) * indexStep)
 		c.Assert(next.Key(), Equals, string(val))
 		c.Assert(valToStr(c, next), Equals, string(val))
 		iter.Close()
 	}
 
-	// Non exist seek test
-	iter, err := txn.Seek(encodeInt(testCount))
+	// Non exist and beyond maximum seek test
+	iter, err := txn.Seek(encodeInt(testCount * indexStep))
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsFalse)
+
+	// Non exist but between existing keys seek test,
+	// it returns the smallest key that larger than the one we are seeking
+	inBetween := encodeInt((testCount-1)*indexStep - 1)
+	last := encodeInt((testCount - 1) * indexStep)
+	iter, err = txn.Seek(inBetween)
+	c.Assert(err, IsNil)
+	c.Assert(iter.Valid(), IsTrue)
+	c.Assert(iter.Key(), Not(Equals), string(inBetween))
+	c.Assert(iter.Key(), Equals, string(last))
 	iter.Close()
 }
 
 func mustNotGet(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
-		s := encodeInt(i)
+		s := encodeInt(i * indexStep)
 		_, err := txn.Get(s)
 		c.Assert(err, NotNil)
 	}
@@ -135,7 +146,7 @@ func mustNotGet(c *C, txn kv.Transaction) {
 
 func mustGet(c *C, txn kv.Transaction) {
 	for i := startIndex; i < testCount; i++ {
-		s := encodeInt(i)
+		s := encodeInt(i * indexStep)
 		val, err := txn.Get(s)
 		c.Assert(err, IsNil)
 		c.Assert(string(val), Equals, string(s))
