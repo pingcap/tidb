@@ -64,8 +64,14 @@ func (s *ReplaceIntoStmt) SetText(text string) {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	stmt := &InsertIntoStmt{ColNames: s.ColNames, Lists: s.Lists, Priority: s.Priority,
-		Sel: s.Sel, Setlist: s.Setlist, TableIdent: s.TableIdent, Text: s.Text}
+	stmt := &InsertIntoStmt{ColNames: s.ColNames,
+		Lists:      s.Lists,
+		Priority:   s.Priority,
+		Sel:        s.Sel,
+		Setlist:    s.Setlist,
+		TableIdent: s.TableIdent,
+		Text:       s.Text}
+
 	t, err := getTable(ctx, stmt.TableIdent)
 	if err != nil {
 		return nil, errors.Trace(err)
