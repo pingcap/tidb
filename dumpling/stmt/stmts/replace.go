@@ -16,9 +16,7 @@ package stmts
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -32,12 +30,7 @@ import (
 // the old row is deleted before the new row is inserted.
 // See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
 type ReplaceIntoStmt struct {
-	ColNames   []string
-	Lists      [][]expression.Expression
-	Sel        plan.Planner
-	TableIdent table.Ident
-	Setlist    []*expression.Assignment
-	Priority   int
+	InsertRest
 
 	Text string
 }
@@ -64,42 +57,34 @@ func (s *ReplaceIntoStmt) SetText(text string) {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	stmt := &InsertIntoStmt{ColNames: s.ColNames,
-		Lists:      s.Lists,
-		Priority:   s.Priority,
-		Sel:        s.Sel,
-		Setlist:    s.Setlist,
-		TableIdent: s.TableIdent,
-		Text:       s.Text}
-
-	t, err := getTable(ctx, stmt.TableIdent)
+	t, err := getTable(ctx, s.TableIdent)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cols, err := stmt.getColumns(t.Cols())
+	cols, err := s.getColumns(t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// Process `replace ... (select ...)`
-	if stmt.Sel != nil {
-		return stmt.execSelect(t, cols, ctx)
+	if s.Sel != nil {
+		return s.execSelect(t, cols, ctx)
 	}
 	// Process `replace ... set x=y ...`
-	if err = stmt.getSetlist(); err != nil {
+	if err = s.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	m, err := stmt.getDefaultValues(ctx, t.Cols())
+	m, err := s.getDefaultValues(ctx, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	replaceValueCount := len(stmt.Lists[0])
+	replaceValueCount := len(s.Lists[0])
 
-	for i, list := range stmt.Lists {
-		if err = stmt.checkValueCount(replaceValueCount, len(list), i, cols); err != nil {
+	for i, list := range s.Lists {
+		if err = s.checkValueCount(replaceValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := stmt.getRow(ctx, t, cols, list, m)
+		row, err := s.getRow(ctx, t, cols, list, m)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -1719,7 +1719,7 @@ NotKeywordToken:
 InsertIntoStmt:
 	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertRest OnDuplicateKeyUpdate
 	{
-		x := $6.(*stmts.InsertIntoStmt)
+		x := &stmts.InsertIntoStmt{InsertRest: $6.(stmts.InsertRest)}
 		x.Priority = $2.(int)
 		x.TableIdent = $5.(table.Ident)
 		if $7 != nil {
@@ -1741,33 +1741,33 @@ IntoOpt:
 InsertRest:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-		$$ = &stmts.InsertIntoStmt{
+		$$ = stmts.InsertRest{
 			ColNames:   $2.([]string), 
 			Lists:      $5.([][]expression.Expression)}
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
+		$$ = stmts.InsertRest{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+		$$ = stmts.InsertRest{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
+		$$ = stmts.InsertRest{Lists:  $2.([][]expression.Expression)}
 	}
 |	SelectStmt
 	{
-		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+		$$ = stmts.InsertRest{Sel: $1.(*stmts.SelectStmt)}
 	}
 |	UnionStmt
 	{
-		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
+		$$ = stmts.InsertRest{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &stmts.InsertIntoStmt{Setlist: $2.([]*expression.Assignment)}
+		$$ = stmts.InsertRest{Setlist: $2.([]*expression.Assignment)}
 	}
 
 ValueSym:
@@ -1835,10 +1835,7 @@ OnDuplicateKeyUpdate:
 ReplaceIntoStmt:
 	"REPLACE" ReplacePriority IntoOpt TableIdent InsertRest
 	{
-		x := &stmts.ReplaceIntoStmt{ColNames: $5.(*stmts.InsertIntoStmt).ColNames, 
-					       Lists: $5.(*stmts.InsertIntoStmt).Lists, 
-					     	 Sel: $5.(*stmts.InsertIntoStmt).Sel,
-					     Setlist: $5.(*stmts.InsertIntoStmt).Setlist}
+		x := &stmts.ReplaceIntoStmt{InsertRest: $5.(stmts.InsertRest)}
 		x.Priority = $2.(int)
 		x.TableIdent = $4.(table.Ident)
 		$$ = x
