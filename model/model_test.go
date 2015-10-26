@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -33,4 +34,47 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(abc.O, Equals, "aBC")
 	c.Assert(abc.L, Equals, "abc")
 	c.Assert(abc.String(), Equals, "aBC")
+}
+
+func (*testSuite) TestClone(c *C) {
+	column := &ColumnInfo{
+		ID:           1,
+		Name:         NewCIStr("c"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(0),
+	}
+
+	index := &IndexInfo{
+		Name:  NewCIStr("key"),
+		Table: NewCIStr("t"),
+		Columns: []*IndexColumn{
+			{
+				Name:   NewCIStr("c"),
+				Offset: 0,
+				Length: 10,
+			}},
+		Unique:  true,
+		Primary: true,
+	}
+
+	table := &TableInfo{
+		ID:      1,
+		Name:    NewCIStr("t"),
+		Charset: "utf8",
+		Collate: "utf8",
+		Columns: []*ColumnInfo{column},
+		Indices: []*IndexInfo{index},
+	}
+
+	dbInfo := &DBInfo{
+		ID:      1,
+		Name:    NewCIStr("test"),
+		Charset: "utf8",
+		Collate: "utf8",
+		Tables:  []*TableInfo{table},
+	}
+
+	n := dbInfo.Clone()
+	c.Assert(n, DeepEquals, dbInfo)
 }

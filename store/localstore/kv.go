@@ -62,6 +62,12 @@ type Driver struct {
 	engine.Driver
 }
 
+// IsLocalStore checks whether a storage is local or not.
+func IsLocalStore(s kv.Storage) bool {
+	_, ok := s.(*dbStore)
+	return ok
+}
+
 // Open opens or creates a storage with specific format for a local engine Driver.
 func (d Driver) Open(schema string) (kv.Storage, error) {
 	mc.mu.Lock()
