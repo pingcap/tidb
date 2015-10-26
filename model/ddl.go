@@ -41,10 +41,10 @@ type Job struct {
 	TableID int64         `json:"table_id"`
 	Args    []interface{} `json:"args"`
 	State   JobState      `json:"state"`
-	Error   string        `json:"err"`
+	Error   string        `json:"error"`
 }
 
-// JobState is for job.
+// JobState is for job state.
 type JobState byte
 
 // List job states.
