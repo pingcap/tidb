@@ -384,13 +384,13 @@ func (m *TMeta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 			continue
 		}
 
-		var tbInfo model.TableInfo
-		err = json.Unmarshal(r.Value, &tbInfo)
+		tbInfo := &model.TableInfo{}
+		err = json.Unmarshal(r.Value, tbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		tables = append(tables, &tbInfo)
+		tables = append(tables, tbInfo)
 	}
 
 	return tables, nil
@@ -405,12 +405,12 @@ func (m *TMeta) ListDatabases() ([]*model.DBInfo, error) {
 
 	dbs := make([]*model.DBInfo, 0, len(res))
 	for _, r := range res {
-		var dbInfo model.DBInfo
-		err = json.Unmarshal(r.Value, &dbInfo)
+		dbInfo := &model.DBInfo{}
+		err = json.Unmarshal(r.Value, dbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		dbs = append(dbs, &dbInfo)
+		dbs = append(dbs, dbInfo)
 	}
 	return dbs, nil
 }
@@ -423,9 +423,9 @@ func (m *TMeta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var dbInfo model.DBInfo
-	err = json.Unmarshal(value, &dbInfo)
-	return &dbInfo, errors.Trace(err)
+	dbInfo := &model.DBInfo{}
+	err = json.Unmarshal(value, dbInfo)
+	return dbInfo, errors.Trace(err)
 }
 
 // GetTable gets the table value in database with tableID.
@@ -443,17 +443,15 @@ func (m *TMeta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var tableInfo model.TableInfo
-	err = json.Unmarshal(value, &tableInfo)
-	return &tableInfo, errors.Trace(err)
+	tableInfo := &model.TableInfo{}
+	err = json.Unmarshal(value, tableInfo)
+	return tableInfo, errors.Trace(err)
 }
 
 // DDL structure
 //	mDDLOnwer: []byte
-//	mDDLJobID: int64
 //	mDDLJobList: list jobs
 //	mDDLJobHistory: hash
-//	mDDLMRJobs: list jobs
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
@@ -462,7 +460,6 @@ var (
 	mDDLOwnerKey      = []byte("mDDLOwner")
 	mDDLJobListKey    = []byte("mDDLJobList")
 	mDDLJobHistoryKey = []byte("mDDLJobHistory")
-	mDDLMRJobKey      = []byte("mDDLMRJob")
 )
 
 // GetDDLOwner gets the current owner for DDL.
@@ -472,9 +469,9 @@ func (m *TMeta) GetDDLOwner() (*model.Owner, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var owner model.Owner
-	err = json.Unmarshal(value, &owner)
-	return &owner, errors.Trace(err)
+	owner := &model.Owner{}
+	err = json.Unmarshal(value, owner)
+	return owner, errors.Trace(err)
 }
 
 // SetDDLOwner sets the current owner for DDL.
@@ -495,16 +492,16 @@ func (m *TMeta) EnQueueDDLJob(job *model.Job) error {
 	return m.txn.RPush(mDDLJobListKey, b)
 }
 
-// DeQueueDDLJob pops a DDL job in the list.
+// DeQueueDDLJob pops a DDL job from the list.
 func (m *TMeta) DeQueueDDLJob() (*model.Job, error) {
 	value, err := m.txn.LPop(mDDLJobListKey)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
 	}
 
-	var job model.Job
-	err = json.Unmarshal(value, &job)
-	return &job, errors.Trace(err)
+	job := &model.Job{}
+	err = json.Unmarshal(value, job)
+	return job, errors.Trace(err)
 }
 
 // GetDDLJob returns the DDL job with index.
@@ -514,9 +511,9 @@ func (m *TMeta) GetDDLJob(index int64) (*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var job model.Job
-	err = json.Unmarshal(value, &job)
-	return &job, errors.Trace(err)
+	job := &model.Job{}
+	err = json.Unmarshal(value, job)
+	return job, errors.Trace(err)
 }
 
 // UpdateDDLJob updates the DDL job with index.
@@ -555,9 +552,9 @@ func (m *TMeta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var job model.Job
-	err = json.Unmarshal(value, &job)
-	return &job, errors.Trace(err)
+	job := &model.Job{}
+	err = json.Unmarshal(value, job)
+	return job, errors.Trace(err)
 }
 
 // Commit commits the transaction.
