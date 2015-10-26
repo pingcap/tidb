@@ -111,7 +111,7 @@ type session struct {
 	store   kv.Storage
 	sid     int64
 	history stmtHistory
-	initing bool
+	initing bool // Running bootstrap using this session.
 }
 
 func (s *session) Status() uint16 {
@@ -263,7 +263,6 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 
 // GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	log.Infof("GetGlobalSysVar")
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -281,7 +280,6 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	log.Infof("GetGlobalSysVar over")
 	return value, nil
 }
 
