@@ -578,6 +578,6 @@ const (
 type GlobalSysVarAccessor interface {
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(ctx context.Context, name string) (string, error)
-	// SetGlobalSysVar set global system variable name to value.
+	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
 }
