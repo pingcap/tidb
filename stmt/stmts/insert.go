@@ -81,7 +81,7 @@ func (s *InsertIntoStmt) SetText(text string) {
 }
 
 // execExecSelect implements `insert table select ... from ...`.
-func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (_ rset.Recordset, err error) {
+func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (rset.Recordset, error) {
 	r, err := s.Sel.Plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -304,9 +304,9 @@ func (s *InsertIntoStmt) getRow(ctx context.Context, t table.Table, cols []*colu
 		// For "insert into t values (default)" Default Eval.
 		m[expression.ExprEvalDefaultName] = cols[i].Name.O
 
-		val, evalErr := expr.Eval(ctx, m)
-		if evalErr != nil {
-			return nil, errors.Trace(evalErr)
+		val, err := expr.Eval(ctx, m)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		r[cols[i].Offset] = val
 		marked[cols[i].Offset] = struct{}{}
@@ -326,7 +326,7 @@ func (s *InsertIntoStmt) getRow(ctx context.Context, t table.Table, cols []*colu
 		return nil, errors.Trace(err)
 	}
 
-	return r, err
+	return r, nil
 }
 
 func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]expression.Assignment) error {

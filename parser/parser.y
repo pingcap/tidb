@@ -1827,15 +1827,14 @@ OnDuplicateKeyUpdate:
 	}
 
 /************************************************************************************
- *
  *  Replace Statments
+ *  See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
  *
  *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
 	"REPLACE" ReplacePriority IntoOpt TableIdent InsertRest
 	{
-		
 		x := &stmts.ReplaceIntoStmt{ColNames: $5.(*stmts.InsertIntoStmt).ColNames, 
 					       Lists: $5.(*stmts.InsertIntoStmt).Lists, 
 					     	 Sel: $5.(*stmts.InsertIntoStmt).Sel,
@@ -1843,9 +1842,6 @@ ReplaceIntoStmt:
 		x.Priority = $2.(int)
 		x.TableIdent = $4.(table.Ident)
 		$$ = x
-		if yylex.(*lexer).root {
-			break
-		}
 	}
 
 ReplacePriority:
