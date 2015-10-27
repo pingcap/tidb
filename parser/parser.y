@@ -433,7 +433,7 @@ import (
 	IndexName		"index name"
 	IndexType		"index type"
 	InsertIntoStmt		"INSERT INTO statement"
-	InsertRest		"Rest part of INSERT/REPLACE INTO statement"
+	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
 	JoinTable 		"join table"
 	JoinType		"join type"
@@ -1717,9 +1717,9 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertRest OnDuplicateKeyUpdate
+	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertValues OnDuplicateKeyUpdate
 	{
-		x := &stmts.InsertIntoStmt{InsertRest: $6.(stmts.InsertRest)}
+		x := &stmts.InsertIntoStmt{InsertValues: $6.(stmts.InsertValues)}
 		x.Priority = $2.(int)
 		x.TableIdent = $5.(table.Ident)
 		if $7 != nil {
@@ -1738,36 +1738,36 @@ IntoOpt:
 	{
 	}
 
-InsertRest:
+InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-		$$ = stmts.InsertRest{
+		$$ = stmts.InsertValues{
 			ColNames:   $2.([]string), 
 			Lists:      $5.([][]expression.Expression)}
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-		$$ = stmts.InsertRest{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
+		$$ = stmts.InsertValues{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-		$$ = stmts.InsertRest{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+		$$ = stmts.InsertValues{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-		$$ = stmts.InsertRest{Lists:  $2.([][]expression.Expression)}
+		$$ = stmts.InsertValues{Lists:  $2.([][]expression.Expression)}
 	}
 |	SelectStmt
 	{
-		$$ = stmts.InsertRest{Sel: $1.(*stmts.SelectStmt)}
+		$$ = stmts.InsertValues{Sel: $1.(*stmts.SelectStmt)}
 	}
 |	UnionStmt
 	{
-		$$ = stmts.InsertRest{Sel: $1.(*stmts.UnionStmt)}
+		$$ = stmts.InsertValues{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = stmts.InsertRest{Setlist: $2.([]*expression.Assignment)}
+		$$ = stmts.InsertValues{Setlist: $2.([]*expression.Assignment)}
 	}
 
 ValueSym:
@@ -1833,9 +1833,9 @@ OnDuplicateKeyUpdate:
  *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" ReplacePriority IntoOpt TableIdent InsertRest
+	"REPLACE" ReplacePriority IntoOpt TableIdent InsertValues
 	{
-		x := &stmts.ReplaceIntoStmt{InsertRest: $5.(stmts.InsertRest)}
+		x := &stmts.ReplaceIntoStmt{InsertValues: $5.(stmts.InsertValues)}
 		x.Priority = $2.(int)
 		x.TableIdent = $4.(table.Ident)
 		$$ = x

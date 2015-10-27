@@ -30,7 +30,7 @@ import (
 // the old row is deleted before the new row is inserted.
 // See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
 type ReplaceIntoStmt struct {
-	InsertRest
+	InsertValues
 
 	Text string
 }
@@ -67,6 +67,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 	}
 
 	// Process `replace ... (select ...)`
+	// TODO: handles the duplicate-key in a primary key or a unique index.
 	if s.Sel != nil {
 		return s.execSelect(t, cols, ctx)
 	}
@@ -117,15 +118,13 @@ func replaceRow(ctx context.Context, t table.Table, handle int64, replaceRow []i
 	isReplace := false
 	touched := make([]bool, len(row))
 	for i, val := range row {
-		v, err := types.Compare(val, replaceRow[i])
-		if err != nil {
-			return errors.Trace(err)
+		v, err1 := types.Compare(val, replaceRow[i])
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if v != 0 {
 			touched[i] = true
-			if !isReplace {
-				isReplace = true
-			}
+			isReplace = true
 		}
 	}
 	if isReplace {
