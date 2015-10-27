@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -113,7 +114,7 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		err := sessionctx.GetDomain(ctx).DDL().DropTable(ctx, ti.Full(ctx))
 		// TODO: we should return special error for table not exist, checking "not exist" is not enough,
 		// because some other errors may contain this error string too.
-		if err != nil && strings.HasSuffix(err.Error(), "not exist") {
+		if errors2.ErrorEqual(err, ddl.ErrNotExists) || errors2.ErrorEqual(err, qerror.ErrDatabaseNotExist) {
 			notExistTables = append(notExistTables, ti.String())
 		} else if err != nil {
 			return nil, errors.Trace(err)

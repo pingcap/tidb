@@ -396,7 +396,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 
 	tbl, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(ErrNotExists)
 	}
 	for _, spec := range specs {
 		switch spec.Action {
@@ -528,7 +528,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(ErrNotExists)
 	}
 
 	job := &model.Job{
@@ -573,7 +573,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(ErrNotExists)
 	}
 	if _, ok := is.IndexByName(ti.Schema, ti.Name, indexName); ok {
 		return errors.Errorf("CREATE INDEX: index already exist %s", indexName)

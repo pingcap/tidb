@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -34,7 +35,10 @@ func (d *ddl) onTableCreate(t *meta.TMeta, job *model.Job) error {
 	tbInfo.State = model.StateNone
 
 	tables, err := t.ListTables(schemaID)
-	if err != nil {
+	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
+		job.State = model.JobCancelled
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	} else if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -87,9 +91,14 @@ func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
 	tableID := job.TableID
 
 	tblInfo, err := t.GetTable(schemaID, tableID)
-	if err != nil {
+	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
+		job.State = model.JobCancelled
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	} else if err != nil {
 		return errors.Trace(err)
-	} else if tblInfo == nil {
+	}
+
+	if tblInfo == nil {
 		job.State = model.JobCancelled
 		return errors.Trace(ErrNotExists)
 	}

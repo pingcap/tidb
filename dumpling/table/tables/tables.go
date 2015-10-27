@@ -82,6 +82,7 @@ func NewTable(tableID int64, tableName string, dbName string, cols []*column.Col
 		indexPrefix:  fmt.Sprintf("%d_i", tableID),
 		alloc:        alloc,
 		Columns:      cols,
+		state:        model.StatePublic,
 	}
 	return t
 }
