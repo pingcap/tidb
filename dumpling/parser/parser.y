@@ -1307,7 +1307,7 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" "TABLE" TableIdentList
+	"DROP" DropTableOpt TableIdentList
 	{
 		$$ = &stmts.DropTableStmt{TableIdents: $3.([]table.Ident)}
 		if yylex.(*lexer).root {
@@ -1321,6 +1321,10 @@ DropTableStmt:
 			break
 		}
 	}
+
+DropTableOpt:
+	"TABLE"
+|	"TABLES"
 
 EqOpt:
 	{

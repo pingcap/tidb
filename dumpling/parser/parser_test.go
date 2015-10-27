@@ -500,13 +500,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// For drop datbase/schema
+		// For drop datbase/schema/table
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table xxx", true},
+		{"drop table xxx, yyy", true},
+		{"drop tables xxx", true},
+		{"drop tables xxx, yyy", true},
+		{"drop table if exists xxx", true},
+		{"drop table if not exists xxx", false},
 	}
 	s.RunTest(c, table)
 }
