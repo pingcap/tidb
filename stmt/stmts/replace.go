@@ -113,18 +113,25 @@ func replaceRow(ctx context.Context, t table.Table, handle int64, replaceRow []i
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	isReplace := false
+	touched := make([]bool, len(row))
 	for i, val := range row {
 		v, err := types.Compare(val, replaceRow[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if v != 0 {
-			touched := make([]bool, len(row))
-			for i := 0; i < len(touched); i++ {
-				touched[i] = true
+			touched[i] = true
+			if !isReplace {
+				isReplace = true
 			}
-			variable.GetSessionVars(ctx).AddAffectedRows(1)
-			return t.UpdateRecord(ctx, handle, row, replaceRow, touched)
+		}
+	}
+	if isReplace {
+		variable.GetSessionVars(ctx).AddAffectedRows(1)
+		if err = t.UpdateRecord(ctx, handle, row, replaceRow, touched); err != nil {
+			return errors.Trace(err)
 		}
 	}
 
