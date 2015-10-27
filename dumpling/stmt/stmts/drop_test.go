@@ -57,6 +57,8 @@ func (s *testStmtSuite) TestDropTable(c *C) {
 	c.Assert(mf.Len(), Greater, 0)
 
 	mustExec(c, s.testDB, testSQL)
+	mustExec(c, s.testDB, "create table if not exists t (c int)")
+	mustExec(c, s.testDB, "drop table t")
 }
 
 func (s *testStmtSuite) TestDropIndex(c *C) {

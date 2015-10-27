@@ -140,7 +140,7 @@ func (t *TxStructure) HLen(key []byte) (int64, error) {
 func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
-	if err != nil {
+	if err != nil || meta.IsEmpty() {
 		return errors.Trace(err)
 	}
 
