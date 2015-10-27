@@ -44,6 +44,10 @@ type ExprNode interface {
 	SetType(tp *types.FieldType)
 	// GetType gets the evaluation type of the expression.
 	GetType() *types.FieldType
+	// SetValue sets value to the expression.
+	SetValue(val interface{})
+	// GetValue gets value of the expression.
+	GetValue() interface{}
 }
 
 // FuncNode represents function call expression node.
