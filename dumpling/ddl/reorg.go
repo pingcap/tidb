@@ -24,13 +24,11 @@ import (
 
 var _ context.Context = &reOrgContext{}
 
-// reOrgContext implements context.Context interface for re-orgnization use.
+// reOrgContext implements context.Context interface for reorgnization use.
 type reOrgContext struct {
 	store kv.Storage
-
-	m map[fmt.Stringer]interface{}
-
-	txn kv.Transaction
+	m     map[fmt.Stringer]interface{}
+	txn   kv.Transaction
 }
 
 func (c *reOrgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
@@ -85,7 +83,7 @@ func (c *reOrgContext) ClearValue(key fmt.Stringer) {
 	delete(c.m, key)
 }
 
-func (d *ddl) newReOrgContext() context.Context {
+func (d *ddl) newReorgContext() context.Context {
 	c := &reOrgContext{
 		store: d.store,
 		m:     make(map[fmt.Stringer]interface{}),
@@ -94,30 +92,29 @@ func (d *ddl) newReOrgContext() context.Context {
 	return c
 }
 
-const waitReOrgTimeout = 10 * time.Second
+const waitReorgTimeout = 10 * time.Second
 
-var errWaitReOrgTimeout = errors.New("wait re-orgnization done timeout")
+var errWaitReorgTimeout = errors.New("wait for reorgnization timeout")
 
-func (d *ddl) runReOrgJob(f func() error) error {
-	// wait re-orgnization jobs done
-	// TODO use persistent re-orgnization job list.
+func (d *ddl) runReorgJob(f func() error) error {
+	// wait reorgnization jobs done
+	// TODO use persistent reorgnization job list.
 	if d.reOrgDoneCh == nil {
-		// start a re-orgnization job
+		// start a reorgnization job
 		d.reOrgDoneCh = make(chan error, 1)
-
 		go func() {
 			d.reOrgDoneCh <- f()
 		}()
 	}
 
-	// wait re-orgnization job done or timeout
+	// wait reorgnization job done or timeout
 	select {
 	case err := <-d.reOrgDoneCh:
 		d.reOrgDoneCh = nil
 		return errors.Trace(err)
-	case <-time.After(waitReOrgTimeout):
+	case <-time.After(waitReorgTimeout):
 		// if timeout, we will return, check the owner and retry wait job done again.
-		return errWaitReOrgTimeout
+		return errWaitReorgTimeout
 	}
 
 }
