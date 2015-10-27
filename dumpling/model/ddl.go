@@ -15,6 +15,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/juju/errors"
 )
@@ -37,6 +38,33 @@ const (
 	ActionDropConstraint
 )
 
+func (action ActionType) String() string {
+	switch action {
+	case ActionCreateSchema:
+		return "create schema"
+	case ActionDropSchema:
+		return "drop schema"
+	case ActionCreateTable:
+		return "create table"
+	case ActionDropTable:
+		return "drop table"
+	case ActionAddColumn:
+		return "add column"
+	case ActionDropColumn:
+		return "drop column"
+	case ActionAddIndex:
+		return "add index"
+	case ActionDropIndex:
+		return "drop index"
+	case ActionAddConstraint:
+		return "add constraint"
+	case ActionDropConstraint:
+		return "drop constraint"
+	default:
+		return "none"
+	}
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID       int64         `json:"id"`
@@ -51,30 +79,36 @@ type Job struct {
 }
 
 // Encode encodes job with json format.
-func (j *Job) Encode() ([]byte, error) {
+func (job *Job) Encode() ([]byte, error) {
 	var err error
-	j.RawArgs, err = json.Marshal(j.Args)
+	job.RawArgs, err = json.Marshal(job.Args)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	var b []byte
-	b, err = json.Marshal(j)
+	b, err = json.Marshal(job)
 	return b, errors.Trace(err)
 }
 
 // Decode decodes job from the json buffer, we must use DecodeArgs later to
 // decode special args for this job.
-func (j *Job) Decode(b []byte) error {
-	err := json.Unmarshal(b, j)
+func (job *Job) Decode(b []byte) error {
+	err := json.Unmarshal(b, job)
 	return errors.Trace(err)
 }
 
 // DecodeArgs decodes job args.
-func (j *Job) DecodeArgs(args ...interface{}) error {
-	j.Args = args
-	err := json.Unmarshal(j.RawArgs, &j.Args)
+func (job *Job) DecodeArgs(args ...interface{}) error {
+	job.Args = args
+	err := json.Unmarshal(job.RawArgs, &job.Args)
 	return errors.Trace(err)
+}
+
+// String implements fmt.Stringer interface.
+func (job *Job) String() string {
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaID:%d, TableID:%d, Args:%q",
+		job.ID, job.Type, job.State, job.SchemaID, job.TableID, job.RawArgs)
 }
 
 // JobState is for job state.

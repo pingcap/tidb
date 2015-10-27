@@ -101,4 +101,6 @@ func (*testSuite) TestJobCodec(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(name, DeepEquals, NewCIStr("a"))
 	c.Assert(a, DeepEquals, A{Name: "abc"})
+
+	c.Assert(len(newJob.String()), Greater, 0)
 }
