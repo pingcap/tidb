@@ -16,17 +16,40 @@ package optimizer
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/juju/errors"
 )
 
 // Compile compiles a ast.Node into a executable statement.
 func Compile(node ast.Node) (stmt.Statement, error) {
+	validator := &validator{}
+	if _, ok := node.Accept(validator); !ok {
+		return nil, errors.Trace(validator.err)
+	}
+
+	binder := &InfoBinder{}
+	if _, ok := node.Accept(validator); !ok {
+		return nil, errors.Trace(binder.Err)
+	}
+
+	tpComputer := &typeComputer{}
+	if _, ok := node.Accept(typeComputer{}); !ok {
+		return nil, errors.Trace(tpComputer.err)
+	}
+
 	switch v := node.(type) {
+	case *ast.SelectStmt:
+
 	case *ast.SetStmt:
 		return compileSet(v)
 	}
 	return nil, nil
 }
 
-func compileSet(aset *ast.SetStmt) (stmt.Statement, error) {
+func compileSelect(s *ast.SelectStmt) (stmt.Statement, error) {
+
+	return nil, nil
+}
+
+func compileSet(s *ast.SetStmt) (stmt.Statement, error) {
 	return nil, nil
 }

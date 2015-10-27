@@ -36,9 +36,6 @@ type FuncCallExpr struct {
 	F string
 	// Args is the function args.
 	Args []ExprNode
-	// Distinct only affetcts sum, avg, count, group_concat,
-	// so we can ignore it in other functions
-	Distinct bool
 }
 
 // Accept implements Node interface.
@@ -335,3 +332,29 @@ func (nod *FuncTrimExpr) IsStatic() bool {
 
 // TypeStar is a special type for "*".
 type TypeStar string
+
+type AggregateFuncExpr struct {
+	funcNode
+	// F is the function name.
+	F string
+	// Args is the function args.
+	Args []ExprNode
+	Distinct bool
+}
+
+// Accept implements Node Accept interface.
+func (nod *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*AggregateFuncExpr)
+	for i, val := range nod.Args {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Args[i] = node.(ExprNode)
+	}
+	return v.Leave(nod)
+}

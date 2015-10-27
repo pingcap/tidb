@@ -62,6 +62,7 @@ func (dn *dmlNode) dmlStatement() {}
 // Expression implementations should embed it in.
 type exprNode struct {
 	node
+	val interface{}
 	tp *types.FieldType
 }
 
@@ -78,6 +79,16 @@ func (en *exprNode) SetType(tp *types.FieldType) {
 // GetType implements Expression interface.
 func (en *exprNode) GetType() *types.FieldType {
 	return en.tp
+}
+
+// SetValue implements Expression interface.
+func (en *exprNode) SetValue(val interface{}) {
+	en.val = val
+}
+
+// GetValue implements Expression interface.
+func (en *exprNode) GetValue() interface{} {
+	return en.val
 }
 
 type funcNode struct {

@@ -47,8 +47,6 @@ var (
 // ValueExpr is the simple value expression.
 type ValueExpr struct {
 	exprNode
-	// Val is the literal value.
-	Val interface{}
 }
 
 // IsStatic implements ExprNode interface.

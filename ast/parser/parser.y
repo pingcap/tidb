@@ -1888,7 +1888,7 @@ FunctionNameConflict:
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode), Distinct: false}
+		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"CURRENT_USER"
 	{
@@ -1918,18 +1918,14 @@ DistinctOpt:
 	}
 
 FunctionCallKeyword:
-	"AVG" '(' DistinctOpt ExpressionList ')'
-	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode), Distinct: $3.(bool)}
-	}
-|	"CAST" '(' Expression "AS" CastType ')'
+	"CAST" '(' Expression "AS" CastType ')'
 	{
 		/* See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		$$ = &ast.FuncCastExpr{
 			Expr: $3.(ast.ExprNode), 
 			Tp: $5.(*types.FieldType),
 			FunctionType: ast.CastFunction,
-		}	
+		}
 	}
 |	"CASE" ExpressionOpt WhenClauseList ElseOpt "END"	
 	{
@@ -2211,30 +2207,34 @@ TrimDirection:
 	}
 
 FunctionCallAgg:
-	"COUNT" '(' DistinctOpt ExpressionList ')'
+	"AVG" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $3.([]ast.ExprNode), Distinct: $3.(bool)}
+	}
+|	"COUNT" '(' DistinctOpt ExpressionList ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
 		args := []ast.ExprNode{&ast.ValueExpr{Val: ast.TypeStar("*")} }
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"MAX" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"MIN" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 |	"SUM" '(' DistinctOpt Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: []ast.ExprNode{$4.(ast.ExprNode)}, Distinct: $3.(bool)}
 	}
 
 FuncDatetimePrec:
