@@ -240,6 +240,7 @@ func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
 	case model.ActionCreateSchema:
 		err = d.onSchemaCreate(t, job)
 	case model.ActionDropSchema:
+		err = d.onSchemaDrop(t, job)
 	case model.ActionCreateTable:
 	case model.ActionDropTable:
 	case model.ActionAddColumn:

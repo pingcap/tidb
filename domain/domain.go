@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -52,6 +53,11 @@ func (do *Domain) loadInfoSchema(m *meta.TMeta) (err error) {
 	}
 
 	for _, di := range schemas {
+		if di.State != model.StatePublic {
+			// schema is not public, can't be used outside.
+			continue
+		}
+
 		tables, err := m.ListTables(di.ID)
 		if err != nil {
 			return errors.Trace(err)

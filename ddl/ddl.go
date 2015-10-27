@@ -62,12 +62,14 @@ type DDL interface {
 type ddl struct {
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
+	store       kv.Storage
 	meta        *meta.Meta
 	// schema lease seconds.
-	lease     int
-	uuid      string
-	jobCh     chan struct{}
-	jobDoneCh chan struct{}
+	lease       int
+	uuid        string
+	jobCh       chan struct{}
+	jobDoneCh   chan struct{}
+	reOrgDoneCh chan error
 }
 
 // OnDDLChange is used as hook function when schema changed.
@@ -86,6 +88,7 @@ func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 	d := &ddl{
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
+		store:       store,
 		meta:        meta.NewMeta(store),
 		lease:       lease,
 		uuid:        uuid.NewV4().String(),
@@ -145,46 +148,12 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		return errors.Trace(ErrNotExists)
 	}
 
-	// Update InfoSchema
-	oldInfo := is.Clone()
-	var newInfo []*model.DBInfo
-	for _, v := range oldInfo {
-		if v.Name.L != schema.L {
-			newInfo = append(newInfo, v)
-		}
+	job := &model.Job{
+		SchemaID: old.ID,
+		Type:     model.ActionDropSchema,
 	}
 
-	// Remove data.
-	txn, err := ctx.GetTxn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tables := is.SchemaTables(schema)
-	for _, t := range tables {
-		err = t.Truncate(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Remove indices.
-		for _, v := range t.Indices() {
-			if v != nil && v.X != nil {
-				if err = v.X.Drop(txn); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-	}
-
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.DropDatabase(old.ID)
-		return errors.Trace(err)
-	})
-
+	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
