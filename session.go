@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
@@ -553,6 +555,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 		s.initing = false
 		storeBootstrapped[store.UUID()] = true
 	}
-	// Add auth here
+	// TODO: Add auth here
+	privChecker := &privileges.UserPrivileges{}
+	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
 }
