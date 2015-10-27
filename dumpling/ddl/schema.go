@@ -133,9 +133,10 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 		})
 
 		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we will return, check the owner and retry wait job done again.
+			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
-		} else if err != nil {
+		}
+		if err != nil {
 			return errors.Trace(err)
 		}
 
@@ -155,17 +156,14 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 
 func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
 	ctx := d.newReorgContext()
-	defer ctx.FinishTxn(true)
-
 	txn, err := ctx.GetTxn(true)
 
 	for _, tblInfo := range tables {
-
 		alloc := autoid.NewAllocator(d.meta, dbInfo.ID)
 		t := table.TableFromMeta(dbInfo.Name.L, alloc, tblInfo)
-
 		err = t.Truncate(ctx)
 		if err != nil {
+			ctx.FinishTxn(true)
 			return errors.Trace(err)
 		}
 
@@ -173,6 +171,7 @@ func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) er
 		for _, v := range t.Indices() {
 			if v != nil && v.X != nil {
 				if err = v.X.Drop(txn); err != nil {
+					ctx.FinishTxn(true)
 					return errors.Trace(err)
 				}
 			}
