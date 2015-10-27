@@ -239,7 +239,7 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
 
-	err = tx.HDel(key, []byte("fake"))
+	err = tx.HDel(key, []byte("fake_key"))
 	c.Assert(err, IsNil)
 
 	err = tx.Commit()

@@ -22,7 +22,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
 )
 
 var (
@@ -174,10 +173,10 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 	return nil
 }
 
-func (txn *dbTxn) each(f func(iterator.Iterator) error) error {
+func (txn *dbTxn) each(f func(kv.Iterator) error) error {
 	iter := txn.UnionStore.Dirty.NewIterator(nil)
-	defer iter.Release()
-	for iter.Next() {
+	defer iter.Close()
+	for ; iter.Valid(); iter, _ = iter.Next() {
 		if err := f(iter); err != nil {
 			return errors.Trace(err)
 		}
@@ -207,11 +206,11 @@ func (txn *dbTxn) doCommit() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.each(func(iter iterator.Iterator) error {
-		metaKey := codec.EncodeBytes(nil, iter.Key())
+	err = txn.each(func(iter kv.Iterator) error {
+		metaKey := codec.EncodeBytes(nil, []byte(iter.Key()))
 		// put dummy meta key, write current version
 		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
-		mvccKey := MvccEncodeVersionKey(iter.Key(), curVer)
+		mvccKey := MvccEncodeVersionKey(kv.Key(iter.Key()), curVer)
 		if len(iter.Value()) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
 		} else {

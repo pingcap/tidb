@@ -89,7 +89,7 @@ const (
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.global_variables(
+	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 )
@@ -133,7 +133,7 @@ func initGlobalVariables(s Session) {
 	mustExecute(s, CreateGloablVariablesTable)
 	values := make([]string, 0, len(variable.SysVars))
 	for k, v := range variable.SysVars {
-		value := fmt.Sprintf(`("%s", "%s")`, k, v.Value)
+		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable, strings.Join(values, ", "))

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
@@ -194,7 +195,7 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		stmt.ClearExecArgs(ctx)
 	}
 	// MySQL DDL should be auto-commit
-	if err == nil && (s.IsDDL() || variable.ShouldAutocommit(ctx)) {
+	if err == nil && (s.IsDDL() || autocommit.ShouldAutocommit(ctx)) {
 		err = ctx.FinishTxn(false)
 	}
 	return rs, errors.Trace(err)
