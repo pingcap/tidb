@@ -160,7 +160,7 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 			f := fs[i]
 			p, ok := mysql.Col2PrivType[f.Name]
 			if !ok {
-				panic("Unknown Privilege Type!")
+				return errors.Errorf("Unknown Privilege Type!")
 			}
 			ps.add(p)
 		}
@@ -192,7 +192,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 		// DB
 		db, ok := row.Data[1].(string)
 		if !ok {
-			panic("This should be never happened!")
+			errors.Errorf("This should be never happened!")
 		}
 		ps[db] = &privileges{}
 		for i := dbTablePrivColumnStartIndex; i < len(fs); i++ {
@@ -207,7 +207,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 			f := fs[i]
 			p, ok := mysql.Col2PrivType[f.Name]
 			if !ok {
-				panic("Unknown Privilege Type!")
+				return errors.Errorf("Unknown Privilege Type!")
 			}
 			ps[db].add(p)
 		}
@@ -235,12 +235,12 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 		// DB
 		db, ok := row.Data[1].(string)
 		if !ok {
-			panic("This should be never happened!")
+			return errors.Errorf("This should be never happened!")
 		}
 		// Table_name
 		tbl, ok := row.Data[3].(string)
 		if !ok {
-			panic("This should be never happened!")
+			return errors.Errorf("This should be never happened!")
 		}
 		_, ok = ps[db]
 		if !ok {
@@ -250,13 +250,13 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 		// Table_priv
 		tblPrivs, ok := row.Data[6].(mysql.Set)
 		if !ok {
-			panic("This should be never happened!")
+			errors.Errorf("This should be never happened!")
 		}
 		pvs := strings.Split(tblPrivs.Name, ",")
 		for _, d := range pvs {
 			p, ok := mysql.SetStr2Priv[d]
 			if !ok {
-				panic("Unknown Privilege Type!")
+				return errors.Errorf("Unknown Privilege Type!")
 			}
 			ps[db][tbl].add(p)
 		}
