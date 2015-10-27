@@ -24,6 +24,7 @@ import (
 
 var _ context.Context = &reOrgContext{}
 
+// reOrgContext implements context.Context interface for re-orgnization use.
 type reOrgContext struct {
 	store kv.Storage
 

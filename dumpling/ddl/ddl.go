@@ -65,10 +65,14 @@ type ddl struct {
 	store       kv.Storage
 	meta        *meta.Meta
 	// schema lease seconds.
-	lease       int
-	uuid        string
-	jobCh       chan struct{}
-	jobDoneCh   chan struct{}
+	lease     int
+	uuid      string
+	jobCh     chan struct{}
+	jobDoneCh chan struct{}
+	// reOrgDoneCh is for re-orgnization, if the re-orgnization job is done,
+	// we will use this channel to notify outer.
+	// TODO: now we use goroutine to simulate re-orgnization jobs, later we may
+	// use a persistent job list.
 	reOrgDoneCh chan error
 }
 
