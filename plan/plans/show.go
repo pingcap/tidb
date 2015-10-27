@@ -53,6 +53,7 @@ type ShowPlan struct {
 	Where       expression.Expression
 	rows        []*plan.Row
 	cursor      int
+	User        string // ShowGrants need to know username.
 }
 
 func (s *ShowPlan) isColOK(c *column.Col) bool {
@@ -107,6 +108,8 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowCreateTable:
 		names = []string{"Table", "Create Table"}
+	case stmt.ShowGrants:
+		names = []string{fmt.Sprintf("Grants for %s", s.User)}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
@@ -164,6 +167,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowCollation(ctx)
 	case stmt.ShowCreateTable:
 		return s.fetchShowCreateTable(ctx)
+	case stmt.ShowGrants:
+		return s.fetchShowGrants(ctx)
 	}
 	return nil
 }
@@ -186,7 +191,6 @@ func (s *ShowPlan) evalCondition(ctx context.Context, m map[interface{}]interfac
 	if cond == nil {
 		return true, nil
 	}
-
 	return expression.EvalBoolExpr(ctx, cond, m)
 }
 
@@ -496,5 +500,9 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 
 	s.rows = append(s.rows, &plan.Row{Data: data})
 
+	return nil
+}
+
+func (s *ShowPlan) fetchShowGrants(ctx context.Context) error {
 	return nil
 }

@@ -58,7 +58,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter", "escape",
+		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -252,6 +252,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
 		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
+		{`SHOW GRANTS`, true},
+		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},

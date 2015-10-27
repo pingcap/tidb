@@ -25,12 +25,14 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
-// Checker is the interface for check privileges.
+// Manager is the interface for check privileges.
 type Checker interface {
 	// Check checks privilege.
 	// If tbl is nil, only check global/db scope privileges.
 	// If tbl is not nil, check global/db/table scope privileges.
 	Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error)
+	// Show privileges
+	ShowGrants(ctx context.Context, user string) ([]string, error)
 }
 
 const key keyType = 0
