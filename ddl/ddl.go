@@ -372,18 +372,15 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("New table: %+v", tbInfo)
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
-		}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tbInfo.ID,
+		Type:     model.ActionCreateTable,
+		Args:     []interface{}{tbInfo},
+	}
 
-		err = t.CreateTable(schema.ID, tbInfo)
-		return errors.Trace(err)
-	})
-
+	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
@@ -534,22 +531,14 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		return errors.Trace(err)
 	}
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.DropTable(schema.ID, tb.Meta().ID)
-		return errors.Trace(err)
-	})
-
-	err = d.onDDLChange(err)
-	if err != nil {
-		return errors.Trace(err)
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tb.Meta().ID,
+		Type:     model.ActionDropTable,
 	}
 
-	err = d.deleteTableData(ctx, tb)
+	err = d.startJob(ctx, job)
+	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
 

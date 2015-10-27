@@ -107,7 +107,7 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaID:%d, TableID:%d, Args:%q",
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaID:%d, TableID:%d, Args:%s",
 		job.ID, job.Type, job.State, job.SchemaID, job.TableID, job.RawArgs)
 }
 

@@ -223,7 +223,7 @@ func (d *ddl) onWorker() {
 
 		err := d.handleJobQueue()
 		if err != nil {
-			log.Errorf("handle job err %v", err)
+			log.Errorf("handle job err %v", errors.ErrorStack(err))
 		}
 	}
 }
@@ -242,7 +242,9 @@ func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
 	case model.ActionDropSchema:
 		err = d.onSchemaDrop(t, job)
 	case model.ActionCreateTable:
+		err = d.onTableCreate(t, job)
 	case model.ActionDropTable:
+		err = d.onTableDrop(t, job)
 	case model.ActionAddColumn:
 	case model.ActionDropColumn:
 	case model.ActionAddIndex:
