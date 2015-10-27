@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/reborndb/go/errors2"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 func (d *ddl) onTableCreate(t *meta.TMeta, job *model.Job) error {
