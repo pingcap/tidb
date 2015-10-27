@@ -123,6 +123,11 @@ func (p *UserPrivileges) loadPrivileges(ctx context.Context) error {
 	return nil
 }
 
+// mysql.User/mysql.DB table privilege columns start from index 3.
+// See: booststrap.go CreateUserTable/CreateDBPrivTable
+const userTablePrivColumnStartIndex = 3
+const dbTablePrivColumnStartIndex = 3
+
 func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`, mysql.SystemDB, mysql.UserTable, p.username, p.host)
 	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
@@ -143,13 +148,11 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 		if row == nil {
 			break
 		}
-		// mysql.User table privilege columns start from index 3.
-		// See: booststrap.go CreateUserTable
-		for i := 3; i < len(fs); i++ {
+		for i := userTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			ed, ok := d.(mysql.Enum)
 			if !ok {
-				return fmt.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
+				return errors.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
 			}
 			if ed.String() != "Y" {
 				continue
@@ -192,13 +195,11 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 			panic("This should be never happened!")
 		}
 		ps[db] = &privileges{}
-		// mysql.DB table privilege columns start from index 3.
-		// See: booststrap.go CreateDBPrivTable
-		for i := 3; i < len(fs); i++ {
+		for i := dbTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			ed, ok := d.(mysql.Enum)
 			if !ok {
-				return fmt.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
+				return errors.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
 			}
 			if ed.String() != "Y" {
 				continue
