@@ -160,6 +160,17 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
+
+		{"REPLACE INTO foo VALUES (1 || 2)", true},
+		{"REPLACE INTO foo VALUES (1 | 2)", true},
+		{"REPLACE INTO foo VALUES (false || true)", true},
+		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES ()", true},
+		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314,)", false},
+		{"REPLACE INTO foo () VALUES ()", true},
+		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id 
 		FROM stuff 
