@@ -181,6 +181,22 @@ var Priv2UserCol = map[PrivilegeType]string{
 	IndexPriv:      "Index_priv",
 }
 
+// Col2PrivType is the privilege tables column name to privilege type.
+var Col2PrivType = map[string]PrivilegeType{
+	"Create_priv":      CreatePriv,
+	"Select_priv":      SelectPriv,
+	"Insert_priv":      InsertPriv,
+	"Update_priv":      UpdatePriv,
+	"Delete_priv":      DeletePriv,
+	"Show_db_priv":     ShowDBPriv,
+	"Create_user_priv": CreateUserPriv,
+	"Drop_priv":        DropPriv,
+	"Grant_priv":       GrantPriv,
+	"Alter_priv":       AlterPriv,
+	"Execute_priv":     ExecutePriv,
+	"Index_priv":       IndexPriv,
+}
+
 // AllGlobalPrivs is all the privileges in global scope.
 var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ShowDBPriv, ExecutePriv, IndexPriv, CreateUserPriv}
 
@@ -212,6 +228,20 @@ var Priv2SetStr = map[PrivilegeType]string{
 	AlterPriv:   "Alter",
 	ExecutePriv: "Execute",
 	IndexPriv:   "Index",
+}
+
+// SetStr2Priv is the map for privilege set string to privilege type.
+var SetStr2Priv = map[string]PrivilegeType{
+	"Create":  CreatePriv,
+	"Select":  SelectPriv,
+	"Insert":  InsertPriv,
+	"Update":  UpdatePriv,
+	"Delete":  DeletePriv,
+	"Drop":    DropPriv,
+	"Grant":   GrantPriv,
+	"Alter":   AlterPriv,
+	"Execute": ExecutePriv,
+	"Index":   IndexPriv,
 }
 
 // AllDBPrivs is all the privileges in database scope.

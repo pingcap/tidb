@@ -16,9 +16,11 @@ package mock
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -26,6 +28,7 @@ var _ context.Context = (*Context)(nil)
 // Context represents mocked context.Context.
 type Context struct {
 	values map[fmt.Stringer]interface{}
+	// mock global variable
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -51,6 +54,27 @@ func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
 
 // FinishTxn implements context.Context FinishTxn interface.
 func (c *Context) FinishTxn(rollback bool) error {
+	return nil
+}
+
+// GetGlobalSysVar implements GlobalSysVarAccessor GetGlobalSysVar interface.
+func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	sysvars := variable.SysVars
+	v, ok := sysvars[strings.ToLower(name)]
+	if !ok {
+		return "", nil
+	}
+	return v.Value, nil
+}
+
+// SetGlobalSysVar implements GlobalSysVarAccessor SetGlobalSysVar interface.
+func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
+	sysvars := variable.SysVars
+	v, ok := sysvars[strings.ToLower(name)]
+	if !ok {
+		return fmt.Errorf("Unknown sys var: %s", name)
+	}
+	v.Value = value
 	return nil
 }
 
