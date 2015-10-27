@@ -19,13 +19,12 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/reborndb/go/errors2"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 	schemaID := job.SchemaID
-
-	name := model.CIStr{}
+	var name model.CIStr
 	if err := job.DecodeArgs(&name); err != nil {
 		// arg error, cancel this job.
 		job.State = model.JobCancelled
@@ -41,7 +40,7 @@ func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 	for _, db := range dbs {
 		if db.Name.L == name.L {
 			if db.ID != schemaID {
-				// database exists, can't create, we can cancel this job now.
+				// database exists, can't create, we should cancel this job now.
 				job.State = model.JobCancelled
 				return errors.Trace(ErrExists)
 			}
@@ -94,7 +93,8 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
-	} else if dbInfo == nil {
+	}
+	if dbInfo == nil {
 		job.State = model.JobCancelled
 		return errors.Trace(ErrNotExists)
 	}
@@ -116,30 +116,30 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
-		// delete only -> re orgnization
-		dbInfo.State = model.StateReOrgnization
+		// delete only -> reorgnization
+		dbInfo.State = model.StateReorgnization
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
-	case model.StateReOrgnization:
-		// wait re-orgnization jobs done and drop meta.
+	case model.StateReorgnization:
+		// wait reorgnization jobs done and drop meta.
 		var tables []*model.TableInfo
 		tables, err = t.ListTables(dbInfo.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = d.runReOrgJob(func() error {
+		err = d.runReorgJob(func() error {
 			return d.dropSchemaData(dbInfo, tables)
 		})
 
-		if errors2.ErrorEqual(err, errWaitReOrgTimeout) {
+		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we will return, check the owner and retry wait job done again.
 			return nil
 		} else if err != nil {
 			return errors.Trace(err)
 		}
 
-		// all re-orgnization jobs done, drop this database
+		// all reorgnization jobs done, drop this database
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			return errors.Trace(err)
 		}
@@ -154,7 +154,7 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 }
 
 func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
-	ctx := d.newReOrgContext()
+	ctx := d.newReorgContext()
 	defer ctx.FinishTxn(true)
 
 	txn, err := ctx.GetTxn(true)
