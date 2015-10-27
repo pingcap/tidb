@@ -63,7 +63,14 @@ func (do *Domain) loadInfoSchema(m *meta.TMeta) (err error) {
 			return errors.Trace(err)
 		}
 
-		di.Tables = tables
+		di.Tables = make([]*model.TableInfo, 0, len(tables))
+		for _, tbl := range tables {
+			if tbl.State != model.StatePublic {
+				// schema is not public, can't be used outsiee.
+				continue
+			}
+			di.Tables = append(di.Tables, tbl)
+		}
 	}
 
 	log.Infof("loadInfoSchema %d", schemaMetaVersion)

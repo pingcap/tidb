@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
 
-func TesTxStructure(t *testing.T) {
+func TestStructure(t *testing.T) {
 	TestingT(t)
 }
 
@@ -238,6 +238,9 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 	l, err = tx.HLen(key)
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
+
+	err = tx.HDel(key, []byte("fake"))
+	c.Assert(err, IsNil)
 
 	err = tx.Commit()
 	c.Assert(err, IsNil)

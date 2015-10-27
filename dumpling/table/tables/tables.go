@@ -48,6 +48,7 @@ type Table struct {
 	recordPrefix string
 	indexPrefix  string
 	alloc        autoid.Allocator
+	state        model.SchemaState
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -67,6 +68,7 @@ func TableFromMeta(dbname string, alloc autoid.Allocator, tblInfo *model.TableIn
 		t.AddIndex(idx)
 	}
 
+	t.state = tblInfo.State
 	return t
 }
 
@@ -107,8 +109,9 @@ func (t *Table) TableName() model.CIStr {
 // Meta implements table.Table Meta interface.
 func (t *Table) Meta() *model.TableInfo {
 	ti := &model.TableInfo{
-		Name: t.Name,
-		ID:   t.ID,
+		Name:  t.Name,
+		ID:    t.ID,
+		State: t.state,
 	}
 	// load table meta
 	for _, col := range t.Columns {
