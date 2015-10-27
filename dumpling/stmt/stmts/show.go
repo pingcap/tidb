@@ -14,13 +14,13 @@
 package stmts
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/format"
@@ -42,6 +42,9 @@ type ShowStmt struct {
 	GlobalScope bool
 	Pattern     *expression.PatternLike
 	Where       expression.Expression
+
+	// Used by show grants
+	User string
 
 	Text string
 }
@@ -68,8 +71,6 @@ func (s *ShowStmt) SetText(text string) {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	// TODO: finish this
-	log.Debug("Exec Show Stmt")
 	r := &plans.ShowPlan{
 		Target:      s.Target,
 		DBName:      s.getDBName(ctx),
@@ -80,6 +81,10 @@ func (s *ShowStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		GlobalScope: s.GlobalScope,
 		Pattern:     s.Pattern,
 		Where:       s.Where,
+		User:        s.User,
+	}
+	if s.Target == stmt.ShowGrants && len(s.User) == 0 {
+		r.User = variable.GetSessionVars(ctx).User
 	}
 	return rsets.Recordset{Ctx: ctx, Plan: r}, nil
 }

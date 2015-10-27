@@ -57,6 +57,7 @@ const (
 	ShowVariables
 	ShowCollation
 	ShowCreateTable
+	ShowGrants
 )
 
 const (
