@@ -23,16 +23,16 @@ import (
 
 var (
 	r    = metrics.NewRegistry()
-	once = sync.Once{}
+	once sync.Once
 )
 
-// Reg registers a new metric for observation.
-func Reg(name string, m interface{}) {
+// Register registers a new metric for observation.
+func Register(name string, m interface{}) {
 	r.Register(name, m)
 }
 
-// IncCounter increments specific counter metric.
-func IncCounter(name string, i int64) {
+// Inc increments specific counter metric.
+func Inc(name string, i int64) {
 	if c := r.GetOrRegister(name, metrics.NewCounter()); c != nil {
 		c.(metrics.Counter).Inc(i)
 	}
@@ -50,7 +50,7 @@ func RecordTime(name string, startTime time.Time) {
 func RunMetric(interval time.Duration) {
 	once.Do(func() {
 		go func() {
-			metrics.Write(r, interval, os.Stdin)
+			metrics.Write(r, interval, os.Stdout)
 		}()
 	})
 }

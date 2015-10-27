@@ -39,11 +39,11 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	startTime := time.Now()
 	g := hbase.NewGet([]byte(k))
 	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
-	v, err := innerGet(s, g)
+	v, err := internalGet(s, g)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	metric.IncCounter("hbase-store-get-counter", 1)
+	metric.Inc("hbase-store-get-counter", 1)
 	metric.RecordTime("hbase-store-get-time", startTime)
 	return v, nil
 }
@@ -55,14 +55,14 @@ func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
 	g.TsRangeFrom = 0
 	g.TsRangeTo = ver.Ver + 1
-	v, err := innerGet(s, g)
+	v, err := internalGet(s, g)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return v, nil
 }
 
-func innerGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
+func internalGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 	r, err := s.txn.Get(s.storeName, g)
 	if err != nil {
 		return nil, errors.Trace(err)

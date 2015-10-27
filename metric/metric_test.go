@@ -29,30 +29,35 @@ type testSuite struct{}
 
 var _ = Suite(&testSuite{})
 
-func (t *testSuite) TestRegMetric(c *C) {
-	Reg("test-metric", metrics.NewCounter())
-	Reg("test-metric", metrics.NewHistogram(metrics.NewUniformSample(1000)))
+const (
+	testMetricName     = "test-metric"
+	testTimeMetricName = "time-metric"
+)
 
-	v := r.Get("test-metric")
+func (t *testSuite) TestRegMetric(c *C) {
+	Register(testMetricName, metrics.NewCounter())
+	Register(testMetricName, metrics.NewHistogram(metrics.NewUniformSample(1000)))
+
+	v := r.Get(testMetricName)
 	c.Assert(v != nil, Equals, true)
 
 	// Will not overwrite
 	_, ok := v.(metrics.Counter)
 	c.Assert(ok, IsTrue)
 
-	IncCounter("test-metric", 1)
-	IncCounter("test-metric", 1)
-	c.Assert(r.Get("test-metric").(metrics.Counter).Count(), Equals, int64(2))
+	Inc(testMetricName, 1)
+	Inc(testMetricName, 1)
+	c.Assert(r.Get(testMetricName).(metrics.Counter).Count(), Equals, int64(2))
 
-	Reg("time-metric", metrics.NewHistogram(metrics.NewUniformSample(1000)))
+	Register(testTimeMetricName, metrics.NewHistogram(metrics.NewUniformSample(1000)))
 	start := time.Now()
 	time.Sleep(100 * time.Millisecond)
-	RecordTime("time-metric", start)
+	RecordTime(testTimeMetricName, start)
 
 	start = time.Now()
 	time.Sleep(20 * time.Millisecond)
-	RecordTime("time-metric", start)
+	RecordTime(testTimeMetricName, start)
 
-	c.Assert(r.Get("time-metric").(metrics.Histogram).Max(), GreaterEqual, int64(100))
-	c.Assert(r.Get("time-metric").(metrics.Histogram).Min(), Less, int64(100))
+	c.Assert(r.Get(testTimeMetricName).(metrics.Histogram).Max(), GreaterEqual, int64(100))
+	c.Assert(r.Get(testTimeMetricName).(metrics.Histogram).Min(), Less, int64(100))
 }

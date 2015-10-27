@@ -20,18 +20,19 @@ import (
 
 	"github.com/c4pt0r/go-hbase"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
 )
 
 const (
-	// ColFamily is the hbase col family name.
+	// ColFamily is the hbase column family name.
 	ColFamily = "f"
-	// Qualifier is the hbase col name.
+	// Qualifier is the hbase column name.
 	Qualifier = "q"
 	// FmlAndQual is a shortcut.
 	FmlAndQual = ColFamily + ":" + Qualifier
+	// HbaseTableName is the table name in hbase which is invisible to SQL layer.
+	HbaseTableName = "tidb"
 )
 
 var (
@@ -39,8 +40,8 @@ var (
 )
 
 var (
-	// ErrHasNotZk is used when has not zookeeper info.
-	ErrHasNotZk = errors.New("Error: has not zookeeper info")
+	// ErrZkInfoErr is returned when zookeeper info is invalid.
+	ErrZkInfoErr = errors.New("zk info error")
 )
 
 var mc storeCache
@@ -76,7 +77,7 @@ func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
 		Txn:        t,
 		valid:      true,
 		storeName:  storeName,
-		tID:        t.GetStartTS(),
+		tid:        t.GetStartTS(),
 		UnionStore: kv.NewUnionStore(&hbaseSnapshot{t, storeName}),
 	}
 }
@@ -107,40 +108,34 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 	defer mc.mu.Unlock()
 
 	if len(zkInfo) == 0 {
-		log.Error("db uri is error, has not zk info")
-		return nil, ErrHasNotZk
+		return nil, ErrZkInfoErr
 	}
-
 	if store, ok := mc.cache[zkInfo]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
-		log.Info("cache store", zkInfo)
 		return store, nil
 	}
-
 	zks := strings.Split(zkInfo, ",")
+	if len(zks) == 0 {
+		return nil, ErrZkInfoErr
+	}
 	c, err := hbase.NewClient(zks, "/hbase")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	storeName := "tidb"
-	if !c.TableExists(storeName) {
-		log.Warn("auto create table:" + storeName)
-		// create new hbase table for store
-		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(storeName))
+	if !c.TableExists(HbaseTableName) {
+		// Create new hbase table for store.
+		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(HbaseTableName))
 		cf := hbase.NewColumnFamilyDescriptor(ColFamily)
 		cf.AddStrAddr("THEMIS_ENABLE", "true")
 		t.AddColumnDesc(cf)
 		//TODO: specify split?
-		err := c.CreateTable(t, nil)
-		if err != nil {
+		if err := c.CreateTable(t, nil); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-
 	s := &hbaseStore{
 		zkInfo:    zkInfo,
-		storeName: storeName,
+		storeName: HbaseTableName,
 		cli:       c,
 	}
 	mc.cache[zkInfo] = s

@@ -40,7 +40,7 @@ type hbaseTxn struct {
 	*themis.Txn
 	store     *hbaseStore // for commit
 	storeName string
-	tID       uint64
+	tid       uint64
 	valid     bool
 	version   kv.Version // commit version
 }
@@ -48,7 +48,7 @@ type hbaseTxn struct {
 // Implement transaction interface
 
 func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
-	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tID)
+	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
@@ -64,7 +64,7 @@ func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
+	intVal, err := strconv.ParseInt(string(val), 10, 64)
 	if err != nil {
 		return intVal, errors.Trace(err)
 	}
@@ -79,11 +79,11 @@ func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 }
 
 func (txn *hbaseTxn) String() string {
-	return fmt.Sprintf("%d", txn.tID)
+	return fmt.Sprintf("%d", txn.tid)
 }
 
 func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
-	log.Debugf("get key:%q, txn:%d", k, txn.tID)
+	log.Debugf("get key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) || len(val) == 0 {
@@ -107,7 +107,7 @@ func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
+	intVal, err := strconv.ParseInt(string(val), 10, 64)
 	return intVal, errors.Trace(err)
 }
 
@@ -118,13 +118,13 @@ func (txn *hbaseTxn) Set(k kv.Key, data []byte) error {
 		return ErrCannotSetNilValue
 	}
 
-	log.Debugf("set key:%q, txn:%d", k, txn.tID)
+	log.Debugf("set key:%q, txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	return txn.UnionStore.Set(k, data)
 }
 
 func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
-	log.Debugf("seek %q txn:%d", k, txn.tID)
+	log.Debugf("seek %q txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	iter, err := txn.UnionStore.Seek(k, txn)
 	if err != nil {
@@ -134,7 +134,7 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 }
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
-	log.Debugf("delete %q txn:%d", k, txn.tID)
+	log.Debugf("delete %q txn:%d", k, txn.tid)
 	k = kv.EncodeKey(k)
 	err := txn.UnionStore.Delete(k)
 	if err != nil {
@@ -185,7 +185,7 @@ func (txn *hbaseTxn) doCommit() error {
 	}
 
 	txn.version = kv.NewVersion(txn.Txn.GetCommitTS())
-	log.Debugf("doCommit txn.version:%d", txn.version.Ver)
+	log.Debugf("commit successfully, txn.version:%d", txn.version.Ver)
 	return nil
 }
 
@@ -193,11 +193,10 @@ func (txn *hbaseTxn) Commit() error {
 	if !txn.valid {
 		return ErrInvalidTxn
 	}
-	log.Infof("commit txn %d", txn.tID)
+	log.Debugf("start to commit txn %d", txn.tid)
 	defer func() {
 		txn.close()
 	}()
-
 	return txn.doCommit()
 }
 
@@ -220,7 +219,7 @@ func (txn *hbaseTxn) Rollback() error {
 	if !txn.valid {
 		return ErrInvalidTxn
 	}
-	log.Warnf("Rollback txn %d", txn.tID)
+	log.Warnf("Rollback txn %d", txn.tid)
 	return txn.close()
 }
 
