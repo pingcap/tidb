@@ -141,16 +141,12 @@ func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
 
 func (d *ddl) finishJob(t *meta.TMeta, job *model.Job) error {
 	// done, notice and run next job.
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		_, err := t.DeQueueDDLJob()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.AddHistoryDDLJob(job)
+	_, err := t.DeQueueDDLJob()
+	if err != nil {
 		return errors.Trace(err)
-	})
+	}
 
+	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }
 
