@@ -803,7 +803,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return repeat
 {regexp}		return regexp
 {references}		return references
-{replace}		return replace
+{replace}		lval.item = string(l.val)
+			return replace
 {rlike}			return rlike
 
 {sys_var}		lval.item = string(l.val)
