@@ -110,7 +110,7 @@ func (s *dbStore) UUID() string {
 	return s.uuid
 }
 
-func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
+func (s *dbStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
 	s.snapLock.RLock()
 	defer s.snapLock.RUnlock()
 
@@ -122,11 +122,20 @@ func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if ver.Cmp(currentVer) > 0 {
+		ver = currentVer
+	}
+
 	return &dbSnapshot{
 		store:   s,
 		db:      s.db,
-		version: currentVer,
+		version: ver,
 	}, nil
+}
+
+func (s *dbStore) CurrentVersion() (kv.Version, error) {
+	return globalVersionProvider.CurrentVersion()
 }
 
 // Begin transaction
@@ -217,12 +226,18 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 
 	metaKey := codec.EncodeBytes(nil, []byte(key))
 	currValue, err := s.db.Get(metaKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) || currValue == nil {
-		// If it's a new key, we won't need to check its version
+	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+		s.keysLocked[key] = tid
 		return nil
 	}
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// key not exist.
+	if currValue == nil {
+		s.keysLocked[key] = tid
+		return nil
 	}
 	_, ver, err := codec.DecodeUint(currValue)
 	if err != nil {
@@ -236,7 +251,6 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 	}
 
 	s.keysLocked[key] = tid
-
 	return nil
 }
 
