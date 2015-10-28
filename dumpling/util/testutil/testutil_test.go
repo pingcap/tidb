@@ -19,12 +19,6 @@ import (
 	. "github.com/pingcap/check"
 )
 
-const (
-	startIndex = 0
-	testCount  = 12
-	testPow    = 10
-)
-
 func TestT(t *testing.T) {
 	TestingT(t)
 }
