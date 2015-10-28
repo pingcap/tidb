@@ -17,6 +17,12 @@ package testutil
 // If a and b is exactly the same except the order, it returns true.
 // In otherwise return false.
 func CompareUnorderedStringSlice(a []string, b []string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
 	if len(a) != len(b) {
 		return false
 	}
