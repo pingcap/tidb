@@ -19,7 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 func (s *testBuiltinSuite) TestLength(c *C) {
@@ -104,7 +104,7 @@ func (s *testBuiltinSuite) TestLeft(c *C) {
 
 	args = []interface{}{1, int64(1)}
 	_, err = builtinLeft(args, nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	args = []interface{}{"abcdefg", "xxx"}
 	_, err = builtinLeft(args, nil)

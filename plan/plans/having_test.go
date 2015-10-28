@@ -30,11 +30,17 @@ var _ = Suite(&testHavingPlan{})
 func (t *testHavingPlan) TestHaving(c *C) {
 	tblPlan := &testTablePlan{groupByTestData, []string{"id", "name"}, 0}
 	havingPlan := &plans.HavingPlan{
+		SelectList: &plans.SelectList{
+			HiddenFieldOffset: len(tblPlan.GetFields()),
+			ResultFields:      tblPlan.GetFields(),
+		},
 		Src: tblPlan,
 		Expr: &expression.BinaryOperation{
 			Op: opcode.GE,
 			L: &expression.Ident{
-				CIStr: model.NewCIStr("id"),
+				CIStr:      model.NewCIStr("id"),
+				ReferScope: expression.IdentReferSelectList,
+				ReferIndex: 0,
 			},
 			R: &expression.Value{
 				Val: 20,

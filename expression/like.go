@@ -82,7 +82,7 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if expr == nil {
+	if types.IsNil(expr) {
 		return nil, nil
 	}
 
@@ -98,21 +98,15 @@ func (p *PatternLike) Eval(ctx context.Context, args map[interface{}]interface{}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if pattern == nil {
+		if types.IsNil(pattern) {
 			return nil, nil
 		}
-		var spattern string
-		switch v := pattern.(type) {
-		case string:
-			spattern = v
-		case []byte:
-			spattern = string(v)
-		default:
-			return nil, errors.Errorf("Pattern should be string or []byte in LIKE: %v (Value of type %T)", pattern, pattern)
+		spattern, err := types.ToString(pattern)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		p.patChars, p.patTypes = compilePattern(spattern, p.Escape)
 	}
-
 	match := doMatch(sexpr, p.patChars, p.patTypes)
 	if p.Not {
 		return !match, nil

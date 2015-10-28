@@ -28,14 +28,15 @@ import (
 // see https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
 
 func builtinAbs(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
-	switch x := args[0].(type) {
+	d := types.RawData(args[0])
+	switch x := d.(type) {
 	case nil:
 		return nil, nil
 	case uint, uint8, uint16, uint32, uint64:
 		return x, nil
 	case int, int8, int16, int32, int64:
 		// we don't need to handle error here, it must be success
-		v, _ := types.ToInt64(args[0])
+		v, _ := types.ToInt64(d)
 		if v >= 0 {
 			return x, nil
 		}
@@ -45,7 +46,7 @@ func builtinAbs(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	default:
 		// we will try to convert other types to float
 		// TODO: if time has no precision, it will be a integer
-		f, err := types.ToFloat64(args[0])
+		f, err := types.ToFloat64(d)
 		return math.Abs(f), errors.Trace(err)
 	}
 }

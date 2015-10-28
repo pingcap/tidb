@@ -15,43 +15,26 @@ package plans_test
 
 import (
 	"database/sql"
-	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type testShowSuit struct {
-	txn  kv.Transaction
-	vars map[string]interface{}
+	txn kv.Transaction
+	ctx context.Context
 }
-
-// implement Context interface
-func (p *testShowSuit) GetTxn(forceNew bool) (kv.Transaction, error) { return p.txn, nil }
-
-func (p *testShowSuit) FinishTxn(rollback bool) error { return nil }
-
-// SetValue saves a value associated with this context for key
-func (p *testShowSuit) SetValue(key fmt.Stringer, value interface{}) {
-	p.vars[key.String()] = value
-}
-
-// Value returns the value associated with this context for key
-func (p *testShowSuit) Value(key fmt.Stringer) interface{} {
-	return p.vars[key.String()]
-}
-
-// ClearValue clears the value associated with this context for key
-func (p *testShowSuit) ClearValue(key fmt.Stringer) {}
 
 var _ = Suite(&testShowSuit{})
 
@@ -59,9 +42,9 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	var err error
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
-	p.vars = map[string]interface{}{}
+	p.ctx = mock.NewContext()
 	p.txn, _ = store.Begin()
-	variable.BindSessionVars(p)
+	variable.BindSessionVars(p.ctx)
 }
 
 func (p *testShowSuit) TearDownSuite(c *C) {
@@ -102,10 +85,10 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
 	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeVarchar)
 
-	sessionVars := variable.GetSessionVars(p)
+	sessionVars := variable.GetSessionVars(p.ctx)
 	ret := map[string]string{}
 	rset := rsets.Recordset{
-		Ctx:  p,
+		Ctx:  p.ctx,
 		Plan: pln,
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
@@ -176,7 +159,7 @@ func (p *testShowSuit) TestShowCollation(c *C) {
 	}
 
 	rset := rsets.Recordset{
-		Ctx:  p,
+		Ctx:  p.ctx,
 		Plan: pln,
 	}
 

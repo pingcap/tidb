@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
@@ -348,13 +348,13 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
-				iter, _, terr := v.X.Seek(txn, colVals)
-				if terr != nil {
-					return 0, errors.Trace(terr)
+				iter, _, err1 := v.X.Seek(txn, colVals)
+				if err1 != nil {
+					return 0, errors.Trace(err1)
 				}
-				_, h, terr := iter.Next()
-				if terr != nil {
-					return 0, errors.Trace(terr)
+				_, h, err1 := iter.Next()
+				if err1 != nil {
+					return 0, errors.Trace(err1)
 				}
 				return h, errors.Trace(err)
 			}
@@ -530,7 +530,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		return err
 	}
 
-	it, err := txn.Seek([]byte(startKey), nil)
+	it, err := txn.Seek([]byte(startKey))
 	if err != nil {
 		return err
 	}

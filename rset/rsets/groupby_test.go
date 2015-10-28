@@ -50,6 +50,11 @@ func (s *testGroupByRsetSuite) SetUpSuite(c *C) {
 	s.r = &GroupByRset{Src: tblPlan, SelectList: selectList, By: by}
 }
 
+func resetAggFields(selectList *plans.SelectList) {
+	fields := selectList.Fields
+	selectList.AggFields = GetAggFields(fields)
+}
+
 func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	// `select id, name from t group by name`
 	p, err := s.r.Plan(nil)
@@ -88,6 +93,8 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	fld := &field.Field{Expr: fldExpr, AsName: "a"}
 	s.r.SelectList.Fields[0] = fld
 
+	resetAggFields(s.r.SelectList)
+
 	s.r.By[0] = expression.Value{Val: int64(1)}
 
 	_, err = s.r.Plan(nil)
@@ -115,6 +122,8 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 	s.r.SelectList.ResultFields[0].Col.Name = model.NewCIStr("count(id)")
 	s.r.SelectList.ResultFields[0].Name = "a"
 
+	resetAggFields(s.r.SelectList)
+
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)
 
@@ -123,48 +132,6 @@ func (s *testGroupByRsetSuite) TestGroupByRsetPlan(c *C) {
 
 	_, err = s.r.Plan(nil)
 	c.Assert(err, NotNil)
-}
-
-func (s *testGroupByRsetSuite) TestGroupByHasAmbiguousField(c *C) {
-	fld := &field.Field{Expr: expression.Value{Val: 1}}
-
-	// check `1`
-	fields := []*field.Field{fld}
-	indices := []int{0}
-
-	ret := s.r.HasAmbiguousField(indices, fields)
-	c.Assert(ret, IsFalse)
-
-	// check `c1 as c2, c1 as c2`
-	fld = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("c1")}, AsName: "c2"}
-	fields = []*field.Field{fld, fld}
-	indices = []int{0, 1}
-
-	ret = s.r.HasAmbiguousField(indices, fields)
-	c.Assert(ret, IsFalse)
-
-	// check `c1+c2 as c2, c1+c3 as c2`
-	exprx := expression.NewBinaryOperation(opcode.Plus, expression.Value{Val: "c1"},
-		expression.Value{Val: "c2"})
-	expry := expression.NewBinaryOperation(opcode.Plus, expression.Value{Val: "c1"},
-		expression.Value{Val: "c3"})
-
-	fldx := &field.Field{Expr: exprx, AsName: "c2"}
-	fldy := &field.Field{Expr: expry, AsName: "c2"}
-	fields = []*field.Field{fldx, fldy}
-	indices = []int{0, 1}
-
-	ret = s.r.HasAmbiguousField(indices, fields)
-	c.Assert(ret, IsFalse)
-
-	// check `c1 as c2, c3 as c2`
-	fldx = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("c1")}, AsName: "c2"}
-	fldy = &field.Field{Expr: &expression.Ident{CIStr: model.NewCIStr("c3")}, AsName: "c2"}
-	fields = []*field.Field{fldx, fldy}
-	indices = []int{0, 1}
-
-	ret = s.r.HasAmbiguousField(indices, fields)
-	c.Assert(ret, IsTrue)
 }
 
 func (s *testGroupByRsetSuite) TestGroupByRsetString(c *C) {

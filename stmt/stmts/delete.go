@@ -99,7 +99,7 @@ func (s *DeleteStmt) plan(ctx context.Context) (plan.Plan, error) {
 	return r, nil
 }
 
-func (s *DeleteStmt) removeRow(ctx context.Context, t table.Table, h int64, data []interface{}) error {
+func removeRow(ctx context.Context, t table.Table, h int64, data []interface{}) error {
 	// remove row's all indexies
 	if err := t.RemoveRowAllIndex(ctx, h, data); err != nil {
 		return err
@@ -186,7 +186,7 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = s.removeRow(ctx, t, handle, data)
+		err = removeRow(ctx, t, handle, data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

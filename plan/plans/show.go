@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -371,12 +371,17 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 			continue
 		}
 
-		value := v.Value
+		var value string
 		if !s.GlobalScope {
 			// Try to get Session Scope variable value
 			sv, ok := sessionVars.Systems[v.Name]
 			if ok {
 				value = sv
+			}
+		} else {
+			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		row := &plan.Row{Data: []interface{}{v.Name, value}}

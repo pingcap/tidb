@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -70,7 +71,6 @@ func (p *PatternRegexp) String() string {
 // Eval implements the Expression Eval interface.
 func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
 	var sexpr string
-	var ok bool
 	switch {
 	case p.Sexpr != nil:
 		sexpr = *p.Sexpr
@@ -80,12 +80,12 @@ func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface
 			return nil, err
 		}
 
-		if expr == nil {
+		if types.IsNil(expr) {
 			return nil, nil
 		}
 
-		sexpr, ok = expr.(string)
-		if !ok {
+		sexpr, err = types.ToString(expr)
+		if err != nil {
 			return nil, errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
 		}
 
@@ -102,12 +102,12 @@ func (p *PatternRegexp) Eval(ctx context.Context, args map[interface{}]interface
 			return nil, err
 		}
 
-		if pattern == nil {
+		if types.IsNil(pattern) {
 			return nil, nil
 		}
 
-		spattern, ok := pattern.(string)
-		if !ok {
+		spattern, err := types.ToString(pattern)
+		if err != nil {
 			return nil, errors.Errorf("non-string pattern in LIKE: %v (Value of type %T)", pattern, pattern)
 		}
 

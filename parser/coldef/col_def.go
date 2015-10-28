@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -103,8 +103,8 @@ func getDefaultValue(c *ConstraintOpt, tp byte, fsp int) (interface{}, error) {
 
 		return value, nil
 	}
-
-	return expression.FastEval(c.Evalue), nil
+	v := expression.FastEval(c.Evalue)
+	return types.RawData(v), nil
 }
 
 func removeOnUpdateNowFlag(c *column.Col) {

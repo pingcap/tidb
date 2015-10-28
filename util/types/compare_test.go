@@ -16,16 +16,16 @@ package types
 import (
 	"time"
 
-	. "github.com/pingcap/check"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 )
 
-var _ = Suite(&testCompareSuite{})
+var _ = check.Suite(&testCompareSuite{})
 
 type testCompareSuite struct {
 }
 
-func (s *testCompareSuite) TestCompare(c *C) {
+func (s *testCompareSuite) TestCompare(c *check.C) {
 	cmpTbl := []struct {
 		lhs interface{}
 		rhs interface{}
@@ -167,12 +167,12 @@ func (s *testCompareSuite) TestCompare(c *C) {
 
 	for _, t := range cmpTbl {
 		ret, err := Compare(t.lhs, t.rhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.ret)
+		c.Assert(err, check.IsNil)
+		c.Assert(ret, check.Equals, t.ret)
 
 		ret, err = Compare(t.rhs, t.lhs)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, -t.ret)
+		c.Assert(err, check.IsNil)
+		c.Assert(ret, check.Equals, -t.ret)
 	}
 
 	cmpError := []struct {
@@ -188,10 +188,10 @@ func (s *testCompareSuite) TestCompare(c *C) {
 
 	for _, t := range cmpError {
 		_, err := Compare(t.lhs, t.rhs)
-		c.Assert(err, NotNil)
+		c.Assert(err, check.NotNil)
 
 		_, err = Compare(t.rhs, t.lhs)
-		c.Assert(err, NotNil)
+		c.Assert(err, check.NotNil)
 	}
 
 }

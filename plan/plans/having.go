@@ -32,6 +32,7 @@ type HavingPlan struct {
 	Src      plan.Plan
 	Expr     expression.Expression
 	evalArgs map[interface{}]interface{}
+	*SelectList
 }
 
 // Explain implements plan.Plan Explain interface.
@@ -61,10 +62,11 @@ func (r *HavingPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		if srcRow == nil || err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.evalArgs[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
-			v, err0 := GetIdentValue(name, r.Src.GetFields(), srcRow.Data, field.CheckFieldFlag)
-			if err0 == nil {
-				return v, nil
+		r.evalArgs[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+			if scope == expression.IdentReferFromTable {
+				return srcRow.FromData[index], nil
+			} else if scope == expression.IdentReferSelectList {
+				return srcRow.Data[index], nil
 			}
 
 			// try to find in outer query

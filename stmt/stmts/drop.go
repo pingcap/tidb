@@ -111,6 +111,8 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	var notExistTables []string
 	for _, ti := range s.TableIdents {
 		err := sessionctx.GetDomain(ctx).DDL().DropTable(ctx, ti.Full(ctx))
+		// TODO: we should return special error for table not exist, checking "not exist" is not enough,
+		// because some other errors may contain this error string too.
 		if err != nil && strings.HasSuffix(err.Error(), "not exist") {
 			notExistTables = append(notExistTables, ti.String())
 		} else if err != nil {

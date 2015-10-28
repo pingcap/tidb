@@ -13,7 +13,11 @@
 
 package variable
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pingcap/tidb/context"
+)
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
 type ScopeFlag uint8
@@ -27,7 +31,7 @@ const (
 	ScopeSession
 )
 
-// SysVar is for system variable
+// SysVar is for system variable.
 type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
@@ -39,12 +43,10 @@ type SysVar struct {
 	Value string
 }
 
-// Global sys vars map
+// SysVars is global sys vars map.
 var SysVars map[string]*SysVar
 
-// GetSysVar returns the sysvar value for the given name
-// TODO: later we will get global sys vars from KV storage,
-// so this function will be removed later, maybe.
+// GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	return SysVars[name]
@@ -558,4 +560,24 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
+}
+
+// SetNamesVariables is the system variable names related to set names statements.
+var SetNamesVariables = []string{
+	"character_set_client",
+	"character_set_connection",
+	"character_set_results",
+}
+
+const (
+	// CollationConnection is the name for collation_connection system variable.
+	CollationConnection = "collation_connection"
+)
+
+// GlobalSysVarAccessor is the interface for accessing global scope system variables.
+type GlobalSysVarAccessor interface {
+	// GetGlobalSysVar gets the global system variable value for name.
+	GetGlobalSysVar(ctx context.Context, name string) (string, error)
+	// SetGlobalSysVar sets the global system variable name to value.
+	SetGlobalSysVar(ctx context.Context, name string, value string) error
 }

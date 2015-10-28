@@ -16,9 +16,9 @@ package expression
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -85,14 +85,22 @@ func (f *FunctionCast) String() string {
 func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	value, err := f.Expr.Eval(ctx, args)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-
+	value = types.RawData(value)
+	d := &types.DataItem{Type: f.Tp}
 	// Casting nil to any type returns null
 	if value == nil {
-		return nil, nil
+		d.Data = nil
+		return d, nil
 	}
-	return types.Cast(value, f.Tp), nil
+
+	d.Data, err = types.Cast(value, f.Tp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return d, nil
 }
 
 // Accept implements Expression Accept interface.

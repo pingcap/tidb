@@ -19,7 +19,7 @@ package types
 
 import (
 	"github.com/juju/errors"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // CompareInt64 returns an integer comparing the int64 x to y.
@@ -103,6 +103,8 @@ func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
 		x = string(v)
 	case []interface{}:
 		rowTypeNum++
+	case *DataItem:
+		return coerceCompare(v.Data, b)
 	}
 
 	switch v := b.(type) {
@@ -110,6 +112,8 @@ func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
 		y = string(v)
 	case []interface{}:
 		rowTypeNum++
+	case *DataItem:
+		return coerceCompare(a, v.Data)
 	}
 
 	if rowTypeNum == 1 {

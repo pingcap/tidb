@@ -29,7 +29,7 @@ import (
 	"fmt"
 	"strings"
 	
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/ddl"
@@ -113,6 +113,7 @@ import (
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
+	dateAdd		"DATE_ADD"
 	day		"DAY"
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
@@ -150,6 +151,7 @@ import (
 	fulltext	"FULLTEXT"
 	ge		">="
 	global		"GLOBAL"
+	grant		"GRANT"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -163,6 +165,7 @@ import (
 	index		"INDEX"
 	inner 		"INNER"
 	insert		"INSERT"
+	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
 	join		"JOIN"
@@ -199,6 +202,7 @@ import (
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
+	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
 	oror		"||"
@@ -213,6 +217,7 @@ import (
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
+	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
@@ -238,6 +243,7 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	to		"TO"
 	trailing	"TRAILING"
 	transaction	"TRANSACTION"
 	trim		"TRIM"
@@ -351,6 +357,7 @@ import (
 	CharsetName		"Charset Name"
 	CollationName		"Collation Name"
 	ColumnDef		"table column definition"
+	ColumnListOpt		"Optional column list"
 	ColumnName		"column name"
 	ColumnNameList		"column name list"
 	ColumnNameListOpt	"column name list opt"
@@ -413,6 +420,7 @@ import (
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
+	GrantStmt		"Grant statement"
 	GroupByClause		"GROUP BY clause"
 	GroupByList		"GROUP BY list"
 	HashString		"Hashed string"
@@ -425,7 +433,7 @@ import (
 	IndexName		"index name"
 	IndexType		"index type"
 	InsertIntoStmt		"INSERT INTO statement"
-	InsertRest		"Rest part of INSERT INTO statement"
+	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
 	JoinTable 		"join table"
 	JoinType		"join type"
@@ -441,6 +449,7 @@ import (
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
+	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
@@ -460,8 +469,14 @@ import (
 	PrimaryExpression	"primary expression"
 	PrimaryFactor		"primary expression factor"
 	Priority		"insert statement priority"
+	PrivElem		"Privilege element"
+	PrivElemList		"Privilege element list"
+	PrivLevel		"Privilege scope"
+	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
+	ReplaceIntoStmt		"REPLACE INTO statement"
+	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
@@ -696,7 +711,6 @@ ColumnPosition:
 			RelativeColumn: $2.(string),
 		}
 	}
-
 
 AlterSpecificationList:
 	AlterSpecification
@@ -1296,7 +1310,7 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" "TABLE" TableIdentList
+	"DROP" TableOrTables TableIdentList
 	{
 		$$ = &stmts.DropTableStmt{TableIdents: $3.([]table.Ident)}
 		if yylex.(*lexer).root {
@@ -1310,6 +1324,10 @@ DropTableStmt:
 			break
 		}
 	}
+
+TableOrTables:
+	"TABLE"
+|	"TABLES"
 
 EqOpt:
 	{
@@ -1692,7 +1710,7 @@ UnReservedKeyword:
 |	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
 
 NotKeywordToken:
-	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
+	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
@@ -1703,9 +1721,9 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertRest OnDuplicateKeyUpdate
+	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertValues OnDuplicateKeyUpdate
 	{
-		x := $6.(*stmts.InsertIntoStmt)
+		x := &stmts.InsertIntoStmt{InsertValues: $6.(stmts.InsertValues)}
 		x.Priority = $2.(int)
 		x.TableIdent = $5.(table.Ident)
 		if $7 != nil {
@@ -1724,36 +1742,36 @@ IntoOpt:
 	{
 	}
 
-InsertRest:
+InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-		$$ = &stmts.InsertIntoStmt{
+		$$ = stmts.InsertValues{
 			ColNames:   $2.([]string), 
 			Lists:      $5.([][]expression.Expression)}
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
+		$$ = stmts.InsertValues{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+		$$ = stmts.InsertValues{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
+		$$ = stmts.InsertValues{Lists:  $2.([][]expression.Expression)}
 	}
 |	SelectStmt
 	{
-		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+		$$ = stmts.InsertValues{Sel: $1.(*stmts.SelectStmt)}
 	}
 |	UnionStmt
 	{
-		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
+		$$ = stmts.InsertValues{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &stmts.InsertIntoStmt{Setlist: $2.([]*expression.Assignment)}
+		$$ = stmts.InsertValues{Setlist: $2.([]*expression.Assignment)}
 	}
 
 ValueSym:
@@ -1812,7 +1830,33 @@ OnDuplicateKeyUpdate:
 		$$ = $5
 	}
 
-/***********************************Insert Statments END************************************/
+/************************************************************************************
+ *  Replace Statments
+ *  See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
+ *
+ *  TODO: support PARTITION
+ **********************************************************************************/
+ReplaceIntoStmt:
+	"REPLACE" ReplacePriority IntoOpt TableIdent InsertValues
+	{
+		x := &stmts.ReplaceIntoStmt{InsertValues: $5.(stmts.InsertValues)}
+		x.Priority = $2.(int)
+		x.TableIdent = $4.(table.Ident)
+		$$ = x
+	}
+
+ReplacePriority:
+	{
+		$$ = stmts.NoPriority
+	}
+|	"LOW_PRIORITY"
+	{
+		$$ = stmts.LowPriority
+	}
+|	"DELAYED"
+	{
+		$$ = stmts.DelayedPriority
+	}
 
 Literal:
 	"false"
@@ -1827,6 +1871,16 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		l := yylex.(*lexer)
+		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		d := &types.DataItem{
+			Type: tp,
+			Data: $1.(string),
+		}
+		$$ = d
+	}
 |	hexLit
 |	bitLit
 
@@ -2227,6 +2281,14 @@ FunctionCallNonKeyword:
 			l := yylex.(*lexer)
 			l.err(err)
 			return 1
+		}
+	}
+|	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &expression.DateAdd{
+			Unit: $7.(string), 
+			Date: $3.(expression.Expression),
+			Interval: $6.(expression.Expression),
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
@@ -2757,7 +2819,6 @@ PrimaryFactor:
 	}
 |	PrimaryExpression
 
-
 Priority:
 	{
 		$$ = stmts.NoPriority
@@ -2932,14 +2993,28 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
 		$$ = &stmts.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.([]*field.Field),
-			From:          nil,
-			Lock:	       $6.(coldef.LockType),
+			Lock:	       $5.(coldef.LockType),
 		}
+	}
+|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+		st := &stmts.SelectStmt {
+			Distinct:      $2.(bool),
+			Fields:        $3.([]*field.Field),
+			From:          nil,
+			Lock:	       $7.(coldef.LockType),
+		}
+
+		if $5 != nil {
+			st.Where = &rsets.WhereRset{Expr: $5.(expression.Expression)}
+		}
+
+		$$ = st
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM" 
 	FromClause WhereClauseOptional SelectStmtGroup HavingClause SelectStmtOrder
@@ -2978,8 +3053,7 @@ SelectStmt:
 	}
 
 FromDual:
-	/* Empty */
-|	"FROM" "DUAL"
+	"FROM" "DUAL" 
 
 
 FromClause:
@@ -3497,9 +3571,11 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	GrantStmt
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
+|	ReplaceIntoStmt
 |	SelectStmt
 |	SetStmt
 |	ShowStmt
@@ -3519,6 +3595,7 @@ ExplainableStmt:
 |	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 StatementList:
 	Statement
@@ -4298,10 +4375,14 @@ CreateUserStmt:
 UserSpecification:
 	Username AuthOption	
 	{
-		$$ = &coldef.UserSpecification{
+		x := &coldef.UserSpecification{
 			User: $1.(string),
-			AuthOpt: $2.(*coldef.AuthOption),
 		}
+		if $2 != nil {
+			x.AuthOpt = $2.(*coldef.AuthOption)	
+		}
+		$$ = x
+
 	}
 
 UserSpecificationList:
@@ -4315,7 +4396,9 @@ UserSpecificationList:
 	}
 
 AuthOption:
-	{}
+	{
+		$$ = nil
+	}
 |	"IDENTIFIED" "BY" AuthString
 	{
 		$$ = &coldef.AuthOption {
@@ -4332,5 +4415,147 @@ AuthOption:
 
 HashString:
 	stringLit
+
+/*************************************************************************************
+ * Grant statement
+ * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ *************************************************************************************/
+GrantStmt:
+	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecificationList
+	 {
+		$$ = &stmts.GrantStmt{
+			Privs: $2.([]*coldef.PrivElem),
+			ObjectType: $4.(int),
+			Level: $5.(*coldef.GrantLevel),
+			Users: $7.([]*coldef.UserSpecification),
+		}	 	
+	 }
+
+PrivElem:
+	PrivType ColumnListOpt
+	{
+		$$ = &coldef.PrivElem{
+			Priv: $1.(mysql.PrivilegeType),
+			Cols: $2.([]string),
+		}
+	}
+
+ColumnListOpt:
+	{
+		$$ = []string{}
+	}
+|	'(' ColumnNameList ')'
+	{
+		$$ = $2
+	}
+
+PrivElemList:
+	PrivElem
+	{
+		$$ = []*coldef.PrivElem{$1.(*coldef.PrivElem)}
+	}
+|	PrivElemList ',' PrivElem
+	{
+		$$ = append($1.([]*coldef.PrivElem), $3.(*coldef.PrivElem))
+	}
+
+PrivType:
+	"ALL"
+	{
+		$$ = mysql.AllPriv
+	}
+|	"ALTER"
+	{
+		$$ = mysql.AlterPriv
+	}
+|	"CREATE"
+	{
+		$$ = mysql.CreatePriv
+	}
+|	"CREATE" "USER"
+	{
+		$$ = mysql.CreateUserPriv
+	}
+|	"DELETE"
+	{
+		$$ = mysql.DeletePriv
+	}
+|	"DROP"
+	{
+		$$ = mysql.DropPriv
+	}
+|	"EXECUTE"
+	{
+		$$ = mysql.ExecutePriv
+	}
+|	"INDEX"
+	{
+		$$ = mysql.IndexPriv
+	}
+|	"INSERT"
+	{
+		$$ = mysql.InsertPriv
+	}
+|	"SELECT"
+	{
+		$$ = mysql.SelectPriv
+	}
+|	"SHOW" "DATABASES"
+	{
+		$$ = mysql.ShowDBPriv
+	}
+|	"UPDATE"
+	{
+		$$ = mysql.UpdatePriv
+	}
+|	"GRANT" "OPTION"
+	{
+		$$ = mysql.GrantPriv
+	}
+	
+ObjectType:
+	{
+		$$ = coldef.ObjectTypeNone
+	}
+|	"TABLE"
+	{
+		$$ = coldef.ObjectTypeTable
+	}
+
+PrivLevel:
+	'*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelDB,
+		}		
+	}
+|	'*' '.' '*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelGlobal,
+		}		
+	}
+| 	Identifier '.' '*'
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelDB,
+			DBName: $1.(string),
+		}		
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelTable,
+			DBName: $1.(string),
+			TableName: $3.(string),
+		}		
+	}
+|	Identifier
+	{
+		$$ = &coldef.GrantLevel {
+			Level: coldef.GrantLevelTable,
+			TableName: $1.(string),
+		}		
+	}
 %%
 

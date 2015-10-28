@@ -17,12 +17,11 @@ import (
 	"bytes"
 
 	"github.com/ngaut/log"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
 )
 
 // UnionIter is the iterator on an UnionStore.
 type UnionIter struct {
-	dirtyIt    iterator.Iterator
+	dirtyIt    Iterator
 	snapshotIt Iterator
 
 	dirtyValid    bool
@@ -32,12 +31,11 @@ type UnionIter struct {
 	isValid    bool
 }
 
-func newUnionIter(dirtyIt iterator.Iterator, snapshotIt Iterator) *UnionIter {
+func newUnionIter(dirtyIt Iterator, snapshotIt Iterator) *UnionIter {
 	it := &UnionIter{
-		dirtyIt:    dirtyIt,
-		snapshotIt: snapshotIt,
-		// leveldb use next for checking valid...
-		dirtyValid:    dirtyIt.Next(),
+		dirtyIt:       dirtyIt,
+		snapshotIt:    snapshotIt,
+		dirtyValid:    dirtyIt.Valid(),
 		snapshotValid: snapshotIt.Valid(),
 	}
 	it.updateCur()
@@ -46,12 +44,13 @@ func newUnionIter(dirtyIt iterator.Iterator, snapshotIt Iterator) *UnionIter {
 
 // Go next and update valid status.
 func (iter *UnionIter) dirtyNext() {
-	iter.dirtyValid = iter.dirtyIt.Next()
+	iter.dirtyIt, _ = iter.dirtyIt.Next()
+	iter.dirtyValid = iter.dirtyIt.Valid()
 }
 
 // Go next and update valid status.
 func (iter *UnionIter) snapshotNext() {
-	iter.snapshotIt, _ = iter.snapshotIt.Next(nil)
+	iter.snapshotIt, _ = iter.snapshotIt.Next()
 	iter.snapshotValid = iter.snapshotIt.Valid()
 }
 
@@ -81,7 +80,7 @@ func (iter *UnionIter) updateCur() {
 		// both valid
 		if iter.snapshotValid && iter.dirtyValid {
 			snapshotKey := []byte(iter.snapshotIt.Key())
-			dirtyKey := iter.dirtyIt.Key()
+			dirtyKey := []byte(iter.dirtyIt.Key())
 			cmp := bytes.Compare(dirtyKey, snapshotKey)
 			// if equal, means both have value
 			if cmp == 0 {
@@ -116,8 +115,8 @@ func (iter *UnionIter) updateCur() {
 }
 
 // Next implements the Iterator Next interface.
-func (iter *UnionIter) Next(f FnKeyCmp) (Iterator, error) {
-	if iter.curIsDirty == false {
+func (iter *UnionIter) Next() (Iterator, error) {
+	if !iter.curIsDirty {
 		iter.snapshotNext()
 	} else {
 		iter.dirtyNext()
@@ -129,7 +128,7 @@ func (iter *UnionIter) Next(f FnKeyCmp) (Iterator, error) {
 // Value implements the Iterator Value interface.
 // Multi columns
 func (iter *UnionIter) Value() []byte {
-	if iter.curIsDirty == false {
+	if !iter.curIsDirty {
 		return iter.snapshotIt.Value()
 	}
 	return iter.dirtyIt.Value()
@@ -137,10 +136,10 @@ func (iter *UnionIter) Value() []byte {
 
 // Key implements the Iterator Key interface.
 func (iter *UnionIter) Key() string {
-	if iter.curIsDirty == false {
+	if !iter.curIsDirty {
 		return string(DecodeKey([]byte(iter.snapshotIt.Key())))
 	}
-	return string(DecodeKey(iter.dirtyIt.Key()))
+	return string(DecodeKey([]byte(iter.dirtyIt.Key())))
 }
 
 // Valid implements the Iterator Valid interface.
@@ -155,7 +154,7 @@ func (iter *UnionIter) Close() {
 		iter.snapshotIt = nil
 	}
 	if iter.dirtyIt != nil {
-		iter.dirtyIt.Release()
+		iter.dirtyIt.Close()
 		iter.dirtyIt = nil
 	}
 }

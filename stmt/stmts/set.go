@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -116,8 +118,6 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			}
 			return nil, nil
 		}
-
-		// TODO: should get global sys var from db.
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
 			return nil, errors.Errorf("Unknown system variable '%s'", name)
@@ -125,7 +125,6 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		if sysVar.Scope == variable.ScopeNone {
 			return nil, errors.Errorf("Variable '%s' is a read only variable", name)
 		}
-
 		if v.IsGlobal {
 			if sysVar.Scope&variable.ScopeGlobal > 0 {
 				value, err := v.getValue(ctx)
@@ -133,13 +132,14 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 					return nil, errors.Trace(err)
 				}
 				if value == nil {
-					sysVar.Value = ""
-				} else {
-					// TODO: set global variables in db, now we only change memory global sys var map.
-					// TODO: check sys variable type if possible.
-					sysVar.Value = fmt.Sprintf("%v", value)
+					value = ""
 				}
-				return nil, nil
+				svalue, err := types.ToString(value)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				err = ctx.(variable.GlobalSysVarAccessor).SetGlobalSysVar(ctx, name, svalue)
+				return nil, errors.Trace(err)
 			}
 			return nil, errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
 		}
@@ -147,9 +147,8 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			if value, err := v.getValue(ctx); err != nil {
 				return nil, errors.Trace(err)
 			} else if value == nil {
-				sysVar.Value = ""
+				sessionVars.Systems[name] = ""
 			} else {
-				// TODO: check sys variable type if possible.
 				sessionVars.Systems[name] = fmt.Sprintf("%v", value)
 			}
 			return nil, nil
@@ -190,9 +189,23 @@ func (s *SetCharsetStmt) SetText(text string) {
 }
 
 // Exec implements the stmt.Statement Exec interface.
+// SET NAMES sets the three session system variables character_set_client, character_set_connection,
+// and character_set_results to the given character set. Setting character_set_connection to charset_name
+// also sets collation_connection to the default collation for charset_name.
+// The optional COLLATE clause may be used to specify a collation explicitly.
 func (s *SetCharsetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	// TODO: finish this
 	log.Debug("Set charset to ", s.Charset)
-	// ctx.Charset = s.Charset
+	collation := s.Collate
+	if len(collation) == 0 {
+		collation, err = charset.GetDefaultCollation(s.Charset)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	sessionVars := variable.GetSessionVars(ctx)
+	for _, v := range variable.SetNamesVariables {
+		sessionVars.Systems[v] = s.Charset
+	}
+	sessionVars.Systems[variable.CollationConnection] = collation
 	return nil, nil
 }

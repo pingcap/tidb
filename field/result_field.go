@@ -23,21 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
-	mysql "github.com/pingcap/tidb/mysqldef"
-)
-
-const (
-	// DefaultFieldFlag is `FieldNameFlag`.
-	DefaultFieldFlag = FieldNameFlag
-	// CheckFieldFlag includes `FieldNameFlag` and `OrgFieldNameFlag`.
-	CheckFieldFlag = FieldNameFlag | OrgFieldNameFlag
-)
-
-const (
-	// OrgFieldNameFlag is origin filed name flag.
-	OrgFieldNameFlag uint32 = 1 << iota
-	// FieldNameFlag is filed name flag.
-	FieldNameFlag
+	"github.com/pingcap/tidb/mysql"
 )
 
 // ResultField provides meta data of table column.
@@ -96,47 +82,17 @@ func ColToResultField(col *column.Col, tableName string) *ResultField {
 	return rf
 }
 
-// CheckAmbiguousField checks whether name is an ambiguous field in ResultFields.
-func CheckAmbiguousField(name string, fields []*ResultField, flag uint32) error {
-	indices := GetResultFieldIndex(name, fields, flag)
-	if len(indices) > 1 {
-		return errors.Errorf("ambiguous field %s", name)
-	}
-
-	return nil
-}
-
-// CheckFieldName checks whether name is an unknown or ambiguous field in ResultFields.
-func CheckFieldName(name string, fields []*ResultField, flag uint32) error {
-	if !ContainFieldName(name, fields, flag) {
-		return errors.Errorf("unknown field %s", name)
-	}
-
-	return CheckAmbiguousField(name, fields, OrgFieldNameFlag)
-}
-
-// CheckAllFieldNames checks whether names has unknown or ambiguous field in ResultFields.
-func CheckAllFieldNames(names []string, fields []*ResultField, flag uint32) error {
-	for _, name := range names {
-		if err := CheckFieldName(name, fields, flag); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
-}
-
 // ContainFieldName checks whether name is in ResultFields.
-func ContainFieldName(name string, fields []*ResultField, flag uint32) bool {
-	indices := GetResultFieldIndex(name, fields, flag)
+func ContainFieldName(name string, fields []*ResultField) bool {
+	indices := GetResultFieldIndex(name, fields)
 	return len(indices) > 0
 }
 
 // ContainAllFieldNames checks whether names are all in ResultFields.
 // TODO: add alias table name support
-func ContainAllFieldNames(names []string, fields []*ResultField, flag uint32) bool {
+func ContainAllFieldNames(names []string, fields []*ResultField) bool {
 	for _, name := range names {
-		if !ContainFieldName(name, fields, flag) {
+		if !ContainFieldName(name, fields) {
 			return false
 		}
 	}
@@ -179,55 +135,14 @@ func JoinQualifiedName(db string, table string, field string) string {
 }
 
 // GetResultFieldIndex gets name index in ResultFields.
-func GetResultFieldIndex(name string, fields []*ResultField, flag uint32) []int {
+func GetResultFieldIndex(name string, fields []*ResultField) []int {
 	var indices []int
 
 	db, table, field := SplitQualifiedName(name)
-
-	// Check origin field name.
-	if flag&OrgFieldNameFlag > 0 {
-		for i, f := range fields {
-			if checkFieldsEqual(db, table, field, f.DBName, f.TableName, f.ColumnInfo.Name.L) {
-				indices = append(indices, i)
-				continue
-			}
-		}
-	}
-
-	// Check alias field name.
-	if flag&FieldNameFlag > 0 {
-		for i, f := range fields {
-			if checkFieldsEqual(db, table, field, f.DBName, f.TableName, f.Name) {
-				indices = append(indices, i)
-				continue
-			}
-		}
-	}
-
-	return indices
-}
-
-// GetFieldIndex gets name index in Fields.
-func GetFieldIndex(name string, fields []*Field, flag uint32) []int {
-	var indices []int
-
-	// Check origin field name.
-	if flag&OrgFieldNameFlag > 0 {
-		for i, f := range fields {
-			if CheckFieldsEqual(name, f.Expr.String()) {
-				indices = append(indices, i)
-				continue
-			}
-		}
-	}
-
-	// Check alias field name.
-	if flag&FieldNameFlag > 0 {
-		for i, f := range fields {
-			if CheckFieldsEqual(name, f.AsName) {
-				indices = append(indices, i)
-				continue
-			}
+	for i, f := range fields {
+		if checkFieldsEqual(db, table, field, f.DBName, f.TableName, f.Name) {
+			indices = append(indices, i)
+			continue
 		}
 	}
 
@@ -267,8 +182,8 @@ func checkFieldsEqual(xdb, xtable, xfield, ydb, ytable, yfield string) bool {
 }
 
 // CloneFieldByName clones a ResultField in ResultFields according to name.
-func CloneFieldByName(name string, fields []*ResultField, flag uint32) (*ResultField, error) {
-	indices := GetResultFieldIndex(name, fields, flag)
+func CloneFieldByName(name string, fields []*ResultField) (*ResultField, error) {
+	indices := GetResultFieldIndex(name, fields)
 	if len(indices) == 0 {
 		return nil, errors.Errorf("unknown field %s", name)
 	}
@@ -280,4 +195,9 @@ func CloneFieldByName(name string, fields []*ResultField, flag uint32) (*ResultF
 func CheckWildcardField(name string) (string, bool, error) {
 	_, table, field := SplitQualifiedName(name)
 	return table, field == "*", nil
+}
+
+// IsQualifiedName returns whether name contains "." or not.
+func IsQualifiedName(name string) bool {
+	return strings.Contains(name, ".")
 }

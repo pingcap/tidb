@@ -17,7 +17,7 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -49,29 +49,29 @@ func (s *testCastSuite) TestCast(c *C) {
 
 	v, err := expr.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(1))
+	c.Assert(v.(*types.DataItem).Data, Equals, int64(1))
 
 	f.Flag |= mysql.UnsignedFlag
 	v, err = expr.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(1))
+	c.Assert(v.(*types.DataItem).Data, Equals, uint64(1))
 
 	f.Tp = mysql.TypeString
 	f.Charset = charset.CharsetBin
 	v, err = expr.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, []byte("1"))
+	c.Assert(v.(*types.DataItem).Data, DeepEquals, []byte("1"))
 
 	f.Tp = mysql.TypeString
 	f.Charset = "utf8"
 	v, err = expr.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, "1")
+	c.Assert(v.(*types.DataItem).Data, DeepEquals, "1")
 
 	expr.Expr = Value{nil}
 	v, err = expr.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, nil)
+	c.Assert(v.(*types.DataItem).Data, Equals, nil)
 
 	expr.Expr = mockExpr{err: errors.New("must error")}
 	c.Assert(expr.Clone(), NotNil)

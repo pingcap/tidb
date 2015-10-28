@@ -29,13 +29,22 @@ var (
 	_ kv.Iterator     = (*dbIter)(nil)
 )
 
+// dbSnapshot implements MvccSnapshot interface.
 type dbSnapshot struct {
+	store   *dbStore
 	db      engine.DB
 	rawIt   engine.Iterator
 	version kv.Version // transaction begin version
 }
 
 func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
+	s.store.snapLock.RLock()
+	defer s.store.snapLock.RUnlock()
+
+	if s.store.closed {
+		return nil, errors.Trace(ErrDBClosed)
+	}
+
 	if s.rawIt == nil {
 		var err error
 		s.rawIt, err = s.db.Seek([]byte{0})
@@ -113,10 +122,13 @@ func (s *dbSnapshot) MvccRelease() {
 }
 
 func (s *dbSnapshot) Release() {
-	if s.rawIt != nil {
-		s.rawIt.Release()
-		s.rawIt = nil
+	if s.rawIt == nil {
+		return
 	}
+
+	// TODO: check whether Release will panic if store is closed.
+	s.rawIt.Release()
+	s.rawIt = nil
 }
 
 type dbIter struct {
@@ -135,11 +147,11 @@ func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
 		valid:           true,
 		exceptedVersion: exceptedVer,
 	}
-	it.Next(nil)
+	it.Next()
 	return it
 }
 
-func (it *dbIter) Next(fn kv.FnKeyCmp) (kv.Iterator, error) {
+func (it *dbIter) Next() (kv.Iterator, error) {
 	encKey := codec.EncodeBytes(nil, it.startKey)
 	var retErr error
 	var engineIter engine.Iterator

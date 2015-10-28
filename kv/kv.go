@@ -25,7 +25,7 @@ type Key []byte
 
 // Next returns the next key in byte-order.
 func (k Key) Next() Key {
-	// add \x0 to the end of key
+	// add 0x0 to the end of key
 	buf := make([]byte, len([]byte(k))+1)
 	copy(buf, []byte(k))
 	return buf
@@ -104,7 +104,7 @@ type Transaction interface {
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
-	Seek(k Key, fnKeyCmp func(key Key) bool) (Iterator, error)
+	Seek(k Key) (Iterator, error)
 	// Inc increases the value for key k in KV store by step.
 	Inc(k Key, step int64) (int64, error)
 	// GetInt64 get int64 which created by Inc method.
@@ -158,12 +158,16 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// GetSnapshot gets a snaphot that is able to read any version of data.
-	GetSnapshot() (MvccSnapshot, error)
+	// GetSnapshot gets a snaphot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver Version) (MvccSnapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID
 	UUID() string
+
+	// CurrentVersion returns current max committed version.
+	CurrentVersion() (Version, error)
 }
 
 // FnKeyCmp is the function for iterator the keys
@@ -171,7 +175,7 @@ type FnKeyCmp func(key Key) bool
 
 // Iterator is the interface for a interator on KV store.
 type Iterator interface {
-	Next(FnKeyCmp) (Iterator, error)
+	Next() (Iterator, error)
 	Value() []byte
 	Key() string
 	Valid() bool

@@ -24,7 +24,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv/memkv"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -110,11 +110,14 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 		err  error
 	)
 
+	v = types.RawData(v)
 	switch y := v.(type) {
 	case int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
 		data, err = mysql.ConvertToDecimal(v)
 	case mysql.Decimal:
 		data = y
+	case nil:
+		data = nil
 	default:
 		data, err = types.ToFloat64(v)
 	}
@@ -122,7 +125,10 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	if data == nil {
+		return sum, nil
+	}
+	data = types.RawData(data)
 	switch x := sum.(type) {
 	case nil:
 		return data, nil
@@ -160,18 +166,19 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 		}
 
 		switch x := data.sum.(type) {
+		case nil:
+			return nil, nil
 		case float64:
 			return float64(x) / float64(data.n), nil
 		case mysql.Decimal:
 			return x.Div(mysql.NewDecimalFromUint(data.n, 0)), nil
 		}
-
 		panic("should not happend")
 	}
 
 	data, _ := ctx[fn].(avg)
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
@@ -181,7 +188,7 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 		return nil, err
 	}
 
-	if data.sum == nil {
+	if types.IsNil(data.sum) {
 		data.n = 0
 	}
 
@@ -210,7 +217,7 @@ func builtinCount(args []interface{}, ctx map[interface{}]interface{}) (v interf
 
 	n, _ := ctx[fn].(int64)
 
-	if args[0] != nil {
+	if !types.IsNil(args[0]) {
 		ok, err := distinct.isDistinct(args...)
 		if err != nil || !ok {
 			// if err or not distinct, return
@@ -239,12 +246,12 @@ func builtinMax(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	max := ctx[fn]
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
 	// Notice: for max, `nil < non nil`
-	if max == nil {
+	if types.IsNil(max) {
 		max = y
 	} else {
 		n, err := types.Compare(max, y)
@@ -276,12 +283,12 @@ func builtinMin(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	min := ctx[fn]
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
 	// Notice: for min, `nil > non nil`
-	if min == nil {
+	if types.IsNil(min) {
 		min = y
 	} else {
 		n, err := types.Compare(min, y)
@@ -316,7 +323,7 @@ func builtinSum(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	sum := ctx[fn]
 	y := args[0]
-	if y == nil {
+	if types.IsNil(y) {
 		return
 	}
 
@@ -345,14 +352,14 @@ func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v 
 	distinct := getDistinct(ctx, fn)
 	if _, ok := ctx[ExprAggDone]; ok {
 		distinct.clear()
-		if v, _ := ctx[fn]; v != nil {
+		if v, _ := ctx[fn]; !types.IsNil(v) {
 			return v.(string), nil
 		}
 		return nil, nil
 	}
 
 	var buf bytes.Buffer
-	if v := ctx[fn]; v != nil {
+	if v := ctx[fn]; !types.IsNil(v) {
 		s := v.(string)
 		// now use comma separator
 		buf.WriteString(s)
@@ -366,7 +373,7 @@ func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v 
 	}
 
 	for i := 0; i < len(args); i++ {
-		if args[i] == nil {
+		if types.IsNil(args[i]) {
 			// if any is nil, we will not concat
 			return
 		}

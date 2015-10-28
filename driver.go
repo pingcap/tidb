@@ -31,7 +31,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	qerror "github.com/pingcap/tidb/util/errors"
@@ -54,7 +54,6 @@ var (
 	_ driver.Stmt   = (*driverStmt)(nil)
 	_ driver.Driver = (*sqlDriver)(nil)
 
-	// TODO: change to BEGIN or START TRANSACTION
 	txBeginSQL    = "BEGIN;"
 	txCommitSQL   = "COMMIT;"
 	txRollbackSQL = "ROLLBACK;"
@@ -452,7 +451,6 @@ func (r *driverRows) Next(dest []driver.Value) error {
 
 // driverStmt is a prepared statement. It is bound to a driverConn and not used
 // by multiple goroutines concurrently.
-// TODO: We do not support prepared stmt now, will change this later
 type driverStmt struct {
 	conn       *driverConn
 	query      string

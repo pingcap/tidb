@@ -26,7 +26,8 @@ import (
 	"strings"
 	
 	"github.com/pingcap/tidb/expression"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/mysql"
 )
 
 type lexer struct {
@@ -54,6 +55,10 @@ type lexer struct {
 	// record token's offset of the input
 	tokenEndOffset   int
 	tokenStartOffset int
+
+	// Charset information
+	charset		string
+	collation	string
 }
 
 
@@ -102,6 +107,15 @@ func (l *lexer) Root() bool {
 
 func (l *lexer) SetRoot(root bool) {
 	l.root = root
+}
+
+func (l *lexer) SetCharsetInfo(charset, collation string) {
+	l.charset = charset
+	l.collation = collation
+}
+
+func (l *lexer) GetCharsetInfo() (string, string) {
+	return l.charset, l.collation	
 }
 
 func (l *lexer) unget(b byte) {
@@ -283,6 +297,7 @@ current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
+date_add	{d}{a}{t}{e}_{a}{d}{d}
 day		{d}{a}{y}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
@@ -316,6 +331,7 @@ from		{f}{r}{o}{m}
 full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
+grant		{g}{r}{a}{n}{t}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
@@ -329,6 +345,7 @@ in		{i}{n}
 index		{i}{n}{d}{e}{x}
 inner 		{i}{n}{n}{e}{r}
 insert		{i}{n}{s}{e}{r}{t}
+interval	{i}{n}{t}{e}{r}{v}{a}{l}
 into		{i}{n}{t}{o}
 is		{i}{s}
 join		{j}{o}{i}{n}
@@ -356,6 +373,7 @@ national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
+option		{o}{p}{t}{i}{o}{n}
 or		{o}{r}
 order		{o}{r}{d}{e}{r}
 outer		{o}{u}{t}{e}{r}
@@ -368,6 +386,7 @@ rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
+replace		{r}{e}{p}{l}{a}{c}{e}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
@@ -389,6 +408,7 @@ sysdate		{s}{y}{s}{d}{a}{t}{e}
 table		{t}{a}{b}{l}{e}
 tables		{t}{a}{b}{l}{e}{s}
 then		{t}{h}{e}{n}
+to		{t}{o}
 trailing	{t}{r}{a}{i}{l}{i}{n}{g}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
 trim		{t}{r}{i}{m}
@@ -626,6 +646,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
+{date_add}		lval.item = string(l.val)
+			return dateAdd
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
@@ -683,6 +705,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {full}			lval.item = string(l.val)
 			return full
 {fulltext}		return fulltext
+{grant}			return grant
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
@@ -706,6 +729,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {index}			return index
 {inner} 		return inner
 {insert}		return insert
+{interval}		return interval
 {into}			return into
 {in}			return in
 {is}			return is
@@ -757,6 +781,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {offset}		lval.item = string(l.val)
 			return offset
 {on}			return on
+{option}		return option
 {order}			return order
 {or}			return or
 {outer}			return outer
@@ -791,6 +816,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return repeat
 {regexp}		return regexp
 {references}		return references
+{replace}		return replace
 {rlike}			return rlike
 
 {sys_var}		lval.item = string(l.val)
@@ -819,6 +845,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {tables}		lval.item = string(l.val)
 			return tables
 {then}			return then
+{to}			return to
 {trailing}		return trailing
 {transaction}		lval.item = string(l.val)
 			return transaction
@@ -1011,7 +1038,8 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 		s = strings.TrimSuffix(s, "'") + "\""
 		pref = "\""
 	} 
-	v, err := strconv.Unquote(pref + s)
+	v := stringutil.RemoveUselessBackslash(pref+s)
+	v, err := strconv.Unquote(v)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}

@@ -66,8 +66,8 @@ func (f *FunctionSubstring) Eval(ctx context.Context, args map[interface{}]inter
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	str, ok := fs.(string)
-	if !ok {
+	str, err := types.ToString(fs)
+	if err != nil {
 		return nil, errors.Errorf("Substring invalid args, need string but get %T", fs)
 	}
 
@@ -155,8 +155,8 @@ func (f *FunctionSubstringIndex) Eval(ctx context.Context, args map[interface{}]
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	str, ok := fs.(string)
-	if !ok {
+	str, err := types.ToString(fs)
+	if err != nil {
 		return nil, errors.Errorf("Substring_Index invalid args, need string but get %T", fs)
 	}
 
@@ -164,8 +164,8 @@ func (f *FunctionSubstringIndex) Eval(ctx context.Context, args map[interface{}]
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	delim, ok := t.(string)
-	if !ok {
+	delim, err := types.ToString(t)
+	if err != nil {
 		return nil, errors.Errorf("Substring_Index invalid delim, need string but get %T", t)
 	}
 
@@ -244,7 +244,7 @@ func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if fs == nil {
+	if types.IsNil(fs) {
 		return nil, nil
 	}
 	str, err := types.ToString(fs)
@@ -256,7 +256,7 @@ func (f *FunctionLocate) Eval(ctx context.Context, args map[interface{}]interfac
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if fs == nil {
+	if types.IsNil(fs) {
 		return nil, nil
 	}
 	substr, err := types.ToString(fs)

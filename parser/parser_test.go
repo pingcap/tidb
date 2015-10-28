@@ -160,6 +160,17 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
+
+		{"REPLACE INTO foo VALUES (1 || 2)", true},
+		{"REPLACE INTO foo VALUES (1 | 2)", true},
+		{"REPLACE INTO foo VALUES (false || true)", true},
+		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES ()", true},
+		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314,)", false},
+		{"REPLACE INTO foo () VALUES ()", true},
+		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id 
 		FROM stuff 
@@ -278,6 +289,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// For dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
+		{"select 1 where exists (select 2)", false},
+		{"select 1 from dual where not exists (select 2)", true},
 
 		// For show create table
 		{"show create table test.t", true},
@@ -401,6 +414,28 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
+
+		// For date_add
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 hour)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 10 day)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 week)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 month)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 quarter)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval 1 year)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10.10" second_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10.10" minute_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10" minute_second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
+		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
 	}
 	s.RunTest(c, table)
 }
@@ -476,13 +511,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// For drop datbase/schema
+		// For drop datbase/schema/table
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table xxx", true},
+		{"drop table xxx, yyy", true},
+		{"drop tables xxx", true},
+		{"drop tables xxx, yyy", true},
+		{"drop table if exists xxx", true},
+		{"drop table if not exists xxx", false},
 	}
 	s.RunTest(c, table)
 }
@@ -530,6 +571,17 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password', 'root'@'127.0.0.1' IDENTIFIED BY PASSWORD 'hashstring'`, true},
+
+		// For grant statement
+		{"GRANT ALL ON db1.* TO 'jeffrey'@'localhost';", true},
+		{"GRANT SELECT ON db2.invoice TO 'jeffrey'@'localhost';", true},
+		{"GRANT ALL ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON *.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.* TO 'someuser'@'somehost';", true},
+		{"GRANT ALL ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT, INSERT ON mydb.mytbl TO 'someuser'@'somehost';", true},
+		{"GRANT SELECT (col1), INSERT (col1,col2) ON mydb.mytbl TO 'someuser'@'somehost';", true},
 	}
 	s.RunTest(c, table)
 }

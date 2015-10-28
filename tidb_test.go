@@ -26,7 +26,7 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/errors2"
@@ -807,6 +807,11 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row, 1, 2)
 
+	r = mustExecSQL(c, se, "select 1, 2 from dual where not exists (select * from t where c1=2)")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 1, 2)
+
 	r = mustExecSQL(c, se, "select 1, 2")
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
@@ -877,6 +882,17 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
 
+	mustExecFailed(c, se, "select * from t1 left join t2 on t1.c1 = t3.c3 left join on t3 on t1.c1 = t2.c2")
+
+	// For issue 393
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (b blob)")
+	mustExecSQL(c, se, `insert t values('\x01')`)
+
+	r = mustExecSQL(c, se, `select length(b) from t`)
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 3)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
@@ -899,6 +915,8 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 	c.Assert(rows, HasLen, 2)
 	match(c, rows[0], 0)
 	match(c, rows[1], 2)
+
+	mustExecMatch(c, se, "select a.c1, a.c2 from (select c1 as c1, c1 as c2 from t1) as a", [][]interface{}{{1, 1}, {2, 2}})
 }
 
 func (s *testSessionSuite) TestShow(c *C) {
@@ -906,7 +924,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "set global autocommit=1")
-	r := mustExecSQL(c, se, "show variables where variable_name = 'autocommit'")
+	r := mustExecSQL(c, se, "show global variables where variable_name = 'autocommit'")
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, "autocommit", 1)
@@ -989,16 +1007,21 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
 	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	// Check privilege tables.
+	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
+	v, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
@@ -1113,7 +1136,138 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 	c.Assert(rows[1][0], Equals, float64(930))
+}
 
+func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName).(*session)
+	r, err := se.ExecRestrictedSQL(se, "select 1;")
+	c.Assert(r, NotNil)
+	c.Assert(err, IsNil)
+	_, err = se.ExecRestrictedSQL(se, "select 1; select 2;")
+	c.Assert(err, NotNil)
+	_, err = se.ExecRestrictedSQL(se, "")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestGroupBy(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t values (1,1), (2,2), (1,2), (1,3)")
+	mustExecMatch(c, se, "select nullif (count(*), 2);", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select 1 as a, sum(c1) as a from t group by a", [][]interface{}{{1, 5}})
+	mustExecMatch(c, se, "select c1 as a, 1 as a, sum(c1) as a from t group by a", [][]interface{}{{1, 1, 5}})
+	mustExecMatch(c, se, "select c1 as a, 1 as a, c2 as a from t group by a;", [][]interface{}{{1, 1, 1}})
+	mustExecMatch(c, se, "select c1 as c2, sum(c1) as c2 from t group by c2;", [][]interface{}{{1, 1}, {2, 3}, {1, 1}})
+
+	mustExecMatch(c, se, "select c1 as c2, c2 from t group by c2 + 1", [][]interface{}{{1, 1}, {2, 2}, {1, 3}})
+	mustExecMatch(c, se, "select c1 as c2, count(c1) from t group by c2", [][]interface{}{{1, 1}, {2, 2}, {1, 1}})
+	mustExecMatch(c, se, "select t.c1, c1 from t group by c1", [][]interface{}{{1, 1}, {2, 2}})
+	mustExecMatch(c, se, "select t.c1 as a, c1 as a from t group by a", [][]interface{}{{1, 1}, {2, 2}})
+
+	mustExecFailed(c, se, "select c1 as a, c2 as a from t group by a")
+	mustExecFailed(c, se, "select c1 as c2, c2 from t group by c2")
+	mustExecFailed(c, se, "select sum(c1) as a from t group by a")
+	mustExecFailed(c, se, "select sum(c1) as a from t group by a + 1")
+}
+
+func (s *testSessionSuite) TestOrderBy(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
+	mustExecSQL(c, se, "insert into t values (1,2), (2, 1)")
+
+	// Fix issue https://github.com/pingcap/tidb/issues/337
+	mustExecMatch(c, se, "select c1 as a, c1 as b from t order by c1", [][]interface{}{{1, 1}, {2, 2}})
+
+	mustExecMatch(c, se, "select c1 as a, t.c1 as a from t order by a desc", [][]interface{}{{2, 2}, {1, 1}})
+	mustExecMatch(c, se, "select c1 as c2 from t order by c2", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select sum(c1) from t order by sum(c1)", [][]interface{}{{3}})
+	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{2}, {1}})
+
+	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
+
+	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c2")
+	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c1")
+}
+
+func (s *testSessionSuite) TestHaving(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
+	mustExecSQL(c, se, "insert into t values (1,2,3), (2, 3, 1), (3, 1, 2)")
+
+	mustExecMatch(c, se, "select c1 as c2, c3 from t having c2 = 2", [][]interface{}{{2, 1}})
+	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c2 having c2 = 2;", [][]interface{}{{1, 3}})
+	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c2 having sum(c2) = 2;", [][]interface{}{{1, 3}})
+	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c3 having sum(c2) = 2;", [][]interface{}{{1, 3}})
+	mustExecMatch(c, se, "select c1 as c2, c3 from t group by c3 having sum(0) + c2 = 2;", [][]interface{}{{2, 1}})
+	mustExecMatch(c, se, "select c1 as a from t having c1 = 1;", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select t.c1 from t having c1 = 1;", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select a.c1 from t as a having c1 = 1;", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select c1 as a from t group by c3 having sum(a) = 1;", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select c1 as a from t group by c3 having sum(a) + a = 2;", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;", [][]interface{}{{1, 1}})
+
+	mustExecMatch(c, se, "select sum(c1) from t group by c1 having sum(c1)", [][]interface{}{{1}, {2}, {3}})
+	mustExecMatch(c, se, "select sum(c1) - 1 from t group by c1 having sum(c1) - 1", [][]interface{}{{1}, {2}})
+	mustExecMatch(c, se, "select 1 from t group by c1 having sum(abs(c2 + c3)) = c1", [][]interface{}{{1}})
+
+	mustExecFailed(c, se, "select c1 from t having c2")
+	mustExecFailed(c, se, "select c1 from t having c2 + 1")
+	mustExecFailed(c, se, "select c1 from t group by c2 + 1 having c2")
+	mustExecFailed(c, se, "select c1 from t group by c2 + 1 having c2 + 1")
+	mustExecFailed(c, se, "select c1 as c2, c2 from t having c2")
+	mustExecFailed(c, se, "select c1 as c2, c2 from t having c2 + 1")
+	mustExecFailed(c, se, "select c1 as a, c2 as a from t having a")
+	mustExecFailed(c, se, "select c1 as a, c2 as a from t having a + 1")
+	mustExecFailed(c, se, "select c1 + 1 from t having c1")
+	mustExecFailed(c, se, "select c1 + 1 from t having c1 + 1")
+	mustExecFailed(c, se, "select a.c1 as c, b.c1 as d from t as a, t as b having c1")
+	mustExecFailed(c, se, "select 1 from t having sum(avg(c1))")
+}
+
+func (s *testSessionSuite) TestResultType(c *C) {
+	// Testcase for https://github.com/pingcap/tidb/issues/325
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	rs := mustExecSQL(c, se, `select cast(null as char(30))`)
+	c.Assert(rs, NotNil)
+	row, err := rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0], IsNil)
+	fs, err := rs.Fields()
+	c.Assert(err, IsNil)
+	c.Assert(fs[0].Col.FieldType.Tp, Equals, mysql.TypeString)
+}
+
+func (s *testSessionSuite) TestIssue461(c *C) {
+	store := newStore(c, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1,
+		`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
+	mustExecSQL(c, se1, "begin;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(1, 1);")
+	se2 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se2, "begin;")
+	mustExecSQL(c, se2, "insert into test(id, val) values(1, 1);")
+	mustExecSQL(c, se2, "commit;")
+	mustExecFailed(c, se1, "commit;")
+
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table test;")
+}
+
+func (s *testSessionSuite) TestBuiltin(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	// Testcase for https://github.com/pingcap/tidb/issues/382
+	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {
@@ -1186,4 +1340,20 @@ func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
 	for i := 0; i < len(rows); i++ {
 		match(c, rows[i], expected[i]...)
 	}
+}
+
+func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
+	r := mustExecSQL(c, se, sql)
+	rows, err := r.Rows(-1, 0)
+	c.Assert(err, IsNil)
+	matches(c, rows, expected)
+}
+
+func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
+	r, err := exec(c, se, sql, args...)
+	if err == nil {
+		// sometimes we may meet error after executing first row.
+		_, err = r.FirstRow()
+	}
+	c.Assert(err, NotNil)
 }

@@ -23,7 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 
-	mysql "github.com/pingcap/tidb/mysqldef"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -137,10 +137,10 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 	switch op := u.Op; op {
 	case opcode.Not:
 		a := Eval(u.V, ctx, args)
+		a = types.RawData(a)
 		if a == nil {
 			return
 		}
-
 		n, err := types.ToBool(a)
 		if err != nil {
 			return types.UndOp(a, op)
@@ -150,10 +150,10 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		return int64(0), nil
 	case opcode.BitNeg:
 		a := Eval(u.V, ctx, args)
+		a = types.RawData(a)
 		if a == nil {
 			return
 		}
-
 		// for bit operation, we will use int64 first, then return uint64
 		n, err := types.ToInt64(a)
 		if err != nil {
@@ -163,7 +163,10 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		return uint64(^n), nil
 	case opcode.Plus:
 		a := Eval(u.V, ctx, args)
-
+		a = types.RawData(a)
+		if a == nil {
+			return
+		}
 		switch x := a.(type) {
 		case nil:
 			return nil, nil
@@ -219,6 +222,10 @@ func (u *UnaryOperation) Eval(ctx context.Context, args map[interface{}]interfac
 		}
 	case opcode.Minus:
 		a := Eval(u.V, ctx, args)
+		a = types.RawData(a)
+		if a == nil {
+			return
+		}
 
 		switch x := a.(type) {
 		case nil:

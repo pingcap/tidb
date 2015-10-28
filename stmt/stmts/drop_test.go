@@ -22,7 +22,7 @@ import (
 func (s *testStmtSuite) TestDropDatabase(c *C) {
 	testSQL := "drop database if exists drop_test;"
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -42,7 +42,7 @@ func (s *testStmtSuite) TestDropDatabase(c *C) {
 func (s *testStmtSuite) TestDropTable(c *C) {
 	testSQL := "drop table if exists drop_table;"
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -57,12 +57,14 @@ func (s *testStmtSuite) TestDropTable(c *C) {
 	c.Assert(mf.Len(), Greater, 0)
 
 	mustExec(c, s.testDB, testSQL)
+	mustExec(c, s.testDB, "create table if not exists t (c int)")
+	mustExec(c, s.testDB, "drop table t")
 }
 
 func (s *testStmtSuite) TestDropIndex(c *C) {
 	testSQL := "drop index if exists drop_index;"
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

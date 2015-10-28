@@ -93,7 +93,7 @@ func (n *PatternIn) String() string {
 func (n *PatternIn) checkInList(in interface{}, list []interface{}) (interface{}, error) {
 	hasNull := false
 	for _, v := range list {
-		if v == nil {
+		if types.IsNil(v) {
 			hasNull = true
 			continue
 		}
@@ -137,7 +137,7 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 		return nil, err
 	}
 
-	if lhs == nil {
+	if types.IsNil(lhs) {
 		return nil, nil
 	}
 

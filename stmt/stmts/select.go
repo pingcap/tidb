@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -149,7 +149,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 	lock := s.Lock
-	if variable.ShouldAutocommit(ctx) {
+	if lock != coldef.SelectLockNone && autocommit.ShouldAutocommit(ctx) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -175,20 +175,20 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if s.Having != nil {
 		// `having` may contain aggregate functions, and we will add this to hidden fields.
-		if err = s.Having.CheckAndUpdateSelectList(selectList, groupBy, r.GetFields()); err != nil {
+		if err = s.Having.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
 	if s.OrderBy != nil {
 		// `order by` may contain aggregate functions, and we will add this to hidden fields.
-		if err = s.OrderBy.CheckAndUpdateSelectList(selectList, r.GetFields()); err != nil {
+		if err = s.OrderBy.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
 	switch {
-	case !rsets.HasAggFields(selectList.Fields) && s.GroupBy == nil:
+	case len(selectList.AggFields) == 0 && s.GroupBy == nil:
 		// If no group by and no aggregate functions, we will use SelectFieldsPlan.
 		if r, err = (&rsets.SelectFieldsRset{Src: r,
 			SelectList: selectList,
@@ -207,8 +207,10 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 
 	if s := s.Having; s != nil {
 		if r, err = (&rsets.HavingRset{
-			Src:  r,
-			Expr: s.Expr}).Plan(ctx); err != nil {
+			Src:        r,
+			Expr:       s.Expr,
+			SelectList: selectList,
+			GroupBy:    groupBy}).Plan(ctx); err != nil {
 			return nil, err
 		}
 	}
