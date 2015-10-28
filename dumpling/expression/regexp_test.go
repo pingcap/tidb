@@ -73,7 +73,8 @@ func (rs *testRegexpSuite) TestT(c *C) {
 	pat.Re = nil
 	pat.Pattern = &Value{123}
 	_, err = pat.Eval(nil, nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	pat.Re = nil
 	pat.Pattern = &Value{"["}
 	_, err = pat.Eval(nil, nil)
 	c.Assert(err, NotNil)
@@ -84,7 +85,8 @@ func (rs *testRegexpSuite) TestT(c *C) {
 	pat.Sexpr = nil
 	pat.Expr = &Value{123}
 	_, err = pat.Eval(nil, nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	pat.Sexpr = nil
 	pat.Expr = &Value{nil}
 	_, err = pat.Eval(nil, nil)
 	c.Assert(err, IsNil)

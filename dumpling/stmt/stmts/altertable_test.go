@@ -22,7 +22,7 @@ import (
 func (s *testStmtSuite) TestAlterTable(c *C) {
 	testSQL := "drop table if exists t; create table t (c1 int); alter table t add column c2 int;"
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 
 	stmtLen := len(stmtList)
