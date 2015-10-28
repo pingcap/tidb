@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
@@ -504,5 +505,18 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 }
 
 func (s *ShowPlan) fetchShowGrants(ctx context.Context) error {
+	// Get checker
+	checker := privilege.GetPrivilegeChecker(ctx)
+	if checker == nil {
+		return errors.New("Miss privilege checker!")
+	}
+	gs, err := checker.ShowGrants(ctx, s.User)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, g := range gs {
+		data := []interface{}{g}
+		s.rows = append(s.rows, &plan.Row{Data: data})
+	}
 	return nil
 }

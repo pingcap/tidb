@@ -25,7 +25,7 @@ func (k keyType) String() string {
 	return "privilege-key"
 }
 
-// Manager is the interface for check privileges.
+// Checker is the interface for check privileges.
 type Checker interface {
 	// Check checks privilege.
 	// If tbl is nil, only check global/db scope privileges.
