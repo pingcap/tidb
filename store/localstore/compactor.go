@@ -83,7 +83,6 @@ func (gc *localstoreCompactor) getAllVersions(k kv.Key) ([]kv.EncodedKey, error)
 }
 
 func (gc *localstoreCompactor) deleteWorker() {
-	gc.workerWaitGroup.Add(1)
 	defer gc.workerWaitGroup.Done()
 	cnt := 0
 	batch := gc.db.NewBatch()
@@ -178,10 +177,12 @@ func (gc *localstoreCompactor) Compact(ctx interface{}, k kv.Key) error {
 
 func (gc *localstoreCompactor) Start() {
 	// Start workers.
-	go gc.checkExpiredKeysWorker()
+	gc.workerWaitGroup.Add(deleteWorkerCnt)
 	for i := 0; i < deleteWorkerCnt; i++ {
 		go gc.deleteWorker()
 	}
+
+	go gc.checkExpiredKeysWorker()
 }
 
 func (gc *localstoreCompactor) Stop() {
