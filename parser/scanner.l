@@ -55,6 +55,10 @@ type lexer struct {
 	// record token's offset of the input
 	tokenEndOffset   int
 	tokenStartOffset int
+
+	// Charset information
+	charset		string
+	collation	string
 }
 
 
@@ -103,6 +107,15 @@ func (l *lexer) Root() bool {
 
 func (l *lexer) SetRoot(root bool) {
 	l.root = root
+}
+
+func (l *lexer) SetCharsetInfo(charset, collation string) {
+	l.charset = charset
+	l.collation = collation
+}
+
+func (l *lexer) GetCharsetInfo() (string, string) {
+	return l.charset, l.collation	
 }
 
 func (l *lexer) unget(b byte) {
