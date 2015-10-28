@@ -109,6 +109,7 @@ func (gc *localstoreCompactor) deleteWorker() {
 }
 
 func (gc *localstoreCompactor) checkExpiredKeysWorker() {
+	gc.workerWaitGroup.Add(1)
 	defer gc.workerWaitGroup.Done()
 	for {
 		select {
@@ -176,11 +177,12 @@ func (gc *localstoreCompactor) Compact(ctx interface{}, k kv.Key) error {
 
 func (gc *localstoreCompactor) Start() {
 	// Start workers.
-	gc.workerWaitGroup.Add(deleteWorkerCnt + 1)
-	go gc.checkExpiredKeysWorker()
+	gc.workerWaitGroup.Add(deleteWorkerCnt)
 	for i := 0; i < deleteWorkerCnt; i++ {
 		go gc.deleteWorker()
 	}
+
+	go gc.checkExpiredKeysWorker()
 }
 
 func (gc *localstoreCompactor) Stop() {
