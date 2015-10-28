@@ -256,7 +256,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
-	log.Infof("Executing %s [%s]", st, sql)
+	log.Infof("Executing %s [%s]", st.OriginText(), sql)
 	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
 	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
