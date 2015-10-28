@@ -214,6 +214,11 @@ func (t *Table) FirstKey() string {
 // FindIndexByColName implements table.Table FindIndexByColName interface.
 func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 	for _, idx := range t.indices {
+		// only public index can be read.
+		if idx.State != model.StatePublic {
+			continue
+		}
+
 		if len(idx.Columns) == 1 && strings.EqualFold(idx.Columns[0].Name.L, name) {
 			return idx
 		}
@@ -344,7 +349,8 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		return 0, err
 	}
 	for _, v := range t.indices {
-		if v == nil {
+		if v == nil || v.State == model.StateDeleteOnly {
+			// if index is in delete only, we can't add it.
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
@@ -491,6 +497,11 @@ func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{},
 		return err
 	}
 	if err = idx.X.Delete(txn, vals, h); err != nil {
+		if idx.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
+			// if index is not in public state, we may delete the index in reorgnazation jobs,
+			// so skip ErrNotExist error.
+			return nil
+		}
 		return err
 	}
 	return nil
@@ -509,6 +520,12 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 			return err
 		}
 		if err = v.X.Delete(txn, vals, h); err != nil {
+			if v.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
+				// if index is not in public state, we may delete the index in reorgnazation jobs,
+				// so skip ErrNotExist error.
+				continue
+			}
+
 			return err
 		}
 	}
@@ -517,10 +534,16 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 
 // BuildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
+	if idx.State == model.StateDeleteOnly {
+		// if the index is in delete only state, we can add index.
+		return nil
+	}
+
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return err
 	}
+
 	if err = idx.X.Create(txn, vals, h); err != nil {
 		return err
 	}
