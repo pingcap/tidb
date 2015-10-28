@@ -62,6 +62,8 @@ func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 			State: model.StateDeleteOnly,
 		}
 
+		job.SchemaState = model.StateDeleteOnly
+
 		err = t.CreateDatabase(dbInfo)
 		return errors.Trace(err)
 	}
@@ -69,11 +71,13 @@ func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 	switch dbInfo.State {
 	case model.StateDeleteOnly:
 		// delete only -> write only
+		job.SchemaState = model.StateWriteOnly
 		dbInfo.State = model.StateWriteOnly
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> public
+		job.SchemaState = model.StatePublic
 		dbInfo.State = model.StatePublic
 		err = t.UpdateDatabase(dbInfo)
 		if err != nil {
@@ -107,16 +111,19 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		job.SchemaState = model.StateWriteOnly
 		dbInfo.State = model.StateWriteOnly
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> delete only
+		job.SchemaState = model.StateDeleteOnly
 		dbInfo.State = model.StateDeleteOnly
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorgnization
+		job.SchemaState = model.StateReorgnization
 		dbInfo.State = model.StateReorgnization
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
@@ -147,6 +154,7 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 
 		// finish this job
 		job.State = model.JobDone
+		job.SchemaState = model.StateNone
 		return nil
 	default:
 		// we can't enter here.
