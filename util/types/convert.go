@@ -66,54 +66,47 @@ var signedLowerBound = map[byte]int64{
 	mysql.TypeLonglong: math.MinInt64,
 }
 
-func convertFloatToInt(val float64, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+func convertFloatToInt(val float64, lowerBound int64, upperBound int64, tp byte) (int64, error) {
 	val = RoundFloat(val)
 	if val < float64(lowerBound) {
-		converted = lowerBound
-		err = overflow(val, tp)
-		return
+		return lowerBound, overflow(val, tp)
 	}
+
 	if val > float64(upperBound) {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = int64(val)
-	return
+
+	return int64(val), nil
 }
 
-func convertIntToInt(val, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+func convertIntToInt(val int64, lowerBound int64, upperBound int64, tp byte) (int64, error) {
 	if val < lowerBound {
-		converted = lowerBound
-		err = overflow(val, tp)
-		return
+		return lowerBound, overflow(val, tp)
 	}
+
 	if val > upperBound {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = val
-	return
+
+	return val, nil
 }
 
-func convertUintToInt(val uint64, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+func convertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 	if val > uint64(upperBound) {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = int64(val)
-	return
+
+	return int64(val), nil
 }
 
-func convertToInt(val interface{}, target *FieldType) (converted int64, err error) {
+func convertToInt(val interface{}, target *FieldType) (int64, error) {
 	tp := target.Tp
 	lowerBound := signedLowerBound[tp]
 	upperBound := signedUpperBound[tp]
+
 	switch v := val.(type) {
 	case uint64:
-		return convertUintToInt(v, lowerBound, upperBound, tp)
+		return convertUintToInt(v, upperBound, tp)
 	case int:
 		return convertIntToInt(int64(v), lowerBound, upperBound, tp)
 	case int64:
@@ -157,48 +150,40 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 	return 0, typeError(val, target)
 }
 
-func convertIntToUint(val int64, upperBound uint64, tp byte) (converted uint64, err error) {
+func convertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
 	if val < 0 {
-		converted = 0
-		err = overflow(val, tp)
-		return
+		return 0, overflow(val, tp)
 	}
+
 	if uint64(val) > upperBound {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = uint64(val)
-	return
+
+	return uint64(val), nil
 }
 
-func convertUintToUint(val uint64, upperBound uint64, tp byte) (converted uint64, err error) {
+func convertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 	if val > upperBound {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = val
-	return
+
+	return val, nil
 }
 
-func convertFloatToUint(val float64, upperBound uint64, tp byte) (converted uint64, err error) {
+func convertFloatToUint(val float64, upperBound uint64, tp byte) (uint64, error) {
 	val = RoundFloat(val)
 	if val < 0 {
-		converted = 0
-		err = overflow(val, tp)
-		return
+		return 0, overflow(val, tp)
 	}
+
 	if val > float64(upperBound) {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = uint64(val)
-	return
+
+	return uint64(val), nil
 }
 
-func convertToUint(val interface{}, target *FieldType) (converted uint64, err error) {
+func convertToUint(val interface{}, target *FieldType) (uint64, error) {
 	tp := target.Tp
 	upperBound := unsignedUpperBound[tp]
 	switch v := val.(type) {
