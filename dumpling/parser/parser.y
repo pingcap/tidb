@@ -2429,6 +2429,19 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression),
+						$5.(expression.Expression),
+						$7.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"SECOND" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
