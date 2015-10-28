@@ -22,6 +22,7 @@ var (
 	_ DMLNode = &DeleteStmt{}
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
+	_ DMLNode = &UnionStmt{}
 	_ Node    = &Join{}
 	_ Node    = &TableName{}
 	_ Node    = &TableSource{}
@@ -114,7 +115,7 @@ type TableSource struct {
 	node
 
 	// Source is the source of the data, can be a TableName,
-	// a SubQuery, or a JoinNode.
+	// a SelectStmt, a UnionStmt, or a JoinNode.
 	Source ResultSetNode
 
 	// AsName is the as name of the table source.

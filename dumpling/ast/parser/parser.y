@@ -944,15 +944,15 @@ NowSym:
 SignedLiteral:
 	Literal
 	{
-		$$ = ast.ValueExpr{Val: $1}
+		$$ = ast.NewValueExpr($1)
 	}
 |	'+' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: &ast.ValueExpr{Val: $2}}
+		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ast.NewValueExpr($2)}
 	}
 |	'-' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: &ast.ValueExpr{Val: $2}}
+		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr($2)}
 	}
 
 // TODO: support decimal literal
@@ -1752,7 +1752,7 @@ Literal:
 Operand:
 	Literal
 	{
-		$$ = &ast.ValueExpr{Val: $1}
+		$$ = ast.NewValueExpr($1)
 	}
 |	ColumnName
 	{
@@ -2217,7 +2217,7 @@ FunctionCallAgg:
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
-		args := []ast.ExprNode{&ast.ValueExpr{Val: ast.TypeStar("*")} }
+		args := []ast.ExprNode{ast.NewValueExpr("*")}
 		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
@@ -2649,6 +2649,10 @@ TableFactor:
 	{
 		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
+|	'(' UnionStmt ')' TableAsName
+	{
+		$$ = &ast.TableSource{Source: $2.(*ast.UnionStmt), AsName: $4.(model.CIStr)}
+	}
 |	'(' TableRefs ')'
 	{
 		$$ = $2
@@ -2789,6 +2793,14 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*ast.SelectStmt)
+		src := yylex.(*lexer).src
+		// See the implemention of yyParse function
+		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
+		$$ = &ast.SubqueryExpr{Query: s}
+	}
+|	'(' UnionStmt ')'
+	{
+		s := $2.(*ast.UnionStmt)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])

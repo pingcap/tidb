@@ -26,7 +26,9 @@ var (
 	_ FuncNode = &FuncConvertExpr{}
 	_ FuncNode = &FuncCastExpr{}
 	_ FuncNode = &FuncSubstringExpr{}
+	_ FuncNode = &FuncLocateExpr{}
 	_ FuncNode = &FuncTrimExpr{}
+	_ FuncNode = &AggregateFuncExpr{}
 )
 
 // FuncCallExpr is for function expression.
@@ -330,15 +332,16 @@ func (nod *FuncTrimExpr) IsStatic() bool {
 	return nod.Str.IsStatic() && nod.RemStr.IsStatic()
 }
 
-// TypeStar is a special type for "*".
-type TypeStar string
-
+// AggregateFuncExpr represents aggregate function expression.
 type AggregateFuncExpr struct {
 	funcNode
 	// F is the function name.
 	F string
 	// Args is the function args.
 	Args []ExprNode
+	// If distinct is true, the function only aggregate distinct values.
+	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
+	// but "sum(distinct c1)" is "3".
 	Distinct bool
 }
 

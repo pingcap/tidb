@@ -15,7 +15,9 @@ package ast
 
 import (
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -26,6 +28,7 @@ var (
 	_ ExprNode = &CaseExpr{}
 	_ ExprNode = &SubqueryExpr{}
 	_ ExprNode = &CompareSubqueryExpr{}
+	_ Node     = &ColumnName{}
 	_ ExprNode = &ColumnNameExpr{}
 	_ ExprNode = &DefaultExpr{}
 	_ ExprNode = &IdentifierExpr{}
@@ -47,6 +50,39 @@ var (
 // ValueExpr is the simple value expression.
 type ValueExpr struct {
 	exprNode
+}
+
+// NewValueExpr creates a ValueExpr with value, and sets default field type.
+func NewValueExpr(value interface{}) *ValueExpr {
+	ve := &ValueExpr{}
+	ve.Data = value
+	// TODO: make it more precise.
+	switch value.(type) {
+	case bool, int64:
+		ve.Type = types.NewFieldType(mysql.TypeLonglong)
+	case uint64:
+		ve.Type = types.NewFieldType(mysql.TypeLonglong)
+		ve.Type.Flag |= mysql.UnsignedFlag
+	case string:
+		ve.Type = types.NewFieldType(mysql.TypeVarchar)
+		ve.Type.Charset = mysql.DefaultCharset
+		ve.Type.Collate = mysql.DefaultCollationName
+	case float64:
+		ve.Type = types.NewFieldType(mysql.TypeDouble)
+	case []byte:
+		ve.Type = types.NewFieldType(mysql.TypeBlob)
+		ve.Type.Charset = "binary"
+		ve.Type.Collate = "binary"
+	case mysql.Bit:
+		ve.Type = types.NewFieldType(mysql.TypeBit)
+	case mysql.Hex:
+		ve.Type = types.NewFieldType(mysql.TypeVarchar)
+		ve.Type.Charset = "binary"
+		ve.Type.Collate = "binary"
+	default:
+		panic("illegal literal value type")
+	}
+	return ve
 }
 
 // IsStatic implements ExprNode interface.
@@ -247,7 +283,7 @@ func (nod *CaseExpr) IsStatic() bool {
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query *SelectStmt
+	Query ResultSetNode
 }
 
 // Accept implements Node Accept interface.
@@ -261,7 +297,7 @@ func (nod *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return nod, false
 	}
-	nod.Query = node.(*SelectStmt)
+	nod.Query = node.(ResultSetNode)
 	return v.Leave(nod)
 }
 

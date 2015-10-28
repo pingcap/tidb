@@ -21,7 +21,7 @@ func (ts *testClonerSuite) TestCloner(c *C) {
 
 	a := &UnaryOperationExpr{
 		Op: opcode.Not,
-		V:  &UnaryOperationExpr{V: &ValueExpr{Val: true}},
+		V:  &UnaryOperationExpr{V: NewValueExpr(true)},
 	}
 
 	b, ok := a.Accept(cloner)
@@ -35,6 +35,6 @@ func (ts *testClonerSuite) TestCloner(c *C) {
 	a3 := a2.(*ValueExpr)
 	b3 := b2.(*ValueExpr)
 	c.Assert(a3, Not(Equals), b3)
-	c.Assert(a3.Val, Equals, true)
-	c.Assert(b3.Val, Equals, true)
+	c.Assert(a3.GetValue(), Equals, true)
+	c.Assert(b3.GetValue(), Equals, true)
 }
