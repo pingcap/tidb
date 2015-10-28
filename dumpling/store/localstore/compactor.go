@@ -91,18 +91,16 @@ func (gc *localstoreCompactor) deleteWorker() {
 		case <-gc.stopCh:
 			return
 		case key := <-gc.delCh:
-			{
-				cnt++
-				batch.Delete(key)
-				// Batch delete.
-				if cnt == gc.policy.BatchDeleteCnt {
-					err := gc.db.Commit(batch)
-					if err != nil {
-						log.Error(err)
-					}
-					batch = gc.db.NewBatch()
-					cnt = 0
+			cnt++
+			batch.Delete(key)
+			// Batch delete.
+			if cnt == gc.policy.BatchDeleteCnt {
+				err := gc.db.Commit(batch)
+				if err != nil {
+					log.Error(err)
 				}
+				batch = gc.db.NewBatch()
+				cnt = 0
 			}
 		}
 	}
@@ -126,7 +124,6 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 			gc.recentKeys = make(map[string]struct{})
 			gc.mu.Unlock()
 			log.Info("GC trigger")
-			// Do Compactor
 			for k := range m {
 				err := gc.Compact(nil, []byte(k))
 				if err != nil {
