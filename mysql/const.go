@@ -253,4 +253,5 @@ var AllTablePrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePr
 // AllColumnPrivs is all the privileges in column scope.
 var AllColumnPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv}
 
+// AllPrivilegeLiteral is the string literal for All Privilege.
 const AllPrivilegeLiteral = "ALL PRIVILEGES"

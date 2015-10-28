@@ -155,15 +155,18 @@ func (ps *userPrivileges) ShowGrants() []string {
 // UserPrivileges implements privilege.Checker interface.
 // This is used to check privilege for the current user.
 type UserPrivileges struct {
-	username string
-	host     string
-	privs    *userPrivileges
+	User  string
+	privs *userPrivileges
 }
 
 // Check implements Checker.Check interface.
 func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error) {
 	if p.privs == nil {
 		// Lazy load
+		if len(p.User) == 0 {
+			// User current user
+			p.User = variable.GetSessionVars(ctx).User
+		}
 		err := p.loadPrivileges(ctx)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -198,12 +201,11 @@ func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model
 }
 
 func (p *UserPrivileges) loadPrivileges(ctx context.Context) error {
-	user := variable.GetSessionVars(ctx).User
-	strs := strings.Split(user, "@")
-	p.username, p.host = strs[0], strs[1]
+	strs := strings.Split(p.User, "@")
+	username, host := strs[0], strs[1]
 	p.privs = &userPrivileges{
-		User: p.username,
-		Host: p.host,
+		User: username,
+		Host: host,
 	}
 	// Load privileges from mysql.User/DB/Table_privs/Column_privs table
 	err := p.loadGlobalPrivileges(ctx)
@@ -228,7 +230,8 @@ const userTablePrivColumnStartIndex = 3
 const dbTablePrivColumnStartIndex = 3
 
 func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`, mysql.SystemDB, mysql.UserTable, p.username, p.host)
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
+		mysql.SystemDB, mysql.UserTable, p.privs.User, p.privs.Host)
 	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -269,7 +272,8 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 }
 
 func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`, mysql.SystemDB, mysql.DBTable, p.username, p.host)
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
+		mysql.SystemDB, mysql.DBTable, p.privs.User, p.privs.Host)
 	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -316,7 +320,8 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 }
 
 func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`, mysql.SystemDB, mysql.TablePrivTable, p.username, p.host)
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND (Host="%s" OR Host="%%");`,
+		mysql.SystemDB, mysql.TablePrivTable, p.privs.User, p.privs.Host)
 	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -365,6 +370,14 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 }
 
 func (p *UserPrivileges) ShowGrants(ctx context.Context, user string) ([]string, error) {
-	// TODO: Finish this
-	return nil, nil
+	// If user is current user
+	if user == "currentuser" {
+		return p.privs.ShowGrants(), nil
+	}
+	userp := &UserPrivileges{User: user}
+	err := userp.loadPrivileges(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return userp.privs.ShowGrants(), nil
 }

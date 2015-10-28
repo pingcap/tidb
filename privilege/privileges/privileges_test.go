@@ -39,6 +39,7 @@ type testPrivilegeSuite struct {
 	dbName string
 
 	createDBSQL              string
+	createDB1SQL             string
 	dropDBSQL                string
 	useDBSQL                 string
 	createTableSQL           string
@@ -55,11 +56,13 @@ func (t *testPrivilegeSuite) SetUpTest(c *C) {
 	t.store = newStore(c, t.dbName)
 	se := newSession(c, t.store, t.dbName)
 	t.createDBSQL = fmt.Sprintf("create database if not exists %s;", t.dbName)
+	t.createDB1SQL = fmt.Sprintf("create database if not exists %s1;", t.dbName)
 	t.dropDBSQL = fmt.Sprintf("drop database if exists %s;", t.dbName)
 	t.useDBSQL = fmt.Sprintf("use %s;", t.dbName)
 	t.createTableSQL = `CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`
 
 	mustExec(c, se, t.createDBSQL)
+	mustExec(c, se, t.createDB1SQL) // create database test1
 	mustExec(c, se, t.useDBSQL)
 	mustExec(c, se, t.createTableSQL)
 
@@ -150,6 +153,79 @@ func (t *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	r, err = pc.Check(ctx, db, tbl, mysql.IndexPriv)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsTrue)
+}
+
+func (t *testPrivilegeSuite) TestShowGrants(c *C) {
+	se := newSession(c, t.store, t.dbName)
+	ctx, _ := se.(context.Context)
+	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
+	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
+	pc := &privileges.UserPrivileges{}
+	gs, err := pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT Index ON *.* TO 'show'@'localhost'`)
+
+	mustExec(c, se, `GRANT Select ON *.* TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT Select,Index ON *.* TO 'show'@'localhost'`)
+
+	// The order of privs is the same with AllGlobalPrivs
+	mustExec(c, se, `GRANT Update ON *.* TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
+
+	// All privileges
+	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+
+	// Add db scope privileges
+	mustExec(c, se, `GRANT Select ON test.* TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 2)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
+
+	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 3)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
+	c.Assert(gs[2], Equals, `GRANT Index ON test1.* TO 'show'@'localhost'`)
+
+	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 3)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
+	c.Assert(gs[2], Equals, `GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`)
+
+	// Add table scope privileges
+	mustExec(c, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
+	pc = &privileges.UserPrivileges{}
+	gs, err = pc.ShowGrants(ctx, `show@localhost`)
+	c.Assert(err, IsNil)
+	c.Assert(gs, HasLen, 4)
+	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
+	c.Assert(gs[2], Equals, `GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`)
+	c.Assert(gs[3], Equals, `GRANT Update ON test.test TO 'show'@'localhost'`)
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {
