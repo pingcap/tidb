@@ -202,6 +202,9 @@ func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model
 
 func (p *UserPrivileges) loadPrivileges(ctx context.Context) error {
 	strs := strings.Split(p.User, "@")
+	if len(strs) != 2 {
+		return errors.Errorf("Wrong username format: %s", p.User)
+	}
 	username, host := strs[0], strs[1]
 	p.privs = &userPrivileges{
 		User: username,
@@ -369,9 +372,10 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 	return nil
 }
 
+// ShowGrants implements privilege.Checker ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx context.Context, user string) ([]string, error) {
 	// If user is current user
-	if user == "currentuser" {
+	if user == p.User {
 		return p.privs.ShowGrants(), nil
 	}
 	userp := &UserPrivileges{User: user}

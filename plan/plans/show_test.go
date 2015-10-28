@@ -15,6 +15,7 @@ package plans_test
 
 import (
 	"database/sql"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -34,17 +35,52 @@ import (
 type testShowSuit struct {
 	txn kv.Transaction
 	ctx context.Context
+
+	store  kv.Storage
+	dbName string
+
+	createDBSQL              string
+	dropDBSQL                string
+	useDBSQL                 string
+	createTableSQL           string
+	createSystemDBSQL        string
+	createUserTableSQL       string
+	createDBPrivTableSQL     string
+	createTablePrivTableSQL  string
+	createColumnPrivTableSQL string
 }
 
 var _ = Suite(&testShowSuit{})
 
 func (p *testShowSuit) SetUpSuite(c *C) {
-	var err error
-	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
-	c.Assert(err, IsNil)
 	p.ctx = mock.NewContext()
-	p.txn, _ = store.Begin()
 	variable.BindSessionVars(p.ctx)
+
+	p.dbName = "testshowplan"
+	p.store = newStore(c, p.dbName)
+	p.txn, _ = p.store.Begin()
+	se := newSession(c, p.store, p.dbName)
+	p.createDBSQL = fmt.Sprintf("create database if not exists %s;", p.dbName)
+	p.dropDBSQL = fmt.Sprintf("drop database if exists %s;", p.dbName)
+	p.useDBSQL = fmt.Sprintf("use %s;", p.dbName)
+	p.createTableSQL = `CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`
+
+	mustExecSQL(c, se, p.createDBSQL)
+	mustExecSQL(c, se, p.useDBSQL)
+	mustExecSQL(c, se, p.createTableSQL)
+
+	p.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
+	p.createUserTableSQL = tidb.CreateUserTable
+	p.createDBPrivTableSQL = tidb.CreateDBPrivTable
+	p.createTablePrivTableSQL = tidb.CreateTablePrivTable
+	p.createColumnPrivTableSQL = tidb.CreateColumnPrivTable
+
+	mustExecSQL(c, se, p.createSystemDBSQL)
+	mustExecSQL(c, se, p.createUserTableSQL)
+	mustExecSQL(c, se, p.createDBPrivTableSQL)
+	mustExecSQL(c, se, p.createTablePrivTableSQL)
+	mustExecSQL(c, se, p.createColumnPrivTableSQL)
+
 }
 
 func (p *testShowSuit) TearDownSuite(c *C) {
@@ -212,4 +248,43 @@ func (p *testShowSuit) TestShowTables(c *C) {
 	rows, _ := testDB.Query(`show create table abc;`)
 	rows.Next()
 	c.Assert(rows.Err(), NotNil)
+}
+
+func (p *testShowSuit) TestShowGrants(c *C) {
+	se := newSession(c, p.store, p.dbName)
+	ctx, _ := se.(context.Context)
+	mustExecSQL(c, se, `CREATE USER 'test'@'localhost' identified by '123';`)
+	variable.GetSessionVars(ctx).User = `test@localhost`
+	mustExecSQL(c, se, `GRANT Index ON *.* TO  'test'@'localhost';`)
+
+	pln := &plans.ShowPlan{
+		Target: stmt.ShowGrants,
+		User:   `test@localhost`,
+	}
+	row, err := pln.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0], Equals, `GRANT Index ON *.* TO 'test'@'localhost'`)
+
+	fs := pln.GetFields()
+	c.Assert(fs, HasLen, 1)
+	c.Assert(fs[0].Name, Equals, `Grants for test@localhost`)
+}
+
+func mustExecSQL(c *C, se tidb.Session, sql string) {
+	_, err := se.Execute(sql)
+	c.Assert(err, IsNil)
+}
+
+func newStore(c *C, dbPath string) kv.Storage {
+	store, err := tidb.NewStore("memory" + "://" + dbPath)
+	c.Assert(err, IsNil)
+	return store
+}
+
+func newSession(c *C, store kv.Storage, dbName string) tidb.Session {
+	se, err := tidb.CreateSession(store)
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se, "create database if not exists "+dbName)
+	mustExecSQL(c, se, "use "+dbName)
+	return se
 }
