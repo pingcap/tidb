@@ -1245,6 +1245,23 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(fs[0].Col.FieldType.Tp, Equals, mysql.TypeString)
 }
 
+func (s *testSessionSuite) TestIssue461(c *C) {
+	store := newStore(c, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1,
+		`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
+	mustExecSQL(c, se1, "begin;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(1, 1);")
+	se2 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se2, "begin;")
+	mustExecSQL(c, se2, "insert into test(id, val) values(1, 1);")
+	mustExecSQL(c, se2, "commit;")
+	mustExecFailed(c, se1, "commit;")
+
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table test;")
+}
+
 func (s *testSessionSuite) TestBuiltin(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)

@@ -22,7 +22,7 @@ import (
 func (s *testStmtSuite) TestDo(c *C) {
 	testSQL := "do 1, 2"
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

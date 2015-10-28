@@ -21,6 +21,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -45,14 +47,19 @@ func (l Value) IsStatic() bool {
 
 // String implements the Expression String interface.
 func (l Value) String() string {
-	switch x := l.Val.(type) {
-	case nil:
+	if types.IsNil(l.Val) {
 		return "NULL"
+	}
+	switch x := l.Val.(type) {
 	case string:
 		return fmt.Sprintf("%q", x)
-	default:
-		return fmt.Sprintf("%v", l.Val)
+	case *types.DataItem:
+		if x.Type.Tp == mysql.TypeString {
+			return fmt.Sprintf("%q", x.Data)
+		}
+		return fmt.Sprintf("%v", x.Data)
 	}
+	return fmt.Sprintf("%v", l.Val)
 }
 
 // Eval implements the Expression Eval interface.
