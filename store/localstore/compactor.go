@@ -118,11 +118,15 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 			log.Info("GC stopped")
 			return
 		case <-gc.ticker.C:
-			log.Info("GC trigger")
 			gc.mu.Lock()
 			m := gc.recentKeys
+			if len(m) == 0 {
+				gc.mu.Unlock()
+				continue
+			}
 			gc.recentKeys = make(map[string]struct{})
 			gc.mu.Unlock()
+			log.Info("GC trigger")
 			// Do Compactor
 			for k := range m {
 				err := gc.Compact(nil, []byte(k))
