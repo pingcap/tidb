@@ -104,7 +104,7 @@ func (s *testStmtSuite) TestSelectHaving(c *C) {
 	s.fillData(s.testDB, c)
 
 	// Test compile
-	stmtList, err := tidb.Compile("select * from test where id = 2;")
+	stmtList, err := tidb.Compile(s.ctx, "select * from test where id = 2;")
 	c.Assert(err, IsNil)
 
 	str := stmtList[0].OriginText()

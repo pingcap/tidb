@@ -71,7 +71,7 @@ func (s *testStmtSuite) TestDelete(c *C) {
 	s.fillData(s.testDB, c)
 
 	// Test compile
-	stmtList, err := tidb.Compile("DELETE from test where id = 2;")
+	stmtList, err := tidb.Compile(s.ctx, "DELETE from test where id = 2;")
 	c.Assert(err, IsNil)
 
 	str := stmtList[0].OriginText()
@@ -141,7 +141,7 @@ func (s *testStmtSuite) TestMultiTableDelete(c *C) {
 	s.fillDataMultiTable(s.testDB, c)
 
 	// Test compile
-	stmtList, err := tidb.Compile("DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;")
+	stmtList, err := tidb.Compile(s.ctx, "DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;")
 	c.Assert(err, IsNil)
 	str := stmtList[0].OriginText()
 	c.Assert(0, Less, len(str))

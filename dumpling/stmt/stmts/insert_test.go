@@ -52,7 +52,7 @@ func (s *testStmtSuite) TestInsert(c *C) {
 	insertSetSQL := `insert insert_test set c1 = 3;`
 	mustExec(c, s.testDB, insertSetSQL)
 
-	stmtList, err := tidb.Compile(insertSetSQL)
+	stmtList, err := tidb.Compile(s.ctx, insertSetSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

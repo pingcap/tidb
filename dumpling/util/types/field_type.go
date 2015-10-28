@@ -136,3 +136,9 @@ func RawData(d interface{}) interface{} {
 func IsNil(d interface{}) bool {
 	return RawData(d) == nil
 }
+
+// IsDataItem checks if the interface is a DataItem.
+func IsDataItem(d interface{}) bool {
+	_, ok := d.(*DataItem)
+	return ok
+}

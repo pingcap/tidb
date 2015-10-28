@@ -30,7 +30,9 @@ var (
 )
 
 type dbStore struct {
-	mu sync.Mutex
+	mu       sync.Mutex
+	snapLock sync.RWMutex
+
 	db engine.DB
 
 	txns       map[uint64]*dbTxn
@@ -38,6 +40,8 @@ type dbStore struct {
 	uuid       string
 	path       string
 	compactor  *localstoreCompactor
+
+	closed bool
 }
 
 type storeCache struct {
@@ -49,6 +53,9 @@ var (
 	globalID              int64
 	globalVersionProvider kv.VersionProvider
 	mc                    storeCache
+
+	// ErrDBClosed is the error meaning db is closed and we can use it anymore.
+	ErrDBClosed = errors.New("db is closed")
 )
 
 func init() {
@@ -92,6 +99,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		path:       schema,
 		db:         db,
 		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
+		closed:     false,
 	}
 	mc.cache[schema] = s
 	s.compactor.Start()
@@ -102,21 +110,42 @@ func (s *dbStore) UUID() string {
 	return s.uuid
 }
 
-func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
+func (s *dbStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
+	s.snapLock.RLock()
+	defer s.snapLock.RUnlock()
+
+	if s.closed {
+		return nil, errors.Trace(ErrDBClosed)
+	}
+
 	currentVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if ver.Cmp(currentVer) > 0 {
+		ver = currentVer
+	}
+
 	return &dbSnapshot{
+		store:   s,
 		db:      s.db,
-		version: currentVer,
+		version: ver,
 	}, nil
+}
+
+func (s *dbStore) CurrentVersion() (kv.Version, error) {
+	return globalVersionProvider.CurrentVersion()
 }
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return nil, errors.Trace(ErrDBClosed)
+	}
 
 	beginVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
@@ -131,6 +160,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
 	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{
+		store:   s,
 		db:      s.db,
 		version: beginVer,
 	})
@@ -141,6 +171,18 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 }
 
 func (s *dbStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.snapLock.Lock()
+	defer s.snapLock.Unlock()
+
+	if s.closed {
+		return nil
+	}
+
+	s.closed = true
+
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	s.compactor.Stop()
@@ -151,6 +193,10 @@ func (s *dbStore) Close() error {
 func (s *dbStore) writeBatch(b engine.Batch) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return errors.Trace(ErrDBClosed)
+	}
 
 	err := s.db.Commit(b)
 	if err != nil {
@@ -170,18 +216,28 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.closed {
+		return errors.Trace(ErrDBClosed)
+	}
+
 	if _, ok := s.keysLocked[key]; ok {
 		return errors.Trace(kv.ErrLockConflict)
 	}
 
 	metaKey := codec.EncodeBytes(nil, []byte(key))
 	currValue, err := s.db.Get(metaKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) || currValue == nil {
-		// If it's a new key, we won't need to check its version
+	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+		s.keysLocked[key] = tid
 		return nil
 	}
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// key not exist.
+	if currValue == nil {
+		s.keysLocked[key] = tid
+		return nil
 	}
 	_, ver, err := codec.DecodeUint(currValue)
 	if err != nil {
@@ -195,13 +251,16 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 	}
 
 	s.keysLocked[key] = tid
-
 	return nil
 }
 
 func (s *dbStore) unLockKeys(keys ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.closed {
+		return errors.Trace(ErrDBClosed)
+	}
 
 	for _, key := range keys {
 		if _, ok := s.keysLocked[key]; !ok {
