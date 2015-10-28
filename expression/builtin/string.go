@@ -147,10 +147,10 @@ func builtinUpper(args []interface{}, ctx map[interface{}]interface{}) (interfac
 	}
 }
 
-// See: https://dev.mysql.com/doc/refman/5.0/en/string-functions.html#function_replace
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func builtinReplace(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	for _, arg := range args {
-		if arg == nil {
+		if types.IsNil(arg) {
 			return nil, nil
 		}
 	}
