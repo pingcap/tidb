@@ -507,3 +507,47 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
+
+func (s *testKVSuite) TestDBClose(c *C) {
+	path := "memory:test"
+	d := Driver{
+		goleveldb.MemoryDriver{},
+	}
+	store, err := d.Open(path)
+	c.Assert(err, IsNil)
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+
+	err = txn.Set([]byte("a"), []byte("b"))
+	c.Assert(err, IsNil)
+
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	snap, err := store.GetSnapshot()
+	c.Assert(err, IsNil)
+
+	_, err = snap.MvccGet(kv.EncodeKey([]byte("a")), kv.MaxVersion)
+	c.Assert(err, IsNil)
+
+	txn, err = store.Begin()
+	c.Assert(err, IsNil)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+
+	_, err = store.Begin()
+	c.Assert(err, NotNil)
+
+	_, err = store.GetSnapshot()
+	c.Assert(err, NotNil)
+
+	err = txn.Set([]byte("a"), []byte("b"))
+	c.Assert(err, IsNil)
+
+	err = txn.Commit()
+	c.Assert(err, NotNil)
+
+	snap.MvccRelease()
+}

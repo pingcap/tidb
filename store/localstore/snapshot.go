@@ -31,12 +31,20 @@ var (
 
 // dbSnapshot implements MvccSnapshot interface.
 type dbSnapshot struct {
+	store   *dbStore
 	db      engine.DB
 	rawIt   engine.Iterator
 	version kv.Version // transaction begin version
 }
 
 func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
+	s.store.snapLock.RLock()
+	defer s.store.snapLock.RUnlock()
+
+	if s.store.closed {
+		return nil, errors.Trace(ErrDBClosed)
+	}
+
 	if s.rawIt == nil {
 		var err error
 		s.rawIt, err = s.db.Seek([]byte{0})
@@ -114,10 +122,13 @@ func (s *dbSnapshot) MvccRelease() {
 }
 
 func (s *dbSnapshot) Release() {
-	if s.rawIt != nil {
-		s.rawIt.Release()
-		s.rawIt = nil
+	if s.rawIt == nil {
+		return
 	}
+
+	// TODO: check whether Release will panic if store is closed.
+	s.rawIt.Release()
+	s.rawIt = nil
 }
 
 type dbIter struct {
