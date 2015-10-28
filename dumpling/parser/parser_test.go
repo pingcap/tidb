@@ -160,6 +160,17 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
+
+		{"REPLACE INTO foo VALUES (1 || 2)", true},
+		{"REPLACE INTO foo VALUES (1 | 2)", true},
+		{"REPLACE INTO foo VALUES (false || true)", true},
+		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES ()", true},
+		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314,)", false},
+		{"REPLACE INTO foo () VALUES ()", true},
+		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id 
 		FROM stuff 
@@ -500,13 +511,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// For drop datbase/schema
+		// For drop datbase/schema/table
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table xxx", true},
+		{"drop table xxx, yyy", true},
+		{"drop tables xxx", true},
+		{"drop tables xxx, yyy", true},
+		{"drop table if exists xxx", true},
+		{"drop table if not exists xxx", false},
 	}
 	s.RunTest(c, table)
 }
