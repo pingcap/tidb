@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -195,26 +196,29 @@ func (t *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(ctx, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
-	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
-	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
+	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT Select ON test.* TO 'show'@'localhost'`}
+	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
 	pc = &privileges.UserPrivileges{}
 	gs, err = pc.ShowGrants(ctx, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
-	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
-	c.Assert(gs[2], Equals, `GRANT Index ON test1.* TO 'show'@'localhost'`)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT Index ON test1.* TO 'show'@'localhost'`}
+	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
 	pc = &privileges.UserPrivileges{}
 	gs, err = pc.ShowGrants(ctx, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
-	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
-	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
-	c.Assert(gs[2], Equals, `GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
+	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	// Add table scope privileges
 	mustExec(c, se, `GRANT Update ON test.test TO  'show'@'localhost';`)
@@ -222,10 +226,11 @@ func (t *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err = pc.ShowGrants(ctx, `show@localhost`)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
-	c.Assert(gs[0], Equals, `GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`)
-	c.Assert(gs[1], Equals, `GRANT Select ON test.* TO 'show'@'localhost'`)
-	c.Assert(gs[2], Equals, `GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`)
-	c.Assert(gs[3], Equals, `GRANT Update ON test.test TO 'show'@'localhost'`)
+	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
+		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
+		`GRANT Update ON test.test TO 'show'@'localhost'`}
+	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 }
 
 func mustExec(c *C, se tidb.Session, sql string) {
