@@ -323,6 +323,20 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, old
 	return nil
 }
 
+func (t *Table) delDirtyIndexKey(createdIdx int, recordID int64, r []interface{}, txn kv.Transaction) {
+	for i, v := range t.indices {
+		if v == nil {
+			continue
+		}
+
+		if i >= createdIdx {
+			break
+		}
+		colVals, _ := v.FetchValues(r)
+		_ = v.X.Delete(txn, colVals, recordID)
+	}
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
 	id := variable.GetSessionVars(ctx).LastInsertID
@@ -339,12 +353,13 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	if err != nil {
 		return 0, err
 	}
-	for _, v := range t.indices {
+	for i, v := range t.indices {
 		if v == nil {
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
+			t.delDirtyIndexKey(i, recordID, r, txn)
 			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row

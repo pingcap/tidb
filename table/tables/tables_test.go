@@ -95,7 +95,8 @@ func (ts *testSuite) TestBasic(c *C) {
 	prefix := tb.IndexPrefix()
 	cnt, err := countEntriesWithPrefix(ctx, prefix)
 	c.Assert(err, IsNil)
-	c.Assert(cnt, Greater, 0)
+	//c.Assert(cnt, Greater, 0)  // it is not a correct assert, because after fix issue 463, there is no index in the table anymore
+	c.Assert(cnt, Equals, 0)
 	c.Assert(tb.Truncate(ctx), IsNil)
 	// Make sure index data is also removed after tb.Truncate().
 	cnt, err = countEntriesWithPrefix(ctx, prefix)
