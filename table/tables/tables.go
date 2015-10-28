@@ -281,8 +281,17 @@ func (t *Table) setNewData(ctx context.Context, h int64, data []interface{}) err
 	if err != nil {
 		return err
 	}
+
+	// update first key -> LOCK
+	k := t.RecordKey(h, nil)
+	// Use current txn-id as lockKey
+	err = txn.Set([]byte(k), []byte(txn.String()))
+	if err != nil {
+		return err
+	}
+
 	for _, col := range t.Cols() {
-		k := t.RecordKey(h, col)
+		k = t.RecordKey(h, col)
 		if err := t.SetColValue(txn, k, data[col.Offset]); err != nil {
 			return errors.Trace(err)
 		}
