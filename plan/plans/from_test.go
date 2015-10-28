@@ -171,6 +171,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 			},
 			Unique:  false,
 			Primary: false,
+			State:   model.StatePublic,
 		},
 		X: kv.NewKVIndex("i", "id", false),
 	}

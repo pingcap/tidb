@@ -77,6 +77,8 @@ type Job struct {
 	// we must use json raw message for delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
+	// snapshot version for this job.
+	SnapshotVer uint64 `json:"snapshot_ver"`
 }
 
 // Encode encodes job with json format.

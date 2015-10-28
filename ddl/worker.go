@@ -249,7 +249,9 @@ func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
 	case model.ActionAddColumn:
 	case model.ActionDropColumn:
 	case model.ActionAddIndex:
+		err = d.onIndexCreate(t, job)
 	case model.ActionDropIndex:
+		err = d.onIndexDrop(t, job)
 	case model.ActionAddConstraint:
 	case model.ActionDropConstraint:
 	default:

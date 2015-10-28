@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -224,6 +223,7 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		col.State = model.StatePublic
 		constraints = append(constraints, cts...)
 		cols = append(cols, col)
 		colMap[strings.ToLower(colDef.Name)] = col
@@ -331,6 +331,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		idxInfo := &model.IndexInfo{
 			Name:    model.NewCIStr(constr.ConstrName),
 			Columns: indexColumns,
+			State:   model.StatePublic,
 		}
 		switch constr.Tp {
 		case coldef.ConstrPrimaryKey:
@@ -575,123 +576,39 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	if err != nil {
 		return errors.Trace(ErrNotExists)
 	}
-	if _, ok := is.IndexByName(ti.Schema, ti.Name, indexName); ok {
-		return errors.Errorf("CREATE INDEX: index already exist %s", indexName)
-	}
-	if is.ColumnExists(ti.Schema, ti.Name, indexName) {
-		return errors.Errorf("CREATE INDEX: index name collision with existing column: %s", indexName)
-	}
 
-	tbInfo := t.Meta()
-
-	// build offsets
-	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
-	for i, ic := range idxColNames {
-		col := column.FindCol(t.Cols(), ic.ColumnName)
-		if col == nil {
-			return errors.Errorf("CREATE INDEX: column does not exist: %s", ic.ColumnName)
-		}
-		idxColumns = append(idxColumns, &model.IndexColumn{
-			Name:   col.Name,
-			Offset: col.Offset,
-			Length: ic.Length,
-		})
-		// Set ColumnInfo flag
-		if i == 0 {
-			if unique && len(idxColNames) == 1 {
-				tbInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
-			} else {
-				tbInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
-			}
-		}
-	}
-	// create index info
-	idxInfo := &model.IndexInfo{
-		Name:    indexName,
-		Columns: idxColumns,
-		Unique:  unique,
-	}
-	tbInfo.Indices = append(tbInfo.Indices, idxInfo)
-
-	// build index
-	err = d.buildIndex(ctx, t, idxInfo, unique)
-	if err != nil {
-		return errors.Trace(err)
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionAddIndex,
+		Args:     []interface{}{unique, indexName, idxColNames},
 	}
 
-	// update InfoSchema
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.UpdateTable(schema.ID, tbInfo)
-		return errors.Trace(err)
-	})
-
+	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.IndexInfo, unique bool) error {
-	firstKey := t.FirstKey()
-	prefix := t.KeyPrefix()
+func (d *ddl) DropIndex(ctx context.Context, schemaName, tableName, indexNmae model.CIStr) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(schemaName)
+	if !ok {
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	}
 
-	txn, err := ctx.GetTxn(false)
+	t, err := is.TableByName(schemaName, tableName)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(ErrNotExists)
 	}
-	it, err := txn.Seek([]byte(firstKey))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		var err error
-		handle, err := util.DecodeHandleFromRowKey(it.Key())
-		log.Info("building index...", handle)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// TODO: v is timestamp ?
-		// fetch datas
-		cols := t.Cols()
-		var vals []interface{}
-		for _, v := range idxInfo.Columns {
-			var (
-				data []byte
-				val  interface{}
-			)
-			col := cols[v.Offset]
-			k := t.RecordKey(handle, col)
-			data, err = txn.Get([]byte(k))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			val, err = t.DecodeValue(data, col)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			vals = append(vals, val)
-		}
-		// build index
-		kvX := kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, unique)
-		err = kvX.Create(txn, vals, handle)
-		if err != nil {
-			return errors.Trace(err)
-		}
 
-		rk := []byte(t.RecordKey(handle, nil))
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
-			return errors.Trace(err)
-		}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionDropIndex,
+		Args:     []interface{}{indexNmae},
 	}
-	return nil
-}
 
-func (d *ddl) DropIndex(ctx context.Context, schema, tableName, indexNmae model.CIStr) error {
-	// TODO: implement
-	return nil
+	err = d.startJob(ctx, job)
+	err = d.onDDLChange(err)
+	return errors.Trace(err)
 }

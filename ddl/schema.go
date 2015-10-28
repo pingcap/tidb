@@ -162,6 +162,9 @@ func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
 func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
 	ctx := d.newReorgContext()
 	txn, err := ctx.GetTxn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for _, tblInfo := range tables {
 		alloc := autoid.NewAllocator(d.meta, dbInfo.ID)
