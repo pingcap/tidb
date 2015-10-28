@@ -51,7 +51,7 @@ func (s *testStmtSuite) TestReplace(c *C) {
 
 	replaceSetSQL := `replace replace_test set c1 = 3;`
 	mustExec(c, s.testDB, replaceSetSQL)
-	stmtList, err := tidb.Compile(replaceSetSQL)
+	stmtList, err := tidb.Compile(s.ctx, replaceSetSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
