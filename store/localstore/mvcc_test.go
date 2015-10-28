@@ -168,7 +168,7 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	c.Assert(err, IsNil)
 	testKey := encodeTestDataKey(1)
 
-	snapshot, err := t.s.GetSnapshot()
+	snapshot, err := t.s.GetSnapshot(kv.MaxVersion)
 	defer snapshot.MvccRelease()
 	b, err = snapshot.MvccGet(testKey, kv.MaxVersion)
 	c.Assert(err, IsNil)
@@ -232,7 +232,7 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 	v, err := tx.CommittedVersion()
 	c.Assert(err, IsNil)
 
-	snapshot, err := t.s.GetSnapshot()
+	snapshot, err := t.s.GetSnapshot(kv.MaxVersion)
 	defer snapshot.MvccRelease()
 	c.Assert(err, IsNil)
 

@@ -110,7 +110,7 @@ func (s *dbStore) UUID() string {
 	return s.uuid
 }
 
-func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
+func (s *dbStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
 	s.snapLock.RLock()
 	defer s.snapLock.RUnlock()
 
@@ -122,11 +122,20 @@ func (s *dbStore) GetSnapshot() (kv.MvccSnapshot, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if ver.Cmp(currentVer) > 0 {
+		ver = currentVer
+	}
+
 	return &dbSnapshot{
 		store:   s,
 		db:      s.db,
-		version: currentVer,
+		version: ver,
 	}, nil
+}
+
+func (s *dbStore) CurrentVersion() (kv.Version, error) {
+	return globalVersionProvider.CurrentVersion()
 }
 
 // Begin transaction
