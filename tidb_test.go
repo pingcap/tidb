@@ -1246,7 +1246,6 @@ func (s *testSessionSuite) TestResultType(c *C) {
 }
 
 func (s *testSessionSuite) TestIssue461(c *C) {
-	// Testcase for https://github.com/pingcap/tidb/issues/325
 	store := newStore(c, s.dbName)
 	se1 := newSession(c, store, s.dbName)
 	mustExecSQL(c, se1,
@@ -1258,6 +1257,9 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	mustExecSQL(c, se2, "insert into test(id, val) values(1, 1);")
 	mustExecSQL(c, se2, "commit;")
 	mustExecFailed(c, se1, "commit;")
+
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table test;")
 }
 
 func (s *testSessionSuite) TestBuiltin(c *C) {
