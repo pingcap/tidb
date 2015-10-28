@@ -158,12 +158,16 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// GetSnapshot gets a snaphot that is able to read any version of data.
-	GetSnapshot() (MvccSnapshot, error)
+	// GetSnapshot gets a snaphot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver Version) (MvccSnapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID
 	UUID() string
+
+	// CurrentVersion returns current max committed version.
+	CurrentVersion() (Version, error)
 }
 
 // FnKeyCmp is the function for iterator the keys

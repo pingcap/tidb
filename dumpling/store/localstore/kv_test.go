@@ -525,7 +525,11 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	snap, err := store.GetSnapshot()
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
+
+	snap, err := store.GetSnapshot(kv.MaxVersion)
 	c.Assert(err, IsNil)
 
 	_, err = snap.MvccGet(kv.EncodeKey([]byte("a")), kv.MaxVersion)
@@ -540,7 +544,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	_, err = store.Begin()
 	c.Assert(err, NotNil)
 
-	_, err = store.GetSnapshot()
+	_, err = store.GetSnapshot(kv.MaxVersion)
 	c.Assert(err, NotNil)
 
 	err = txn.Set([]byte("a"), []byte("b"))
