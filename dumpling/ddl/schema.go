@@ -31,7 +31,12 @@ func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	var dbInfo *model.DBInfo
+	dbInfo := &model.DBInfo{
+		ID:    schemaID,
+		Name:  name,
+		State: model.StateNone,
+	}
+
 	dbs, err := t.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
@@ -54,21 +59,13 @@ func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	if dbInfo == nil {
-		// first create, enter delete only state
-		dbInfo = &model.DBInfo{
-			ID:    schemaID,
-			Name:  name,
-			State: model.StateDeleteOnly,
-		}
-
+	switch dbInfo.State {
+	case model.StateNone:
+		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
-
+		dbInfo.State = model.StateDeleteOnly
 		err = t.CreateDatabase(dbInfo)
 		return errors.Trace(err)
-	}
-
-	switch dbInfo.State {
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
