@@ -38,6 +38,9 @@ func (s *testTestUtilSuite) TestCompareUnorderedString(c *C) {
 		{[]string{"1", "1", "2"}, []string{"1", "2", "1"}, true},
 		{[]string{"1", "1"}, []string{"1", "2", "1"}, false},
 		{[]string{"1", "1", "2"}, []string{"1", "2", "2"}, false},
+		{nil, nil, true},
+		{[]string{}, nil, false},
+		{nil, []string{}, false},
 	}
 	for _, t := range tbl {
 		c.Assert(CompareUnorderedStringSlice(t.a, t.b), Equals, t.r)
