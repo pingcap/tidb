@@ -40,7 +40,11 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	it, err := s.db.Seek(nil)
+	c.Assert(err, IsNil)
 	s.db.Close()
+
+	it.Release()
 }
 
 func (s *testSuite) TestDB(c *C) {
