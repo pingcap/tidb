@@ -98,7 +98,7 @@ func (*testLikeSuite) TestEval(c *C) {
 	c.Assert(err, IsNil)
 	pattern.Pattern = mockExpr{isStatic: false, val: 123}
 	_, err = pattern.Eval(nil, nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	pattern.Expr = mockExpr{isStatic: false, err: errors.Errorf("test error")}
 	c.Assert(pattern.Clone(), NotNil)
@@ -106,7 +106,7 @@ func (*testLikeSuite) TestEval(c *C) {
 	c.Assert(err, NotNil)
 	pattern.Expr = mockExpr{isStatic: false, val: 123}
 	_, err = pattern.Eval(nil, nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	pattern.Expr = mockExpr{isStatic: false, val: nil}
 	_, err = pattern.Eval(nil, nil)
 	c.Assert(err, IsNil)

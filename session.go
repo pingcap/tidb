@@ -243,7 +243,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 		// TODO: Maybe we should remove this restriction latter.
 		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
 	}
-	statements, err := Compile(sql)
+	statements, err := Compile(ctx, sql)
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
@@ -256,7 +256,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
-	log.Infof("Executing %s [%s]", st, sql)
+	log.Infof("Executing %s [%s]", st.OriginText(), sql)
 	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
 	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
@@ -331,7 +331,7 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
-	statements, err := Compile(sql)
+	statements, err := Compile(s, sql)
 	if err != nil {
 		log.Errorf("Syntax error: %s", sql)
 		log.Errorf("Error occurs at %s.", err)

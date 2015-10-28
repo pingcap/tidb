@@ -87,6 +87,7 @@ func cloneExpressionList(list []Expression) []Expression {
 
 // FastEval evaluates Value and static +/- Unary expression and returns its value.
 func FastEval(v interface{}) interface{} {
+	v = types.RawData(v)
 	switch x := v.(type) {
 	case Value:
 		return x.Val
@@ -101,8 +102,6 @@ func FastEval(v interface{}) interface{} {
 		}
 		m := map[interface{}]interface{}{}
 		return Eval(x, nil, m)
-	case *types.DataItem:
-		return FastEval(x.Data)
 	default:
 		return nil
 	}
@@ -115,10 +114,7 @@ func Eval(v Expression, ctx context.Context, env map[interface{}]interface{}) (y
 	if err != nil {
 		panic(err) // panic ok here
 	}
-	x, ok := y.(*types.DataItem)
-	if ok {
-		y = x.Data
-	}
+	y = types.RawData(y)
 	return
 }
 
@@ -294,6 +290,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 			}
 		}
 	case Value:
+		x.Val = types.RawData(x.Val)
 		switch xval := x.Val.(type) {
 		case string:
 			value, err = mysql.ParseTime(xval, tp, fsp)
