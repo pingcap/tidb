@@ -75,7 +75,8 @@ type Job struct {
 	Error    string        `json:"err"`
 	Args     []interface{} `json:"-"`
 	// we must use json raw message for delay parsing special args.
-	RawArgs json.RawMessage `json:"raw_args"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
 }
 
 // Encode encodes job with json format.
@@ -107,8 +108,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaID:%d, TableID:%d, Args:%s",
-		job.ID, job.Type, job.State, job.SchemaID, job.TableID, job.RawArgs)
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, Args:%s",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, job.RawArgs)
 }
 
 // JobState is for job state.

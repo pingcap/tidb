@@ -48,6 +48,8 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	// notice worker that we push a new job and wait the job done.
 	asyncNotify(d.jobCh)
 
+	log.Warnf("start DDL job %v", job)
+
 	jobID := job.ID
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -119,6 +121,8 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 		if err = t.SetDDLOwner(owner); err != nil {
 			return errors.Trace(err)
 		}
+
+		log.Debugf("become owner %s", owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
@@ -140,6 +144,7 @@ func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
 }
 
 func (d *ddl) finishJob(t *meta.TMeta, job *model.Job) error {
+	log.Warnf("finish DDL job %v", job)
 	// done, notice and run next job.
 	_, err := t.DeQueueDDLJob()
 	if err != nil {
@@ -169,7 +174,7 @@ func (d *ddl) handleJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			log.Warnf("run job %v", job)
+			log.Warnf("run DDL job %v", job)
 			err = d.runJob(t, job)
 			if err != nil {
 				return errors.Trace(err)
@@ -213,7 +218,7 @@ func (d *ddl) onWorker() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Warnf("wait %s to check status again", checkTime)
+			log.Debugf("wait %s to check DDL status again", checkTime)
 		case <-d.jobCh:
 		}
 

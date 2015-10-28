@@ -62,16 +62,19 @@ func (d *ddl) onTableCreate(t *meta.TMeta, job *model.Job) error {
 	switch tbInfo.State {
 	case model.StateNone:
 		// none -> delete only
+		job.SchemaState = model.StateDeleteOnly
 		tbInfo.State = model.StateDeleteOnly
 		err = t.CreateTable(schemaID, tbInfo)
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> write only
+		job.SchemaState = model.StateWriteOnly
 		tbInfo.State = model.StateWriteOnly
 		err = t.UpdateTable(schemaID, tbInfo)
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> public
+		job.SchemaState = model.StatePublic
 		tbInfo.State = model.StatePublic
 		err = t.UpdateTable(schemaID, tbInfo)
 		if err != nil {
@@ -111,16 +114,19 @@ func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
 	switch tblInfo.State {
 	case model.StatePublic:
 		// public -> write only
+		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> delete only
+		job.SchemaState = model.StateDeleteOnly
 		tblInfo.State = model.StateDeleteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
+		job.SchemaState = model.StateReorgnization
 		tblInfo.State = model.StateReorgnization
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
@@ -150,6 +156,7 @@ func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
 		}
 
 		// finish this job
+		job.SchemaState = model.StateNone
 		job.State = model.JobDone
 		return nil
 	default:
