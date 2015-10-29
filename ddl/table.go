@@ -133,7 +133,7 @@ func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
 	case model.StateReorgnization:
 		// reorganization -> absent
 		var tbl table.Table
-		tbl, err = d.createTable(t, schemaID, tblInfo)
+		tbl, err = d.getTable(t, schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -164,7 +164,7 @@ func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) createTable(t *meta.TMeta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+func (d *ddl) getTable(t *meta.TMeta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	dbInfo, err := t.GetDatabase(schemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
