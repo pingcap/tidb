@@ -28,7 +28,10 @@ var (
 
 // HavingRset is record set for having fields.
 type HavingRset struct {
-	Src        plan.Plan
+	Src plan.Plan
+	// CheckAggregate function may modify Expr.
+	// We need to record original expr for next exec when using prepared statement.
+	OriginExpr expression.Expression
 	Expr       expression.Expression
 	SelectList *plans.SelectList
 	// Group by clause
@@ -38,12 +41,17 @@ type HavingRset struct {
 // CheckAggregate will check whether order by has aggregate function or not,
 // if has, we will add it to select list hidden field.
 func (r *HavingRset) CheckAggregate(selectList *plans.SelectList) error {
+	if r.OriginExpr != nil {
+		r.Expr = r.OriginExpr
+	}
 	if expression.ContainAggregateFunc(r.Expr) {
+		if r.OriginExpr == nil {
+			r.OriginExpr = r.Expr
+		}
 		expr, err := selectList.UpdateAggFields(r.Expr)
 		if err != nil {
 			return errors.Errorf("%s in 'having clause'", err.Error())
 		}
-
 		r.Expr = expr
 	}
 
@@ -242,7 +250,6 @@ func (v *havingVisitor) VisitIdent(i *expression.Ident) (expression.Expression, 
 
 func (v *havingVisitor) VisitPosition(p *expression.Position) (expression.Expression, error) {
 	n := p.N
-
 	// we have added order by to hidden field before, now visit it here.
 	expr := v.selectList.Fields[n-1].Expr
 	e, err := expr.Accept(v)

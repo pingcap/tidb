@@ -179,7 +179,6 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-
 	if s.OrderBy != nil {
 		// `order by` may contain aggregate functions, and we will add this to hidden fields.
 		if err = s.OrderBy.CheckAggregate(selectList); err != nil {
