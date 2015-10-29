@@ -773,13 +773,9 @@ ColumnNameListOpt:
 	{
 		$$ = []*ast.ColumnName{}
 	}
-|	'(' ')'
+|	ColumnNameList
 	{
-		$$ = []*ast.ColumnName{}
-	}
-|	'(' ColumnNameList ')'
-	{
-		$$ = $2.([]*ast.ColumnName)
+		$$ = $1.([]*ast.ColumnName)
 	}
 
 CommitStmt:
@@ -1144,12 +1140,13 @@ DeleteFromStmt:
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
-			Order:		$8.([]*ast.ByItem),
 		}
 		if $7 != nil {
 			x.Where = $7.(ast.ExprNode)
 		}
-
+		if $8 != nil {
+			x.Order = $8.([]*ast.ByItem)
+		}
 		if $9 != nil {
 			x.Limit = $9.(*ast.Limit)
 		}
@@ -1501,13 +1498,13 @@ Field:
 	}
 |	Expression FieldAsNameOpt
 	{
-		$$ = &ast.SelectField{Expr: $1.(ast.ExprNode), AsName: $2.(model.CIStr)}
+		$$ = &ast.SelectField{Expr: $1.(ast.ExprNode), AsName: model.NewCIStr($2.(string))}
 	}
 
 FieldAsNameOpt:
 	/* EMPTY */
 	{
-		$$ = model.CIStr{}
+		$$ = ""
 	}
 |	FieldAsName
 	{
@@ -2213,7 +2210,7 @@ TrimDirection:
 FunctionCallAgg:
 	"AVG" '(' DistinctOpt ExpressionList ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $3.([]ast.ExprNode), Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: $4.([]ast.ExprNode), Distinct: $3.(bool)}
 	}
 |	"COUNT" '(' DistinctOpt ExpressionList ')'
 	{
@@ -2550,14 +2547,32 @@ RollbackStmt:
 	}
 
 SelectStmt:
-	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual SelectStmtLimit SelectLockOpt
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtLimit SelectLockOpt
 	{
-		$$ = &ast.SelectStmt {
+		st := &ast.SelectStmt {
 			Distinct:      $2.(bool),
 			Fields:        $3.(*ast.FieldList),
-			From:          nil,
-			LockTp:	       $6.(ast.SelectLockType),
+			LockTp:	       $5.(ast.SelectLockType),
 		}
+		if $4 != nil {
+			st.Limit = $4.(*ast.Limit)
+		}
+		$$ = st
+	}
+|	"SELECT" SelectStmtOpts SelectStmtFieldList FromDual WhereClauseOptional SelectStmtLimit SelectLockOpt
+	{
+		st := &ast.SelectStmt {
+			Distinct:      $2.(bool),
+			Fields:        $3.(*ast.FieldList),
+			LockTp:	       $7.(ast.SelectLockType),
+		}
+		if $5 != nil {
+			st.Where = $5.(ast.ExprNode)
+		}
+		if $6 != nil {
+			st.Limit = $6.(*ast.Limit)
+		}
+		$$ = st
 	}
 |	"SELECT" SelectStmtOpts SelectStmtFieldList "FROM"
 	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause OrderByOptional
@@ -2594,8 +2609,7 @@ SelectStmt:
 	}
 
 FromDual:
-	/* Empty */
-|	"FROM" "DUAL"
+	"FROM" "DUAL"
 
 
 TableRefsClause:
@@ -2836,13 +2850,7 @@ UnionStmt:
 	{
 		union := $1.(*ast.UnionStmt)
 		if $2 != nil {
-			// push union order by into select statements.
-			orderBy := $2.(*ast.OrderByClause)
-			cloner := &ast.Cloner{}
-			for _, s := range union.Selects {
-				node, _ := orderBy.Accept(cloner)
-				s.OrderBy = node.(*ast.OrderByClause)
-			}
+			union.OrderBy = $2.(*ast.OrderByClause)
 		}
 		if $3 != nil {
 			union.Limit = $3.(*ast.Limit)
@@ -3052,12 +3060,15 @@ ShowStmt:
 	}
 |	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
-		$$ = &ast.ShowStmt{
+		stmt := &ast.ShowStmt{
 			Tp:	ast.ShowTables,
 			DBName:	$4.(string),
 			Full:	$2.(bool),
-			Where:  $5.(ast.ExprNode),
 		}
+		if $5 != nil {
+			stmt.Where = $5.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"SHOW" OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
@@ -3074,18 +3085,24 @@ ShowStmt:
 	}
 |	"SHOW" GlobalScope "VARIABLES" ShowLikeOrWhereOpt
 	{
-		$$ = &ast.ShowStmt{
+		stmt := &ast.ShowStmt{
 			Tp: ast.ShowVariables,
 			GlobalScope: $2.(bool),
-			Where:  $4.(ast.ExprNode),
 		}
+		if $4 != nil {
+			stmt.Where = $4.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"SHOW" "COLLATION" ShowLikeOrWhereOpt
 	{
-		$$ = &ast.ShowStmt{
+		stmt := &ast.ShowStmt{
 			Tp: 	ast.ShowCollation,
-			Where:  $3.(ast.ExprNode),
 		}
+		if $3 != nil {
+			stmt.Where = $3.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 |	"SHOW" "CREATE" "TABLE" TableName
 	{
@@ -3174,6 +3191,7 @@ Statement:
 |	PreparedStmt
 |	RollbackStmt
 |	SelectStmt
+|	UnionStmt
 |	SetStmt
 |	ShowStmt
 |	TruncateTableStmt
@@ -3807,13 +3825,11 @@ StringName:
  * See: https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
 	{
-		// Single-table syntax
-		join := &ast.Join{Left: &ast.TableSource{Source:$4.(ast.ResultSetNode)}, Right: nil}
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
-			TableRefs:	&ast.TableRefsClause{TableRefs: join},
+			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
 			List:		$6.([]*ast.Assignment),
 		}
 		if $7 != nil {
@@ -3824,23 +3840,6 @@ UpdateStmt:
 		}
 		if $9 != nil {
 			st.Limit = $9.(*ast.Limit)
-		}
-		$$ = st
-		if yylex.(*lexer).root {
-			break
-		}
-	}
-|	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
-	{
-		// Multiple-table syntax
-		st := &ast.UpdateStmt{
-			LowPriority:	$2.(bool),
-			TableRefs:	&ast.TableRefsClause{TableRefs: $4.(*ast.Join)},
-			List:		$6.([]*ast.Assignment),
-			MultipleTable:	true,
-		}
-		if $7 != nil {
-			st.Where = $7.(ast.ExprNode)
 		}
 		$$ = st
 		if yylex.(*lexer).root {

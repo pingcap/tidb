@@ -166,14 +166,14 @@ func (c *expressionConverter) subquery(v *ast.SubqueryExpr) {
 	oldSubquery := &subquery.SubQuery{}
 	switch x := v.Query.(type) {
 	case *ast.SelectStmt:
-		oldSelect, err := convertSelect(x)
+		oldSelect, err := convertSelect(c, x)
 		if err != nil {
 			c.err = err
 			return
 		}
 		oldSubquery.Stmt = oldSelect
 	case *ast.UnionStmt:
-		oldUnion, err := convertUnion(x)
+		oldUnion, err := convertUnion(c, x)
 		if err != nil {
 			c.err = err
 			return

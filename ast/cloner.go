@@ -13,6 +13,8 @@
 
 package ast
 
+import "fmt"
+
 // Cloner is a ast visitor that clones a node.
 type Cloner struct {
 }
@@ -55,6 +57,9 @@ func cloneStruct(in Node) (out Node) {
 		nv := *v
 		out = &nv
 	case *ColumnName:
+		nv := *v
+		out = &nv
+	case *ColumnNameExpr:
 		nv := *v
 		out = &nv
 	case *DefaultExpr:
@@ -162,7 +167,7 @@ func cloneStruct(in Node) (out Node) {
 	default:
 		// We currently only handle expression and select statement.
 		// Will add more when we need to.
-		panic("unknown ast Node type")
+		panic("unknown ast Node type " + fmt.Sprintf("%T", v))
 	}
 	return
 }

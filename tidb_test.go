@@ -640,6 +640,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	// conflict
 	mustExecSQL(c, se1, "begin")
 	rs, err := exec(c, se1, "select * from t where c1=11 for update")
+	c.Assert(err, IsNil)
 	_, err = rs.Rows(-1, 0)
 
 	mustExecSQL(c, se2, "begin")

@@ -16,79 +16,95 @@ package optimizer
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/stmt"
 )
 
+type Compiler struct {
+	paramMarkers []*expression.ParamMarker
+}
+
 // Compile compiles a ast.Node into a executable statement.
-func Compile(node ast.Node) (stmt.Statement, error) {
+func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 	validator := &validator{}
 	if _, ok := node.Accept(validator); !ok {
 		return nil, errors.Trace(validator.err)
 	}
 
-	binder := &InfoBinder{}
-	if _, ok := node.Accept(validator); !ok {
-		return nil, errors.Trace(binder.Err)
-	}
+	//	binder := &InfoBinder{}
+	//	if _, ok := node.Accept(validator); !ok {
+	//		return nil, errors.Trace(binder.Err)
+	//	}
 
 	tpComputer := &typeComputer{}
 	if _, ok := node.Accept(tpComputer); !ok {
 		return nil, errors.Trace(tpComputer.err)
 	}
-
+	c := newExpressionConverter()
+	defer func() {
+		for _, v := range c.exprMap {
+			if x, ok := v.(*expression.ParamMarker); ok {
+				com.paramMarkers = append(com.paramMarkers, x)
+			}
+		}
+	}()
 	switch v := node.(type) {
 	case *ast.InsertStmt:
-		return convertInsert(v)
+		return convertInsert(c, v)
 	case *ast.DeleteStmt:
-		return convertDelete(v)
+		return convertDelete(c, v)
 	case *ast.UpdateStmt:
-		return convertUpdate(v)
+		return convertUpdate(c, v)
 	case *ast.SelectStmt:
-		return convertSelect(v)
+		return convertSelect(c, v)
 	case *ast.UnionStmt:
-		return convertUnion(v)
+		return convertUnion(c, v)
 	case *ast.CreateDatabaseStmt:
-		return convertCreateDatabase(v)
+		return convertCreateDatabase(c, v)
 	case *ast.DropDatabaseStmt:
-		return convertDropDatabase(v)
+		return convertDropDatabase(c, v)
 	case *ast.CreateTableStmt:
-		return convertCreateTable(v)
+		return convertCreateTable(c, v)
 	case *ast.DropTableStmt:
-		return convertDropTable(v)
+		return convertDropTable(c, v)
 	case *ast.CreateIndexStmt:
-		return convertCreateIndex(v)
+		return convertCreateIndex(c, v)
 	case *ast.DropIndexStmt:
-		return convertDropIndex(v)
+		return convertDropIndex(c, v)
 	case *ast.AlterTableStmt:
-		return convertAlterTable(v)
+		return convertAlterTable(c, v)
 	case *ast.TruncateTableStmt:
-		return convertTruncateTable(v)
+		return convertTruncateTable(c, v)
 	case *ast.ExplainStmt:
-		return convertExplain(v)
+		return convertExplain(c, v)
 	case *ast.PrepareStmt:
-		return convertPrepare(v)
+		return convertPrepare(c, v)
 	case *ast.DeallocateStmt:
-		return convertDeallocate(v)
+		return convertDeallocate(c, v)
 	case *ast.ExecuteStmt:
-		return convertExecute(v)
+		return convertExecute(c, v)
 	case *ast.ShowStmt:
-		return convertShow(v)
+		return convertShow(c, v)
 	case *ast.BeginStmt:
-		return convertBegin(v)
+		return convertBegin(c, v)
 	case *ast.CommitStmt:
-		return convertCommit(v)
+		return convertCommit(c, v)
 	case *ast.RollbackStmt:
-		return convertRollback(v)
+		return convertRollback(c, v)
 	case *ast.UseStmt:
-		return convertUse(v)
+		return convertUse(c, v)
 	case *ast.SetStmt:
-		return convertSet(v)
+		return convertSet(c, v)
 	case *ast.SetCharsetStmt:
-		return convertSetCharset(v)
+		return convertSetCharset(c, v)
 	case *ast.SetPwdStmt:
-		return convertSetPwd(v)
+		return convertSetPwd(c, v)
 	case *ast.DoStmt:
-		return convertDo(v)
+		return convertDo(c, v)
 	}
 	return nil, nil
+}
+
+func (com *Compiler) ParamMarkers() []*expression.ParamMarker {
+	return com.paramMarkers
 }

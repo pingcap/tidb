@@ -488,6 +488,7 @@ type UnionStmt struct {
 
 	Distinct bool
 	Selects  []*SelectStmt
+	OrderBy  *OrderByClause
 	Limit    *Limit
 }
 
@@ -504,6 +505,13 @@ func (nod *UnionStmt) Accept(v Visitor) (Node, bool) {
 			return nod, false
 		}
 		nod.Selects[i] = node.(*SelectStmt)
+	}
+	if nod.OrderBy != nil {
+		node, ok := nod.OrderBy.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.OrderBy = node.(*OrderByClause)
 	}
 	if nod.Limit != nil {
 		node, ok := nod.Limit.Accept(v)
