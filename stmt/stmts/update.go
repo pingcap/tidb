@@ -44,7 +44,7 @@ var _ stmt.Statement = (*UpdateStmt)(nil)
 // See: https://dev.mysql.com/doc/refman/5.7/en/update.html
 type UpdateStmt struct {
 	TableRefs     *rsets.JoinRset
-	List          []expression.Assignment
+	List          []*expression.Assignment
 	Where         expression.Expression
 	Order         *rsets.OrderByRset
 	Limit         *rsets.LimitRset
@@ -96,8 +96,8 @@ func findColumnByName(t table.Table, name string) (*column.Col, error) {
 	return c, nil
 }
 
-func getUpdateColumns(assignList []expression.Assignment, fields []*field.ResultField) (map[int]expression.Assignment, error) {
-	m := make(map[int]expression.Assignment, len(assignList))
+func getUpdateColumns(assignList []*expression.Assignment, fields []*field.ResultField) (map[int]*expression.Assignment, error) {
+	m := make(map[int]*expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
 		name := v.ColName
@@ -119,7 +119,7 @@ func getUpdateColumns(assignList []expression.Assignment, fields []*field.Result
 }
 
 func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table,
-	updateColumns map[int]expression.Assignment, m map[interface{}]interface{},
+	updateColumns map[int]*expression.Assignment, m map[interface{}]interface{},
 	offset int, onDuplicateUpdate bool) error {
 	if err := t.LockRow(ctx, h, true); err != nil {
 		return errors.Trace(err)

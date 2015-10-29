@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -39,8 +40,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	m := meta.NewMeta(store)
-	err = m.RunInNewTxn(false, func(m *meta.TMeta) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
 		err = m.CreateTable(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
@@ -49,7 +50,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := autoid.NewAllocator(m, 1)
+	alloc := autoid.NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
 
 	id, err := alloc.Alloc(1)
