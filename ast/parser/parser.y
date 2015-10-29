@@ -1669,6 +1669,10 @@ InsertRest:
 	{
 		$$ = &ast.InsertStmt{Select: $1.(*ast.SelectStmt)}
 	}
+|	UnionStmt
+	{
+		$$ = &ast.InsertStmt{Select: $1.(*ast.UnionStmt)}
+	}
 |	"SET" ColumnSetValueList
 	{
 		$$ = &ast.InsertStmt{Setlist: $2.([]*ast.Assignment)}
