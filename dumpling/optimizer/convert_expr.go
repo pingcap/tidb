@@ -190,26 +190,28 @@ func (c *expressionConverter) compareSubquery(v *ast.CompareSubqueryExpr) {
 	c.exprMap[v] = oldCmpSubquery
 }
 
-func concatCIStr(ciStrs ...model.CIStr) string {
+func joinColumnName(columnName *ast.ColumnName) string {
 	var originStrs []string
-	for _, v := range ciStrs {
-		if v.O != "" {
-			originStrs = append(originStrs, v.O)
-		}
+	if columnName.Schema.O != "" {
+		originStrs = append(originStrs, columnName.Schema.O)
 	}
+	if columnName.Table.O != "" {
+		originStrs = append(originStrs, columnName.Table.O)
+	}
+	originStrs = append(originStrs, columnName.Name.O)
 	return strings.Join(originStrs, ".")
 }
 
 func (c *expressionConverter) columnNameExpr(v *ast.ColumnNameExpr) {
 	ident := &expression.Ident{}
-	ident.CIStr = model.NewCIStr(concatCIStr(v.Name.Schema, v.Name.Table, v.Name.Name))
+	ident.CIStr = model.NewCIStr(joinColumnName(v.Name))
 	c.exprMap[v] = ident
 }
 
 func (c *expressionConverter) defaultExpr(v *ast.DefaultExpr) {
 	oldDefault := &expression.Default{}
 	if v.Name != nil {
-		oldDefault.Name = concatCIStr(v.Name.Schema, v.Name.Table, v.Name.Name)
+		oldDefault.Name = joinColumnName(v.Name)
 	}
 	c.exprMap[v] = oldDefault
 }
@@ -302,7 +304,7 @@ func (c *expressionConverter) unaryOperation(v *ast.UnaryOperationExpr) {
 }
 
 func (c *expressionConverter) values(v *ast.ValuesExpr) {
-	nameStr := concatCIStr(v.Column.Schema, v.Column.Table, v.Column.Name)
+	nameStr := joinColumnName(v.Column)
 	c.exprMap[v] = &expression.Values{CIStr: model.NewCIStr(nameStr)}
 }
 

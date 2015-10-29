@@ -564,7 +564,7 @@ type InsertStmt struct {
 	Setlist     []*Assignment
 	Priority    int
 	OnDuplicate []*Assignment
-	Select      *SelectStmt
+	Select      ResultSetNode
 }
 
 // Accept implements Node Accept interface.
@@ -616,7 +616,7 @@ func (nod *InsertStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return nod, false
 		}
-		nod.Select = node.(*SelectStmt)
+		nod.Select = node.(ResultSetNode)
 	}
 	return v.Leave(nod)
 }
