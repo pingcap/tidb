@@ -106,15 +106,24 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 		uuid:        uuid.NewV4().String(),
 		jobCh:       make(chan struct{}, 1),
 		jobDoneCh:   make(chan struct{}, 1),
-		quitCh:      make(chan struct{}),
 	}
 
-	d.wait.Add(1)
-	go d.onWorker()
+	d.start()
+
 	return d
 }
 
+func (d *ddl) start() {
+	d.quitCh = make(chan struct{})
+	d.wait.Add(1)
+	go d.onWorker()
+}
+
 func (d *ddl) close() {
+	if d.isClosed() {
+		return
+	}
+
 	close(d.quitCh)
 
 	d.wait.Wait()
