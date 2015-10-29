@@ -60,7 +60,7 @@ type InsertValues struct {
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
 type InsertIntoStmt struct {
 	InsertValues
-	OnDuplicate []expression.Assignment
+	OnDuplicate []*expression.Assignment
 
 	Text string
 }
@@ -335,7 +335,7 @@ func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column
 	return r, nil
 }
 
-func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]expression.Assignment) error {
+func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]*expression.Assignment) error {
 	// On duplicate key update the duplicate row.
 	// Evaluate the updated value.
 	// TODO: report rows affected and last insert id.
@@ -360,8 +360,8 @@ func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}
 	return nil
 }
 
-func getOnDuplicateUpdateColumns(assignList []expression.Assignment, t table.Table) (map[int]expression.Assignment, error) {
-	m := make(map[int]expression.Assignment, len(assignList))
+func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, error) {
+	m := make(map[int]*expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
 		c, err := findColumnByName(t, field.JoinQualifiedName("", v.TableName, v.ColName))

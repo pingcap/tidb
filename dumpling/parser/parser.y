@@ -746,23 +746,23 @@ Assignment:
 		if err != nil {
 			yylex.(*lexer).errf("Parse Assignment error: %s", $1.(string))
 		}
-		$$ = *x
+		$$ = x
 	}
 
 AssignmentList:
 	Assignment
 	{
-		$$ = []expression.Assignment{$1.(expression.Assignment)}
+		$$ = []*expression.Assignment{$1.(*expression.Assignment)}
 	}
 |	AssignmentList ',' Assignment
 	{
-		$$ = append($1.([]expression.Assignment), $3.(expression.Assignment))
+		$$ = append($1.([]*expression.Assignment), $3.(*expression.Assignment))
 	}
 
 AssignmentListOpt:
 	/* EMPTY */
 	{
-		$$ = []expression.Assignment{}
+		$$ = []*expression.Assignment{}
 	}
 |	AssignmentList
 
@@ -1727,7 +1727,7 @@ InsertIntoStmt:
 		x.Priority = $2.(int)
 		x.TableIdent = $5.(table.Ident)
 		if $7 != nil {
-			x.OnDuplicate = $7.([]expression.Assignment)
+			x.OnDuplicate = $7.([]*expression.Assignment)
 		}
 		$$ = x
 		if yylex.(*lexer).root {
@@ -4306,7 +4306,7 @@ UpdateStmt:
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	r,
-			List:		$6.([]expression.Assignment),
+			List:		$6.([]*expression.Assignment),
 		}
 		if $7 != nil {
 			st.Where = $7.(expression.Expression)
@@ -4328,7 +4328,7 @@ UpdateStmt:
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	$4.(*rsets.JoinRset),
-			List:		$6.([]expression.Assignment),
+			List:		$6.([]*expression.Assignment),
 			MultipleTable:	true,
 		}
 		if $7 != nil {
