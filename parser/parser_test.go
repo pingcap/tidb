@@ -349,6 +349,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
+		{`SELECT REPLACE('www.mysql.com', 'w', 'Ww')`, true},
+
 		{`SELECT LOCATE('bar', 'foobarbar');`, true},
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
 
