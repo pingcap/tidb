@@ -178,7 +178,7 @@ func (d *ddl) onIndexCreate(t *meta.TMeta, job *model.Job) error {
 	case model.StateReorgnization:
 		// reorganization -> public
 		var tbl table.Table
-		tbl, err = d.createTable(t, schemaID, tblInfo)
+		tbl, err = d.getTable(t, schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -262,7 +262,7 @@ func (d *ddl) onIndexDrop(t *meta.TMeta, job *model.Job) error {
 	case model.StateReorgnization:
 		// reorganization -> absent
 		var tbl table.Table
-		tbl, err = d.createTable(t, schemaID, tblInfo)
+		tbl, err = d.getTable(t, schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
