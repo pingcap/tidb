@@ -96,10 +96,10 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) verifyOwner(t *meta.TMeta) error {
+func (d *ddl) checkOwner(t *meta.TMeta) (*model.Owner, error) {
 	owner, err := t.GetDDLOwner()
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	if owner == nil {
@@ -108,28 +108,27 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 		owner.OwnerID = d.uuid
 	}
 
-	now := time.Now().Unix()
+	now := time.Now().UnixNano()
 	// we must wait 2 * lease time to guarantee other servers update the schema,
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
-	maxTimeout := int64(4 * d.lease / time.Second)
+	maxTimeout := int64(4 * d.lease)
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
 		owner.OwnerID = d.uuid
 		owner.LastUpdateTS = now
-
-		// update or try to set itself as owner.
+		// update status.
 		if err = t.SetDDLOwner(owner); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-
 		log.Debugf("become owner %s", owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		return errors.Trace(ErrNotOwner)
+		log.Debugf("not owner, owner is %s", owner.OwnerID)
+		return nil, errors.Trace(ErrNotOwner)
 	}
 
-	return nil
+	return owner, nil
 }
 
 func (d *ddl) getFirstJob(t *meta.TMeta) (*model.Job, error) {
@@ -166,7 +165,7 @@ func (d *ddl) handleJobQueue() error {
 
 		var job *model.Job
 		err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-			err := d.verifyOwner(t)
+			owner, err := d.checkOwner(t)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -193,6 +192,16 @@ func (d *ddl) handleJobQueue() error {
 				err = d.updateJob(t, job)
 			}
 
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// running job may cost some time, so here we must update owner status to
+			// prevent other become the owner.
+			owner.LastUpdateTS = time.Now().UnixNano()
+			if err = t.SetDDLOwner(owner); err != nil {
+				return errors.Trace(err)
+			}
 			return errors.Trace(err)
 		})
 
@@ -212,6 +221,14 @@ func (d *ddl) handleJobQueue() error {
 	}
 }
 
+func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
+	if n1 > 0 {
+		return n1
+	}
+
+	return n2
+}
+
 // onWorker is for async online schema change, it will try to become the owner first,
 // then wait or pull the job queue to handle a schema change job.
 func (d *ddl) onWorker() {
@@ -219,10 +236,7 @@ func (d *ddl) onWorker() {
 
 	// we use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time, if lease is 0, we will use default 10s.
-	checkTime := 2 * d.lease
-	if checkTime == 0 {
-		checkTime = 10 * time.Second
-	}
+	checkTime := chooseLeaseTime(2*d.lease, 10*time.Second)
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()

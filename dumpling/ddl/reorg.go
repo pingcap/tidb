@@ -107,12 +107,14 @@ func (d *ddl) runReorgJob(f func() error) error {
 		}()
 	}
 
+	waitTimeout := chooseLeaseTime(d.lease, waitReorgTimeout)
+
 	// wait reorgnization job done or timeout
 	select {
 	case err := <-d.reOrgDoneCh:
 		d.reOrgDoneCh = nil
 		return errors.Trace(err)
-	case <-time.After(waitReorgTimeout):
+	case <-time.After(waitTimeout):
 		// if timeout, we will return, check the owner and retry wait job done again.
 		return errWaitReorgTimeout
 	case <-d.quitCh:

@@ -89,6 +89,10 @@ func fakeOnDDLChange(err error) error {
 
 // NewDDL creates a new DDL.
 func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease time.Duration) DDL {
+	return newDDL(store, infoHandle, hook, lease)
+}
+
+func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease time.Duration) *ddl {
 	if hook == nil {
 		hook = fakeOnDDLChange
 	}
