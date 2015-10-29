@@ -62,7 +62,7 @@ type DDL interface {
 type ddl struct {
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
-	meta        *meta.Meta
+	store       kv.Storage
 	// schema lease seconds.
 	lease     int
 	uuid      string
@@ -78,7 +78,7 @@ func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 	d := &ddl{
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
-		meta:        meta.NewMeta(store),
+		store:       store,
 		lease:       lease,
 		uuid:        uuid.NewV4().String(),
 		jobCh:       make(chan struct{}, 1),
@@ -92,6 +92,17 @@ func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
+func (d *ddl) genGlobalID() (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+
+	return globalID, errors.Trace(err)
+}
+
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
@@ -99,12 +110,13 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 		return errors.Trace(ErrExists)
 	}
 	info := &model.DBInfo{Name: schema}
-	info.ID, err = d.meta.GenGlobalID()
+	info.ID, err = d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
@@ -121,7 +133,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(t *meta.TMeta, schemaMetaVersion int64) error {
+func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
 	curVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
@@ -172,7 +184,8 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		}
 	}
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
@@ -276,7 +289,7 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	col.ID, err = d.meta.GenGlobalID()
+	col.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -331,7 +344,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
-	tbInfo.ID, err = d.meta.GenGlobalID()
+	tbInfo.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -399,7 +412,8 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	}
 	log.Infof("New table: %+v", tbInfo)
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
@@ -500,7 +514,8 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 	}
 
 	// update infomation schema
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, schemaMetaVersion)
 		if err != nil {
 			return errors.Trace(err)
@@ -562,7 +577,8 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		return errors.Trace(err)
 	}
 
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
@@ -659,7 +675,8 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	}
 
 	// update InfoSchema
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
