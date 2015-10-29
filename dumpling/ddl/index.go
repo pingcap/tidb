@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"io"
 	"strings"
 
 	"github.com/juju/errors"
@@ -162,6 +163,16 @@ func (d *ddl) onIndexCreate(t *meta.TMeta, job *model.Job) error {
 		// write only -> public
 		job.SchemaState = model.StateReorgnization
 		indexInfo.State = model.StateReorgnization
+
+		// get the current version for later Reorgnization.
+		var ver kv.Version
+		ver, err = d.store.CurrentVersion()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		job.SnapshotVer = ver.Ver
+
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorgnization:
@@ -348,10 +359,26 @@ func fetchSnapRowColVals(snap kv.MvccSnapshot, ver kv.Version, t table.Table, ha
 	return vals, nil
 }
 
-func checkIndexExist(txn kv.Transaction, kvIndex kv.Index, vals []interface{}) (bool, error) {
+func checkIndexExist(txn kv.Transaction, kvIndex kv.Index, h int64, vals []interface{}) (bool, error) {
 	it, hit, err := kvIndex.Seek(txn, vals)
-	it.Close()
-	return hit, errors.Trace(err)
+	if err != nil || !hit {
+		return false, errors.Trace(err)
+	}
+	defer it.Close()
+	for {
+		var handle int64
+		_, handle, err = it.Next()
+		if errors2.ErrorEqual(err, io.EOF) {
+			err = nil
+		} else if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		// we must check handle equation to prevent multi row with same index data in none unique index.
+		if handle == h {
+			return true, nil
+		}
+	}
 }
 
 func (d *ddl) needAddingIndexForRow(txn kv.Transaction, t table.Table, handle int64, kvIndex kv.Index, indexInfo *model.IndexInfo) (bool, error) {
@@ -367,7 +394,7 @@ func (d *ddl) needAddingIndexForRow(txn kv.Transaction, t table.Table, handle in
 		return false, errors.Trace(err)
 	}
 
-	if ok, err := checkIndexExist(txn, kvIndex, vals); err != nil {
+	if ok, err := checkIndexExist(txn, kvIndex, handle, vals); err != nil {
 		return false, errors.Trace(err)
 	} else if ok {
 		// index exists, we don't need to add again
@@ -425,10 +452,25 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 				return errors.Trace(err)
 			}
 
-			// build index
-			err = kvX.Create(txn, vals, handle)
+			var indexExist bool
+			indexExist, err = checkIndexExist(txn, kvX, handle, vals)
 			if err != nil {
 				return errors.Trace(err)
+			}
+
+			if !indexExist {
+				// mean we haven't already added this index.
+				// should lock row here???
+				err = t.LockRow(ctx, handle, true)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				// create the index.
+				err = kvX.Create(txn, vals, handle)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 
