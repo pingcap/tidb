@@ -219,10 +219,10 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 }
 
 // Truncate implements table.Table Truncate interface.
-func (t *Table) Truncate(ctx context.Context) (err error) {
-	err = util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+func (t *Table) Truncate(ctx context.Context) error {
+	err := util.DelKeyWithPrefix(ctx, t.KeyPrefix())
 	if err != nil {
-		return
+		return errors.Trace(err)
 	}
 	return util.DelKeyWithPrefix(ctx, t.IndexPrefix())
 }
@@ -233,17 +233,17 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, currData []interface{
 	// set on update value
 	err := t.setOnUpdateData(ctx, touched, newData)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	// set new value
 	if err := t.setNewData(ctx, h, newData); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	// rebuild index
 	if err := t.rebuildIndices(ctx, h, touched, currData, newData); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -279,7 +279,7 @@ func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) er
 func (t *Table) setNewData(ctx context.Context, h int64, data []interface{}) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	for _, col := range t.Cols() {
 		k := t.RecordKey(h, col)
@@ -305,19 +305,19 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, old
 
 		oldVs, err := idx.FetchValues(oldData)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		if t.RemoveRowIndex(ctx, h, oldVs, idx); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		newVs, err := idx.FetchValues(newData)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if err := t.BuildIndexForRow(ctx, h, newVs, idx); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -332,12 +332,12 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	} else {
 		recordID, err = t.alloc.Alloc(t.ID)
 		if err != nil {
-			return 0, err
+			return 0, errors.Trace(err)
 		}
 	}
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	for _, v := range t.indices {
 		if v == nil {
@@ -362,19 +362,15 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 	}
 
-	// split a record into multiple kv pair
-	// first key -> LOCK
-	k := t.RecordKey(recordID, nil)
-	// A new row with current txn-id as lockKey
-	err = txn.Set([]byte(k), []byte(txn.String()))
-	if err != nil {
-		return 0, err
+	if err := t.LockRow(ctx, recordID, true); err != nil {
+		return 0, errors.Trace(err)
 	}
+
 	// column key -> column value
 	for _, c := range t.Cols() {
 		k := t.RecordKey(recordID, c)
 		if err := t.SetColValue(txn, k, r[c.Offset]); err != nil {
-			return 0, err
+			return 0, errors.Trace(err)
 		}
 	}
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
@@ -385,7 +381,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
 	v, err := t.flatten(raw)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return kv.EncodeValue(v)
 }
@@ -404,7 +400,7 @@ func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
 func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	// use the length of t.Cols() for alignment
 	v := make([]interface{}, len(t.Cols()))
@@ -430,7 +426,7 @@ func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 	cols := t.Cols()
 	r, err := t.RowWithCols(ctx, h, cols)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return r, nil
 }
@@ -484,10 +480,10 @@ func (t *Table) RemoveRow(ctx context.Context, h int64) error {
 func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if err = idx.X.Delete(txn, vals, h); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -502,10 +498,10 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 		}
 		txn, err := ctx.GetTxn(false)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if err = v.X.Delete(txn, vals, h); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -515,10 +511,10 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if err = idx.X.Create(txn, vals, h); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -527,12 +523,12 @@ func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{
 func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column.Col, fn table.RecordIterFunc) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	it, err := txn.Seek([]byte(startKey))
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer it.Close()
 
@@ -550,16 +546,16 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		var err error
 		handle, err := util.DecodeHandleFromRowKey(it.Key())
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		data, err := t.RowWithCols(ctx, handle, cols)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
-			return err
+			return errors.Trace(err)
 		}
 
 		rk := t.RecordKey(handle, nil)
