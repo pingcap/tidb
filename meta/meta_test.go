@@ -38,12 +38,12 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	m := meta.NewMeta(store)
-
-	t, err := m.Begin()
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 
-	defer t.Rollback()
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
 
 	n, err := t.GenGlobalID()
 	c.Assert(err, IsNil)
@@ -146,28 +146,8 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbs, HasLen, 0)
 
-	err = t.Commit()
+	err = txn.Commit()
 	c.Assert(err, IsNil)
-
-	fn := func(m *meta.TMeta) error {
-		n, err = m.GenSchemaVersion()
-		c.Assert(err, IsNil)
-
-		var n1 int64
-		n1, err = m.GetSchemaVersion()
-		c.Assert(err, IsNil)
-		c.Assert(n, Equals, n1)
-		return nil
-	}
-
-	err = m.RunInNewTxn(false, fn)
-	c.Assert(err, IsNil)
-
-	n, err = m.GenGlobalID()
-	c.Assert(err, IsNil)
-	n1, err := m.GenGlobalID()
-	c.Assert(err, IsNil)
-	c.Assert(n1, Equals, n+1)
 }
 
 func (s *testSuite) TestDDL(c *C) {
@@ -176,12 +156,12 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	m := meta.NewMeta(store)
-
-	t, err := m.Begin()
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 
-	defer t.Rollback()
+	defer txn.Rollback()
+
+	t := meta.NewMeta(txn)
 
 	owner := &model.Owner{OwnerID: "1"}
 	err = t.SetDDLOwner(owner)
@@ -220,6 +200,6 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
-	err = t.Commit()
+	err = txn.Commit()
 	c.Assert(err, IsNil)
 }

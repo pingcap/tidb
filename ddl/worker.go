@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 )
@@ -30,7 +31,8 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// Create a new job and queue it.
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var err error
 		job.ID, err = t.GenGlobalID()
 		if err != nil {
@@ -85,7 +87,8 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
 		return errors.Trace(err1)
@@ -101,7 +104,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) checkOwner(t *meta.TMeta) (*model.Owner, error) {
+func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
 	owner, err := t.GetDDLOwner()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -136,18 +139,18 @@ func (d *ddl) checkOwner(t *meta.TMeta) (*model.Owner, error) {
 	return owner, nil
 }
 
-func (d *ddl) getFirstJob(t *meta.TMeta) (*model.Job, error) {
+func (d *ddl) getFirstJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJob(0)
 	return job, errors.Trace(err)
 }
 
 // every time we enter another state except final state, we must call this function.
-func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) updateJob(t *meta.Meta, job *model.Job) error {
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) finishJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 	log.Warnf("finish DDL job %v", job)
 	// done, notice and run next job.
 	_, err := t.DeQueueDDLJob()
@@ -169,7 +172,8 @@ func (d *ddl) handleJobQueue() error {
 		}
 
 		var job *model.Job
-		err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
 			owner, err := d.checkOwner(t)
 			if err != nil {
 				return errors.Trace(err)
@@ -262,7 +266,7 @@ func (d *ddl) onWorker() {
 	}
 }
 
-func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
 	if job.State == model.JobDone || job.State == model.JobCancelled {
 		return nil
 	}

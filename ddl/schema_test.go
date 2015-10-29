@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/errors2"
@@ -35,7 +36,7 @@ func (s *testDDLSuite) TestSchema(c *C) {
 	ctx := mock.NewContext()
 
 	schema := model.NewCIStr("test")
-	schemaID, err := d1.meta.GenGlobalID()
+	schemaID, err := d1.genGlobalID()
 	c.Assert(err, IsNil)
 
 	job := &model.Job{
@@ -47,7 +48,8 @@ func (s *testDDLSuite) TestSchema(c *C) {
 	err = d1.startJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	d1.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var dbInfo *model.DBInfo
 		dbInfo, err = t.GetDatabase(schemaID)
 		c.Assert(err, IsNil)
@@ -70,7 +72,8 @@ func (s *testDDLSuite) TestSchema(c *C) {
 	err = d1.startJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	d1.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var dbInfo *model.DBInfo
 		dbInfo, err = t.GetDatabase(schemaID)
 		c.Assert(err, IsNil)
@@ -113,7 +116,7 @@ func (s *testDDLSuite) TestSchemaWaitJob(c *C) {
 	testCheckOwner(c, d2, false)
 
 	schema := model.NewCIStr("test")
-	schemaID, err := d2.meta.GenGlobalID()
+	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
 
 	job := &model.Job{
@@ -125,7 +128,8 @@ func (s *testDDLSuite) TestSchemaWaitJob(c *C) {
 	err = d2.startJob(ctx, job)
 	c.Assert(err, IsNil)
 
-	d2.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	kv.RunInNewTxn(d2.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var dbInfo *model.DBInfo
 		dbInfo, err = t.GetDatabase(schemaID)
 		c.Assert(err, IsNil)
@@ -137,7 +141,7 @@ func (s *testDDLSuite) TestSchemaWaitJob(c *C) {
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false)
 
-	schemaID, err = d2.meta.GenGlobalID()
+	schemaID, err = d2.genGlobalID()
 	c.Assert(err, IsNil)
 
 	job = &model.Job{
@@ -149,7 +153,8 @@ func (s *testDDLSuite) TestSchemaWaitJob(c *C) {
 	err = d2.startJob(ctx, job)
 	c.Assert(err, NotNil)
 
-	d2.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	kv.RunInNewTxn(d2.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var historyJob *model.Job
 		historyJob, err = t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
@@ -197,7 +202,7 @@ func (s *testDDLSuite) TestSchemaResume(c *C) {
 	testCheckOwner(c, d1, true)
 
 	schema := model.NewCIStr("test")
-	schemaID, err := d1.meta.GenGlobalID()
+	schemaID, err := d1.genGlobalID()
 	c.Assert(err, IsNil)
 
 	job := &model.Job{
@@ -208,7 +213,8 @@ func (s *testDDLSuite) TestSchemaResume(c *C) {
 
 	testRunInterruptedJob(c, d1, job)
 
-	d1.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var dbInfo *model.DBInfo
 		dbInfo, err = t.GetDatabase(schemaID)
 		c.Assert(err, IsNil)
@@ -224,7 +230,8 @@ func (s *testDDLSuite) TestSchemaResume(c *C) {
 
 	testRunInterruptedJob(c, d1, job)
 
-	d1.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var dbInfo *model.DBInfo
 		dbInfo, err = t.GetDatabase(schemaID)
 		c.Assert(err, IsNil)

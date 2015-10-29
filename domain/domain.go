@@ -31,11 +31,11 @@ type Domain struct {
 	store      kv.Storage
 	infoHandle *infoschema.Handle
 	ddl        ddl.DDL
-	meta       *meta.Meta
 	lease      time.Duration
 }
 
-func (do *Domain) loadInfoSchema(m *meta.TMeta) (err error) {
+func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
+	m := meta.NewMeta(txn)
 	schemaMetaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
@@ -103,7 +103,7 @@ func (do *Domain) onDDLChange(err error) error {
 }
 
 func (do *Domain) reload() error {
-	err := do.meta.RunInNewTxn(false, do.loadInfoSchema)
+	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
 	return errors.Trace(err)
 }
 
@@ -129,7 +129,6 @@ func (do *Domain) loadSchemaInLoop() {
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
 		store: store,
-		meta:  meta.NewMeta(store),
 		lease: lease,
 	}
 

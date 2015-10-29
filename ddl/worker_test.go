@@ -38,7 +38,8 @@ type testDDLSuite struct {
 }
 
 func testCheckOwner(c *C, d *ddl, isOwner bool) {
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		_, err := d.checkOwner(t)
 		return err
 	})
