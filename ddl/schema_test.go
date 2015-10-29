@@ -71,7 +71,8 @@ func (s *testDDLSuite) TestSchema(c *C) {
 	c.Assert(err, IsNil)
 
 	d1.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		dbInfo, err := t.GetDatabase(schemaID)
+		var dbInfo *model.DBInfo
+		dbInfo, err = t.GetDatabase(schemaID)
 		c.Assert(err, IsNil)
 		c.Assert(dbInfo, IsNil)
 
