@@ -130,12 +130,10 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 	if !c.unique {
 		encVal, err = EncodeValue(append(indexedValues, h)...)
 	} else {
-		/*
-			See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
-			A UNIQUE index creates a constraint such that all values in the index must be distinct.
-			An error occurs if you try to add a new row with a key value that matches an existing row.
-			For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
-		*/
+		// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
+		// An error occurs if you try to add a new row with a key value that matches an existing row.
+		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
 		containsNull := false
 		for _, cv := range indexedValues {
 			if cv == nil {
@@ -245,4 +243,31 @@ func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 		return nil, errors.Trace(err)
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
+}
+
+func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, error) {
+	key, err := c.genIndexKey(indexedValues, h)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	value, err := txn.Get(key)
+	if IsErrNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	// For uniq index, the value of key is handle.
+	if c.unique {
+		handle, err := decodeHandle(value)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		return h == handle, nil
+	}
+
+	return true, nil
 }
