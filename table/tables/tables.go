@@ -343,7 +343,7 @@ func (t *Table) checkCreateUnqIdxAvail(txn kv.Transaction, r []interface{}, h in
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
-		duplicate, err = v.X.CheckUnique(txn, colVals, h)
+		duplicate, err = v.X.CheckDuplicated(txn, colVals, h)
 		if err != nil {
 			return false, 0, errors.Trace(err)
 		}
@@ -378,7 +378,7 @@ func (t *Table) checkUpdateUnqIdxAvail(txn kv.Transaction, oldData, newData []in
 			continue
 		}
 
-		duplicate, err = v.X.CheckUnique(txn, newVals, h)
+		duplicate, err = v.X.CheckDuplicated(txn, newVals, h)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
