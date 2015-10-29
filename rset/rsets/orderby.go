@@ -49,9 +49,11 @@ func (i OrderByItem) String() string {
 
 // OrderByRset is record set for order by fields.
 type OrderByRset struct {
-	By         []OrderByItem
-	Src        plan.Plan
-	SelectList *plans.SelectList
+	By []OrderByItem
+	// CheckAggregate may modify By, so we need to record original By.
+	OriginByExpr []expression.Expression
+	Src          plan.Plan
+	SelectList   *plans.SelectList
 }
 
 func (r *OrderByRset) String() string {
@@ -68,13 +70,23 @@ func (r *OrderByRset) String() string {
 // CheckAggregate will check whether order by has aggregate function or not,
 // if has, we will add it to select list hidden field.
 func (r *OrderByRset) CheckAggregate(selectList *plans.SelectList) error {
+	// Record original data or replace processed data with original data.
+	if r.OriginByExpr == nil {
+		r.OriginByExpr = make([]expression.Expression, len(r.By))
+	} else {
+		for i, v := range r.OriginByExpr {
+			if v != nil {
+				r.By[i].Expr = v
+			}
+		}
+	}
 	for i, v := range r.By {
 		if expression.ContainAggregateFunc(v.Expr) {
 			expr, err := selectList.UpdateAggFields(v.Expr)
 			if err != nil {
 				return errors.Errorf("%s in 'order clause'", err.Error())
 			}
-
+			r.OriginByExpr[i] = v.Expr
 			r.By[i].Expr = expr
 		}
 	}

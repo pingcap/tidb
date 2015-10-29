@@ -1262,6 +1262,22 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	mustExecSQL(c, se, "drop table test;")
 }
 
+func (s *testSessionSuite) TestIssue177(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, `drop table if exists t1;`)
+	mustExecSQL(c, se, `drop table if exists t2;`)
+	mustExecSQL(c, se, "CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	mustExecSQL(c, se, "CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	mustExecSQL(c, se, `INSERT INTO t1 VALUES (1,1,1);`)
+	mustExecSQL(c, se, `INSERT INTO t2 VALUES (1,1,1);`)
+	mustExecSQL(c, se, `PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";`)
+	mustExecSQL(c, se, `EXECUTE my_stmt;`)
+	mustExecSQL(c, se, `EXECUTE my_stmt;`)
+	mustExecSQL(c, se, `deallocate prepare my_stmt;`)
+	mustExecSQL(c, se, `drop table t1,t2;`)
+}
+
 func (s *testSessionSuite) TestBuiltin(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
