@@ -616,7 +616,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropIndex(ctx context.Context, schemaName, tableName, indexNmae model.CIStr) error {
+func (d *ddl) DropIndex(ctx context.Context, schemaName, tableName, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(schemaName)
 	if !ok {
@@ -632,7 +632,7 @@ func (d *ddl) DropIndex(ctx context.Context, schemaName, tableName, indexNmae mo
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionDropIndex,
-		Args:     []interface{}{indexNmae},
+		Args:     []interface{}{indexName},
 	}
 
 	err = d.startJob(ctx, job)
