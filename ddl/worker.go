@@ -51,7 +51,12 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	log.Warnf("start DDL job %v", job)
 
 	jobID := job.ID
-	ticker := time.NewTicker(10 * time.Second)
+
+	var historyJob *model.Job
+
+	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorgnization -> public
+	// for every state change, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
 	defer ticker.Stop()
 	for {
 		select {
@@ -59,21 +64,21 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 		case <-ticker.C:
 		}
 
-		job, err = d.getHistoryJob(jobID)
+		historyJob, err = d.getHistoryJob(jobID)
 		if err != nil {
 			log.Errorf("get history job err %v, check again", err)
 			continue
-		} else if job == nil {
+		} else if historyJob == nil {
 			log.Warnf("job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
 		// if a job is a history table, the state must be JobDone or JobCancel.
-		if job.State == model.JobDone {
+		if historyJob.State == model.JobDone {
 			return nil
 		}
 
-		return errors.Errorf(job.Error)
+		return errors.Errorf(historyJob.Error)
 	}
 }
 
