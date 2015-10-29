@@ -183,6 +183,40 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 	return errors.Trace(ErrKeyExists)
 }
 
+// MustCreate creates a new entry in the kvIndex data.
+// If the index is unique and there already exists an entry with the same key, Create will continue, and failed when commit
+// MustCreate must call after the CheckDuplicated, which tell there is no duplicate key, and if someone create the same index between CheckDuplicated
+// and MustCreate, finally our transaction commit will fail, so it is ok.
+func (c *kvIndex) MustCreate(txn Transaction, indexedValues []interface{}, h int64) error {
+	key, err := c.genIndexKey(indexedValues, h)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !c.unique {
+		// TODO: reconsider value
+		err = txn.Set(key, []byte("timestamp?"))
+		return errors.Trace(err)
+	}
+
+	// unique index
+	err = txn.LockKeys(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = txn.Get(key)
+	if err != nil && !IsErrNotFound(err) {
+		return errors.Trace(err)
+	}
+
+	// Set anyway
+	err = txn.Set(key, encodeHandle(h))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 // Delete removes the entry for handle h and indexdValues from KV index.
 func (c *kvIndex) Delete(txn Transaction, indexedValues []interface{}, h int64) error {
 	key, err := c.genIndexKey(indexedValues, h)
@@ -235,6 +269,27 @@ func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter Index
 		hit = true
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, hit, nil
+}
+
+// CheckDuplicated check if the index is duplicated, only check the unique index
+func (c *kvIndex) CheckDuplicated(txn Transaction, indexedValues []interface{}, h int64) (duplicate bool, err error) {
+	if !c.unique {
+		return false, nil
+	}
+
+	key, err := c.genIndexKey(indexedValues, h)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	val, err := txn.Get(key)
+	if IsErrNotFound(err) {
+		return false, nil
+	} else if err == nil && len(val) > 0 {
+		return true, nil
+	} else {
+		return false, errors.Trace(err)
+	}
 }
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.

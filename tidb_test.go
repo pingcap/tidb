@@ -1262,6 +1262,50 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	mustExecSQL(c, se, "drop table test;")
 }
 
+func (s *testSessionSuite) TestIssue463(c *C) {
+	// Testcase for https://github.com/pingcap/tidb/issues/463
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se,
+		`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val int UNIQUE, 
+			PRIMARY KEY (id)
+		);`)
+	mustExecSQL(c, se, "insert into test(id, val) values(1, 1);")
+	mustExecFailed(c, se, "insert into test(id, val) values(2, 1);")
+	mustExecSQL(c, se, "insert into test(id, val) values(2, 2);")
+
+	mustExecSQL(c, se, "begin;")
+	mustExecSQL(c, se, "insert into test(id, val) values(3, 3);")
+	mustExecFailed(c, se, "insert into test(id, val) values(4, 3);")
+	mustExecSQL(c, se, "insert into test(id, val) values(4, 4);")
+	mustExecSQL(c, se, "commit;")
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1, "begin;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(5, 6);")
+	mustExecSQL(c, se, "begin;")
+	mustExecSQL(c, se, "insert into test(id, val) values(20, 6);")
+	mustExecSQL(c, se, "commit;")
+	mustExecFailed(c, se1, "commit;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(5, 5);")
+
+	mustExecSQL(c, se, "drop table test;")
+
+	mustExecSQL(c, se,
+		`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val1 int UNIQUE,
+			val2 int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	mustExecSQL(c, se, "insert into test(id, val1, val2) values(1, 1, 1);")
+	mustExecSQL(c, se, "insert into test(id, val1, val2) values(2, 2, 2);")
+	mustExecFailed(c, se, "update test set val1 = 3, val2 = 2 where id = 1;")
+	mustExecSQL(c, se, "insert into test(id, val1, val2) values(3, 3, 3);")
+	mustExecSQL(c, se, "drop table test;")
+}
+
 func (s *testSessionSuite) TestBuiltin(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
