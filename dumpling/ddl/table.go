@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) onTableCreate(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onTableCreate(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -89,7 +89,7 @@ func (d *ddl) onTableCreate(t *meta.TMeta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onTableDrop(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 
@@ -164,13 +164,13 @@ func (d *ddl) onTableDrop(t *meta.TMeta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) getTable(t *meta.TMeta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+func (d *ddl) getTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	dbInfo, err := t.GetDatabase(schemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	alloc := autoid.NewAllocator(d.meta, dbInfo.ID)
+	alloc := autoid.NewAllocator(d.store, dbInfo.ID)
 	tbl := table.TableFromMeta(dbInfo.Name.L, alloc, tblInfo)
 	return tbl, nil
 }

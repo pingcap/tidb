@@ -63,18 +63,18 @@ func NewCall(f string, args []Expression, distinct bool) (v Expression, err erro
 	}
 
 	c := Call{F: f, Distinct: distinct, distinctKey: new(int)}
-	for _, Val := range args {
-		if !Val.IsStatic() {
-			c.Args = append(c.Args, Val)
+	for _, val := range args {
+		if !val.IsStatic() {
+			c.Args = append(c.Args, val)
 			continue
 		}
 
-		eVal, err := Val.Eval(nil, nil)
+		v, err := val.Eval(nil, nil)
 		if err != nil {
 			return nil, err
 		}
 
-		c.Args = append(c.Args, Value{eVal})
+		c.Args = append(c.Args, Value{v})
 	}
 
 	return &c, nil

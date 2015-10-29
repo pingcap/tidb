@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 )
 
@@ -32,11 +33,11 @@ type Allocator interface {
 }
 
 type allocator struct {
-	mu   sync.Mutex
-	base int64
-	end  int64
-	m    *meta.Meta
-	dbID int64
+	mu    sync.Mutex
+	base  int64
+	end   int64
+	store kv.Storage
+	dbID  int64
 }
 
 // Alloc allocs the next autoID for table with tableID.
@@ -48,7 +49,8 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
-		err := alloc.m.RunInNewTxn(true, func(m *meta.TMeta) error {
+		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
 			// err1 is used for passing `go tool vet --shadow` check.
 			end, err1 := m.GenAutoTableID(alloc.dbID, tableID, step)
 			if err1 != nil {
@@ -71,9 +73,9 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(m *meta.Meta, dbID int64) Allocator {
+func NewAllocator(store kv.Storage, dbID int64) Allocator {
 	return &allocator{
-		m:    m,
-		dbID: dbID,
+		store: store,
+		dbID:  dbID,
 	}
 }

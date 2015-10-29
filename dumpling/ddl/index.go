@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) checkTablePublic(t *meta.TMeta, job *model.Job) (*model.TableInfo, error) {
+func (d *ddl) checkTablePublic(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
@@ -102,7 +102,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	return idxInfo, nil
 }
 
-func (d *ddl) onIndexCreate(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 
 	tblInfo, err := d.checkTablePublic(t, job)
@@ -212,7 +212,7 @@ func (d *ddl) onIndexCreate(t *meta.TMeta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onIndexDrop(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 
 	tblInfo, err := d.checkTablePublic(t, job)

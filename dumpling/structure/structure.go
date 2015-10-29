@@ -13,78 +13,19 @@
 
 package structure
 
-import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
-)
+import "github.com/pingcap/tidb/kv"
 
-// ErrTxDone is the error returned after transaction has already been committed or rolled back.
-var ErrTxDone = errors.New("Transaction has already been committed or rolled back")
-
-// TStore is the storage for data structure.
-type TStore struct {
-	store  kv.Storage
-	prefix []byte
-}
-
-// NewStore creates a TStore with kv storage and special key prefix.
-func NewStore(store kv.Storage, prefix []byte) *TStore {
-	s := &TStore{
-		store:  store,
+// NewStructure creates a TxStructure in transaction txn and with key prefix.
+func NewStructure(txn kv.Transaction, prefix []byte) *TxStructure {
+	return &TxStructure{
+		txn:    txn,
 		prefix: prefix,
 	}
-	return s
-}
-
-// Begin creates a TxStructure for calling structure APIs in a transaction later.
-func (s *TStore) Begin() (*TxStructure, error) {
-	t := &TxStructure{done: false, prefix: s.prefix}
-
-	var err error
-	t.txn, err = s.store.Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return t, nil
-}
-
-// RunInNewTxn runs f in a new transaction
-func (s *TStore) RunInNewTxn(retryable bool, f func(t *TxStructure) error) error {
-	fn := func(txn kv.Transaction) error {
-		t := &TxStructure{done: false, prefix: s.prefix, txn: txn}
-		return errors.Trace(f(t))
-	}
-	err := kv.RunInNewTxn(s.store, retryable, fn)
-	return errors.Trace(err)
 }
 
 // TxStructure supports some simple data structures like string, hash, list, etc... and
 // you can use these in a transaction.
 type TxStructure struct {
 	txn    kv.Transaction
-	done   bool
 	prefix []byte
-}
-
-// Commit commits the transaction.
-func (t *TxStructure) Commit() error {
-	if t.done {
-		return ErrTxDone
-	}
-
-	t.done = true
-
-	return errors.Trace(t.txn.Commit())
-}
-
-// Rollback rolls back the transaction.
-func (t *TxStructure) Rollback() error {
-	if t.done {
-		return ErrTxDone
-	}
-
-	t.done = true
-
-	return errors.Trace(t.txn.Rollback())
 }
