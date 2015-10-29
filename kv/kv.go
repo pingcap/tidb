@@ -190,9 +190,11 @@ type IndexIterator interface {
 
 // Index is the interface for index data on KV store.
 type Index interface {
-	Create(txn Transaction, indexedValues []interface{}, h int64) error                          // supports insert into statement
-	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
-	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
-	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
-	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
+	Create(txn Transaction, indexedValues []interface{}, h int64) error                            // supports insert into statement
+	Delete(txn Transaction, indexedValues []interface{}, h int64) error                            // supports delete from statement
+	Drop(txn Transaction) error                                                                    // supports drop table, drop index statements
+	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error)   // supports where clause
+	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                     // supports aggregate min / ascending order by
+	CheckUnique(txn Transaction, indexedValues []interface{}, h int64) (duplicate bool, err error) // supports check unique index is duplicate with indexedValues
+	MustCreate(txn Transaction, indexedValues []interface{}, h int64) error                        // for issue #463
 }

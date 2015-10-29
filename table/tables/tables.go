@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 // Table implements table.Table interface.
@@ -291,6 +291,19 @@ func (t *Table) setNewData(ctx context.Context, h int64, data []interface{}) err
 }
 
 func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, oldData, newData []interface{}) error {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return err
+	}
+
+	duplicate, err := t.checkUpdateUnqIdxAvail(txn, oldData, newData, h)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if duplicate {
+		return errors.Trace(kv.ErrKeyExists)
+	}
+
 	for _, idx := range t.Indices() {
 		idxTouched := false
 		for _, ic := range idx.Columns {
@@ -323,18 +336,72 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, old
 	return nil
 }
 
-func (t *Table) delDirtyIndexKey(createdIdx int, recordID int64, r []interface{}, txn kv.Transaction) {
-	for i, v := range t.indices {
+// check unique indices constrains
+func (t *Table) checkCreateUnqIdxAvail(txn kv.Transaction, r []interface{}, h int64) (duplicate bool, recordID int64, err error) {
+	for _, v := range t.indices {
 		if v == nil {
 			continue
 		}
-
-		if i >= createdIdx {
-			break
-		}
 		colVals, _ := v.FetchValues(r)
-		_ = v.X.Delete(txn, colVals, recordID)
+		duplicate, err = v.X.CheckUnique(txn, colVals, h)
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+
+		if duplicate {
+			recordID, err = getDuplicateRow(txn, colVals, v)
+			if err != nil {
+				return duplicate, 0, errors.Trace(err)
+			}
+			return duplicate, recordID, nil
+		}
 	}
+
+	return false, 0, nil
+}
+
+func isIndexValsEqual(vals1, vals2 []interface{}) bool {
+	byteVals1, _ := kv.EncodeValue(vals1...)
+	byteVals2, _ := kv.EncodeValue(vals2...)
+
+	return bytes.Equal(byteVals1, byteVals2)
+}
+
+func (t *Table) checkUpdateUnqIdxAvail(txn kv.Transaction, oldData, newData []interface{}, h int64) (duplicate bool, err error) {
+	for _, v := range t.indices {
+		if v == nil {
+			continue
+		}
+		oldVals, _ := v.FetchValues(oldData)
+		newVals, _ := v.FetchValues(newData)
+		if isIndexValsEqual(oldVals, newVals) { // update the same index value is not necessary but available
+			continue
+		}
+
+		duplicate, err = v.X.CheckUnique(txn, newVals, h)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		if duplicate {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func getDuplicateRow(txn kv.Transaction, colVals []interface{}, v *column.IndexedCol) (recordID int64, err error) {
+	iter, _, err := v.X.Seek(txn, colVals)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	_, h, err := iter.Next()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return h, nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -353,26 +420,19 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	if err != nil {
 		return 0, err
 	}
-	for i, v := range t.indices {
+	duplicate, duplicateID, err := t.checkCreateUnqIdxAvail(txn, r, recordID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if duplicate {
+		return duplicateID, errors.Trace(kv.ErrKeyExists)
+	}
+	for _, v := range t.indices {
 		if v == nil {
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
-		if err = v.X.Create(txn, colVals, recordID); err != nil {
-			t.delDirtyIndexKey(i, recordID, r, txn)
-			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
-				// Get the duplicate row handle
-				// For insert on duplicate syntax, we should update the row
-				iter, _, err1 := v.X.Seek(txn, colVals)
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				_, h, err1 := iter.Next()
-				if err1 != nil {
-					return 0, errors.Trace(err1)
-				}
-				return h, errors.Trace(err)
-			}
+		if err = v.X.MustCreate(txn, colVals, recordID); err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
@@ -532,7 +592,7 @@ func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{
 	if err != nil {
 		return err
 	}
-	if err = idx.X.Create(txn, vals, h); err != nil {
+	if err = idx.X.MustCreate(txn, vals, h); err != nil {
 		return err
 	}
 	return nil
