@@ -66,19 +66,19 @@ var (
 	ErrTableNotExists = errors.New("table doesn't exist")
 )
 
-// TMeta is for handling meta information in a transaction.
-type TMeta struct {
+// Meta is for handling meta information in a transaction.
+type Meta struct {
 	txn *structure.TxStructure
 }
 
-// NewMeta creates a TMeta in transaction txn.
-func NewMeta(txn kv.Transaction) *TMeta {
+// NewMeta creates a Meta in transaction txn.
+func NewMeta(txn kv.Transaction) *Meta {
 	t := structure.NewStructure(txn, []byte{0x00})
-	return &TMeta{txn: t}
+	return &Meta{txn: t}
 }
 
 // GenGlobalID generates next id globally.
-func (m *TMeta) GenGlobalID() (int64, error) {
+func (m *Meta) GenGlobalID() (int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
@@ -86,15 +86,15 @@ func (m *TMeta) GenGlobalID() (int64, error) {
 }
 
 // GetGlobalID gets current global id.
-func (m *TMeta) GetGlobalID() (int64, error) {
+func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
 }
 
-func (m *TMeta) dbKey(dbID int64) []byte {
+func (m *Meta) dbKey(dbID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mDBPrefix, dbID))
 }
 
-func (m *TMeta) parseDatabaseID(key string) (int64, error) {
+func (m *Meta) parseDatabaseID(key string) (int64, error) {
 	seps := strings.Split(key, ":")
 	if len(seps) != 2 {
 		return 0, errors.Errorf("invalid db key %s", key)
@@ -104,15 +104,15 @@ func (m *TMeta) parseDatabaseID(key string) (int64, error) {
 	return n, errors.Trace(err)
 }
 
-func (m *TMeta) autoTalbeIDKey(tableID int64) []byte {
+func (m *Meta) autoTalbeIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
 }
 
-func (m *TMeta) tableKey(tableID int64) []byte {
+func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
 
-func (m *TMeta) parseTableID(key string) (int64, error) {
+func (m *Meta) parseTableID(key string) (int64, error) {
 	seps := strings.Split(key, ":")
 	if len(seps) != 2 {
 		return 0, errors.Errorf("invalid table meta key %s", key)
@@ -123,7 +123,7 @@ func (m *TMeta) parseTableID(key string) (int64, error) {
 }
 
 // GenAutoTableID adds step to the auto id of the table and returns the sum.
-func (m *TMeta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
+func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
 	// check db exists
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -140,21 +140,21 @@ func (m *TMeta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, er
 }
 
 // GetAutoTableID gets current auto id with table id.
-func (m *TMeta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
+func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTalbeIDKey(tableID))
 }
 
 // GetSchemaVersion gets current global schema version.
-func (m *TMeta) GetSchemaVersion() (int64, error) {
+func (m *Meta) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)
 }
 
 // GenSchemaVersion generates next schema version.
-func (m *TMeta) GenSchemaVersion() (int64, error) {
+func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
-func (m *TMeta) checkDBExists(dbKey []byte) error {
+func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -165,33 +165,39 @@ func (m *TMeta) checkDBExists(dbKey []byte) error {
 	return nil
 }
 
-func (m *TMeta) checkDBNotExists(dbKey []byte) error {
+func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
 		return errors.Trace(err)
-	} else if v != nil {
+	}
+
+	if v != nil {
 		return ErrDBExists
 	}
 
 	return nil
 }
 
-func (m *TMeta) checkTableExists(dbKey []byte, tableKey []byte) error {
+func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil {
 		return errors.Trace(err)
-	} else if v == nil {
+	}
+
+	if v == nil {
 		return ErrTableNotExists
 	}
 
 	return nil
 }
 
-func (m *TMeta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
+func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil {
 		return errors.Trace(err)
-	} else if v != nil {
+	}
+
+	if v != nil {
 		return ErrTableExists
 	}
 
@@ -199,7 +205,7 @@ func (m *TMeta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 }
 
 // CreateDatabase creates a database with db info.
-func (m *TMeta) CreateDatabase(dbInfo *model.DBInfo) error {
+func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBNotExists(dbKey); err != nil {
@@ -215,7 +221,7 @@ func (m *TMeta) CreateDatabase(dbInfo *model.DBInfo) error {
 }
 
 // UpdateDatabase updates a database with db info.
-func (m *TMeta) UpdateDatabase(dbInfo *model.DBInfo) error {
+func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -231,7 +237,7 @@ func (m *TMeta) UpdateDatabase(dbInfo *model.DBInfo) error {
 }
 
 // CreateTable creates a table with tableInfo in database.
-func (m *TMeta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
+func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -253,7 +259,7 @@ func (m *TMeta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // DropDatabase drops whole database.
-func (m *TMeta) DropDatabase(dbID int64) error {
+func (m *Meta) DropDatabase(dbID int64) error {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 
@@ -269,7 +275,7 @@ func (m *TMeta) DropDatabase(dbID int64) error {
 }
 
 // DropTable drops table in database.
-func (m *TMeta) DropTable(dbID int64, tableID int64) error {
+func (m *Meta) DropTable(dbID int64, tableID int64) error {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -295,7 +301,7 @@ func (m *TMeta) DropTable(dbID int64, tableID int64) error {
 }
 
 // UpdateTable updates the table with table info.
-func (m *TMeta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
+func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -320,7 +326,7 @@ func (m *TMeta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // ListTables shows all tables in database.
-func (m *TMeta) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -352,7 +358,7 @@ func (m *TMeta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 }
 
 // ListDatabases shows all databases.
-func (m *TMeta) ListDatabases() ([]*model.DBInfo, error) {
+func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
 	res, err := m.txn.HGetAll(mDBs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -371,7 +377,7 @@ func (m *TMeta) ListDatabases() ([]*model.DBInfo, error) {
 }
 
 // GetDatabase gets the database value with ID.
-func (m *TMeta) GetDatabase(dbID int64) (*model.DBInfo, error) {
+func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbKey := m.dbKey(dbID)
 	value, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil || value == nil {
@@ -384,7 +390,7 @@ func (m *TMeta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 }
 
 // GetTable gets the table value in database with tableID.
-func (m *TMeta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
+func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	// first check db exists or not.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -418,7 +424,7 @@ var (
 )
 
 // GetDDLOwner gets the current owner for DDL.
-func (m *TMeta) GetDDLOwner() (*model.Owner, error) {
+func (m *Meta) GetDDLOwner() (*model.Owner, error) {
 	value, err := m.txn.Get(mDDLOwnerKey)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -430,7 +436,7 @@ func (m *TMeta) GetDDLOwner() (*model.Owner, error) {
 }
 
 // SetDDLOwner sets the current owner for DDL.
-func (m *TMeta) SetDDLOwner(o *model.Owner) error {
+func (m *Meta) SetDDLOwner(o *model.Owner) error {
 	b, err := json.Marshal(o)
 	if err != nil {
 		return errors.Trace(err)
@@ -439,7 +445,7 @@ func (m *TMeta) SetDDLOwner(o *model.Owner) error {
 }
 
 // EnQueueDDLJob adds a DDL job to the list.
-func (m *TMeta) EnQueueDDLJob(job *model.Job) error {
+func (m *Meta) EnQueueDDLJob(job *model.Job) error {
 	b, err := json.Marshal(job)
 	if err != nil {
 		return errors.Trace(err)
@@ -448,7 +454,7 @@ func (m *TMeta) EnQueueDDLJob(job *model.Job) error {
 }
 
 // DeQueueDDLJob pops a DDL job from the list.
-func (m *TMeta) DeQueueDDLJob() (*model.Job, error) {
+func (m *Meta) DeQueueDDLJob() (*model.Job, error) {
 	value, err := m.txn.LPop(mDDLJobListKey)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -460,7 +466,7 @@ func (m *TMeta) DeQueueDDLJob() (*model.Job, error) {
 }
 
 // GetDDLJob returns the DDL job with index.
-func (m *TMeta) GetDDLJob(index int64) (*model.Job, error) {
+func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 	value, err := m.txn.LIndex(mDDLJobListKey, index)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -472,7 +478,7 @@ func (m *TMeta) GetDDLJob(index int64) (*model.Job, error) {
 }
 
 // UpdateDDLJob updates the DDL job with index.
-func (m *TMeta) UpdateDDLJob(index int64, job *model.Job) error {
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
 	b, err := json.Marshal(job)
 	if err != nil {
 		return errors.Trace(err)
@@ -481,18 +487,18 @@ func (m *TMeta) UpdateDDLJob(index int64, job *model.Job) error {
 }
 
 // DDLJobLength returns the DDL job length.
-func (m *TMeta) DDLJobLength() (int64, error) {
+func (m *Meta) DDLJobLength() (int64, error) {
 	return m.txn.LLen(mDDLJobListKey)
 }
 
-func (m *TMeta) jobIDKey(id int64) []byte {
+func (m *Meta) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	return b
 }
 
 // AddHistoryDDLJob adds DDL job to history.
-func (m *TMeta) AddHistoryDDLJob(job *model.Job) error {
+func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
 	b, err := json.Marshal(job)
 	if err != nil {
 		return errors.Trace(err)
@@ -501,7 +507,7 @@ func (m *TMeta) AddHistoryDDLJob(job *model.Job) error {
 }
 
 // GetHistoryDDLJob gets a history DDL job.
-func (m *TMeta) GetHistoryDDLJob(id int64) (*model.Job, error) {
+func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	value, err := m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)

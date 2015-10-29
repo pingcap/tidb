@@ -97,7 +97,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) verifyOwner(t *meta.TMeta) error {
+func (d *ddl) verifyOwner(t *meta.Meta) error {
 	owner, err := t.GetDDLOwner()
 	if err != nil {
 		return errors.Trace(err)
@@ -129,7 +129,7 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 }
 
 // every time we enter another state, we must call this function.
-func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) updateJob(t *meta.Meta, job *model.Job) error {
 	err := d.verifyOwner(t)
 	if err != nil {
 		return errors.Trace(err)

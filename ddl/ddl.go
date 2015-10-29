@@ -95,11 +95,9 @@ func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 func (d *ddl) genGlobalID() (int64, error) {
 	var globalID int64
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-
-		var err1 error
-		globalID, err1 = t.GenGlobalID()
-		return errors.Trace(err1)
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
 	})
 
 	return globalID, errors.Trace(err)
@@ -135,7 +133,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(t *meta.TMeta, schemaMetaVersion int64) error {
+func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
 	curVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
