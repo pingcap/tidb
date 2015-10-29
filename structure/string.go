@@ -56,10 +56,7 @@ func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 // the value after the increment.
 func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	ek := t.encodeStringDataKey(key)
-	if err := t.txn.LockKeys(ek); err != nil {
-		return 0, errors.Trace(err)
-	}
-
+	// txn Inc will lock this key, so we don't lock it here.
 	n, err := t.txn.Inc(ek, step)
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
