@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 )
@@ -30,7 +31,8 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// Create a new job and queue it.
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var err error
 		job.ID, err = t.GenGlobalID()
 		if err != nil {
@@ -78,7 +80,8 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
 		return errors.Trace(err1)
@@ -139,7 +142,9 @@ func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
 func (d *ddl) getFirstJob() (*model.Job, error) {
 	var job *model.Job
 
-	err := d.meta.RunInNewTxn(true, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+
 		var err1 error
 		job, err1 = t.GetDDLJob(0)
 		return errors.Trace(err1)
@@ -150,7 +155,8 @@ func (d *ddl) getFirstJob() (*model.Job, error) {
 
 func (d *ddl) finishJob(job *model.Job) error {
 	// done, notice and run next job.
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifyOwner(t)
 		if err != nil {
 			return errors.Trace(err)
@@ -169,7 +175,8 @@ func (d *ddl) finishJob(job *model.Job) error {
 }
 
 func (d *ddl) checkOwner() error {
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		return errors.Trace(d.verifyOwner(t))
 	})
 

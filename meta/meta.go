@@ -66,60 +66,15 @@ var (
 	ErrTableNotExists = errors.New("table doesn't exist")
 )
 
-// Meta is the structure saving meta information.
-type Meta struct {
-	store *structure.TStore
-}
-
 // TMeta is for handling meta information in a transaction.
 type TMeta struct {
 	txn *structure.TxStructure
 }
 
-// NewMeta creates a Meta with kv storage.
-func NewMeta(store kv.Storage) *Meta {
-	m := &Meta{
-		store: structure.NewStore(store, []byte{0x00}),
-	}
-	return m
-}
-
-// Begin creates a TMeta object and you can handle meta information in a transaction.
-func (m *Meta) Begin() (*TMeta, error) {
-	t := &TMeta{}
-
-	var err error
-	t.txn, err = m.store.Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return t, nil
-}
-
-// RunInNewTxn runs fn in a new transaction.
-func (m *Meta) RunInNewTxn(retryable bool, f func(t *TMeta) error) error {
-	fn := func(txn *structure.TxStructure) error {
-		t := &TMeta{txn: txn}
-		return errors.Trace(f(t))
-	}
-
-	err := m.store.RunInNewTxn(retryable, fn)
-	return errors.Trace(err)
-}
-
-// GenGlobalID generates next id globally.
-func (m *Meta) GenGlobalID() (int64, error) {
-	var (
-		id  int64
-		err error
-	)
-
-	err1 := m.RunInNewTxn(true, func(t *TMeta) error {
-		id, err = t.GenGlobalID()
-		return errors.Trace(err)
-	})
-
-	return id, errors.Trace(err1)
+// NewMeta creates a TMeta in transaction txn.
+func NewMeta(txn kv.Transaction) *TMeta {
+	t := structure.NewStructure(txn, []byte{0x00})
+	return &TMeta{txn: t}
 }
 
 // GenGlobalID generates next id globally.
@@ -555,14 +510,4 @@ func (m *TMeta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	job := &model.Job{}
 	err = json.Unmarshal(value, job)
 	return job, errors.Trace(err)
-}
-
-// Commit commits the transaction.
-func (m *TMeta) Commit() error {
-	return m.txn.Commit()
-}
-
-// Rollback rolls back the transaction.
-func (m *TMeta) Rollback() error {
-	return m.txn.Rollback()
 }
