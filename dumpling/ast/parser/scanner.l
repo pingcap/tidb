@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type lexer struct {
@@ -46,6 +47,7 @@ type lexer struct {
 	val		[]byte
 	ungetBuf	[]byte
 	root		bool
+	prepare		bool
 	stmtStartPos 	int
 	stringLit 	[]byte
 
@@ -84,6 +86,14 @@ func (l *lexer) Inj() int {
 
 func (l *lexer) SetInj(inj int) {
 	l.inj = inj
+}
+
+func (l *lexer) SetPrepare() {
+	l.prepare = true
+}
+
+func (l *lexer) IsPrepare() bool {
+	return l.prepare
 }
 
 func (l *lexer) Root() bool {
@@ -1001,7 +1011,8 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 		s = strings.TrimSuffix(s, "'") + "\""
 		pref = "\""
 	} 
-	v, err := strconv.Unquote(pref + s)
+	v := stringutil.RemoveUselessBackslash(pref+s)
+        v, err := strconv.Unquote(v)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}

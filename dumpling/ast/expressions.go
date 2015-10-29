@@ -14,6 +14,7 @@
 package ast
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -58,6 +59,8 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	ve.Data = value
 	// TODO: make it more precise.
 	switch value.(type) {
+	case nil:
+		ve.Type = types.NewFieldType(mysql.TypeNull)
 	case bool, int64:
 		ve.Type = types.NewFieldType(mysql.TypeLonglong)
 	case uint64:
@@ -80,7 +83,7 @@ func NewValueExpr(value interface{}) *ValueExpr {
 		ve.Type.Charset = "binary"
 		ve.Type.Collate = "binary"
 	default:
-		panic("illegal literal value type")
+		panic("illegal literal value type:" + fmt.Sprintf("T", value))
 	}
 	return ve
 }

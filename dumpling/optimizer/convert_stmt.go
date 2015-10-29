@@ -16,8 +16,10 @@ package optimizer
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/stmt"
@@ -37,17 +39,16 @@ func convertAssignment(converter *expressionConverter, v *ast.Assignment) (*expr
 	return oldAssign, nil
 }
 
-func convertInsert(v *ast.InsertStmt) (*stmts.InsertIntoStmt, error) {
+func convertInsert(converter *expressionConverter, v *ast.InsertStmt) (*stmts.InsertIntoStmt, error) {
 	oldInsert := &stmts.InsertIntoStmt{
 		Priority: v.Priority,
 		Text:     v.Text(),
 	}
-	tableName := v.Table.TableRefs.Left.(*ast.TableName)
+	tableName := v.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
 	oldInsert.TableIdent = table.Ident{Schema: tableName.Schema, Name: tableName.Name}
 	for _, val := range v.Columns {
 		oldInsert.ColNames = append(oldInsert.ColNames, joinColumnName(val))
 	}
-	converter := newExpressionConverter()
 	for _, row := range v.Lists {
 		var oldRow []expression.Expression
 		for _, val := range row {
@@ -77,9 +78,9 @@ func convertInsert(v *ast.InsertStmt) (*stmts.InsertIntoStmt, error) {
 		var err error
 		switch x := v.Select.(type) {
 		case *ast.SelectStmt:
-			oldInsert.Sel, err = convertSelect(x)
+			oldInsert.Sel, err = convertSelect(converter, x)
 		case *ast.UnionStmt:
-			oldInsert.Sel, err = convertUnion(x)
+			oldInsert.Sel, err = convertUnion(converter, x)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -88,7 +89,7 @@ func convertInsert(v *ast.InsertStmt) (*stmts.InsertIntoStmt, error) {
 	return oldInsert, nil
 }
 
-func convertDelete(v *ast.DeleteStmt) (*stmts.DeleteStmt, error) {
+func convertDelete(converter *expressionConverter, v *ast.DeleteStmt) (*stmts.DeleteStmt, error) {
 	oldDelete := &stmts.DeleteStmt{
 		BeforeFrom:  v.BeforeFrom,
 		Ignore:      v.Ignore,
@@ -97,7 +98,6 @@ func convertDelete(v *ast.DeleteStmt) (*stmts.DeleteStmt, error) {
 		Quick:       v.Quick,
 		Text:        v.Text(),
 	}
-	converter := newExpressionConverter()
 	oldRefs, err := convertJoin(converter, v.TableRefs.TableRefs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -131,14 +131,13 @@ func convertDelete(v *ast.DeleteStmt) (*stmts.DeleteStmt, error) {
 	return oldDelete, nil
 }
 
-func convertUpdate(v *ast.UpdateStmt) (*stmts.UpdateStmt, error) {
+func convertUpdate(converter *expressionConverter, v *ast.UpdateStmt) (*stmts.UpdateStmt, error) {
 	oldUpdate := &stmts.UpdateStmt{
 		Ignore:        v.Ignore,
 		MultipleTable: v.MultipleTable,
 		LowPriority:   v.LowPriority,
 		Text:          v.Text(),
 	}
-	converter := newExpressionConverter()
 	var err error
 	oldUpdate.TableRefs, err = convertJoin(converter, v.TableRefs.TableRefs)
 	if err != nil {
@@ -176,10 +175,7 @@ func convertUpdate(v *ast.UpdateStmt) (*stmts.UpdateStmt, error) {
 	return oldUpdate, nil
 }
 
-func convertSelect(s *ast.SelectStmt) (*stmts.SelectStmt, error) {
-	converter := &expressionConverter{
-		exprMap: map[ast.Node]expression.Expression{},
-	}
+func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.SelectStmt, error) {
 	oldSelect := &stmts.SelectStmt{}
 	oldSelect.Distinct = s.Distinct
 	oldSelect.Fields = make([]*field.Field, len(s.Fields.Fields))
@@ -187,9 +183,13 @@ func convertSelect(s *ast.SelectStmt) (*stmts.SelectStmt, error) {
 		oldField := &field.Field{}
 		oldField.AsName = val.AsName.O
 		var err error
-		oldField.Expr, err = convertExpr(converter, val.Expr)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if val.Expr != nil {
+			oldField.Expr, err = convertExpr(converter, val.Expr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else if val.WildCard != nil {
+			oldField.Expr = &expression.Ident{CIStr: model.NewCIStr("*")}
 		}
 		oldSelect.Fields[i] = oldField
 	}
@@ -245,7 +245,7 @@ func convertSelect(s *ast.SelectStmt) (*stmts.SelectStmt, error) {
 	return oldSelect, nil
 }
 
-func convertUnion(u *ast.UnionStmt) (*stmts.UnionStmt, error) {
+func convertUnion(converter *expressionConverter, u *ast.UnionStmt) (*stmts.UnionStmt, error) {
 	oldUnion := &stmts.UnionStmt{}
 	oldUnion.Selects = make([]*stmts.SelectStmt, len(u.Selects))
 	oldUnion.Distincts = make([]bool, len(u.Selects)-1)
@@ -255,11 +255,18 @@ func convertUnion(u *ast.UnionStmt) (*stmts.UnionStmt, error) {
 		}
 	}
 	for i, val := range u.Selects {
-		oldSelect, err := convertSelect(val)
+		oldSelect, err := convertSelect(converter, val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		oldUnion.Selects[i] = oldSelect
+	}
+	if u.OrderBy != nil {
+		oldOrderBy, err := convertOrderBy(converter, u.OrderBy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldUnion.OrderBy = oldOrderBy
 	}
 	if u.Limit != nil {
 		if u.Limit.Offset > 0 {
@@ -298,7 +305,7 @@ func convertJoin(converter *expressionConverter, join *ast.Join) (*rsets.JoinRse
 		oldJoin.Left = oldLeft
 	}
 
-	switch r := join.Left.(type) {
+	switch r := join.Right.(type) {
 	case *ast.Join:
 		oldRight, err := convertJoin(converter, r)
 		if err != nil {
@@ -331,13 +338,13 @@ func convertTableSource(converter *expressionConverter, ts *ast.TableSource) (*r
 	case *ast.TableName:
 		oldTs.Source = table.Ident{Schema: src.Schema, Name: src.Name}
 	case *ast.SelectStmt:
-		oldSelect, err := convertSelect(src)
+		oldSelect, err := convertSelect(converter, src)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		oldTs.Source = oldSelect
 	case *ast.UnionStmt:
-		oldUnion, err := convertUnion(src)
+		oldUnion, err := convertUnion(converter, src)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -384,7 +391,7 @@ func convertOrderBy(converter *expressionConverter, orderBy *ast.OrderByClause) 
 	return oldOrderBy, nil
 }
 
-func convertCreateDatabase(v *ast.CreateDatabaseStmt) (*stmts.CreateDatabaseStmt, error) {
+func convertCreateDatabase(converter *expressionConverter, v *ast.CreateDatabaseStmt) (*stmts.CreateDatabaseStmt, error) {
 	oldCreateDatabase := &stmts.CreateDatabaseStmt{
 		IfNotExists: v.IfNotExists,
 		Name:        v.Name,
@@ -404,7 +411,7 @@ func convertCreateDatabase(v *ast.CreateDatabaseStmt) (*stmts.CreateDatabaseStmt
 	return oldCreateDatabase, nil
 }
 
-func convertDropDatabase(v *ast.DropDatabaseStmt) (*stmts.DropDatabaseStmt, error) {
+func convertDropDatabase(converter *expressionConverter, v *ast.DropDatabaseStmt) (*stmts.DropDatabaseStmt, error) {
 	return &stmts.DropDatabaseStmt{
 		IfExists: v.IfExists,
 		Name:     v.Name,
@@ -512,12 +519,12 @@ func convertConstraint(converter *expressionConverter, v *ast.Constraint) (*cold
 	return oldConstraint, nil
 }
 
-func convertCreateTable(v *ast.CreateTableStmt) (*stmts.CreateTableStmt, error) {
+func convertCreateTable(converter *expressionConverter, v *ast.CreateTableStmt) (*stmts.CreateTableStmt, error) {
 	oldCreateTable := &stmts.CreateTableStmt{
-		Ident: table.Ident{Schema: v.Table.Schema, Name: v.Table.Name},
-		Text:  v.Text(),
+		Ident:       table.Ident{Schema: v.Table.Schema, Name: v.Table.Name},
+		IfNotExists: v.IfNotExists,
+		Text:        v.Text(),
 	}
-	converter := newExpressionConverter()
 	for _, val := range v.Cols {
 		oldColDef, err := convertColumnDef(converter, val)
 		if err != nil {
@@ -551,7 +558,7 @@ func convertCreateTable(v *ast.CreateTableStmt) (*stmts.CreateTableStmt, error) 
 	return oldCreateTable, nil
 }
 
-func convertDropTable(v *ast.DropTableStmt) (*stmts.DropTableStmt, error) {
+func convertDropTable(converter *expressionConverter, v *ast.DropTableStmt) (*stmts.DropTableStmt, error) {
 	oldDropTable := &stmts.DropTableStmt{
 		IfExists: v.IfExists,
 		Text:     v.Text(),
@@ -566,7 +573,7 @@ func convertDropTable(v *ast.DropTableStmt) (*stmts.DropTableStmt, error) {
 	return oldDropTable, nil
 }
 
-func convertCreateIndex(v *ast.CreateIndexStmt) (*stmts.CreateIndexStmt, error) {
+func convertCreateIndex(converter *expressionConverter, v *ast.CreateIndexStmt) (*stmts.CreateIndexStmt, error) {
 	oldCreateIndex := &stmts.CreateIndexStmt{
 		IndexName: v.IndexName,
 		Unique:    v.Unique,
@@ -587,7 +594,7 @@ func convertCreateIndex(v *ast.CreateIndexStmt) (*stmts.CreateIndexStmt, error) 
 	return oldCreateIndex, nil
 }
 
-func convertDropIndex(v *ast.DropIndexStmt) (*stmts.DropIndexStmt, error) {
+func convertDropIndex(converter *expressionConverter, v *ast.DropIndexStmt) (*stmts.DropIndexStmt, error) {
 	return &stmts.DropIndexStmt{
 		IfExists:  v.IfExists,
 		IndexName: v.IndexName,
@@ -595,14 +602,110 @@ func convertDropIndex(v *ast.DropIndexStmt) (*stmts.DropIndexStmt, error) {
 	}, nil
 }
 
-func convertAlterTable(v *ast.AlterTableStmt) (*stmts.AlterTableStmt, error) {
+func convertAlterTableSpec(converter *expressionConverter, v *ast.AlterTableSpec) (*ddl.AlterSpecification, error) {
+	oldAlterSpec := &ddl.AlterSpecification{
+		Name: v.Name,
+	}
+	switch v.Tp {
+	case ast.AlterTableAddConstraint:
+		oldAlterSpec.Action = ddl.AlterAddConstr
+	case ast.AlterTableAddColumn:
+		oldAlterSpec.Action = ddl.AlterAddColumn
+	case ast.AlterTableDropColumn:
+		oldAlterSpec.Action = ddl.AlterDropColumn
+	case ast.AlterTableDropForeignKey:
+		oldAlterSpec.Action = ddl.AlterDropForeignKey
+	case ast.AlterTableDropIndex:
+		oldAlterSpec.Action = ddl.AlterDropIndex
+	case ast.AlterTableDropPrimaryKey:
+		oldAlterSpec.Action = ddl.AlterDropPrimaryKey
+	case ast.AlterTableOption:
+		oldAlterSpec.Action = ddl.AlterTableOpt
+	}
+	if v.Column != nil {
+		oldColDef, err := convertColumnDef(converter, v.Column)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldAlterSpec.Column = oldColDef
+	}
+	if v.Position != nil {
+		oldAlterSpec.Position = &ddl.ColumnPosition{}
+		switch v.Position.Tp {
+		case ast.ColumnPositionNone:
+			oldAlterSpec.Position.Type = ddl.ColumnPositionNone
+		case ast.ColumnPositionFirst:
+			oldAlterSpec.Position.Type = ddl.ColumnPositionFirst
+		case ast.ColumnPositionAfter:
+			oldAlterSpec.Position.Type = ddl.ColumnPositionAfter
+		}
+		if v.ColumnName != nil {
+			oldAlterSpec.Position.RelativeColumn = joinColumnName(v.ColumnName)
+		}
+	}
+	if v.Constraint != nil {
+		oldConstraint, err := convertConstraint(converter, v.Constraint)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldAlterSpec.Constraint = oldConstraint
+	}
+	for _, val := range v.Options {
+		oldOpt := &coldef.TableOpt{
+			StrValue:  val.StrValue,
+			UintValue: val.UintValue,
+		}
+		switch val.Tp {
+		case ast.TableOptionNone:
+			oldOpt.Tp = coldef.TblOptNone
+		case ast.TableOptionEngine:
+			oldOpt.Tp = coldef.TblOptEngine
+		case ast.TableOptionCharset:
+			oldOpt.Tp = coldef.TblOptCharset
+		case ast.TableOptionCollate:
+			oldOpt.Tp = coldef.TblOptCollate
+		case ast.TableOptionAutoIncrement:
+			oldOpt.Tp = coldef.TblOptAutoIncrement
+		case ast.TableOptionComment:
+			oldOpt.Tp = coldef.TblOptComment
+		case ast.TableOptionAvgRowLength:
+			oldOpt.Tp = coldef.TblOptAvgRowLength
+		case ast.TableOptionCheckSum:
+			oldOpt.Tp = coldef.TblOptCheckSum
+		case ast.TableOptionCompression:
+			oldOpt.Tp = coldef.TblOptCompression
+		case ast.TableOptionConnection:
+			oldOpt.Tp = coldef.TblOptConnection
+		case ast.TableOptionPassword:
+			oldOpt.Tp = coldef.TblOptPassword
+		case ast.TableOptionKeyBlockSize:
+			oldOpt.Tp = coldef.TblOptKeyBlockSize
+		case ast.TableOptionMaxRows:
+			oldOpt.Tp = coldef.TblOptMaxRows
+		case ast.TableOptionMinRows:
+			oldOpt.Tp = coldef.TblOptMinRows
+		}
+		oldAlterSpec.TableOpts = append(oldAlterSpec.TableOpts, oldOpt)
+	}
+	return oldAlterSpec, nil
+}
+
+func convertAlterTable(converter *expressionConverter, v *ast.AlterTableStmt) (*stmts.AlterTableStmt, error) {
 	oldAlterTable := &stmts.AlterTableStmt{
-		Text: v.Text(),
+		Ident: table.Ident{Schema: v.Table.Schema, Name: v.Table.Name},
+		Text:  v.Text(),
+	}
+	for _, val := range v.Specs {
+		oldSpec, err := convertAlterTableSpec(converter, val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldAlterTable.Specs = append(oldAlterTable.Specs, oldSpec)
 	}
 	return oldAlterTable, nil
 }
 
-func convertTruncateTable(v *ast.TruncateTableStmt) (*stmts.TruncateTableStmt, error) {
+func convertTruncateTable(converter *expressionConverter, v *ast.TruncateTableStmt) (*stmts.TruncateTableStmt, error) {
 	return &stmts.TruncateTableStmt{
 		TableIdent: table.Ident{
 			Schema: v.Table.Schema,
@@ -612,20 +715,20 @@ func convertTruncateTable(v *ast.TruncateTableStmt) (*stmts.TruncateTableStmt, e
 	}, nil
 }
 
-func convertExplain(v *ast.ExplainStmt) (*stmts.ExplainStmt, error) {
+func convertExplain(converter *expressionConverter, v *ast.ExplainStmt) (*stmts.ExplainStmt, error) {
 	oldExplain := &stmts.ExplainStmt{
 		Text: v.Text(),
 	}
 	var err error
 	switch x := v.Stmt.(type) {
 	case *ast.SelectStmt:
-		oldExplain.S, err = convertSelect(x)
+		oldExplain.S, err = convertSelect(converter, x)
 	case *ast.UpdateStmt:
-		oldExplain.S, err = convertUpdate(x)
+		oldExplain.S, err = convertUpdate(converter, x)
 	case *ast.DeleteStmt:
-		oldExplain.S, err = convertDelete(x)
+		oldExplain.S, err = convertDelete(converter, x)
 	case *ast.InsertStmt:
-		oldExplain.S, err = convertInsert(x)
+		oldExplain.S, err = convertInsert(converter, x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -633,7 +736,7 @@ func convertExplain(v *ast.ExplainStmt) (*stmts.ExplainStmt, error) {
 	return oldExplain, nil
 }
 
-func convertPrepare(v *ast.PrepareStmt) (*stmts.PreparedStmt, error) {
+func convertPrepare(converter *expressionConverter, v *ast.PrepareStmt) (*stmts.PreparedStmt, error) {
 	oldPrepare := &stmts.PreparedStmt{
 		InPrepare: true,
 		Name:      v.Name,
@@ -651,7 +754,7 @@ func convertPrepare(v *ast.PrepareStmt) (*stmts.PreparedStmt, error) {
 	return oldPrepare, nil
 }
 
-func convertDeallocate(v *ast.DeallocateStmt) (*stmts.DeallocateStmt, error) {
+func convertDeallocate(converter *expressionConverter, v *ast.DeallocateStmt) (*stmts.DeallocateStmt, error) {
 	return &stmts.DeallocateStmt{
 		ID:   v.ID,
 		Name: v.Name,
@@ -659,14 +762,13 @@ func convertDeallocate(v *ast.DeallocateStmt) (*stmts.DeallocateStmt, error) {
 	}, nil
 }
 
-func convertExecute(v *ast.ExecuteStmt) (*stmts.ExecuteStmt, error) {
+func convertExecute(converter *expressionConverter, v *ast.ExecuteStmt) (*stmts.ExecuteStmt, error) {
 	oldExec := &stmts.ExecuteStmt{
 		ID:   v.ID,
 		Name: v.Name,
 		Text: v.Text(),
 	}
 	oldExec.UsingVars = make([]expression.Expression, len(v.UsingVars))
-	converter := newExpressionConverter()
 	for i, val := range v.UsingVars {
 		oldVar, err := convertExpr(converter, val)
 		if err != nil {
@@ -677,7 +779,7 @@ func convertExecute(v *ast.ExecuteStmt) (*stmts.ExecuteStmt, error) {
 	return oldExec, nil
 }
 
-func convertShow(v *ast.ShowStmt) (*stmts.ShowStmt, error) {
+func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowStmt, error) {
 	oldShow := &stmts.ShowStmt{
 		DBName:      v.DBName,
 		Flag:        v.Flag,
@@ -735,25 +837,25 @@ func convertShow(v *ast.ShowStmt) (*stmts.ShowStmt, error) {
 	return oldShow, nil
 }
 
-func convertBegin(v *ast.BeginStmt) (*stmts.BeginStmt, error) {
+func convertBegin(converter *expressionConverter, v *ast.BeginStmt) (*stmts.BeginStmt, error) {
 	return &stmts.BeginStmt{
 		Text: v.Text(),
 	}, nil
 }
 
-func convertCommit(v *ast.CommitStmt) (*stmts.CommitStmt, error) {
+func convertCommit(converter *expressionConverter, v *ast.CommitStmt) (*stmts.CommitStmt, error) {
 	return &stmts.CommitStmt{
 		Text: v.Text(),
 	}, nil
 }
 
-func convertRollback(v *ast.RollbackStmt) (*stmts.RollbackStmt, error) {
+func convertRollback(converter *expressionConverter, v *ast.RollbackStmt) (*stmts.RollbackStmt, error) {
 	return &stmts.RollbackStmt{
 		Text: v.Text(),
 	}, nil
 }
 
-func convertUse(v *ast.UseStmt) (*stmts.UseStmt, error) {
+func convertUse(converter *expressionConverter, v *ast.UseStmt) (*stmts.UseStmt, error) {
 	return &stmts.UseStmt{
 		DBName: v.DBName,
 		Text:   v.Text(),
@@ -775,12 +877,11 @@ func convertVariableAssignment(converter *expressionConverter, v *ast.VariableAs
 	}, nil
 }
 
-func convertSet(v *ast.SetStmt) (*stmts.SetStmt, error) {
+func convertSet(converter *expressionConverter, v *ast.SetStmt) (*stmts.SetStmt, error) {
 	oldSet := &stmts.SetStmt{
 		Text:      v.Text(),
 		Variables: make([]*stmts.VariableAssignment, len(v.Variables)),
 	}
-	converter := newExpressionConverter()
 	for i, val := range v.Variables {
 		oldAssign, err := convertVariableAssignment(converter, val)
 		if err != nil {
@@ -791,7 +892,7 @@ func convertSet(v *ast.SetStmt) (*stmts.SetStmt, error) {
 	return oldSet, nil
 }
 
-func convertSetCharset(v *ast.SetCharsetStmt) (*stmts.SetCharsetStmt, error) {
+func convertSetCharset(converter *expressionConverter, v *ast.SetCharsetStmt) (*stmts.SetCharsetStmt, error) {
 	return &stmts.SetCharsetStmt{
 		Charset: v.Charset,
 		Collate: v.Collate,
@@ -799,7 +900,7 @@ func convertSetCharset(v *ast.SetCharsetStmt) (*stmts.SetCharsetStmt, error) {
 	}, nil
 }
 
-func convertSetPwd(v *ast.SetPwdStmt) (*stmts.SetPwdStmt, error) {
+func convertSetPwd(converter *expressionConverter, v *ast.SetPwdStmt) (*stmts.SetPwdStmt, error) {
 	return &stmts.SetPwdStmt{
 		User:     v.User,
 		Password: v.Password,
@@ -807,14 +908,13 @@ func convertSetPwd(v *ast.SetPwdStmt) (*stmts.SetPwdStmt, error) {
 	}, nil
 }
 
-func convertDo(v *ast.DoStmt) (*stmts.DoStmt, error) {
-	exprConverter := newExpressionConverter()
+func convertDo(converter *expressionConverter, v *ast.DoStmt) (*stmts.DoStmt, error) {
 	oldDo := &stmts.DoStmt{
 		Text:  v.Text(),
 		Exprs: make([]expression.Expression, len(v.Exprs)),
 	}
 	for i, val := range v.Exprs {
-		oldExpr, err := convertExpr(exprConverter, val)
+		oldExpr, err := convertExpr(converter, val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
