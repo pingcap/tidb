@@ -19,6 +19,7 @@ package tidb
 
 import (
 	"net/http"
+	"time"
 	// For pprof
 	_ "net/http/pprof"
 	"strings"
@@ -78,7 +79,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if localstore.IsLocalStore(store) {
 		lease = 0
 	}
-	d, err = domain.NewDomain(store, lease)
+	d, err = domain.NewDomain(store, time.Duration(lease)*time.Second)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

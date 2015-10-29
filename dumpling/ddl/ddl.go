@@ -20,6 +20,8 @@ package ddl
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
@@ -64,7 +66,7 @@ type ddl struct {
 	store       kv.Storage
 	meta        *meta.Meta
 	// schema lease seconds.
-	lease     int
+	lease     time.Duration
 	uuid      string
 	jobCh     chan struct{}
 	jobDoneCh chan struct{}
@@ -73,6 +75,9 @@ type ddl struct {
 	// TODO: now we use goroutine to simulate reorgnization jobs, later we may
 	// use a persistent job list.
 	reOrgDoneCh chan error
+
+	quitCh chan struct{}
+	wait   sync.WaitGroup
 }
 
 // OnDDLChange is used as hook function when schema changed.
@@ -83,7 +88,7 @@ func fakeOnDDLChange(err error) error {
 }
 
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease int) DDL {
+func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease time.Duration) DDL {
 	if hook == nil {
 		hook = fakeOnDDLChange
 	}
@@ -97,9 +102,27 @@ func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 		uuid:        uuid.NewV4().String(),
 		jobCh:       make(chan struct{}, 1),
 		jobDoneCh:   make(chan struct{}, 1),
+		quitCh:      make(chan struct{}),
 	}
+
+	d.wait.Add(1)
 	go d.onWorker()
 	return d
+}
+
+func (d *ddl) close() {
+	close(d.quitCh)
+
+	d.wait.Wait()
+}
+
+func (d *ddl) isClosed() bool {
+	select {
+	case <-d.quitCh:
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *ddl) GetInformationSchema() infoschema.InfoSchema {

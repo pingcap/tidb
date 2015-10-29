@@ -112,7 +112,7 @@ func (d *ddl) verifyOwner(t *meta.TMeta) error {
 	// we must wait 2 * lease time to guarantee other servers update the schema,
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
-	maxTimeout := int64(4 * d.lease)
+	maxTimeout := int64(4 * d.lease / time.Second)
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
 		owner.OwnerID = d.uuid
 		owner.LastUpdateTS = now
@@ -160,6 +160,10 @@ var ErrNotOwner = errors.New("DDL: not owner")
 
 func (d *ddl) handleJobQueue() error {
 	for {
+		if d.isClosed() {
+			return nil
+		}
+
 		var job *model.Job
 		err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
 			err := d.verifyOwner(t)
@@ -211,7 +215,15 @@ func (d *ddl) handleJobQueue() error {
 // onWorker is for async online schema change, it will try to become the owner first,
 // then wait or pull the job queue to handle a schema change job.
 func (d *ddl) onWorker() {
-	checkTime := 10 * time.Second
+	defer d.wait.Done()
+
+	// we use 4 * lease time to check owner's timeout, so here, we will update owner's status
+	// every 2 * lease time, if lease is 0, we will use default 10s.
+	checkTime := 2 * d.lease
+	if checkTime == 0 {
+		checkTime = 10 * time.Second
+	}
+
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
 
@@ -220,6 +232,8 @@ func (d *ddl) onWorker() {
 		case <-ticker.C:
 			log.Debugf("wait %s to check DDL status again", checkTime)
 		case <-d.jobCh:
+		case <-d.quitCh:
+			return
 		}
 
 		err := d.handleJobQueue()
@@ -276,6 +290,9 @@ func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
 // to guarantee that all servers have already updated schema.
 func (d *ddl) waitSchemaChanged() {
 	if d.lease > 0 {
-		time.Sleep(time.Duration(d.lease) * time.Second * 2)
+		select {
+		case <-time.After(d.lease * 2):
+		case <-d.quitCh:
+		}
 	}
 }
