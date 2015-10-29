@@ -305,7 +305,8 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error) {
 	_, err := txn.Get([]byte(t.RecordKey(handle, nil)))
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
-		// if row doesn't exist, we may delete the row already, no need to add index again.
+		// If row doesn't exist, we may have deleted the row already,
+		// no need to add index again.
 		return false, nil
 	} else if err != nil {
 		return false, errors.Trace(err)
