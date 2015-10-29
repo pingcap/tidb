@@ -298,6 +298,7 @@ current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
 date_add	{d}{a}{t}{e}_{a}{d}{d}
+date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
@@ -648,6 +649,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {databases}		return databases
 {date_add}		lval.item = string(l.val)
 			return dateAdd
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
