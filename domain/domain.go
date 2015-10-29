@@ -32,7 +32,7 @@ type Domain struct {
 	infoHandle *infoschema.Handle
 	ddl        ddl.DDL
 	meta       *meta.Meta
-	lease      int
+	lease      time.Duration
 }
 
 func (do *Domain) loadInfoSchema(m *meta.TMeta) (err error) {
@@ -112,7 +112,7 @@ func (do *Domain) loadSchemaInLoop() {
 		return
 	}
 
-	ticker := time.NewTicker(time.Duration(do.lease) * time.Second)
+	ticker := time.NewTicker(do.lease)
 	defer ticker.Stop()
 
 	for {
@@ -126,7 +126,7 @@ func (do *Domain) loadSchemaInLoop() {
 }
 
 // NewDomain creates a new domain.
-func NewDomain(store kv.Storage, lease int) (d *Domain, err error) {
+func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
 		store: store,
 		meta:  meta.NewMeta(store),

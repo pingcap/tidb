@@ -115,6 +115,9 @@ func (d *ddl) runReorgJob(f func() error) error {
 	case <-time.After(waitReorgTimeout):
 		// if timeout, we will return, check the owner and retry wait job done again.
 		return errWaitReorgTimeout
+	case <-d.quitCh:
+		// we return errWaitReorgTimeout here too, so that outer loop will break.
+		return errWaitReorgTimeout
 	}
 
 }
