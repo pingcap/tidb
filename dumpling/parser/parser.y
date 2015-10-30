@@ -1892,7 +1892,7 @@ Literal:
 		co, err := charset.GetDefaultCollation(tp.Charset)
 		if err != nil {
 			l := yylex.(*lexer)
-			l.err(fmt.Sprintf("Get collation error for charset: %s", tp.Charset))
+			l.errf("Get collation error for charset: %s", tp.Charset)
 			return 1
 		}
 		tp.Collate = co
