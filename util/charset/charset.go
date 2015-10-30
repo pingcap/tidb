@@ -125,7 +125,7 @@ func GetDefaultCollation(charset string) (string, error) {
 	return c.DefaultCollation.Name, nil
 }
 
-// GetCharsetInfo return charset and collation for cs as name.
+// GetCharsetInfo returns charset and collation for cs as name.
 func GetCharsetInfo(cs string) (string, string, error) {
 	c, ok := charsets[strings.ToLower(cs)]
 	if !ok {

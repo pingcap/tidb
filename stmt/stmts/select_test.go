@@ -37,12 +37,7 @@ func (s *testStmtSuite) TestSelectWithoutFrom(c *C) {
 	tx = mustBegin(c, s.testDB)
 	rows, err = tx.Query(`select _utf8"string";`)
 	c.Assert(err, IsNil)
-
-	for rows.Next() {
-		var str string
-		rows.Scan(&str)
-		c.Assert(str, Equals, "string")
-	}
+	matchRows(c, rows, [][]interface{}{{"string"}})
 	rows.Close()
 	mustCommit(c, tx)
 }
