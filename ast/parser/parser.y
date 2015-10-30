@@ -141,6 +141,7 @@ import (
 	fulltext	"FULLTEXT"
 	ge		">="
 	global		"GLOBAL"
+	grant		"GRANT"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -190,6 +191,7 @@ import (
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
+	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
 	oror		"||"
@@ -229,6 +231,7 @@ import (
 	tableKwd	"TABLE"
 	tables		"TABLES"
 	then		"THEN"
+	to		"TO"
 	trailing	"TRAILING"
 	transaction	"TRANSACTION"
 	trim		"TRIM"
@@ -403,6 +406,7 @@ import (
 	FunctionNameConflict	"Built-in function call names which are conflict with keywords"
 	FuncDatetimePrec	"Function datetime precision"
 	GlobalScope		"The scope of variable"
+	GrantStmt		"Grant statement"
 	GroupByClause		"GROUP BY clause"
 	HashString		"Hashed string"
 	HavingClause		"HAVING clause"
@@ -430,6 +434,7 @@ import (
 	NotOpt			"optional NOT"
 	NowSym			"CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
 	NumLiteral		"Num/Int/Float/Decimal Literal"
+	ObjectType		"Grant statement object type"
 	OnDuplicateKeyUpdate	"ON DUPLICATE KEY UPDATE value list"
 	Operand			"operand"
 	OptFull			"Full or empty"
@@ -448,6 +453,10 @@ import (
 	PrimaryExpression	"primary expression"
 	PrimaryFactor		"primary expression factor"
 	Priority		"insert statement priority"
+	PrivElem		"Privilege element"
+	PrivElemList		"Privilege element list"
+	PrivLevel		"Privilege scope"
+	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
 	RollbackStmt		"ROLLBACK statement"
@@ -491,7 +500,7 @@ import (
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
 	UnionStmt		"Union select state ment"
 	UnionClauseList		"Union select clause list"
-	UnionClausePList	"Union (select) clause list"
+	UnionSelect		"Union (select) item"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
 	UserSpec		"Username and auth option"
@@ -633,7 +642,7 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableDropColumn,
-			ColumnName: $3.(*ast.ColumnName),
+			DropColumn: $3.(*ast.ColumnName),
 		}
 	}
 |	"DROP" "PRIMARY" "KEY"
@@ -1253,7 +1262,7 @@ ExplainStmt:
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt: &ast.ShowStmt{
-				Tp:	ast.ShowTables,
+				Tp:	ast.ShowColumns,
 				Table:	$2.(*ast.TableName),
 			},
 		}
@@ -2842,32 +2851,36 @@ SelectLockOpt:
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/union.html
 UnionStmt:
-	UnionClauseList
-	{
-		$$ = $1.(*ast.UnionStmt)
-	}
-|	UnionClausePList OrderByOptional SelectStmtLimit
+	UnionClauseList "UNION" UnionOpt SelectStmt
 	{
 		union := $1.(*ast.UnionStmt)
-		if $2 != nil {
-			union.OrderBy = $2.(*ast.OrderByClause)
+		union.Distinct = union.Distinct || $3.(bool)
+		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
+		$$ = union
+	}
+|	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
+	{
+		union := $1.(*ast.UnionStmt)
+		union.Distinct = union.Distinct || $3.(bool)
+		union.Selects = append(union.Selects, $5.(*ast.SelectStmt))
+		if $7 != nil {
+			union.OrderBy = $7.(*ast.OrderByClause)
 		}
-		if $3 != nil {
-			union.Limit = $3.(*ast.Limit)
+		if $8 != nil {
+			union.Limit = $8.(*ast.Limit)
 		}
 		$$ = union
 	}
 
 UnionClauseList:
-	SelectStmt "UNION" UnionOpt SelectStmt
+	UnionSelect
 	{
-		selects := []*ast.SelectStmt{$1.(*ast.SelectStmt), $4.(*ast.SelectStmt)}
+		selects := []*ast.SelectStmt{$1.(*ast.SelectStmt)}
 		$$ = &ast.UnionStmt{
-			Distinct: $3.(bool),
 			Selects: selects,
 		}
 	}
-|	UnionClauseList "UNION" UnionOpt SelectStmt
+|	UnionClauseList "UNION" UnionOpt UnionSelect
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
@@ -2875,21 +2888,11 @@ UnionClauseList:
 		$$ = union
 	}
 
-UnionClausePList:
-	'(' SelectStmt ')' "UNION" UnionOpt '(' SelectStmt ')'
+UnionSelect:
+	SelectStmt
+|	'(' SelectStmt ')'
 	{
-		selects := []*ast.SelectStmt{$2.(*ast.SelectStmt), $7.(*ast.SelectStmt)}
-		$$ = &ast.UnionStmt{
-			Distinct: $5.(bool),
-			Selects: selects,
-		}
-	}
-|	UnionClausePList "UNION" UnionOpt '(' SelectStmt ')'
-	{
-		union := $1.(*ast.UnionStmt)
-		union.Distinct = union.Distinct || $3.(bool)
-		union.Selects = append(union.Selects, $5.(*ast.SelectStmt))
-		$$ = union
+		$$ = $2
 	}
 
 UnionOpt:
@@ -3066,7 +3069,11 @@ ShowStmt:
 			Full:	$2.(bool),
 		}
 		if $5 != nil {
-			stmt.Where = $5.(ast.ExprNode)
+			if x, ok := $5.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
 		}
 		$$ = stmt
 	}
@@ -3089,7 +3096,9 @@ ShowStmt:
 			Tp: ast.ShowVariables,
 			GlobalScope: $2.(bool),
 		}
-		if $4 != nil {
+		if x, ok := $4.(*ast.PatternLikeExpr); ok {
+			stmt.Pattern = x
+		} else {
 			stmt.Where = $4.(ast.ExprNode)
 		}
 		$$ = stmt
@@ -3099,7 +3108,9 @@ ShowStmt:
 		stmt := &ast.ShowStmt{
 			Tp: 	ast.ShowCollation,
 		}
-		if $3 != nil {
+		if x, ok := $3.(*ast.PatternLikeExpr); ok {
+			stmt.Pattern = x
+		} else {
 			stmt.Where = $3.(ast.ExprNode)
 		}
 		$$ = stmt
@@ -3187,6 +3198,7 @@ Statement:
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	GrantStmt
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -3895,10 +3907,13 @@ CreateUserStmt:
 UserSpec:
 	Username AuthOption	
 	{
-		$$ = &ast.UserSpec{
+		userSpec := &ast.UserSpec{
 			User: $1.(string),
-			AuthOpt: $2.(*ast.AuthOption),
 		}
+		if $2 != nil {
+			userSpec.AuthOpt = $2.(*ast.AuthOption)
+		}
+		$$ = userSpec
 	}
 
 UserSpecList:
@@ -3912,7 +3927,9 @@ UserSpecList:
 	}
 
 AuthOption:
-	{}
+	{
+		$$ = nil
+	}
 |	"IDENTIFIED" "BY" AuthString
 	{
 		$$ = &ast.AuthOption {
@@ -3922,11 +3939,150 @@ AuthOption:
 	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
-		$$ = &ast.AuthOption {
+		$$ = &ast.AuthOption{
 			HashString: $4.(string),
 		}
 	}
 
 HashString:
 	stringLit
+
+/*************************************************************************************
+ * Grant statement
+ * See: https://dev.mysql.com/doc/refman/5.7/en/grant.html
+ *************************************************************************************/
+GrantStmt:
+	 "GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList
+	 {
+		$$ = &ast.GrantStmt{
+			Privs: $2.([]*ast.PrivElem),
+			ObjectType: $4.(ast.ObjectTypeType),
+			Level: $5.(*ast.GrantLevel),
+			Users: $7.([]*ast.UserSpec),
+		}
+	 }
+
+PrivElem:
+	PrivType
+	{
+		$$ = &ast.PrivElem{
+			Priv: $1.(mysql.PrivilegeType),
+		}
+	}
+|	PrivType '(' ColumnNameList ')'
+	{
+		$$ = &ast.PrivElem{
+			Priv: $1.(mysql.PrivilegeType),
+			Cols: $3.([]*ast.ColumnName),
+		}
+	}
+
+PrivElemList:
+	PrivElem
+	{
+		$$ = []*ast.PrivElem{$1.(*ast.PrivElem)}
+	}
+|	PrivElemList ',' PrivElem
+	{
+		$$ = append($1.([]*ast.PrivElem), $3.(*ast.PrivElem))
+	}
+
+PrivType:
+	"ALL"
+	{
+		$$ = mysql.AllPriv
+	}
+|	"ALTER"
+	{
+		$$ = mysql.AlterPriv
+	}
+|	"CREATE"
+	{
+		$$ = mysql.CreatePriv
+	}
+|	"CREATE" "USER"
+	{
+		$$ = mysql.CreateUserPriv
+	}
+|	"DELETE"
+	{
+		$$ = mysql.DeletePriv
+	}
+|	"DROP"
+	{
+		$$ = mysql.DropPriv
+	}
+|	"EXECUTE"
+	{
+		$$ = mysql.ExecutePriv
+	}
+|	"INDEX"
+	{
+		$$ = mysql.IndexPriv
+	}
+|	"INSERT"
+	{
+		$$ = mysql.InsertPriv
+	}
+|	"SELECT"
+	{
+		$$ = mysql.SelectPriv
+	}
+|	"SHOW" "DATABASES"
+	{
+		$$ = mysql.ShowDBPriv
+	}
+|	"UPDATE"
+	{
+		$$ = mysql.UpdatePriv
+	}
+|	"GRANT" "OPTION"
+	{
+		$$ = mysql.GrantPriv
+	}
+
+ObjectType:
+	{
+		$$ = ast.ObjectTypeNone
+	}
+|	"TABLE"
+	{
+		$$ = ast.ObjectTypeTable
+	}
+
+PrivLevel:
+	'*'
+	{
+		$$ = &ast.GrantLevel {
+			Level: ast.GrantLevelDB,
+		}
+	}
+|	'*' '.' '*'
+	{
+		$$ = &ast.GrantLevel {
+			Level: ast.GrantLevelGlobal,
+		}
+	}
+| 	Identifier '.' '*'
+	{
+		$$ = &ast.GrantLevel {
+			Level: ast.GrantLevelDB,
+			DBName: $1.(string),
+		}
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &ast.GrantLevel {
+			Level: ast.GrantLevelTable,
+			DBName: $1.(string),
+			TableName: $3.(string),
+		}
+	}
+|	Identifier
+	{
+		$$ = &ast.GrantLevel {
+			Level: ast.GrantLevelTable,
+			TableName: $1.(string),
+		}
+	}
 %%

@@ -176,8 +176,10 @@ func convertUpdate(converter *expressionConverter, v *ast.UpdateStmt) (*stmts.Up
 }
 
 func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.SelectStmt, error) {
-	oldSelect := &stmts.SelectStmt{}
-	oldSelect.Distinct = s.Distinct
+	oldSelect := &stmts.SelectStmt{
+		Distinct: s.Distinct,
+		Text:     s.Text(),
+	}
 	oldSelect.Fields = make([]*field.Field, len(s.Fields.Fields))
 	for i, val := range s.Fields.Fields {
 		oldField := &field.Field{}
@@ -246,7 +248,9 @@ func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.Se
 }
 
 func convertUnion(converter *expressionConverter, u *ast.UnionStmt) (*stmts.UnionStmt, error) {
-	oldUnion := &stmts.UnionStmt{}
+	oldUnion := &stmts.UnionStmt{
+		Text: u.Text(),
+	}
 	oldUnion.Selects = make([]*stmts.SelectStmt, len(u.Selects))
 	oldUnion.Distincts = make([]bool, len(u.Selects)-1)
 	if u.Distinct {
@@ -639,9 +643,12 @@ func convertAlterTableSpec(converter *expressionConverter, v *ast.AlterTableSpec
 		case ast.ColumnPositionAfter:
 			oldAlterSpec.Position.Type = ddl.ColumnPositionAfter
 		}
-		if v.ColumnName != nil {
-			oldAlterSpec.Position.RelativeColumn = joinColumnName(v.ColumnName)
+		if v.Position.RelativeColumn != nil {
+			oldAlterSpec.Position.RelativeColumn = joinColumnName(v.Position.RelativeColumn)
 		}
+	}
+	if v.DropColumn != nil {
+		oldAlterSpec.Name = joinColumnName(v.DropColumn)
 	}
 	if v.Constraint != nil {
 		oldConstraint, err := convertConstraint(converter, v.Constraint)
@@ -729,6 +736,8 @@ func convertExplain(converter *expressionConverter, v *ast.ExplainStmt) (*stmts.
 		oldExplain.S, err = convertDelete(converter, x)
 	case *ast.InsertStmt:
 		oldExplain.S, err = convertInsert(converter, x)
+	case *ast.ShowStmt:
+		oldExplain.S, err = convertShow(converter, x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -908,6 +917,36 @@ func convertSetPwd(converter *expressionConverter, v *ast.SetPwdStmt) (*stmts.Se
 	}, nil
 }
 
+func convertUserSpec(converter *expressionConverter, v *ast.UserSpec) (*coldef.UserSpecification, error) {
+	oldSpec := &coldef.UserSpecification{
+		User: v.User,
+	}
+	if v.AuthOpt != nil {
+		oldAuthOpt := &coldef.AuthOption{
+			AuthString:   v.AuthOpt.AuthString,
+			ByAuthString: v.AuthOpt.ByAuthString,
+			HashString:   v.AuthOpt.HashString,
+		}
+		oldSpec.AuthOpt = oldAuthOpt
+	}
+	return oldSpec, nil
+}
+
+func convertCreateUser(converter *expressionConverter, v *ast.CreateUserStmt) (*stmts.CreateUserStmt, error) {
+	oldCreateUser := &stmts.CreateUserStmt{
+		IfNotExists: v.IfNotExists,
+		Text:        v.Text(),
+	}
+	for _, val := range v.Specs {
+		oldSpec, err := convertUserSpec(converter, val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldCreateUser.Specs = append(oldCreateUser.Specs, oldSpec)
+	}
+	return oldCreateUser, nil
+}
+
 func convertDo(converter *expressionConverter, v *ast.DoStmt) (*stmts.DoStmt, error) {
 	oldDo := &stmts.DoStmt{
 		Text:  v.Text(),
@@ -921,4 +960,58 @@ func convertDo(converter *expressionConverter, v *ast.DoStmt) (*stmts.DoStmt, er
 		oldDo.Exprs[i] = oldExpr
 	}
 	return oldDo, nil
+}
+
+func convertPrivElem(converter *expressionConverter, v *ast.PrivElem) (*coldef.PrivElem, error) {
+	oldPrim := &coldef.PrivElem{
+		Priv: v.Priv,
+	}
+	for _, val := range v.Cols {
+		oldPrim.Cols = append(oldPrim.Cols, joinColumnName(val))
+	}
+	return oldPrim, nil
+}
+
+func convertGrant(converter *expressionConverter, v *ast.GrantStmt) (*stmts.GrantStmt, error) {
+	oldGrant := &stmts.GrantStmt{
+		Text: v.Text(),
+	}
+	for _, val := range v.Privs {
+		oldPrim, err := convertPrivElem(converter, val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldGrant.Privs = append(oldGrant.Privs, oldPrim)
+	}
+	switch v.ObjectType {
+	case ast.ObjectTypeNone:
+		oldGrant.ObjectType = coldef.ObjectTypeNone
+	case ast.ObjectTypeTable:
+		oldGrant.ObjectType = coldef.ObjectTypeTable
+	}
+	if v.Level != nil {
+		oldGrantLevel := &coldef.GrantLevel{
+			DBName:    v.Level.DBName,
+			TableName: v.Level.TableName,
+		}
+		switch v.Level.Level {
+		case ast.GrantLevelDB:
+			oldGrantLevel.Level = coldef.GrantLevelDB
+		case ast.GrantLevelGlobal:
+			oldGrantLevel.Level = coldef.GrantLevelGlobal
+		case ast.GrantLevelNone:
+			oldGrantLevel.Level = coldef.GrantLevelNone
+		case ast.GrantLevelTable:
+			oldGrantLevel.Level = coldef.GrantLevelTable
+		}
+		oldGrant.Level = oldGrantLevel
+	}
+	for _, val := range v.Users {
+		oldUserSpec, err := convertUserSpec(converter, val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		oldGrant.Users = append(oldGrant.Users, oldUserSpec)
+	}
+	return oldGrant, nil
 }

@@ -498,7 +498,7 @@ type AlterTableSpec struct {
 	Constraint *Constraint
 	Options    []*TableOption
 	Column     *ColumnDef
-	ColumnName *ColumnName
+	DropColumn *ColumnName
 	Position   *ColumnPosition
 }
 
@@ -523,12 +523,12 @@ func (nod *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		nod.Column = node.(*ColumnDef)
 	}
-	if nod.ColumnName != nil {
-		node, ok := nod.ColumnName.Accept(v)
+	if nod.DropColumn != nil {
+		node, ok := nod.DropColumn.Accept(v)
 		if !ok {
 			return nod, false
 		}
-		nod.ColumnName = node.(*ColumnName)
+		nod.DropColumn = node.(*ColumnName)
 	}
 	if nod.Position != nil {
 		node, ok := nod.Position.Accept(v)

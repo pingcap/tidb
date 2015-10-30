@@ -13,6 +13,8 @@
 
 package ast
 
+import "github.com/pingcap/tidb/mysql"
+
 var (
 	_ StmtNode = &ExplainStmt{}
 	_ StmtNode = &PrepareStmt{}
@@ -26,7 +28,9 @@ var (
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &SetCharsetStmt{}
 	_ StmtNode = &SetPwdStmt{}
+	_ StmtNode = &CreateUserStmt{}
 	_ StmtNode = &DoStmt{}
+	_ StmtNode = &GrantStmt{}
 
 	_ Node = &VariableAssignment{}
 )
@@ -165,7 +169,7 @@ const (
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
 // See: https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
-	stmtNode
+	dmlNode
 
 	Tp     ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -379,10 +383,20 @@ type UserSpec struct {
 // CreateUserStmt creates user account.
 // See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
+	stmtNode
+
 	IfNotExists bool
 	Specs       []*UserSpec
+}
 
-	Text string
+// Accept implements Node Accept interface.
+func (nod *CreateUserStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*CreateUserStmt)
+	return v.Leave(nod)
 }
 
 // DoStmt is the struct for DO statement.
@@ -405,6 +419,88 @@ func (nod *DoStmt) Accept(v Visitor) (Node, bool) {
 			return nod, false
 		}
 		nod.Exprs[i] = node.(ExprNode)
+	}
+	return v.Leave(nod)
+}
+
+// PrivElem is the privilege type and optional column list.
+type PrivElem struct {
+	node
+	Priv mysql.PrivilegeType
+	Cols []*ColumnName
+}
+
+// Accept implements Node Accept interface.
+func (nod *PrivElem) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*PrivElem)
+	for i, val := range nod.Cols {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Cols[i] = node.(*ColumnName)
+	}
+	return v.Leave(nod)
+}
+
+// ObjectTypeType is the type for object type.
+type ObjectTypeType int
+
+const (
+	// ObjectTypeNone is for empty object type.
+	ObjectTypeNone ObjectTypeType = iota
+	// ObjectTypeTable means the following object is a table.
+	ObjectTypeTable
+)
+
+// GrantLevelType is the type for grant level.
+type GrantLevelType int
+
+const (
+	// GrantLevelNone is the dummy const for default value.
+	GrantLevelNone GrantLevelType = iota
+	// GrantLevelGlobal means the privileges are administrative or apply to all databases on a given server.
+	GrantLevelGlobal
+	// GrantLevelDB means the privileges apply to all objects in a given database.
+	GrantLevelDB
+	// GrantLevelTable means the privileges apply to all columns in a given table.
+	GrantLevelTable
+)
+
+// GrantLevel is used for store the privilege scope.
+type GrantLevel struct {
+	Level     GrantLevelType
+	DBName    string
+	TableName string
+}
+
+// GrantStmt is the struct for GRANT statement.
+type GrantStmt struct {
+	stmtNode
+
+	Privs      []*PrivElem
+	ObjectType ObjectTypeType
+	Level      *GrantLevel
+	Users      []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (nod *GrantStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*GrantStmt)
+	for i, val := range nod.Privs {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Privs[i] = node.(*PrivElem)
 	}
 	return v.Leave(nod)
 }

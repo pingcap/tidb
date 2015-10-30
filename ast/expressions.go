@@ -83,7 +83,7 @@ func NewValueExpr(value interface{}) *ValueExpr {
 		ve.Type.Charset = "binary"
 		ve.Type.Collate = "binary"
 	default:
-		panic("illegal literal value type:" + fmt.Sprintf("T", value))
+		panic(fmt.Sprintf("illegal literal value type:%T", value))
 	}
 	return ve
 }
@@ -581,16 +581,20 @@ func (nod *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNod)
 	}
 	nod = newNod.(*PatternLikeExpr)
-	node, ok := nod.Expr.Accept(v)
-	if !ok {
-		return nod, false
+	if nod.Expr != nil {
+		node, ok := nod.Expr.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Expr = node.(ExprNode)
 	}
-	nod.Expr = node.(ExprNode)
-	node, ok = nod.Pattern.Accept(v)
-	if !ok {
-		return nod, false
+	if nod.Pattern != nil {
+		node, ok := nod.Pattern.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Pattern = node.(ExprNode)
 	}
-	nod.Pattern = node.(ExprNode)
 	return v.Leave(nod)
 }
 
