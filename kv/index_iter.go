@@ -245,26 +245,33 @@ func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
 }
 
-func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (int64, bool, error) {
+func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error) {
 	key, err := c.genIndexKey(indexedValues, h)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
 
 	value, err := txn.Get(key)
+	if IsErrNotFound(err) {
+		return false, 0, nil
+	}
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
 
 	// For uniq index, the value of key is handle.
 	if c.unique {
 		handle, err := decodeHandle(value)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return false, 0, errors.Trace(err)
 		}
 
-		return handle, handle == h, nil
+		if handle != h {
+			return true, handle, errors.Trace(ErrKeyExists)
+		}
+
+		return true, handle, nil
 	}
 
-	return h, true, nil
+	return true, h, nil
 }
