@@ -97,11 +97,14 @@ const waitReorgTimeout = 10 * time.Second
 var errWaitReorgTimeout = errors.New("wait for reorgnization timeout")
 
 func (d *ddl) runReorgJob(f func() error) error {
-	// TODO: use persistent reorgnization job list.
-	// start a reorgnization job
-	go func() {
-		d.reOrgDoneCh <- f()
-	}()
+	// TODO use persistent reorgnization job list.
+	if d.reOrgDoneCh == nil {
+		// start a reorgnization job
+		d.reOrgDoneCh = make(chan error, 1)
+		go func() {
+			d.reOrgDoneCh <- f()
+		}()
+	}
 
 	waitTimeout := chooseLeaseTime(d.lease, waitReorgTimeout)
 
