@@ -50,6 +50,8 @@ type SelectStmt struct {
 	// TODO: rename Lock
 	Lock coldef.LockType
 
+	selectList *plans.SelectList
+
 	Text string
 }
 
@@ -163,7 +165,12 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	// Get select list for futher field values evaluation.
-	selectList, err := plans.ResolveSelectList(s.Fields, r.GetFields())
+	var selectList *plans.SelectList
+	if s.selectList == nil {
+		selectList, err = plans.ResolveSelectList(s.Fields, r.GetFields())
+	} else {
+		selectList = s.selectList
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,18 +180,22 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		groupBy = s.GroupBy.By
 	}
 
-	if s.Having != nil {
+	if s.Having != nil && s.selectList == nil {
 		// `having` may contain aggregate functions, and we will add this to hidden fields.
 		if err = s.Having.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
-	if s.OrderBy != nil {
+	if s.OrderBy != nil && s.selectList == nil {
 		// `order by` may contain aggregate functions, and we will add this to hidden fields.
 		if err = s.OrderBy.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	if s.selectList == nil {
+		s.selectList = selectList
 	}
 
 	switch {
