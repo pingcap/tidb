@@ -31,6 +31,8 @@ type Checker interface {
 	// If tbl is nil, only check global/db scope privileges.
 	// If tbl is not nil, check global/db/table scope privileges.
 	Check(ctx context.Context, db *model.DBInfo, tbl *model.TableInfo, privilege mysql.PrivilegeType) (bool, error)
+	// Show granted privileges for user.
+	ShowGrants(ctx context.Context, user string) ([]string, error)
 }
 
 const key keyType = 0
