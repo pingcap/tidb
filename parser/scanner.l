@@ -332,6 +332,7 @@ full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
 grant		{g}{r}{a}{n}{t}
+grants		{g}{r}{a}{n}{t}{s}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
@@ -706,6 +707,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return full
 {fulltext}		return fulltext
 {grant}			return grant
+{grants}		lval.item = string(l.val)
+			return grants
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
