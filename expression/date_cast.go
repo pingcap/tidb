@@ -93,34 +93,34 @@ func (dc *DateCast) Eval(ctx context.Context, args map[interface{}]interface{}) 
 
 func (dc *DateCast) evalArgs(ctx context.Context, args map[interface{}]interface{}) (
 	mysql.Time, int64, int64, int64, time.Duration, error) {
-	dv, err := dc.Date.Eval(ctx, args)
-	if dv == nil || err != nil {
+	dVal, err := dc.Date.Eval(ctx, args)
+	if dVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
-	sv, err := types.ToString(dv)
+	dValStr, err := types.ToString(dVal)
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
 	f := types.NewFieldType(mysql.TypeDatetime)
 	f.Decimal = mysql.MaxFsp
-	dv, err = types.Convert(sv, f)
-	if dv == nil || err != nil {
+	dVal, err = types.Convert(dValStr, f)
+	if dVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
-	t, ok := dv.(mysql.Time)
+	t, ok := dVal.(mysql.Time)
 	if !ok {
-		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Errorf("need time type, but got %T", dv)
+		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Errorf("need time type, but got %T", dVal)
 	}
 
-	iv, err := dc.Interval.Eval(ctx, args)
-	if iv == nil || err != nil {
+	iVal, err := dc.Interval.Eval(ctx, args)
+	if iVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
-	format, err := types.ToString(iv)
+	iValStr, err := types.ToString(iVal)
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
-	years, months, days, durations, err := mysql.ExtractTimeValue(dc.Unit, strings.TrimSpace(format))
+	years, months, days, durations, err := mysql.ExtractTimeValue(dc.Unit, strings.TrimSpace(iValStr))
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
