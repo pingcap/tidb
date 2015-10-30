@@ -498,8 +498,8 @@ func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{},
 	}
 	if err = idx.X.Delete(txn, vals, h); err != nil {
 		if idx.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
-			// If the index is not in public state, we may have not created the index,
-			// so skip ErrNotExist error.
+			// If the index is not in public state, we may have not created the index
+			// or already deleted the index, so skip ErrNotExist error.
 			return nil
 		}
 		return err
@@ -521,8 +521,8 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 		}
 		if err = v.X.Delete(txn, vals, h); err != nil {
 			if v.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
-				// If the index is not in public state, we may have not created the index,
-				// so skip ErrNotExist error.
+				// If the index is not in public state, we may have not created the index
+				// or already deleted the index, so skip ErrNotExist error.
 				continue
 			}
 

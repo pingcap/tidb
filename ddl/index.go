@@ -372,7 +372,7 @@ func (d *ddl) needAddingIndexForRow(txn kv.Transaction, t table.Table, handle in
 		return false, errors.Trace(err)
 	}
 
-	if ok, err := kvIndex.Exist(txn, vals, handle); err != nil {
+	if ok, _, err := kvIndex.Exist(txn, vals, handle); err != nil {
 		return false, errors.Trace(err)
 	} else if ok {
 		// index exists, we don't need to add again
@@ -431,7 +431,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 			}
 
 			var indexExist bool
-			indexExist, err = kvX.Exist(txn, vals, handle)
+			indexExist, _, err = kvX.Exist(txn, vals, handle)
 			if err != nil {
 				return errors.Trace(err)
 			}
