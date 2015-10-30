@@ -200,11 +200,13 @@ func (nod *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
 		return nod, false
 	}
 	nod.Pos = node.(ExprNode)
-	node, ok = nod.Len.Accept(v)
-	if !ok {
-		return nod, false
+	if nod.Len != nil {
+		node, ok = nod.Len.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Len = node.(ExprNode)
 	}
-	nod.Len = node.(ExprNode)
 	return v.Leave(nod)
 }
 

@@ -142,6 +142,7 @@ import (
 	ge		">="
 	global		"GLOBAL"
 	grant		"GRANT"
+	grants		"GRANTS"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -206,6 +207,7 @@ import (
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
+	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
@@ -418,7 +420,7 @@ import (
 	IndexName		"index name"
 	IndexType		"index type"
 	InsertIntoStmt		"INSERT INTO statement"
-	InsertRest		"Rest part of INSERT INTO statement"
+	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
 	JoinTable 		"join table"
 	JoinType		"join type"
@@ -459,6 +461,8 @@ import (
 	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
+	ReplaceIntoStmt		"REPLACE INTO statement"
+	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
@@ -1224,20 +1228,24 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" "TABLE" TableNameList
+	"DROP" TableOrTables TableNameList
 	{
 		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
 		if yylex.(*lexer).root {
 			break
 		}
 	}
-|	"DROP" "TABLE" "IF" "EXISTS" TableNameList
+|	"DROP" TableOrTables "IF" "EXISTS" TableNameList
 	{
 		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
 		if yylex.(*lexer).root {
 			break
 		}
 	}
+
+TableOrTables:
+	"TABLE"
+|	"TABLES"
 
 EqOpt:
 	{
@@ -1619,7 +1627,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -1633,7 +1641,7 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertRest OnDuplicateKeyUpdate
+	"INSERT" Priority IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
 	{
 		x := $6.(*ast.InsertStmt)
 		x.Priority = $2.(int)
@@ -1656,7 +1664,7 @@ IntoOpt:
 	{
 	}
 
-InsertRest:
+InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
 		$$ = &ast.InsertStmt{
@@ -1741,7 +1749,39 @@ OnDuplicateKeyUpdate:
 		$$ = $5
 	}
 
-/***********************************Insert Statments END************************************/
+/***********************************Insert Statements END************************************/
+
+/************************************************************************************
+ *  Replace Statements
+ *  See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
+ *
+ *  TODO: support PARTITION
+ **********************************************************************************/
+ReplaceIntoStmt:
+	"REPLACE" ReplacePriority IntoOpt TableName InsertValues
+	{
+		x := $5.(*ast.InsertStmt)
+		x.Replace = true
+		x.Priority = $2.(int)
+		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
+		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
+		$$ = x
+	}
+
+ReplacePriority:
+	{
+		$$ = ast.NoPriority
+	}
+|	"LOW_PRIORITY"
+	{
+		$$ = ast.LowPriority
+	}
+|	"DELAYED"
+	{
+		$$ = ast.DelayedPriority
+	}
+
+/***********************************Replace Statments END************************************/
 
 Literal:
 	"false"
@@ -1984,7 +2024,7 @@ FunctionCallKeyword:
 	}
 |	"YEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 FunctionCallNonKeyword:
@@ -2049,7 +2089,7 @@ FunctionCallNonKeyword:
 	}
 |	"IFNULL" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"LENGTH" '(' Expression ')'
 	{
@@ -2105,6 +2145,11 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
+		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
+	}
+|	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}
 		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
 	}
 |	"SECOND" '(' Expression ')'
@@ -3118,8 +3163,21 @@ ShowStmt:
 |	"SHOW" "CREATE" "TABLE" TableName
 	{
 		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowCreateTable,
+			Tp:	ast.ShowCreateTable,
 			Table:	$4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "GRANTS"
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		$$ = &ast.ShowStmt{Tp: ast.ShowGrants}
+	}
+|	"SHOW" "GRANTS" "FOR" Username
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowGrants,
+			User:	$4.(string),
 		}
 	}
 
@@ -3202,6 +3260,7 @@ Statement:
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
+|	ReplaceIntoStmt
 |	SelectStmt
 |	UnionStmt
 |	SetStmt
@@ -3221,6 +3280,7 @@ ExplainableStmt:
 |	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 StatementList:
 	Statement

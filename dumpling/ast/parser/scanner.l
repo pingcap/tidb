@@ -54,6 +54,10 @@ type lexer struct {
 	// record token's offset of the input
 	tokenEndOffset   int
 	tokenStartOffset int
+
+	// Charset information
+	charset		string
+	collation	string
 }
 
 
@@ -102,6 +106,15 @@ func (l *lexer) Root() bool {
 
 func (l *lexer) SetRoot(root bool) {
 	l.root = root
+}
+
+func (l *lexer) SetCharsetInfo(charset, collation string) {
+	l.charset = charset
+	l.collation = collation
+}
+
+func (l *lexer) GetCharsetInfo() (string, string) {
+	return l.charset, l.collation
 }
 
 func (l *lexer) unget(b byte) {
@@ -317,6 +330,7 @@ full		{f}{u}{l}{l}
 fulltext	{f}{u}{l}{l}{t}{e}{x}{t}
 global		{g}{l}{o}{b}{a}{l}
 grant		{g}{r}{a}{n}{t}
+grants		{g}{r}{a}{n}{t}{s}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
 having		{h}{a}{v}{i}{n}{g}
@@ -370,6 +384,7 @@ rand		{r}{a}{n}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
+replace		{r}{e}{p}{l}{a}{c}{e}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
@@ -687,6 +702,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return full
 {fulltext}		return fulltext
 {grant}			return grant
+{grants}		lval.item = string(l.val)
+			return grants
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
@@ -795,6 +812,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp
+{replace}		lval.item = string(l.val)
+			return replace
 {references}		return references
 {rlike}			return rlike
 
