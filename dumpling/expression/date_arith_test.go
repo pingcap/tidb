@@ -26,7 +26,7 @@ type testDateArithSuite struct {
 func (t *testDateArithSuite) TestDateArith(c *C) {
 	input := "2011-11-11 10:10:10"
 	e := &DateArith{
-		Op:       add,
+		Op:       DateAdd,
 		Unit:     "DAY",
 		Date:     Value{Val: input},
 		Interval: Value{Val: "1"},
@@ -36,18 +36,18 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 	c.Assert(e.IsStatic(), IsTrue)
 	_, err := e.Eval(nil, nil)
 	c.Assert(err, IsNil)
-	e.Op = sub
+	e.Op = DateSub
 	c.Assert(e.String(), Equals, `DATE_SUB("2011-11-11 10:10:10", INTERVAL "1" DAY)`)
 
 	// Test null.
 	nullTbl := []struct {
-		Op       string
+		Op       int
 		Unit     string
 		Date     interface{}
 		Interval interface{}
 	}{
-		{add, "DAY", nil, "1"},
-		{add, "DAY", input, nil},
+		{DateAdd, "DAY", nil, "1"},
+		{DateAdd, "DAY", input, nil},
 	}
 	for _, t := range nullTbl {
 		e := &DateArith{
@@ -59,7 +59,7 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		v, err := e.Eval(nil, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, IsNil)
-		e.Op = sub
+		e.Op = DateSub
 		v, err = e.Eval(nil, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, IsNil)
@@ -99,7 +99,7 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 	}
 	for _, t := range tbl {
 		e := &DateArith{
-			Op:       add,
+			Op:       DateAdd,
 			Unit:     t.Unit,
 			Date:     Value{Val: input},
 			Interval: Value{Val: t.Interval},
@@ -110,7 +110,7 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		c.Assert(ok, IsTrue)
 		c.Assert(value.String(), Equals, t.AddExpect)
 
-		e.Op = sub
+		e.Op = DateSub
 		v, err = e.Eval(nil, nil)
 		c.Assert(err, IsNil)
 		value, ok = v.(mysql.Time)
@@ -136,7 +136,7 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 	}
 	for _, t := range errTbl {
 		e := &DateArith{
-			Op:       add,
+			Op:       DateAdd,
 			Unit:     t.Unit,
 			Date:     Value{Val: input},
 			Interval: Value{Val: t.Interval},
@@ -148,7 +148,7 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		c.Assert(err, NotNil, Commentf("%s", v))
 
 		e = &DateArith{
-			Op:       sub,
+			Op:       DateSub,
 			Unit:     t.Unit,
 			Date:     Value{Val: input},
 			Interval: Value{Val: t.Interval},

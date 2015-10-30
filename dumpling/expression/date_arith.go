@@ -25,24 +25,24 @@ import (
 )
 
 const (
-	add = "ADD"
-	sub = "SUB"
+	// DateAdd is to run date_add function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	DateAdd = 1
+	// DateSub is to run date_sub function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
+	DateSub = 2
 )
 
 // DateArith is used for dealing with addition and substraction of time.
-// If the Op value is ADD, then do date_add function.
-// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-// If the Op value is SUB, then do date_sub function.
-// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 type DateArith struct {
-	Op       string
+	Op       int
 	Unit     string
 	Date     Expression
 	Interval Expression
 }
 
 func (da *DateArith) isAdd() bool {
-	if da.Op == add {
+	if da.Op == DateAdd {
 		return true
 	}
 
@@ -67,7 +67,14 @@ func (da *DateArith) Accept(v Visitor) (Expression, error) {
 
 // String implements the Expression String interface.
 func (da *DateArith) String() string {
-	return fmt.Sprintf("DATE_%s(%s, INTERVAL %s %s)", da.Op, da.Date, da.Interval, strings.ToUpper(da.Unit))
+	var str string
+	if da.isAdd() {
+		str = "DATE_ADD"
+	} else {
+		str = "DATE_SUB"
+	}
+
+	return fmt.Sprintf("%s(%s, INTERVAL %s %s)", str, da.Date, da.Interval, strings.ToUpper(da.Unit))
 }
 
 // Eval implements the Expression Eval interface.
