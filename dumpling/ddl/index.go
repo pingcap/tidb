@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"bytes"
 	"io"
 	"strings"
 
@@ -345,7 +346,7 @@ func fetchSnapRowColVals(snap kv.MvccSnapshot, ver kv.Version, t table.Table, ha
 
 		col := cols[v.Offset]
 		k := t.RecordKey(handle, col)
-		data, err := snap.MvccGet([]byte(k), ver)
+		data, err := snap.MvccGet(kv.EncodeKey([]byte(k)), ver)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -415,7 +416,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 	defer snap.MvccRelease()
 
 	firstKey := t.FirstKey()
-	prefix := t.KeyPrefix()
+	prefix := []byte(t.KeyPrefix())
 
 	ctx := d.newReorgContext()
 	txn, err := ctx.GetTxn(true)
@@ -424,14 +425,19 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 	}
 	defer txn.Rollback()
 
-	it := snap.NewMvccIterator([]byte(firstKey), ver)
+	it := snap.NewMvccIterator(kv.EncodeKey([]byte(firstKey)), ver)
 	defer it.Close()
 
 	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
 
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+	for it.Valid() {
+		key := kv.DecodeKey([]byte(it.Key()))
+		if !bytes.HasPrefix(key, prefix) {
+			break
+		}
+
 		var handle int64
-		handle, err = util.DecodeHandleFromRowKey(it.Key())
+		handle, err = util.DecodeHandleFromRowKey(string(key))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -474,9 +480,11 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 			}
 		}
 
-		rk := []byte(t.RecordKey(handle, nil))
+		rk := kv.EncodeKey([]byte(t.RecordKey(handle, nil)))
 		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
+		if errors2.ErrorEqual(err, kv.ErrNotExist) {
+			break
+		} else if err != nil {
 			return errors.Trace(err)
 		}
 	}

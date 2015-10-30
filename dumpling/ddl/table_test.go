@@ -111,9 +111,18 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 	})
 }
 
-func testGetTable(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) table.Table {
-	alloc := autoid.NewAllocator(d.store, dbInfo.ID)
-	tbl := table.TableFromMeta(dbInfo.Name.L, alloc, tblInfo)
+func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
+	var tblInfo *model.TableInfo
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		var err error
+		tblInfo, err = t.GetTable(schemaID, tableID)
+		c.Assert(err, IsNil)
+		c.Assert(tblInfo, NotNil)
+		return nil
+	})
+	alloc := autoid.NewAllocator(d.store, schemaID)
+	tbl := table.TableFromMeta("", alloc, tblInfo)
 	return tbl
 }
 
@@ -162,7 +171,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
-	tbl := testGetTable(c, d, s.dbInfo, tblInfo)
+	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	_, err = tbl.AddRecord(ctx, []interface{}{1, 1, 1})
 	c.Assert(err, IsNil)
