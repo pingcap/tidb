@@ -20,11 +20,12 @@ import (
 	"github.com/pingcap/tidb/stmt"
 )
 
+// Compiler compiles ast.Node into an executable statement.
 type Compiler struct {
 	paramMarkers []*expression.ParamMarker
 }
 
-// Compile compiles a ast.Node into a executable statement.
+// Compile compiles a ast.Node into an executable statement.
 func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 	validator := &validator{}
 	if _, ok := node.Accept(validator); !ok {
@@ -99,12 +100,17 @@ func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 		return convertSetCharset(c, v)
 	case *ast.SetPwdStmt:
 		return convertSetPwd(c, v)
+	case *ast.CreateUserStmt:
+		return convertCreateUser(c, v)
 	case *ast.DoStmt:
 		return convertDo(c, v)
+	case *ast.GrantStmt:
+		return convertGrant(c, v)
 	}
 	return nil, nil
 }
 
+// ParamMarkers returns parameter markers for prepared statement.
 func (com *Compiler) ParamMarkers() []*expression.ParamMarker {
 	return com.paramMarkers
 }
