@@ -233,6 +233,29 @@ func (t *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 }
 
+func (t *testPrivilegeSuite) TestDropTablePriv(c *C) {
+	se := newSession(c, t.store, t.dbName)
+	ctx, _ := se.(context.Context)
+	mustExec(c, se, `CREATE TABLE todrop(c int);`)
+	variable.GetSessionVars(ctx).User = "root@localhost"
+	mustExec(c, se, `CREATE USER 'drop'@'localhost' identified by '123';`)
+	mustExec(c, se, `GRANT Select ON test.todrop TO  'drop'@'localhost';`)
+
+	variable.GetSessionVars(ctx).User = "drop@localhost"
+	mustExec(c, se, `SELECT * FROM todrop;`)
+
+	_, err := se.Execute("DROP TABLE todrop;")
+	c.Assert(err, NotNil)
+
+	variable.GetSessionVars(ctx).User = "root@localhost"
+	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
+
+	se1 := newSession(c, t.store, t.dbName)
+	ctx1, _ := se.(context.Context)
+	variable.GetSessionVars(ctx1).User = "drop@localhost"
+	mustExec(c, se1, `DROP TABLE todrop;`)
+}
+
 func mustExec(c *C, se tidb.Session, sql string) {
 	_, err := se.Execute(sql)
 	c.Assert(err, IsNil)

@@ -166,6 +166,9 @@ func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model
 		if len(p.User) == 0 {
 			// User current user
 			p.User = variable.GetSessionVars(ctx).User
+			if len(p.User) == 0 {
+				return true, nil
+			}
 		}
 		err := p.loadPrivileges(ctx)
 		if err != nil {
