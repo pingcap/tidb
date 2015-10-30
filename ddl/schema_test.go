@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -24,8 +25,89 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *testDDLSuite) TestSchema(c *C) {
-	store := createTestStore(c, "test_schema")
+var _ = Suite(&testSchemaSuite{})
+
+type testSchemaSuite struct{}
+
+func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
+	var err error
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr(name),
+	}
+
+	dbInfo.ID, err = d.genGlobalID()
+	c.Assert(err, IsNil)
+	return dbInfo
+}
+
+func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+	job := &model.Job{
+		SchemaID: dbInfo.ID,
+		Type:     model.ActionCreateSchema,
+		Args:     []interface{}{dbInfo.Name},
+	}
+
+	err := d.startJob(ctx, job)
+	c.Assert(err, IsNil)
+	return job
+}
+
+func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+	job := &model.Job{
+		SchemaID: dbInfo.ID,
+		Type:     model.ActionDropSchema,
+	}
+
+	err := d.startJob(ctx, job)
+	c.Assert(err, IsNil)
+	return job
+}
+
+func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		info, err := t.GetDatabase(dbInfo.ID)
+		c.Assert(err, IsNil)
+
+		if state == model.StateNone {
+			c.Assert(info, IsNil)
+			return nil
+		}
+
+		c.Assert(info.Name, DeepEquals, dbInfo.Name)
+		c.Assert(info.State, Equals, state)
+		return nil
+	})
+}
+
+func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		c.Assert(historyJob.State, Equals, model.JobDone)
+		if isAdd {
+			c.Assert(historyJob.SchemaState, Equals, model.StatePublic)
+		} else {
+			c.Assert(historyJob.SchemaState, Equals, model.StateNone)
+		}
+
+		return nil
+	})
+}
+
+func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		c.Assert(historyJob.State, Equals, model.JobCancelled)
+		return nil
+	})
+}
+
+func (s *testSchemaSuite) TestSchema(c *C) {
+	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 
 	lease := 100 * time.Millisecond
@@ -35,69 +117,27 @@ func (s *testDDLSuite) TestSchema(c *C) {
 
 	ctx := mock.NewContext()
 
-	schema := model.NewCIStr("test")
-	schemaID, err := d1.genGlobalID()
-	c.Assert(err, IsNil)
+	dbInfo := testSchemaInfo(c, d1, "test")
+	job := testCreateSchema(c, ctx, d1, dbInfo)
 
-	job := &model.Job{
-		SchemaID: schemaID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema},
-	}
+	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
+	testCheckJobDone(c, d1, job, true)
 
-	err = d1.startJob(ctx, job)
-	c.Assert(err, IsNil)
-
-	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var dbInfo *model.DBInfo
-		dbInfo, err = t.GetDatabase(schemaID)
-		c.Assert(err, IsNil)
-		c.Assert(dbInfo.Name, DeepEquals, model.NewCIStr("test"))
-		c.Assert(dbInfo.State, Equals, model.StatePublic)
-
-		var historyJob *model.Job
-		historyJob, err = t.GetHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobDone)
-		c.Assert(historyJob.SchemaState, Equals, model.StatePublic)
-		return nil
-	})
+	job = testDropSchema(c, ctx, d1, dbInfo)
+	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
+	testCheckJobDone(c, d1, job, false)
 
 	job = &model.Job{
-		SchemaID: schemaID,
+		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
 	}
 
-	err = d1.startJob(ctx, job)
-	c.Assert(err, IsNil)
-
-	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var dbInfo *model.DBInfo
-		dbInfo, err = t.GetDatabase(schemaID)
-		c.Assert(err, IsNil)
-		c.Assert(dbInfo, IsNil)
-
-		var historyJob *model.Job
-		historyJob, err = t.GetHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobDone)
-		c.Assert(historyJob.SchemaState, Equals, model.StateNone)
-		return nil
-	})
-
-	job = &model.Job{
-		SchemaID: schemaID,
-		Type:     model.ActionDropSchema,
-	}
-
-	err = d1.startJob(ctx, job)
+	err := d1.startJob(ctx, job)
 	c.Assert(errors2.ErrorEqual(err, ErrNotExists), IsTrue)
 }
 
-func (s *testDDLSuite) TestSchemaWaitJob(c *C) {
-	store := createTestStore(c, "test_schema_wait")
+func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
+	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
 	ctx := mock.NewContext()
@@ -115,52 +155,25 @@ func (s *testDDLSuite) TestSchemaWaitJob(c *C) {
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false)
 
-	schema := model.NewCIStr("test")
-	schemaID, err := d2.genGlobalID()
-	c.Assert(err, IsNil)
-
-	job := &model.Job{
-		SchemaID: schemaID,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema},
-	}
-
-	err = d2.startJob(ctx, job)
-	c.Assert(err, IsNil)
-
-	kv.RunInNewTxn(d2.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var dbInfo *model.DBInfo
-		dbInfo, err = t.GetDatabase(schemaID)
-		c.Assert(err, IsNil)
-		c.Assert(dbInfo.Name, DeepEquals, model.NewCIStr("test"))
-		c.Assert(dbInfo.State, Equals, model.StatePublic)
-		return nil
-	})
+	dbInfo := testSchemaInfo(c, d2, "test")
+	job := testCreateSchema(c, ctx, d2, dbInfo)
+	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false)
 
-	schemaID, err = d2.genGlobalID()
+	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
 
 	job = &model.Job{
 		SchemaID: schemaID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema},
+		Args:     []interface{}{dbInfo.Name},
 	}
 
 	err = d2.startJob(ctx, job)
 	c.Assert(err, NotNil)
-
-	kv.RunInNewTxn(d2.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var historyJob *model.Job
-		historyJob, err = t.GetHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		c.Assert(historyJob.State, Equals, model.JobCancelled)
-		return nil
-	})
+	testCheckJobCancelled(c, d2, job)
 
 	// d2 must not be owner.
 	testCheckOwner(c, d2, false)
@@ -182,7 +195,6 @@ LOOP:
 		case <-ticker.C:
 			d.close()
 			d.start()
-			asyncNotify(d.jobCh)
 		case err := <-done:
 			c.Assert(err, IsNil)
 			break LOOP
@@ -190,8 +202,8 @@ LOOP:
 	}
 }
 
-func (s *testDDLSuite) TestSchemaResume(c *C) {
-	store := createTestStore(c, "test_schema_resume")
+func (s *testSchemaSuite) TestSchemaResume(c *C) {
+	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 
 	lease := 50 * time.Millisecond
@@ -201,41 +213,22 @@ func (s *testDDLSuite) TestSchemaResume(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	schema := model.NewCIStr("test")
-	schemaID, err := d1.genGlobalID()
-	c.Assert(err, IsNil)
+	dbInfo := testSchemaInfo(c, d1, "test")
 
 	job := &model.Job{
-		SchemaID: schemaID,
+		SchemaID: dbInfo.ID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema},
+		Args:     []interface{}{dbInfo.Name},
 	}
 
 	testRunInterruptedJob(c, d1, job)
-
-	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var dbInfo *model.DBInfo
-		dbInfo, err = t.GetDatabase(schemaID)
-		c.Assert(err, IsNil)
-		c.Assert(dbInfo.Name, DeepEquals, model.NewCIStr("test"))
-		c.Assert(dbInfo.State, Equals, model.StatePublic)
-		return nil
-	})
+	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
 
 	job = &model.Job{
-		SchemaID: schemaID,
+		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,
 	}
 
 	testRunInterruptedJob(c, d1, job)
-
-	kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var dbInfo *model.DBInfo
-		dbInfo, err = t.GetDatabase(schemaID)
-		c.Assert(err, IsNil)
-		c.Assert(dbInfo, IsNil)
-		return nil
-	})
+	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
 }

@@ -27,7 +27,7 @@ import (
 
 var _ = Suite(&testDDLSuite{})
 
-func createTestStore(c *C, name string) kv.Storage {
+func testCreateStore(c *C, name string) kv.Storage {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open(fmt.Sprintf("memory:%s", name))
 	c.Assert(err, IsNil)
@@ -38,7 +38,7 @@ type testDDLSuite struct {
 }
 
 func testCheckOwner(c *C, d *ddl, isOwner bool) {
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		_, err := d.checkOwner(t)
 		return err
@@ -52,7 +52,7 @@ func testCheckOwner(c *C, d *ddl, isOwner bool) {
 }
 
 func (s *testDDLSuite) TestCheckOnwer(c *C) {
-	store := createTestStore(c, "test_owner")
+	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
 	lease := 100 * time.Millisecond

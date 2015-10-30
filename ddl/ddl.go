@@ -115,6 +115,9 @@ func (d *ddl) start() {
 	d.quitCh = make(chan struct{})
 	d.wait.Add(1)
 	go d.onWorker()
+	// for every start, we will send a fake job to let worker
+	// check owner first and try to find whether a job exists and run.
+	asyncNotify(d.jobCh)
 }
 
 func (d *ddl) close() {
