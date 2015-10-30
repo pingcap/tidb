@@ -18,14 +18,14 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-var _ = Suite(&testDateCastSuite{})
+var _ = Suite(&testDateArithSuite{})
 
-type testDateCastSuite struct {
+type testDateArithSuite struct {
 }
 
-func (t *testDateCastSuite) TestDateCast(c *C) {
+func (t *testDateArithSuite) TestDateArith(c *C) {
 	input := "2011-11-11 10:10:10"
-	e := &DateCast{
+	e := &DateArith{
 		Op:       add,
 		Unit:     "DAY",
 		Date:     Value{Val: input},
@@ -50,7 +50,7 @@ func (t *testDateCastSuite) TestDateCast(c *C) {
 		{add, "DAY", input, nil},
 	}
 	for _, t := range nullTbl {
-		e := &DateCast{
+		e := &DateArith{
 			Op:       t.Op,
 			Unit:     t.Unit,
 			Date:     Value{Val: t.Date},
@@ -98,7 +98,7 @@ func (t *testDateCastSuite) TestDateCast(c *C) {
 		{"YEAR_MONTH", "11-11", "2023-10-11 10:10:10", "1999-12-11 10:10:10"},
 	}
 	for _, t := range tbl {
-		e := &DateCast{
+		e := &DateArith{
 			Op:       add,
 			Unit:     t.Unit,
 			Date:     Value{Val: input},
@@ -135,7 +135,7 @@ func (t *testDateCastSuite) TestDateCast(c *C) {
 		{"YEAR_MONTH", "10 1"},
 	}
 	for _, t := range errTbl {
-		e := &DateCast{
+		e := &DateArith{
 			Op:       add,
 			Unit:     t.Unit,
 			Date:     Value{Val: input},
@@ -147,7 +147,7 @@ func (t *testDateCastSuite) TestDateCast(c *C) {
 		v, err := e.Eval(nil, nil)
 		c.Assert(err, NotNil, Commentf("%s", v))
 
-		e = &DateCast{
+		e = &DateArith{
 			Op:       sub,
 			Unit:     t.Unit,
 			Date:     Value{Val: input},

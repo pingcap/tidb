@@ -2286,7 +2286,7 @@ FunctionCallNonKeyword:
 	}
 |	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		$$ = &expression.DateCast{
+		$$ = &expression.DateArith{
 			Op:"ADD",
 			Unit: $7.(string), 
 			Date: $3.(expression.Expression),
@@ -2295,7 +2295,7 @@ FunctionCallNonKeyword:
 	}
 |	"DATE_SUB" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		$$ = &expression.DateCast{
+		$$ = &expression.DateArith{
 			Op:"SUB",
 			Unit: $7.(string),
 			Date: $3.(expression.Expression),
