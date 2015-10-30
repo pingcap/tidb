@@ -747,6 +747,7 @@ Assignment:
 		x, err := expression.NewAssignment($1.(string), $3.(expression.Expression))
 		if err != nil {
 			yylex.(*lexer).errf("Parse Assignment error: %s", $1.(string))
+			return 1
 		}
 		$$ = x
 	}
@@ -1067,6 +1068,7 @@ CreateDatabaseStmt:
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
 			yylex.(*lexer).errf("Unknown character set %s or collate %s ", cs, co)
+			return 1
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
@@ -1891,6 +1893,7 @@ Literal:
 		if err != nil {
 			l := yylex.(*lexer)
 			l.err(fmt.Sprintf("Get collation error for charset: %s", tp.Charset))
+			return 1
 		}
 		tp.Collate = co
 		$$ = &types.DataItem{
@@ -1931,6 +1934,7 @@ Operand:
 		l := yylex.(*lexer)
 		if !l.prepare {
 			l.err("Can not accept placeholder when not parsing prepare sql")
+			return 1
 		}
 		pm := &expression.ParamMarker{}
 		l.ParamList = append(l.ParamList, pm)
@@ -3912,6 +3916,7 @@ NumericType:
 			x.Flen = 1
 		} else if x.Flen > 64 {
 			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+			return 1
 		}
 		$$ = x
 	}
