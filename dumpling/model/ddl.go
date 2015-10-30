@@ -78,7 +78,8 @@ type Job struct {
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	// snapshot version for this job.
-	SnapshotVer uint64 `json:"snapshot_ver"`
+	SnapshotVer  uint64 `json:"snapshot_ver"`
+	LastUpdateTS int64  `json:"last_update_ts"`
 }
 
 // Encode encodes job with json format.

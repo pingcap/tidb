@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -260,9 +261,8 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
-	// first check db exists or not.
+	// check if db exists.
 	dbKey := m.dbKey(dbID)
-
 	if err := m.txn.HClear(dbKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -283,7 +283,6 @@ func (m *Meta) DropTable(dbID int64, tableID int64) error {
 	}
 
 	tableKey := m.tableKey(tableID)
-
 	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
@@ -398,7 +397,6 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	}
 
 	tableKey := m.tableKey(tableID)
-
 	value, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -479,6 +477,8 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 
 // UpdateDDLJob updates the DDL job with index.
 func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
+	// TODO: use timestamp allocated by TSO
+	job.LastUpdateTS = time.Now().Unix()
 	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
