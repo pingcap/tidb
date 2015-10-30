@@ -27,7 +27,7 @@ import (
 
 var _ = Suite(&testDDLSuite{})
 
-func createTestStore(c *C, name string) kv.Storage {
+func testCreateStore(c *C, name string) kv.Storage {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open(fmt.Sprintf("memory:%s", name))
 	c.Assert(err, IsNil)
@@ -37,37 +37,39 @@ func createTestStore(c *C, name string) kv.Storage {
 type testDDLSuite struct {
 }
 
+func testCheckOwner(c *C, d *ddl, isOwner bool) {
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		_, err := d.checkOwner(t)
+		return err
+	})
+	if isOwner {
+		c.Assert(err, IsNil)
+		return
+	}
+
+	c.Assert(errors2.ErrorEqual(err, ErrNotOwner), IsTrue)
+}
+
 func (s *testDDLSuite) TestCheckOnwer(c *C) {
-	store := createTestStore(c, "test_owner")
+	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
 	lease := 100 * time.Millisecond
 	d1 := newDDL(store, nil, nil, lease)
+	defer d1.close()
 
 	time.Sleep(lease)
 
-	err := d1.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		_, err1 := d1.checkOwner(t)
-		return err1
-	})
-	c.Assert(err, IsNil)
+	testCheckOwner(c, d1, true)
 
 	d2 := newDDL(store, nil, nil, lease)
-	err = d2.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		_, err1 := d2.checkOwner(t)
-		return err1
-	})
-	c.Assert(err, NotNil)
-	c.Assert(errors2.ErrorEqual(err, ErrNotOwner), IsTrue)
+	defer d2.close()
 
+	testCheckOwner(c, d2, false)
 	d1.close()
 
 	time.Sleep(6 * lease)
 
-	err = d2.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
-		_, err1 := d2.checkOwner(t)
-		return err1
-	})
-	c.Assert(err, IsNil)
-	d2.close()
+	testCheckOwner(c, d2, true)
 }

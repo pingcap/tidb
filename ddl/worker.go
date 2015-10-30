@@ -19,8 +19,10 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/errors2"
 )
 
 func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
@@ -30,7 +32,8 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// Create a new job and queue it.
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var err error
 		job.ID, err = t.GenGlobalID()
 		if err != nil {
@@ -51,7 +54,12 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	log.Warnf("start DDL job %v", job)
 
 	jobID := job.ID
-	ticker := time.NewTicker(10 * time.Second)
+
+	var historyJob *model.Job
+
+	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorgnization -> public
+	// for every state change, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
 	defer ticker.Stop()
 	for {
 		select {
@@ -59,28 +67,29 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 		case <-ticker.C:
 		}
 
-		job, err = d.getHistoryJob(jobID)
+		historyJob, err = d.getHistoryJob(jobID)
 		if err != nil {
 			log.Errorf("get history job err %v, check again", err)
 			continue
-		} else if job == nil {
+		} else if historyJob == nil {
 			log.Warnf("job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
 		// if a job is a history table, the state must be JobDone or JobCancel.
-		if job.State == model.JobDone {
+		if historyJob.State == model.JobDone {
 			return nil
 		}
 
-		return errors.Errorf(job.Error)
+		return errors.Errorf(historyJob.Error)
 	}
 }
 
 func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
-	err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
 		return errors.Trace(err1)
@@ -96,7 +105,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) checkOwner(t *meta.TMeta) (*model.Owner, error) {
+func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
 	owner, err := t.GetDDLOwner()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -131,18 +140,18 @@ func (d *ddl) checkOwner(t *meta.TMeta) (*model.Owner, error) {
 	return owner, nil
 }
 
-func (d *ddl) getFirstJob(t *meta.TMeta) (*model.Job, error) {
+func (d *ddl) getFirstJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJob(0)
 	return job, errors.Trace(err)
 }
 
 // every time we enter another state except final state, we must call this function.
-func (d *ddl) updateJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) updateJob(t *meta.Meta, job *model.Job) error {
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) finishJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 	log.Warnf("finish DDL job %v", job)
 	// done, notice and run next job.
 	_, err := t.DeQueueDDLJob()
@@ -164,9 +173,13 @@ func (d *ddl) handleJobQueue() error {
 		}
 
 		var job *model.Job
-		err := d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
 			owner, err := d.checkOwner(t)
-			if err != nil {
+			if errors2.ErrorEqual(err, ErrNotOwner) {
+				// we are not owner, return and retry checking later.
+				return nil
+			} else if err != nil {
 				return errors.Trace(err)
 			}
 
@@ -257,7 +270,7 @@ func (d *ddl) onWorker() {
 	}
 }
 
-func (d *ddl) runJob(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
 	if job.State == model.JobDone || job.State == model.JobCancelled {
 		return nil
 	}

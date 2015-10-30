@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onSchemaCreate(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	var name model.CIStr
 	if err := job.DecodeArgs(&name); err != nil {
@@ -90,7 +90,7 @@ func (d *ddl) onSchemaCreate(t *meta.TMeta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onSchemaDrop(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onSchemaDrop(t *meta.Meta, job *model.Job) error {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -167,7 +167,7 @@ func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) er
 	}
 
 	for _, tblInfo := range tables {
-		alloc := autoid.NewAllocator(d.meta, dbInfo.ID)
+		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
 		t := table.TableFromMeta(dbInfo.Name.L, alloc, tblInfo)
 		err = t.Truncate(ctx)
 		if err != nil {

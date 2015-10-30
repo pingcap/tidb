@@ -17,18 +17,19 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
 
-func TestStructure(t *testing.T) {
+func TestTxStructure(t *testing.T) {
 	TestingT(t)
 }
 
 var _ = Suite(&tesTxStructureSuite{})
 
 type tesTxStructureSuite struct {
-	s *TStore
+	store kv.Storage
 }
 
 func (s *tesTxStructureSuite) SetUpSuite(c *C) {
@@ -38,19 +39,20 @@ func (s *tesTxStructureSuite) SetUpSuite(c *C) {
 	}
 	store, err := d.Open(path)
 	c.Assert(err, IsNil)
-	s.s = NewStore(store, []byte{0x00})
+	s.store = store
 }
 
 func (s *tesTxStructureSuite) TearDownSuite(c *C) {
-	err := s.s.store.Close()
+	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
 
 func (s *tesTxStructureSuite) TestString(c *C) {
-	tx, err := s.s.Begin()
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
+	defer txn.Rollback()
 
-	defer tx.Rollback()
+	tx := NewStructure(txn, []byte{0x00})
 
 	key := []byte("a")
 	value := []byte("1")
@@ -80,15 +82,16 @@ func (s *tesTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	err = tx.Commit()
+	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 
 func (s *tesTxStructureSuite) TestList(c *C) {
-	tx, err := s.s.Begin()
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
+	defer txn.Rollback()
 
-	defer tx.Rollback()
+	tx := NewStructure(txn, []byte{0x00})
 
 	key := []byte("a")
 	err = tx.LPush(key, []byte("3"), []byte("2"), []byte("1"))
@@ -161,15 +164,16 @@ func (s *tesTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
 
-	err = tx.Commit()
+	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
 
 func (s *tesTxStructureSuite) TestHash(c *C) {
-	tx, err := s.s.Begin()
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
+	defer txn.Rollback()
 
-	defer tx.Rollback()
+	tx := NewStructure(txn, []byte{0x00})
 
 	key := []byte("a")
 
@@ -242,10 +246,11 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 	err = tx.HDel(key, []byte("fake_key"))
 	c.Assert(err, IsNil)
 
-	err = tx.Commit()
+	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	fn := func(t *TxStructure) error {
+	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := NewStructure(txn, []byte{0x00})
 		err = t.Set(key, []byte("abc"))
 		c.Assert(err, IsNil)
 
@@ -253,7 +258,6 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(value, DeepEquals, []byte("abc"))
 		return nil
-	}
-	err = s.s.RunInNewTxn(false, fn)
+	})
 	c.Assert(err, IsNil)
 }

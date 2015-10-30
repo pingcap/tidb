@@ -100,6 +100,7 @@ var Funcs = map[string]Func{
 	"length":    {builtinLength, 1, 1, true, false},
 	"lower":     {builtinLower, 1, 1, true, false},
 	"repeat":    {builtinRepeat, 2, 2, true, false},
+	"replace":   {builtinReplace, 3, 3, true, false},
 	"upper":     {builtinUpper, 1, 1, true, false},
 
 	// information functions

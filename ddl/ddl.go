@@ -64,7 +64,6 @@ type ddl struct {
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
 	store       kv.Storage
-	meta        *meta.Meta
 	// schema lease seconds.
 	lease     time.Duration
 	uuid      string
@@ -101,20 +100,31 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
 		store:       store,
-		meta:        meta.NewMeta(store),
 		lease:       lease,
 		uuid:        uuid.NewV4().String(),
 		jobCh:       make(chan struct{}, 1),
 		jobDoneCh:   make(chan struct{}, 1),
-		quitCh:      make(chan struct{}),
 	}
 
-	d.wait.Add(1)
-	go d.onWorker()
+	d.start()
+
 	return d
 }
 
+func (d *ddl) start() {
+	d.quitCh = make(chan struct{})
+	d.wait.Add(1)
+	go d.onWorker()
+	// for every start, we will send a fake job to let worker
+	// check owner first and try to find whether a job exists and run.
+	asyncNotify(d.jobCh)
+}
+
 func (d *ddl) close() {
+	if d.isClosed() {
+		return
+	}
+
 	close(d.quitCh)
 
 	d.wait.Wait()
@@ -133,14 +143,25 @@ func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
 }
 
-func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) error {
+func (d *ddl) genGlobalID() (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+
+	return globalID, errors.Trace(err)
+}
+
+func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return errors.Trace(ErrExists)
 	}
 
-	schemaID, err := d.meta.GenGlobalID()
+	schemaID, err := d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,11 +174,10 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) error {
 
 	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
-
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(t *meta.TMeta, schemaMetaVersion int64) error {
+func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
 	curVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
@@ -278,7 +298,7 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	col.ID, err = d.meta.GenGlobalID()
+	col.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -333,7 +353,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
-	tbInfo.ID, err = d.meta.GenGlobalID()
+	tbInfo.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -498,7 +518,8 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 	}
 
 	// update infomation schema
-	err = d.meta.RunInNewTxn(false, func(t *meta.TMeta) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, schemaMetaVersion)
 		if err != nil {
 			return errors.Trace(err)

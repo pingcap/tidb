@@ -28,15 +28,18 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) checkTablePublic(t *meta.TMeta, job *model.Job) (*model.TableInfo, error) {
+func (d *ddl) checkTablePublic(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
-	if errors2.ErrorEqual(err, meta.ErrDBNotExists) || errors2.ErrorEqual(err, meta.ErrTableNotExists) {
+	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
 		return nil, errors.Trace(ErrNotExists)
 	} else if err != nil {
 		return nil, errors.Trace(err)
+	} else if tblInfo == nil {
+		job.State = model.JobCancelled
+		return nil, errors.Trace(ErrNotExists)
 	}
 
 	if tblInfo.State != model.StatePublic {
@@ -98,7 +101,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	return idxInfo, nil
 }
 
-func (d *ddl) onIndexCreate(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 
 	tblInfo, err := d.checkTablePublic(t, job)
@@ -208,7 +211,7 @@ func (d *ddl) onIndexCreate(t *meta.TMeta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onIndexDrop(t *meta.TMeta, job *model.Job) error {
+func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 
 	tblInfo, err := d.checkTablePublic(t, job)

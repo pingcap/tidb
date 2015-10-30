@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
@@ -191,13 +190,13 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 // Handle handles information schema, including getting and setting.
 type Handle struct {
 	value atomic.Value
-	meta  *meta.Meta
+	store kv.Storage
 }
 
 // NewHandle creates a new Handle.
 func NewHandle(store kv.Storage) *Handle {
 	return &Handle{
-		meta: meta.NewMeta(store),
+		store: store,
 	}
 }
 
@@ -218,7 +217,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 		info.schemas[di.ID] = di
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
-			alloc := autoid.NewAllocator(h.meta, di.ID)
+			alloc := autoid.NewAllocator(h.store, di.ID)
 			info.tables[t.ID] = table.TableFromMeta(di.Name.L, alloc, t)
 			tname := tableName{di.Name.L, t.Name.L}
 			info.tableNameToID[tname] = t.ID
