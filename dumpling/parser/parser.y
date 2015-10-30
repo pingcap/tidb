@@ -152,6 +152,7 @@ import (
 	ge		">="
 	global		"GLOBAL"
 	grant		"GRANT"
+	grants		"GRANTS"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -1707,7 +1708,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -3506,6 +3507,19 @@ ShowStmt:
 		$$ = &stmts.ShowStmt{
 			Target:     stmt.ShowCreateTable,
 			TableIdent: $4.(table.Ident),
+		}
+	}
+|	"SHOW" "GRANTS"
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		$$ = &stmts.ShowStmt{Target: stmt.ShowGrants}
+	}
+|	"SHOW" "GRANTS" "FOR" Username
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowGrants,
+			User:	$4.(string),
 		}
 	}
 
