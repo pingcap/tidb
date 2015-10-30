@@ -33,6 +33,18 @@ func (s *testStmtSuite) TestSelectWithoutFrom(c *C) {
 
 	rows.Close()
 	mustCommit(c, tx)
+
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`select _utf8"string";`)
+	c.Assert(err, IsNil)
+
+	for rows.Next() {
+		var str string
+		rows.Scan(&str)
+		c.Assert(str, Equals, "string")
+	}
+	rows.Close()
+	mustCommit(c, tx)
 }
 
 func (s *testStmtSuite) TestSelectExplain(c *C) {
