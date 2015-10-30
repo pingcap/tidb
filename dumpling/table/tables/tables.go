@@ -51,8 +51,8 @@ type Table struct {
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(dbname string, alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
-	t := NewTable(tblInfo.ID, tblInfo.Name.O, dbname, nil, alloc)
+func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
+	t := NewTable(tblInfo.ID, tblInfo.Name.O, nil, alloc)
 
 	for _, colInfo := range tblInfo.Columns {
 		c := column.Col{ColumnInfo: *colInfo}
@@ -71,7 +71,7 @@ func TableFromMeta(dbname string, alloc autoid.Allocator, tblInfo *model.TableIn
 }
 
 // NewTable constructs a Table instance.
-func NewTable(tableID int64, tableName string, dbName string, cols []*column.Col, alloc autoid.Allocator) *Table {
+func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
 	name := model.NewCIStr(tableName)
 	t := &Table{
 		ID:           tableID,

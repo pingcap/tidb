@@ -218,7 +218,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
 			alloc := autoid.NewAllocator(h.store, di.ID)
-			info.tables[t.ID] = table.TableFromMeta(di.Name.L, alloc, t)
+			info.tables[t.ID] = table.TableFromMeta(alloc, t)
 			tname := tableName{di.Name.L, t.Name.L}
 			info.tableNameToID[tname] = t.ID
 			for _, c := range t.Columns {
