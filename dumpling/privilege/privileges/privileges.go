@@ -167,6 +167,8 @@ func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model
 			// User current user
 			p.User = variable.GetSessionVars(ctx).User
 			if len(p.User) == 0 {
+				// In embedded db mode, user does not need to login. So we do not have username.
+				// TODO: remove this check latter.
 				return true, nil
 			}
 		}

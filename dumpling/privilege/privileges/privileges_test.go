@@ -251,7 +251,7 @@ func (t *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
 
 	se1 := newSession(c, t.store, t.dbName)
-	ctx1, _ := se.(context.Context)
+	ctx1, _ := se1.(context.Context)
 	variable.GetSessionVars(ctx1).User = "drop@localhost"
 	mustExec(c, se1, `DROP TABLE todrop;`)
 }
