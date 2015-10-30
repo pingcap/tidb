@@ -74,7 +74,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 			},
 		},
 	}
-	p.tbl = tables.NewTable(2, "t2", "test", p.cols, &simpleAllocator{})
+	p.tbl = tables.NewTable(2, "t2", p.cols, &simpleAllocator{})
 
 	idxCol := &column.IndexedCol{
 		IndexInfo: model.IndexInfo{
