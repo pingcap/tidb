@@ -578,8 +578,8 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		return errors.Trace(err)
 	}
 	// Check Privilege
-	pchecker := privilege.GetPrivilegeChecker(ctx)
-	hasPriv, err := pchecker.Check(ctx, schema, tb.Meta(), mysql.DropPriv)
+	privChecker := privilege.GetPrivilegeChecker(ctx)
+	hasPriv, err := privChecker.Check(ctx, schema, tb.Meta(), mysql.DropPriv)
 	if err != nil {
 		return errors.Trace(err)
 	}
