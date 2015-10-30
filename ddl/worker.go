@@ -294,7 +294,9 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
 	case model.ActionDropIndex:
 		err = d.onIndexDrop(t, job)
 	case model.ActionAddConstraint:
+		log.Fatal("Doesn't support change constraint online")
 	case model.ActionDropConstraint:
+		log.Fatal("Doesn't support change constraint online")
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled

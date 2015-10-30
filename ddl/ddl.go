@@ -104,6 +104,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, l
 		uuid:        uuid.NewV4().String(),
 		jobCh:       make(chan struct{}, 1),
 		jobDoneCh:   make(chan struct{}, 1),
+		reOrgDoneCh: make(chan error, 1),
 	}
 
 	d.start()
