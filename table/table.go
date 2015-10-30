@@ -111,7 +111,7 @@ type Table interface {
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
-var TableFromMeta func(schema string, alloc autoid.Allocator, tblInfo *model.TableInfo) Table
+var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) Table
 
 // Ident is the table identifier composed of schema name and table name.
 // TODO: Move out
