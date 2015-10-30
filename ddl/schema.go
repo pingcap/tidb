@@ -168,7 +168,7 @@ func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) er
 
 	for _, tblInfo := range tables {
 		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
-		t := table.TableFromMeta(dbInfo.Name.L, alloc, tblInfo)
+		t := table.TableFromMeta(alloc, tblInfo)
 		err = t.Truncate(ctx)
 		if err != nil {
 			ctx.FinishTxn(true)

@@ -56,7 +56,7 @@ func (s *testIndexSuite) testCreateIndex(c *C, ctx context.Context, tblInfo *mod
 		SchemaID: s.dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, model.NewCIStr(indexName), []*coldef.IndexColName{&coldef.IndexColName{ColumnName: colName, Length: 256}}},
+		Args:     []interface{}{unique, model.NewCIStr(indexName), []*coldef.IndexColName{{ColumnName: colName, Length: 256}}},
 	}
 
 	err := s.d.startJob(ctx, job)
@@ -90,7 +90,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
 	for i := 0; i < 10; i++ {
-		_, err := t.AddRecord(ctx, []interface{}{i, i, i})
+		_, err = t.AddRecord(ctx, []interface{}{i, i, i})
 		c.Assert(err, IsNil)
 	}
 
