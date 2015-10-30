@@ -95,7 +95,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 			},
 		},
 	}
-	p.tbl = tables.NewTable(1, "t", "test", p.cols, &simpleAllocator{})
+	p.tbl = tables.NewTable(1, "t", p.cols, &simpleAllocator{})
 	variable.BindSessionVars(p)
 
 	var i int64
