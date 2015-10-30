@@ -29,20 +29,20 @@ const (
 	sub = "SUB"
 )
 
-// DateCast is used for dealing with addition and substraction of time.
+// DateArith is used for dealing with addition and substraction of time.
 // If the Op value is ADD, then do date_add function.
 // See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
 // If the Op value is SUB, then do date_sub function.
 // See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
-type DateCast struct {
+type DateArith struct {
 	Op       string
 	Unit     string
 	Date     Expression
 	Interval Expression
 }
 
-func (dc *DateCast) isAdd() bool {
-	if dc.Op == add {
+func (da *DateArith) isAdd() bool {
+	if da.Op == add {
 		return true
 	}
 
@@ -50,34 +50,34 @@ func (dc *DateCast) isAdd() bool {
 }
 
 // Clone implements the Expression Clone interface.
-func (dc *DateCast) Clone() Expression {
-	n := *dc
+func (da *DateArith) Clone() Expression {
+	n := *da
 	return &n
 }
 
 // IsStatic implements the Expression IsStatic interface.
-func (dc *DateCast) IsStatic() bool {
-	return dc.Date.IsStatic() && dc.Interval.IsStatic()
+func (da *DateArith) IsStatic() bool {
+	return da.Date.IsStatic() && da.Interval.IsStatic()
 }
 
 // Accept implements the Visitor Accept interface.
-func (dc *DateCast) Accept(v Visitor) (Expression, error) {
-	return v.VisitDateCast(dc)
+func (da *DateArith) Accept(v Visitor) (Expression, error) {
+	return v.VisitDateArith(da)
 }
 
 // String implements the Expression String interface.
-func (dc *DateCast) String() string {
-	return fmt.Sprintf("DATE_%s(%s, INTERVAL %s %s)", dc.Op, dc.Date, dc.Interval, strings.ToUpper(dc.Unit))
+func (da *DateArith) String() string {
+	return fmt.Sprintf("DATE_%s(%s, INTERVAL %s %s)", da.Op, da.Date, da.Interval, strings.ToUpper(da.Unit))
 }
 
 // Eval implements the Expression Eval interface.
-func (dc *DateCast) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	t, years, months, days, durations, err := dc.evalArgs(ctx, args)
+func (da *DateArith) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
+	t, years, months, days, durations, err := da.evalArgs(ctx, args)
 	if t.IsZero() || err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if !dc.isAdd() {
+	if !da.isAdd() {
 		years, months, days, durations = -years, -months, -days, -durations
 	}
 	t.Time = t.Time.Add(durations)
@@ -91,9 +91,9 @@ func (dc *DateCast) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	return t, nil
 }
 
-func (dc *DateCast) evalArgs(ctx context.Context, args map[interface{}]interface{}) (
+func (da *DateArith) evalArgs(ctx context.Context, args map[interface{}]interface{}) (
 	mysql.Time, int64, int64, int64, time.Duration, error) {
-	dVal, err := dc.Date.Eval(ctx, args)
+	dVal, err := da.Date.Eval(ctx, args)
 	if dVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
@@ -112,7 +112,7 @@ func (dc *DateCast) evalArgs(ctx context.Context, args map[interface{}]interface
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Errorf("need time type, but got %T", dVal)
 	}
 
-	iVal, err := dc.Interval.Eval(ctx, args)
+	iVal, err := da.Interval.Eval(ctx, args)
 	if iVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
@@ -120,7 +120,7 @@ func (dc *DateCast) evalArgs(ctx context.Context, args map[interface{}]interface
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
-	years, months, days, durations, err := mysql.ExtractTimeValue(dc.Unit, strings.TrimSpace(iValStr))
+	years, months, days, durations, err := mysql.ExtractTimeValue(da.Unit, strings.TrimSpace(iValStr))
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
