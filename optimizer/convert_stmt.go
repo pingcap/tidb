@@ -39,15 +39,13 @@ func convertAssignment(converter *expressionConverter, v *ast.Assignment) (*expr
 	return oldAssign, nil
 }
 
-func convertInsert(converter *expressionConverter, v *ast.InsertStmt) (*stmts.InsertIntoStmt, error) {
-	oldInsert := &stmts.InsertIntoStmt{
-		Priority: v.Priority,
-		Text:     v.Text(),
-	}
+func convertInsert(converter *expressionConverter, v *ast.InsertStmt) (stmt.Statement, error) {
+	insertValues := stmts.InsertValues{}
+	insertValues.Priority = v.Priority
 	tableName := v.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
-	oldInsert.TableIdent = table.Ident{Schema: tableName.Schema, Name: tableName.Name}
+	insertValues.TableIdent = table.Ident{Schema: tableName.Schema, Name: tableName.Name}
 	for _, val := range v.Columns {
-		oldInsert.ColNames = append(oldInsert.ColNames, joinColumnName(val))
+		insertValues.ColNames = append(insertValues.ColNames, joinColumnName(val))
 	}
 	for _, row := range v.Lists {
 		var oldRow []expression.Expression
@@ -58,33 +56,44 @@ func convertInsert(converter *expressionConverter, v *ast.InsertStmt) (*stmts.In
 			}
 			oldRow = append(oldRow, oldExpr)
 		}
-		oldInsert.Lists = append(oldInsert.Lists, oldRow)
+		insertValues.Lists = append(insertValues.Lists, oldRow)
 	}
 	for _, assign := range v.Setlist {
 		oldAssign, err := convertAssignment(converter, assign)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		oldInsert.Setlist = append(oldInsert.Setlist, oldAssign)
+		insertValues.Setlist = append(insertValues.Setlist, oldAssign)
+	}
+
+	if v.Select != nil {
+		var err error
+		switch x := v.Select.(type) {
+		case *ast.SelectStmt:
+			insertValues.Sel, err = convertSelect(converter, x)
+		case *ast.UnionStmt:
+			insertValues.Sel, err = convertUnion(converter, x)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if v.Replace {
+		return &stmts.ReplaceIntoStmt{
+			InsertValues: insertValues,
+			Text:         v.Text(),
+		}, nil
+	}
+	oldInsert := &stmts.InsertIntoStmt{
+		InsertValues: insertValues,
+		Text:         v.Text(),
 	}
 	for _, onDup := range v.OnDuplicate {
 		oldOnDup, err := convertAssignment(converter, onDup)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		oldInsert.OnDuplicate = append(oldInsert.OnDuplicate, *oldOnDup)
-	}
-	if v.Select != nil {
-		var err error
-		switch x := v.Select.(type) {
-		case *ast.SelectStmt:
-			oldInsert.Sel, err = convertSelect(converter, x)
-		case *ast.UnionStmt:
-			oldInsert.Sel, err = convertUnion(converter, x)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		oldInsert.OnDuplicate = append(oldInsert.OnDuplicate, oldOnDup)
 	}
 	return oldInsert, nil
 }
@@ -155,7 +164,7 @@ func convertUpdate(converter *expressionConverter, v *ast.UpdateStmt) (*stmts.Up
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		oldUpdate.List = append(oldUpdate.List, *oldAssign)
+		oldUpdate.List = append(oldUpdate.List, oldAssign)
 	}
 	if v.Order != nil {
 		orderRset := &rsets.OrderByRset{}

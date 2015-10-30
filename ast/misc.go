@@ -164,6 +164,7 @@ const (
 	ShowVariables
 	ShowCollation
 	ShowCreateTable
+	ShowGrants
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
@@ -177,6 +178,7 @@ type ShowStmt struct {
 	Column *ColumnName // Used for `desc table column`.
 	Flag   int         // Some flag parsed from sql, such as FULL.
 	Full   bool
+	User   string // Used for show grants.
 
 	// Used by show variables
 	GlobalScope bool
