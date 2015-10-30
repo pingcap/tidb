@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) checkTablePublic(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
+func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
@@ -104,8 +104,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 
 func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-
-	tblInfo, err := d.checkTablePublic(t, job)
+	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -214,8 +213,7 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-
-	tblInfo, err := d.checkTablePublic(t, job)
+	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -264,8 +262,7 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateReorgnization:
 		// reorganization -> absent
-		var tbl table.Table
-		tbl, err = d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(t, schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
