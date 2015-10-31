@@ -180,6 +180,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 		done <- s.testCreateIndex(c, ctx, d, tblInfo, true, "c1_uni", "c1")
 	}()
 
+	var exist bool
 LOOP:
 	for {
 		select {
@@ -205,7 +206,7 @@ LOOP:
 			txn, err = ctx.GetTxn(true)
 			c.Assert(err, IsNil)
 
-			exist, _, err := index.X.Exist(txn, []interface{}{1}, h)
+			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
 			c.Assert(err, IsNil)
 			c.Assert(exist, IsFalse)
 
@@ -262,7 +263,7 @@ LOOP1:
 			txn, err = ctx.GetTxn(true)
 			c.Assert(err, IsNil)
 
-			exist, _, err := index.X.Exist(txn, []interface{}{1}, h)
+			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
 			c.Assert(err, IsNil)
 			c.Assert(exist, IsFalse)
 
