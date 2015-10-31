@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"bytes"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -28,39 +27,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
 )
-
-func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
-	schemaID := job.SchemaID
-	tableID := job.TableID
-	tblInfo, err := t.GetTable(schemaID, tableID)
-	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
-		job.State = model.JobCancelled
-		return nil, errors.Trace(ErrNotExists)
-	} else if err != nil {
-		return nil, errors.Trace(err)
-	} else if tblInfo == nil {
-		job.State = model.JobCancelled
-		return nil, errors.Trace(ErrNotExists)
-	}
-
-	if tblInfo.State != model.StatePublic {
-		job.State = model.JobCancelled
-		return nil, errors.Errorf("table %s is not in public, but %s", tblInfo.Name.L, tblInfo.State)
-	}
-
-	return tblInfo, nil
-}
-
-// FindCol finds column in cols by name.
-func findCol(cols []*model.ColumnInfo, name string) (c *model.ColumnInfo) {
-	name = strings.ToLower(name)
-	for _, c = range cols {
-		if c.Name.L == name {
-			return
-		}
-	}
-	return nil
-}
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
 	for _, col := range tblInfo.Columns {
