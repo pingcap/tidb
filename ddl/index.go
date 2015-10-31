@@ -131,20 +131,23 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		// write only -> public
 		job.SchemaState = model.StateReorgnization
 		indexInfo.State = model.StateReorgnization
-
-		// get the current version for later Reorgnization.
-		var ver kv.Version
-		ver, err = d.store.CurrentVersion()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		job.SnapshotVer = ver.Ver
-
+		// initialize SnapshotVer to 0 for later reorgnization check.
+		job.SnapshotVer = 0
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorgnization:
 		// reorganization -> public
+		// get the current version for reorgnization if we don't have
+		if job.SnapshotVer == 0 {
+			var ver kv.Version
+			ver, err = d.store.CurrentVersion()
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			job.SnapshotVer = ver.Ver
+		}
+
 		var tbl table.Table
 		tbl, err = d.getTable(t, schemaID, tblInfo)
 		if err != nil {
@@ -280,7 +283,7 @@ func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error
 	return true, nil
 }
 
-func fetchCurrentRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]interface{}, error) {
+func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]interface{}, error) {
 	// fetch datas
 	cols := t.Cols()
 	var vals []interface{}
@@ -303,52 +306,12 @@ func fetchCurrentRowColVals(txn kv.Transaction, t table.Table, handle int64, ind
 	return vals, nil
 }
 
-func fetchSnapRowColVals(snap kv.MvccSnapshot, ver kv.Version, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]interface{}, error) {
-	// fetch datas
-	cols := t.Cols()
-	var vals []interface{}
-	for _, v := range indexInfo.Columns {
-		var val interface{}
-
-		col := cols[v.Offset]
-		k := t.RecordKey(handle, col)
-		data, err := snap.MvccGet(kv.EncodeKey([]byte(k)), ver)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		val, err = t.DecodeValue(data, col)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		vals = append(vals, val)
-	}
-
-	return vals, nil
-}
-
-func (d *ddl) needAddingIndexForRow(txn kv.Transaction, t table.Table, handle int64, kvIndex kv.Index, indexInfo *model.IndexInfo) (bool, error) {
-	if ok, err := checkRowExist(txn, t, handle); err != nil {
-		return false, errors.Trace(err)
-	} else if !ok {
-		// if row doesn't exist, we don't need to add index
-		return false, nil
-	}
-
-	vals, err := fetchCurrentRowColVals(txn, t, handle, indexInfo)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	if ok, _, err := kvIndex.Exist(txn, vals, handle); err != nil {
-		return false, errors.Trace(err)
-	} else if ok {
-		// index exists, we don't need to add again
-		return false, nil
-	}
-
-	return true, nil
-}
-
+// How to add index in reorgnization state?
+//  1, Generate a snapshot with special version.
+//  2, Traverse the snapshot, get every row in the table.
+//  3, For one row, if the row has been already deleted, skip to next row.
+//  4, If not deleted, check whether index has existed, if existed, skip to next row.
+//  5, If index doesn't exist, create the index and then continue to handle next row.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version uint64) error {
 	ver := kv.Version{Ver: version}
 
@@ -361,13 +324,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 
 	firstKey := t.FirstKey()
 	prefix := []byte(t.KeyPrefix())
-
-	ctx := d.newReorgContext()
-	txn, err := ctx.GetTxn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer txn.Rollback()
 
 	it := snap.NewMvccIterator(kv.EncodeKey([]byte(firstKey)), ver)
 	defer it.Close()
@@ -388,43 +344,46 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 
 		log.Info("building index...", handle)
 
-		// first check need adding index or not.
-		var need bool
-		need, err = d.needAddingIndexForRow(txn, t, handle, kvX, indexInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		// the first key in one row is the lock.
+		lock := t.RecordKey(handle, nil)
+		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			// first check row exists
+			var exist bool
+			exist, err = checkRowExist(txn, t, handle)
+			if err != nil {
+				return errors.Trace(err)
+			} else if !exist {
+				// row doesn't exist, skip it.
+				return nil
+			}
 
-		if need {
 			var vals []interface{}
-			vals, err = fetchSnapRowColVals(snap, ver, t, handle, indexInfo)
+			vals, err = fetchRowColVals(txn, t, handle, indexInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			var indexExist bool
-			indexExist, _, err = kvX.Exist(txn, vals, handle)
+			exist, _, err = kvX.Exist(txn, vals, handle)
+			if err != nil {
+				return errors.Trace(err)
+			} else if exist {
+				// index already exists, skip it.
+				return nil
+			}
+
+			// mean we haven't already added this index.
+			// lock row first
+			err = txn.LockKeys(lock)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			if !indexExist {
-				// mean we haven't already added this index.
-				// should lock row here???
-				err = t.LockRow(ctx, handle, true)
-				if err != nil {
-					return errors.Trace(err)
-				}
+			// create the index.
+			err = kvX.Create(txn, vals, handle)
+			return errors.Trace(err)
+		})
 
-				// create the index.
-				err = kvX.Create(txn, vals, handle)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-
-		rk := kv.EncodeKey([]byte(t.RecordKey(handle, nil)))
+		rk := kv.EncodeKey(lock)
 		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if errors2.ErrorEqual(err, kv.ErrNotExist) {
 			break
@@ -433,7 +392,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 		}
 	}
 
-	return errors.Trace(txn.Commit())
+	return nil
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {

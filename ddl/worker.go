@@ -32,7 +32,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// Create a new job and queue it.
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		job.ID, err = t.GenGlobalID()

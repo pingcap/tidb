@@ -14,7 +14,7 @@
 package ddl
 
 import (
-	"io"
+	"strings"
 	"time"
 
 	"github.com/ngaut/log"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/coldef"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -51,7 +52,7 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func (s *testIndexSuite) testCreateIndex(c *C, ctx context.Context, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+func (s *testIndexSuite) testCreateIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := &model.Job{
 		SchemaID: s.dbInfo.ID,
 		TableID:  tblInfo.ID,
@@ -59,12 +60,12 @@ func (s *testIndexSuite) testCreateIndex(c *C, ctx context.Context, tblInfo *mod
 		Args:     []interface{}{unique, model.NewCIStr(indexName), []*coldef.IndexColName{{ColumnName: colName, Length: 256}}},
 	}
 
-	err := s.d.startJob(ctx, job)
+	err := d.startJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
 
-func (s *testIndexSuite) testDropIndex(c *C, ctx context.Context, tblInfo *model.TableInfo, indexName string) *model.Job {
+func (s *testIndexSuite) testDropIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := &model.Job{
 		SchemaID: s.dbInfo.ID,
 		TableID:  tblInfo.ID,
@@ -72,7 +73,7 @@ func (s *testIndexSuite) testDropIndex(c *C, ctx context.Context, tblInfo *model
 		Args:     []interface{}{model.NewCIStr(indexName)},
 	}
 
-	err := s.d.startJob(ctx, job)
+	err := d.startJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -104,7 +105,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 		return true, nil
 	})
 
-	job := s.testCreateIndex(c, ctx, tblInfo, true, "c1_uni", "c1")
+	job := s.testCreateIndex(c, ctx, s.d, tblInfo, true, "c1_uni", "c1")
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -118,31 +119,179 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(h, Equals, h1)
 
-	_, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
 	c.Assert(err, NotNil)
 
-	it, _, err := index.X.Seek(txn, []interface{}{1})
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	c.Assert(it, NotNil)
 
-	_, h2, err := it.Next()
+	exist, _, err := index.X.Exist(txn, []interface{}{1}, h)
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, h2)
+	c.Assert(exist, IsTrue)
 
-	it.Close()
-
-	s.testDropIndex(c, ctx, tblInfo, "c1_uni")
+	s.testDropIndex(c, ctx, s.d, tblInfo, "c1_uni")
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	index1 := t.FindIndexByColName("c1")
 	c.Assert(index1, IsNil)
 
-	it, _, _ = index.X.Seek(txn, []interface{}{1})
-	c.Assert(it, NotNil)
-	_, _, err = it.Next()
-	c.Assert(err.Error(), Equals, io.EOF.Error())
+	txn, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
+	c.Assert(err, IsNil)
+	c.Assert(exist, IsFalse)
+}
+
+func testGetIndex(t table.Table, name string) *column.IndexedCol {
+	for _, idx := range t.Indices() {
+		// only public index can be read.
+
+		if len(idx.Columns) == 1 && strings.EqualFold(idx.Columns[0].Name.L, name) {
+			return idx
+		}
+	}
+	return nil
+}
+
+func (s *testIndexSuite) TestIndexWait(c *C) {
+	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	defer d.close()
+
+	tblInfo := testTableInfo(c, d, "t")
+	ctx := testNewContext(c, d)
+	defer ctx.FinishTxn(true)
+
+	txn, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	var h int64
+	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	c.Assert(err, IsNil)
+
+	ticker := time.NewTicker(d.lease)
+	done := make(chan *model.Job, 1)
+
+	go func() {
+		done <- s.testCreateIndex(c, ctx, d, tblInfo, true, "c1_uni", "c1")
+	}()
+
+	var exist bool
+LOOP:
+	for {
+		select {
+		case job := <-done:
+			testCheckJobDone(c, d, job, true)
+			break LOOP
+		case <-ticker.C:
+			d.close()
+
+			t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+			index := testGetIndex(t, "c1")
+			if index == nil {
+				d.start()
+				continue
+			}
+
+			err = t.RemoveRowAllIndex(ctx, h, []interface{}{1})
+			c.Assert(err, IsNil)
+
+			err = t.RemoveRow(ctx, h)
+			c.Assert(err, IsNil)
+
+			txn, err = ctx.GetTxn(true)
+			c.Assert(err, IsNil)
+
+			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
+			c.Assert(err, IsNil)
+			c.Assert(exist, IsFalse)
+
+			h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+			c.Assert(err, IsNil)
+
+			txn, err = ctx.GetTxn(true)
+			c.Assert(err, IsNil)
+
+			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
+			c.Assert(err, IsNil)
+			switch index.State {
+			case model.StateDeleteOnly:
+				c.Assert(exist, IsFalse)
+			case model.StateNone:
+				c.Fatalf("can be none state")
+			default:
+				c.Assert(exist, IsTrue)
+			}
+
+			d.start()
+		}
+	}
+
+	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	c.Assert(t.FindIndexByColName("c1"), NotNil)
+
+	go func() {
+		done <- s.testDropIndex(c, ctx, d, tblInfo, "c1_uni")
+	}()
+
+LOOP1:
+	for {
+		select {
+		case job := <-done:
+			testCheckJobDone(c, d, job, false)
+			break LOOP1
+		case <-ticker.C:
+			d.close()
+
+			t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+			index := testGetIndex(t, "c1")
+			if index == nil {
+				d.start()
+				continue
+			}
+
+			err = t.RemoveRowAllIndex(ctx, h, []interface{}{1})
+			c.Assert(err, IsNil)
+
+			err = t.RemoveRow(ctx, h)
+			c.Assert(err, IsNil)
+
+			txn, err = ctx.GetTxn(true)
+			c.Assert(err, IsNil)
+
+			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
+			c.Assert(err, IsNil)
+			c.Assert(exist, IsFalse)
+
+			h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+			c.Assert(err, IsNil)
+
+			txn, err = ctx.GetTxn(true)
+			c.Assert(err, IsNil)
+
+			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
+			c.Assert(err, IsNil)
+			switch index.State {
+			case model.StateDeleteOnly:
+				c.Assert(exist, IsFalse)
+			case model.StateNone:
+				c.Fatalf("can be none state")
+			default:
+				c.Assert(exist, IsTrue)
+			}
+
+			d.start()
+		}
+	}
+
+	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	c.Assert(t.FindIndexByColName("c1"), IsNil)
 }
 
 func init() {
-	log.SetLevelByString("info")
+	log.SetLevelByString("warn")
 }
