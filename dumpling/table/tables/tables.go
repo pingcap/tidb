@@ -494,8 +494,8 @@ func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{},
 	}
 	if err = idx.X.Delete(txn, vals, h); err != nil {
 		if idx.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
-			// if index is not in public state, we may delete the index in reorgnazation jobs,
-			// so skip ErrNotExist error.
+			// If the index is not in public state, we may have not created the index,
+			// or already deleted the index, so skip ErrNotExist error.
 			return nil
 		}
 
@@ -518,8 +518,8 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 		}
 		if err = v.X.Delete(txn, vals, h); err != nil {
 			if v.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
-				// if index is not in public state, we may delete the index in reorgnazation jobs,
-				// so skip ErrNotExist error.
+				// If the index is not in public state, we may have not created the index,
+				// or already deleted the index, so skip ErrNotExist error.
 				continue
 			}
 
@@ -532,7 +532,7 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 // BuildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	if idx.State == model.StateDeleteOnly {
-		// if the index is in delete only state, we can add index.
+		// If the index is in delete only state, we can not add index.
 		return nil
 	}
 
