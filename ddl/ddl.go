@@ -177,20 +177,6 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
-	curVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if curVer != schemaMetaVersion {
-		return errors.Errorf("Schema changed, our version %d, but got %d", schemaMetaVersion, curVer)
-	}
-
-	// Increment version.
-	_, err = t.GenSchemaVersion()
-	return errors.Trace(err)
-}
-
 func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
@@ -283,7 +269,7 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 }
 
 func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
-	// set charset
+	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -293,15 +279,17 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 			colDef.Tp.Collate = charset.CharsetBin
 		}
 	}
-	// convert colDef into col
+
 	col, cts, err := coldef.ColumnDefToCol(offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	col.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	return col, cts, nil
 }
 
@@ -434,9 +422,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterSpecification) (err error) {
-	// Get database and table.
 	is := d.GetInformationSchema()
-
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return errors.Trace(qerror.ErrDatabaseNotExist)
@@ -446,52 +432,88 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	if err != nil {
 		return errors.Trace(ErrNotExists)
 	}
+
 	for _, spec := range specs {
-		switch spec.Action {
-		case AlterAddColumn:
-			if err := d.addColumn(ctx, schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
-				return errors.Trace(err)
-			}
-		default:
-			// TODO: process more actions
-			continue
+		err := d.alterTable(ctx, schema, tbl, spec)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	return nil
+}
+
+func (d *ddl) alterTable(ctx context.Context, schema *model.DBInfo, t table.Table, spec *AlterSpecification) error {
+	var job *model.Job
+	switch spec.Action {
+	case AlterAddColumn:
+		job = &model.Job{
+			SchemaID: schema.ID,
+			TableID:  t.Meta().ID,
+			Type:     model.ActionAddColumn,
+			Args:     []interface{}{spec},
+		}
+	default:
+		// TODO: support more actions.
+		return errors.Errorf("Not support alter table spec - %v", spec)
+	}
+
+	err := d.startJob(ctx, job)
+	err = d.onDDLChange(err)
+	return nil
+}
+
+/*
+func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
+	curVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if curVer != schemaMetaVersion {
+		return errors.Errorf("Schema changed, our version %d, but got %d", schemaMetaVersion, curVer)
+	}
+
+	// Increment version.
+	_, err = t.GenSchemaVersion()
+	return errors.Trace(err)
 }
 
 // Add a column into table
 func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
-	// Find position
+	// Check column name duplicate.
 	cols := tbl.Cols()
 	position := len(cols)
 	name := spec.Column.Name
-	// Check column name duplicate.
 	dc := column.FindCol(cols, name)
 	if dc != nil {
 		return errors.Errorf("Try to add a column with the same name of an already exists column.")
 	}
+
+	// Get column position.
 	if spec.Position.Type == ColumnPositionFirst {
 		position = 0
 	} else if spec.Position.Type == ColumnPositionAfter {
-		// Find the mentioned column.
 		c := column.FindCol(cols, spec.Position.RelativeColumn)
 		if c == nil {
 			return errors.Errorf("No such column: %v", name)
 		}
+
 		// Insert position is after the mentioned column.
 		position = c.Offset + 1
 	}
+
 	// TODO: set constraint
 	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// insert col into the right place of the column list
+
+	// Insert col into the right place of the column list.
 	newCols := make([]*column.Col, 0, len(cols)+1)
 	newCols = append(newCols, cols[:position]...)
 	newCols = append(newCols, col)
 	newCols = append(newCols, cols[position:]...)
+
 	// adjust position
 	if position != len(cols) {
 		offsetChange := make(map[int]int)
@@ -532,6 +554,7 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
 }
+*/
 
 func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error {
 	txn, err := ctx.GetTxn(false)
@@ -659,4 +682,16 @@ func (d *ddl) DropIndex(ctx context.Context, schemaName, tableName, indexName mo
 	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
+}
+
+// findCol finds column in cols by name.
+func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
+	name = strings.ToLower(name)
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+
+	return nil
 }

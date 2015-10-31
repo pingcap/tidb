@@ -288,7 +288,9 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
 	case model.ActionDropTable:
 		err = d.onTableDrop(t, job)
 	case model.ActionAddColumn:
+		err = d.onColumnAdd(t, job)
 	case model.ActionDropColumn:
+		err = d.onColumnDrop(t, job)
 	case model.ActionAddIndex:
 		err = d.onIndexCreate(t, job)
 	case model.ActionDropIndex:
