@@ -128,7 +128,7 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateWriteOnly:
-		// write only -> public
+		// write only -> reorganization
 		job.SchemaState = model.StateReorgnization
 		indexInfo.State = model.StateReorgnization
 		// initialize SnapshotVer to 0 for later reorgnization check.

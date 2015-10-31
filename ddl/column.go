@@ -132,23 +132,26 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateWriteOnly:
-		// write only -> public
+		// write only -> reorganization
 		job.SchemaState = model.StateReorgnization
 		columnInfo.State = model.StateReorgnization
-
-		// get the current version for later Reorgnization.
-		var ver kv.Version
-		ver, err = d.store.CurrentVersion()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		job.SnapshotVer = ver.Ver
-
+		// initialize SnapshotVer to 0 for later reorgnization check.
+		job.SnapshotVer = 0
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorgnization:
 		// reorganization -> public
+		// get the current version for reorgnization if we don't have
+		if job.SnapshotVer == 0 {
+			var ver kv.Version
+			ver, err = d.store.CurrentVersion()
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			job.SnapshotVer = ver.Ver
+		}
+
 		tbl, err := d.getTable(t, schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -184,26 +187,6 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 func (d *ddl) onColumnDrop(t *meta.Meta, job *model.Job) error {
 	// TODO: complete it.
 	return nil
-}
-
-func (d *ddl) needBackfillColumnForRow(txn kv.Transaction, t table.Table, handle int64, key []byte) (bool, error) {
-	if ok, err := checkRowExist(txn, t, handle); err != nil {
-		return false, errors.Trace(err)
-	} else if !ok {
-		// If row doesn't exist, we don't need to backfill column.
-		return false, nil
-	}
-
-	_, err := txn.Get([]byte(key))
-	if kv.IsErrNotFound(err) {
-		// If row column doesn't exist, we need to backfill column.
-		return true, nil
-	}
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	return false, nil
 }
 
 func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, version uint64) error {
@@ -243,23 +226,45 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, versio
 
 		log.Info("backfill column...", handle)
 
-		// Check if need backfill column data.
-		backfillKey := t.RecordKey(handle, &column.Col{*columnInfo})
-		need, err := d.needBackfillColumnForRow(txn, t, handle, backfillKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		// The first key in one row is the lock.
+		lock := t.RecordKey(handle, nil)
+		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			// First check if row exists.
+			var exist bool
+			exist, err = checkRowExist(txn, t, handle)
+			if err != nil {
+				return errors.Trace(err)
+			} else if !exist {
+				// If row doesn't exist, skip it.
+				return nil
+			}
 
-		if need {
+			backfillKey := t.RecordKey(handle, &column.Col{*columnInfo})
+			_, err = txn.Get(backfillKey)
+			if err != nil {
+				if !kv.IsErrNotFound(err) {
+					return errors.Trace(err)
+				}
+			}
+
+			// If row column doesn't exist, we need to backfill column.
+			// Lock row first.
+			err = txn.LockKeys(lock)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			// TODO: check and get timestamp/datetime default value.
 			// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
 			err = t.(*tables.Table).SetColValue(txn, backfillKey, columnInfo.DefaultValue)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		}
 
-		rk := kv.EncodeKey([]byte(t.RecordKey(handle, nil)))
+			return nil
+		})
+
+		rk := kv.EncodeKey(lock)
 		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if errors2.ErrorEqual(err, kv.ErrNotExist) {
 			break
