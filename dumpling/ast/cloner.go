@@ -15,7 +15,7 @@ package ast
 
 import "fmt"
 
-// Cloner is a ast visitor that clones a node.
+// Cloner is an ast visitor that clones a node.
 type Cloner struct {
 }
 
