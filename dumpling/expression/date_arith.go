@@ -24,18 +24,21 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// DateArithType is type for DateArith option.
+type DateArithType byte
+
 const (
 	// DateAdd is to run date_add function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	DateAdd = 1
+	DateAdd DateArithType = iota + 1
 	// DateSub is to run date_sub function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
-	DateSub = 2
+	DateSub
 )
 
 // DateArith is used for dealing with addition and substraction of time.
 type DateArith struct {
-	Op       int
+	Op       DateArithType
 	Unit     string
 	Date     Expression
 	Interval Expression
