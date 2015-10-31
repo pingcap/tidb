@@ -56,7 +56,7 @@ type ValueExpr struct {
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
 func NewValueExpr(value interface{}) *ValueExpr {
 	ve := &ValueExpr{}
-	ve.Data = value
+	ve.Data = types.RawData(value)
 	// TODO: make it more precise.
 	switch value.(type) {
 	case nil:
@@ -82,6 +82,8 @@ func NewValueExpr(value interface{}) *ValueExpr {
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
 		ve.Type.Charset = "binary"
 		ve.Type.Collate = "binary"
+	case *types.DataItem:
+		ve.Type = value.(*types.DataItem).Type
 	default:
 		panic(fmt.Sprintf("illegal literal value type:%T", value))
 	}
