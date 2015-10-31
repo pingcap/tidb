@@ -14,11 +14,17 @@
 package ddl
 
 import (
+	"bytes"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -149,7 +155,7 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.fillColumnData(tbl, columnInfo, job.SnapshotVer)
+			return d.backfillColumn(tbl, columnInfo, job.SnapshotVer)
 		})
 		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -180,7 +186,87 @@ func (d *ddl) onColumnDrop(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
-func (d *ddl) fillColumnData(t table.Table, columnInfo *model.ColumnInfo, version uint64) error {
-	// TODO: complete it.
-	return nil
+func (d *ddl) needBackfillColumnForRow(txn kv.Transaction, t table.Table, handle int64, key []byte) (bool, error) {
+	if ok, err := checkRowExist(txn, t, handle); err != nil {
+		return false, errors.Trace(err)
+	} else if !ok {
+		// If row doesn't exist, we don't need to backfill column.
+		return false, nil
+	}
+
+	_, err := txn.Get([]byte(key))
+	if kv.IsErrNotFound(err) {
+		// If row column doesn't exist, we need to backfill column.
+		return true, nil
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	return false, nil
+}
+
+func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, version uint64) error {
+	ver := kv.Version{Ver: version}
+
+	snap, err := d.store.GetSnapshot(ver)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer snap.MvccRelease()
+
+	firstKey := t.FirstKey()
+	prefix := []byte(t.KeyPrefix())
+
+	ctx := d.newReorgContext()
+	txn, err := ctx.GetTxn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer txn.Rollback()
+
+	it := snap.NewMvccIterator(kv.EncodeKey([]byte(firstKey)), ver)
+	defer it.Close()
+
+	for it.Valid() {
+		key := kv.DecodeKey([]byte(it.Key()))
+		if !bytes.HasPrefix(key, prefix) {
+			break
+		}
+
+		var handle int64
+		handle, err = util.DecodeHandleFromRowKey(string(key))
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		log.Info("backfill column...", handle)
+
+		// Check if need backfill column data.
+		backfillKey := t.RecordKey(handle, &column.Col{*columnInfo})
+		need, err := d.needBackfillColumnForRow(txn, t, handle, backfillKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if need {
+			// TODO: check and get timestamp/datetime default value.
+			// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
+			err = t.(*tables.Table).SetColValue(txn, backfillKey, columnInfo.DefaultValue)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		rk := kv.EncodeKey([]byte(t.RecordKey(handle, nil)))
+		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		if errors2.ErrorEqual(err, kv.ErrNotExist) {
+			break
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return errors.Trace(txn.Commit())
 }
