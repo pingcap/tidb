@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"bytes"
-	"io"
 	"strings"
 
 	"github.com/juju/errors"
@@ -305,7 +304,8 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error) {
 	_, err := txn.Get([]byte(t.RecordKey(handle, nil)))
 	if errors2.ErrorEqual(err, kv.ErrNotExist) {
-		// if row doesn't exist, we may delete the row already, no need to add index again.
+		// If row doesn't exist, we may have deleted the row already,
+		// no need to add index again.
 		return false, nil
 	} else if err != nil {
 		return false, errors.Trace(err)
@@ -360,28 +360,6 @@ func fetchSnapRowColVals(snap kv.MvccSnapshot, ver kv.Version, t table.Table, ha
 	return vals, nil
 }
 
-func checkIndexExist(txn kv.Transaction, kvIndex kv.Index, h int64, vals []interface{}) (bool, error) {
-	it, hit, err := kvIndex.Seek(txn, vals)
-	if err != nil || !hit {
-		return false, errors.Trace(err)
-	}
-	defer it.Close()
-	for {
-		var handle int64
-		_, handle, err = it.Next()
-		if errors2.ErrorEqual(err, io.EOF) {
-			err = nil
-		} else if err != nil {
-			return false, errors.Trace(err)
-		}
-
-		// we must check handle equation to prevent multi row with same index data in none unique index.
-		if handle == h {
-			return true, nil
-		}
-	}
-}
-
 func (d *ddl) needAddingIndexForRow(txn kv.Transaction, t table.Table, handle int64, kvIndex kv.Index, indexInfo *model.IndexInfo) (bool, error) {
 	if ok, err := checkRowExist(txn, t, handle); err != nil {
 		return false, errors.Trace(err)
@@ -395,7 +373,7 @@ func (d *ddl) needAddingIndexForRow(txn kv.Transaction, t table.Table, handle in
 		return false, errors.Trace(err)
 	}
 
-	if ok, err := checkIndexExist(txn, kvIndex, handle, vals); err != nil {
+	if ok, _, err := kvIndex.Exist(txn, vals, handle); err != nil {
 		return false, errors.Trace(err)
 	} else if ok {
 		// index exists, we don't need to add again
@@ -459,7 +437,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 			}
 
 			var indexExist bool
-			indexExist, err = checkIndexExist(txn, kvX, handle, vals)
+			indexExist, _, err = kvX.Exist(txn, vals, handle)
 			if err != nil {
 				return errors.Trace(err)
 			}
