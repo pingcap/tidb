@@ -44,6 +44,10 @@ type ExprNode interface {
 	SetType(tp *types.FieldType)
 	// GetType gets the evaluation type of the expression.
 	GetType() *types.FieldType
+	// SetValue sets value to the expression.
+	SetValue(val interface{})
+	// GetValue gets value of the expression.
+	GetValue() interface{}
 }
 
 // FuncNode represents function call expression node.
@@ -95,8 +99,7 @@ type Visitor interface {
 	// VisitEnter is called before children nodes is visited.
 	// skipChildren returns true means children nodes should be skipped,
 	// this is useful when work is done in Enter and there is no need to visit children.
-	// ok returns false to stop visiting.
-	Enter(n Node) (skipChildren bool, ok bool)
+	Enter(n Node) (node Node, skipChildren bool)
 	// VisitLeave is called after children nodes has been visited.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)

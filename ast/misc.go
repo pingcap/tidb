@@ -13,6 +13,8 @@
 
 package ast
 
+import "github.com/pingcap/tidb/mysql"
+
 var (
 	_ StmtNode = &ExplainStmt{}
 	_ StmtNode = &PrepareStmt{}
@@ -26,7 +28,9 @@ var (
 	_ StmtNode = &SetStmt{}
 	_ StmtNode = &SetCharsetStmt{}
 	_ StmtNode = &SetPwdStmt{}
+	_ StmtNode = &CreateUserStmt{}
 	_ StmtNode = &DoStmt{}
+	_ StmtNode = &GrantStmt{}
 
 	_ Node = &VariableAssignment{}
 )
@@ -57,16 +61,18 @@ type ExplainStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (es *ExplainStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(es); skipChildren {
-		return es, ok
+func (nod *ExplainStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := es.Stmt.Accept(v)
+	nod = newNod.(*ExplainStmt)
+	node, ok := nod.Stmt.Accept(v)
 	if !ok {
-		return es, false
+		return nod, false
 	}
-	es.Stmt = node.(DMLNode)
-	return v.Leave(es)
+	nod.Stmt = node.(DMLNode)
+	return v.Leave(nod)
 }
 
 // PrepareStmt is a statement to prepares a SQL statement which contains placeholders,
@@ -83,16 +89,18 @@ type PrepareStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (ps *PrepareStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ps); skipChildren {
-		return ps, ok
+func (nod *PrepareStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ps.SQLVar.Accept(v)
+	nod = newNod.(*PrepareStmt)
+	node, ok := nod.SQLVar.Accept(v)
 	if !ok {
-		return ps, false
+		return nod, false
 	}
-	ps.SQLVar = node.(*VariableExpr)
-	return v.Leave(ps)
+	nod.SQLVar = node.(*VariableExpr)
+	return v.Leave(nod)
 }
 
 // DeallocateStmt is a statement to release PreparedStmt.
@@ -105,11 +113,13 @@ type DeallocateStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (ds *DeallocateStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ds); skipChildren {
-		return ds, ok
+func (nod *DeallocateStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(ds)
+	nod = newNod.(*DeallocateStmt)
+	return v.Leave(nod)
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -123,18 +133,20 @@ type ExecuteStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (es *ExecuteStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(es); skipChildren {
-		return es, ok
+func (nod *ExecuteStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range es.UsingVars {
+	nod = newNod.(*ExecuteStmt)
+	for i, val := range nod.UsingVars {
 		node, ok := val.Accept(v)
 		if !ok {
-			return es, false
+			return nod, false
 		}
-		es.UsingVars[i] = node.(ExprNode)
+		nod.UsingVars[i] = node.(ExprNode)
 	}
-	return v.Leave(es)
+	return v.Leave(nod)
 }
 
 // ShowStmtType is the type for SHOW statement.
@@ -152,12 +164,13 @@ const (
 	ShowVariables
 	ShowCollation
 	ShowCreateTable
+	ShowGrants
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
 // See: https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
-	stmtNode
+	dmlNode
 
 	Tp     ShowStmtType // Databases/Tables/Columns/....
 	DBName string
@@ -165,6 +178,7 @@ type ShowStmt struct {
 	Column *ColumnName // Used for `desc table column`.
 	Flag   int         // Some flag parsed from sql, such as FULL.
 	Full   bool
+	User   string // Used for show grants.
 
 	// Used by show variables
 	GlobalScope bool
@@ -173,39 +187,41 @@ type ShowStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (ss *ShowStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ss); skipChildren {
-		return ss, ok
+func (nod *ShowStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if ss.Table != nil {
-		node, ok := ss.Table.Accept(v)
+	nod = newNod.(*ShowStmt)
+	if nod.Table != nil {
+		node, ok := nod.Table.Accept(v)
 		if !ok {
-			return ss, false
+			return nod, false
 		}
-		ss.Table = node.(*TableName)
+		nod.Table = node.(*TableName)
 	}
-	if ss.Column != nil {
-		node, ok := ss.Column.Accept(v)
+	if nod.Column != nil {
+		node, ok := nod.Column.Accept(v)
 		if !ok {
-			return ss, false
+			return nod, false
 		}
-		ss.Column = node.(*ColumnName)
+		nod.Column = node.(*ColumnName)
 	}
-	if ss.Pattern != nil {
-		node, ok := ss.Pattern.Accept(v)
+	if nod.Pattern != nil {
+		node, ok := nod.Pattern.Accept(v)
 		if !ok {
-			return ss, false
+			return nod, false
 		}
-		ss.Pattern = node.(*PatternLikeExpr)
+		nod.Pattern = node.(*PatternLikeExpr)
 	}
-	if ss.Where != nil {
-		node, ok := ss.Where.Accept(v)
+	if nod.Where != nil {
+		node, ok := nod.Where.Accept(v)
 		if !ok {
-			return ss, false
+			return nod, false
 		}
-		ss.Where = node.(ExprNode)
+		nod.Where = node.(ExprNode)
 	}
-	return v.Leave(ss)
+	return v.Leave(nod)
 }
 
 // BeginStmt is a statement to start a new transaction.
@@ -215,11 +231,13 @@ type BeginStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (bs *BeginStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(bs); skipChildren {
-		return bs, ok
+func (nod *BeginStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(bs)
+	nod = newNod.(*BeginStmt)
+	return v.Leave(nod)
 }
 
 // CommitStmt is a statement to commit the current transaction.
@@ -229,11 +247,13 @@ type CommitStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (cs *CommitStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cs); skipChildren {
-		return cs, ok
+func (nod *CommitStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(cs)
+	nod = newNod.(*CommitStmt)
+	return v.Leave(nod)
 }
 
 // RollbackStmt is a statement to roll back the current transaction.
@@ -243,11 +263,13 @@ type RollbackStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (rs *RollbackStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(rs); skipChildren {
-		return rs, ok
+func (nod *RollbackStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(rs)
+	nod = newNod.(*RollbackStmt)
+	return v.Leave(nod)
 }
 
 // UseStmt is a statement to use the DBName database as the current database.
@@ -259,11 +281,13 @@ type UseStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (us *UseStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(us); skipChildren {
-		return us, ok
+func (nod *UseStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(us)
+	nod = newNod.(*UseStmt)
+	return v.Leave(nod)
 }
 
 // VariableAssignment is a variable assignment struct.
@@ -276,16 +300,18 @@ type VariableAssignment struct {
 }
 
 // Accept implements Node interface.
-func (va *VariableAssignment) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(va); skipChildren {
-		return va, ok
+func (nod *VariableAssignment) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := va.Value.Accept(v)
+	nod = newNod.(*VariableAssignment)
+	node, ok := nod.Value.Accept(v)
 	if !ok {
-		return va, false
+		return nod, false
 	}
-	va.Value = node.(ExprNode)
-	return v.Leave(va)
+	nod.Value = node.(ExprNode)
+	return v.Leave(nod)
 }
 
 // SetStmt is the statement to set variables.
@@ -296,18 +322,20 @@ type SetStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (set *SetStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(set); skipChildren {
-		return set, ok
+func (nod *SetStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range set.Variables {
+	nod = newNod.(*SetStmt)
+	for i, val := range nod.Variables {
 		node, ok := val.Accept(v)
 		if !ok {
-			return set, false
+			return nod, false
 		}
-		set.Variables[i] = node.(*VariableAssignment)
+		nod.Variables[i] = node.(*VariableAssignment)
 	}
-	return v.Leave(set)
+	return v.Leave(nod)
 }
 
 // SetCharsetStmt is a statement to assign values to character and collation variables.
@@ -320,11 +348,13 @@ type SetCharsetStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (set *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(set); skipChildren {
-		return set, ok
+func (nod *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(set)
+	nod = newNod.(*SetCharsetStmt)
+	return v.Leave(nod)
 }
 
 // SetPwdStmt is a statement to assign a password to user account.
@@ -337,11 +367,13 @@ type SetPwdStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (set *SetPwdStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(set); skipChildren {
-		return set, ok
+func (nod *SetPwdStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(set)
+	nod = newNod.(*SetPwdStmt)
+	return v.Leave(nod)
 }
 
 // UserSpec is used for parsing create user statement.
@@ -353,10 +385,20 @@ type UserSpec struct {
 // CreateUserStmt creates user account.
 // See: https://dev.mysql.com/doc/refman/5.7/en/create-user.html
 type CreateUserStmt struct {
+	stmtNode
+
 	IfNotExists bool
 	Specs       []*UserSpec
+}
 
-	Text string
+// Accept implements Node Accept interface.
+func (nod *CreateUserStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*CreateUserStmt)
+	return v.Leave(nod)
 }
 
 // DoStmt is the struct for DO statement.
@@ -367,16 +409,100 @@ type DoStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (do *DoStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(do); skipChildren {
-		return do, ok
+func (nod *DoStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range do.Exprs {
+	nod = newNod.(*DoStmt)
+	for i, val := range nod.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
-			return do, false
+			return nod, false
 		}
-		do.Exprs[i] = node.(ExprNode)
+		nod.Exprs[i] = node.(ExprNode)
 	}
-	return v.Leave(do)
+	return v.Leave(nod)
+}
+
+// PrivElem is the privilege type and optional column list.
+type PrivElem struct {
+	node
+	Priv mysql.PrivilegeType
+	Cols []*ColumnName
+}
+
+// Accept implements Node Accept interface.
+func (nod *PrivElem) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*PrivElem)
+	for i, val := range nod.Cols {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Cols[i] = node.(*ColumnName)
+	}
+	return v.Leave(nod)
+}
+
+// ObjectTypeType is the type for object type.
+type ObjectTypeType int
+
+const (
+	// ObjectTypeNone is for empty object type.
+	ObjectTypeNone ObjectTypeType = iota
+	// ObjectTypeTable means the following object is a table.
+	ObjectTypeTable
+)
+
+// GrantLevelType is the type for grant level.
+type GrantLevelType int
+
+const (
+	// GrantLevelNone is the dummy const for default value.
+	GrantLevelNone GrantLevelType = iota
+	// GrantLevelGlobal means the privileges are administrative or apply to all databases on a given server.
+	GrantLevelGlobal
+	// GrantLevelDB means the privileges apply to all objects in a given database.
+	GrantLevelDB
+	// GrantLevelTable means the privileges apply to all columns in a given table.
+	GrantLevelTable
+)
+
+// GrantLevel is used for store the privilege scope.
+type GrantLevel struct {
+	Level     GrantLevelType
+	DBName    string
+	TableName string
+}
+
+// GrantStmt is the struct for GRANT statement.
+type GrantStmt struct {
+	stmtNode
+
+	Privs      []*PrivElem
+	ObjectType ObjectTypeType
+	Level      *GrantLevel
+	Users      []*UserSpec
+}
+
+// Accept implements Node Accept interface.
+func (nod *GrantStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*GrantStmt)
+	for i, val := range nod.Privs {
+		node, ok := val.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Privs[i] = node.(*PrivElem)
+	}
+	return v.Leave(nod)
 }

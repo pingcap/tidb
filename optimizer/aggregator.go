@@ -13,20 +13,14 @@
 
 package optimizer
 
-import (
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/stmt"
-)
-
-// Compile compiles a ast.Node into a executable statement.
-func Compile(node ast.Node) (stmt.Statement, error) {
-	switch v := node.(type) {
-	case *ast.SetStmt:
-		return compileSet(v)
-	}
-	return nil, nil
-}
-
-func compileSet(aset *ast.SetStmt) (stmt.Statement, error) {
-	return nil, nil
+// Aggregator is the interface to
+// compute aggregate function result.
+type Aggregator interface {
+	// Input add a input value to aggregator.
+	// The input values are accumulated in the aggregator.
+	Input(in ...interface{}) error
+	// Output use input values to compute the aggregated result.
+	Output() interface{}
+	// Clear clears the input values.
+	Clear()
 }
