@@ -41,7 +41,7 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 
 	// Test null.
 	nullTbl := []struct {
-		Op       int
+		Op       DateArithType
 		Unit     string
 		Date     interface{}
 		Interval interface{}
