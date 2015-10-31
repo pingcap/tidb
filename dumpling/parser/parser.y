@@ -250,6 +250,7 @@ import (
 	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
+	underscoreCS	"UNDERSCORE_CHARSET"
 	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
@@ -746,6 +747,7 @@ Assignment:
 		x, err := expression.NewAssignment($1.(string), $3.(expression.Expression))
 		if err != nil {
 			yylex.(*lexer).errf("Parse Assignment error: %s", $1.(string))
+			return 1
 		}
 		$$ = x
 	}
@@ -1066,6 +1068,7 @@ CreateDatabaseStmt:
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
 			yylex.(*lexer).errf("Unknown character set %s or collate %s ", cs, co)
+			return 1
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
@@ -1876,11 +1879,27 @@ Literal:
 		tp := types.NewFieldType(mysql.TypeString)
 		l := yylex.(*lexer)
 		tp.Charset, tp.Collate = l.GetCharsetInfo()
-		d := &types.DataItem{
+		$$ = &types.DataItem{
 			Type: tp,
 			Data: $1.(string),
 		}
-		$$ = d
+	}
+|	"UNDERSCORE_CHARSET" stringLit
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset = $1.(string)
+		co, err := charset.GetDefaultCollation(tp.Charset)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.errf("Get collation error for charset: %s", tp.Charset)
+			return 1
+		}
+		tp.Collate = co
+		$$ = &types.DataItem{
+			Type: tp,
+			Data: $2.(string),
+		}
 	}
 |	hexLit
 |	bitLit
@@ -1915,6 +1934,7 @@ Operand:
 		l := yylex.(*lexer)
 		if !l.prepare {
 			l.err("Can not accept placeholder when not parsing prepare sql")
+			return 1
 		}
 		pm := &expression.ParamMarker{}
 		l.ParamList = append(l.ParamList, pm)
@@ -3896,6 +3916,7 @@ NumericType:
 			x.Flen = 1
 		} else if x.Flen > 64 {
 			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+			return 1
 		}
 		$$ = x
 	}
