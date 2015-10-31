@@ -33,8 +33,9 @@ func convertExpr(converter *expressionConverter, expr ast.ExprNode) (expression.
 // expressionConverter converts ast expression to
 // old expression for transition state.
 type expressionConverter struct {
-	exprMap map[ast.Node]expression.Expression
-	err     error
+	exprMap      map[ast.Node]expression.Expression
+	paramMarkers []*expression.ParamMarker
+	err          error
 }
 
 func newExpressionConverter() *expressionConverter {
@@ -265,7 +266,9 @@ func (c *expressionConverter) patternLike(v *ast.PatternLikeExpr) {
 }
 
 func (c *expressionConverter) paramMarker(v *ast.ParamMarkerExpr) {
-	c.exprMap[v] = &expression.ParamMarker{}
+	marker := &expression.ParamMarker{}
+	c.exprMap[v] = marker
+	c.paramMarkers = append(c.paramMarkers, marker)
 }
 
 func (c *expressionConverter) parentheses(v *ast.ParenthesesExpr) {
