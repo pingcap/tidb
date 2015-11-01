@@ -59,6 +59,9 @@ type Table interface {
 	// Cols returns the columns of the table.
 	Cols() []*column.Col
 
+	// AllCols returns all the columns of the table including write only column.
+	AllCols() []*column.Col
+
 	// Indices returns the indices of the table.
 	Indices() []*column.IndexedCol
 
