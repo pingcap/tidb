@@ -53,6 +53,7 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	}
 
 	colInfo := &col.ColumnInfo
+	colInfo.State = model.StateNone
 
 	// Insert col into the right place of the column list.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)

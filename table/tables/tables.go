@@ -129,6 +129,20 @@ func (t *Table) Meta() *model.TableInfo {
 
 // Cols implements table.Table Cols interface.
 func (t *Table) Cols() []*column.Col {
+	cols := make([]*column.Col, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.State == model.StateDeleteOnly {
+			continue
+		}
+
+		cols = append(cols, col)
+	}
+
+	return cols
+}
+
+// AllCols implements table.Table AllCols interface.
+func (t *Table) AllCols() []*column.Col {
 	return t.Columns
 }
 
@@ -378,6 +392,10 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 
 	// column key -> column value
 	for _, c := range t.Cols() {
+		if c.State == model.StateDeleteOnly {
+			continue
+		}
+
 		k := t.RecordKey(recordID, c)
 		if err := t.SetColValue(txn, k, r[c.Offset]); err != nil {
 			return 0, errors.Trace(err)
@@ -414,18 +432,22 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 	}
 	// use the length of t.Cols() for alignment
 	v := make([]interface{}, len(t.Cols()))
-	for _, c := range cols {
-		k := t.RecordKey(h, c)
+	for _, col := range cols {
+		if col.State == model.StateDeleteOnly {
+			return nil, errors.Trace(kv.ErrNotExist)
+		}
+
+		k := t.RecordKey(h, col)
 		data, err := txn.Get([]byte(k))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		val, err := t.DecodeValue(data, c)
+		val, err := t.DecodeValue(data, col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v[c.Offset] = val
+		v[col.Offset] = val
 	}
 	return v, nil
 }
@@ -471,10 +493,16 @@ func (t *Table) RemoveRow(ctx context.Context, h int64) error {
 		return errors.Trace(err)
 	}
 	// Remove row's colume one by one
-	for _, col := range t.Cols() {
+	for _, col := range t.AllCols() {
 		k := t.RecordKey(h, col)
 		err := txn.Delete([]byte(k))
 		if err != nil {
+			if col.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
+				// If the column is not in public state, we may have not added the column,
+				// or already deleted the column, so skip ErrNotExist error.
+				continue
+			}
+
 			return errors.Trace(err)
 		}
 	}
