@@ -762,7 +762,6 @@ func convertPrepare(converter *expressionConverter, v *ast.PrepareStmt) (*stmts.
 		Text:      v.Text(),
 	}
 	if v.SQLVar != nil {
-		converter := newExpressionConverter()
 		oldSQLVar, err := convertExpr(converter, v.SQLVar)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -815,7 +814,6 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 		oldShow.ColumnName = joinColumnName(v.Column)
 	}
 	if v.Where != nil {
-		converter := newExpressionConverter()
 		oldWhere, err := convertExpr(converter, v.Where)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -823,7 +821,6 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 		oldShow.Where = oldWhere
 	}
 	if v.Pattern != nil {
-		converter := newExpressionConverter()
 		oldPattern, err := convertExpr(converter, v.Pattern)
 		if err != nil {
 			return nil, errors.Trace(err)

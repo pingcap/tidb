@@ -2833,7 +2833,7 @@ SelectStmtLimit:
 	}
 |	"LIMIT" LengthNum "OFFSET" LengthNum
 	{
-		$$ = &ast.Limit{Offset: $2.(uint64), Count: $4.(uint64)}
+		$$ = &ast.Limit{Offset: $4.(uint64), Count: $2.(uint64)}
 	}
 
 SelectStmtDistinct:
