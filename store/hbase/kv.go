@@ -68,7 +68,7 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 
 	t := themis.NewTxn(s.cli)
 	txn := newHbaseTxn(t, s.storeName)
-	txn.UnionStore = kv.NewUnionStore(&hbaseSnapshot{t, s.storeName})
+	txn.UnionStore = kv.NewUnionStore(newHbaseSnapshot(t, s.storeName))
 	return txn, nil
 }
 
@@ -78,7 +78,7 @@ func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
 		valid:      true,
 		storeName:  storeName,
 		tid:        t.GetStartTS(),
-		UnionStore: kv.NewUnionStore(&hbaseSnapshot{t, storeName}),
+		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
 	}
 }
 
