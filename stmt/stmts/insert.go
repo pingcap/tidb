@@ -107,26 +107,29 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 		if row == nil {
 			break
 		}
-		data0 := make([]interface{}, len(t.Cols()))
+
+		currentRow := make([]interface{}, len(t.WriteableCols()))
 		marked := make(map[int]struct{}, len(cols))
-		for i, d := range row.Data {
-			data0[cols[i].Offset] = d
-			marked[cols[i].Offset] = struct{}{}
+		for i, data := range row.Data {
+			offset := cols[i].Offset
+			currentRow[offset] = data
+			marked[offset] = struct{}{}
 		}
 
-		if err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
+		if err = s.initDefaultValues(ctx, t, currentRow, marked); err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		if err = column.CastValues(ctx, data0, cols); err != nil {
+		if err = column.CastValues(ctx, currentRow, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		if err = column.CheckNotNull(t.Cols(), data0); err != nil {
+		if err = column.CheckNotNull(t.WriteableCols(), currentRow); err != nil {
 			return nil, errors.Trace(err)
 		}
+
 		var v interface{}
-		v, err = types.Clone(data0)
+		v, err = types.Clone(currentRow)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -227,6 +230,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	cols, err := s.getColumns(t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -243,10 +247,11 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		return nil, errors.Trace(err)
 	}
 
-	m, err := s.getDefaultValues(ctx, t.Cols())
+	defaultValMap, err := s.getDefaultValues(ctx, t.WriteableCols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	insertValueCount := len(s.Lists[0])
 	toUpdateColumns, err := getOnDuplicateUpdateColumns(s.OnDuplicate, t)
 	if err != nil {
@@ -258,7 +263,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 			return nil, errors.Trace(err)
 		}
 
-		row, err := s.getRow(ctx, t, cols, list, m)
+		row, err := s.fillRowData(ctx, t, cols, list, defaultValMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -303,36 +308,40 @@ func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, error) {
-	r := make([]interface{}, len(t.Cols()))
+func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, defaultValMap map[interface{}]interface{}) ([]interface{}, error) {
+	row := make([]interface{}, len(t.WriteableCols()))
 	marked := make(map[int]struct{}, len(list))
 	for i, expr := range list {
 		// For "insert into t values (default)" Default Eval.
-		m[expression.ExprEvalDefaultName] = cols[i].Name.O
+		defaultValMap[expression.ExprEvalDefaultName] = cols[i].Name.O
 
-		val, err := expr.Eval(ctx, m)
+		val, err := expr.Eval(ctx, defaultValMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r[cols[i].Offset] = val
-		marked[cols[i].Offset] = struct{}{}
+
+		offset := cols[i].Offset
+		row[offset] = val
+		marked[offset] = struct{}{}
 	}
 
 	// Clear last insert id.
 	variable.GetSessionVars(ctx).SetLastInsertID(0)
 
-	err := s.initDefaultValues(ctx, t, r, marked)
+	err := s.initDefaultValues(ctx, t, row, marked)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = column.CastValues(ctx, r, cols); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = column.CheckNotNull(t.Cols(), r); err != nil {
+
+	if err = column.CastValues(ctx, row, cols); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return r, nil
+	if err = column.CheckNotNull(t.WriteableCols(), row); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return row, nil
 }
 
 func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]*expression.Assignment) error {
@@ -376,7 +385,7 @@ func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Ta
 func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
 	var err error
 	var defaultValueCols []*column.Col
-	for i, c := range t.Cols() {
+	for i, c := range t.WriteableCols() {
 		if row[i] != nil {
 			// Column value is not nil, continue.
 			continue

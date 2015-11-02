@@ -61,6 +61,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	cols, err := s.getColumns(t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -71,28 +72,33 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 	if s.Sel != nil {
 		return s.execSelect(t, cols, ctx)
 	}
+
 	// Process `replace ... set x=y ...`
 	if err = s.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	m, err := s.getDefaultValues(ctx, t.Cols())
+
+	defaultValMap, err := s.getDefaultValues(ctx, t.WriteableCols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	replaceValueCount := len(s.Lists[0])
 
+	replaceValueCount := len(s.Lists[0])
 	for i, list := range s.Lists {
 		if err = s.checkValueCount(replaceValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := s.getRow(ctx, t, cols, list, m)
+
+		row, err := s.fillRowData(ctx, t, cols, list, defaultValMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
 		h, err := t.AddRecord(ctx, row)
 		if err == nil {
 			continue
 		}
+
 		if err != nil && !errors2.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
@@ -115,18 +121,20 @@ func replaceRow(ctx context.Context, t table.Table, handle int64, replaceRow []i
 		return errors.Trace(err)
 	}
 
+	result := 0
 	isReplace := false
 	touched := make([]bool, len(row))
 	for i, val := range row {
-		v, err1 := types.Compare(val, replaceRow[i])
-		if err1 != nil {
-			return errors.Trace(err1)
+		result, err = types.Compare(val, replaceRow[i])
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if v != 0 {
+		if result != 0 {
 			touched[i] = true
 			isReplace = true
 		}
 	}
+
 	if isReplace {
 		variable.GetSessionVars(ctx).AddAffectedRows(1)
 		if err = t.UpdateRecord(ctx, handle, row, replaceRow, touched); err != nil {
