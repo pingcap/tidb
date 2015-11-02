@@ -175,7 +175,7 @@ type FnKeyCmp func(key Key) bool
 
 // Iterator is the interface for a interator on KV store.
 type Iterator interface {
-	Next() (Iterator, error)
+	Next() error
 	Value() []byte
 	Key() string
 	Valid() bool

@@ -93,10 +93,10 @@ func (i *btreeIter) Value() []byte {
 }
 
 // Next implements Iterator Next.
-func (i *btreeIter) Next() (Iterator, error) {
+func (i *btreeIter) Next() error {
 	k, v, err := i.e.Next()
 	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), err == nil
-	return i, err
+	return err
 }
 
 // Valid implements Iterator Valid.
