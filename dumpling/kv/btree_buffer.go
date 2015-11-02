@@ -16,6 +16,8 @@
 package kv
 
 import (
+	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -73,7 +75,11 @@ func (b *btreeBuffer) NewIterator(param interface{}) Iterator {
 	}
 	iter := &btreeIter{e: e}
 	// the initial push...
-	iter.Next()
+	err = iter.Next()
+	if err != nil {
+		log.Error(err)
+		return &btreeIter{ok: false}
+	}
 	return iter
 }
 
@@ -96,7 +102,7 @@ func (i *btreeIter) Value() []byte {
 func (i *btreeIter) Next() error {
 	k, v, err := i.e.Next()
 	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), err == nil
-	return err
+	return errors.Trace(err)
 }
 
 // Valid implements Iterator Valid.
