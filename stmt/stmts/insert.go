@@ -92,6 +92,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 		return nil, errors.Trace(err)
 	}
 	defer r.Close()
+
 	if len(r.GetFields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(r.GetFields()))
 	}
@@ -281,6 +282,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		if len(s.OnDuplicate) == 0 || !errors2.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
+
 		if err = execOnDuplicateUpdate(ctx, t, row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -308,14 +310,14 @@ func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, defaultValMap map[interface{}]interface{}) ([]interface{}, error) {
+func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, evalMap map[interface{}]interface{}) ([]interface{}, error) {
 	row := make([]interface{}, len(t.WriteableCols()))
 	marked := make(map[int]struct{}, len(list))
 	for i, expr := range list {
 		// For "insert into t values (default)" Default Eval.
-		defaultValMap[expression.ExprEvalDefaultName] = cols[i].Name.O
+		evalMap[expression.ExprEvalDefaultName] = cols[i].Name.O
 
-		val, err := expr.Eval(ctx, defaultValMap)
+		val, err := expr.Eval(ctx, evalMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
