@@ -27,14 +27,17 @@ var (
 	_ kv.Iterator     = (*hbaseIter)(nil)
 )
 
+// hbaseBatchSize is used for go-themis Scanner.
 const hbaseBatchSize = 1000
 
+// hbaseSnapshot implements MvccSnapshot interface.
 type hbaseSnapshot struct {
 	txn       *themis.Txn
 	storeName string
 	cache     map[string][]byte
 }
 
+// newHBaseSnapshot creates a snapshot of an HBase store.
 func newHbaseSnapshot(txn *themis.Txn, storeName string) *hbaseSnapshot {
 	return &hbaseSnapshot{
 		txn:       txn,
@@ -43,6 +46,9 @@ func newHbaseSnapshot(txn *themis.Txn, storeName string) *hbaseSnapshot {
 	}
 }
 
+// Get gets the value for key k from snapshot. It internally uses a cache to
+// reduce RPC calls. If cache not hit, it uses a Scanner to query a batch of
+// data.
 func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	if b, ok := s.cache[string(k)]; ok {
 		return b, nil
