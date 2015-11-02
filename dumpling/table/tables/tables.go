@@ -258,34 +258,35 @@ func (t *Table) Truncate(ctx context.Context) error {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *Table) UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched []bool) error {
-	// if they are not set, and other data are changed, they will be updated by current timestamp too.
-	// set on update value
+func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched []bool) error {
+	// If they are not set, and other data are changed, they will be updated by current timestamp too.
 	err := t.setOnUpdateData(ctx, touched, newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// set new value
-	if err := t.setNewData(ctx, h, newData); err != nil {
+	if err := t.setNewData(ctx, h, touched, newData); err != nil {
 		return errors.Trace(err)
 	}
 
 	// rebuild index
-	if err := t.rebuildIndices(ctx, h, touched, currData, newData); err != nil {
+	if err := t.rebuildIndices(ctx, h, touched, oldData, newData); err != nil {
 		return errors.Trace(err)
 	}
+
 	return nil
 }
 
 func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []interface{}) error {
-	ucols := column.FindOnUpdateCols(t.Cols())
+	ucols := column.FindOnUpdateCols(t.WriteableCols())
 	for _, c := range ucols {
 		if !touched[c.Offset] {
 			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, c.Tp, c.Decimal)
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 			data[c.Offset] = v
 			touched[c.Offset] = true
 		}
@@ -306,17 +307,23 @@ func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) er
 	return nil
 }
 
-func (t *Table) setNewData(ctx context.Context, h int64, data []interface{}) error {
+func (t *Table) setNewData(ctx context.Context, h int64, touched []bool, data []interface{}) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	for _, col := range t.Cols() {
+		if !touched[col.Offset] {
+			continue
+		}
+
 		k := t.RecordKey(h, col)
 		if err := t.SetColValue(txn, k, data[col.Offset]); err != nil {
 			return errors.Trace(err)
 		}
 	}
+
 	return nil
 }
 
@@ -346,6 +353,7 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, old
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		if err := t.BuildIndexForRow(ctx, h, newVs, idx); err != nil {
 			return errors.Trace(err)
 		}

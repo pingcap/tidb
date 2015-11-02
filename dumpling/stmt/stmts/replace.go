@@ -78,7 +78,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		return nil, errors.Trace(err)
 	}
 
-	defaultValMap, err := s.getDefaultValues(ctx, t.WriteableCols())
+	evalMap, err := s.getDefaultValues(ctx, t.WriteableCols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -89,7 +89,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 			return nil, errors.Trace(err)
 		}
 
-		row, err := s.fillRowData(ctx, t, cols, list, defaultValMap)
+		row, err := s.fillRowData(ctx, t, cols, list, evalMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
