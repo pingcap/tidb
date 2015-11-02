@@ -1956,16 +1956,16 @@ FunctionNameConflict:
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"CURRENT_USER"
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-		$$ = &ast.FuncCallExpr{F: $1.(string)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string)}
 	}
 |	"CURRENT_DATE"
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string)}
 	}
 
 DistinctOpt:
@@ -2025,11 +2025,11 @@ FunctionCallKeyword:
 	}
 |	"DATE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"USER" '(' ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string)}
 	}
 |	"VALUES" '(' ColumnName ')' %prec lowerThanInsertValues
 	{
@@ -2038,21 +2038,21 @@ FunctionCallKeyword:
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"YEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 
 FunctionCallNonKeyword:
 	"COALESCE" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"CURDATE" '(' ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string)}
 	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{
@@ -2060,35 +2060,35 @@ FunctionCallNonKeyword:
 		if $2 != nil {
 			args = append(args, $2.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: args}
 	}
 |	"ABS" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"CONCAT" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"CONCAT_WS" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"DAY" '(' Expression ')'
 	{
-		$$ =  &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ =  &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFWEEK" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFMONTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DAYOFYEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
 	{
@@ -2099,19 +2099,19 @@ FunctionCallNonKeyword:
 	}
 |	"FOUND_ROWS" '(' ')'
 	{
-		$$ =  &ast.FuncCallExpr{F: $1.(string)}
+		$$ =  &ast.FuncCallExpr{FnName: $1.(string)}
 	}
 |	"HOUR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"IFNULL" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"LENGTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LOCATE" '(' Expression ',' Expression ')'
 	{
@@ -2130,19 +2130,19 @@ FunctionCallNonKeyword:
 	}
 |	"LOWER" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MICROSECOND" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MINUTE" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"MONTH" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"NOW" '(' ExpressionOpt ')'
 	{
@@ -2150,11 +2150,11 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: args}
 	}
 |	"NULLIF" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 |	"RAND" '(' ExpressionOpt ')'
 	{
@@ -2163,16 +2163,16 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: args}
 	}
 |	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: args}
 	}
 |	"SECOND" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
@@ -2218,7 +2218,7 @@ FunctionCallNonKeyword:
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: args}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: args}
 	}
 |	"TRIM" '(' Expression ')'
 	{
@@ -2250,19 +2250,19 @@ FunctionCallNonKeyword:
 	}
 |	"UPPER" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"WEEKDAY" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"WEEKOFYEAR" '(' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{F: $1.(string), Args: $3.([]ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
 	}
 
 TrimDirection:

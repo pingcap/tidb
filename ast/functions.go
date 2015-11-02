@@ -35,7 +35,7 @@ var (
 type FuncCallExpr struct {
 	funcNode
 	// F is the function name.
-	F string
+	FnName string
 	// Args is the function args.
 	Args []ExprNode
 }
@@ -59,7 +59,7 @@ func (nod *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (nod *FuncCallExpr) IsStatic() bool {
-	v := builtin.Funcs[strings.ToLower(nod.F)]
+	v := builtin.Funcs[strings.ToLower(nod.FnName)]
 	if v.F == nil || !v.IsStatic {
 		return false
 	}

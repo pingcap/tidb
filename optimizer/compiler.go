@@ -43,11 +43,7 @@ func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 	}
 	c := newExpressionConverter()
 	defer func() {
-		for _, v := range c.exprMap {
-			if x, ok := v.(*expression.ParamMarker); ok {
-				com.paramMarkers = append(com.paramMarkers, x)
-			}
-		}
+		com.paramMarkers = c.paramMarkers
 	}()
 	switch v := node.(type) {
 	case *ast.InsertStmt:
