@@ -71,7 +71,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
-	for i, ic := range idxColNames {
+	for _, ic := range idxColNames {
 		col := findCol(tblInfo.Columns, ic.ColumnName)
 		if col == nil {
 			return nil, errors.Errorf("CREATE INDEX: column does not exist: %s", ic.ColumnName)
@@ -82,14 +82,6 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			Offset: col.Offset,
 			Length: ic.Length,
 		})
-		// Set ColumnInfo flag
-		if i == 0 {
-			if unique && len(idxColNames) == 1 {
-				tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
-			} else {
-				tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
-			}
-		}
 	}
 	// create index info
 	idxInfo := &model.IndexInfo{
@@ -100,6 +92,40 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	}
 
 	return idxInfo, nil
+}
+
+func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+	col := indexInfo.Columns[0]
+
+	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
+		tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
+	} else {
+		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
+	}
+
+}
+
+func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+	col := indexInfo.Columns[0]
+
+	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
+		tblInfo.Columns[col.Offset].Flag &= ^uint(mysql.UniqueKeyFlag)
+	} else {
+		tblInfo.Columns[col.Offset].Flag &= ^uint(mysql.MultipleKeyFlag)
+	}
+
+	// other index may still cover this col
+	for _, index := range tblInfo.Indices {
+		if index.Name.L == indexInfo.Name.L {
+			continue
+		}
+
+		if index.Columns[0].Name.L != col.Name.L {
+			continue
+		}
+
+		addIndexColumnFlag(tblInfo, index)
+	}
 }
 
 func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
@@ -201,6 +227,8 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		}
 
 		indexInfo.State = model.StatePublic
+		// set column index flag.
+		addIndexColumnFlag(tblInfo, indexInfo)
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
@@ -290,7 +318,8 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 			}
 		}
 		tblInfo.Indices = newIndices
-
+		// set column index flag.
+		dropIndexColumnFlag(tblInfo, indexInfo)
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
