@@ -266,8 +266,10 @@ func (c *expressionConverter) patternLike(v *ast.PatternLikeExpr) {
 }
 
 func (c *expressionConverter) paramMarker(v *ast.ParamMarkerExpr) {
-	c.paramMarkers = append(c.paramMarkers, v)
-	c.exprMap[v] = &expression.ParamMarker{}
+	if c.exprMap[v] == nil {
+		c.exprMap[v] = &expression.ParamMarker{}
+		c.paramMarkers = append(c.paramMarkers, v)
+	}
 }
 
 func (c *expressionConverter) parentheses(v *ast.ParenthesesExpr) {
