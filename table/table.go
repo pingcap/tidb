@@ -56,11 +56,11 @@ type Table interface {
 	// TableName returns table name.
 	TableName() model.CIStr
 
-	// Cols returns the columns of the table.
+	// Cols returns the columns of the table which is used in select.
 	Cols() []*column.Col
 
-	// AllCols returns all the columns of the table including write only column.
-	AllCols() []*column.Col
+	// WriteableCols returns the columns of the table which is used in insert/update/delete.
+	WriteableCols() []*column.Col
 
 	// Indices returns the indices of the table.
 	Indices() []*column.IndexedCol

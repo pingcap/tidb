@@ -181,8 +181,6 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 	default:
 		return errors.Errorf("invalid column state %v", columnInfo.State)
 	}
-
-	return nil
 }
 
 func (d *ddl) onColumnDrop(t *meta.Meta, job *model.Job) error {
@@ -240,7 +238,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, versio
 				return nil
 			}
 
-			backfillKey := t.RecordKey(handle, &column.Col{*columnInfo})
+			backfillKey := t.RecordKey(handle, &column.Col{ColumnInfo: *columnInfo})
 			_, err = txn.Get(backfillKey)
 			if err != nil {
 				if !kv.IsErrNotFound(err) {

@@ -83,6 +83,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 				Offset:       0,
 				DefaultValue: 0,
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+				State:        model.StatePublic,
 			},
 		},
 		{
@@ -92,6 +93,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 				Offset:       1,
 				DefaultValue: nil,
 				FieldType:    *types.NewFieldType(mysql.TypeVarchar),
+				State:        model.StatePublic,
 			},
 		},
 	}

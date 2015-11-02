@@ -131,18 +131,16 @@ func (t *Table) Meta() *model.TableInfo {
 func (t *Table) Cols() []*column.Col {
 	cols := make([]*column.Col, 0, len(t.Columns))
 	for _, col := range t.Columns {
-		if col.State == model.StateDeleteOnly {
-			continue
+		if col.State == model.StatePublic {
+			cols = append(cols, col)
 		}
-
-		cols = append(cols, col)
 	}
 
 	return cols
 }
 
-// AllCols implements table.Table AllCols interface.
-func (t *Table) AllCols() []*column.Col {
+// WriteableCols implements table.Table WriteableCols interface.
+func (t *Table) WriteableCols() []*column.Col {
 	return t.Columns
 }
 
@@ -391,7 +389,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	}
 
 	// column key -> column value
-	for _, c := range t.Cols() {
+	for _, c := range t.WriteableCols() {
 		if c.State == model.StateDeleteOnly {
 			continue
 		}
@@ -433,7 +431,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 	// use the length of t.Cols() for alignment
 	v := make([]interface{}, len(t.Cols()))
 	for _, col := range cols {
-		if col.State == model.StateDeleteOnly {
+		if col.State != model.StatePublic {
 			return nil, errors.Trace(kv.ErrNotExist)
 		}
 
@@ -493,7 +491,7 @@ func (t *Table) RemoveRow(ctx context.Context, h int64) error {
 		return errors.Trace(err)
 	}
 	// Remove row's colume one by one
-	for _, col := range t.AllCols() {
+	for _, col := range t.WriteableCols() {
 		k := t.RecordKey(h, col)
 		err := txn.Delete([]byte(k))
 		if err != nil {

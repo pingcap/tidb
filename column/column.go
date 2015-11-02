@@ -57,7 +57,7 @@ func (c *Col) String() string {
 // FindCol finds column in cols by name.
 func FindCol(cols []*Col, name string) *Col {
 	for _, col := range cols {
-		if col.State == model.StateWriteOnly {
+		if col.State != model.StatePublic {
 			continue
 		}
 
@@ -87,7 +87,7 @@ func FindCols(cols []*Col, names []string) ([]*Col, error) {
 func FindOnUpdateCols(cols []*Col) []*Col {
 	var rcols []*Col
 	for _, col := range cols {
-		if col.State == model.StateWriteOnly {
+		if col.State != model.StatePublic {
 			continue
 		}
 
