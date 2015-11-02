@@ -63,7 +63,6 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	if b, ok := s.cache[string(k)]; ok {
 		return b, nil
 	}
-
 	return nil, kv.ErrNotExist
 }
 

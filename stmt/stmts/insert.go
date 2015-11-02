@@ -46,16 +46,21 @@ const (
 	DelayedPriority
 )
 
+// InsertValues is the rest part of insert/replace into statement.
+type InsertValues struct {
+	ColNames   []string
+	Lists      [][]expression.Expression
+	Sel        plan.Planner
+	TableIdent table.Ident
+	Setlist    []*expression.Assignment
+	Priority   int
+}
+
 // InsertIntoStmt is a statement to insert new rows into an existing table.
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
 type InsertIntoStmt struct {
-	ColNames    []string
-	Lists       [][]expression.Expression
-	Sel         plan.Planner
-	TableIdent  table.Ident
-	Setlist     []*expression.Assignment
-	Priority    int
-	OnDuplicate []expression.Assignment
+	InsertValues
+	OnDuplicate []*expression.Assignment
 
 	Text string
 }
@@ -81,7 +86,7 @@ func (s *InsertIntoStmt) SetText(text string) {
 }
 
 // execExecSelect implements `insert table select ... from ...`.
-func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (_ rset.Recordset, err error) {
+func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (rset.Recordset, error) {
 	r, err := s.Sel.Plan(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -109,7 +114,7 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 			marked[cols[i].Offset] = struct{}{}
 		}
 
-		if err = s.initDefaultValues(ctx, t, t.Cols(), data0, marked); err != nil {
+		if err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -144,7 +149,7 @@ func (s *InsertIntoStmt) execSelect(t table.Table, cols []*column.Col, ctx conte
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
-func (s *InsertIntoStmt) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
+func (s *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
 	var cols []*column.Col
 	var err error
 
@@ -185,28 +190,25 @@ func (s *InsertIntoStmt) getColumns(tableCols []*column.Col) ([]*column.Col, err
 	return cols, nil
 }
 
-// Exec implements the stmt.Statement Exec interface.
-func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	t, err := getTable(ctx, s.TableIdent)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (s *InsertValues) getDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
+	m := map[interface{}]interface{}{}
+	for _, v := range cols {
+		if value, ok, err := getDefaultValue(ctx, v); ok {
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			m[v.Name.L] = value
+		}
 	}
 
-	tableCols := t.Cols()
-	cols, err := s.getColumns(tableCols)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	return m, nil
+}
 
-	// Process `insert ... (select ..) `
-	if s.Sel != nil {
-		return s.execSelect(t, cols, ctx)
-	}
-
-	// Process `insert ... set x=y...`
+func (s *InsertValues) fillValueList() error {
 	if len(s.Setlist) > 0 {
 		if len(s.Lists) > 0 {
-			return nil, errors.Errorf("INSERT INTO %s: set type should not use values", s.TableIdent)
+			return errors.Errorf("INSERT INTO %s: set type should not use values", s.TableIdent)
 		}
 
 		var l []expression.Expression
@@ -216,73 +218,48 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		s.Lists = append(s.Lists, l)
 	}
 
-	m := map[interface{}]interface{}{}
-	for _, v := range tableCols {
-		var (
-			value interface{}
-			ok    bool
-		)
-		value, ok, err = getDefaultValue(ctx, v)
-		if ok {
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	return nil
+}
 
-			m[v.Name.L] = value
-		}
+// Exec implements the stmt.Statement Exec interface.
+func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
+	t, err := getTable(ctx, s.TableIdent)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cols, err := s.getColumns(t.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
+	// Process `insert ... (select ..) `
+	// TODO: handles the duplicate-key in a primary key or a unique index.
+	if s.Sel != nil {
+		return s.execSelect(t, cols, ctx)
+	}
+
+	// Process `insert ... set x=y...`
+	if err = s.fillValueList(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	m, err := s.getDefaultValues(ctx, t.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	insertValueCount := len(s.Lists[0])
-	toUpdateColumns, err0 := getOnDuplicateUpdateColumns(s.OnDuplicate, t)
-	if err0 != nil {
-		return nil, errors.Trace(err0)
+	toUpdateColumns, err := getOnDuplicateUpdateColumns(s.OnDuplicate, t)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	toUpdateArgs := map[interface{}]interface{}{}
 	for i, list := range s.Lists {
-		r := make([]interface{}, len(tableCols))
-		valueCount := len(list)
-
-		if insertValueCount != valueCount {
-			// "insert into t values (), ()" is valid.
-			// "insert into t values (), (1)" is not valid.
-			// "insert into t values (1), ()" is not valid.
-			// "insert into t values (1,2), (1)" is not valid.
-			// So the value count must be same for all insert list.
-			return nil, errors.Errorf("Column count doesn't match value count at row %d", i+1)
-		}
-
-		if valueCount == 0 && len(s.ColNames) > 0 {
-			// "insert into t (c1) values ()" is not valid.
-			return nil, errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", s.TableIdent, len(s.ColNames), 0)
-		} else if valueCount > 0 && valueCount != len(cols) {
-			return nil, errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", s.TableIdent, len(cols), valueCount)
-		}
-
-		// Clear last insert id.
-		variable.GetSessionVars(ctx).SetLastInsertID(0)
-
-		marked := make(map[int]struct{}, len(list))
-		for i, expr := range list {
-			// For "insert into t values (default)" Default Eval.
-			m[expression.ExprEvalDefaultName] = cols[i].Name.O
-
-			val, evalErr := expr.Eval(ctx, m)
-			if evalErr != nil {
-				return nil, errors.Trace(evalErr)
-			}
-			r[cols[i].Offset] = val
-			marked[cols[i].Offset] = struct{}{}
-		}
-
-		if err := s.initDefaultValues(ctx, t, tableCols, r, marked); err != nil {
+		if err = s.checkValueCount(insertValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		if err = column.CastValues(ctx, r, cols); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err = column.CheckNotNull(tableCols, r); err != nil {
+		row, err := s.getRow(ctx, t, cols, list, m)
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -291,31 +268,15 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
 		// `insert t (c1) values(1),(2),(3);`
 		// Last insert id will be 1, not 3.
-		h, err := t.AddRecord(ctx, r)
+		h, err := t.AddRecord(ctx, row)
 		if err == nil {
 			continue
 		}
+
 		if len(s.OnDuplicate) == 0 || !errors2.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
-		// On duplicate key Update the duplicate row.
-		// Evaluate the updated value.
-		// TODO: report rows affected and last insert id.
-		data, err := t.Row(ctx, h)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		toUpdateArgs[expression.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
-			c, err1 := findColumnByName(t, name)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			return r[c.Offset], nil
-		}
-
-		err = updateRecord(ctx, h, data, t, toUpdateColumns, toUpdateArgs, 0, true)
-		if err != nil {
+		if err = execOnDuplicateUpdate(ctx, t, row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -323,8 +284,84 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	return nil, nil
 }
 
-func getOnDuplicateUpdateColumns(assignList []expression.Assignment, t table.Table) (map[int]expression.Assignment, error) {
-	m := make(map[int]expression.Assignment, len(assignList))
+func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
+	if insertValueCount != valueCount {
+		// "insert into t values (), ()" is valid.
+		// "insert into t values (), (1)" is not valid.
+		// "insert into t values (1), ()" is not valid.
+		// "insert into t values (1,2), (1)" is not valid.
+		// So the value count must be same for all insert list.
+		return errors.Errorf("Column count doesn't match value count at row %d", num+1)
+	}
+	if valueCount == 0 && len(s.ColNames) > 0 {
+		// "insert into t (c1) values ()" is not valid.
+		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", s.TableIdent, len(s.ColNames), 0)
+	} else if valueCount > 0 && valueCount != len(cols) {
+		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", s.TableIdent, len(cols), valueCount)
+	}
+
+	return nil
+}
+
+func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, error) {
+	r := make([]interface{}, len(t.Cols()))
+	marked := make(map[int]struct{}, len(list))
+	for i, expr := range list {
+		// For "insert into t values (default)" Default Eval.
+		m[expression.ExprEvalDefaultName] = cols[i].Name.O
+
+		val, err := expr.Eval(ctx, m)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r[cols[i].Offset] = val
+		marked[cols[i].Offset] = struct{}{}
+	}
+
+	// Clear last insert id.
+	variable.GetSessionVars(ctx).SetLastInsertID(0)
+
+	err := s.initDefaultValues(ctx, t, r, marked)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = column.CastValues(ctx, r, cols); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = column.CheckNotNull(t.Cols(), r); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return r, nil
+}
+
+func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]*expression.Assignment) error {
+	// On duplicate key update the duplicate row.
+	// Evaluate the updated value.
+	// TODO: report rows affected and last insert id.
+	data, err := t.Row(ctx, h)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	toUpdateArgs := map[interface{}]interface{}{}
+	toUpdateArgs[expression.ExprEvalValuesFunc] = func(name string) (interface{}, error) {
+		c, err1 := findColumnByName(t, name)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		return row[c.Offset], nil
+	}
+
+	if err = updateRecord(ctx, h, data, t, cols, toUpdateArgs, 0, true); err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Table) (map[int]*expression.Assignment, error) {
+	m := make(map[int]*expression.Assignment, len(assignList))
 
 	for _, v := range assignList {
 		c, err := findColumnByName(t, field.JoinQualifiedName("", v.TableName, v.ColName))
@@ -336,10 +373,10 @@ func getOnDuplicateUpdateColumns(assignList []expression.Assignment, t table.Tab
 	return m, nil
 }
 
-func (s *InsertIntoStmt) initDefaultValues(ctx context.Context, t table.Table, cols []*column.Col, row []interface{}, marked map[int]struct{}) error {
+func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
 	var err error
 	var defaultValueCols []*column.Col
-	for i, c := range cols {
+	for i, c := range t.Cols() {
 		if row[i] != nil {
 			// Column value is not nil, continue.
 			continue

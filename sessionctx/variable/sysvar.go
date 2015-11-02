@@ -13,7 +13,11 @@
 
 package variable
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pingcap/tidb/context"
+)
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
 type ScopeFlag uint8
@@ -42,9 +46,7 @@ type SysVar struct {
 // SysVars is global sys vars map.
 var SysVars map[string]*SysVar
 
-// GetSysVar returns the sysvar value for the given name
-// TODO: later we will get global sys vars from KV storage,
-// so this function will be removed later, maybe.
+// GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	return SysVars[name]
@@ -571,3 +573,11 @@ const (
 	// CollationConnection is the name for collation_connection system variable.
 	CollationConnection = "collation_connection"
 )
+
+// GlobalSysVarAccessor is the interface for accessing global scope system variables.
+type GlobalSysVarAccessor interface {
+	// GetGlobalSysVar gets the global system variable value for name.
+	GetGlobalSysVar(ctx context.Context, name string) (string, error)
+	// SetGlobalSysVar sets the global system variable name to value.
+	SetGlobalSysVar(ctx context.Context, name string, value string) error
+}

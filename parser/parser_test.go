@@ -58,7 +58,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter", "escape",
+		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -160,6 +160,17 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false},
 		{"INSERT INTO foo () VALUES ()", true},
 		{"INSERT INTO foo VALUE ()", true},
+
+		{"REPLACE INTO foo VALUES (1 || 2)", true},
+		{"REPLACE INTO foo VALUES (1 | 2)", true},
+		{"REPLACE INTO foo VALUES (false || true)", true},
+		{"REPLACE INTO foo VALUES (bar(5678))", false},
+		{"REPLACE INTO foo VALUES ()", true},
+		{"REPLACE INTO foo (a,b) VALUES (42,314)", true},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false},
+		{"REPLACE INTO foo (a,b,) VALUES (42,314,)", false},
+		{"REPLACE INTO foo () VALUES ()", true},
+		{"REPLACE INTO foo VALUE ()", true},
 		// 40
 		{`SELECT stuff.id 
 		FROM stuff 
@@ -252,6 +263,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SHOW GLOBAL VARIABLES WHERE Variable_name = 'autocommit'", true},
 		{`SHOW FULL TABLES FROM icar_qa LIKE play_evolutions`, true},
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
+		{`SHOW GRANTS`, true},
+		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
@@ -308,6 +321,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select '\'a\'';`, true},
 		{`select "\"a\"";`, true},
 		{`select """a""";`, true},
+		{`select _utf8"string";`, true},
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -337,6 +351,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
+
+		{`SELECT REPLACE('www.mysql.com', 'w', 'Ww')`, true},
 
 		{`SELECT LOCATE('bar', 'foobarbar');`, true},
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
@@ -500,13 +516,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create schema xxx", true},
 		{"create schema if exists xxx", false},
 		{"create schema if not exists xxx", true},
-		// For drop datbase/schema
+		// For drop datbase/schema/table
 		{"drop database xxx", true},
 		{"drop database if exists xxx", true},
 		{"drop database if not exists xxx", false},
 		{"drop schema xxx", true},
 		{"drop schema if exists xxx", true},
 		{"drop schema if not exists xxx", false},
+		{"drop table xxx", true},
+		{"drop table xxx, yyy", true},
+		{"drop tables xxx", true},
+		{"drop tables xxx, yyy", true},
+		{"drop table if exists xxx", true},
+		{"drop table if not exists xxx", false},
 	}
 	s.RunTest(c, table)
 }

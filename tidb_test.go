@@ -924,7 +924,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "set global autocommit=1")
-	r := mustExecSQL(c, se, "show variables where variable_name = 'autocommit'")
+	r := mustExecSQL(c, se, "show global variables where variable_name = 'autocommit'")
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, "autocommit", 1)
@@ -1243,6 +1243,47 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	fs, err := rs.Fields()
 	c.Assert(err, IsNil)
 	c.Assert(fs[0].Col.FieldType.Tp, Equals, mysql.TypeString)
+}
+
+func (s *testSessionSuite) TestIssue461(c *C) {
+	store := newStore(c, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1,
+		`CREATE TABLE test ( id int(11) UNSIGNED NOT NULL AUTO_INCREMENT, val int UNIQUE, PRIMARY KEY (id)); `)
+	mustExecSQL(c, se1, "begin;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(1, 1);")
+	se2 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se2, "begin;")
+	mustExecSQL(c, se2, "insert into test(id, val) values(1, 1);")
+	mustExecSQL(c, se2, "commit;")
+	mustExecFailed(c, se1, "commit;")
+
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table test;")
+}
+
+func (s *testSessionSuite) TestIssue177(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, `drop table if exists t1;`)
+	mustExecSQL(c, se, `drop table if exists t2;`)
+	mustExecSQL(c, se, "CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	mustExecSQL(c, se, "CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;")
+	mustExecSQL(c, se, `INSERT INTO t1 VALUES (1,1,1);`)
+	mustExecSQL(c, se, `INSERT INTO t2 VALUES (1,1,1);`)
+	mustExecSQL(c, se, `PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";`)
+	mustExecSQL(c, se, `EXECUTE my_stmt;`)
+	mustExecSQL(c, se, `EXECUTE my_stmt;`)
+	mustExecSQL(c, se, `deallocate prepare my_stmt;`)
+	mustExecSQL(c, se, `drop table t1,t2;`)
+}
+
+func (s *testSessionSuite) TestBuiltin(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	// Testcase for https://github.com/pingcap/tidb/issues/382
+	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {

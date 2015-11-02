@@ -44,6 +44,11 @@ var (
 	ErrZkInfoErr = errors.New("zk info error")
 )
 
+type storeCache struct {
+	mu    sync.Mutex
+	cache map[string]*hbaseStore
+}
+
 var mc storeCache
 
 func init() {
@@ -57,11 +62,6 @@ type hbaseStore struct {
 	cli       hbase.HBaseClient
 }
 
-type storeCache struct {
-	mu    sync.Mutex
-	cache map[string]*hbaseStore
-}
-
 func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -72,14 +72,9 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	return txn, nil
 }
 
-func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
-	return &hbaseTxn{
-		Txn:        t,
-		valid:      true,
-		storeName:  storeName,
-		tid:        t.GetStartTS(),
-		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
-	}
+func (s *hbaseStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
+	//TODO: support snapshot
+	return nil, errors.New("not implemented")
 }
 
 func (s *hbaseStore) Close() error {
@@ -94,8 +89,9 @@ func (s *hbaseStore) UUID() string {
 	return "hbase." + s.storeName + "." + s.zkInfo
 }
 
-func (s *hbaseStore) GetSnapshot() (kv.MvccSnapshot, error) {
-	return nil, nil
+func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
+	t := themis.NewTxn(s.cli)
+	return kv.Version{Ver: t.GetStartTS()}, nil
 }
 
 // Driver implements engine Driver.

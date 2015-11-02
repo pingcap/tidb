@@ -19,6 +19,39 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// SchemaState is the state for schema elements.
+type SchemaState byte
+
+const (
+	// StateNone means this schema element is absent and can't be used.
+	StateNone SchemaState = iota
+	// StateDeleteOnly means we can only delete items for this schema element.
+	StateDeleteOnly
+	// StateWriteOnly means we can use any write operation on this schema element,
+	// but outer can't read the changed data.
+	StateWriteOnly
+	// StateReOrgnization meas we are re-orgnizating whole data for this shema changed.
+	StateReOrgnization
+	// StatePublic means this schema element is ok for all write and read operations.
+	StatePublic
+)
+
+// String implements fmt.Stringer interface.
+func (s SchemaState) String() string {
+	switch s {
+	case StateDeleteOnly:
+		return "delete only"
+	case StateWriteOnly:
+		return "write only"
+	case StateReOrgnization:
+		return "reorgnization"
+	case StatePublic:
+		return "public"
+	default:
+		return "none"
+	}
+}
+
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
 	ID              int64       `json:"id"`
@@ -26,6 +59,13 @@ type ColumnInfo struct {
 	Offset          int         `json:"offset"`
 	DefaultValue    interface{} `json:"default"`
 	types.FieldType `json:"type"`
+	State           SchemaState `json:"state"`
+}
+
+// Clone clones ColumnInfo.
+func (c *ColumnInfo) Clone() *ColumnInfo {
+	nc := *c
+	return &nc
 }
 
 // TableInfo provides meta data describing a DB table.
@@ -37,6 +77,23 @@ type TableInfo struct {
 	// Columns are listed in the order in which they appear in the schema.
 	Columns []*ColumnInfo `json:"cols"`
 	Indices []*IndexInfo  `json:"index_info"`
+	State   SchemaState   `json:"state"`
+}
+
+// Clone clones TableInfo.
+func (t *TableInfo) Clone() *TableInfo {
+	nt := *t
+	nt.Columns = make([]*ColumnInfo, len(t.Columns))
+	nt.Indices = make([]*IndexInfo, len(t.Indices))
+
+	for i := range t.Columns {
+		nt.Columns[i] = t.Columns[i].Clone()
+	}
+
+	for i := range t.Indices {
+		nt.Indices[i] = t.Indices[i].Clone()
+	}
+	return &nt
 }
 
 // IndexColumn provides index column info.
@@ -44,6 +101,12 @@ type IndexColumn struct {
 	Name   CIStr `json:"name"`   // Index name
 	Offset int   `json:"offset"` // Index offset
 	Length int   `json:"length"` // Index length
+}
+
+// Clone clones IndexColumn.
+func (i *IndexColumn) Clone() *IndexColumn {
+	ni := *i
+	return &ni
 }
 
 // IndexInfo provides meta data describing a DB index.
@@ -55,6 +118,17 @@ type IndexInfo struct {
 	Columns []*IndexColumn `json:"idx_cols"`   // Index columns.
 	Unique  bool           `json:"is_unique"`  // Whether the index is unique.
 	Primary bool           `json:"is_primary"` // Whether the index is primary key.
+	State   SchemaState    `json:"state"`
+}
+
+// Clone clones IndexInfo.
+func (index *IndexInfo) Clone() *IndexInfo {
+	ni := *index
+	ni.Columns = make([]*IndexColumn, len(index.Columns))
+	for i := range index.Columns {
+		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	return &ni
 }
 
 // DBInfo provides meta data describing a DB.
@@ -63,7 +137,18 @@ type DBInfo struct {
 	Name    CIStr        `json:"db_name"` // DB name.
 	Charset string       `json:"charset"`
 	Collate string       `json:"collate"`
-	Tables  []*TableInfo `json:"tables"` // Tables in the DB.
+	Tables  []*TableInfo `json:"-"` // Tables in the DB.
+	State   SchemaState  `json:"state"`
+}
+
+// Clone clones DBInfo.
+func (db *DBInfo) Clone() *DBInfo {
+	newInfo := *db
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	for i := range db.Tables {
+		newInfo.Tables[i] = db.Tables[i].Clone()
+	}
+	return &newInfo
 }
 
 // CIStr is case insensitve string.

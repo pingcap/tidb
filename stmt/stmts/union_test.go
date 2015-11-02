@@ -26,7 +26,7 @@ func (s *testStmtSuite) TestUnion(c *C) {
 	testSQL := `select 1 union select 0;`
 	mustExec(c, s.testDB, testSQL)
 
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

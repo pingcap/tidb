@@ -17,10 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
 	"github.com/pingcap/tidb/util/errors2"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/comparer"
-	"github.com/syndtr/goleveldb/leveldb/memdb"
-	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 // conditionType is the type for condition consts.
@@ -37,7 +33,7 @@ const (
 
 var (
 	p = pool.NewCache("memdb pool", 100, func() interface{} {
-		return memdb.New(comparer.DefaultComparer, 1*1024*1024)
+		return NewMemDbBuffer()
 	})
 )
 
@@ -49,22 +45,31 @@ type conditionValue struct {
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if errors2.ErrorEqual(err, leveldb.ErrNotFound) || errors2.ErrorEqual(err, ErrNotExist) {
+	if errors2.ErrorEqual(err, ErrNotExist) {
 		return true
 	}
 
 	return false
 }
 
+// MemBuffer is the interface for transaction buffer of update in a transaction
+type MemBuffer interface {
+	// shares the same interface as the read-only snapshot
+	// and it implies that MemBuffer's iterator should iterate its kv pairs in the same order as snapshot
+	Snapshot
+	// Set associates key with value
+	Set([]byte, []byte) error
+}
+
 // UnionStore is an implement of Store which contains a buffer for update.
 type UnionStore struct {
-	Dirty    *memdb.DB // updates are buffered in memory
+	Dirty    MemBuffer // updates are buffered in memory
 	Snapshot Snapshot  // for read
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
-	dirty := p.Get().(*memdb.DB)
+	dirty := p.Get().(MemBuffer)
 	return UnionStore{
 		Dirty:    dirty,
 		Snapshot: snapshot,
@@ -92,13 +97,13 @@ func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 
 // Set implements the Store Set interface.
 func (us *UnionStore) Set(key []byte, value []byte) error {
-	return us.Dirty.Put(key, value)
+	return us.Dirty.Set(key, value)
 }
 
 // Seek implements the Snapshot Seek interface.
 func (us *UnionStore) Seek(key []byte, txn Transaction) (Iterator, error) {
 	snapshotIt := us.Snapshot.NewIterator(key)
-	dirtyIt := us.Dirty.NewIterator(&util.Range{Start: key})
+	dirtyIt := us.Dirty.NewIterator(key)
 	it := newUnionIter(dirtyIt, snapshotIt)
 	return it, nil
 }
@@ -125,13 +130,13 @@ func (us *UnionStore) Delete(k []byte) error {
 		return errors.Trace(ErrNotExist)
 	}
 
-	return us.Dirty.Put(k, nil)
+	return us.Dirty.Set(k, nil)
 }
 
 // Close implements the Store Close interface.
 func (us *UnionStore) Close() error {
 	us.Snapshot.Release()
-	us.Dirty.Reset()
+	us.Dirty.Release()
 	p.Put(us.Dirty)
 	return nil
 }

@@ -18,7 +18,6 @@
 package ddl
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -32,12 +31,13 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	qerror "github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/twinj/uuid"
 )
 
 // Pre-defined errors.
@@ -61,26 +61,47 @@ type DDL interface {
 }
 
 type ddl struct {
-	store       kv.Storage
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
+	store       kv.Storage
+	// schema lease seconds.
+	lease     int
+	uuid      string
+	jobCh     chan struct{}
+	jobDoneCh chan struct{}
 }
 
 // OnDDLChange is used as hook function when schema changed.
 type OnDDLChange func(err error) error
 
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange) DDL {
+func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease int) DDL {
 	d := &ddl{
-		store:       store,
 		infoHandle:  infoHandle,
 		onDDLChange: hook,
+		store:       store,
+		lease:       lease,
+		uuid:        uuid.NewV4().String(),
+		jobCh:       make(chan struct{}, 1),
+		jobDoneCh:   make(chan struct{}, 1),
 	}
+	go d.onWorker()
 	return d
 }
 
 func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
 	return d.infoHandle.Get()
+}
+
+func (d *ddl) genGlobalID() (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+
+	return globalID, errors.Trace(err)
 }
 
 func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) {
@@ -90,17 +111,21 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 		return errors.Trace(ErrExists)
 	}
 	info := &model.DBInfo{Name: schema}
-	info.ID, err = meta.GenGlobalID(d.store)
+	info.ID, err = d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
+		t := meta.NewMeta(txn)
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.writeSchemaInfo(info, txn)
+
+		err = t.CreateDatabase(info)
+
+		log.Warnf("save schema %s", info)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -109,8 +134,8 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int64) error {
-	curVer, err := txn.GetInt64(meta.SchemaMetaVersionKey)
+func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
+	curVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -119,14 +144,7 @@ func (d *ddl) verifySchemaMetaVersion(txn kv.Transaction, schemaMetaVersion int6
 	}
 
 	// Increment version.
-	_, err = txn.Inc(meta.SchemaMetaVersionKey, 1)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err := txn.LockKeys(meta.SchemaMetaVersionKey); err != nil {
-		return errors.Trace(err)
-	}
+	_, err = t.GenSchemaVersion()
 	return errors.Trace(err)
 }
 
@@ -167,17 +185,15 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		}
 	}
 
-	// Delete meta key.
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
+		t := meta.NewMeta(txn)
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		key := []byte(meta.DBMetaKey(old.ID))
-		if err := txn.LockKeys(key); err != nil {
-			return errors.Trace(err)
-		}
-		return txn.Delete(key)
+
+		err = t.DropDatabase(old.ID)
+		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
@@ -274,7 +290,7 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	col.ID, err = meta.GenGlobalID(d.store)
+	col.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -329,7 +345,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
-	tbInfo.ID, err = meta.GenGlobalID(d.store)
+	tbInfo.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -370,7 +386,8 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 
 func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*coldef.ColumnDef, constraints []*coldef.TableConstraint) (err error) {
 	is := d.GetInformationSchema()
-	if !is.SchemaExists(ident.Schema) {
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
 		return errors.Trace(qerror.ErrDatabaseNotExist)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
@@ -397,11 +414,13 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	log.Infof("New table: %+v", tbInfo)
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
+		t := meta.NewMeta(txn)
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.updateInfoSchema(ident.Schema, tbInfo, txn)
+
+		err = t.CreateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 
@@ -414,9 +433,12 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterSpecification) (err error) {
 	// Get database and table.
 	is := d.GetInformationSchema()
-	if !is.SchemaExists(ident.Schema) {
+
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
 		return errors.Trace(qerror.ErrDatabaseNotExist)
 	}
+
 	tbl, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
 		return errors.Trace(err)
@@ -424,7 +446,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			if err := d.addColumn(ctx, ident.Schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
+			if err := d.addColumn(ctx, schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
 				return errors.Trace(err)
 			}
 		default:
@@ -436,7 +458,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 }
 
 // Add a column into table
-func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
+func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
 	// Find position
 	cols := tbl.Cols()
 	position := len(cols)
@@ -494,11 +516,13 @@ func (d *ddl) addColumn(ctx context.Context, schema model.CIStr, tbl table.Table
 
 	// update infomation schema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		err := d.verifySchemaMetaVersion(txn, schemaMetaVersion)
+		t := meta.NewMeta(txn)
+		err := d.verifySchemaMetaVersion(t, schemaMetaVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.updateInfoSchema(schema, tb.Meta(), txn)
+
+		err = t.UpdateTable(schema.ID, tb.Meta())
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -544,35 +568,34 @@ func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	is := d.GetInformationSchema()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	}
+
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// update InfoSchema before delete all the table data.
-	clonedInfo := is.Clone()
+	// Check Privilege
+	privChecker := privilege.GetPrivilegeChecker(ctx)
+	hasPriv, err := privChecker.Check(ctx, schema, tb.Meta(), mysql.DropPriv)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !hasPriv {
+		return errors.Errorf("You do not have the privilege to drop table %s.%s.", ti.Schema, ti.Name)
+	}
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
+		t := meta.NewMeta(txn)
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, info := range clonedInfo {
-			if info.Name == ti.Schema {
-				var newTableInfos []*model.TableInfo
-				// append other tables.
-				for _, tbInfo := range info.Tables {
-					if tbInfo.Name.L != ti.Name.L {
-						newTableInfos = append(newTableInfos, tbInfo)
-					}
-				}
-				info.Tables = newTableInfos
-				err = d.writeSchemaInfo(info, txn)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-		return nil
+
+		err = t.DropTable(schema.ID, tb.Meta().ID)
+		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
@@ -602,18 +625,17 @@ func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
 			}
 		}
 	}
-	// Remove auto ID key.
-	err = txn.Delete([]byte(meta.AutoIDKey(t.TableID())))
 
-	// Auto ID meta is created when the first time used, so it may not exist.
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
-		return nil
-	}
-	return errors.Trace(err)
+	return nil
 }
 
 func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) error {
 	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	}
+
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(err)
@@ -664,11 +686,13 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 
 	// update InfoSchema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		err := d.verifySchemaMetaVersion(txn, is.SchemaMetaVersion())
+		t := meta.NewMeta(txn)
+		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = d.updateInfoSchema(ti.Schema, tbInfo, txn)
+
+		err = t.UpdateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -736,45 +760,5 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 
 func (d *ddl) DropIndex(ctx context.Context, schema, tableName, indexNmae model.CIStr) error {
 	// TODO: implement
-	return nil
-}
-
-func (d *ddl) writeSchemaInfo(info *model.DBInfo, txn kv.Transaction) error {
-	var b []byte
-	b, err := json.Marshal(info)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	key := []byte(meta.DBMetaKey(info.ID))
-	if err := txn.LockKeys(key); err != nil {
-		return errors.Trace(err)
-	}
-	txn.Set(key, b)
-	log.Warn("save schema", string(b))
-
-	return errors.Trace(err)
-}
-
-func (d *ddl) updateInfoSchema(schema model.CIStr, tbInfo *model.TableInfo, txn kv.Transaction) error {
-	is := d.GetInformationSchema()
-	clonedInfo := is.Clone()
-	for _, info := range clonedInfo {
-		if info.Name == schema {
-			var match bool
-			for i := range info.Tables {
-				if info.Tables[i].Name == tbInfo.Name {
-					info.Tables[i] = tbInfo
-					match = true
-				}
-			}
-			if !match {
-				info.Tables = append(info.Tables, tbInfo)
-			}
-			err := d.writeSchemaInfo(info, txn)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
 	return nil
 }

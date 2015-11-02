@@ -37,7 +37,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	dom, err := NewDomain(store)
+	dom, err := NewDomain(store, 0)
 	c.Assert(err, IsNil)
 	store = dom.Store()
 	dd := dom.DDL()
@@ -46,6 +46,6 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
-	dom, err = NewDomain(store)
+	dom, err = NewDomain(store, 0)
 	c.Assert(err, IsNil)
 }

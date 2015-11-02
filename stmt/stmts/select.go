@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -49,6 +49,8 @@ type SelectStmt struct {
 	Where    *rsets.WhereRset
 	// TODO: rename Lock
 	Lock coldef.LockType
+
+	selectList *plans.SelectList
 
 	Text string
 }
@@ -149,7 +151,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		}
 	}
 	lock := s.Lock
-	if variable.ShouldAutocommit(ctx) {
+	if lock != coldef.SelectLockNone && autocommit.ShouldAutocommit(ctx) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
 		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
@@ -163,7 +165,12 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 
 	// Get select list for futher field values evaluation.
-	selectList, err := plans.ResolveSelectList(s.Fields, r.GetFields())
+	var selectList *plans.SelectList
+	if s.selectList == nil {
+		selectList, err = plans.ResolveSelectList(s.Fields, r.GetFields())
+	} else {
+		selectList = s.selectList
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,18 +180,22 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 		groupBy = s.GroupBy.By
 	}
 
-	if s.Having != nil {
+	if s.Having != nil && s.selectList == nil {
 		// `having` may contain aggregate functions, and we will add this to hidden fields.
 		if err = s.Having.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
-	if s.OrderBy != nil {
+	if s.OrderBy != nil && s.selectList == nil {
 		// `order by` may contain aggregate functions, and we will add this to hidden fields.
 		if err = s.OrderBy.CheckAggregate(selectList); err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	if s.selectList == nil {
+		s.selectList = selectList
 	}
 
 	switch {

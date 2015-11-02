@@ -66,54 +66,52 @@ var signedLowerBound = map[byte]int64{
 	mysql.TypeLonglong: math.MinInt64,
 }
 
-func convertFloatToInt(val float64, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+func convertFloatToInt(val float64, lowerBound int64, upperBound int64, tp byte) (int64, error) {
 	val = RoundFloat(val)
 	if val < float64(lowerBound) {
-		converted = lowerBound
-		err = overflow(val, tp)
-		return
+		return lowerBound, overflow(val, tp)
 	}
+
 	if val > float64(upperBound) {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = int64(val)
-	return
+
+	return int64(val), nil
 }
 
-func convertIntToInt(val, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+func convertIntToInt(val int64, lowerBound int64, upperBound int64, tp byte) (int64, error) {
 	if val < lowerBound {
-		converted = lowerBound
-		err = overflow(val, tp)
-		return
+		return lowerBound, overflow(val, tp)
 	}
+
 	if val > upperBound {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = val
-	return
+
+	return val, nil
 }
 
-func convertUintToInt(val uint64, lowerBound, upperBound int64, tp byte) (converted int64, err error) {
+func convertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 	if val > uint64(upperBound) {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = int64(val)
-	return
+
+	return int64(val), nil
 }
 
-func convertToInt(val interface{}, target *FieldType) (converted int64, err error) {
+func convertToInt(val interface{}, target *FieldType) (int64, error) {
 	tp := target.Tp
 	lowerBound := signedLowerBound[tp]
 	upperBound := signedUpperBound[tp]
+
 	switch v := val.(type) {
+	case bool:
+		if v {
+			return 1, nil
+		}
+		return 0, nil
 	case uint64:
-		return convertUintToInt(v, lowerBound, upperBound, tp)
+		return convertUintToInt(v, upperBound, tp)
 	case int:
 		return convertIntToInt(int64(v), lowerBound, upperBound, tp)
 	case int64:
@@ -153,55 +151,54 @@ func convertToInt(val interface{}, target *FieldType) (converted int64, err erro
 		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
 	case mysql.Set:
 		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
+	case *DataItem:
+		return convertToInt(v.Data, target)
 	}
 	return 0, typeError(val, target)
 }
 
-func convertIntToUint(val int64, upperBound uint64, tp byte) (converted uint64, err error) {
+func convertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
 	if val < 0 {
-		converted = 0
-		err = overflow(val, tp)
-		return
+		return 0, overflow(val, tp)
 	}
+
 	if uint64(val) > upperBound {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = uint64(val)
-	return
+
+	return uint64(val), nil
 }
 
-func convertUintToUint(val uint64, upperBound uint64, tp byte) (converted uint64, err error) {
+func convertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 	if val > upperBound {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = val
-	return
+
+	return val, nil
 }
 
-func convertFloatToUint(val float64, upperBound uint64, tp byte) (converted uint64, err error) {
+func convertFloatToUint(val float64, upperBound uint64, tp byte) (uint64, error) {
 	val = RoundFloat(val)
 	if val < 0 {
-		converted = 0
-		err = overflow(val, tp)
-		return
+		return 0, overflow(val, tp)
 	}
+
 	if val > float64(upperBound) {
-		converted = upperBound
-		err = overflow(val, tp)
-		return
+		return upperBound, overflow(val, tp)
 	}
-	converted = uint64(val)
-	return
+
+	return uint64(val), nil
 }
 
-func convertToUint(val interface{}, target *FieldType) (converted uint64, err error) {
+func convertToUint(val interface{}, target *FieldType) (uint64, error) {
 	tp := target.Tp
 	upperBound := unsignedUpperBound[tp]
 	switch v := val.(type) {
+	case bool:
+		if v {
+			return 1, nil
+		}
+		return 0, nil
 	case uint64:
 		return convertUintToUint(v, upperBound, tp)
 	case int:
@@ -243,6 +240,8 @@ func convertToUint(val interface{}, target *FieldType) (converted uint64, err er
 		return convertFloatToUint(v.ToNumber(), upperBound, tp)
 	case mysql.Set:
 		return convertFloatToUint(v.ToNumber(), upperBound, tp)
+	case *DataItem:
+		return convertToUint(v.Data, target)
 	}
 	return 0, typeError(val, target)
 }
@@ -549,93 +548,12 @@ func StrToFloat(str string) (float64, error) {
 
 // ToUint64 converts an interface to an uint64.
 func ToUint64(value interface{}) (uint64, error) {
-	switch v := value.(type) {
-	case int:
-		return uint64(v), nil
-	case int64:
-		return uint64(v), nil
-	case uint64:
-		return uint64(v), nil
-	case float32:
-		return uint64(RoundFloat((float64(v)))), nil
-	case float64:
-		return uint64(RoundFloat(v)), nil
-	case string:
-		f, err := StrToFloat(v)
-		return uint64(f), err
-	case []byte:
-		f, err := StrToFloat(string(v))
-		return uint64(f), err
-	case mysql.Time:
-		// 2011-11-10 11:11:11.999999 -> 20111110111112
-		return uint64(v.ToNumber().Round(0).IntPart()), nil
-	case mysql.Duration:
-		// 11:11:11.999999 -> 111112
-		return uint64(v.ToNumber().Round(0).IntPart()), nil
-	case mysql.Decimal:
-		return uint64(v.Round(0).IntPart()), nil
-	case mysql.Hex:
-		// we don't need RoundFloat here because hex can not have fractional part.
-		return uint64(v.ToNumber()), nil
-	case mysql.Bit:
-		return uint64(v.ToNumber()), nil
-	case mysql.Enum:
-		return uint64(v.ToNumber()), nil
-	case mysql.Set:
-		return uint64(v.ToNumber()), nil
-	case *DataItem:
-		return ToUint64(v.Data)
-	default:
-		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
-	}
+	return convertToUint(value, NewFieldType(mysql.TypeLonglong))
 }
 
 // ToInt64 converts an interface to an int64.
 func ToInt64(value interface{}) (int64, error) {
-	switch v := value.(type) {
-	case bool:
-		if v {
-			return 1, nil
-		}
-		return 0, nil
-	case int:
-		return int64(v), nil
-	case int64:
-		return int64(v), nil
-	case uint64:
-		return int64(v), nil
-	case float32:
-		return int64(RoundFloat((float64(v)))), nil
-	case float64:
-		return int64(RoundFloat(v)), nil
-	case string:
-		f, err := StrToFloat(v)
-		return int64(f), err
-	case []byte:
-		f, err := StrToFloat(string(v))
-		return int64(f), err
-	case mysql.Time:
-		// 2011-11-10 11:11:11.999999 -> 20111110111112
-		return v.ToNumber().Round(0).IntPart(), nil
-	case mysql.Duration:
-		// 11:11:11.999999 -> 111112
-		return v.ToNumber().Round(0).IntPart(), nil
-	case mysql.Decimal:
-		return v.Round(0).IntPart(), nil
-	case mysql.Hex:
-		// we don't need RoundFloat here because hex can not have fractional part.
-		return int64(v.ToNumber()), nil
-	case mysql.Bit:
-		return int64(v.ToNumber()), nil
-	case mysql.Enum:
-		return int64(v.ToNumber()), nil
-	case mysql.Set:
-		return int64(v.ToNumber()), nil
-	case *DataItem:
-		return ToInt64(v.Data)
-	default:
-		return 0, errors.Errorf("cannot convert %v(type %T) to int64", value, value)
-	}
+	return convertToInt(value, NewFieldType(mysql.TypeLonglong))
 }
 
 // ToFloat64 converts an interface to a float64.

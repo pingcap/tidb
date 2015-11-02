@@ -115,7 +115,11 @@ func (s *testTableRsetSuite) TestTableSourceString(c *C) {
 	str := ts.String()
 	c.Assert(len(str), Greater, 0)
 
-	stmtList, err := tidb.Compile(s.querySql)
+	store := newStore(c)
+	se := newSession(c, store, s.dbName)
+	ctx, ok := se.(context.Context)
+	c.Assert(ok, IsTrue)
+	stmtList, err := tidb.Compile(ctx, s.querySql)
 	c.Assert(err, IsNil)
 	c.Assert(len(stmtList), Greater, 0)
 
