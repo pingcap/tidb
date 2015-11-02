@@ -671,3 +671,26 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 		c.Assert(d.MicroSecond(), Equals, t.MicroSecond)
 	}
 }
+
+func (s *testTimeSuite) TestParseDateFormat(c *C) {
+	tbl := []struct {
+		Input  string
+		Result []string
+	}{
+		{"2011-11-11 10:10:10.123456", []string{"2011", "11", "11", "10", "10", "10", "123456"}},
+		{"  2011-11-11 10:10:10.123456  ", []string{"2011", "11", "11", "10", "10", "10", "123456"}},
+		{"2011-11-11 10", []string{"2011", "11", "11", "10"}},
+		{"2011-11-11T10:10:10.123456", []string{"2011", "11", "11", "10", "10", "10", "123456"}},
+		{"2011:11:11T10:10:10.123456", []string{"2011", "11", "11", "10", "10", "10", "123456"}},
+		{"xx2011-11-11 10:10:10", nil},
+		{"T10:10:10", nil},
+		{"2011-11-11x", nil},
+		{"2011-11-11  10:10:10", nil},
+		{"xxx 10:10:10", nil},
+	}
+
+	for _, t := range tbl {
+		r := parseDateFormat(t.Input)
+		c.Assert(r, DeepEquals, t.Result)
+	}
+}

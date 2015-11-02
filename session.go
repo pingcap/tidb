@@ -32,8 +32,11 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Session context
@@ -109,6 +113,7 @@ type session struct {
 	store   kv.Storage
 	sid     int64
 	history stmtHistory
+	initing bool // Running bootstrap using this session.
 }
 
 func (s *session) Status() uint16 {
@@ -238,7 +243,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 		// TODO: Maybe we should remove this restriction latter.
 		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
 	}
-	statements, err := Compile(sql)
+	statements, err := Compile(ctx, sql)
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
@@ -251,15 +256,82 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
-	log.Infof("Executing %s [%s]", st, sql)
+	log.Infof("Executing %s [%s]", st.OriginText(), sql)
 	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
 	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
 	return rs, errors.Trace(err)
 }
 
+// GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
+func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	rs, err := s.ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer rs.Close()
+	row, err := rs.Next()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if row == nil {
+		return "", fmt.Errorf("Unknown sys var: %s", name)
+	}
+	value, err := types.ToString(row.Data[0])
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return value, nil
+}
+
+// SetGlobalSysVar implements RestrictedSQLExecutor.SetGlobalSysVar interface.
+func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) error {
+	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
+	_, err := s.ExecRestrictedSQL(ctx, sql)
+	return errors.Trace(err)
+}
+
+// IsAutocommit checks if it is in the auto-commit mode.
+func (s *session) isAutocommit(ctx context.Context) bool {
+	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
+		return false
+	}
+	autocommit, ok := variable.GetSessionVars(ctx).Systems["autocommit"]
+	if !ok {
+		if s.initing {
+			return false
+		}
+		var err error
+		autocommit, err = s.GetGlobalSysVar(ctx, "autocommit")
+		if err != nil {
+			log.Errorf("Get global sys var error: %v", err)
+			return false
+		}
+		ok = true
+	}
+	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
+		variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+		return true
+	}
+	variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, false)
+	return false
+}
+
+func (s *session) ShouldAutocommit(ctx context.Context) bool {
+	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
+		return false
+	}
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK.
+	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && s.isAutocommit(ctx) {
+		return true
+	}
+	return false
+}
+
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
-	statements, err := Compile(sql)
+	statements, err := Compile(s, sql)
 	if err != nil {
 		log.Errorf("Syntax error: %s", sql)
 		log.Errorf("Error occurs at %s.", err)
@@ -369,7 +441,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !variable.IsAutocommit(s) {
+		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
@@ -386,7 +458,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !variable.IsAutocommit(s) {
+		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
@@ -470,14 +542,21 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+
+	// session implements autocommit.Checker. Bind it to ctx
+	autocommit.BindAutocommitChecker(s, s)
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
 	_, ok := storeBootstrapped[store.UUID()]
 	if !ok {
+		s.initing = true
 		bootstrap(s)
+		s.initing = false
 		storeBootstrapped[store.UUID()] = true
 	}
-	// Add auth here
+	// TODO: Add auth here
+	privChecker := &privileges.UserPrivileges{}
+	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
 }

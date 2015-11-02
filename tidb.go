@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
@@ -66,7 +67,19 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	if d != nil {
 		return
 	}
-	d, err = domain.NewDomain(store)
+
+	if SchemaLease <= minSchemaLease {
+		SchemaLease = minSchemaLease
+	}
+
+	lease := SchemaLease
+	// if storage is local storage, we may in test environment or
+	// run server in single machine mode, so we don't need wait
+	// 2 * lease time for DDL operation.
+	if localstore.IsLocalStore(store) {
+		lease = 0
+	}
+	d, err = domain.NewDomain(store, lease)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -85,12 +98,34 @@ var (
 	PprofAddr = "localhost:8888"
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
+
+	// SchemaLease is the time(seconds) for re-updating remote schema.
+	// In online DDL, we must wait 2 * SchemaLease time to guarantee
+	// all servers get the neweset schema.
+	SchemaLease    = 300
+	minSchemaLease = 120
 )
 
+// What character set should the server translate a statement to after receiving it?
+// For this, the server uses the character_set_connection and collation_connection system variables.
+// It converts statements sent by the client from character_set_client to character_set_connection
+// (except for string literals that have an introducer such as _latin1 or _utf8).
+// collation_connection is important for comparisons of literal strings.
+// For comparisons of strings with column values, collation_connection does not matter because columns
+// have their own collation, which has a higher collation precedence.
+// See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
+func getCtxCharsetInfo(ctx context.Context) (string, string) {
+	sessionVars := variable.GetSessionVars(ctx)
+	charset := sessionVars.Systems["character_set_connection"]
+	collation := sessionVars.Systems["collation_connection"]
+	return charset, collation
+}
+
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(src string) ([]stmt.Statement, error) {
+func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
 	log.Debug("compiling", src)
 	l := parser.NewLexer(src)
+	l.SetCharsetInfo(getCtxCharsetInfo(ctx))
 	if parser.YYParse(l) != 0 {
 		log.Warnf("compiling %s, error: %v", src, l.Errors()[0])
 		return nil, errors.Trace(l.Errors()[0])
@@ -113,9 +148,10 @@ func Compile(src string) ([]stmt.Statement, error) {
 
 // CompilePrepare compiles prepared statement, allows placeholder as expr.
 // The return values are compiled statement, parameter list and error.
-func CompilePrepare(src string) (stmt.Statement, []*expression.ParamMarker, error) {
+func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*expression.ParamMarker, error) {
 	log.Debug("compiling prepared", src)
 	l := parser.NewLexer(src)
+	l.SetCharsetInfo(getCtxCharsetInfo(ctx))
 	l.SetPrepare()
 	if parser.YYParse(l) != 0 {
 		log.Errorf("compiling %s\n, error: %v", src, l.Errors()[0])
@@ -177,7 +213,7 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		stmt.ClearExecArgs(ctx)
 	}
 	// MySQL DDL should be auto-commit
-	if err == nil && (s.IsDDL() || variable.ShouldAutocommit(ctx)) {
+	if err == nil && (s.IsDDL() || autocommit.ShouldAutocommit(ctx)) {
 		err = ctx.FinishTxn(false)
 	}
 	return rs, errors.Trace(err)
@@ -204,7 +240,7 @@ func runPreparedStmt(ctx context.Context, ps *stmts.PreparedStmt) (rset.Recordse
 		return nil, nil
 	}
 	// compile SQLText
-	stmt, params, err := CompilePrepare(SQLText)
+	stmt, params, err := CompilePrepare(ctx, SQLText)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

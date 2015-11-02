@@ -110,13 +110,12 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 		err  error
 	)
 
+	v = types.RawData(v)
 	switch y := v.(type) {
 	case int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
 		data, err = mysql.ConvertToDecimal(v)
 	case mysql.Decimal:
 		data = y
-	case *types.DataItem:
-		return calculateSum(sum, y.Data)
 	case nil:
 		data = nil
 	default:

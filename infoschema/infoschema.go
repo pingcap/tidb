@@ -14,7 +14,6 @@
 package infoschema
 
 import (
-	"encoding/json"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -183,11 +182,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemas {
-		// TODO: this is a temporary solution, change to real clone later.
-		b, _ := json.Marshal(v)
-		var newInfo model.DBInfo
-		json.Unmarshal(b, &newInfo)
-		result = append(result, &newInfo)
+		result = append(result, v.Clone())
 	}
 	return
 }
@@ -222,8 +217,8 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 		info.schemas[di.ID] = di
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
-			alloc := autoid.NewAllocator(h.store)
-			info.tables[t.ID] = table.TableFromMeta(di.Name.L, alloc, t)
+			alloc := autoid.NewAllocator(h.store, di.ID)
+			info.tables[t.ID] = table.TableFromMeta(alloc, t)
 			tname := tableName{di.Name.L, t.Name.L}
 			info.tableNameToID[tname] = t.ID
 			for _, c := range t.Columns {
@@ -245,5 +240,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 
 // Get gets information schema from Handle.
 func (h *Handle) Get() InfoSchema {
-	return h.value.Load().(InfoSchema)
+	v := h.value.Load()
+	schema, _ := v.(InfoSchema)
+	return schema
 }

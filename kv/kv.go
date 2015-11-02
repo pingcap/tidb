@@ -158,12 +158,16 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// GetSnapshot gets a snaphot that is able to read any version of data.
-	GetSnapshot() (MvccSnapshot, error)
+	// GetSnapshot gets a snaphot that is able to read any data which data is <= ver.
+	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
+	GetSnapshot(ver Version) (MvccSnapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID
 	UUID() string
+
+	// CurrentVersion returns current max committed version.
+	CurrentVersion() (Version, error)
 }
 
 // FnKeyCmp is the function for iterator the keys
@@ -189,6 +193,7 @@ type Index interface {
 	Create(txn Transaction, indexedValues []interface{}, h int64) error                          // supports insert into statement
 	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
 	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
+	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist
 	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
 	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
 }

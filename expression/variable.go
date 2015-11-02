@@ -71,7 +71,7 @@ func (v *Variable) Eval(ctx context.Context, args map[interface{}]interface{}) (
 		return nil, nil
 	}
 
-	sysVar, ok := variable.SysVars[name]
+	_, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
 		return nil, errors.Errorf("Unknown system variable '%s'", name)
@@ -82,9 +82,11 @@ func (v *Variable) Eval(ctx context.Context, args map[interface{}]interface{}) (
 			return value, nil
 		}
 	}
-
-	// TODO: select global sys var from kv store, now we only get it from memory
-	return sysVar.Value, nil
+	value, err := ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, name)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return value, nil
 }
 
 // Accept implements Expression Accept interface.

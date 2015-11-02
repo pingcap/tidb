@@ -87,12 +87,7 @@ func (f *FunctionCast) Eval(ctx context.Context, args map[interface{}]interface{
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	v, ok := value.(*types.DataItem)
-	if ok {
-		value = v.Data
-	}
-
+	value = types.RawData(value)
 	d := &types.DataItem{Type: f.Tp}
 	// Casting nil to any type returns null
 	if value == nil {

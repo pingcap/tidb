@@ -33,6 +33,13 @@ func (s *testStmtSuite) TestSelectWithoutFrom(c *C) {
 
 	rows.Close()
 	mustCommit(c, tx)
+
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`select _utf8"string";`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{"string"}})
+	rows.Close()
+	mustCommit(c, tx)
 }
 
 func (s *testStmtSuite) TestSelectExplain(c *C) {
@@ -104,7 +111,7 @@ func (s *testStmtSuite) TestSelectHaving(c *C) {
 	s.fillData(s.testDB, c)
 
 	// Test compile
-	stmtList, err := tidb.Compile("select * from test where id = 2;")
+	stmtList, err := tidb.Compile(s.ctx, "select * from test where id = 2;")
 	c.Assert(err, IsNil)
 
 	str := stmtList[0].OriginText()

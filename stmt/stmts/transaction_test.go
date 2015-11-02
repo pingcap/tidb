@@ -22,7 +22,7 @@ import (
 func (s *testStmtSuite) TestBegin(c *C) {
 	// Test BeginStmt.
 	testSQL := `begin;`
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -40,7 +40,7 @@ func (s *testStmtSuite) TestBegin(c *C) {
 func (s *testStmtSuite) TestCommit(c *C) {
 	// Test CommitStmt.
 	testSQL := `commit;`
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -58,7 +58,7 @@ func (s *testStmtSuite) TestCommit(c *C) {
 func (s *testStmtSuite) TestRollback(c *C) {
 	// Test RollbackStmt.
 	testSQL := `rollback;`
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

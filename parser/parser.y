@@ -152,6 +152,7 @@ import (
 	ge		">="
 	global		"GLOBAL"
 	grant		"GRANT"
+	grants		"GRANTS"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
 	having		"HAVING"
@@ -217,6 +218,7 @@ import (
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
+	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
@@ -248,6 +250,7 @@ import (
 	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
+	underscoreCS	"UNDERSCORE_CHARSET"
 	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
@@ -432,7 +435,7 @@ import (
 	IndexName		"index name"
 	IndexType		"index type"
 	InsertIntoStmt		"INSERT INTO statement"
-	InsertRest		"Rest part of INSERT INTO statement"
+	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
 	JoinTable 		"join table"
 	JoinType		"join type"
@@ -474,6 +477,8 @@ import (
 	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
 	RegexpSym		"REGEXP or RLIKE"
+	ReplaceIntoStmt		"REPLACE INTO statement"
+	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
@@ -742,24 +747,25 @@ Assignment:
 		x, err := expression.NewAssignment($1.(string), $3.(expression.Expression))
 		if err != nil {
 			yylex.(*lexer).errf("Parse Assignment error: %s", $1.(string))
+			return 1
 		}
-		$$ = *x
+		$$ = x
 	}
 
 AssignmentList:
 	Assignment
 	{
-		$$ = []expression.Assignment{$1.(expression.Assignment)}
+		$$ = []*expression.Assignment{$1.(*expression.Assignment)}
 	}
 |	AssignmentList ',' Assignment
 	{
-		$$ = append($1.([]expression.Assignment), $3.(expression.Assignment))
+		$$ = append($1.([]*expression.Assignment), $3.(*expression.Assignment))
 	}
 
 AssignmentListOpt:
 	/* EMPTY */
 	{
-		$$ = []expression.Assignment{}
+		$$ = []*expression.Assignment{}
 	}
 |	AssignmentList
 
@@ -1062,6 +1068,7 @@ CreateDatabaseStmt:
 		ok := charset.ValidCharsetAndCollation(cs, co)
 		if !ok {
 			yylex.(*lexer).errf("Unknown character set %s or collate %s ", cs, co)
+			return 1
 		}
 		dbopt := &coldef.CharsetOpt{Chs: cs, Col: co}
 
@@ -1307,7 +1314,7 @@ DropIndexStmt:
 	}
 
 DropTableStmt:
-	"DROP" "TABLE" TableIdentList
+	"DROP" TableOrTables TableIdentList
 	{
 		$$ = &stmts.DropTableStmt{TableIdents: $3.([]table.Ident)}
 		if yylex.(*lexer).root {
@@ -1321,6 +1328,10 @@ DropTableStmt:
 			break
 		}
 	}
+
+TableOrTables:
+	"TABLE"
+|	"TABLES"
 
 EqOpt:
 	{
@@ -1700,7 +1711,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
@@ -1714,13 +1725,13 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertRest OnDuplicateKeyUpdate
+	"INSERT" Priority IgnoreOptional IntoOpt TableIdent InsertValues OnDuplicateKeyUpdate
 	{
-		x := $6.(*stmts.InsertIntoStmt)
+		x := &stmts.InsertIntoStmt{InsertValues: $6.(stmts.InsertValues)}
 		x.Priority = $2.(int)
 		x.TableIdent = $5.(table.Ident)
 		if $7 != nil {
-			x.OnDuplicate = $7.([]expression.Assignment)
+			x.OnDuplicate = $7.([]*expression.Assignment)
 		}
 		$$ = x
 		if yylex.(*lexer).root {
@@ -1735,36 +1746,36 @@ IntoOpt:
 	{
 	}
 
-InsertRest:
+InsertValues:
 	'(' ColumnNameListOpt ')' ValueSym ExpressionListList
 	{
-		$$ = &stmts.InsertIntoStmt{
+		$$ = stmts.InsertValues{
 			ColNames:   $2.([]string), 
 			Lists:      $5.([][]expression.Expression)}
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
-		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
+		$$ = stmts.InsertValues{ColNames: $2.([]string), Sel: $4.(*stmts.SelectStmt)}
 	}
 |	'(' ColumnNameListOpt ')' UnionStmt
 	{
-		$$ = &stmts.InsertIntoStmt{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
+		$$ = stmts.InsertValues{ColNames: $2.([]string), Sel: $4.(*stmts.UnionStmt)}
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
-		$$ = &stmts.InsertIntoStmt{Lists:  $2.([][]expression.Expression)}
+		$$ = stmts.InsertValues{Lists:  $2.([][]expression.Expression)}
 	}
 |	SelectStmt
 	{
-		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.SelectStmt)}
+		$$ = stmts.InsertValues{Sel: $1.(*stmts.SelectStmt)}
 	}
 |	UnionStmt
 	{
-		$$ = &stmts.InsertIntoStmt{Sel: $1.(*stmts.UnionStmt)}
+		$$ = stmts.InsertValues{Sel: $1.(*stmts.UnionStmt)}
 	}
 |	"SET" ColumnSetValueList
 	{
-		$$ = &stmts.InsertIntoStmt{Setlist: $2.([]*expression.Assignment)}
+		$$ = stmts.InsertValues{Setlist: $2.([]*expression.Assignment)}
 	}
 
 ValueSym:
@@ -1823,7 +1834,33 @@ OnDuplicateKeyUpdate:
 		$$ = $5
 	}
 
-/***********************************Insert Statments END************************************/
+/************************************************************************************
+ *  Replace Statments
+ *  See: https://dev.mysql.com/doc/refman/5.7/en/replace.html
+ *
+ *  TODO: support PARTITION
+ **********************************************************************************/
+ReplaceIntoStmt:
+	"REPLACE" ReplacePriority IntoOpt TableIdent InsertValues
+	{
+		x := &stmts.ReplaceIntoStmt{InsertValues: $5.(stmts.InsertValues)}
+		x.Priority = $2.(int)
+		x.TableIdent = $4.(table.Ident)
+		$$ = x
+	}
+
+ReplacePriority:
+	{
+		$$ = stmts.NoPriority
+	}
+|	"LOW_PRIORITY"
+	{
+		$$ = stmts.LowPriority
+	}
+|	"DELAYED"
+	{
+		$$ = stmts.DelayedPriority
+	}
 
 Literal:
 	"false"
@@ -1838,6 +1875,32 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+		l := yylex.(*lexer)
+		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		$$ = &types.DataItem{
+			Type: tp,
+			Data: $1.(string),
+		}
+	}
+|	"UNDERSCORE_CHARSET" stringLit
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset = $1.(string)
+		co, err := charset.GetDefaultCollation(tp.Charset)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.errf("Get collation error for charset: %s", tp.Charset)
+			return 1
+		}
+		tp.Collate = co
+		$$ = &types.DataItem{
+			Type: tp,
+			Data: $2.(string),
+		}
+	}
 |	hexLit
 |	bitLit
 
@@ -1871,6 +1934,7 @@ Operand:
 		l := yylex.(*lexer)
 		if !l.prepare {
 			l.err("Can not accept placeholder when not parsing prepare sql")
+			return 1
 		}
 		pm := &expression.ParamMarker{}
 		l.ParamList = append(l.ParamList, pm)
@@ -2396,6 +2460,19 @@ FunctionCallNonKeyword:
 			return 1
 		}
 	}
+|	"REPLACE" '(' Expression ',' Expression ',' Expression ')'
+	{
+		args := []expression.Expression{$3.(expression.Expression),
+						$5.(expression.Expression),
+						$7.(expression.Expression)}
+		var err error
+		$$, err = expression.NewCall($1.(string), args, false)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.err(err)
+			return 1
+		}
+	}
 |	"SECOND" '(' Expression ')'
 	{
 		args := []expression.Expression{$3.(expression.Expression)}
@@ -2775,7 +2852,6 @@ PrimaryFactor:
 		$$ = expression.NewBinaryOperation(opcode.Xor, $1.(expression.Expression), $3.(expression.Expression))
 	}
 |	PrimaryExpression
-
 
 Priority:
 	{
@@ -3453,6 +3529,19 @@ ShowStmt:
 			TableIdent: $4.(table.Ident),
 		}
 	}
+|	"SHOW" "GRANTS"
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		$$ = &stmts.ShowStmt{Target: stmt.ShowGrants}
+	}
+|	"SHOW" "GRANTS" "FOR" Username
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/show-grants.html
+		$$ = &stmts.ShowStmt{
+			Target: stmt.ShowGrants,
+			User:	$4.(string),
+		}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -3533,6 +3622,7 @@ Statement:
 |	InsertIntoStmt
 |	PreparedStmt
 |	RollbackStmt
+|	ReplaceIntoStmt
 |	SelectStmt
 |	SetStmt
 |	ShowStmt
@@ -3552,6 +3642,7 @@ ExplainableStmt:
 |	DeleteFromStmt
 |	UpdateStmt
 |	InsertIntoStmt
+|	ReplaceIntoStmt
 
 StatementList:
 	Statement
@@ -3825,6 +3916,7 @@ NumericType:
 			x.Flen = 1
 		} else if x.Flen > 64 {
 			yylex.(*lexer).errf("invalid field length %d for bit type, must in [1, 64]", x.Flen)
+			return 1
 		}
 		$$ = x
 	}
@@ -4249,7 +4341,7 @@ UpdateStmt:
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	r,
-			List:		$6.([]expression.Assignment),
+			List:		$6.([]*expression.Assignment),
 		}
 		if $7 != nil {
 			st.Where = $7.(expression.Expression)
@@ -4271,7 +4363,7 @@ UpdateStmt:
 		st := &stmts.UpdateStmt{
 			LowPriority:	$2.(bool),
 			TableRefs:	$4.(*rsets.JoinRset),
-			List:		$6.([]expression.Assignment),
+			List:		$6.([]*expression.Assignment),
 			MultipleTable:	true,
 		}
 		if $7 != nil {

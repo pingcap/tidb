@@ -83,7 +83,6 @@ func (gc *localstoreCompactor) getAllVersions(k kv.Key) ([]kv.EncodedKey, error)
 }
 
 func (gc *localstoreCompactor) deleteWorker() {
-	gc.workerWaitGroup.Add(1)
 	defer gc.workerWaitGroup.Done()
 	cnt := 0
 	batch := gc.db.NewBatch()
@@ -92,18 +91,16 @@ func (gc *localstoreCompactor) deleteWorker() {
 		case <-gc.stopCh:
 			return
 		case key := <-gc.delCh:
-			{
-				cnt++
-				batch.Delete(key)
-				// Batch delete.
-				if cnt == gc.policy.BatchDeleteCnt {
-					err := gc.db.Commit(batch)
-					if err != nil {
-						log.Error(err)
-					}
-					batch = gc.db.NewBatch()
-					cnt = 0
+			cnt++
+			batch.Delete(key)
+			// Batch delete.
+			if cnt == gc.policy.BatchDeleteCnt {
+				err := gc.db.Commit(batch)
+				if err != nil {
+					log.Error(err)
 				}
+				batch = gc.db.NewBatch()
+				cnt = 0
 			}
 		}
 	}
@@ -118,12 +115,15 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 			log.Info("GC stopped")
 			return
 		case <-gc.ticker.C:
-			log.Info("GC trigger")
 			gc.mu.Lock()
 			m := gc.recentKeys
+			if len(m) == 0 {
+				gc.mu.Unlock()
+				continue
+			}
 			gc.recentKeys = make(map[string]struct{})
 			gc.mu.Unlock()
-			// Do Compactor
+			log.Info("GC trigger")
 			for k := range m {
 				err := gc.Compact(nil, []byte(k))
 				if err != nil {
@@ -174,10 +174,12 @@ func (gc *localstoreCompactor) Compact(ctx interface{}, k kv.Key) error {
 
 func (gc *localstoreCompactor) Start() {
 	// Start workers.
-	go gc.checkExpiredKeysWorker()
+	gc.workerWaitGroup.Add(deleteWorkerCnt)
 	for i := 0; i < deleteWorkerCnt; i++ {
 		go gc.deleteWorker()
 	}
+
+	go gc.checkExpiredKeysWorker()
 }
 
 func (gc *localstoreCompactor) Stop() {

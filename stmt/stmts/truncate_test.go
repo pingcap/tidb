@@ -24,7 +24,7 @@ func (s *testStmtSuite) TestTruncate(c *C) {
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = "truncate table truncate_test;"
-	stmtList, err := tidb.Compile(testSQL)
+	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 

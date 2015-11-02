@@ -104,7 +104,7 @@ func (s *testBuiltinSuite) TestLeft(c *C) {
 
 	args = []interface{}{1, int64(1)}
 	_, err = builtinLeft(args, nil)
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 
 	args = []interface{}{"abcdefg", "xxx"}
 	_, err = builtinLeft(args, nil)
@@ -164,5 +164,25 @@ func (s *testBuiltinSuite) TestLowerAndUpper(c *C) {
 		v, err = builtinUpper(args, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, strings.ToUpper(t.Expect))
+	}
+}
+
+func (s *testBuiltinSuite) TestReplace(c *C) {
+	tbl := []struct {
+		Input  []interface{}
+		Expect interface{}
+	}{
+		{[]interface{}{nil, nil, nil}, nil},
+		{[]interface{}{1, nil, 2}, nil},
+		{[]interface{}{1, 1, nil}, nil},
+		{[]interface{}{"12345", 2, 222}, "1222345"},
+		{[]interface{}{"12325", 2, "a"}, "1a3a5"},
+		{[]interface{}{12345, 2, "aa"}, "1aa345"},
+	}
+
+	for _, t := range tbl {
+		v, err := builtinReplace(t.Input, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t.Expect)
 	}
 }

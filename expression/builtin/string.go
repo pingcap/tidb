@@ -85,8 +85,8 @@ func builtinConcatWS(args []interface{}, ctx map[interface{}]interface{}) (v int
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func builtinLeft(args []interface{}, _ map[interface{}]interface{}) (v interface{}, err error) {
-	str, ok := args[0].(string)
-	if !ok {
+	str, err := types.ToString(args[0])
+	if err != nil {
 		return nil, errors.Errorf("BuiltinLeft invalid args, need string but get %T", args[0])
 	}
 	// TODO: deal with other types
@@ -145,4 +145,28 @@ func builtinUpper(args []interface{}, ctx map[interface{}]interface{}) (interfac
 		}
 		return strings.ToUpper(s), nil
 	}
+}
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
+func builtinReplace(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	for _, arg := range args {
+		if types.IsNil(arg) {
+			return nil, nil
+		}
+	}
+
+	str, err := types.ToString(args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	oldStr, err := types.ToString(args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	newStr, err := types.ToString(args[2])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return strings.Replace(str, oldStr, newStr, -1), nil
 }

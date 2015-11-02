@@ -130,12 +130,10 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 	if !c.unique {
 		encVal, err = EncodeValue(append(indexedValues, h)...)
 	} else {
-		/*
-			See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
-			A UNIQUE index creates a constraint such that all values in the index must be distinct.
-			An error occurs if you try to add a new row with a key value that matches an existing row.
-			For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
-		*/
+		// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
+		// An error occurs if you try to add a new row with a key value that matches an existing row.
+		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
 		containsNull := false
 		for _, cv := range indexedValues {
 			if cv == nil {
@@ -159,20 +157,24 @@ func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, err
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there already exists an entry with the same key, Create will return ErrKeyExists
 func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) error {
-	keyBuf, err := c.genIndexKey(indexedValues, h)
+	key, err := c.genIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !c.unique {
 		// TODO: reconsider value
-		err = txn.Set(keyBuf, []byte("timestamp?"))
+		err = txn.Set(key, []byte("timestamp?"))
 		return errors.Trace(err)
 	}
 
 	// unique index
-	_, err = txn.Get(keyBuf)
+	err = txn.LockKeys(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = txn.Get(key)
 	if IsErrNotFound(err) {
-		err = txn.Set(keyBuf, encodeHandle(h))
+		err = txn.Set(key, encodeHandle(h))
 		return errors.Trace(err)
 	}
 
@@ -181,11 +183,11 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 
 // Delete removes the entry for handle h and indexdValues from KV index.
 func (c *kvIndex) Delete(txn Transaction, indexedValues []interface{}, h int64) error {
-	keyBuf, err := c.genIndexKey(indexedValues, h)
+	key, err := c.genIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.Delete(keyBuf)
+	err = txn.Delete(key)
 	return errors.Trace(err)
 }
 
@@ -217,17 +219,17 @@ func (c *kvIndex) Drop(txn Transaction) error {
 
 // Seek searches KV index for the entry with indexedValues.
 func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
-	keyBuf, err := c.genIndexKey(indexedValues, 0)
+	key, err := c.genIndexKey(indexedValues, 0)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	it, err := txn.Seek(keyBuf)
+	it, err := txn.Seek(key)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	// check if hit
 	hit = false
-	if it.Valid() && it.Key() == string(keyBuf) {
+	if it.Valid() && it.Key() == string(key) {
 		hit = true
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, hit, nil
@@ -241,4 +243,35 @@ func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 		return nil, errors.Trace(err)
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
+}
+
+func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error) {
+	key, err := c.genIndexKey(indexedValues, h)
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+
+	value, err := txn.Get(key)
+	if IsErrNotFound(err) {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
+
+	// For uniq index, the value of key is handle.
+	if c.unique {
+		handle, err := decodeHandle(value)
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+
+		if handle != h {
+			return true, handle, errors.Trace(ErrKeyExists)
+		}
+
+		return true, handle, nil
+	}
+
+	return true, h, nil
 }

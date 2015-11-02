@@ -103,8 +103,8 @@ func getDefaultValue(c *ConstraintOpt, tp byte, fsp int) (interface{}, error) {
 
 		return value, nil
 	}
-
-	return expression.FastEval(c.Evalue), nil
+	v := expression.FastEval(c.Evalue)
+	return types.RawData(v), nil
 }
 
 func removeOnUpdateNowFlag(c *column.Col) {
