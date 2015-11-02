@@ -66,7 +66,7 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	case uint64:
 		ve.Type = types.NewFieldType(mysql.TypeLonglong)
 		ve.Type.Flag |= mysql.UnsignedFlag
-	case string:
+	case string, UnquoteString:
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
 		ve.Type.Charset = mysql.DefaultCharset
 		ve.Type.Collate = mysql.DefaultCollationName

@@ -31,6 +31,9 @@ var (
 	_ FuncNode = &AggregateFuncExpr{}
 )
 
+// UnquoteString is not quoted when printed.
+type UnquoteString string
+
 // FuncCallExpr is for function expression.
 type FuncCallExpr struct {
 	funcNode
