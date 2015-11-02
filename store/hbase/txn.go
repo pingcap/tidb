@@ -23,7 +23,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
 )
 
 var (
@@ -43,6 +42,16 @@ type hbaseTxn struct {
 	tid       uint64
 	valid     bool
 	version   kv.Version // commit version
+}
+
+func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
+	return &hbaseTxn{
+		Txn:        t,
+		valid:      true,
+		storeName:  storeName,
+		tid:        t.GetStartTS(),
+		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
+	}
 }
 
 // Implement transaction interface
@@ -74,7 +83,6 @@ func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	return intVal, nil
 }
 
@@ -143,10 +151,10 @@ func (txn *hbaseTxn) Delete(k kv.Key) error {
 	return nil
 }
 
-func (txn *hbaseTxn) each(f func(iterator.Iterator) error) error {
+func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
 	iter := txn.UnionStore.Dirty.NewIterator(nil)
-	defer iter.Release()
-	for iter.Next() {
+	defer iter.Close()
+	for ; iter.Valid(); iter, _ = iter.Next() {
 		if err := f(iter); err != nil {
 			return errors.Trace(err)
 		}
@@ -155,7 +163,7 @@ func (txn *hbaseTxn) each(f func(iterator.Iterator) error) error {
 }
 
 func (txn *hbaseTxn) doCommit() error {
-	err := txn.each(func(iter iterator.Iterator) error {
+	err := txn.each(func(iter kv.Iterator) error {
 		var row, val []byte
 		row = make([]byte, len(iter.Key()))
 		if len(iter.Value()) == 0 { // Deleted marker

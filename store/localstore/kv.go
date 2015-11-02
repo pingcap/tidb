@@ -160,6 +160,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
 	txn.UnionStore = kv.NewUnionStore(&dbSnapshot{
+		store:   s,
 		db:      s.db,
 		version: beginVer,
 	})
