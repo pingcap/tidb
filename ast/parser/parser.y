@@ -2036,7 +2036,7 @@ FunctionCallKeyword:
 |	"VALUES" '(' ColumnName ')' %prec lowerThanInsertValues
 	{
 		// TODO: support qualified identifier for column_name
-		$$ = &ast.ColumnNameExpr{Name: $3.(*ast.ColumnName)}
+		$$ = &ast.ValuesExpr{Column: $3.(*ast.ColumnName)}
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{
@@ -2292,7 +2292,7 @@ FunctionCallAgg:
 	}
 |	"COUNT" '(' DistinctOpt '*' ')'
 	{
-		args := []ast.ExprNode{ast.NewValueExpr("*")}
+		args := []ast.ExprNode{ast.NewValueExpr(ast.UnquoteString("*"))}
 		$$ = &ast.AggregateFuncExpr{F: $1.(string), Args: args, Distinct: $3.(bool)}
 	}
 |	"GROUP_CONCAT" '(' DistinctOpt ExpressionList ')'
@@ -2753,6 +2753,7 @@ TableFactor:
 TableAsNameOpt:
 	{
 		$$ = model.CIStr{}
+		yyS[yypt].offset = yylex.(*lexer).i
 	}
 |	TableAsName
 	{

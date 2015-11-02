@@ -200,7 +200,14 @@ func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.Se
 				return nil, errors.Trace(err)
 			}
 		} else if val.WildCard != nil {
-			oldField.Expr = &expression.Ident{CIStr: model.NewCIStr("*")}
+			str := "*"
+			if val.WildCard.Table.O != "" {
+				str = val.WildCard.Table.O + ".*"
+				if val.WildCard.Schema.O != "" {
+					str = val.WildCard.Schema.O + "." + str
+				}
+			}
+			oldField.Expr = &expression.Ident{CIStr: model.NewCIStr(str)}
 		}
 		oldSelect.Fields[i] = oldField
 	}
