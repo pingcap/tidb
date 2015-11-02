@@ -172,20 +172,10 @@ func (d *ddl) getTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) (
 
 func (d *ddl) dropTableData(t table.Table) error {
 	ctx := d.newReorgContext()
-	txn, err := ctx.GetTxn(true)
 
-	if err != nil {
+	if err := t.Truncate(ctx); err != nil {
+		ctx.FinishTxn(true)
 		return errors.Trace(err)
-	}
-
-	// Remove indices.
-	for _, v := range t.Indices() {
-		if v != nil && v.X != nil {
-			if err = v.X.Drop(txn); err != nil {
-				ctx.FinishTxn(true)
-				return errors.Trace(err)
-			}
-		}
 	}
 
 	return errors.Trace(ctx.FinishTxn(false))
