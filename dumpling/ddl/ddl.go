@@ -55,7 +55,7 @@ type DDL interface {
 	CreateTable(ctx context.Context, ident table.Ident, cols []*coldef.ColumnDef, constrs []*coldef.TableConstraint) error
 	DropTable(ctx context.Context, tableIdent table.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent table.Ident, unique bool, indexName model.CIStr, columnNames []*coldef.IndexColName) error
-	DropIndex(ctx context.Context, schema, tableName, indexName model.CIStr) error
+	DropIndex(ctx context.Context, tableIdent table.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent table.Ident, spec []*AlterSpecification) error
 }
@@ -446,15 +446,34 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	if err != nil {
 		return errors.Trace(ErrNotExists)
 	}
+
+	// now we only allow one schema changes at the same time.
+	if len(specs) != 1 {
+		return errors.New("can't run multi schema changes in one DDL")
+	}
+
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			if err := d.addColumn(ctx, schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
-				return errors.Trace(err)
+			err = d.addColumn(ctx, schema, tbl, spec, is.SchemaMetaVersion())
+		case AlterDropIndex:
+			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
+		case AlterAddConstr:
+			constr := spec.Constraint
+			switch spec.Constraint.Tp {
+			case coldef.ConstrKey, coldef.ConstrIndex:
+				err = d.CreateIndex(ctx, ident, false, model.NewCIStr(constr.ConstrName), spec.Constraint.Keys)
+			case coldef.ConstrUniq, coldef.ConstrUniqIndex, coldef.ConstrUniqKey:
+				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.ConstrName), spec.Constraint.Keys)
+			default:
+				// nothing to do now.
 			}
 		default:
-			// TODO: process more actions
-			continue
+			// nothing to do now.
+		}
+
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -637,14 +656,14 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropIndex(ctx context.Context, schemaName, tableName, indexName model.CIStr) error {
+func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
-	schema, ok := is.SchemaByName(schemaName)
+	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(qerror.ErrDatabaseNotExist)
 	}
 
-	t, err := is.TableByName(schemaName, tableName)
+	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(ErrNotExists)
 	}
