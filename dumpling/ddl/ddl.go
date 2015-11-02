@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -575,6 +576,15 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Check Privilege
+	privChecker := privilege.GetPrivilegeChecker(ctx)
+	hasPriv, err := privChecker.Check(ctx, schema, tb.Meta(), mysql.DropPriv)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !hasPriv {
+		return errors.Errorf("You do not have the privilege to drop table %s.%s.", ti.Schema, ti.Name)
 	}
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
