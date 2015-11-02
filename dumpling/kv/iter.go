@@ -72,7 +72,7 @@ func DecodeValue(data []byte) ([]interface{}, error) {
 func NextUntil(it Iterator, fn FnKeyCmp) (Iterator, error) {
 	var err error
 	for it.Valid() && !fn([]byte(it.Key())) {
-		it, err = it.Next()
+		err = it.Next()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -249,7 +249,7 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 			return errors.Trace(err)
 		}
 
-		it, err = it.Next()
+		err = it.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
