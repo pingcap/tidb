@@ -68,12 +68,12 @@ type UnionStore struct {
 }
 
 // NewUnionStore builds a new UnionStore.
-func NewUnionStore(snapshot Snapshot) (UnionStore, error) {
+func NewUnionStore(snapshot Snapshot) UnionStore {
 	dirty := p.Get().(MemBuffer)
 	return UnionStore{
 		Dirty:    dirty,
 		Snapshot: snapshot,
-	}, nil
+	}
 }
 
 // Get implements the Store Get interface.
