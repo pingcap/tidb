@@ -101,8 +101,12 @@ func (i *btreeIter) Value() []byte {
 // Next implements Iterator Next.
 func (i *btreeIter) Next() error {
 	k, v, err := i.e.Next()
-	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), err == nil
-	return errors.Trace(err)
+	if err != nil {
+		i.ok = false
+		return errors.Trace(err)
+	}
+	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), true
+	return nil
 }
 
 // Valid implements Iterator Valid.
