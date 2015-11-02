@@ -1844,7 +1844,9 @@ Operand:
 	}
 |	"PLACEHOLDER"
 	{
-		$$ = &ast.ParamMarkerExpr{}
+		$$ = &ast.ParamMarkerExpr{
+			Offset: yyS[yypt].offset,
+		}
 	}
 |	"ROW" '(' Expression ',' ExpressionList ')'
 	{

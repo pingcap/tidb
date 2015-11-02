@@ -609,6 +609,7 @@ func (nod *PatternLikeExpr) IsStatic() bool {
 // Used in parsing prepare statement.
 type ParamMarkerExpr struct {
 	exprNode
+	Offset int
 }
 
 // Accept implements Node Accept interface.

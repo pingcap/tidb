@@ -14,6 +14,8 @@
 package optimizer
 
 import (
+	"sort"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -22,7 +24,7 @@ import (
 
 // Compiler compiles ast.Node into an executable statement.
 type Compiler struct {
-	paramMarkers []*expression.ParamMarker
+	converter *expressionConverter
 }
 
 // Compile compiles a ast.Node into an executable statement.
@@ -42,9 +44,7 @@ func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 		return nil, errors.Trace(tpComputer.err)
 	}
 	c := newExpressionConverter()
-	defer func() {
-		com.paramMarkers = c.paramMarkers
-	}()
+	com.converter = c
 	switch v := node.(type) {
 	case *ast.InsertStmt:
 		return convertInsert(c, v)
@@ -106,7 +106,27 @@ func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 	return nil, nil
 }
 
+type paramMarkers []*ast.ParamMarkerExpr
+
+func (p paramMarkers) Len() int {
+	return len(p)
+}
+
+func (p paramMarkers) Less(i, j int) bool {
+	return p[i].Offset < p[j].Offset
+}
+
+func (p paramMarkers) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
 // ParamMarkers returns parameter markers for prepared statement.
 func (com *Compiler) ParamMarkers() []*expression.ParamMarker {
-	return com.paramMarkers
+	c := com.converter
+	sort.Sort(c.paramMarkers)
+	oldMarkers := make([]*expression.ParamMarker, len(c.paramMarkers))
+	for i, val := range c.paramMarkers {
+		oldMarkers[i] = c.exprMap[val].(*expression.ParamMarker)
+	}
+	return oldMarkers
 }
