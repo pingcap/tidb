@@ -151,7 +151,7 @@ func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
 	return it
 }
 
-func (it *dbIter) Next() (kv.Iterator, error) {
+func (it *dbIter) Next() error {
 	encKey := codec.EncodeBytes(nil, it.startKey)
 	var retErr error
 	var engineIter engine.Iterator
@@ -189,7 +189,7 @@ func (it *dbIter) Next() (kv.Iterator, error) {
 		// Current key's all versions are deleted, just go next key.
 		encKey = codec.EncodeBytes(nil, key.Next())
 	}
-	return it, errors.Trace(retErr)
+	return errors.Trace(retErr)
 }
 
 func (it *dbIter) Valid() bool {

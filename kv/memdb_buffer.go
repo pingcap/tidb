@@ -69,9 +69,9 @@ func (m *memDbBuffer) Release() {
 }
 
 // Next implements the Iterator Next.
-func (i *memDbIter) Next() (Iterator, error) {
+func (i *memDbIter) Next() error {
 	i.iter.Next()
-	return i, nil
+	return nil
 }
 
 // Valid implements the Iterator Valid.

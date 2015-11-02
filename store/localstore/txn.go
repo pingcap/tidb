@@ -176,7 +176,7 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 func (txn *dbTxn) each(f func(kv.Iterator) error) error {
 	iter := txn.UnionStore.Dirty.NewIterator(nil)
 	defer iter.Close()
-	for ; iter.Valid(); iter, _ = iter.Next() {
+	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {
 			return errors.Trace(err)
 		}
