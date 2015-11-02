@@ -239,6 +239,7 @@ import (
 	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
+	underscoreCS	"UNDERSCORE_CHARSET"
 	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
@@ -1796,6 +1797,23 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
+|	"UNDERSCORE_CHARSET" stringLit
+	{
+		// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.Charset = $1.(string)
+		co, err := charset.GetDefaultCollation(tp.Charset)
+		if err != nil {
+			l := yylex.(*lexer)
+			l.errf("Get collation error for charset: %s", tp.Charset)
+			return 1
+		}
+		tp.Collate = co
+		$$ = &types.DataItem{
+			Type: tp,
+			Data: $2.(string),
+		}
+	}
 |	hexLit
 |	bitLit
 
