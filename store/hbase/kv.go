@@ -18,8 +18,8 @@ import (
 
 	"sync"
 
-	"github.com/c4pt0r/go-hbase"
 	"github.com/juju/errors"
+	"github.com/pingcap/go-hbase"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
 )
@@ -73,8 +73,8 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 }
 
 func (s *hbaseStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
-	//TODO: support snapshot
-	return nil, errors.New("not implemented")
+	t := themis.NewTxn(s.cli)
+	return newHbaseSnapshot(t, s.storeName), nil
 }
 
 func (s *hbaseStore) Close() error {
@@ -91,6 +91,8 @@ func (s *hbaseStore) UUID() string {
 
 func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
 	t := themis.NewTxn(s.cli)
+	defer t.Release()
+
 	return kv.Version{Ver: t.GetStartTS()}, nil
 }
 
