@@ -569,13 +569,6 @@ func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
-		txn.Set([]byte("a"), []byte("0"))
-		txn.Set([]byte("b"), []byte("0"))
-
-		return nil
-	})
-
 	done := make(chan struct{}, 1)
 	f := func() {
 		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
