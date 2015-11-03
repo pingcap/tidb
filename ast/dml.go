@@ -203,6 +203,8 @@ func (nod *WildCardField) Accept(v Visitor) (Node, bool) {
 type SelectField struct {
 	node
 
+	// Offset is used to get original text.
+	Offset int
 	// If WildCard is not nil, Expr will be nil.
 	WildCard *WildCardField
 	// If Expr is not nil, WildCard will be nil.
