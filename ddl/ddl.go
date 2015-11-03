@@ -421,17 +421,6 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterSpecification) (err error) {
-	is := d.GetInformationSchema()
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return errors.Trace(qerror.ErrDatabaseNotExist)
-	}
-
-	tbl, err := is.TableByName(ident.Schema, ident.Name)
-	if err != nil {
-		return errors.Trace(ErrNotExists)
-	}
-
 	// now we only allow one schema changes at the same time.
 	if len(specs) != 1 {
 		return errors.New("can't run multi schema changes in one DDL")
@@ -440,14 +429,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			job := &model.Job{
-				SchemaID: schema.ID,
-				TableID:  tbl.Meta().ID,
-				Type:     model.ActionAddColumn,
-				Args:     []interface{}{spec},
-			}
-			err = d.startJob(ctx, job)
-			err = d.onDDLChange(err)
+			err = d.AddColumn(ctx, ident, spec)
 		case AlterDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case AlterAddConstr:
@@ -470,6 +452,31 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	}
 
 	return nil
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecification) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	}
+
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(ErrNotExists)
+	}
+
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionAddColumn,
+		Args:     []interface{}{spec},
+	}
+
+	err = d.startJob(ctx, job)
+	err = d.onDDLChange(err)
+	return errors.Trace(err)
 }
 
 // DropTable will proceed even if some table in the list does not exists.
