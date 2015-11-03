@@ -60,10 +60,6 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 	for _, colInfo := range tblInfo.Columns {
 		col := &column.Col{ColumnInfo: *colInfo}
 		t.Columns = append(t.Columns, col)
-
-		if col.State != model.StateDeleteOnly {
-			t.writableColumns = append(t.writableColumns, col)
-		}
 	}
 
 	for _, idxInfo := range tblInfo.Indices {
@@ -90,6 +86,9 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 		Columns:      cols,
 		state:        model.StatePublic,
 	}
+
+	t.publicColumns = t.Cols()
+	t.writableColumns = t.writableCols()
 	return t
 }
 
@@ -135,7 +134,7 @@ func (t *Table) Meta() *model.TableInfo {
 
 // Cols implements table.Table Cols interface.
 func (t *Table) Cols() []*column.Col {
-	if t.publicColumns != nil {
+	if len(t.publicColumns) > 0 {
 		return t.publicColumns
 	}
 
@@ -147,6 +146,23 @@ func (t *Table) Cols() []*column.Col {
 	}
 
 	return t.publicColumns
+}
+
+func (t *Table) writableCols() []*column.Col {
+	if len(t.writableColumns) > 0 {
+		return t.writableColumns
+	}
+
+	t.writableColumns = make([]*column.Col, 0, len(t.Columns))
+	for _, col := range t.Columns {
+		if col.State == model.StateDeleteOnly {
+			continue
+		}
+
+		t.writableColumns = append(t.writableColumns, col)
+	}
+
+	return t.writableColumns
 }
 
 func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error) {
@@ -256,7 +272,7 @@ func (t *Table) Truncate(ctx context.Context) error {
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched map[int]bool) error {
 	// We should check whether this table has on update column which state is write only.
-	currentData := make([]interface{}, len(t.writableColumns))
+	currentData := make([]interface{}, len(t.writableCols()))
 	copy(currentData, newData)
 
 	// If they are not set, and other data are changed, they will be updated by current timestamp too.
@@ -279,7 +295,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}
 }
 
 func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data []interface{}) error {
-	ucols := column.FindOnUpdateCols(t.writableColumns)
+	ucols := column.FindOnUpdateCols(t.writableCols())
 	for _, col := range ucols {
 		if !touched[col.Offset] {
 			value, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
@@ -405,29 +421,22 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		return 0, errors.Trace(err)
 	}
 
-	// Set public column value.
-	for _, col := range t.Cols() {
+	// Set public and write only column value.
+	for _, col := range t.writableCols() {
+		var value interface{}
 		key := t.RecordKey(recordID, col)
-		value := r[col.Offset]
+		if col.State == model.StateWriteOnly {
+			value, _, err = EvalColumnDefaultValue(ctx, &col.ColumnInfo)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		} else {
+			value = r[col.Offset]
+		}
+
 		err = t.SetColValue(txn, key, value)
 		if err != nil {
 			return 0, errors.Trace(err)
-		}
-	}
-
-	// Set write only column value.
-	for _, col := range t.writableColumns {
-		if col.State == model.StateWriteOnly {
-			key := t.RecordKey(recordID, col)
-			value, _, err := EvalColumnDefaultValue(ctx, &col.ColumnInfo)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-
-			err = t.SetColValue(txn, key, value)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
 		}
 	}
 
@@ -460,11 +469,12 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	// use the length of t.Cols() for alignment
 	v := make([]interface{}, len(t.Cols()))
 	for _, col := range cols {
 		if col.State != model.StatePublic {
-			return nil, errors.Trace(kv.ErrNotExist)
+			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
 
 		k := t.RecordKey(h, col)
