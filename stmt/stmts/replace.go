@@ -123,7 +123,7 @@ func replaceRow(ctx context.Context, t table.Table, handle int64, replaceRow []i
 
 	result := 0
 	isReplace := false
-	touched := make([]bool, len(row))
+	touched := make(map[int]bool, len(row))
 	for i, val := range row {
 		result, err = types.Compare(val, replaceRow[i])
 		if err != nil {

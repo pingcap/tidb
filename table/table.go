@@ -87,7 +87,7 @@ type Table interface {
 	AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error)
 
 	// UpdateRecord updates a row in the table.
-	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched []bool) error
+	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched map[int]bool) error
 
 	// TableID returns the ID of the table.
 	TableID() int64
