@@ -37,7 +37,7 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
-	for i, ic := range idxColNames {
+	for _, ic := range idxColNames {
 		col := findCol(tblInfo.Columns, ic.ColumnName)
 		if col == nil {
 			return nil, errors.Errorf("CREATE INDEX: column does not exist: %s", ic.ColumnName)
@@ -48,14 +48,6 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			Offset: col.Offset,
 			Length: ic.Length,
 		})
-		// Set ColumnInfo flag
-		if i == 0 {
-			if unique && len(idxColNames) == 1 {
-				tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
-			} else {
-				tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
-			}
-		}
 	}
 	// create index info
 	idxInfo := &model.IndexInfo{
@@ -66,6 +58,40 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	}
 
 	return idxInfo, nil
+}
+
+func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+	col := indexInfo.Columns[0]
+
+	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
+		tblInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
+	} else {
+		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
+	}
+
+}
+
+func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+	col := indexInfo.Columns[0]
+
+	if indexInfo.Unique && len(indexInfo.Columns) == 1 {
+		tblInfo.Columns[col.Offset].Flag &= ^uint(mysql.UniqueKeyFlag)
+	} else {
+		tblInfo.Columns[col.Offset].Flag &= ^uint(mysql.MultipleKeyFlag)
+	}
+
+	// other index may still cover this col
+	for _, index := range tblInfo.Indices {
+		if index.Name.L == indexInfo.Name.L {
+			continue
+		}
+
+		if index.Columns[0].Name.L != col.Name.L {
+			continue
+		}
+
+		addIndexColumnFlag(tblInfo, index)
+	}
 }
 
 func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
@@ -167,6 +193,8 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		}
 
 		indexInfo.State = model.StatePublic
+		// set column index flag.
+		addIndexColumnFlag(tblInfo, indexInfo)
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
@@ -256,7 +284,8 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 			}
 		}
 		tblInfo.Indices = newIndices
-
+		// set column index flag.
+		dropIndexColumnFlag(tblInfo, indexInfo)
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
@@ -306,6 +335,8 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 	return vals, nil
 }
 
+const maxBatchSize = 1024
+
 // How to add index in reorgnization state?
 //  1, Generate a snapshot with special version.
 //  2, Traverse the snapshot, get every row in the table.
@@ -313,22 +344,42 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 //  4, If not deleted, check whether index has existed, if existed, skip to next row.
 //  5, If index doesn't exist, create the index and then continue to handle next row.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version uint64) error {
+	seekHandle := int64(0)
+	for {
+		handles, err := d.getSnapshotRows(t, version, seekHandle)
+		if err != nil {
+			return errors.Trace(err)
+		} else if len(handles) == 0 {
+			return nil
+		}
+
+		seekHandle = handles[len(handles)-1] + 1
+		// TODO: save seekHandle in reorgnization job, so we can resume this job later from this handle.
+
+		err = d.backfillTableIndex(t, indexInfo, handles)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+}
+
+func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) ([]int64, error) {
 	ver := kv.Version{Ver: version}
 
 	snap, err := d.store.GetSnapshot(ver)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	defer snap.MvccRelease()
 
-	firstKey := t.FirstKey()
+	firstKey := t.RecordKey(seekHandle, nil)
 	prefix := []byte(t.KeyPrefix())
 
 	it := snap.NewMvccIterator(kv.EncodeKey([]byte(firstKey)), ver)
 	defer it.Close()
 
-	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
+	handles := make([]int64, 0, maxBatchSize)
 
 	for it.Valid() {
 		key := kv.DecodeKey([]byte(it.Key()))
@@ -339,17 +390,39 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 		var handle int64
 		handle, err = util.DecodeHandleFromRowKey(string(key))
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 
-		log.Info("building index...", handle)
+		rk := kv.EncodeKey(t.RecordKey(handle, nil))
 
-		// the first key in one row is the lock.
-		lock := t.RecordKey(handle, nil)
-		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		handles = append(handles, handle)
+		if len(handles) == maxBatchSize {
+			seekHandle = handle + 1
+			break
+		}
+
+		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		if errors2.ErrorEqual(err, kv.ErrNotExist) {
+			break
+		} else if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	snap.MvccRelease()
+
+	return handles, nil
+}
+
+func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64) error {
+	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
+
+	for _, handle := range handles {
+		log.Error("building index...", handle, handles)
+
+		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			// first check row exists
-			var exist bool
-			exist, err = checkRowExist(txn, t, handle)
+			exist, err := checkRowExist(txn, t, handle)
 			if err != nil {
 				return errors.Trace(err)
 			} else if !exist {
@@ -373,21 +446,18 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 
 			// mean we haven't already added this index.
 			// lock row first
-			err = txn.LockKeys(lock)
+			err = txn.LockKeys(t.RecordKey(handle, nil))
 			if err != nil {
 				return errors.Trace(err)
 			}
 
 			// create the index.
+			log.Errorf("create index %d", handle)
 			err = kvX.Create(txn, vals, handle)
 			return errors.Trace(err)
 		})
 
-		rk := kv.EncodeKey(lock)
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if errors2.ErrorEqual(err, kv.ErrNotExist) {
-			break
-		} else if err != nil {
+		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -396,22 +466,18 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	ctx := d.newReorgContext()
-	txn, err := ctx.GetTxn(true)
-
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Remove indices.
-	for _, v := range t.Indices() {
-		if v != nil && v.X != nil && v.Name.L == indexInfo.Name.L {
-			if err = v.X.Drop(txn); err != nil {
-				ctx.FinishTxn(true)
-				return errors.Trace(err)
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		// Remove indices.
+		for _, v := range t.Indices() {
+			if v != nil && v.X != nil && v.Name.L == indexInfo.Name.L {
+				if err := v.X.Drop(txn); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
-	}
 
-	return errors.Trace(ctx.FinishTxn(false))
+		return nil
+	})
+
+	return errors.Trace(err)
 }

@@ -161,28 +161,14 @@ func (d *ddl) onSchemaDrop(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
 	ctx := d.newReorgContext()
-	txn, err := ctx.GetTxn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	for _, tblInfo := range tables {
 		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
 		t := table.TableFromMeta(alloc, tblInfo)
-		err = t.Truncate(ctx)
+		err := t.Truncate(ctx)
 		if err != nil {
 			ctx.FinishTxn(true)
 			return errors.Trace(err)
-		}
-
-		// Remove indices.
-		for _, v := range t.Indices() {
-			if v != nil && v.X != nil {
-				if err = v.X.Drop(txn); err != nil {
-					ctx.FinishTxn(true)
-					return errors.Trace(err)
-				}
-			}
 		}
 	}
 	return errors.Trace(ctx.FinishTxn(false))

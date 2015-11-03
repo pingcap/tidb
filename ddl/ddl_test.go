@@ -81,7 +81,7 @@ func (ts *testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	tbs := sessionctx.GetDomain(ctx).InfoSchema().SchemaTables(tbIdent.Schema)
 	c.Assert(tbs, HasLen, 1)
-	err = sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, tbIdent.Schema, tbIdent.Name, idxName)
+	err = sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, tbIdent, idxName)
 	c.Assert(err, IsNil)
 	err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, tbIdent)
 	c.Assert(err, IsNil)

@@ -90,7 +90,8 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	t := testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 
-	for i := 0; i < 10; i++ {
+	num := 10
+	for i := 0; i < num; i++ {
 		_, err = t.AddRecord(ctx, []interface{}{i, i, i})
 		c.Assert(err, IsNil)
 	}
@@ -112,10 +113,10 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	index := t.FindIndexByColName("c1")
 	c.Assert(index, NotNil)
 
-	h, err := t.AddRecord(ctx, []interface{}{11, 11, 11})
+	h, err := t.AddRecord(ctx, []interface{}{num + 1, 1, 1})
 	c.Assert(err, IsNil)
 
-	h1, err := t.AddRecord(ctx, []interface{}{11, 11, 11})
+	h1, err := t.AddRecord(ctx, []interface{}{num + 1, 1, 1})
 	c.Assert(err, NotNil)
 	c.Assert(h, Equals, h1)
 
@@ -176,6 +177,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 	ticker := time.NewTicker(d.lease)
 	done := make(chan *model.Job, 1)
 
+	ctx.FinishTxn(false)
 	go func() {
 		done <- s.testCreateIndex(c, ctx, d, tblInfo, true, "c1_uni", "c1")
 	}()
@@ -227,6 +229,9 @@ LOOP:
 				c.Assert(exist, IsTrue)
 			}
 
+			err = ctx.FinishTxn(false)
+			c.Assert(err, IsNil)
+
 			d.start()
 		}
 	}
@@ -234,6 +239,7 @@ LOOP:
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	c.Assert(t.FindIndexByColName("c1"), NotNil)
 
+	ctx.FinishTxn(false)
 	go func() {
 		done <- s.testDropIndex(c, ctx, d, tblInfo, "c1_uni")
 	}()
@@ -284,6 +290,9 @@ LOOP1:
 				c.Assert(exist, IsTrue)
 			}
 
+			err = ctx.FinishTxn(false)
+			c.Assert(err, IsNil)
+
 			d.start()
 		}
 	}
@@ -293,5 +302,5 @@ LOOP1:
 }
 
 func init() {
-	log.SetLevelByString("warn")
+	log.SetLevelByString("error")
 }
