@@ -1516,7 +1516,15 @@ Field:
 	}
 |	Expression FieldAsNameOpt
 	{
-		$$ = &ast.SelectField{Expr: $1.(ast.ExprNode), AsName: model.NewCIStr($2.(string))}
+		expr := $1.(ast.ExprNode)
+		asName := $2.(string)
+		if asName != "" {
+			// Set expr original text.
+			offset := yyS[yypt-1].offset
+			end := yyS[yypt].offset-1
+			expr.SetText(yylex.(*lexer).src[offset:end])
+		}
+		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
 FieldAsNameOpt:
@@ -1550,11 +1558,22 @@ FieldAsName:
 FieldList:
 	Field
 	{
-		$$ = []*ast.SelectField{$1.(*ast.SelectField)}
+		field := $1.(*ast.SelectField)
+		field.Offset = yyS[yypt].offset
+		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
 	{
-		$$ = append($1.([]*ast.SelectField), $3.(*ast.SelectField))
+
+		fl := $1.([]*ast.SelectField)
+		last := fl[len(fl)-1]
+		if last.Expr != nil && last.AsName.O == "" {
+			lastEnd := yyS[yypt-1].offset-1 // Comma offset.
+			last.SetText(yylex.(*lexer).src[last.Offset:lastEnd])
+		}
+		newField := $3.(*ast.SelectField)
+		newField.Offset = yyS[yypt].offset
+		$$ = append(fl, newField)
 	}
 
 GroupByClause:
@@ -2628,6 +2647,22 @@ SelectStmt:
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $5.(ast.SelectLockType),
 		}
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			src := yylex.(*lexer).src
+			var lastEnd int
+			if $4 != nil {
+				lastEnd = yyS[yypt-1].offset-1
+			} else if $5 != ast.SelectLockNone {
+				lastEnd = yyS[yypt].offset-1
+			} else {
+				lastEnd = len(src)
+				if src[lastEnd-1] == ';' {
+					lastEnd--
+				}
+			}
+			lastField.SetText(yylex.(*lexer).src[lastField.Offset:lastEnd])
+		}
 		if $4 != nil {
 			st.Limit = $4.(*ast.Limit)
 		}
@@ -2639,6 +2674,11 @@ SelectStmt:
 			Distinct:      $2.(bool),
 			Fields:        $3.(*ast.FieldList),
 			LockTp:	       $7.(ast.SelectLockType),
+		}
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := yyS[yypt-3].offset-1
+			lastField.SetText(yylex.(*lexer).src[lastField.Offset:lastEnd])
 		}
 		if $5 != nil {
 			st.Where = $5.(ast.ExprNode)
@@ -2657,6 +2697,12 @@ SelectStmt:
 			Fields:		$3.(*ast.FieldList),
 			From:		$5.(*ast.TableRefsClause),
 			LockTp:		$11.(ast.SelectLockType),
+		}
+
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := yyS[yypt-7].offset-1
+			lastField.SetText(yylex.(*lexer).src[lastField.Offset:lastEnd])
 		}
 
 		if $6 != nil {
@@ -2739,6 +2785,8 @@ TableFactor:
 	}
 |	'(' SelectStmt ')' TableAsName
 	{
+		st := $2.(*ast.SelectStmt)
+		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-1].offset-1)
 		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
 |	'(' UnionStmt ')' TableAsName
@@ -2753,7 +2801,6 @@ TableFactor:
 TableAsNameOpt:
 	{
 		$$ = model.CIStr{}
-		yyS[yypt].offset = yylex.(*lexer).i
 	}
 |	TableAsName
 	{
@@ -2886,6 +2933,7 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*ast.SelectStmt)
+		yylex.(*lexer).SetLastSelectFieldText(s, yyS[yypt].offset-1)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -2928,7 +2976,9 @@ UnionStmt:
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		union.Selects = append(union.Selects, $5.(*ast.SelectStmt))
+		st := $5.(*ast.SelectStmt)
+		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-2].offset-1)
+		union.Selects = append(union.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
 		}
@@ -2958,7 +3008,9 @@ UnionSelect:
 	SelectStmt
 |	'(' SelectStmt ')'
 	{
-		$$ = $2
+		st := $2.(*ast.SelectStmt)
+		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt].offset-1)
+		$$ = st
 	}
 
 UnionOpt:

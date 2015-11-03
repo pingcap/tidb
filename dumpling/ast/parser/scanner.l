@@ -118,6 +118,16 @@ func (l *lexer) GetCharsetInfo() (string, string) {
 	return l.charset, l.collation
 }
 
+// The select statement is not at the end of the whole statement, if the last
+// field text was set from its offset to the end of the src string, update
+// the last field text.
+func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
+	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+	if lastField.Offset + len(lastField.Text()) >= len(l.src)-1 {
+		lastField.SetText(l.src[lastField.Offset:lastEnd])
+	}
+}
+
 func (l *lexer) unget(b byte) {
 	l.ungetBuf = append(l.ungetBuf, b)
 	l.i--
