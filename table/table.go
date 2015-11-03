@@ -59,9 +59,6 @@ type Table interface {
 	// Cols returns the columns of the table which is used in select.
 	Cols() []*column.Col
 
-	// WriteableCols returns the columns of the table which is used in insert/update.
-	WriteableCols() []*column.Col
-
 	// Indices returns the indices of the table.
 	Indices() []*column.IndexedCol
 

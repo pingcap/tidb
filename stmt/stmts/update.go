@@ -128,8 +128,8 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	// From t.Cols() we can get public state columns, but we should check
 	// whether this table has on update column which state is write only.
 	oldData := data
-	newData := make([]interface{}, len(t.WriteableCols()))
-	touched := make([]bool, len(t.WriteableCols()))
+	newData := make([]interface{}, len(t.Cols()))
+	touched := make([]bool, len(t.Cols()))
 	copy(newData, oldData)
 
 	cols := t.Cols()

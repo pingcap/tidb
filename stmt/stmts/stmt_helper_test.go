@@ -33,7 +33,7 @@ func (f *mockFormatter) Format(format string, args ...interface{}) (n int, errno
 	return f.Write([]byte(data))
 }
 
-func (s *testStmtSuite) TestGetColDefaultValue(c *C) {
+func (s *testStmtSuite) TestEvalColumnDefaultValue(c *C) {
 	testSQL := `drop table if exists helper_test;
     create table helper_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int not null, c2 timestamp, c3 int default 1);`
 	mustExec(c, s.testDB, testSQL)

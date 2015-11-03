@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
@@ -109,8 +110,8 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 			break
 		}
 
-		currentRow := make([]interface{}, len(t.WriteableCols()))
-		marked := make(map[int]struct{}, len(t.WriteableCols()))
+		currentRow := make([]interface{}, len(t.Cols()))
+		marked := make(map[int]struct{}, len(t.Cols()))
 		for i, data := range row.Data {
 			offset := cols[i].Offset
 			currentRow[offset] = data
@@ -125,7 +126,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 			return nil, errors.Trace(err)
 		}
 
-		if err = column.CheckNotNull(t.WriteableCols(), currentRow); err != nil {
+		if err = column.CheckNotNull(t.Cols(), currentRow); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -194,19 +195,19 @@ func (s *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 	return cols, nil
 }
 
-func (s *InsertValues) getDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
-	m := map[interface{}]interface{}{}
-	for _, v := range cols {
-		if value, ok, err := getDefaultValue(ctx, v); ok {
+func (s *InsertValues) evalColumnDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
+	defaultValMap := map[interface{}]interface{}{}
+	for _, col := range cols {
+		if value, ok, err := tables.EvalColumnDefaultValue(ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 
-			m[v.Name.L] = value
+			defaultValMap[col.Name.L] = value
 		}
 	}
 
-	return m, nil
+	return defaultValMap, nil
 }
 
 func (s *InsertValues) fillValueList() error {
@@ -248,7 +249,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		return nil, errors.Trace(err)
 	}
 
-	defaultValMap, err := s.getDefaultValues(ctx, t.WriteableCols())
+	defaultValMap, err := s.evalColumnDefaultValues(ctx, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -311,7 +312,7 @@ func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 }
 
 func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, evalMap map[interface{}]interface{}) ([]interface{}, error) {
-	row := make([]interface{}, len(t.WriteableCols()))
+	row := make([]interface{}, len(t.Cols()))
 	marked := make(map[int]struct{}, len(list))
 	for i, expr := range list {
 		// For "insert into t values (default)" Default Eval.
@@ -339,7 +340,7 @@ func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*c
 		return nil, errors.Trace(err)
 	}
 
-	if err = column.CheckNotNull(t.WriteableCols(), row); err != nil {
+	if err = column.CheckNotNull(t.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -387,7 +388,7 @@ func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Ta
 func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
 	var err error
 	var defaultValueCols []*column.Col
-	for i, c := range t.WriteableCols() {
+	for i, c := range t.Cols() {
 		if row[i] != nil {
 			// Column value is not nil, continue.
 			continue
@@ -407,7 +408,7 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 			variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
 		} else {
 			var value interface{}
-			value, _, err = getDefaultValue(ctx, c)
+			value, _, err = tables.EvalColumnDefaultValue(ctx, &c.ColumnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
