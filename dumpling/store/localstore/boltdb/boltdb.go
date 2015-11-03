@@ -19,8 +19,8 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/bytes"
 )
 
 var (
@@ -54,11 +54,7 @@ func (d *db) Get(key []byte) ([]byte, error) {
 }
 
 func (d *db) Seek(startKey []byte) (engine.Iterator, error) {
-	tx, err := d.DB.Begin(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &iterator{tx: tx, key: startKey}, nil
+	return &iterator{key: startKey, seeked: false, d: d}, nil
 }
 
 func (d *db) NewBatch() engine.Batch {
@@ -96,33 +92,55 @@ func (d *db) Close() error {
 }
 
 type iterator struct {
-	tx *bolt.Tx
-	*bolt.Cursor
-
-	key   []byte
-	value []byte
+	d      *db
+	seeked bool
+	key    []byte
+	value  []byte
 }
 
 func (i *iterator) Next() bool {
-	if i.Cursor == nil {
-		i.Cursor = i.tx.Bucket(bucketName).Cursor()
-		if i.key == nil {
-			i.key, i.value = i.Cursor.First()
+	i.d.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		var key []byte
+		var value []byte
+
+		if !i.seeked {
+			i.seeked = true
+			if i.key == nil {
+				key, value = c.First()
+			} else {
+				key, value = c.Seek(i.key)
+			}
 		} else {
-			i.key, i.value = i.Cursor.Seek(i.key)
+			c.Seek(i.key)
+			key, value = c.Next()
 		}
-	} else {
-		i.key, i.value = i.Cursor.Next()
-	}
+
+		i.key = bytes.CloneBytes(key)
+		i.value = bytes.CloneBytes(value)
+
+		return nil
+	})
 
 	return i.key != nil
 }
 
 func (i *iterator) Seek(startKey []byte) bool {
-	if i.Cursor == nil {
-		i.Cursor = i.tx.Bucket(bucketName).Cursor()
-	}
-	i.key, i.value = i.Cursor.Seek(startKey)
+	i.d.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		var key []byte
+		var value []byte
+
+		key, value = c.Seek(startKey)
+
+		i.key = bytes.CloneBytes(key)
+		i.value = bytes.CloneBytes(value)
+
+		return nil
+	})
+
 	return i.key != nil
 }
 
@@ -135,10 +153,7 @@ func (i *iterator) Value() []byte {
 }
 
 func (i *iterator) Release() {
-	err := i.tx.Rollback()
-	if err != nil {
-		log.Errorf("commit err %v", err)
-	}
+
 }
 
 type write struct {
