@@ -28,6 +28,25 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
+func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo) {
+	offsetChanged := make(map[int]int)
+	for i := 0; i < len(columns); i++ {
+		newOffset := columns[i].TempOffset
+		offsetChanged[columns[i].Offset] = newOffset
+		columns[i].Offset = newOffset
+	}
+
+	// Update index column offset info.
+	for _, idx := range indices {
+		for _, c := range idx.Columns {
+			newOffset, ok := offsetChanged[c.Offset]
+			if ok {
+				c.Offset = newOffset
+			}
+		}
+	}
+}
+
 func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*model.ColumnInfo, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
@@ -54,6 +73,9 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 
 	colInfo := &col.ColumnInfo
 	colInfo.State = model.StateNone
+	// To support add column asynchronous, we should mark its offset as the last column.
+	// So that we can use origin column offset to get value from row.
+	colInfo.Offset = len(cols)
 
 	// Insert col into the right place of the column list.
 	newCols := make([]*model.ColumnInfo, 0, len(cols)+1)
@@ -61,23 +83,9 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	newCols = append(newCols, colInfo)
 	newCols = append(newCols, cols[position:]...)
 
-	// Adjust position.
-	if position != len(cols) {
-		offsetChanged := make(map[int]int)
-		for i := position + 1; i < len(newCols); i++ {
-			offsetChanged[newCols[i].Offset] = i
-			newCols[i].Offset = i
-		}
-
-		// Update index column offset info.
-		for _, idx := range tblInfo.Indices {
-			for _, c := range idx.Columns {
-				newOffset, ok := offsetChanged[c.Offset]
-				if ok {
-					c.Offset = newOffset
-				}
-			}
-		}
+	// Set column temp offset info.
+	for i := 0; i < len(newCols); i++ {
+		newCols[i].TempOffset = i
 	}
 
 	tblInfo.Columns = newCols
@@ -169,7 +177,11 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
+		// Adjust column position.
+		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices)
+
 		columnInfo.State = model.StatePublic
+
 		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
