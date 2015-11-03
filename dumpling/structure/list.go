@@ -58,10 +58,6 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.LockKeys(metaKey); err != nil {
-		return errors.Trace(err)
-	}
-
 	index := int64(0)
 	for _, v := range values {
 		if left {
@@ -95,10 +91,6 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return nil, errors.Trace(err)
-	}
-
-	if err = t.txn.LockKeys(metaKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -176,10 +168,6 @@ func (t *TxStructure) LClear(key []byte) error {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
-	}
-
-	if err = t.txn.LockKeys(metaKey); err != nil {
 		return errors.Trace(err)
 	}
 
