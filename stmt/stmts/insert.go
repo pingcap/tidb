@@ -110,7 +110,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 		}
 
 		currentRow := make([]interface{}, len(t.WriteableCols()))
-		marked := make(map[int]struct{}, len(cols))
+		marked := make(map[int]struct{}, len(t.WriteableCols()))
 		for i, data := range row.Data {
 			offset := cols[i].Offset
 			currentRow[offset] = data
