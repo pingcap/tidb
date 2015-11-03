@@ -276,7 +276,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, versio
 		})
 
 		rk := kv.EncodeKey(lock)
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if errors2.ErrorEqual(err, kv.ErrNotExist) {
 			break
 		} else if err != nil {

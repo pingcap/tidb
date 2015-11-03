@@ -321,6 +321,7 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select '\'a\'';`, true},
 		{`select "\"a\"";`, true},
 		{`select """a""";`, true},
+		{`select _utf8"string";`, true},
 		// For comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true},
 	}
@@ -440,6 +441,28 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+
+		// For date_sub
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 second)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 hour)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 day)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 1 week)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 1 month)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 1 quarter)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval 1 year)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "10.10" second_microsecond)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10.10" minute_microsecond)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10" minute_second)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
+		{`select date_sub("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
 	}
 	s.RunTest(c, table)
 }
