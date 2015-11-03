@@ -34,10 +34,10 @@ func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
 		return nil, errors.Trace(validator.err)
 	}
 
-	//	binder := &InfoBinder{}
-	//	if _, ok := node.Accept(validator); !ok {
-	//		return nil, errors.Trace(binder.Err)
-	//	}
+	binder := &InfoBinder{}
+	if _, ok := node.Accept(validator); !ok {
+		return nil, errors.Trace(binder.Err)
+	}
 
 	tpComputer := &typeComputer{}
 	if _, ok := node.Accept(tpComputer); !ok {
