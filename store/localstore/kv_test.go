@@ -15,13 +15,16 @@ package localstore
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
 
@@ -554,4 +557,55 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	c.Assert(err, NotNil)
 
 	snap.MvccRelease()
+}
+
+func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
+	d := Driver{
+		boltdb.Driver{},
+	}
+	path := "boltdb_test"
+	defer os.Remove(path)
+	store, err := d.Open(path)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		txn.Set([]byte("a"), []byte("0"))
+		txn.Set([]byte("b"), []byte("0"))
+
+		return nil
+	})
+
+	done := make(chan struct{}, 1)
+	f := func() {
+		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			txn.Inc([]byte("a"), 1)
+
+			done <- struct{}{}
+			return nil
+		})
+	}
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		txn.Inc([]byte("b"), 1)
+
+		go f()
+
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+		}
+		return nil
+	})
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		n, err := txn.GetInt64([]byte("a"))
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, int64(1))
+
+		n, err = txn.GetInt64([]byte("b"))
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, int64(1))
+		return nil
+	})
 }
