@@ -125,14 +125,12 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 		return errors.Trace(err)
 	}
 
-	// From t.Cols() we can get public state columns, but we should check
-	// whether this table has on update column which state is write only.
+	cols := t.Cols()
 	oldData := data
-	newData := make([]interface{}, len(t.Cols()))
-	touched := make([]bool, len(t.Cols()))
+	newData := make([]interface{}, len(cols))
+	touched := make(map[int]bool, len(cols))
 	copy(newData, oldData)
 
-	cols := t.Cols()
 	assignExists := false
 	for i, asgn := range updateColumns {
 		if i < offset || i >= offset+len(cols) {
@@ -157,11 +155,11 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	}
 
 	// Check whether new value is valid.
-	if err := column.CastValues(ctx, newData, t.Cols()); err != nil {
+	if err := column.CastValues(ctx, newData, cols); err != nil {
 		return errors.Trace(err)
 	}
 
-	if err := column.CheckNotNull(t.Cols(), newData); err != nil {
+	if err := column.CheckNotNull(cols, newData); err != nil {
 		return errors.Trace(err)
 	}
 

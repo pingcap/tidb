@@ -254,37 +254,41 @@ func (t *Table) Truncate(ctx context.Context) error {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched []bool) error {
+func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched map[int]bool) error {
+	// We should check whether this table has on update column which state is write only.
+	currentData := make([]interface{}, len(t.writableColumns))
+	copy(currentData, newData)
+
 	// If they are not set, and other data are changed, they will be updated by current timestamp too.
-	err := t.setOnUpdateData(ctx, touched, newData)
+	err := t.setOnUpdateData(ctx, touched, currentData)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// set new value
-	if err := t.setNewData(ctx, h, touched, newData); err != nil {
+	if err := t.setNewData(ctx, h, touched, currentData); err != nil {
 		return errors.Trace(err)
 	}
 
 	// rebuild index
-	if err := t.rebuildIndices(ctx, h, touched, oldData, newData); err != nil {
+	if err := t.rebuildIndices(ctx, h, touched, oldData, currentData); err != nil {
 		return errors.Trace(err)
 	}
 
 	return nil
 }
 
-func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []interface{}) error {
+func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data []interface{}) error {
 	ucols := column.FindOnUpdateCols(t.writableColumns)
-	for _, c := range ucols {
-		if !touched[c.Offset] {
-			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, c.Tp, c.Decimal)
+	for _, col := range ucols {
+		if !touched[col.Offset] {
+			value, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			data[c.Offset] = v
-			touched[c.Offset] = true
+			data[col.Offset] = value
+			touched[col.Offset] = true
 		}
 	}
 	return nil
@@ -303,7 +307,7 @@ func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) er
 	return nil
 }
 
-func (t *Table) setNewData(ctx context.Context, h int64, touched []bool, data []interface{}) error {
+func (t *Table) setNewData(ctx context.Context, h int64, touched map[int]bool, data []interface{}) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -323,7 +327,7 @@ func (t *Table) setNewData(ctx context.Context, h int64, touched []bool, data []
 	return nil
 }
 
-func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, oldData, newData []interface{}) error {
+func (t *Table) rebuildIndices(ctx context.Context, h int64, touched map[int]bool, oldData []interface{}, newData []interface{}) error {
 	for _, idx := range t.Indices() {
 		idxTouched := false
 		for _, ic := range idx.Columns {
