@@ -199,6 +199,7 @@ func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.Se
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// TODO: handle parenthesesed column name expression, which should not set AsName.
 			if _, ok := oldField.Expr.(*expression.Ident); !ok && oldField.AsName == "" {
 				oldField.AsName = val.Text()
 			}
