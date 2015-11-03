@@ -20,7 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -571,30 +570,15 @@ func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
 
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		txn.Set([]byte("a"), []byte("0"))
-		txn.Set([]byte("b"), []byte("0"))
-
-		return nil
-	})
-
-	done := make(chan struct{}, 1)
-	f := func() {
-		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
-			txn.Inc([]byte("a"), 1)
-
-			done <- struct{}{}
-			return nil
-		})
-	}
-
-	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		txn.Inc([]byte("b"), 1)
 
-		go f()
+		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			txn.Set([]byte("b"), []byte("0"))
+			txn.Inc([]byte("a"), 1)
 
-		select {
-		case <-done:
-		case <-time.After(1 * time.Second):
-		}
+			return nil
+		})
+
 		return nil
 	})
 
