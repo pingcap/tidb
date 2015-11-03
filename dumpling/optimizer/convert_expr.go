@@ -112,6 +112,8 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.funcLocate(v)
 	case *ast.FuncTrimExpr:
 		c.funcTrim(v)
+	case *ast.FuncDateArithExpr:
+		c.funcDateArith(v)
 	case *ast.AggregateFuncExpr:
 		c.aggregateFunc(v)
 	}
@@ -394,6 +396,21 @@ func (c *expressionConverter) funcTrim(v *ast.FuncTrimExpr) {
 		oldTrim.Direction = expression.TrimTrailing
 	}
 	c.exprMap[v] = oldTrim
+}
+
+func (c *expressionConverter) funcDateArith(v *ast.FuncDateArithExpr) {
+	oldDateArith := &expression.DateArith{
+		Unit:     v.Unit,
+		Date:     c.exprMap[v.Date],
+		Interval: c.exprMap[v.Interval],
+	}
+	switch v.Op {
+	case ast.DateAdd:
+		oldDateArith.Op = expression.DateAdd
+	case ast.DateSub:
+		oldDateArith.Op = expression.DateSub
+	}
+	c.exprMap[v] = oldDateArith
 }
 
 func (c *expressionConverter) aggregateFunc(v *ast.AggregateFuncExpr) {

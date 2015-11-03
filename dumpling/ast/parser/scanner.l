@@ -307,6 +307,8 @@ current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
+date_add	{d}{a}{t}{e}_{a}{d}{d}
+date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
@@ -355,6 +357,7 @@ in		{i}{n}
 index		{i}{n}{d}{e}{x}
 inner 		{i}{n}{n}{e}{r}
 insert		{i}{n}{s}{e}{r}{t}
+interval	{i}{n}{t}{e}{r}{v}{a}{l}
 into		{i}{n}{t}{o}
 is		{i}{s}
 join		{j}{o}{i}{n}
@@ -655,6 +658,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
+{date_add}		lval.item = string(l.val)
+			return dateAdd
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
@@ -738,6 +745,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {index}			return index
 {inner} 		return inner
 {insert}		return insert
+{interval}		return interval
 {into}			return into
 {in}			return in
 {is}			return is

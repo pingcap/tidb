@@ -104,6 +104,8 @@ import (
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
+	dateAdd		"DATE_ADD"
+	dateSub		"DATE_SUB"
 	day		"DAY"
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
@@ -156,6 +158,7 @@ import (
 	index		"INDEX"
 	inner 		"INNER"
 	insert		"INSERT"
+	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
 	join		"JOIN"
@@ -839,7 +842,7 @@ ColumnOption:
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		// The CHECK clause is parsed but ignored by all storage engines.
-		$$ = nil
+		$$ = &ast.ColumnOption{}
 	}
 
 ColumnOptionList:
@@ -1159,7 +1162,7 @@ DeleteFromStmt:
 			x.Where = $7.(ast.ExprNode)
 		}
 		if $8 != nil {
-			x.Order = $8.([]*ast.ByItem)
+			x.Order = $8.(*ast.OrderByClause)
 		}
 		if $9 != nil {
 			x.Limit = $9.(*ast.Limit)
@@ -1650,7 +1653,7 @@ UnReservedKeyword:
 |	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
 
 NotKeywordToken:
-	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
+	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
@@ -1689,11 +1692,16 @@ InsertValues:
 	{
 		$$ = &ast.InsertStmt{
 			Columns:   $2.([]*ast.ColumnName),
-			Lists:      $5.([][]ast.ExprNode)}
+			Lists:      $5.([][]ast.ExprNode),
+		}
 	}
 |	'(' ColumnNameListOpt ')' SelectStmt
 	{
 		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.SelectStmt)}
+	}
+|	'(' ColumnNameListOpt ')' UnionStmt
+	{
+		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: $4.(*ast.UnionStmt)}
 	}
 |	ValueSym ExpressionListList %prec insertValues
 	{
@@ -2110,6 +2118,24 @@ FunctionCallNonKeyword:
 |	"DAYOFYEAR" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &ast.FuncDateArithExpr{
+			Op:ast.DateAdd,
+			Unit: $7.(string),
+			Date: $3.(ast.ExprNode),
+			Interval: $6.(ast.ExprNode),
+		}
+	}
+|	"DATE_SUB" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &ast.FuncDateArithExpr{
+			Op:ast.DateSub,
+			Unit: $7.(string),
+			Date: $3.(ast.ExprNode),
+			Interval: $6.(ast.ExprNode),
+		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
 	{
@@ -2969,6 +2995,8 @@ UnionStmt:
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.Selects[len(union.Selects)-1]
+		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-2].offset-1)
 		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -2976,6 +3004,8 @@ UnionStmt:
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.Selects[len(union.Selects)-1]
+		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-6].offset-1)
 		st := $5.(*ast.SelectStmt)
 		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-2].offset-1)
 		union.Selects = append(union.Selects, st)
@@ -3000,6 +3030,8 @@ UnionClauseList:
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
+		lastSelect := union.Selects[len(union.Selects)-1]
+		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-2].offset-1)
 		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3216,7 +3248,7 @@ ShowStmt:
 		}
 		if x, ok := $4.(*ast.PatternLikeExpr); ok {
 			stmt.Pattern = x
-		} else {
+		} else if $4 != nil {
 			stmt.Where = $4.(ast.ExprNode)
 		}
 		$$ = stmt
@@ -3228,7 +3260,7 @@ ShowStmt:
 		}
 		if x, ok := $3.(*ast.PatternLikeExpr); ok {
 			stmt.Pattern = x
-		} else {
+		} else if $3 != nil {
 			stmt.Where = $3.(ast.ExprNode)
 		}
 		$$ = stmt
@@ -3970,7 +4002,34 @@ StringName:
  * See: https://dev.mysql.com/doc/refman/5.7/en/update.html
  ***********************************************************************************/
 UpdateStmt:
-	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" LowPriorityOptional IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	{
+		var refs *ast.Join
+		if x, ok := $4.(*ast.Join); ok {
+			refs = x
+		} else {
+			refs = &ast.Join{Left: $4.(ast.ResultSetNode)}
+		}
+		st := &ast.UpdateStmt{
+			LowPriority:	$2.(bool),
+			TableRefs:	&ast.TableRefsClause{TableRefs: refs},
+			List:		$6.([]*ast.Assignment),
+		}
+		if $7 != nil {
+			st.Where = $7.(ast.ExprNode)
+		}
+		if $8 != nil {
+			st.Order = $8.(*ast.OrderByClause)
+		}
+		if $9 != nil {
+			st.Limit = $9.(*ast.Limit)
+		}
+		$$ = st
+		if yylex.(*lexer).root {
+			break
+		}
+	}
+|	"UPDATE" LowPriorityOptional IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
 	{
 		st := &ast.UpdateStmt{
 			LowPriority:	$2.(bool),
@@ -3979,12 +4038,6 @@ UpdateStmt:
 		}
 		if $7 != nil {
 			st.Where = $7.(ast.ExprNode)
-		}
-		if $8 != nil {
-			st.Order = $8.([]*ast.ByItem)
-		}
-		if $9 != nil {
-			st.Limit = $9.(*ast.Limit)
 		}
 		$$ = st
 		if yylex.(*lexer).root {

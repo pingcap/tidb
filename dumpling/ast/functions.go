@@ -28,6 +28,7 @@ var (
 	_ FuncNode = &FuncSubstringExpr{}
 	_ FuncNode = &FuncLocateExpr{}
 	_ FuncNode = &FuncTrimExpr{}
+	_ FuncNode = &FuncDateArithExpr{}
 	_ FuncNode = &AggregateFuncExpr{}
 )
 
@@ -335,6 +336,52 @@ func (nod *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
 // IsStatic implements the ExprNode IsStatic interface.
 func (nod *FuncTrimExpr) IsStatic() bool {
 	return nod.Str.IsStatic() && nod.RemStr.IsStatic()
+}
+
+// DateArithType is type for DateArith option.
+type DateArithType byte
+
+const (
+	// DateAdd is to run date_add function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	DateAdd DateArithType = iota + 1
+	// DateSub is to run date_sub function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
+	DateSub
+)
+
+// FuncDateArithExpr is the struct for date arithmetic functions.
+type FuncDateArithExpr struct {
+	funcNode
+
+	Op       DateArithType
+	Unit     string
+	Date     ExprNode
+	Interval ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (nod *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(nod)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	nod = newNod.(*FuncDateArithExpr)
+	if nod.Date != nil {
+		node, ok := nod.Date.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Date = node.(ExprNode)
+	}
+	if nod.Interval != nil {
+		node, ok := nod.Date.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Date = node.(ExprNode)
+	}
+	return v.Leave(nod)
 }
 
 // AggregateFuncExpr represents aggregate function expression.
