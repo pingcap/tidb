@@ -40,16 +40,17 @@ import (
 
 // Table implements table.Table interface.
 type Table struct {
-	ID            int64
-	Name          model.CIStr
-	Columns       []*column.Col
-	CachedColumns []*column.Col
+	ID      int64
+	Name    model.CIStr
+	Columns []*column.Col
 
-	indices      []*column.IndexedCol
-	recordPrefix string
-	indexPrefix  string
-	alloc        autoid.Allocator
-	state        model.SchemaState
+	publicColumns   []*column.Col
+	writableColumns []*column.Col
+	indices         []*column.IndexedCol
+	recordPrefix    string
+	indexPrefix     string
+	alloc           autoid.Allocator
+	state           model.SchemaState
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -57,8 +58,12 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 	t := NewTable(tblInfo.ID, tblInfo.Name.O, nil, alloc)
 
 	for _, colInfo := range tblInfo.Columns {
-		c := column.Col{ColumnInfo: *colInfo}
-		t.Columns = append(t.Columns, &c)
+		col := &column.Col{ColumnInfo: *colInfo}
+		t.Columns = append(t.Columns, col)
+
+		if col.State != model.StateDeleteOnly {
+			t.writableColumns = append(t.writableColumns, col)
+		}
 	}
 
 	for _, idxInfo := range tblInfo.Indices {
@@ -130,32 +135,18 @@ func (t *Table) Meta() *model.TableInfo {
 
 // Cols implements table.Table Cols interface.
 func (t *Table) Cols() []*column.Col {
-	if t.CachedColumns != nil {
-		return t.CachedColumns
+	if t.publicColumns != nil {
+		return t.publicColumns
 	}
 
-	t.CachedColumns = make([]*column.Col, 0, len(t.Columns))
+	t.publicColumns = make([]*column.Col, 0, len(t.Columns))
 	for _, col := range t.Columns {
 		if col.State == model.StatePublic {
-			t.CachedColumns = append(t.CachedColumns, col)
+			t.publicColumns = append(t.publicColumns, col)
 		}
 	}
 
-	return t.CachedColumns
-}
-
-// WriteableCols implements table.Table WriteableCols interface.
-func (t *Table) WriteableCols() []*column.Col {
-	cols := make([]*column.Col, 0, len(t.Columns))
-	for _, col := range t.Columns {
-		if col.State == model.StateDeleteOnly {
-			continue
-		}
-
-		cols = append(cols, col)
-	}
-
-	return cols
+	return t.publicColumns
 }
 
 func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error) {
@@ -284,7 +275,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}
 }
 
 func (t *Table) setOnUpdateData(ctx context.Context, touched []bool, data []interface{}) error {
-	ucols := column.FindOnUpdateCols(t.WriteableCols())
+	ucols := column.FindOnUpdateCols(t.writableColumns)
 	for _, c := range ucols {
 		if !touched[c.Offset] {
 			v, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, c.Tp, c.Decimal)
@@ -410,13 +401,32 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		return 0, errors.Trace(err)
 	}
 
-	// column key -> column value
-	for _, c := range t.WriteableCols() {
-		k := t.RecordKey(recordID, c)
-		if err := t.SetColValue(txn, k, r[c.Offset]); err != nil {
+	// Set public column value.
+	for _, col := range t.Cols() {
+		key := t.RecordKey(recordID, col)
+		value := r[col.Offset]
+		err = t.SetColValue(txn, key, value)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
 	}
+
+	// Set write only column value.
+	for _, col := range t.writableColumns {
+		if col.State == model.StateWriteOnly {
+			key := t.RecordKey(recordID, col)
+			value, _, err := EvalColumnDefaultValue(ctx, &col.ColumnInfo)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+
+			err = t.SetColValue(txn, key, value)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		}
+	}
+
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return recordID, nil
 }
@@ -642,6 +652,36 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
+}
+
+// EvalColumnDefaultValue evals default value of the column.
+func EvalColumnDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}, bool, error) {
+	// Check no default value flag.
+	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
+		return nil, false, errors.Errorf("Field '%s' doesn't have a default value", col.Name)
+	}
+
+	// Check and get timestamp/datetime default value.
+	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+		if col.DefaultValue == nil {
+			return nil, true, nil
+		}
+
+		value, err := expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		if err != nil {
+			return nil, true, errors.Errorf("Field '%s' get default value fail - %s", col.Name, errors.Trace(err))
+		}
+
+		return value, true, nil
+	} else if col.Tp == mysql.TypeEnum {
+		// For enum type, if no default value and not null is set,
+		// the default value is the first element of the enum list
+		if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+			return col.FieldType.Elems[0], true, nil
+		}
+	}
+
+	return col.DefaultValue, true, nil
 }
 
 func init() {

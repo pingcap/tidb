@@ -233,10 +233,8 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 
 			backfillKey := t.RecordKey(handle, &column.Col{ColumnInfo: *columnInfo})
 			_, err = txn.Get(backfillKey)
-			if err != nil {
-				if !kv.IsErrNotFound(err) {
-					return errors.Trace(err)
-				}
+			if err != nil && !kv.IsErrNotFound(err) {
+				return errors.Trace(err)
 			}
 
 			// If row column doesn't exist, we need to backfill column.
@@ -246,9 +244,12 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			// TODO: check and get timestamp/datetime default value.
-			// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
-			err = t.(*tables.Table).SetColValue(txn, backfillKey, columnInfo.DefaultValue)
+			value, _, err := tables.EvalColumnDefaultValue(nil, columnInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			err = t.(*tables.Table).SetColValue(txn, backfillKey, value)
 			if err != nil {
 				return errors.Trace(err)
 			}
