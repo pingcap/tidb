@@ -557,7 +557,7 @@ func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error 
 		}
 
 		rk := t.RecordKey(handle, nil)
-		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
+		if err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
 			return errors.Trace(err0)
 		}
 	}
@@ -750,7 +750,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 		}
 
 		rk := []byte(t.RecordKey(handle, nil))
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
 		}
