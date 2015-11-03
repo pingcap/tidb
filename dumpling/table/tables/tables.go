@@ -44,11 +44,12 @@ type Table struct {
 	Name    model.CIStr
 	Columns []*column.Col
 
-	indices      []*column.IndexedCol
-	recordPrefix string
-	indexPrefix  string
-	alloc        autoid.Allocator
-	state        model.SchemaState
+	cachedColumns []*column.Col
+	indices       []*column.IndexedCol
+	recordPrefix  string
+	indexPrefix   string
+	alloc         autoid.Allocator
+	state         model.SchemaState
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -129,14 +130,18 @@ func (t *Table) Meta() *model.TableInfo {
 
 // Cols implements table.Table Cols interface.
 func (t *Table) Cols() []*column.Col {
-	cols := make([]*column.Col, 0, len(t.Columns))
+	if t.cachedColumns != nil {
+		return t.cachedColumns
+	}
+
+	t.cachedColumns = make([]*column.Col, 0, len(t.Columns))
 	for _, col := range t.Columns {
 		if col.State == model.StatePublic {
-			cols = append(cols, col)
+			t.cachedColumns = append(t.cachedColumns, col)
 		}
 	}
 
-	return cols
+	return t.cachedColumns
 }
 
 // WriteableCols implements table.Table WriteableCols interface.

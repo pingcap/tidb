@@ -190,7 +190,7 @@ func ColDescFieldNames(full bool) []string {
 func CheckOnce(cols []*Col) error {
 	m := map[string]struct{}{}
 	for _, col := range cols {
-		if col.State == model.StateWriteOnly {
+		if col.State != model.StatePublic {
 			continue
 		}
 
