@@ -98,10 +98,6 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.LockKeys(metaKey); err != nil {
-		return errors.Trace(err)
-	}
-
 	dataKey := t.encodeHashDataKey(key, field)
 	var oldValue []byte
 	oldValue, err = t.loadHashValue(dataKey)
@@ -141,10 +137,6 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
-	}
-
-	if err = t.txn.LockKeys(metaKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -206,10 +198,6 @@ func (t *TxStructure) HClear(key []byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
-	}
-
-	if err = t.txn.LockKeys(metaKey); err != nil {
 		return errors.Trace(err)
 	}
 
