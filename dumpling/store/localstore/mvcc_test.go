@@ -142,7 +142,7 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
 	for it.Valid() {
-		it, err = it.Next()
+		err = it.Next()
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
@@ -244,7 +244,7 @@ func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
 			if string(it.Value()) == "new" {
 				found = true
 			}
-			it, err = it.Next()
+			err = it.Next()
 			c.Assert(err, IsNil)
 		}
 		return found
@@ -275,7 +275,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(err, IsNil)
 	cnt := 0
 	for iter.Valid() {
-		iter, err = iter.Next()
+		err = iter.Next()
 		c.Assert(err, IsNil)
 		cnt++
 	}

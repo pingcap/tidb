@@ -109,13 +109,13 @@ func checkSeek(c *C, txn kv.Transaction) {
 		c.Assert(iter.Key(), Equals, string(val))
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
-		next, err := iter.Next()
+		err = iter.Next()
 		c.Assert(err, IsNil)
-		c.Assert(next.Valid(), IsTrue)
+		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert(next.Key(), Equals, string(val))
-		c.Assert(valToStr(c, next), Equals, string(val))
+		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
 
@@ -280,7 +280,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	for it.Valid() {
 		err = txn.Delete([]byte(it.Key()))
 		c.Assert(err, IsNil)
-		it, err = it.Next()
+		err = it.Next()
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
@@ -415,7 +415,7 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 	it, err := txn.Seek(nil)
 	for it.Valid() {
 		fmt.Printf("%s, %s\n", it.Key(), it.Value())
-		it, _ = it.Next()
+		it.Next()
 	}
 
 	it, err = txn.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))

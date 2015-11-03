@@ -114,6 +114,7 @@ import (
 	database	"DATABASE"
 	databases	"DATABASES"
 	dateAdd		"DATE_ADD"
+	dateSub		"DATE_SUB"
 	day		"DAY"
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
@@ -1714,7 +1715,7 @@ UnReservedKeyword:
 |	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
 
 NotKeywordToken:
-	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT" 
+	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"
 |	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
@@ -2306,8 +2307,18 @@ FunctionCallNonKeyword:
 	}
 |	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		$$ = &expression.DateAdd{
+		$$ = &expression.DateArith{
+			Op:expression.DateAdd,
 			Unit: $7.(string), 
+			Date: $3.(expression.Expression),
+			Interval: $6.(expression.Expression),
+		}
+	}
+|	"DATE_SUB" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+	{
+		$$ = &expression.DateArith{
+			Op:expression.DateSub,
+			Unit: $7.(string),
 			Date: $3.(expression.Expression),
 			Interval: $6.(expression.Expression),
 		}
