@@ -471,7 +471,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddColumn,
-		Args:     []interface{}{spec},
+		Args:     []interface{}{spec, 0},
 	}
 
 	err = d.startJob(ctx, job)
