@@ -14,7 +14,9 @@
 package charset
 
 import (
-	"fmt"
+	"strings"
+
+	"github.com/juju/errors"
 )
 
 // Charset is a charset.
@@ -118,9 +120,18 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 func GetDefaultCollation(charset string) (string, error) {
 	c, ok := charsets[charset]
 	if !ok {
-		return "", fmt.Errorf("Unkown charset %s", charset)
+		return "", errors.Errorf("Unkown charset %s", charset)
 	}
 	return c.DefaultCollation.Name, nil
+}
+
+// GetCharsetInfo returns charset and collation for cs as name.
+func GetCharsetInfo(cs string) (string, string, error) {
+	c, ok := charsets[strings.ToLower(cs)]
+	if !ok {
+		return "", "", errors.Errorf("Unknown charset %s", cs)
+	}
+	return c.Name, c.DefaultCollation.Name, nil
 }
 
 // GetCollations returns a list for all collations.

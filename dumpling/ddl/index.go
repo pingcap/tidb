@@ -435,7 +435,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 			break
 		}
 
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if errors2.ErrorEqual(err, kv.ErrNotExist) {
 			break
 		} else if err != nil {
@@ -486,7 +486,6 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 			}
 
 			// create the index.
-			log.Errorf("create index %d", handle)
 			err = kvX.Create(txn, vals, handle)
 			return errors.Trace(err)
 		})

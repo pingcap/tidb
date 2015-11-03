@@ -27,6 +27,7 @@ import (
 	
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -298,6 +299,7 @@ current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
 date_add	{d}{a}{t}{e}_{a}{d}{d}
+date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
@@ -649,6 +651,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {databases}		return databases
 {date_add}		lval.item = string(l.val)
 			return dateAdd
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
@@ -1016,7 +1020,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return integerType
 
 {ident}			lval.item = string(l.val)
-			return identifier
+			return l.handleIdent(lval)
 
 .			return c0
 
@@ -1106,4 +1110,20 @@ func (l *lexer) bit(lval *yySymType) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+func (l *lexer) handleIdent(lval *yySymType) int {
+	s := lval.item.(string)
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(s, "_") {
+		return identifier	
+	}
+	cs, _, err := charset.GetCharsetInfo(s[1:])
+	if err != nil {
+		return identifier	
+	}
+	lval.item = cs
+	return underscoreCS
 }

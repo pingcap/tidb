@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
@@ -578,7 +579,7 @@ func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error 
 		}
 
 		rk := t.RecordKey(handle, nil)
-		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
+		if err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
 			return errors.Trace(err0)
 		}
 	}
@@ -597,6 +598,15 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(ErrNotExists)
+	}
+	// Check Privilege
+	privChecker := privilege.GetPrivilegeChecker(ctx)
+	hasPriv, err := privChecker.Check(ctx, schema, tb.Meta(), mysql.DropPriv)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !hasPriv {
+		return errors.Errorf("You do not have the privilege to drop table %s.%s.", ti.Schema, ti.Name)
 	}
 
 	job := &model.Job{
