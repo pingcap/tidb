@@ -642,7 +642,7 @@ type DeleteStmt struct {
 	// Only used in multiple table delete statement.
 	Tables      []*TableName
 	Where       ExprNode
-	Order       []*ByItem
+	Order       *OrderByClause
 	Limit       *Limit
 	LowPriority bool
 	Ignore      bool
@@ -680,20 +680,20 @@ func (nod *DeleteStmt) Accept(v Visitor) (Node, bool) {
 		}
 		nod.Where = node.(ExprNode)
 	}
-
-	for i, val := range nod.Order {
-		node, ok = val.Accept(v)
+	if nod.Order != nil {
+		node, ok = nod.Order.Accept(v)
 		if !ok {
 			return nod, false
 		}
-		nod.Order[i] = node.(*ByItem)
+		nod.Order = node.(*OrderByClause)
 	}
-
-	node, ok = nod.Limit.Accept(v)
-	if !ok {
-		return nod, false
+	if nod.Limit != nil {
+		node, ok = nod.Limit.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Limit = node.(*Limit)
 	}
-	nod.Limit = node.(*Limit)
 	return v.Leave(nod)
 }
 
@@ -705,7 +705,7 @@ type UpdateStmt struct {
 	TableRefs     *TableRefsClause
 	List          []*Assignment
 	Where         ExprNode
-	Order         []*ByItem
+	Order         *OrderByClause
 	Limit         *Limit
 	LowPriority   bool
 	Ignore        bool
@@ -738,19 +738,20 @@ func (nod *UpdateStmt) Accept(v Visitor) (Node, bool) {
 		}
 		nod.Where = node.(ExprNode)
 	}
-
-	for i, val := range nod.Order {
-		node, ok = val.Accept(v)
+	if nod.Order != nil {
+		node, ok = nod.Order.Accept(v)
 		if !ok {
 			return nod, false
 		}
-		nod.Order[i] = node.(*ByItem)
+		nod.Order = node.(*OrderByClause)
 	}
-	node, ok = nod.Limit.Accept(v)
-	if !ok {
-		return nod, false
+	if nod.Limit != nil {
+		node, ok = nod.Limit.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Limit = node.(*Limit)
 	}
-	nod.Limit = node.(*Limit)
 	return v.Leave(nod)
 }
 

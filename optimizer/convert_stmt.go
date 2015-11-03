@@ -123,16 +123,11 @@ func convertDelete(converter *expressionConverter, v *ast.DeleteStmt) (*stmts.De
 		}
 	}
 	if v.Order != nil {
-		orderRset := &rsets.OrderByRset{}
-		for _, val := range v.Order {
-			oldExpr, err := convertExpr(converter, val.Expr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			orderItem := rsets.OrderByItem{Expr: oldExpr, Asc: !val.Desc}
-			orderRset.By = append(orderRset.By, orderItem)
+		oldOrderBy, err := convertOrderBy(converter, v.Order)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		oldDelete.Order = orderRset
+		oldDelete.Order = oldOrderBy
 	}
 	if v.Limit != nil {
 		oldDelete.Limit = &rsets.LimitRset{Count: v.Limit.Count}
@@ -167,16 +162,11 @@ func convertUpdate(converter *expressionConverter, v *ast.UpdateStmt) (*stmts.Up
 		oldUpdate.List = append(oldUpdate.List, oldAssign)
 	}
 	if v.Order != nil {
-		orderRset := &rsets.OrderByRset{}
-		for _, val := range v.Order {
-			oldExpr, err := convertExpr(converter, val.Expr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			orderItem := rsets.OrderByItem{Expr: oldExpr, Asc: !val.Desc}
-			orderRset.By = append(orderRset.By, orderItem)
+		oldOrderBy, err := convertOrderBy(converter, v.Order)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		oldUpdate.Order = orderRset
+		oldUpdate.Order = oldOrderBy
 	}
 	if v.Limit != nil {
 		oldUpdate.Limit = &rsets.LimitRset{Count: v.Limit.Count}
