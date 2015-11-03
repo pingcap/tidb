@@ -156,7 +156,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		valid:        true,
 		store:        s,
 		version:      kv.MinVersion,
-		snapshotVals: make(map[string][]byte),
+		snapshotVals: make(map[string]struct{}),
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
 	txn.UnionStore, err = kv.NewUnionStore(&dbSnapshot{
@@ -212,7 +212,7 @@ func (s *dbStore) newBatch() engine.Batch {
 }
 
 // Both lock and unlock are used for simulating scenario of percolator papers.
-func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte) error {
+func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -246,7 +246,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 
 	// If there's newer version of this key, returns error.
 	if ver > tid {
-		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q, snapshotVal:%q", tid, key, currValue, snapshotVal)
+		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q", tid, key, currValue)
 		return errors.Trace(kv.ErrConditionNotMatch)
 	}
 
