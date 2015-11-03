@@ -38,26 +38,19 @@ type dbTxn struct {
 	store        *dbStore // for commit
 	tid          uint64
 	valid        bool
-	version      kv.Version        // commit version
-	snapshotVals map[string][]byte // origin version in snapshot
+	version      kv.Version          // commit version
+	snapshotVals map[string]struct{} // origin version in snapshot
 }
 
-func (txn *dbTxn) markOrigin(k []byte) error {
+func (txn *dbTxn) markOrigin(k []byte) {
 	keystr := string(k)
 
 	// Already exist, do nothing.
 	if _, ok := txn.snapshotVals[keystr]; ok {
-		return nil
+		return
 	}
 
-	val, err := txn.Snapshot.Get(k)
-	if err != nil && !kv.IsErrNotFound(err) {
-		return errors.Trace(err)
-	}
-
-	// log.Debugf("markOrigin, key:%q, value:%q", keystr, val)
-	txn.snapshotVals[keystr] = val
-	return nil
+	txn.snapshotVals[keystr] = struct{}{}
 }
 
 // Implement transaction interface
@@ -66,9 +59,7 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
 	k = kv.EncodeKey(k)
 
-	if err := txn.markOrigin(k); err != nil {
-		return 0, errors.Trace(err)
-	}
+	txn.markOrigin(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
@@ -143,6 +134,7 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.markOrigin(k)
 	txn.store.compactor.OnSet(k)
 	return nil
 }
@@ -169,6 +161,7 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.markOrigin(k)
 	txn.store.compactor.OnDelete(k)
 	return nil
 }
@@ -193,8 +186,8 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 	// Check locked keys
-	for k, v := range txn.snapshotVals {
-		err := txn.store.tryConditionLockKey(txn.tid, k, v)
+	for k := range txn.snapshotVals {
+		err := txn.store.tryConditionLockKey(txn.tid, k)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -266,9 +259,7 @@ func (txn *dbTxn) Rollback() error {
 func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
 		key = kv.EncodeKey(key)
-		if err := txn.markOrigin(key); err != nil {
-			return errors.Trace(err)
-		}
+		txn.markOrigin(key)
 	}
 	return nil
 }

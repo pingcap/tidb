@@ -166,11 +166,6 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 		return errors.Trace(err)
 	}
 
-	// unique index
-	err = txn.LockKeys(key)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	_, err = txn.Get(key)
 	if IsErrNotFound(err) {
 		err = txn.Set(key, encodeHandle(h))

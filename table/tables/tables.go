@@ -362,7 +362,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 	}
 
-	if err := t.LockRow(ctx, recordID, true); err != nil {
+	if err := t.LockRow(ctx, recordID); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -432,20 +432,13 @@ func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 }
 
 // LockRow implements table.Table LockRow interface.
-func (t *Table) LockRow(ctx context.Context, h int64, update bool) error {
+func (t *Table) LockRow(ctx context.Context, h int64) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get row lock key
 	lockKey := t.RecordKey(h, nil)
-	err = txn.LockKeys([]byte(lockKey))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !update {
-		return nil
-	}
 	// set row lock key to current txn
 	err = txn.Set([]byte(lockKey), []byte(txn.String()))
 	return errors.Trace(err)
@@ -453,7 +446,7 @@ func (t *Table) LockRow(ctx context.Context, h int64, update bool) error {
 
 // RemoveRow implements table.Table RemoveRow interface.
 func (t *Table) RemoveRow(ctx context.Context, h int64) error {
-	if err := t.LockRow(ctx, h, false); err != nil {
+	if err := t.LockRow(ctx, h); err != nil {
 		return errors.Trace(err)
 	}
 	txn, err := ctx.GetTxn(false)
