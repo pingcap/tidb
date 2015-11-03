@@ -25,26 +25,25 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo) {
+func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int) {
 	offsetChanged := make(map[int]int)
-	for i := 0; i < len(columns); i++ {
-		newOffset := columns[i].TempOffset
-		offsetChanged[columns[i].Offset] = newOffset
-		columns[i].Offset = newOffset
+	for i := offset; i < len(columns); i++ {
+		offsetChanged[columns[i].Offset] = i
+		columns[i].Offset = i
 	}
 
 	// Update index column offset info.
 	for _, idx := range indices {
-		for _, c := range idx.Columns {
-			newOffset, ok := offsetChanged[c.Offset]
+		for _, col := range idx.Columns {
+			newOffset, ok := offsetChanged[col.Offset]
 			if ok {
-				c.Offset = newOffset
+				col.Offset = newOffset
 			}
 		}
 	}
 }
 
-func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*model.ColumnInfo, error) {
+func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
@@ -55,7 +54,7 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	} else if spec.Position.Type == ColumnPositionAfter {
 		c := findCol(tblInfo.Columns, spec.Position.RelativeColumn)
 		if c == nil {
-			return nil, errors.Errorf("No such column: %v", spec.Column.Name)
+			return nil, 0, errors.Errorf("No such column: %v", spec.Column.Name)
 		}
 
 		// Insert position is after the mentioned column.
@@ -65,7 +64,7 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	// TODO: set constraint
 	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 
 	colInfo := &col.ColumnInfo
@@ -80,13 +79,8 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	newCols = append(newCols, colInfo)
 	newCols = append(newCols, cols[position:]...)
 
-	// Set column temp offset info.
-	for i := 0; i < len(newCols); i++ {
-		newCols[i].TempOffset = i
-	}
-
 	tblInfo.Columns = newCols
-	return colInfo, nil
+	return colInfo, position, nil
 }
 
 func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
@@ -97,7 +91,8 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 	}
 
 	spec := &AlterSpecification{}
-	err = job.DecodeArgs(&spec)
+	offset := 0
+	err = job.DecodeArgs(&spec, &offset)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
@@ -112,10 +107,15 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 			return errors.Errorf("ADD COLUMN: column already exist %s", spec.Column.Name)
 		}
 	} else {
-		columnInfo, err = d.addColumn(tblInfo, spec)
+		columnInfo, offset, err = d.addColumn(tblInfo, spec)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
+		}
+
+		// Set offset arg to job.
+		if offset != 0 {
+			job.Args = []interface{}{spec, offset}
 		}
 	}
 
@@ -174,8 +174,8 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		// Adjust column position.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices)
+		// Adjust column offset.
+		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset)
 
 		columnInfo.State = model.StatePublic
 

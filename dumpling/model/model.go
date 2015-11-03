@@ -57,7 +57,6 @@ type ColumnInfo struct {
 	ID              int64       `json:"id"`
 	Name            CIStr       `json:"name"`
 	Offset          int         `json:"offset"`
-	TempOffset      int         `json:"temp_offset"`
 	DefaultValue    interface{} `json:"default"`
 	types.FieldType `json:"type"`
 	State           SchemaState `json:"state"`
