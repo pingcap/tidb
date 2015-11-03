@@ -199,7 +199,7 @@ func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.Se
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if oldField.AsName == "" {
+			if _, ok := oldField.Expr.(*expression.Ident); !ok && oldField.AsName == "" {
 				oldField.AsName = val.Text()
 			}
 		} else if val.WildCard != nil {
