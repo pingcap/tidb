@@ -38,8 +38,8 @@ type dbTxn struct {
 	store        *dbStore // for commit
 	tid          uint64
 	valid        bool
-	version      kv.Version        // commit version
-	snapshotVals map[string][]byte // origin version in snapshot
+	version      kv.Version          // commit version
+	snapshotVals map[string]struct{} // origin version in snapshot
 }
 
 func (txn *dbTxn) markOrigin(k []byte) error {
@@ -50,13 +50,7 @@ func (txn *dbTxn) markOrigin(k []byte) error {
 		return nil
 	}
 
-	val, err := txn.Snapshot.Get(k)
-	if err != nil && !kv.IsErrNotFound(err) {
-		return errors.Trace(err)
-	}
-
-	// log.Debugf("markOrigin, key:%q, value:%q", keystr, val)
-	txn.snapshotVals[keystr] = val
+	txn.snapshotVals[keystr] = struct{}{}
 	return nil
 }
 
@@ -143,6 +137,10 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := txn.markOrigin(k); err != nil {
+		return errors.Trace(err)
+	}
+
 	txn.store.compactor.OnSet(k)
 	return nil
 }
@@ -169,6 +167,10 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := txn.markOrigin(k); err != nil {
+		return errors.Trace(err)
+	}
+
 	txn.store.compactor.OnDelete(k)
 	return nil
 }
@@ -193,8 +195,8 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 	// Check locked keys
-	for k, v := range txn.snapshotVals {
-		err := txn.store.tryConditionLockKey(txn.tid, k, v)
+	for k := range txn.snapshotVals {
+		err := txn.store.tryConditionLockKey(txn.tid, k)
 		if err != nil {
 			return errors.Trace(err)
 		}

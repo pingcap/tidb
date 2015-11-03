@@ -106,7 +106,7 @@ type Table interface {
 
 	// LockRow locks a row.
 	// If update is true, set row lock key to current txn.
-	LockRow(ctx context.Context, h int64, update bool) error
+	LockRow(ctx context.Context, h int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
