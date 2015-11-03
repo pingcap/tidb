@@ -107,8 +107,8 @@ type Visitor interface {
 	// VisitFunctionTrim visits FunctionTrim expression.
 	VisitFunctionTrim(v *FunctionTrim) (Expression, error)
 
-	// VisitDateAdd visits DateAdd expression.
-	VisitDateAdd(da *DateAdd) (Expression, error)
+	// VisitDateArith visits DateArith expression.
+	VisitDateArith(dc *DateArith) (Expression, error)
 }
 
 // BaseVisitor is the base implementation of Visitor.
@@ -482,8 +482,8 @@ func (bv *BaseVisitor) VisitFunctionTrim(ss *FunctionTrim) (Expression, error) {
 	return ss, nil
 }
 
-// VisitDateAdd implements Visitor interface.
-func (bv *BaseVisitor) VisitDateAdd(da *DateAdd) (Expression, error) {
+// VisitDateArith implements Visitor interface.
+func (bv *BaseVisitor) VisitDateArith(da *DateArith) (Expression, error) {
 	var err error
 	da.Date, err = da.Date.Accept(bv.V)
 	if err != nil {

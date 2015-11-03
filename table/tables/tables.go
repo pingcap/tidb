@@ -587,7 +587,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		}
 
 		rk := t.RecordKey(handle, nil)
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
 		}
