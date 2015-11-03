@@ -23,6 +23,11 @@ import (
 // Key represents high-level Key type.
 type Key []byte
 
+type KvPair struct {
+	Key   []byte
+	Value []byte
+}
+
 // Next returns the next key in byte-order.
 func (k Key) Next() Key {
 	// add 0x0 to the end of key
@@ -101,6 +106,9 @@ var ErrNotCommitted = errors.New("this transaction is not committed")
 type Transaction interface {
 	// Get gets the value for key k from KV store.
 	Get(k Key) ([]byte, error)
+
+	BatchGet(keys []Key) ([]KvPair, error)
+
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
@@ -140,6 +148,8 @@ type MvccSnapshot interface {
 type Snapshot interface {
 	// Get gets the value for key k from snapshot.
 	Get(k Key) ([]byte, error)
+	// BatchGet
+	BatchGet(keys []Key) ([]KvPair, error)
 	// NewIterator gets a new iterator on the snapshot.
 	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
@@ -188,9 +198,13 @@ type IndexIterator interface {
 	Close()
 }
 
+type KeyChecker interface {
+	KeyExists(Key) bool
+}
+
 // Index is the interface for index data on KV store.
 type Index interface {
-	Create(txn Transaction, indexedValues []interface{}, h int64) error                          // supports insert into statement
+	Create(txn Transaction, indexedValues []interface{}, h int64, keyChecker KeyChecker) error   // supports insert into statement
 	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
 	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
 	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist

@@ -744,7 +744,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 		}
 		// build index
 		kvX := kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, unique)
-		err = kvX.Create(txn, vals, handle)
+		err = kvX.Create(txn, vals, handle, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

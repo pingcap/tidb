@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -84,7 +85,7 @@ type Table interface {
 	Truncate(ctx context.Context) (err error)
 
 	// AddRecord inserts a row into the table.
-	AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error)
+	AddRecord(ctx context.Context, r []interface{}, indexKeyChecker kv.KeyChecker) (recordID int64, err error)
 
 	// UpdateRecord updates a row in the table.
 	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched []bool) error

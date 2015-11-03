@@ -72,6 +72,27 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	return nil, kv.ErrNotExist
 }
 
+func (s *hbaseSnapshot) BatchGet(keys []kv.Key) ([]kv.KvPair, error) {
+	var gets []*hbase.Get
+	for _, key := range keys {
+		g := hbase.NewGet(key)
+		g.AddColumn([]byte(ColFamily), []byte(Qualifier))
+		gets = append(gets, g)
+	}
+	rows, err := s.txn.BatchGet(s.storeName, gets)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var ret []kv.KvPair
+	for _, r := range rows {
+		ret = append(ret, kv.KvPair{
+			Key:   append([]byte(nil), r.Row...),
+			Value: append([]byte(nil), r.Columns[FmlAndQual].Value...),
+		})
+	}
+	return ret, nil
+}
+
 // MvccGet returns the specific version of given key, if the version doesn't
 // exist, returns the nearest(lower) version's data.
 func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {

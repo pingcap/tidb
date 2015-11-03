@@ -19,6 +19,7 @@ package stmts
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
@@ -137,7 +138,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 
 	for i, r := range bufRecords {
 		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
-		if _, err = t.AddRecord(ctx, r); err != nil {
+		if _, err = t.AddRecord(ctx, r, nil); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -221,6 +222,25 @@ func (s *InsertValues) fillValueList() error {
 	return nil
 }
 
+type delayIndexKeyChecker struct {
+	keys []kv.Key
+	txn  kv.Transaction
+}
+
+func (c *delayIndexKeyChecker) KeyExists(k kv.Key) bool {
+	c.keys = append(c.keys, append([]byte(nil), k...))
+	return false
+}
+
+func (c *delayIndexKeyChecker) batchCheckExists() (bool, error) {
+	log.Warnf("on batch check exists")
+	kvs, err := c.txn.BatchGet(c.keys)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(kvs) > 0, nil
+}
+
 // Exec implements the stmt.Statement Exec interface.
 func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	t, err := getTable(ctx, s.TableIdent)
@@ -253,6 +273,13 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		return nil, errors.Trace(err)
 	}
 
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	batchChecker := &delayIndexKeyChecker{
+		txn: txn,
+	}
 	for i, list := range s.Lists {
 		if err = s.checkValueCount(insertValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
@@ -268,7 +295,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
 		// `insert t (c1) values(1),(2),(3);`
 		// Last insert id will be 1, not 3.
-		h, err := t.AddRecord(ctx, row)
+		h, err := t.AddRecord(ctx, row, batchChecker)
 		if err == nil {
 			continue
 		}
@@ -280,7 +307,13 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 			return nil, errors.Trace(err)
 		}
 	}
-
+	exists, err := batchChecker.batchCheckExists()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if exists {
+		return nil, errors.Trace(kv.ErrKeyExists)
+	}
 	return nil, nil
 }
 

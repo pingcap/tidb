@@ -40,6 +40,10 @@ func (b *btreeBuffer) Get(k Key) ([]byte, error) {
 	return fromIfaces(v), nil
 }
 
+func (b *btreeBuffer) BatchGet(keys []Key) ([]KvPair, error) {
+	return nil, nil
+}
+
 // Set associates the key with the value.
 func (b *btreeBuffer) Set(k []byte, v []byte) error {
 	b.tree.Set(toIfaces(k), toIfaces(v))

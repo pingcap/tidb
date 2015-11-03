@@ -108,6 +108,10 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	return s.MvccGet(k, s.version)
 }
 
+func (s *dbSnapshot) BatchGet(keys []kv.Key) ([]kv.KvPair, error) {
+	return nil, nil
+}
+
 func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
 	k, ok := param.([]byte)
 	if !ok {

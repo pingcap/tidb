@@ -103,6 +103,14 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+func (txn *hbaseTxn) BatchGet(keys []kv.Key) ([]kv.KvPair, error) {
+	kvPairs, err := txn.Snapshot.BatchGet(keys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return kvPairs, nil
+}
+
 // GetInt64 get int64 which created by Inc method.
 func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
 	k = kv.EncodeKey(k)

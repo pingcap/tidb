@@ -324,7 +324,7 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched []bool, old
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
+func (t *Table) AddRecord(ctx context.Context, r []interface{}, indexKeyChecker kv.KeyChecker) (recordID int64, err error) {
 	id := variable.GetSessionVars(ctx).LastInsertID
 	// Already have auto increment ID
 	if id != 0 {
@@ -344,7 +344,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
-		if err = v.X.Create(txn, colVals, recordID); err != nil {
+		if err = v.X.Create(txn, colVals, recordID, indexKeyChecker); err != nil {
 			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
@@ -513,7 +513,7 @@ func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = idx.X.Create(txn, vals, h); err != nil {
+	if err = idx.X.Create(txn, vals, h, nil); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

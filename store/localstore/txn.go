@@ -130,6 +130,10 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+func (txn *dbTxn) BatchGet(k []kv.Key) ([]kv.KvPair, error) {
+	return nil, nil
+}
+
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if len(data) == 0 {
 		// Incase someone use it in the wrong way, we can figure it out immediately.
