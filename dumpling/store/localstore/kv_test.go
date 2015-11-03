@@ -570,11 +570,11 @@ func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
 
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		txn.Set([]byte("a"), []byte("0"))
-		txn.Inc([]byte("b"), 1)
+		txn.Inc([]byte("a"), 1)
 
 		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 			txn.Set([]byte("b"), []byte("0"))
-			txn.Inc([]byte("a"), 1)
+			txn.Inc([]byte("b"), 1)
 
 			return nil
 		})
