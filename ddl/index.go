@@ -452,7 +452,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
 
 	for _, handle := range handles {
-		log.Error("building index...", handle, handles)
+		log.Debug("building index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			// first check row exists
@@ -499,18 +499,6 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		// Remove indices.
-		for _, v := range t.Indices() {
-			if v != nil && v.X != nil && v.Name.L == indexInfo.Name.L {
-				if err := v.X.Drop(txn); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-
-		return nil
-	})
-
+	err := d.delKeysWithPrefix(kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.Name.L))
 	return errors.Trace(err)
 }
