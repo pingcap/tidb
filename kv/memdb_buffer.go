@@ -58,6 +58,11 @@ func (m *memDbBuffer) Get(k Key) ([]byte, error) {
 	return v, nil
 }
 
+func (m *memDbBuffer) BatchGet(keys []Key) ([]KvPair, error) {
+	// TODO
+	return nil, nil
+}
+
 // Set associates key with value.
 func (m *memDbBuffer) Set(k []byte, v []byte) error {
 	return m.db.Put(k, v)
