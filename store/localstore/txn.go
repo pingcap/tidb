@@ -193,10 +193,6 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 
-	// Release read lock before write. Workaround for BoltDB.
-	// We must Release the snapshot before tryConditionLockKey.
-	// another writing has already locked store lock -> boltdb lock, and
-	// here we lock botldb lock -> store lock, deadlock!
 	txn.Snapshot.Release()
 
 	// Check locked keys
