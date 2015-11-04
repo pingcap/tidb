@@ -26,6 +26,11 @@ type Node interface {
 	// Accept accepts Visitor to visit itself.
 	// The returned node should replace original node.
 	// ok returns false to stop visiting.
+	//
+	// Implementation of this method should first call visitor.Enter,
+	// assign the returned node to its method receiver, if skipChildren returns true,
+	// children should be skipped. Otherwise, call its children in particular order that
+	// later elements depends on on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, ok bool)
 	// Text returns the original text of the element.
 	Text() string
