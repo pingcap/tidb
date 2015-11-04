@@ -75,17 +75,6 @@ type binderContext struct {
 	inByItemExpression bool
 }
 
-type BinderErrorType int
-
-const (
-	BinderErrorAmbiguous BinderErrorType = iota
-	BinderError
-)
-
-type InfoBnderError struct {
-	ErrorType int
-}
-
 // currentContext gets the current binder context.
 func (sb *InfoBinder) currentContext() *binderContext {
 	stackLen := len(sb.contextStack)
