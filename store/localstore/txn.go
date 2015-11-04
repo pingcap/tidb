@@ -185,6 +185,13 @@ func (txn *dbTxn) doCommit() error {
 			txn.store.unLockKeys(key)
 		}
 	}()
+
+	// Release read lock before write. Workaround for BoltDB.
+	// We must Release the snapshot before tryConditionLockKey.
+	// another writing has already locked store lock -> boltdb lock, and
+	// here we lock botldb lock -> store lock, deadlock!
+	txn.Snapshot.Release()
+
 	// Check locked keys
 	for k := range txn.snapshotVals {
 		err := txn.store.tryConditionLockKey(txn.tid, k)
@@ -216,8 +223,6 @@ func (txn *dbTxn) doCommit() error {
 	}
 	// Update commit version.
 	txn.version = curVer
-	// Release read lock before write. Workaround for BoltDB.
-	txn.Snapshot.Release()
 	return txn.store.writeBatch(b)
 }
 
