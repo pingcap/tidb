@@ -80,6 +80,11 @@ type Job struct {
 	// snapshot version for this job.
 	SnapshotVer  uint64 `json:"snapshot_ver"`
 	LastUpdateTS int64  `json:"last_update_ts"`
+	// For reorgnization adding data job like add index, add column,
+	// we will traverse the huge snapshot and add the data in batches.
+	// After some successful batches, we will update the ReorgHandle for
+	// later resuming if currect server crashed.
+	ReOrgHandle int64 `json:"reorg_handle"`
 }
 
 // Encode encodes job with json format.

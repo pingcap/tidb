@@ -98,7 +98,6 @@ const waitReorgTimeout = 10 * time.Second
 var errWaitReorgTimeout = errors.New("wait for reorgnization timeout")
 
 func (d *ddl) runReorgJob(f func() error) error {
-	// TODO use persistent reorgnization job list.
 	if d.reOrgDoneCh == nil {
 		// start a reorgnization job
 		d.reOrgDoneCh = make(chan error, 1)
