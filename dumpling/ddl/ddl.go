@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
@@ -59,9 +60,14 @@ type DDL interface {
 	DropIndex(ctx context.Context, tableIdent table.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent table.Ident, spec []*AlterSpecification) error
+	// SetLease will reset the lease time for online DDL change, it is a very dangerous function and you must guarantee that
+	// all servers have the same lease time.
+	SetLease(lease time.Duration)
 }
 
 type ddl struct {
+	m sync.Mutex
+
 	infoHandle  *infoschema.Handle
 	onDDLChange OnDDLChange
 	store       kv.Storage
@@ -142,6 +148,22 @@ func (d *ddl) isClosed() bool {
 	default:
 		return false
 	}
+}
+
+func (d *ddl) SetLease(lease time.Duration) {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	if lease == d.lease {
+		return
+	}
+
+	log.Warnf("change schema lease %s -> %s", d.lease, lease)
+	d.lease = lease
+
+	// close the running worker and start again
+	d.close()
+	d.start()
 }
 
 func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
