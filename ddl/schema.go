@@ -119,13 +119,13 @@ func (d *ddl) onSchemaDrop(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
-		// delete only -> reorgnization
-		job.SchemaState = model.StateReorgnization
-		dbInfo.State = model.StateReorgnization
+		// delete only -> reorganization
+		job.SchemaState = model.StateReorganization
+		dbInfo.State = model.StateReorganization
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
-	case model.StateReorgnization:
-		// wait reorgnization jobs done and drop meta.
+	case model.StateReorganization:
+		// wait reorganization jobs done and drop meta.
 		var tables []*model.TableInfo
 		tables, err = t.ListTables(dbInfo.ID)
 		if err != nil {
@@ -144,7 +144,7 @@ func (d *ddl) onSchemaDrop(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		// all reorgnization jobs done, drop this database
+		// all reorganization jobs done, drop this database
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			return errors.Trace(err)
 		}
