@@ -82,7 +82,7 @@ func (s *testColumnSuite) TestFind(c *C) {
 	}
 	FindCols(cols, []string{"a"})
 	FindCols(cols, []string{"d"})
-	cols[0].Flag |= mysql.OnUpdateNowFlag
+	cols[0].Flag |= mysql.UpdatingFlag
 	FindOnUpdateCols(cols)
 }
 

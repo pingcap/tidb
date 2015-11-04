@@ -31,5 +31,5 @@ func (s *testTypeSuite) TestFlags(c *C) {
 	c.Assert(HasPriKeyFlag(PriKeyFlag), IsTrue)
 	c.Assert(HasMultipleKeyFlag(MultipleKeyFlag), IsTrue)
 	c.Assert(HasTimestampFlag(TimestampFlag), IsTrue)
-	c.Assert(HasOnUpdateNowFlag(OnUpdateNowFlag), IsTrue)
+	c.Assert(HasUpdatingFlag(UpdatingFlag), IsTrue)
 }
