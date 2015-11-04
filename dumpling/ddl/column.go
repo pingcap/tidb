@@ -100,8 +100,7 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	var columnInfo *model.ColumnInfo
-	columnInfo = findCol(tblInfo.Columns, spec.Column.Name)
+	columnInfo := findCol(tblInfo.Columns, spec.Column.Name)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
 			// we already have a column with same column name
@@ -141,18 +140,18 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		job.SchemaState = model.StateReorgnization
-		columnInfo.State = model.StateReorgnization
-		// initialize SnapshotVer to 0 for later reorgnization check.
+		job.SchemaState = model.StateReorganization
+		columnInfo.State = model.StateReorganization
+		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		// initialize reorg handle to 0
-		job.ReOrgHandle = 0
-		atomic.StoreInt64(&d.reOrgHandle, 0)
+		job.ReorgHandle = 0
+		atomic.StoreInt64(&d.reorgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorgnization:
+	case model.StateReorganization:
 		// reorganization -> public
-		// get the current version for reorgnization if we don't have
+		// get the current version for reorganization if we don't have
 		if job.SnapshotVer == 0 {
 			var ver kv.Version
 			ver, err = d.store.CurrentVersion()
@@ -169,12 +168,12 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.backfillColumn(tbl, columnInfo, job.SnapshotVer, job.ReOrgHandle)
+			return d.backfillColumn(tbl, columnInfo, job.SnapshotVer, job.ReorgHandle)
 		})
 
-		// backfillColumn updates ReOrgHandle after one batch.
-		// so we update the job ReOrgHandle here.
-		job.ReOrgHandle = atomic.LoadInt64(&d.reOrgHandle)
+		// backfillColumn updates ReorgHandle after one batch.
+		// so we update the job ReorgHandle here.
+		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
 		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -217,15 +216,15 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, versio
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
-		// TODO: save seekHandle in reorgnization job, so we can resume this job later from this handle.
+		// TODO: save seekHandle in reorganization job, so we can resume this job later from this handle.
 
 		err = d.backfillColumnData(t, columnInfo, handles)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		// update reOrgHandle here after every successful batch.
-		atomic.StoreInt64(&d.reOrgHandle, seekHandle)
+		// update reorgHandle here after every successful batch.
+		atomic.StoreInt64(&d.reorgHandle, seekHandle)
 	}
 }
 
