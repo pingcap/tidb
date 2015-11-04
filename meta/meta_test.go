@@ -146,6 +146,17 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbs, HasLen, 0)
 
+	bootstrapped, err := t.IsBootstrapped()
+	c.Assert(err, IsNil)
+	c.Assert(bootstrapped, IsFalse)
+
+	err = t.FinishBootstrap()
+	c.Assert(err, IsNil)
+
+	bootstrapped, err = t.IsBootstrapped()
+	c.Assert(err, IsNil)
+	c.Assert(bootstrapped, IsTrue)
+
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }

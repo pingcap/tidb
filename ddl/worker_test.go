@@ -72,4 +72,6 @@ func (s *testDDLSuite) TestCheckOnwer(c *C) {
 	time.Sleep(6 * lease)
 
 	testCheckOwner(c, d2, true)
+
+	d2.SetLease(1 * time.Second)
 }

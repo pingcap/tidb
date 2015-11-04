@@ -54,6 +54,7 @@ var (
 	mDBPrefix         = "mDB"
 	mTablePrefix      = "mTable"
 	mTableIDPrefix    = "mTID"
+	mBootstrapKey     = []byte("mBootstrapKey")
 )
 
 var (
@@ -516,4 +517,20 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	job := &model.Job{}
 	err = job.Decode(value)
 	return job, errors.Trace(err)
+}
+
+// IsBootstrapped returns whether we have already run bootstrap or not.
+// return true means we don't need doing any other bootstrap.
+func (m *Meta) IsBootstrapped() (bool, error) {
+	value, err := m.txn.GetInt64(mBootstrapKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return value == 1, nil
+}
+
+// FinishBootstrap finishes bootstrap.
+func (m *Meta) FinishBootstrap() error {
+	err := m.txn.Set(mBootstrapKey, []byte("1"))
+	return errors.Trace(err)
 }

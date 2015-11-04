@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -548,15 +550,66 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	_, ok := storeBootstrapped[store.UUID()]
+	ok := isBoostrapped(store)
 	if !ok {
 		s.initing = true
 		bootstrap(s)
 		s.initing = false
-		storeBootstrapped[store.UUID()] = true
+		finishBoostrap(store)
 	}
+
+	// if store is not local store, we will reset lease time after bootstrap
+	if !localstore.IsLocalStore(store) {
+		lease := SchemaLease
+		if lease < minSchemaLease {
+			lease = minSchemaLease
+		}
+
+		sessionctx.GetDomain(s).SetLease(time.Duration(lease) * time.Second)
+	}
+
 	// TODO: Add auth here
 	privChecker := &privileges.UserPrivileges{}
 	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
+}
+
+func isBoostrapped(store kv.Storage) bool {
+	// check in memory
+	_, ok := storeBootstrapped[store.UUID()]
+	if ok {
+		return true
+	}
+
+	// check in kv store
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		var err error
+		t := meta.NewMeta(txn)
+		ok, err = t.IsBootstrapped()
+		return errors.Trace(err)
+	})
+
+	if err != nil {
+		log.Fatalf("check bootstrapped err %v", err)
+	}
+
+	if ok {
+		// here mean memory is not ok, but other server has already finished it
+		storeBootstrapped[store.UUID()] = true
+	}
+
+	return ok
+}
+
+func finishBoostrap(store kv.Storage) {
+	storeBootstrapped[store.UUID()] = true
+
+	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := t.FinishBootstrap()
+		return errors.Trace(err)
+	})
+	if err != nil {
+		log.Fatalf("finish bootstrap err %v", err)
+	}
 }
