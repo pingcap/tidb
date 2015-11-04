@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"bytes"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -159,6 +160,9 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		indexInfo.State = model.StateReorgnization
 		// initialize SnapshotVer to 0 for later reorgnization check.
 		job.SnapshotVer = 0
+		// initialize reorg handle to 0
+		job.ReOrgHandle = 0
+		atomic.StoreInt64(&d.reOrgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorgnization:
@@ -181,8 +185,12 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.addTableIndex(tbl, indexInfo, job.SnapshotVer)
+			return d.addTableIndex(tbl, indexInfo, job.SnapshotVer, job.ReOrgHandle)
 		})
+
+		// addTableIndex updates ReOrgHandle after one batch.
+		// so we update the job ReOrgHandle here.
+		job.ReOrgHandle = atomic.LoadInt64(&d.reOrgHandle)
 
 		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -343,8 +351,7 @@ const maxBatchSize = 1024
 //  3, For one row, if the row has been already deleted, skip to next row.
 //  4, If not deleted, check whether index has existed, if existed, skip to next row.
 //  5, If index doesn't exist, create the index and then continue to handle next row.
-func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version uint64) error {
-	seekHandle := int64(0)
+func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version uint64, seekHandle int64) error {
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
@@ -354,12 +361,14 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
-		// TODO: save seekHandle in reorgnization job, so we can resume this job later from this handle.
 
 		err = d.backfillTableIndex(t, indexInfo, handles)
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// update reOrgHandle here after every successful batch.
+		atomic.StoreInt64(&d.reOrgHandle, seekHandle)
 	}
 }
 
@@ -418,7 +427,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
 
 	for _, handle := range handles {
-		log.Error("building index...", handle, handles)
+		log.Debug("building index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			// first check row exists
@@ -465,18 +474,6 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		// Remove indices.
-		for _, v := range t.Indices() {
-			if v != nil && v.X != nil && v.Name.L == indexInfo.Name.L {
-				if err := v.X.Drop(txn); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-
-		return nil
-	})
-
+	err := d.delKeysWithPrefix(kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.Name.L))
 	return errors.Trace(err)
 }

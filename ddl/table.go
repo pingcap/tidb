@@ -193,12 +193,14 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 }
 
 func (d *ddl) dropTableData(t table.Table) error {
-	ctx := d.newReorgContext()
-
-	if err := t.Truncate(ctx); err != nil {
-		ctx.FinishTxn(true)
+	// delete table data
+	err := d.delKeysWithPrefix(t.KeyPrefix())
+	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(ctx.FinishTxn(false))
+	// delete table index
+	err = d.delKeysWithPrefix(t.IndexPrefix())
+
+	return errors.Trace(err)
 }

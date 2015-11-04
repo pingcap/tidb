@@ -160,16 +160,13 @@ func (d *ddl) onSchemaDrop(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
-	ctx := d.newReorgContext()
-
 	for _, tblInfo := range tables {
 		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
 		t := table.TableFromMeta(alloc, tblInfo)
-		err := t.Truncate(ctx)
+		err := d.dropTableData(t)
 		if err != nil {
-			ctx.FinishTxn(true)
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(ctx.FinishTxn(false))
+	return nil
 }

@@ -52,7 +52,7 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	if spec.Position.Type == ColumnPositionFirst {
 		position = 0
 	} else if spec.Position.Type == ColumnPositionAfter {
-		c := findCol(tblInfo.Columns, spec.Position.RelativeColumn)
+		c := findCol(cols, spec.Position.RelativeColumn)
 		if c == nil {
 			return nil, 0, errors.Errorf("No such column: %v", spec.Column.Name)
 		}
