@@ -70,7 +70,7 @@ const (
 	TimestampFlag      = 1024   /* Field is a timestamp */
 	SetFlag            = 2048   /* Field is a set */
 	NoDefaultValueFlag = 4096   /* Field doesn't have a default value */
-	OnUpdateNowFlag    = 8192   /* Field is set to NOW on UPDATE */
+	UpdatingFlag = 8192   /* Field is updating now */
 	NumFlag            = 32768  /* Field is a num (for clients) */
 	PartKeyFlag        = 16384  /* Intern: Part of some keys */
 	GroupFlag          = 32768  /* Intern: Group field */
@@ -135,7 +135,7 @@ func HasTimestampFlag(flag uint) bool {
 	return (flag & TimestampFlag) > 0
 }
 
-// HasOnUpdateNowFlag checks if OnUpdateNowFlag is set.
-func HasOnUpdateNowFlag(flag uint) bool {
-	return (flag & OnUpdateNowFlag) > 0
+// HasUpdatingFlag checks if UpdatingFlag is set.
+func HasUpdatingFlag(flag uint) bool {
+	return (flag & UpdatingFlag) > 0
 }

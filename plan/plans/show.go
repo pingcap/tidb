@@ -453,7 +453,7 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 				buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
 			}
 
-			if mysql.HasOnUpdateNowFlag(col.Flag) {
+			if mysql.HasUpdatingFlag(col.Flag) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
 			}
 		}

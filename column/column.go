@@ -91,7 +91,7 @@ func FindOnUpdateCols(cols []*Col) []*Col {
 			continue
 		}
 
-		if mysql.HasOnUpdateNowFlag(col.Flag) {
+		if mysql.HasUpdatingFlag(col.Flag) {
 			rcols = append(rcols, col)
 		}
 	}
@@ -161,7 +161,7 @@ func NewColDesc(col *Col) *ColDesc {
 	extra := ""
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		extra = "auto_increment"
-	} else if mysql.HasOnUpdateNowFlag(col.Flag) {
+	} else if mysql.HasUpdatingFlag(col.Flag) {
 		extra = "on update CURRENT_TIMESTAMP"
 	}
 

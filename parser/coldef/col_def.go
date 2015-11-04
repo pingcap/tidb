@@ -111,7 +111,7 @@ func removeOnUpdateNowFlag(c *column.Col) {
 	// For timestamp Col, if it is set null or default value,
 	// OnUpdateNowFlag should be removed.
 	if mysql.HasTimestampFlag(c.Flag) {
-		c.Flag &= ^uint(mysql.OnUpdateNowFlag)
+		c.Flag &= ^uint(mysql.UpdatingFlag)
 	}
 }
 
@@ -176,7 +176,7 @@ func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstra
 	// Check and set TimestampFlag and OnUpdateNowFlag.
 	if col.Tp == mysql.TypeTimestamp {
 		col.Flag |= mysql.TimestampFlag
-		col.Flag |= mysql.OnUpdateNowFlag
+		col.Flag |= mysql.UpdatingFlag
 		col.Flag |= mysql.NotNullFlag
 	}
 
@@ -241,7 +241,7 @@ func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstra
 					return nil, nil, errors.Errorf("invalid ON UPDATE for - %s", col.Name)
 				}
 
-				col.Flag |= mysql.OnUpdateNowFlag
+				col.Flag |= mysql.UpdatingFlag
 				setOnUpdateNow = true
 			case ConstrFulltext:
 				// Do nothing.
