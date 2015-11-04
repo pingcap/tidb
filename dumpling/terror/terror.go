@@ -28,7 +28,7 @@ type ErrCode int
 
 // Error classes
 const (
-	Parser ErrClass = iota
+	Parser ErrClass = iota + 1
 	Optimizer
 	KV
 	Server
