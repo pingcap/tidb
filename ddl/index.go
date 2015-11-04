@@ -95,7 +95,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	}
 }
 
-func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
@@ -216,7 +216,7 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {

@@ -85,7 +85,7 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*mo
 	return colInfo, position, nil
 }
 
-func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
 	if err != nil {
@@ -201,7 +201,7 @@ func (d *ddl) onColumnAdd(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onColumnDrop(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	// TODO: complete it.
 	return nil
 }

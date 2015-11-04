@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) onTableCreate(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -89,7 +89,7 @@ func (d *ddl) onTableCreate(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onTableDrop(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 
