@@ -195,8 +195,8 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		// initialize SnapshotVer to 0 for later reorgnization check.
 		job.SnapshotVer = 0
 		// initialize reorg handle to 0
-		job.ReOrgHandle = 0
-		atomic.StoreInt64(&d.reOrgHandle, 0)
+		job.ReorgHandle = 0
+		atomic.StoreInt64(&d.reorgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorgnization:
@@ -219,12 +219,12 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.addTableIndex(tbl, indexInfo, job.SnapshotVer, job.ReOrgHandle)
+			return d.addTableIndex(tbl, indexInfo, job.SnapshotVer, job.ReorgHandle)
 		})
 
-		// addTableIndex updates ReOrgHandle after one batch.
-		// so we update the job ReOrgHandle here.
-		job.ReOrgHandle = atomic.LoadInt64(&d.reOrgHandle)
+		// addTableIndex updates ReorgHandle after one batch.
+		// so we update the job ReorgHandle here.
+		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
 		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -401,8 +401,8 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version u
 			return errors.Trace(err)
 		}
 
-		// update reOrgHandle here after every successful batch.
-		atomic.StoreInt64(&d.reOrgHandle, seekHandle)
+		// update reorgHandle here after every successful batch.
+		atomic.StoreInt64(&d.reorgHandle, seekHandle)
 	}
 }
 
