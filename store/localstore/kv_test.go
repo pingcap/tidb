@@ -15,6 +15,7 @@ package localstore
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
 
@@ -554,4 +556,40 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	c.Assert(err, NotNil)
 
 	snap.MvccRelease()
+}
+
+func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
+	d := Driver{
+		boltdb.Driver{},
+	}
+	path := "boltdb_test"
+	defer os.Remove(path)
+	store, err := d.Open(path)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		txn.Set([]byte("a"), []byte("0"))
+		txn.Inc([]byte("a"), 1)
+
+		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			txn.Set([]byte("b"), []byte("0"))
+			txn.Inc([]byte("b"), 1)
+
+			return nil
+		})
+
+		return nil
+	})
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		n, err := txn.GetInt64([]byte("a"))
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, int64(1))
+
+		n, err = txn.GetInt64([]byte("b"))
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, int64(1))
+		return nil
+	})
 }
