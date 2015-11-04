@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -107,6 +108,10 @@ type Table interface {
 	// LockRow locks a row.
 	// If update is true, set row lock key to current txn.
 	LockRow(ctx context.Context, h int64, update bool) error
+
+	// SetColValue sets the column value.
+	// If the column untouched, we don't need to do this.
+	SetColValue(txn kv.Transaction, key []byte, data interface{}) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

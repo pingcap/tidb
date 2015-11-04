@@ -195,10 +195,10 @@ func (s *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 	return cols, nil
 }
 
-func (s *InsertValues) evalColumnDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
+func (s *InsertValues) getColumnDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
 	defaultValMap := map[interface{}]interface{}{}
 	for _, col := range cols {
-		if value, ok, err := tables.EvalColumnDefaultValue(ctx, &col.ColumnInfo); ok {
+		if value, ok, err := tables.GetColDefaultValue(ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -249,7 +249,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		return nil, errors.Trace(err)
 	}
 
-	defaultValMap, err := s.evalColumnDefaultValues(ctx, t.Cols())
+	defaultValMap, err := s.getColumnDefaultValues(ctx, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -408,7 +408,7 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 			variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
 		} else {
 			var value interface{}
-			value, _, err = tables.EvalColumnDefaultValue(ctx, &c.ColumnInfo)
+			value, _, err = tables.GetColDefaultValue(ctx, &c.ColumnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
