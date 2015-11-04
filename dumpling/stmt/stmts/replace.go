@@ -78,7 +78,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		return nil, errors.Trace(err)
 	}
 
-	evalMap, err := s.evalColumnDefaultValues(ctx, t.Cols())
+	evalMap, err := s.getColumnDefaultValues(ctx, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

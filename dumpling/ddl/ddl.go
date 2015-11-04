@@ -454,8 +454,25 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	return nil
 }
 
+func checkColumnConstraint(constraints []*coldef.ConstraintOpt) error {
+	for _, constraint := range constraints {
+		switch constraint.Tp {
+		case coldef.ConstrAutoIncrement, coldef.ConstrForeignKey, coldef.ConstrPrimaryKey, coldef.ConstrUniq, coldef.ConstrUniqKey:
+			return errors.Errorf("unsupported add column constraint - %s", constraint)
+		}
+	}
+
+	return nil
+}
+
 // AddColumn will add a new column to the table.
 func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecification) error {
+	// Check whether the added column constraints are supported.
+	err := checkColumnConstraint(spec.Column.Constraints)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {

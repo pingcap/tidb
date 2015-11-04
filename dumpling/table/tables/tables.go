@@ -310,8 +310,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	return nil
 }
 
-// SetColValue sets the column value.
-// If the column untouched, we don't need to do this.
+// SetColValue implements table.Table SetColValue interface.
 func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) error {
 	v, err := t.EncodeValue(data)
 	if err != nil {
@@ -426,7 +425,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		var value interface{}
 		key := t.RecordKey(recordID, col)
 		if col.State == model.StateWriteOnly {
-			value, _, err = EvalColumnDefaultValue(ctx, &col.ColumnInfo)
+			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -668,8 +667,8 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
-// EvalColumnDefaultValue evals default value of the column.
-func EvalColumnDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}, bool, error) {
+// GetColDefaultValue evals default value of the column.
+func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}, bool, error) {
 	// Check no default value flag.
 	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
 		return nil, false, errors.Errorf("Field '%s' doesn't have a default value", col.Name)

@@ -244,12 +244,12 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			value, _, err := tables.EvalColumnDefaultValue(nil, columnInfo)
+			value, _, err := tables.GetColDefaultValue(nil, columnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			err = t.(*tables.Table).SetColValue(txn, backfillKey, value)
+			err = t.SetColValue(txn, backfillKey, value)
 			if err != nil {
 				return errors.Trace(err)
 			}
