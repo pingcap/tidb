@@ -23,16 +23,16 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
-var _ context.Context = &reOrgContext{}
+var _ context.Context = &reorgContext{}
 
-// reOrgContext implements context.Context interface for reorgnization use.
-type reOrgContext struct {
+// reorgContext implements context.Context interface for reorganization use.
+type reorgContext struct {
 	store kv.Storage
 	m     map[fmt.Stringer]interface{}
 	txn   kv.Transaction
 }
 
-func (c *reOrgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
+func (c *reorgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 	if forceNew {
 		if c.txn != nil {
 			if err := c.txn.Commit(); err != nil {
@@ -55,7 +55,7 @@ func (c *reOrgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 	return c.txn, nil
 }
 
-func (c *reOrgContext) FinishTxn(rollback bool) error {
+func (c *reorgContext) FinishTxn(rollback bool) error {
 	if c.txn == nil {
 		return nil
 	}
@@ -72,20 +72,20 @@ func (c *reOrgContext) FinishTxn(rollback bool) error {
 	return errors.Trace(err)
 }
 
-func (c *reOrgContext) SetValue(key fmt.Stringer, value interface{}) {
+func (c *reorgContext) SetValue(key fmt.Stringer, value interface{}) {
 	c.m[key] = value
 }
 
-func (c *reOrgContext) Value(key fmt.Stringer) interface{} {
+func (c *reorgContext) Value(key fmt.Stringer) interface{} {
 	return c.m[key]
 }
 
-func (c *reOrgContext) ClearValue(key fmt.Stringer) {
+func (c *reorgContext) ClearValue(key fmt.Stringer) {
 	delete(c.m, key)
 }
 
 func (d *ddl) newReorgContext() context.Context {
-	c := &reOrgContext{
+	c := &reorgContext{
 		store: d.store,
 		m:     make(map[fmt.Stringer]interface{}),
 	}
@@ -95,23 +95,23 @@ func (d *ddl) newReorgContext() context.Context {
 
 const waitReorgTimeout = 10 * time.Second
 
-var errWaitReorgTimeout = errors.New("wait for reorgnization timeout")
+var errWaitReorgTimeout = errors.New("wait for reorganization timeout")
 
 func (d *ddl) runReorgJob(f func() error) error {
-	if d.reOrgDoneCh == nil {
-		// start a reorgnization job
-		d.reOrgDoneCh = make(chan error, 1)
+	if d.reorgDoneCh == nil {
+		// start a reorganization job
+		d.reorgDoneCh = make(chan error, 1)
 		go func() {
-			d.reOrgDoneCh <- f()
+			d.reorgDoneCh <- f()
 		}()
 	}
 
 	waitTimeout := chooseLeaseTime(d.lease, waitReorgTimeout)
 
-	// wait reorgnization job done or timeout
+	// wait reorganization job done or timeout
 	select {
-	case err := <-d.reOrgDoneCh:
-		d.reOrgDoneCh = nil
+	case err := <-d.reorgDoneCh:
+		d.reorgDoneCh = nil
 		return errors.Trace(err)
 	case <-time.After(waitTimeout):
 		// if timeout, we will return, check the owner and retry wait job done again.
