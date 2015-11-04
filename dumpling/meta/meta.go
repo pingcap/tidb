@@ -125,13 +125,13 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 
 // GenAutoTableID adds step to the auto id of the table and returns the sum.
 func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
-	// check db exists
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	// check table exists
+	// Check if table exists.
 	tableKey := m.tableKey(tableID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return 0, errors.Trace(err)
@@ -239,14 +239,14 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 
 // CreateTable creates a table with tableInfo in database.
 func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
-	// then check table exists or not
 	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -261,7 +261,7 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
-	// check if db exists.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.txn.HClear(dbKey); err != nil {
 		return errors.Trace(err)
@@ -276,14 +276,14 @@ func (m *Meta) DropDatabase(dbID int64) error {
 
 // DropTable drops table in database.
 func (m *Meta) DropTable(dbID int64, tableID int64) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Check if table exists.
 	tableKey := m.tableKey(tableID)
-	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -301,15 +301,14 @@ func (m *Meta) DropTable(dbID int64, tableID int64) error {
 
 // UpdateTable updates the table with table info.
 func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
-
-	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -320,7 +319,6 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	err = m.txn.HSet(dbKey, tableKey, data)
-
 	return errors.Trace(err)
 }
 
@@ -390,7 +388,7 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 
 // GetTable gets the table value in database with tableID.
 func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)

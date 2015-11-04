@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -56,7 +57,7 @@ type Table interface {
 	// TableName returns table name.
 	TableName() model.CIStr
 
-	// Cols returns the columns of the table.
+	// Cols returns the columns of the table which is used in select.
 	Cols() []*column.Col
 
 	// Indices returns the indices of the table.
@@ -87,7 +88,7 @@ type Table interface {
 	AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error)
 
 	// UpdateRecord updates a row in the table.
-	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched []bool) error
+	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched map[int]bool) error
 
 	// TableID returns the ID of the table.
 	TableID() int64
@@ -107,6 +108,10 @@ type Table interface {
 	// LockRow locks a row.
 	// If update is true, set row lock key to current txn.
 	LockRow(ctx context.Context, h int64, update bool) error
+
+	// SetColValue sets the column value.
+	// If the column is untouched, we don't need to do this.
+	SetColValue(txn kv.Transaction, key []byte, data interface{}) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

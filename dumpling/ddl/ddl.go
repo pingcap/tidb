@@ -34,8 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/twinj/uuid"
@@ -182,20 +180,6 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	return errors.Trace(err)
 }
 
-func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
-	curVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if curVer != schemaMetaVersion {
-		return errors.Errorf("Schema changed, our version %d, but got %d", schemaMetaVersion, curVer)
-	}
-
-	// Increment version.
-	_, err = t.GenSchemaVersion()
-	return errors.Trace(err)
-}
-
 func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
@@ -288,7 +272,7 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 }
 
 func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
-	// set charset
+	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -298,15 +282,17 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 			colDef.Tp.Collate = charset.CharsetBin
 		}
 	}
-	// convert colDef into col
+
 	col, cts, err := coldef.ColumnDefToCol(offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	col.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	return col, cts, nil
 }
 
@@ -439,19 +425,6 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterSpecification) (err error) {
-	// Get database and table.
-	is := d.GetInformationSchema()
-
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return errors.Trace(qerror.ErrDatabaseNotExist)
-	}
-
-	tbl, err := is.TableByName(ident.Schema, ident.Name)
-	if err != nil {
-		return errors.Trace(ErrNotExists)
-	}
-
 	// now we only allow one schema changes at the same time.
 	if len(specs) != 1 {
 		return errors.New("can't run multi schema changes in one DDL")
@@ -460,7 +433,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			err = d.addColumn(ctx, schema, tbl, spec, is.SchemaMetaVersion())
+			err = d.AddColumn(ctx, ident, spec)
 		case AlterDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case AlterAddConstr:
@@ -481,114 +454,50 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 			return errors.Trace(err)
 		}
 	}
+
 	return nil
 }
 
-// Add a column into table
-func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
-	// Find position
-	cols := tbl.Cols()
-	position := len(cols)
-	name := spec.Column.Name
-	// Check column name duplicate.
-	dc := column.FindCol(cols, name)
-	if dc != nil {
-		return errors.Errorf("Try to add a column with the same name of an already exists column.")
-	}
-	if spec.Position.Type == ColumnPositionFirst {
-		position = 0
-	} else if spec.Position.Type == ColumnPositionAfter {
-		// Find the mentioned column.
-		c := column.FindCol(cols, spec.Position.RelativeColumn)
-		if c == nil {
-			return errors.Errorf("No such column: %v", name)
+func checkColumnConstraint(constraints []*coldef.ConstraintOpt) error {
+	for _, constraint := range constraints {
+		switch constraint.Tp {
+		case coldef.ConstrAutoIncrement, coldef.ConstrForeignKey, coldef.ConstrPrimaryKey, coldef.ConstrUniq, coldef.ConstrUniqKey:
+			return errors.Errorf("unsupported add column constraint - %s", constraint)
 		}
-		// Insert position is after the mentioned column.
-		position = c.Offset + 1
 	}
-	// TODO: set constraint
-	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
+
+	return nil
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecification) error {
+	// Check whether the added column constraints are supported.
+	err := checkColumnConstraint(spec.Column.Constraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// insert col into the right place of the column list
-	newCols := make([]*column.Col, 0, len(cols)+1)
-	newCols = append(newCols, cols[:position]...)
-	newCols = append(newCols, col)
-	newCols = append(newCols, cols[position:]...)
-	// adjust position
-	if position != len(cols) {
-		offsetChange := make(map[int]int)
-		for i := position + 1; i < len(newCols); i++ {
-			offsetChange[newCols[i].Offset] = i
-			newCols[i].Offset = i
-		}
-		// Update index offset info
-		for _, idx := range tbl.Indices() {
-			for _, c := range idx.Columns {
-				newOffset, ok := offsetChange[c.Offset]
-				if ok {
-					c.Offset = newOffset
-				}
-			}
-		}
-	}
-	tb := tbl.(*tables.Table)
-	tb.Columns = newCols
 
-	// TODO: update index
-	if err = updateOldRows(ctx, tb, col); err != nil {
-		return errors.Trace(err)
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(qerror.ErrDatabaseNotExist)
 	}
 
-	// update infomation schema
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, schemaMetaVersion)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(ErrNotExists)
+	}
 
-		err = t.UpdateTable(schema.ID, tb.Meta())
-		return errors.Trace(err)
-	})
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionAddColumn,
+		Args:     []interface{}{spec, 0},
+	}
 
+	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
-}
-
-func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	it, err := txn.Seek([]byte(t.FirstKey()))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-
-	prefix := t.KeyPrefix()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
-		if err0 != nil {
-			return errors.Trace(err0)
-		}
-		k := t.RecordKey(handle, col)
-
-		// TODO: check and get timestamp/datetime default value.
-		// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
-		if err0 = t.SetColValue(txn, k, col.DefaultValue); err0 != nil {
-			return errors.Trace(err0)
-		}
-
-		rk := t.RecordKey(handle, nil)
-		if err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
-			return errors.Trace(err0)
-		}
-	}
-
-	return nil
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -692,4 +601,16 @@ func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIS
 	err = d.startJob(ctx, job)
 	err = d.onDDLChange(err)
 	return errors.Trace(err)
+}
+
+// findCol finds column in cols by name.
+func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
+	name = strings.ToLower(name)
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+
+	return nil
 }

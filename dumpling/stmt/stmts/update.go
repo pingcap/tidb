@@ -119,17 +119,17 @@ func getUpdateColumns(assignList []*expression.Assignment, fields []*field.Resul
 }
 
 func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table,
-	updateColumns map[int]*expression.Assignment, m map[interface{}]interface{},
+	updateColumns map[int]*expression.Assignment, evalMap map[interface{}]interface{},
 	offset int, onDuplicateUpdate bool) error {
 	if err := t.LockRow(ctx, h, true); err != nil {
 		return errors.Trace(err)
 	}
 
-	oldData := make([]interface{}, len(t.Cols()))
-	touched := make([]bool, len(t.Cols()))
-	copy(oldData, data)
-
 	cols := t.Cols()
+	oldData := data
+	newData := make([]interface{}, len(cols))
+	touched := make(map[int]bool, len(cols))
+	copy(newData, oldData)
 
 	assignExists := false
 	for i, asgn := range updateColumns {
@@ -137,47 +137,49 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 			// The assign expression is for another table, not this.
 			continue
 		}
-		val, err := asgn.Expr.Eval(ctx, m)
+
+		val, err := asgn.Expr.Eval(ctx, evalMap)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
+
 		colIndex := i - offset
 		touched[colIndex] = true
-		data[colIndex] = val
+		newData[colIndex] = val
 		assignExists = true
 	}
 
-	// no assign list for this table, no need to update.
+	// If no assign list for this table, no need to update.
 	if !assignExists {
 		return nil
 	}
 
 	// Check whether new value is valid.
-	if err := column.CastValues(ctx, data, t.Cols()); err != nil {
-		return err
+	if err := column.CastValues(ctx, newData, cols); err != nil {
+		return errors.Trace(err)
 	}
 
-	if err := column.CheckNotNull(t.Cols(), data); err != nil {
-		return err
+	if err := column.CheckNotNull(cols, newData); err != nil {
+		return errors.Trace(err)
 	}
 
 	// If row is not changed, we should do nothing.
 	rowChanged := false
-	for i, d := range data {
+	for i := range oldData {
 		if !touched[i] {
 			continue
 		}
-		od := oldData[i]
-		n, err := types.Compare(d, od)
+
+		n, err := types.Compare(newData[i], oldData[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if n != 0 {
 			rowChanged = true
 			break
 		}
 	}
+
 	if !rowChanged {
 		// See: https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if variable.GetSessionVars(ctx).ClientCapability&mysql.ClientFoundRows > 0 {
@@ -187,10 +189,11 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	}
 
 	// Update record to new value and update index.
-	err := t.UpdateRecord(ctx, h, oldData, data, touched)
+	err := t.UpdateRecord(ctx, h, oldData, newData, touched)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// Record affected rows.
 	if !onDuplicateUpdate {
 		variable.GetSessionVars(ctx).AddAffectedRows(1)
@@ -198,6 +201,7 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 		variable.GetSessionVars(ctx).AddAffectedRows(2)
 
 	}
+
 	return nil
 }
 
@@ -253,17 +257,13 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		return nil, errors.Trace(err)
 	}
 	defer p.Close()
-	updatedRowKeys := make(map[string]bool)
 
-	// Get table alias map.
 	fs := p.GetFields()
-
-	columns, err0 := getUpdateColumns(s.List, fs)
-	if err0 != nil {
-		return nil, errors.Trace(err0)
+	columns, err := getUpdateColumns(s.List, fs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	m := map[interface{}]interface{}{}
 	var records []*plan.Row
 	for {
 		row, err1 := p.Next(ctx)
@@ -280,15 +280,17 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		records = append(records, row)
 	}
 
+	evalMap := map[interface{}]interface{}{}
+	updatedRowKeys := make(map[string]bool)
 	for _, row := range records {
 		rowData := row.Data
 
-		// Set ExprEvalIdentReferFunc
-		m[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
+		// Set ExprEvalIdentReferFunc.
+		evalMap[expression.ExprEvalIdentReferFunc] = func(name string, scope int, index int) (interface{}, error) {
 			return rowData[index], nil
 		}
 
-		// Update rows
+		// Update rows.
 		offset := 0
 		for _, entry := range row.RowKeys {
 			tbl := entry.Tbl
@@ -302,13 +304,14 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				// Each matching row is updated once, even if it matches the conditions multiple times.
 				continue
 			}
+
 			// Update row
 			handle, err2 := util.DecodeHandleFromRowKey(k)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
 
-			err2 = updateRecord(ctx, handle, data, tbl, columns, m, lastOffset, false)
+			err2 = updateRecord(ctx, handle, data, tbl, columns, evalMap, lastOffset, false)
 			if err2 != nil {
 				return nil, errors.Trace(err2)
 			}
