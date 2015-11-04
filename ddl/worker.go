@@ -57,7 +57,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 
 	var historyJob *model.Job
 
-	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorgnization -> public
+	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// for every state change, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
 	defer ticker.Stop()

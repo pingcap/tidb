@@ -190,18 +190,18 @@ func (d *ddl) onIndexCreate(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> public
-		job.SchemaState = model.StateReorgnization
-		indexInfo.State = model.StateReorgnization
-		// initialize SnapshotVer to 0 for later reorgnization check.
+		job.SchemaState = model.StateReorganization
+		indexInfo.State = model.StateReorganization
+		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		// initialize reorg handle to 0
 		job.ReorgHandle = 0
 		atomic.StoreInt64(&d.reorgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorgnization:
+	case model.StateReorganization:
 		// reorganization -> public
-		// get the current version for reorgnization if we don't have
+		// get the current version for reorganization if we don't have
 		if job.SnapshotVer == 0 {
 			var ver kv.Version
 			ver, err = d.store.CurrentVersion()
@@ -295,11 +295,11 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateReorgnization
-		indexInfo.State = model.StateReorgnization
+		job.SchemaState = model.StateReorganization
+		indexInfo.State = model.StateReorganization
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorgnization:
+	case model.StateReorganization:
 		// reorganization -> absent
 		tbl, err := d.getTable(t, schemaID, tblInfo)
 		if err != nil {
@@ -318,7 +318,7 @@ func (d *ddl) onIndexDrop(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		// all reorgnization jobs done, drop this index
+		// all reorganization jobs done, drop this index
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if idx.Name.L != indexName.L {
@@ -379,7 +379,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 
 const maxBatchSize = 1024
 
-// How to add index in reorgnization state?
+// How to add index in reorganization state?
 //  1, Generate a snapshot with special version.
 //  2, Traverse the snapshot, get every row in the table.
 //  3, For one row, if the row has been already deleted, skip to next row.
