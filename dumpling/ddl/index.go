@@ -452,8 +452,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 	}
 
-	snap.MvccRelease()
-
 	return handles, nil
 }
 
