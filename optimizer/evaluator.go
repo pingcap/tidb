@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Evaluator is a ast visitor that evaluates an expression.
@@ -62,8 +63,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.between(v)
 	case *ast.BinaryOperationExpr:
 		ok = e.binaryOperation(v)
-	case *ast.WhenClause:
-		ok = e.whenClause(v)
 	case *ast.CaseExpr:
 		ok = e.caseExpr(v)
 	case *ast.SubqueryExpr:
@@ -196,11 +195,21 @@ func hasSameColumnCount(e ast.ExprNode, args ...ast.ExprNode) error {
 	return nil
 }
 
-func (e *Evaluator) whenClause(v *ast.WhenClause) bool {
-	return true
-}
-
 func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
+	for _, val := range v.WhenClauses {
+		cmp, err := types.Compare(v.Value.GetValue(), val.Expr.GetValue())
+		if err != nil {
+			e.err = err
+			return false
+		}
+		if cmp == 0 {
+			v.SetValue(val.Result.GetValue())
+			return true
+		}
+	}
+	if v.ElseClause != nil {
+		v.SetValue(v.ElseClause.GetValue())
+	}
 	return true
 }
 
