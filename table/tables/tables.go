@@ -667,7 +667,7 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
-// GetColDefaultValue evals default value of the column.
+// GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}, bool, error) {
 	// Check no default value flag.
 	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
