@@ -84,7 +84,7 @@ type Job struct {
 	// we will traverse the huge snapshot and add the data in batches.
 	// After some successful batches, we will update the ReorgHandle for
 	// later resuming if currect server crashed.
-	ReOrgHandle int64 `json:"reorg_handle"`
+	ReorgHandle int64 `json:"reorg_handle"`
 }
 
 // Encode encodes job with json format.
