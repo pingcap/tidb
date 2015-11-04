@@ -70,13 +70,13 @@ type ddl struct {
 	uuid      string
 	jobCh     chan struct{}
 	jobDoneCh chan struct{}
-	// reorgDoneCh is for reorgnization, if the reorgnization job is done,
+	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
-	// TODO: now we use goroutine to simulate reorgnization jobs, later we may
+	// TODO: now we use goroutine to simulate reorganization jobs, later we may
 	// use a persistent job list.
 	reorgDoneCh chan error
 
-	// reorgHandle is used for adding data reorgnization, after every batch,
+	// reorgHandle is used for adding data reorganization, after every batch,
 	// we will update for later job update.
 	reorgHandle int64
 
