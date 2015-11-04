@@ -586,6 +586,13 @@ func (nod *InsertStmt) Accept(v Visitor) (Node, bool) {
 	}
 	nod = newNod.(*InsertStmt)
 
+	if nod.Select != nil {
+		node, ok := nod.Select.Accept(v)
+		if !ok {
+			return nod, false
+		}
+		nod.Select = node.(ResultSetNode)
+	}
 	node, ok := nod.Table.Accept(v)
 	if !ok {
 		return nod, false
@@ -621,13 +628,6 @@ func (nod *InsertStmt) Accept(v Visitor) (Node, bool) {
 			return nod, false
 		}
 		nod.OnDuplicate[i] = node.(*Assignment)
-	}
-	if nod.Select != nil {
-		node, ok := nod.Select.Accept(v)
-		if !ok {
-			return nod, false
-		}
-		nod.Select = node.(ResultSetNode)
 	}
 	return v.Leave(nod)
 }
