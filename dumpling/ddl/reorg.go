@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -97,7 +98,6 @@ const waitReorgTimeout = 10 * time.Second
 var errWaitReorgTimeout = errors.New("wait for reorgnization timeout")
 
 func (d *ddl) runReorgJob(f func() error) error {
-	// TODO use persistent reorgnization job list.
 	if d.reOrgDoneCh == nil {
 		// start a reorgnization job
 		d.reOrgDoneCh = make(chan error, 1)
@@ -120,5 +120,49 @@ func (d *ddl) runReorgJob(f func() error) error {
 		// we return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	}
+}
 
+func (d *ddl) delKeysWithPrefix(prefix string) error {
+	keys := make([]string, maxBatchSize)
+
+	for {
+		keys := keys[0:0]
+		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			iter, err := txn.Seek([]byte(prefix))
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			defer iter.Close()
+			for i := 0; i < maxBatchSize; i++ {
+				if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
+					keys = append(keys, iter.Key())
+					err = iter.Next()
+					if err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					break
+				}
+			}
+
+			for _, key := range keys {
+				err := txn.Delete([]byte(key))
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// delete no keys, return.
+		if len(keys) == 0 {
+			return nil
+		}
+	}
 }
