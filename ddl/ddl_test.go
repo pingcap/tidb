@@ -49,7 +49,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 	ts.store = store
 }
 
-func (ts *testSuite) TestT(c *C) {
+func (ts *testSuite) TestDDL(c *C) {
 	se, _ := tidb.CreateSession(ts.store)
 	ctx := se.(context.Context)
 	schemaName := model.NewCIStr("test_ddl")
@@ -89,6 +89,9 @@ func (ts *testSuite) TestT(c *C) {
 	alterStmt := statement(`alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
+	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
 	cols, err := tb.Row(ctx, rid0)
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)

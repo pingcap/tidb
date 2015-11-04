@@ -280,19 +280,21 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
 	var err error
 	switch job.Type {
 	case model.ActionCreateSchema:
-		err = d.onSchemaCreate(t, job)
+		err = d.onCreateSchema(t, job)
 	case model.ActionDropSchema:
-		err = d.onSchemaDrop(t, job)
+		err = d.onDropSchema(t, job)
 	case model.ActionCreateTable:
-		err = d.onTableCreate(t, job)
+		err = d.onCreateTable(t, job)
 	case model.ActionDropTable:
-		err = d.onTableDrop(t, job)
+		err = d.onDropTable(t, job)
 	case model.ActionAddColumn:
+		err = d.onAddColumn(t, job)
 	case model.ActionDropColumn:
+		err = d.onDropColumn(t, job)
 	case model.ActionAddIndex:
-		err = d.onIndexCreate(t, job)
+		err = d.onCreateIndex(t, job)
 	case model.ActionDropIndex:
-		err = d.onIndexDrop(t, job)
+		err = d.onDropIndex(t, job)
 	case model.ActionAddConstraint:
 		log.Fatal("Doesn't support change constraint online")
 	case model.ActionDropConstraint:

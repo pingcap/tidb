@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/errors2"
 )
 
-func (d *ddl) onTableCreate(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -89,7 +89,7 @@ func (d *ddl) onTableCreate(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) onTableDrop(t *meta.Meta, job *model.Job) error {
+func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 
@@ -168,6 +168,28 @@ func (d *ddl) getTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) (
 	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbl := table.TableFromMeta(alloc, tblInfo)
 	return tbl, nil
+}
+
+func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
+	schemaID := job.SchemaID
+	tableID := job.TableID
+	tblInfo, err := t.GetTable(schemaID, tableID)
+	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
+		job.State = model.JobCancelled
+		return nil, errors.Trace(ErrNotExists)
+	} else if err != nil {
+		return nil, errors.Trace(err)
+	} else if tblInfo == nil {
+		job.State = model.JobCancelled
+		return nil, errors.Trace(ErrNotExists)
+	}
+
+	if tblInfo.State != model.StatePublic {
+		job.State = model.JobCancelled
+		return nil, errors.Errorf("table %s is not in public, but %s", tblInfo.Name.L, tblInfo.State)
+	}
+
+	return tblInfo, nil
 }
 
 func (d *ddl) dropTableData(t table.Table) error {
