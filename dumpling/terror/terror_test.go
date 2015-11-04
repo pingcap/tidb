@@ -40,17 +40,17 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(Parser.EqualClass(parserErr), IsTrue)
 	c.Assert(Parser.NotEqualClass(parserErr), IsFalse)
 
-	c.Assert(Parser.EqualCode(parserErr, ErrCode(1)), IsTrue)
-	c.Assert(Parser.NotEqualCode(parserErr, ErrCode(1)), IsFalse)
+	c.Assert(Parser.Equal(parserErr, ErrCode(1)), IsTrue)
+	c.Assert(Parser.NotEqual(parserErr, ErrCode(1)), IsFalse)
 
-	c.Assert(Parser.EqualCode(parserErr, ErrCode(2)), IsFalse)
+	c.Assert(Parser.Equal(parserErr, ErrCode(2)), IsFalse)
 	c.Assert(Optimizer.EqualClass(parserErr), IsFalse)
 
 	optimizerErr := Optimizer.New(ErrCode(2), "abc %s", "def")
-	c.Assert(Optimizer.EqualCode(optimizerErr, ErrCode(2)), IsTrue)
+	c.Assert(Optimizer.Equal(optimizerErr, ErrCode(2)), IsTrue)
 
-	c.Assert(Optimizer.EqualCode(errors.New("abc"), ErrCode(3)), IsFalse)
-	c.Assert(Optimizer.EqualCode(nil, ErrCode(3)), IsFalse)
+	c.Assert(Optimizer.Equal(errors.New("abc"), ErrCode(3)), IsFalse)
+	c.Assert(Optimizer.Equal(nil, ErrCode(3)), IsFalse)
 	c.Assert(Optimizer.EqualClass(errors.New("abc")), IsFalse)
 	c.Assert(Optimizer.EqualClass(nil), IsFalse)
 }
