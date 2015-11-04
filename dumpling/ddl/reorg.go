@@ -25,7 +25,7 @@ import (
 
 var _ context.Context = &reorgContext{}
 
-// reorgContext implements context.Context interface for reorgnization use.
+// reorgContext implements context.Context interface for reorganization use.
 type reorgContext struct {
 	store kv.Storage
 	m     map[fmt.Stringer]interface{}
@@ -95,11 +95,11 @@ func (d *ddl) newReorgContext() context.Context {
 
 const waitReorgTimeout = 10 * time.Second
 
-var errWaitReorgTimeout = errors.New("wait for reorgnization timeout")
+var errWaitReorgTimeout = errors.New("wait for reorganization timeout")
 
 func (d *ddl) runReorgJob(f func() error) error {
 	if d.reorgDoneCh == nil {
-		// start a reorgnization job
+		// start a reorganization job
 		d.reorgDoneCh = make(chan error, 1)
 		go func() {
 			d.reorgDoneCh <- f()
@@ -108,7 +108,7 @@ func (d *ddl) runReorgJob(f func() error) error {
 
 	waitTimeout := chooseLeaseTime(d.lease, waitReorgTimeout)
 
-	// wait reorgnization job done or timeout
+	// wait reorganization job done or timeout
 	select {
 	case err := <-d.reorgDoneCh:
 		d.reorgDoneCh = nil
