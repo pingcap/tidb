@@ -69,6 +69,10 @@ type binderContext struct {
 	inGroupBy bool
 	// When visiting having, only fieldList and groupBy fields are available.
 	inHaving bool
+	// OrderBy clause has different binding rule than group by.
+	inOrderBy bool
+	// When visiting column name in ByItem, we should know if the column name is in an expression.
+	inByItemExpression bool
 }
 
 type BinderErrorType int
@@ -132,6 +136,14 @@ func (sb *InfoBinder) Enter(inNode ast.Node) (outNode ast.Node, skipChildren boo
 		sb.currentContext().inGroupBy = true
 	case *ast.HavingClause:
 		sb.currentContext().inHaving = true
+	case *ast.OrderByClause:
+		sb.currentContext().inOrderBy = true
+	case *ast.ByItem:
+		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
+			// If ByItem is not a single column name expression,
+			// the binding rule is different for order by clause.
+			sb.currentContext().inByItemExpression = true
+		}
 	case *ast.InsertStmt:
 		sb.pushContext()
 	case *ast.DeleteStmt:
@@ -165,6 +177,10 @@ func (sb *InfoBinder) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		sb.currentContext().inGroupBy = false
 	case *ast.HavingClause:
 		sb.currentContext().inHaving = false
+	case *ast.OrderByClause:
+		sb.currentContext().inOrderBy = false
+	case *ast.ByItem:
+		sb.currentContext().inByItemExpression = false
 	case *ast.SelectStmt:
 		v.SetResultFields(sb.currentContext().fieldList)
 		sb.popContext()
@@ -259,7 +275,7 @@ func (sb *InfoBinder) handleColumnName(cn *ast.ColumnName) {
 			return
 		}
 	}
-	sb.Err = errors.Errorf("Unknown column %s", cn.Name.L)
+	sb.Err = errors.Errorf("unknown column %s", cn.Name.L)
 }
 
 // bindColumnNameInContext looks up and binds schema information for a column with the ctx.
@@ -278,25 +294,55 @@ func (sb *InfoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.Column
 		return sb.bindColumnInTableSources(cn, ctx.tables)
 	}
 	if ctx.inGroupBy {
-		// field list first, then tables.
+		// From tables first, then field list.
+		if ctx.inByItemExpression {
+			// From table first, then field list.
+			if sb.bindColumnInTableSources(cn, ctx.tables) {
+				return true
+			}
+			return sb.bindColumnInResultFields(cn, ctx.fieldList)
+		}
+		// Field list first, then from table.
+		if sb.bindColumnInResultFields(cn, ctx.fieldList) {
+			if sb.Err != nil {
+				return true
+			}
+			// The column is bound in field list, but we need to
+			// try to overwrite the binding in table sources.
+			sb.bindColumnInTableSources(cn, ctx.tables)
+			if sb.Err != nil {
+				sb.Err = nil
+			}
+			return true
+		}
+		return false
+	}
+	if ctx.inHaving {
+		// First group by, then field list.
+		if sb.bindColumnInResultFields(cn, ctx.groupBy) {
+			return true
+		}
+		return sb.bindColumnInResultFields(cn, ctx.fieldList)
+	}
+	if ctx.inOrderBy {
+		if sb.bindColumnInResultFields(cn, ctx.groupBy) {
+			return true
+		}
+		if ctx.inByItemExpression {
+			// From table first, then field list.
+			if sb.bindColumnInTableSources(cn, ctx.tables) {
+				return true
+			}
+			return sb.bindColumnInResultFields(cn, ctx.fieldList)
+		}
+		// Field list first, then from table.
 		if sb.bindColumnInResultFields(cn, ctx.fieldList) {
 			return true
 		}
 		return sb.bindColumnInTableSources(cn, ctx.tables)
 	}
-	// column name in other places can be looked up in the same order.
-	if sb.bindColumnInResultFields(cn, ctx.groupBy) {
-		return true
-	}
-	if sb.bindColumnInResultFields(cn, ctx.fieldList) {
-		return true
-	}
-
-	// tables is not available for having clause.
-	if !ctx.inHaving {
-		return sb.bindColumnInTableSources(cn, ctx.tables)
-	}
-	return false
+	// In where clause.
+	return sb.bindColumnInTableSources(cn, ctx.tables)
 }
 
 // bindColumnNameInOnCondition looks up for column name in current join, and
@@ -362,22 +408,38 @@ func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnName, tableSources 
 }
 
 func (sb *InfoBinder) bindColumnInResultFields(cn *ast.ColumnName, rfs []*ast.ResultField) bool {
-	var matchedResultField *ast.ResultField
+	if cn.Table.L != "" {
+		// Skip result fields, bind the column in table source.
+		return false
+	}
+	var matchedColumn *model.ColumnInfo
+	var matchedTable *model.TableInfo
 	for _, rf := range rfs {
-		matchAsName := rf.ColumnAsName.L != "" && rf.ColumnAsName.L == cn.Name.L
-		matchColumnName := rf.ColumnAsName.L == "" && rf.Column.Name.L == cn.Name.L
+		matchAsName := cn.Name.L == rf.ColumnAsName.L
+		matchColumnName := rf.ColumnAsName.L == "" && cn.Name.L == rf.Column.Name.L
 		if matchAsName || matchColumnName {
-			if matchedResultField != nil {
-				sb.Err = errors.Errorf("column %s is ambiguous.", cn.Name.O)
-				return false
+			if rf.Column.Name.L == "" {
+				// This is not a real table column, bind it directly.
+				cn.ColumnInfo = rf.Column
+				cn.TableInfo = rf.Table
+				return true
 			}
-			matchedResultField = rf
+			if matchedColumn == nil {
+				matchedColumn = rf.Column
+				matchedTable = rf.Table
+			} else {
+				sameColumn := matchedTable.Name.L == rf.Table.Name.L && matchedColumn.Name.L == rf.Column.Name.L
+				if !sameColumn {
+					sb.Err = errors.Errorf("column %s is ambiguous.", cn.Name.O)
+					return true
+				}
+			}
 		}
 	}
-	if matchedResultField != nil {
+	if matchedColumn != nil {
 		// bind column.
-		cn.ColumnInfo = matchedResultField.Column
-		cn.TableInfo = matchedResultField.Table
+		cn.ColumnInfo = matchedColumn
+		cn.TableInfo = matchedTable
 		return true
 	}
 	return false
@@ -422,6 +484,8 @@ func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.Res
 		rf.Table = v.Name.TableInfo
 		rf.DBName = v.Name.Schema
 	default:
+		rf.Column = &model.ColumnInfo{} // Empty column info.
+		rf.Table = &model.TableInfo{}   // Empty table info.
 		if field.AsName.L == "" {
 			rf.ColumnAsName.L = field.Expr.Text()
 			rf.ColumnAsName.O = rf.ColumnAsName.L
