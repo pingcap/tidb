@@ -35,7 +35,7 @@ const (
 	// Add more as needed.
 )
 
-// String implements Stringer interface.
+// String implements fmt.Stringer interface.
 func (ec ErrClass) String() string {
 	switch ec {
 	case Parser:
@@ -50,8 +50,8 @@ func (ec ErrClass) String() string {
 	return strconv.Itoa(int(ec))
 }
 
-// EqualCode returns true if err is *Error with the same clase and code.
-func (ec ErrClass) EqualCode(err error, code ErrCode) bool {
+// Equal returns true if err is *Error with the same clase and code.
+func (ec ErrClass) Equal(err error, code ErrCode) bool {
 	e := errors.Cause(err)
 	if e == nil {
 		return false
@@ -62,13 +62,13 @@ func (ec ErrClass) EqualCode(err error, code ErrCode) bool {
 	return false
 }
 
-// NotEqualCode returns true if err is not *Error with the same class
+// NotEqual returns true if err is not *Error with the same class
 // and the same code.
-func (ec ErrClass) NotEqualCode(err error, code ErrCode) bool {
-	return !ec.EqualCode(err, code)
+func (ec ErrClass) NotEqual(err error, code ErrCode) bool {
+	return !ec.Equal(err, code)
 }
 
-// EqualClass return true if err is *Error with the same class.
+// EqualClass returns true if err is *Error with the same class.
 func (ec ErrClass) EqualClass(err error) bool {
 	e := errors.Cause(err)
 	if e == nil {
@@ -80,7 +80,7 @@ func (ec ErrClass) EqualClass(err error) bool {
 	return false
 }
 
-// NotEqualClass return true if err is not *Error with the same class.
+// NotEqualClass returns true if err is not *Error with the same class.
 func (ec ErrClass) NotEqualClass(err error) bool {
 	return !ec.EqualClass(err)
 }
