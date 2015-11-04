@@ -110,7 +110,7 @@ type Table interface {
 	LockRow(ctx context.Context, h int64, update bool) error
 
 	// SetColValue sets the column value.
-	// If the column untouched, we don't need to do this.
+	// If the column is untouched, we don't need to do this.
 	SetColValue(txn kv.Transaction, key []byte, data interface{}) error
 }
 
