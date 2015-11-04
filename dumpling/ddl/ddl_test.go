@@ -52,7 +52,7 @@ func (ts *testSuite) SetUpSuite(c *C) {
 func (ts *testSuite) TestT(c *C) {
 	se, _ := tidb.CreateSession(ts.store)
 	ctx := se.(context.Context)
-	schemaName := model.NewCIStr("test")
+	schemaName := model.NewCIStr("test_ddl")
 	tblName := model.NewCIStr("t")
 	tbIdent := table.Ident{
 		Schema: schemaName,
@@ -170,15 +170,18 @@ func (ts *testSuite) TestT(c *C) {
 func (ts *testSuite) TestConstraintNames(c *C) {
 	se, _ := tidb.CreateSession(ts.store)
 	ctx := se.(context.Context)
-	schemaName := model.NewCIStr("test")
+	schemaName := model.NewCIStr("test_constraint")
 	tblName := model.NewCIStr("t")
 	tbIdent := table.Ident{
 		Schema: schemaName,
 		Name:   tblName,
 	}
 
+	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
+	c.Assert(err, IsNil)
+
 	tbStmt := statement("create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
-	err := sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
+	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, NotNil)
 
 	tbStmt = statement("create table t (a int, b int, index A (a, b), index (a))").(*stmts.CreateTableStmt)
