@@ -61,6 +61,8 @@ type DDL interface {
 	// SetLease will reset the lease time for online DDL change, it is a very dangerous function and you must guarantee that
 	// all servers have the same lease time.
 	SetLease(lease time.Duration)
+	// Stat returns the DDL statistics.
+	Stat() (map[string]interface{}, error)
 }
 
 type ddl struct {

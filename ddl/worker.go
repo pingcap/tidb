@@ -191,10 +191,9 @@ func (d *ddl) handleJobQueue() error {
 			}
 
 			log.Warnf("run DDL job %v", job)
-			err = d.runJob(t, job)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			// if run job meets error, we will save this error in job Error
+			// and retry later if the job is not cancelled.
+			d.runJob(t, job)
 
 			if job.State == model.JobDone || job.State == model.JobCancelled {
 				err = d.finishJob(t, job)
@@ -270,9 +269,9 @@ func (d *ddl) onWorker() {
 	}
 }
 
-func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
+func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
 	if job.State == model.JobDone || job.State == model.JobCancelled {
-		return nil
+		return
 	}
 
 	job.State = model.JobRunning
@@ -305,16 +304,16 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) error {
 		err = errors.Errorf("invalid job %v", job)
 	}
 
-	// if err and inner doesn't cancel job, return err.
+	// saves error in job, so that others can know error happens.
 	if err != nil {
+		// if job is not cancelled, we should log this error.
 		if job.State != model.JobCancelled {
-			return errors.Trace(err)
+			log.Errorf("run job err %v", errors.ErrorStack(err))
 		}
 
 		job.Error = err.Error()
+		job.ErrorCount++
 	}
-
-	return nil
 }
 
 // for every lease seconds, we will re-update the whole schema, so we will wait 2 * lease time
