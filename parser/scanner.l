@@ -1056,7 +1056,7 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 		pref = "\""
 	} 
 	v := stringutil.RemoveUselessBackslash(pref+s)
-        v, err := strconv.Unquote(v)
+	v, err := strconv.Unquote(v)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
