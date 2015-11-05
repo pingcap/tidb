@@ -103,7 +103,7 @@ func bootstrap(s Session) {
 	if err == nil {
 		// We have already finished bootstrap.
 		return
-	} else if !terror.Schema.Equal(err, terror.DatabaseNotExists) {
+	} else if terror.DatabaseNotExists.NotEqual(err) {
 		log.Fatal(err)
 	}
 	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))

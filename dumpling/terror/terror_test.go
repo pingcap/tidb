@@ -30,28 +30,23 @@ type testTErrorSuite struct {
 }
 
 func (s *testTErrorSuite) TestTError(c *C) {
-	c.Assert(Parser.String(), Not(Equals), "")
-	c.Assert(Optimizer.String(), Not(Equals), "")
-	c.Assert(KV.String(), Not(Equals), "")
-	c.Assert(Server.String(), Not(Equals), "")
+	c.Assert(ClassParser.String(), Not(Equals), "")
+	c.Assert(ClassOptimizer.String(), Not(Equals), "")
+	c.Assert(ClassKV.String(), Not(Equals), "")
+	c.Assert(ClassServer.String(), Not(Equals), "")
 
-	parserErr := Parser.New(ErrCode(1), "error 1")
+	parserErr := ClassParser.New(ErrCode(1), "error 1")
 	c.Assert(parserErr.Error(), Not(Equals), "")
-	c.Assert(Parser.EqualClass(parserErr), IsTrue)
-	c.Assert(Parser.NotEqualClass(parserErr), IsFalse)
-	c.Assert(Parser.Equal(parserErr, ErrCode(1)), IsTrue)
-	c.Assert(Parser.NotEqual(parserErr, ErrCode(1)), IsFalse)
+	c.Assert(ClassParser.EqualClass(parserErr), IsTrue)
+	c.Assert(ClassParser.NotEqualClass(parserErr), IsFalse)
 
-	c.Assert(Parser.Equal(parserErr, ErrCode(2)), IsFalse)
-	c.Assert(Optimizer.EqualClass(parserErr), IsFalse)
-
-	optimizerErr := Optimizer.New(ErrCode(2), "abc %s", "def")
-	c.Assert(Optimizer.Equal(optimizerErr, ErrCode(2)), IsTrue)
-
-	c.Assert(Optimizer.Equal(errors.New("abc"), ErrCode(3)), IsFalse)
-	c.Assert(Optimizer.Equal(nil, ErrCode(3)), IsFalse)
-	c.Assert(Optimizer.EqualClass(errors.New("abc")), IsFalse)
-	c.Assert(Optimizer.EqualClass(nil), IsFalse)
+	c.Assert(ClassOptimizer.EqualClass(parserErr), IsFalse)
+	optimizerErr := ClassOptimizer.New(ErrCode(2), "abc")
+	c.Assert(ClassOptimizer.EqualClass(errors.New("abc")), IsFalse)
+	c.Assert(ClassOptimizer.EqualClass(nil), IsFalse)
+	c.Assert(optimizerErr.Equal(optimizerErr.Gen("def")), IsTrue)
+	c.Assert(optimizerErr.Equal(nil), IsFalse)
+	c.Assert(optimizerErr.Equal(errors.New("abc")), IsFalse)
 }
 
 func (s *testTErrorSuite) TestErrorEqual(c *C) {
@@ -85,10 +80,10 @@ func (s *testTErrorSuite) TestErrorEqual(c *C) {
 	c.Assert(ErrorNotEqual(e1, e6), IsTrue)
 	code1 := ErrCode(1)
 	code2 := ErrCode(2)
-	te1 := Parser.New(code1, "abc")
-	te2 := Parser.New(code1, "def")
-	te3 := KV.New(code1, "abc")
-	te4 := KV.New(code2, "abc")
+	te1 := ClassParser.New(code1, "abc")
+	te2 := ClassParser.New(code1, "def")
+	te3 := ClassKV.New(code1, "abc")
+	te4 := ClassKV.New(code2, "abc")
 	c.Assert(ErrorEqual(te1, te2), IsTrue)
 	c.Assert(ErrorEqual(te1, te3), IsFalse)
 	c.Assert(ErrorEqual(te3, te4), IsFalse)

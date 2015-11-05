@@ -246,7 +246,7 @@ func (c *driverConn) Begin() (driver.Tx, error) {
 
 func (c *driverConn) Commit() error {
 	if c.s == nil {
-		return terror.Executor.New(terror.CommitNotInTransaction, "commit not in Transaction.")
+		return terror.CommitNotInTransaction
 	}
 	_, err := c.s.Execute(txCommitSQL)
 
@@ -263,7 +263,7 @@ func (c *driverConn) Commit() error {
 
 func (c *driverConn) Rollback() error {
 	if c.s == nil {
-		return terror.Executor.New(terror.RollbackNotInTransaction, "rollback not in Transaction.")
+		return terror.RollbackNotInTransaction
 	}
 
 	if _, err := c.s.Execute(txRollbackSQL); err != nil {

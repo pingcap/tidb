@@ -67,7 +67,7 @@ func (ts *testSuite) TestT(c *C) {
 	tbStmt := statement("create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
 
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, table.Ident{Schema: noExist, Name: tbIdent.Name}, tbStmt.Cols, tbStmt.Constraints)
-	c.Assert(terror.Schema.Equal(err, terror.DatabaseNotExists), IsTrue)
+	c.Assert(terror.DatabaseNotExists.Equal(err), IsTrue)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
