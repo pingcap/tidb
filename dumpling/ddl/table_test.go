@@ -39,8 +39,8 @@ type testTableSuite struct {
 	d *ddl
 }
 
-// create a test table with int column c1, c2 and c3 and with no index.
-func testTableInfo(c *C, d *ddl, name string) *model.TableInfo {
+// create a test table with num int columns and with no index.
+func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	var err error
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
@@ -48,12 +48,12 @@ func testTableInfo(c *C, d *ddl, name string) *model.TableInfo {
 	tblInfo.ID, err = d.genGlobalID()
 	c.Assert(err, IsNil)
 
-	cols := make([]*model.ColumnInfo, 3)
+	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
 		col := &model.ColumnInfo{
 			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
-			DefaultValue: i,
+			DefaultValue: i + 1,
 			State:        model.StatePublic,
 		}
 
@@ -153,13 +153,13 @@ func (s *testTableSuite) TestTable(c *C) {
 	ctx := testNewContext(c, d)
 	defer ctx.FinishTxn(true)
 
-	tblInfo := testTableInfo(c, d, "t")
+	tblInfo := testTableInfo(c, d, "t", 3)
 
 	job := testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
-	newTblInfo := testTableInfo(c, d, "t")
+	newTblInfo := testTableInfo(c, d, "t", 3)
 	job = &model.Job{
 		SchemaID: s.dbInfo.ID,
 		TableID:  newTblInfo.ID,
@@ -188,7 +188,7 @@ func (s *testTableSuite) TestTableResume(c *C) {
 
 	testCheckOwner(c, d, true)
 
-	tblInfo := testTableInfo(c, d, "t1")
+	tblInfo := testTableInfo(c, d, "t1", 3)
 
 	job := &model.Job{
 		SchemaID: s.dbInfo.ID,
