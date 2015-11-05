@@ -1045,7 +1045,7 @@ func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
 	autocommit.BindAutocommitChecker(ss, ss)
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
-	b, err := alreadyBootstraped(ss)
+	b, err := checkBootstraped(ss)
 	c.Assert(b, IsFalse)
 	c.Assert(err, IsNil)
 	doDDLWorks(ss)

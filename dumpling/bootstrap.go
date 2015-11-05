@@ -104,7 +104,7 @@ const (
 
 // Bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	b, err := alreadyBootstraped(s)
+	b, err := checkBootstraped(s)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -116,12 +116,11 @@ func bootstrap(s Session) {
 }
 
 const (
-	bootstrapedVar      = "bootstraped"
-	bootstrapedVarTrue  = "True"
-	bootstrapedVarFalse = "False"
+	bootstrapedVar     = "bootstraped"
+	bootstrapedVarTrue = "True"
 )
 
-func alreadyBootstraped(s Session) (bool, error) {
+func checkBootstraped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if !errors2.ErrorEqual(err, terrors.ErrDatabaseNotExist) {
@@ -151,7 +150,13 @@ func checkBootstrapedVar(s Session) (bool, error) {
 	}
 	r := rs[0]
 	row, err := r.Next()
-	return row.Data[0].(string) == bootstrapedVarTrue, errors.Trace(err)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if row == nil {
+		return false, nil
+	}
+	return row.Data[0].(string) == bootstrapedVarTrue, nil
 }
 
 // Execute DDL statements in bootstrap stage.
