@@ -488,11 +488,20 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		return errors.Trace(ErrNotExists)
 	}
 
+	var col *column.Col
+	// ingore table constraints now, maybe return error later
+	// we use length(t.Cols()) as the default offset first, later we will change the
+	// column's offset later.
+	col, _, err = d.buildColumnAndConstraint(len(t.Cols()), spec.Column)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddColumn,
-		Args:     []interface{}{spec, 0},
+		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
 	}
 
 	err = d.startJob(ctx, job)
