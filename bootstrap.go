@@ -95,7 +95,7 @@ const (
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
-	// Currently we only put bootstraped in it which indicates if the system is already bootstraped.
+	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
 	CreateTiDBTable = `CREATE TABLE if not exists mysql.tidb(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
@@ -104,7 +104,7 @@ const (
 
 // Bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	b, err := checkBootstraped(s)
+	b, err := checkBootstrapped(s)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -116,26 +116,26 @@ func bootstrap(s Session) {
 }
 
 const (
-	bootstrapedVar     = "bootstraped"
-	bootstrapedVarTrue = "True"
+	bootstrappedVar     = "bootstrapped"
+	bootstrappedVarTrue = "True"
 )
 
-func checkBootstraped(s Session) (bool, error) {
+func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if !errors2.ErrorEqual(err, terrors.ErrDatabaseNotExist) {
 		return false, errors.Trace(err)
 	}
-	// Check bootstraped variable value in TiDB table.
-	v, err := checkBootstrapedVar(s)
+	// Check bootstrapped variable value in TiDB table.
+	v, err := checkBootstrappedVar(s)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return v, nil
 }
 
-func checkBootstrapedVar(s Session) (bool, error) {
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrapedVar)
+func checkBootstrappedVar(s Session) (bool, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrappedVar)
 	rs, err := s.Execute(sql)
 	if err != nil {
 		// TODO: use terrors to compare error.
@@ -156,7 +156,7 @@ func checkBootstrapedVar(s Session) (bool, error) {
 	if row == nil {
 		return false, nil
 	}
-	return row.Data[0].(string) == bootstrapedVarTrue, nil
+	return row.Data[0].(string) == bootstrappedVarTrue, nil
 }
 
 // Execute DDL statements in bootstrap stage.
@@ -193,7 +193,7 @@ func doDMLWorks(s Session) {
 	}
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable, strings.Join(values, ", "))
 	mustExecute(s, sql)
-	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrapedVar, bootstrapedVarTrue, bootstrapedVarTrue)
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
 	mustExecute(s, sql)
 	mustExecute(s, "COMMIT")
 }
