@@ -150,11 +150,8 @@ func checkBootstrappedVar(s Session) (bool, error) {
 	}
 	r := rs[0]
 	row, err := r.Next()
-	if err != nil {
+	if err != nil || row == nil {
 		return false, errors.Trace(err)
-	}
-	if row == nil {
-		return false, nil
 	}
 	return row.Data[0].(string) == bootstrappedVarTrue, nil
 }
