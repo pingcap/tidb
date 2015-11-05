@@ -13,7 +13,7 @@ RUN apk add --update wget git make ; \
     go get -v github.com/pingcap/tidb ; \
     cd $GOPATH/src/github.com/pingcap/tidb ; \
     make ; make server ; cp tidb-server/tidb-server /usr/bin/ ; \
-    apk del apk del run-parts openssl lua5.2-libs lua5.2 ncurses-terminfo-base ncurses-widec-libs lua 5.2-posix \
+    apk del run-parts openssl lua5.2-libs lua5.2 ncurses-terminfo-base ncurses-widec-libs lua 5.2-posix \
 ca-certificates libssh2 curl expat pcre git wget make
 
 EXPOSE 4000
