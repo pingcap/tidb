@@ -30,7 +30,7 @@ type Node interface {
 	// Implementation of this method should first call visitor.Enter,
 	// assign the returned node to its method receiver, if skipChildren returns true,
 	// children should be skipped. Otherwise, call its children in particular order that
-	// later elements depends on on former elements. Finally, return visitor.Leave.
+	// later elements depends on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, ok bool)
 	// Text returns the original text of the element.
 	Text() string

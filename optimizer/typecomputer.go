@@ -16,7 +16,7 @@ package optimizer
 import "github.com/pingcap/tidb/ast"
 
 // typeComputer is an ast Visitor that
-// Compute types for ast.ExprNode.
+// computes result type for ast.ExprNode.
 type typeComputer struct {
 	err error
 }

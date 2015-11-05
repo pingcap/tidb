@@ -21,7 +21,7 @@ type Cloner struct {
 
 // Enter implements Visitor Enter interface.
 func (c *Cloner) Enter(node Node) (Node, bool) {
-	return cloneStruct(node), false
+	return copyStruct(node), false
 }
 
 // Leave implements Visitor Leave interface.
@@ -29,9 +29,9 @@ func (c *Cloner) Leave(in Node) (out Node, ok bool) {
 	return in, true
 }
 
-// cloneStruct clone a node's struct value, if the struct has slice
-// the cloned value should make a new slice and copy old slice to new slice.
-func cloneStruct(in Node) (out Node) {
+// copyStruct copies a node's struct value, if the struct has slice member,
+// make a new slice and copy old slice value to new slice.
+func copyStruct(in Node) (out Node) {
 	switch v := in.(type) {
 	case *ValueExpr:
 		nv := *v
