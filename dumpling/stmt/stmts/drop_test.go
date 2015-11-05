@@ -62,7 +62,7 @@ func (s *testStmtSuite) TestDropTable(c *C) {
 }
 
 func (s *testStmtSuite) TestDropIndex(c *C) {
-	testSQL := "drop index if exists drop_index;"
+	testSQL := "drop index if exists drop_index on t;"
 
 	stmtList, err := tidb.Compile(s.ctx, testSQL)
 	c.Assert(err, IsNil)
