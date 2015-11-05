@@ -96,9 +96,6 @@ const (
 
 // Bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	// Create a test database.
-	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
-
 	//  Check if system db exists.
 	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
 	if err == nil {
@@ -107,30 +104,33 @@ func bootstrap(s Session) {
 	} else if !errors2.ErrorEqual(err, errors.ErrDatabaseNotExist) {
 		log.Fatal(err)
 	}
-	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
-	initUserTable(s)
-	initPrivTables(s)
-	initGlobalVariables(s)
+	doDDLWorks(s)
+	doDMLWorks(s)
 }
 
-func initUserTable(s Session) {
+// Execute DDL statements in bootstrap stage.
+func doDDLWorks(s Session) {
+	// Create a test database.
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+	// Create system db.
+	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
+	// Create user table.
 	mustExecute(s, CreateUserTable)
+	// Create privilege tables.
+	mustExecute(s, CreateDBPrivTable)
+	mustExecute(s, CreateTablePrivTable)
+	mustExecute(s, CreateColumnPrivTable)
+	// Create global systemt variable table.
+	mustExecute(s, CreateGloablVariablesTable)
+}
+
+// Execute DML statements in bootstrap stage.
+func doDMLWorks(s Session) {
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
 		("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
 		("::1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y");`)
-}
-
-// Initiates privilege tables including mysql.db, mysql.tables_priv and mysql.column_priv.
-func initPrivTables(s Session) {
-	mustExecute(s, CreateDBPrivTable)
-	mustExecute(s, CreateTablePrivTable)
-	mustExecute(s, CreateColumnPrivTable)
-}
-
-// Initiates global system variables table.
-func initGlobalVariables(s Session) {
-	mustExecute(s, CreateGloablVariablesTable)
+	// Init global system variable table.
 	values := make([]string, 0, len(variable.SysVars))
 	for k, v := range variable.SysVars {
 		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
