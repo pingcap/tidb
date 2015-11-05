@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/stmt"
-	"github.com/pingcap/tidb/util/errors"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -62,7 +62,7 @@ func (s *UseStmt) SetText(text string) {
 func (s *UseStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	dbname := model.NewCIStr(s.DBName)
 	if !sessionctx.GetDomain(ctx).InfoSchema().SchemaExists(dbname) {
-		return nil, errors.ErrDatabaseNotExist
+		return nil, terror.Schema.New(terror.DatabaseNotExists, "database %s not exists", dbname)
 	}
 	db.BindCurrentSchema(ctx, dbname.O)
 	return nil, nil

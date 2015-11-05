@@ -29,7 +29,9 @@ type ErrCode int
 // Error classes
 const (
 	Parser ErrClass = iota + 1
+	Schema
 	Optimizer
+	Executor
 	KV
 	Server
 	// Add more as needed.
@@ -50,7 +52,7 @@ func (ec ErrClass) String() string {
 	return strconv.Itoa(int(ec))
 }
 
-// Equal returns true if err is *Error with the same clase and code.
+// Equal returns true if err is *Error with the same class and code.
 func (ec ErrClass) Equal(err error, code ErrCode) bool {
 	e := errors.Cause(err)
 	if e == nil {
@@ -108,4 +110,31 @@ type Error struct {
 // Error implements error interface.
 func (te *Error) Error() string {
 	return fmt.Sprintf("[%s:%d]%s", te.Class, te.Code, te.Message)
+}
+
+// ErrorEqual returns a boolean indicating whether err1 is equal to err2.
+func ErrorEqual(err1, err2 error) bool {
+	e1 := errors.Cause(err1)
+	e2 := errors.Cause(err2)
+
+	if e1 == e2 {
+		return true
+	}
+
+	if e1 == nil || e2 == nil {
+		return e1 == e2
+	}
+
+	te1, ok1 := e1.(*Error)
+	te2, ok2 := e2.(*Error)
+	if ok1 && ok2 {
+		return te1.Class == te2.Class && te1.Code == te2.Code
+	}
+
+	return e1.Error() == e2.Error()
+}
+
+// ErrorNotEqual returns a boolean indicating whether err1 isn't equal to err2.
+func ErrorNotEqual(err1, err2 error) bool {
+	return !ErrorEqual(err1, err2)
 }

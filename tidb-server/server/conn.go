@@ -46,8 +46,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -227,14 +227,14 @@ func (cc *clientConn) Run() {
 		cc.alloc.Reset()
 		data, err := cc.readPacket()
 		if err != nil {
-			if errors2.ErrorNotEqual(err, io.EOF) {
+			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Error(err)
 			}
 			return
 		}
 
 		if err := cc.dispatch(data); err != nil {
-			if errors2.ErrorEqual(err, io.EOF) {
+			if terror.ErrorEqual(err, io.EOF) {
 				return
 			}
 			log.Errorf("dispatch error %s, %s", errors.ErrorStack(err), cc)

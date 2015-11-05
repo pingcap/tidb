@@ -16,7 +16,7 @@
 package kv
 
 import (
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/comparer"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
@@ -52,7 +52,7 @@ func (m *memDbBuffer) NewIterator(param interface{}) Iterator {
 // Get returns the value associated with key.
 func (m *memDbBuffer) Get(k Key) ([]byte, error) {
 	v, err := m.db.Get(k)
-	if errors2.ErrorEqual(err, leveldb.ErrNotFound) {
+	if terror.ErrorEqual(err, leveldb.ErrNotFound) {
 		return nil, ErrNotExist
 	}
 	return v, nil
