@@ -31,7 +31,7 @@ type Domain struct {
 	store      kv.Storage
 	infoHandle *infoschema.Handle
 	ddl        ddl.DDL
-	lease      time.Duration
+	leaseCh    chan time.Duration
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
@@ -93,6 +93,14 @@ func (do *Domain) Store() kv.Storage {
 	return do.store
 }
 
+// SetLease will reset the lease time for online DDL change.
+func (do *Domain) SetLease(lease time.Duration) {
+	do.leaseCh <- lease
+
+	// let ddl to reset lease too.
+	do.ddl.SetLease(lease)
+}
+
 func (do *Domain) onDDLChange(err error) error {
 	if err != nil {
 		return err
@@ -107,12 +115,15 @@ func (do *Domain) reload() error {
 	return errors.Trace(err)
 }
 
-func (do *Domain) loadSchemaInLoop() {
-	if do.lease <= 0 {
-		return
+// check schema every 300 seconds default.
+const defaultLoadTime = 300 * time.Second
+
+func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+	if lease <= 0 {
+		lease = defaultLoadTime
 	}
 
-	ticker := time.NewTicker(do.lease)
+	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
 	for {
@@ -121,6 +132,20 @@ func (do *Domain) loadSchemaInLoop() {
 			if err := do.reload(); err != nil {
 				log.Fatalf("reload schema err %v", err)
 			}
+		case newLease := <-do.leaseCh:
+			if newLease <= 0 {
+				newLease = defaultLoadTime
+			}
+
+			if lease == newLease {
+				// nothing to do
+				continue
+			}
+
+			lease = newLease
+			// reset ticker too.
+			ticker.Stop()
+			ticker = time.NewTicker(lease)
 		}
 	}
 }
@@ -128,8 +153,8 @@ func (do *Domain) loadSchemaInLoop() {
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
-		store: store,
-		lease: lease,
+		store:   store,
+		leaseCh: make(chan time.Duration, 1),
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)
@@ -139,7 +164,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		log.Fatalf("load schema err %v", err)
 	}
 
-	go d.loadSchemaInLoop()
+	go d.loadSchemaInLoop(lease)
 
 	return d, nil
 }
