@@ -449,7 +449,7 @@ import (
 	OrderBy			"ORDER BY clause"
 	ByItem			"BY item"
 	OrderByOptional		"Optional ORDER BY clause optional"
-	ByList 			"BY list"
+	ByList			"BY list"
 	OuterOpt		"optional OUTER clause"
 	QuickOptional		"QUICK or empty"
 	PasswordOpt		"Password option"
