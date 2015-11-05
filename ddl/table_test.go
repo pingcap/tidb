@@ -53,7 +53,7 @@ func testTableInfo(c *C, d *ddl, name string) *model.TableInfo {
 		col := &model.ColumnInfo{
 			Name:         model.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
-			DefaultValue: 0,
+			DefaultValue: i,
 			State:        model.StatePublic,
 		}
 
