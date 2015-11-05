@@ -26,6 +26,6 @@ const (
 
 // KV error codes
 const (
-	InCompatibleDBFormat ErrCode = iota + 1
+	IncompatibleDBFormat ErrCode = iota + 1
 	NoDataForHandle
 )
