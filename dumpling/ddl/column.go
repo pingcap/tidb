@@ -228,6 +228,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	}
 
 	if len(tblInfo.Columns) == 1 {
+		job.State = model.JobCancelled
 		return errors.Errorf("can't drop only column %s in table %s", colName, tblInfo.Name)
 	}
 
@@ -236,6 +237,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	for _, indexInfo := range tblInfo.Indices {
 		for _, col := range indexInfo.Columns {
 			if col.Name.L == colName.L {
+				job.State = model.JobCancelled
 				return errors.Errorf("can't drop column %s with index %s covered now", colName, indexInfo.Name)
 			}
 		}
