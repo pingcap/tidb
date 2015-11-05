@@ -26,44 +26,49 @@ var (
 	_ FuncNode = &FuncConvertExpr{}
 	_ FuncNode = &FuncCastExpr{}
 	_ FuncNode = &FuncSubstringExpr{}
+	_ FuncNode = &FuncLocateExpr{}
 	_ FuncNode = &FuncTrimExpr{}
+	_ FuncNode = &FuncDateArithExpr{}
+	_ FuncNode = &AggregateFuncExpr{}
 )
+
+// UnquoteString is not quoted when printed.
+type UnquoteString string
 
 // FuncCallExpr is for function expression.
 type FuncCallExpr struct {
 	funcNode
 	// F is the function name.
-	F string
+	FnName string
 	// Args is the function args.
 	Args []ExprNode
-	// Distinct only affetcts sum, avg, count, group_concat,
-	// so we can ignore it in other functions
-	Distinct bool
 }
 
 // Accept implements Node interface.
-func (c *FuncCallExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(c); skipChildren {
-		return c, ok
+func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range c.Args {
+	n = newNod.(*FuncCallExpr)
+	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
-			return c, false
+			return n, false
 		}
-		c.Args[i] = node.(ExprNode)
+		n.Args[i] = node.(ExprNode)
 	}
-	return v.Leave(c)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (c *FuncCallExpr) IsStatic() bool {
-	v := builtin.Funcs[strings.ToLower(c.F)]
+func (n *FuncCallExpr) IsStatic() bool {
+	v := builtin.Funcs[strings.ToLower(n.FnName)]
 	if v.F == nil || !v.IsStatic {
 		return false
 	}
 
-	for _, v := range c.Args {
+	for _, v := range n.Args {
 		if !v.IsStatic() {
 			return false
 		}
@@ -81,21 +86,23 @@ type FuncExtractExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (ex *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ex); skipChildren {
-		return ex, ok
+func (n *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ex.Date.Accept(v)
+	n = newNod.(*FuncExtractExpr)
+	node, ok := n.Date.Accept(v)
 	if !ok {
-		return ex, false
+		return n, false
 	}
-	ex.Date = node.(ExprNode)
-	return v.Leave(ex)
+	n.Date = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (ex *FuncExtractExpr) IsStatic() bool {
-	return ex.Date.IsStatic()
+func (n *FuncExtractExpr) IsStatic() bool {
+	return n.Date.IsStatic()
 }
 
 // FuncConvertExpr provides a way to convert data between different character sets.
@@ -109,21 +116,23 @@ type FuncConvertExpr struct {
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (f *FuncConvertExpr) IsStatic() bool {
-	return f.Expr.IsStatic()
+func (n *FuncConvertExpr) IsStatic() bool {
+	return n.Expr.IsStatic()
 }
 
 // Accept implements Node Accept interface.
-func (f *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(f); skipChildren {
-		return f, ok
+func (n *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := f.Expr.Accept(v)
+	n = newNod.(*FuncConvertExpr)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return f, false
+		return n, false
 	}
-	f.Expr = node.(ExprNode)
-	return v.Leave(f)
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // CastFunctionType is the type for cast function.
@@ -149,21 +158,23 @@ type FuncCastExpr struct {
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (f *FuncCastExpr) IsStatic() bool {
-	return f.Expr.IsStatic()
+func (n *FuncCastExpr) IsStatic() bool {
+	return n.Expr.IsStatic()
 }
 
 // Accept implements Node Accept interface.
-func (f *FuncCastExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(f); skipChildren {
-		return f, ok
+func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := f.Expr.Accept(v)
+	n = newNod.(*FuncCastExpr)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return f, false
+		return n, false
 	}
-	f.Expr = node.(ExprNode)
-	return v.Leave(f)
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // FuncSubstringExpr returns the substring as specified.
@@ -177,31 +188,35 @@ type FuncSubstringExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (sf *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(sf); skipChildren {
-		return sf, ok
+func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := sf.StrExpr.Accept(v)
+	n = newNod.(*FuncSubstringExpr)
+	node, ok := n.StrExpr.Accept(v)
 	if !ok {
-		return sf, false
+		return n, false
 	}
-	sf.StrExpr = node.(ExprNode)
-	node, ok = sf.Pos.Accept(v)
+	n.StrExpr = node.(ExprNode)
+	node, ok = n.Pos.Accept(v)
 	if !ok {
-		return sf, false
+		return n, false
 	}
-	sf.Pos = node.(ExprNode)
-	node, ok = sf.Len.Accept(v)
-	if !ok {
-		return sf, false
+	n.Pos = node.(ExprNode)
+	if n.Len != nil {
+		node, ok = n.Len.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Len = node.(ExprNode)
 	}
-	sf.Len = node.(ExprNode)
-	return v.Leave(sf)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (sf *FuncSubstringExpr) IsStatic() bool {
-	return sf.StrExpr.IsStatic() && sf.Pos.IsStatic() && sf.Len.IsStatic()
+func (n *FuncSubstringExpr) IsStatic() bool {
+	return n.StrExpr.IsStatic() && n.Pos.IsStatic() && n.Len.IsStatic()
 }
 
 // FuncSubstringIndexExpr returns the substring as specified.
@@ -215,26 +230,28 @@ type FuncSubstringIndexExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (si *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(si); skipChildren {
-		return si, ok
+func (n *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := si.StrExpr.Accept(v)
+	n = newNod.(*FuncSubstringIndexExpr)
+	node, ok := n.StrExpr.Accept(v)
 	if !ok {
-		return si, false
+		return n, false
 	}
-	si.StrExpr = node.(ExprNode)
-	node, ok = si.Delim.Accept(v)
+	n.StrExpr = node.(ExprNode)
+	node, ok = n.Delim.Accept(v)
 	if !ok {
-		return si, false
+		return n, false
 	}
-	si.Delim = node.(ExprNode)
-	node, ok = si.Count.Accept(v)
+	n.Delim = node.(ExprNode)
+	node, ok = n.Count.Accept(v)
 	if !ok {
-		return si, false
+		return n, false
 	}
-	si.Count = node.(ExprNode)
-	return v.Leave(si)
+	n.Count = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // FuncLocateExpr returns the position of the first occurrence of substring.
@@ -248,26 +265,28 @@ type FuncLocateExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (le *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(le); skipChildren {
-		return le, ok
+func (n *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := le.Str.Accept(v)
+	n = newNod.(*FuncLocateExpr)
+	node, ok := n.Str.Accept(v)
 	if !ok {
-		return le, false
+		return n, false
 	}
-	le.Str = node.(ExprNode)
-	node, ok = le.SubStr.Accept(v)
+	n.Str = node.(ExprNode)
+	node, ok = n.SubStr.Accept(v)
 	if !ok {
-		return le, false
+		return n, false
 	}
-	le.SubStr = node.(ExprNode)
-	node, ok = le.Pos.Accept(v)
+	n.SubStr = node.(ExprNode)
+	node, ok = n.Pos.Accept(v)
 	if !ok {
-		return le, false
+		return n, false
 	}
-	le.Pos = node.(ExprNode)
-	return v.Leave(le)
+	n.Pos = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // TrimDirectionType is the type for trim direction.
@@ -295,27 +314,102 @@ type FuncTrimExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (tf *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(tf); skipChildren {
-		return tf, ok
+func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := tf.Str.Accept(v)
+	n = newNod.(*FuncTrimExpr)
+	node, ok := n.Str.Accept(v)
 	if !ok {
-		return tf, false
+		return n, false
 	}
-	tf.Str = node.(ExprNode)
-	node, ok = tf.RemStr.Accept(v)
+	n.Str = node.(ExprNode)
+	node, ok = n.RemStr.Accept(v)
 	if !ok {
-		return tf, false
+		return n, false
 	}
-	tf.RemStr = node.(ExprNode)
-	return v.Leave(tf)
+	n.RemStr = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (tf *FuncTrimExpr) IsStatic() bool {
-	return tf.Str.IsStatic() && tf.RemStr.IsStatic()
+func (n *FuncTrimExpr) IsStatic() bool {
+	return n.Str.IsStatic() && n.RemStr.IsStatic()
 }
 
-// TypeStar is a special type for "*".
-type TypeStar string
+// DateArithType is type for DateArith option.
+type DateArithType byte
+
+const (
+	// DateAdd is to run date_add function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	DateAdd DateArithType = iota + 1
+	// DateSub is to run date_sub function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
+	DateSub
+)
+
+// FuncDateArithExpr is the struct for date arithmetic functions.
+type FuncDateArithExpr struct {
+	funcNode
+
+	Op       DateArithType
+	Unit     string
+	Date     ExprNode
+	Interval ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	n = newNod.(*FuncDateArithExpr)
+	if n.Date != nil {
+		node, ok := n.Date.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Date = node.(ExprNode)
+	}
+	if n.Interval != nil {
+		node, ok := n.Date.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Date = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+// AggregateFuncExpr represents aggregate function expression.
+type AggregateFuncExpr struct {
+	funcNode
+	// F is the function name.
+	F string
+	// Args is the function args.
+	Args []ExprNode
+	// If distinct is true, the function only aggregate distinct values.
+	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
+	// but "sum(distinct c1)" is "3".
+	Distinct bool
+}
+
+// Accept implements Node Accept interface.
+func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+	n = newNod.(*AggregateFuncExpr)
+	for i, val := range n.Args {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Args[i] = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
