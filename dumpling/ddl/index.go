@@ -451,13 +451,6 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				return nil
 			}
 
-			// mean we haven't already added this index.
-			// lock row first
-			err = txn.LockKeys(t.RecordKey(handle, nil))
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			// create the index.
 			err = kvX.Create(txn, vals, handle)
 			return errors.Trace(err)
