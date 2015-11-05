@@ -28,12 +28,23 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int) {
+func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
 	offsetChanged := make(map[int]int)
-	for i := offset; i < len(columns); i++ {
-		offsetChanged[columns[i].Offset] = i
-		columns[i].Offset = i
+	if added {
+		for i := offset + 1; i < len(columns); i++ {
+			offsetChanged[columns[i].Offset] = i
+			columns[i].Offset = i
+		}
+		columns[offset].Offset = offset
+	} else {
+		for i := offset + 1; i < len(columns); i++ {
+			offsetChanged[columns[i].Offset] = i - 1
+			columns[i].Offset = i - 1
+		}
+		columns[offset].Offset = len(columns) - 1
 	}
+
+	// TODO: index can't cover the add/remove column with offset now, we may check this later.
 
 	// Update index column offset info.
 	for _, idx := range indices {
@@ -182,7 +193,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		}
 
 		// Adjust column offset.
-		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset)
+		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, offset, true)
 
 		columnInfo.State = model.StatePublic
 
@@ -200,8 +211,123 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
-	// TODO: complete it.
-	return nil
+	schemaID := job.SchemaID
+	tblInfo, err := d.getTableInfo(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var colName model.CIStr
+	err = job.DecodeArgs(&colName)
+	if err != nil {
+		job.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	colInfo := findCol(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		job.State = model.JobCancelled
+		return errors.Errorf("column %s doesn't exist", colName)
+	}
+
+	if len(tblInfo.Columns) == 1 {
+		return errors.Errorf("can't drop only column %s in table %s", colName, tblInfo.Name)
+	}
+
+	// we don't support drop column with index covered now.
+	// we must drop the index first, then drop the column.
+	for _, indexInfo := range tblInfo.Indices {
+		for _, col := range indexInfo.Columns {
+			if col.Name.L == colName.L {
+				return errors.Errorf("can't drop column %s with index %s covered now", colName, indexInfo.Name)
+			}
+		}
+	}
+
+	_, err = t.GenSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	switch colInfo.State {
+	case model.StatePublic:
+		// public -> write only
+		job.SchemaState = model.StateWriteOnly
+		colInfo.State = model.StateWriteOnly
+
+		// set this column's offset to the last and reset all following columns' offset
+		d.adjustColumnOffset(tblInfo.Columns, tblInfo.Indices, colInfo.Offset, false)
+
+		err = t.UpdateTable(schemaID, tblInfo)
+		return errors.Trace(err)
+	case model.StateWriteOnly:
+		// write only -> delete only
+		job.SchemaState = model.StateDeleteOnly
+		colInfo.State = model.StateDeleteOnly
+		err = t.UpdateTable(schemaID, tblInfo)
+		return errors.Trace(err)
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		job.SchemaState = model.StateReorganization
+		colInfo.State = model.StateReorganization
+		// initialize SnapshotVer to 0 for later reorganization check.
+		job.SnapshotVer = 0
+		// initialize reorg handle to 0
+		job.ReorgHandle = 0
+		atomic.StoreInt64(&d.reorgHandle, 0)
+		err = t.UpdateTable(schemaID, tblInfo)
+		return errors.Trace(err)
+	case model.StateReorganization:
+		// reorganization -> absent
+		// get the current version for reorganization if we don't have
+		if job.SnapshotVer == 0 {
+			var ver kv.Version
+			ver, err = d.store.CurrentVersion()
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			job.SnapshotVer = ver.Ver
+		}
+
+		tbl, err := d.getTable(t, schemaID, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = d.runReorgJob(func() error {
+			return d.dropTableColumn(tbl, colInfo, job.SnapshotVer, job.ReorgHandle)
+		})
+
+		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
+
+		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+			// if timeout, we should return, check for the owner and re-wait job done.
+			return nil
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// all reorganization jobs done, drop this column
+		newColumns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+		for _, col := range tblInfo.Columns {
+			if col.Name.L != colName.L {
+				newColumns = append(newColumns, col)
+			}
+		}
+		tblInfo.Columns = newColumns
+		if err = t.UpdateTable(schemaID, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+
+		// finish this job
+		job.SchemaState = model.StateNone
+		job.State = model.JobDone
+		return nil
+	default:
+		return errors.Errorf("invalid table state %v", tblInfo.State)
+	}
 }
 
 func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, version uint64, seekHandle int64) error {
@@ -278,4 +404,34 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 	}
 
 	return nil
+}
+
+func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, version uint64, seekHandle int64) error {
+	col := &column.Col{ColumnInfo: *colInfo}
+	for {
+		handles, err := d.getSnapshotRows(t, version, seekHandle)
+		if err != nil {
+			return errors.Trace(err)
+		} else if len(handles) == 0 {
+			return nil
+		}
+
+		seekHandle = handles[len(handles)-1] + 1
+
+		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			for _, h := range handles {
+				key := t.RecordKey(h, col)
+				if err := txn.Delete(key); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// update reorgHandle here after every successful batch.
+		atomic.StoreInt64(&d.reorgHandle, seekHandle)
+	}
 }
