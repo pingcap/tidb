@@ -266,6 +266,7 @@ z		[zZ]
 
 abs		{a}{b}{s}
 add		{a}{d}{d}
+adddate		{a}{d}{d}{d}{a}{t}{e}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
@@ -413,6 +414,7 @@ share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
+subdate		{s}{u}{b}{d}{a}{t}{e}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
@@ -595,6 +597,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {abs}			lval.item = string(l.val)
 			return abs
 {add}			return add
+{adddate}		return addDate
 {after}			lval.item = string(l.val)
 			return after
 {all}			return all
@@ -658,10 +661,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
-{date_add}		lval.item = string(l.val)
-			return dateAdd
-{date_sub}		lval.item = string(l.val)
-			return dateSub
+{date_add}		return dateAdd
+{date_sub}		return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
@@ -850,6 +851,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {set}			return set
 {share}			return share
 {show}			return show
+{subdate}		return subDate
 {substring}		lval.item = string(l.val)
 			return substring
 {substring_index}	lval.item = string(l.val)
