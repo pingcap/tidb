@@ -434,6 +434,8 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 		switch spec.Action {
 		case AlterAddColumn:
 			err = d.AddColumn(ctx, ident, spec)
+		case AlterDropColumn:
+			err = d.DropColumn(ctx, ident, model.NewCIStr(spec.Name))
 		case AlterDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case AlterAddConstr:
@@ -502,6 +504,31 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddColumn,
 		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
+	}
+
+	err = d.startJob(ctx, job)
+	err = d.onDDLChange(err)
+	return errors.Trace(err)
+}
+
+// DropColumn will drop a column from the table, now we don't support drop the column with index covered.
+func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CIStr) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(qerror.ErrDatabaseNotExist)
+	}
+
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(ErrNotExists)
+	}
+
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionDropColumn,
+		Args:     []interface{}{colName},
 	}
 
 	err = d.startJob(ctx, job)
