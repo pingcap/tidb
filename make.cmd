@@ -18,17 +18,6 @@ DEL /F /A /Q y.output
 
 golex -o parser/scanner.go parser/scanner.l
 
-@echo [Ast-Parser]
-go get github.com/qiuyesuifeng/goyacc
-go get github.com/qiuyesuifeng/golex
-type nul >>temp.XXXXXX
-goyacc -o nul -xegen "temp.XXXXXX" parser/parser.y
-goyacc -o ast/parser/parser.go -xe "temp.XXXXXX" ast/parser/parser.y
-DEL /F /A /Q temp.XXXXXX
-DEL /F /A /Q y.output
-
-golex -o ast/parser/scanner.go ast/parser/scanner.l
-
 @echo [Build]
 godep go build -ldflags '%LDFLAGS%'
 
