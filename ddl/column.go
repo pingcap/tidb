@@ -372,13 +372,6 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			// If row column doesn't exist, we need to backfill column.
-			// Lock row first.
-			err = txn.LockKeys(t.RecordKey(handle, nil))
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			value, _, err := tables.GetColDefaultValue(nil, columnInfo)
 			if err != nil {
 				return errors.Trace(err)
