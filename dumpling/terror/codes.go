@@ -11,29 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package errors2
+package terror
 
-import (
-	"github.com/juju/errors"
+// Schema error codes
+const (
+	DatabaseNotExists ErrCode = iota + 1
 )
 
-// ErrorEqual returns a boolean indicating whether err1 is equal to err2.
-func ErrorEqual(err1, err2 error) bool {
-	e1 := errors.Cause(err1)
-	e2 := errors.Cause(err2)
+// Executor error codes
+const (
+	CommitNotInTransaction ErrCode = iota + 1
+	RollbackNotInTransaction
+)
 
-	if e1 == e2 {
-		return true
-	}
-
-	if e1 == nil || e2 == nil {
-		return e1 == e2
-	}
-
-	return e1.Error() == e2.Error()
-}
-
-// ErrorNotEqual returns a boolean indicating whether err1 isn't equal to err2.
-func ErrorNotEqual(err1, err2 error) bool {
-	return !ErrorEqual(err1, err2)
-}
+// KV error codes
+const (
+	InCompatibleDBFormat ErrCode = iota + 1
+	NoDataForHandle
+)

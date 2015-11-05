@@ -25,8 +25,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 const (
@@ -104,7 +103,7 @@ func bootstrap(s Session) {
 	if err == nil {
 		// We have already finished bootstrap.
 		return
-	} else if !errors2.ErrorEqual(err, errors.ErrDatabaseNotExist) {
+	} else if !terror.Schema.Equal(err, terror.DatabaseNotExists) {
 		log.Fatal(err)
 	}
 	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
