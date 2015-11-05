@@ -42,7 +42,7 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 	lease := 50 * time.Millisecond
 	s.d = newDDL(s.store, nil, nil, lease)
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test")
+	s.dbInfo = testSchemaInfo(c, s.d, "test_index")
 	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
 }
 
@@ -79,7 +79,7 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
-	tblInfo := testTableInfo(c, s.d, "t1")
+	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
 	defer ctx.FinishTxn(true)
 
@@ -159,7 +159,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	defer d.close()
 
-	tblInfo := testTableInfo(c, d, "t")
+	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 	defer ctx.FinishTxn(true)
 
@@ -167,6 +167,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	defer testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 

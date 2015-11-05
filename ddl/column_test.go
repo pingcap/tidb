@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
@@ -41,7 +42,7 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 	lease := 50 * time.Millisecond
 	s.d = newDDL(s.store, nil, nil, lease)
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test")
+	s.dbInfo = testSchemaInfo(c, s.d, "test_column")
 	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
 }
 
@@ -96,7 +97,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 }
 
 func (s *testColumnSuite) TestColumn(c *C) {
-	tblInfo := testTableInfo(c, s.d, "t1")
+	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
 	defer ctx.FinishTxn(true)
 
@@ -228,129 +229,73 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testCheckJobDone(c, s.d, job, false)
 
 	testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c6", true)
+
+	testDropTable(c, ctx, s.d, s.dbInfo, tblInfo)
 }
 
-func (s *testIndexSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		c.Assert(data, DeepEquals, row)
-		i++
-		return true, nil
-	})
+func (s *testIndexSuite) checkColumnKVExist(c *C, ctx context.Context, t table.Table, handle int64, col *column.Col, columnValue interface{}, isExist bool) {
+	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
 
-	// Check if new column value exists.
-	txn, err := ctx.GetTxn(false)
 	key := t.RecordKey(handle, col)
-	_, err = txn.Get(key)
-	c.Assert(err, NotNil)
-
-	// Test add a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
-	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
-	c.Assert(err, IsNil)
-
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
-	rows := [][]interface{}{row, newRow}
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		c.Assert(data, DeepEquals, rows[i])
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(2))
-
-	// Check if new column value exists.
-	txn, err = ctx.GetTxn(true)
-	key = t.RecordKey(handle, col)
-	_, err = txn.Get(key)
-	c.Assert(err, NotNil)
-
-	// Test remove a row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
-	err = t.RemoveRow(ctx, handle)
-	c.Assert(err, IsNil)
-
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(1))
-
-	// Check if new column value exists.
-	txn, err = ctx.GetTxn(true)
-	key = t.RecordKey(handle, col)
-	_, err = txn.Get(key)
-	c.Assert(err, NotNil)
-
-	err = ctx.FinishTxn(false)
-	c.Assert(err, IsNil)
-}
-
-func (s *testIndexSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}) {
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		c.Assert(data, DeepEquals, row)
-		i++
-		return true, nil
-	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-
-	// Check if new column value exists.
-	txn, err := ctx.GetTxn(false)
-	key := t.RecordKey(handle, col)
-	_, err = txn.Get(key)
-	c.Assert(err, NotNil)
-
-	// Test add a new row.
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
-	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
-	c.Assert(err, IsNil)
-
-	_, err = ctx.GetTxn(true)
-	c.Assert(err, IsNil)
-
-	rows := [][]interface{}{row, newRow}
-
-	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
-		c.Assert(data, DeepEquals, rows[i])
-		i++
-		return true, nil
-	})
-	c.Assert(i, Equals, int64(2))
-
-	// Check if new column value exists.
-	txn, err = ctx.GetTxn(true)
-	key = t.RecordKey(handle, col)
 	data, err := txn.Get(key)
+
+	if isExist {
+		c.Assert(err, IsNil)
+		v, err1 := t.DecodeValue(data, col)
+		c.Assert(err1, IsNil)
+		value, err1 := types.Convert(v, &col.FieldType)
+		c.Assert(err1, IsNil)
+		c.Assert(value, Equals, columnValue)
+	} else {
+		c.Assert(err, NotNil)
+	}
+
+	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
-	v, err := t.DecodeValue(data, col)
+}
+
+func (s *testIndexSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, columnValue interface{}) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
+}
+
+func (s *testIndexSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	i := int64(0)
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
 	c.Assert(err, IsNil)
-	value, err := types.Convert(v, &col.FieldType)
+	c.Assert(i, Equals, int64(1))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, isDropped)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	c.Assert(value, Equals, columnValue)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
 
 	// Test remove a row.
 	_, err = ctx.GetTxn(true)
@@ -369,14 +314,64 @@ func (s *testIndexSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl,
 	})
 	c.Assert(i, Equals, int64(1))
 
-	// Check if new column value exists.
-	txn, err = ctx.GetTxn(true)
-	key = t.RecordKey(handle, col)
-	_, err = txn.Get(key)
-	c.Assert(err, NotNil)
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
+}
 
-	err = ctx.FinishTxn(false)
+func (s *testIndexSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	i := int64(0)
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
 	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, isDropped)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, true)
+
+	// Test remove a row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	err = t.RemoveRow(ctx, handle)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(1))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
 }
 
 func (s *testIndexSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}) {
@@ -396,7 +391,7 @@ func (s *testIndexSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tb
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	newRow := []interface{}{int64(11), int64(22), int64(33), int64(55)}
+	newRow := []interface{}{int64(11), int64(22), int64(33), int64(44)}
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
@@ -435,14 +430,14 @@ func (s *testIndexSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tb
 	c.Assert(err, IsNil)
 }
 
-func (s *testIndexSuite) checkAddColumn(c *C, state model.SchemaState, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}) {
+func (s *testIndexSuite) checkAddOrDropColumn(c *C, state model.SchemaState, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
 	switch state {
 	case model.StateNone:
-		// do nothing
+		s.checkNoneColumn(c, ctx, d, tblInfo, handle, col, columnValue)
 	case model.StateDeleteOnly:
-		s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, col, row)
+		s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
 	case model.StateWriteOnly:
-		s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
+		s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
 	case model.StateReorganization:
 		// do nothing
 	case model.StatePublic:
@@ -464,7 +459,7 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	defer d.close()
 
-	tblInfo := testTableInfo(c, d, "t")
+	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 	defer ctx.FinishTxn(true)
 
@@ -472,6 +467,7 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	defer testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
@@ -495,17 +491,19 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 	states := []model.SchemaState{model.StateDeleteOnly, model.StateWriteOnly, model.StateReorganization, model.StatePublic}
 	stateIndex := 0
 	lastStateIndex := -1
+	col := &column.Col{}
 
 	for {
 		select {
 		case job := <-done:
 			testCheckJobDone(c, d, job, true)
+			s.checkAddOrDropColumn(c, model.StatePublic, ctx, d, tblInfo, handle, col, row, defaultColValue, false)
 			return
 		case <-ticker.C:
 			d.close()
 
 			t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
-			col := testGetColumn(t, colName)
+			col = testGetColumn(t, colName)
 			if col == nil {
 				continue
 			}
@@ -523,7 +521,79 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 			lastStateIndex = stateIndex
 			stateIndex++
 
-			s.checkAddColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue)
+			s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, false)
+
+			d.start()
+		}
+	}
+}
+
+func (s *testIndexSuite) TestDropColumn(c *C) {
+	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	defer d.close()
+
+	tblInfo := testTableInfo(c, d, "t", 4)
+	ctx := testNewContext(c, d)
+	defer ctx.FinishTxn(true)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	defer testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	colName := "c4"
+	defaultColValue := int64(4)
+	row := []interface{}{int64(1), int64(2), int64(3)}
+	handle, err := t.AddRecord(ctx, append(row, defaultColValue))
+	c.Assert(err, IsNil)
+
+	ticker := time.NewTicker(d.lease)
+	done := make(chan *model.Job, 1)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	go func() {
+		done <- testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
+	}()
+
+	states := []model.SchemaState{model.StateWriteOnly, model.StateDeleteOnly, model.StateReorganization}
+	stateIndex := 0
+	lastStateIndex := -1
+	col := &column.Col{}
+
+	for {
+		select {
+		case job := <-done:
+			testCheckJobDone(c, d, job, false)
+			s.checkAddOrDropColumn(c, model.StateNone, ctx, d, tblInfo, handle, col, row, defaultColValue, false)
+			return
+		case <-ticker.C:
+			d.close()
+
+			t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
+			col = testGetColumn(t, colName)
+			if col == nil {
+				return
+			}
+
+			// Here means column state is not changed, so just skipped.
+			if stateIndex == lastStateIndex {
+				continue
+			}
+
+			if stateIndex == len(states) {
+				return
+			}
+
+			c.Assert(col.State, Equals, states[stateIndex])
+			lastStateIndex = stateIndex
+			stateIndex++
+
+			s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, true)
 
 			d.start()
 		}
