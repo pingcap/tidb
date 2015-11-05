@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int) {
@@ -45,31 +46,27 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 	}
 }
 
-func (d *ddl) addColumn(tblInfo *model.TableInfo, spec *AlterSpecification) (*model.ColumnInfo, int, error) {
+func (d *ddl) addColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ColumnPosition) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
 
 	// Get column position.
-	if spec.Position.Type == ColumnPositionFirst {
+	if pos.Type == ColumnPositionFirst {
 		position = 0
-	} else if spec.Position.Type == ColumnPositionAfter {
-		c := findCol(cols, spec.Position.RelativeColumn)
+	} else if pos.Type == ColumnPositionAfter {
+		c := findCol(cols, pos.RelativeColumn)
 		if c == nil {
-			return nil, 0, errors.Errorf("No such column: %v", spec.Column.Name)
+			return nil, 0, errors.Errorf("No such column: %v", pos.RelativeColumn)
 		}
 
 		// Insert position is after the mentioned column.
 		position = c.Offset + 1
 	}
 
-	// TODO: set constraint
-	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
+	// reset column offset here
+	colInfo.Offset = position
 
-	colInfo := &col.ColumnInfo
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
@@ -92,23 +89,24 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	spec := &AlterSpecification{}
+	col := &model.ColumnInfo{}
+	pos := &ColumnPosition{}
 	offset := 0
-	err = job.DecodeArgs(&spec, &offset)
+	err = job.DecodeArgs(col, pos, &offset)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	columnInfo := findCol(tblInfo.Columns, spec.Column.Name)
+	columnInfo := findCol(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
 			// we already have a column with same column name
 			job.State = model.JobCancelled
-			return errors.Errorf("ADD COLUMN: column already exist %s", spec.Column.Name)
+			return errors.Errorf("ADD COLUMN: column already exist %s", col.Name.L)
 		}
 	} else {
-		columnInfo, offset, err = d.addColumn(tblInfo, spec)
+		columnInfo, offset, err = d.addColumn(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
@@ -116,7 +114,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 
 		// Set offset arg to job.
 		if offset != 0 {
-			job.Args = []interface{}{spec, offset}
+			job.Args = []interface{}{columnInfo, pos, offset}
 		}
 	}
 
@@ -260,7 +258,13 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			err = t.SetColValue(txn, backfillKey, value)
+			// must convert to the column field type.
+			v, err := types.Convert(value, &columnInfo.FieldType)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			err = t.SetColValue(txn, backfillKey, v)
 			if err != nil {
 				return errors.Trace(err)
 			}
