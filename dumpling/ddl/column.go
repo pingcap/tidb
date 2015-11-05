@@ -75,9 +75,6 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos
 		position = c.Offset + 1
 	}
 
-	// reset column offset here
-	colInfo.Offset = position
-
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
