@@ -22,10 +22,11 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/errors"
+	terrors "github.com/pingcap/tidb/util/errors"
 	"github.com/pingcap/tidb/util/errors2"
 )
 
@@ -92,20 +93,65 @@ const (
 	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
+	// CreateTiDBTable is the SQL statement creates a table in system db.
+	// This table is a key-value struct contains some information used by TiDB.
+	// Currently we only put bootstraped in it which indicates if the system is already bootstraped.
+	CreateTiDBTable = `CREATE TABLE if not exists mysql.tidb(
+		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
+		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
+		COMMENT VARCHAR(1024));`
 )
 
 // Bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	//  Check if system db exists.
-	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
-	if err == nil {
-		// We have already finished bootstrap.
-		return
-	} else if !errors2.ErrorEqual(err, errors.ErrDatabaseNotExist) {
+	b, err := alreadyBootstraped(s)
+	if err != nil {
 		log.Fatal(err)
+	}
+	if b {
+		return
 	}
 	doDDLWorks(s)
 	doDMLWorks(s)
+}
+
+const (
+	bootstrapedVar      = "bootstraped"
+	bootstrapedVarTrue  = "True"
+	bootstrapedVarFalse = "False"
+)
+
+func alreadyBootstraped(s Session) (bool, error) {
+	//  Check if system db exists.
+	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
+	if !errors2.ErrorEqual(err, terrors.ErrDatabaseNotExist) {
+		return false, errors.Trace(err)
+	}
+	// Check bootstraped variable value in TiDB table.
+	v, err := checkBootstrapedVar(s)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return v, nil
+}
+
+func checkBootstrapedVar(s Session) (bool, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrapedVar)
+	rs, err := s.Execute(sql)
+	if err != nil {
+		// TODO: use terrors to compare error.
+		str := err.Error()
+		if strings.Contains(str, "does not exist") {
+			return false, nil
+		}
+		return false, errors.Trace(err)
+	}
+	if len(rs) != 1 {
+		return false, errors.New("Wrong number of Recordset")
+	}
+	r := rs[0]
+	row, err := r.Next()
+	return row.Data[0].(string) == bootstrapedVarTrue, errors.Trace(err)
 }
 
 // Execute DDL statements in bootstrap stage.
@@ -113,7 +159,7 @@ func doDDLWorks(s Session) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
 	// Create system db.
-	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
+	mustExecute(s, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", mysql.SystemDB))
 	// Create user table.
 	mustExecute(s, CreateUserTable)
 	// Create privilege tables.
@@ -122,10 +168,14 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateColumnPrivTable)
 	// Create global systemt variable table.
 	mustExecute(s, CreateGloablVariablesTable)
+	// Create TiDB table.
+	mustExecute(s, CreateTiDBTable)
 }
 
 // Execute DML statements in bootstrap stage.
+// All the statements run in a single transaction.
 func doDMLWorks(s Session) {
+	mustExecute(s, "BEGIN")
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
 		("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
@@ -138,6 +188,9 @@ func doDMLWorks(s Session) {
 	}
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable, strings.Join(values, ", "))
 	mustExecute(s, sql)
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrapedVar, bootstrapedVarTrue, bootstrapedVarTrue)
+	mustExecute(s, sql)
+	mustExecute(s, "COMMIT")
 }
 
 func mustExecute(s Session, sql string) {
