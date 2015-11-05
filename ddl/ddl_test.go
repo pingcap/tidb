@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
@@ -197,5 +198,7 @@ func statement(sql string) stmt.Statement {
 	log.Debug("Compile", sql)
 	lexer := parser.NewLexer(sql)
 	parser.YYParse(lexer)
-	return lexer.Stmts()[0].(stmt.Statement)
+	compiler := &optimizer.Compiler{}
+	stm, _ := compiler.Compile(lexer.Stmts()[0])
+	return stm
 }
