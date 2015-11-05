@@ -2696,7 +2696,7 @@ SelectStmt:
 					lastEnd--
 				}
 			}
-			lastField.SetText(yylex.(*lexer).src[lastField.Offset:lastEnd])
+			lastField.SetText(src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Limit = $4.(*ast.Limit)
