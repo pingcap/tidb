@@ -20,76 +20,66 @@ import (
 	"github.com/juju/errors"
 )
 
+// Common base error instances.
+var (
+	DatabaseNotExists = ClassSchema.New(CodeDatabaseNotExists, "database not exists")
+
+	CommitNotInTransaction   = ClassExecutor.New(CodeCommitNotInTransaction, "commit not in transaction")
+	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
+)
+
 // ErrCode represents a specific error type in a error class.
 // Same error code can be used in different error classes.
 type ErrCode int
 
-// Schema error codes
+// Schema error codes.
 const (
-	DatabaseNotExists ErrCode = iota + 1
+	CodeDatabaseNotExists ErrCode = iota + 1
 )
 
-// Executor error codes
+// Executor error codes.
 const (
-	CommitNotInTransaction ErrCode = iota + 1
-	RollbackNotInTransaction
+	CodeCommitNotInTransaction ErrCode = iota + 1
+	CodeRollbackNotInTransaction
 )
 
-// KV error codes
+// KV error codes.
 const (
-	IncompatibleDBFormat ErrCode = iota + 1
-	NoDataForHandle
+	CodeIncompatibleDBFormat ErrCode = iota + 1
+	CodeNoDataForHandle
 )
 
 // ErrClass represents a class of errors.
 type ErrClass int
 
-// Error classes
+// Error classes.
 const (
-	Parser ErrClass = iota + 1
-	Schema
-	Optimizer
-	Executor
-	KV
-	Server
+	ClassParser ErrClass = iota + 1
+	ClassSchema
+	ClassOptimizer
+	ClassExecutor
+	ClassKV
+	ClassServer
 	// Add more as needed.
 )
 
 // String implements fmt.Stringer interface.
 func (ec ErrClass) String() string {
 	switch ec {
-	case Parser:
+	case ClassParser:
 		return "parser"
-	case Schema:
+	case ClassSchema:
 		return "schema"
-	case Optimizer:
+	case ClassOptimizer:
 		return "optimizer"
-	case Executor:
+	case ClassExecutor:
 		return "executor"
-	case KV:
+	case ClassKV:
 		return "kv"
-	case Server:
+	case ClassServer:
 		return "server"
 	}
 	return strconv.Itoa(int(ec))
-}
-
-// Equal returns true if err is *Error with the same class and code.
-func (ec ErrClass) Equal(err error, code ErrCode) bool {
-	e := errors.Cause(err)
-	if e == nil {
-		return false
-	}
-	if te, ok := e.(*Error); ok {
-		return te.Class == ec && te.Code == code
-	}
-	return false
-}
-
-// NotEqual returns true if err is not *Error with the same class
-// and the same code.
-func (ec ErrClass) NotEqual(err error, code ErrCode) bool {
-	return !ec.Equal(err, code)
 }
 
 // EqualClass returns true if err is *Error with the same class.
@@ -109,11 +99,9 @@ func (ec ErrClass) NotEqualClass(err error) bool {
 	return !ec.EqualClass(err)
 }
 
-// New creates an *Error with an error code, message format and arguments.
-func (ec ErrClass) New(code ErrCode, message string, args ...interface{}) *Error {
-	if len(args) != 0 {
-		message = fmt.Sprintf(message, args...)
-	}
+// New creates an *Error with an error code and an error message.
+// Usually used to create base *Error.
+func (ec ErrClass) New(code ErrCode, message string) *Error {
 	return &Error{
 		Class:   ec,
 		Code:    code,
@@ -130,8 +118,30 @@ type Error struct {
 }
 
 // Error implements error interface.
-func (te *Error) Error() string {
-	return fmt.Sprintf("[%s:%d]%s", te.Class, te.Code, te.Message)
+func (e *Error) Error() string {
+	return fmt.Sprintf("[%s:%d]%s", e.Class, e.Code, e.Message)
+}
+
+// Gen generates a new *Error with the same class and code, and a new formatted message.
+func (e *Error) Gen(format string, args ...interface{}) *Error {
+	err := *e
+	err.Message = fmt.Sprintf(format, args...)
+	return &err
+}
+
+// Equal checks if err is equal to e.
+func (e *Error) Equal(err error) bool {
+	originErr := errors.Cause(err)
+	if originErr == nil {
+		return false
+	}
+	inErr, ok := originErr.(*Error)
+	return ok && e.Class == inErr.Class && e.Code == inErr.Code
+}
+
+// NotEqual checks if err is not equal to e.
+func (e *Error) NotEqual(err error) bool {
+	return !e.Equal(err)
 }
 
 // ErrorEqual returns a boolean indicating whether err1 is equal to err2.

@@ -62,7 +62,7 @@ func (s *UseStmt) SetText(text string) {
 func (s *UseStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	dbname := model.NewCIStr(s.DBName)
 	if !sessionctx.GetDomain(ctx).InfoSchema().SchemaExists(dbname) {
-		return nil, terror.Schema.New(terror.DatabaseNotExists, "database %s not exists", dbname)
+		return nil, terror.DatabaseNotExists.Gen("database %s not exists", dbname)
 	}
 	db.BindCurrentSchema(ctx, dbname.O)
 	return nil, nil
