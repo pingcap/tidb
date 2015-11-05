@@ -15,16 +15,34 @@ package terror
 
 import (
 	"fmt"
-	"github.com/juju/errors"
 	"strconv"
-)
 
-// ErrClass represents a class of errors.
-type ErrClass int
+	"github.com/juju/errors"
+)
 
 // ErrCode represents a specific error type in a error class.
 // Same error code can be used in different error classes.
 type ErrCode int
+
+// Schema error codes
+const (
+	DatabaseNotExists ErrCode = iota + 1
+)
+
+// Executor error codes
+const (
+	CommitNotInTransaction ErrCode = iota + 1
+	RollbackNotInTransaction
+)
+
+// KV error codes
+const (
+	IncompatibleDBFormat ErrCode = iota + 1
+	NoDataForHandle
+)
+
+// ErrClass represents a class of errors.
+type ErrClass int
 
 // Error classes
 const (
@@ -42,8 +60,12 @@ func (ec ErrClass) String() string {
 	switch ec {
 	case Parser:
 		return "parser"
+	case Schema:
+		return "schema"
 	case Optimizer:
 		return "optimizer"
+	case Executor:
+		return "executor"
 	case KV:
 		return "kv"
 	case Server:
