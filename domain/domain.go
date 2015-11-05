@@ -115,9 +115,10 @@ func (do *Domain) reload() error {
 	return errors.Trace(err)
 }
 
+// check schema every 300 seconds default.
+const defaultLoadTime = 300 * time.Second
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	// check schema every 300 seconds default.
-	const defaultLoadTime = 300 * time.Second
 	if lease <= 0 {
 		lease = defaultLoadTime
 	}
