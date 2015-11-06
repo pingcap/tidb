@@ -18,8 +18,8 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/cockroachdb/cockroach/util/log"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 )
 
 // Common base error instances.
