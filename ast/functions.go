@@ -338,26 +338,40 @@ func (n *FuncTrimExpr) IsStatic() bool {
 	return n.Str.IsStatic() && n.RemStr.IsStatic()
 }
 
-// DateArithType is type for DateArith option.
+// DateArithType is type for DateArith type.
 type DateArithType byte
 
 const (
+	// AddDate is to run adddate function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+	AddDate DateArithType = iota + 1
 	// DateAdd is to run date_add function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	DateAdd DateArithType = iota + 1
+	DateAdd
 	// DateSub is to run date_sub function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
+	// SubDate is to run subdate function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+	SubDate
+	// DateArithDaysForm is to run adddate or subdate function with days form.
+	DateArithDaysForm
 )
+
+// DateArithInterval is the struct of DateArith interval part.
+type DateArithInterval struct {
+	Form     DateArithType
+	Unit     string
+	Interval ExprNode
+}
 
 // FuncDateArithExpr is the struct for date arithmetic functions.
 type FuncDateArithExpr struct {
 	funcNode
 
-	Op       DateArithType
-	Unit     string
-	Date     ExprNode
-	Interval ExprNode
+	Op   DateArithType
+	Date ExprNode
+	DateArithInterval
 }
 
 // Accept implements Node Accept interface.
