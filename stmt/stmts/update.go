@@ -121,7 +121,7 @@ func getUpdateColumns(assignList []*expression.Assignment, fields []*field.Resul
 func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table,
 	updateColumns map[int]*expression.Assignment, m map[interface{}]interface{},
 	offset int, onDuplicateUpdate bool) error {
-	if err := t.LockRow(ctx, h, true); err != nil {
+	if err := t.LockRow(ctx, h); err != nil {
 		return errors.Trace(err)
 	}
 

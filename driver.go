@@ -34,8 +34,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
-	qerror "github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 const (
@@ -247,11 +246,11 @@ func (c *driverConn) Begin() (driver.Tx, error) {
 
 func (c *driverConn) Commit() error {
 	if c.s == nil {
-		return qerror.ErrCommitNotInTransaction
+		return terror.CommitNotInTransaction
 	}
 	_, err := c.s.Execute(txCommitSQL)
 
-	if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+	if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
 		return c.s.Retry()
 	}
 
@@ -264,7 +263,7 @@ func (c *driverConn) Commit() error {
 
 func (c *driverConn) Rollback() error {
 	if c.s == nil {
-		return errors.Trace(qerror.ErrRollbackNotInTransaction)
+		return terror.RollbackNotInTransaction
 	}
 
 	if _, err := c.s.Execute(txRollbackSQL); err != nil {

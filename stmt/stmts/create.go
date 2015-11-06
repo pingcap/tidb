@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -73,7 +73,7 @@ func (s *CreateDatabaseStmt) Exec(ctx context.Context) (_ rset.Recordset, err er
 	log.Debug("create database")
 	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, model.NewCIStr(s.Name))
 	if err != nil {
-		if errors2.ErrorEqual(err, ddl.ErrExists) && s.IfNotExists {
+		if terror.ErrorEqual(err, ddl.ErrExists) && s.IfNotExists {
 			err = nil
 		}
 	}
@@ -115,7 +115,7 @@ func (s *CreateTableStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *CreateTableStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, s.Ident.Full(ctx), s.Cols, s.Constraints)
-	if errors2.ErrorEqual(err, ddl.ErrExists) {
+	if terror.ErrorEqual(err, ddl.ErrExists) {
 		if s.IfNotExists {
 			return nil, nil
 		}

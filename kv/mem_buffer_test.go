@@ -90,13 +90,13 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 		c.Assert(iter.Key(), Equals, string(val))
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
-		next, err := iter.Next()
+		err := iter.Next()
 		c.Assert(err, IsNil)
-		c.Assert(next.Valid(), IsTrue)
+		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert(next.Key(), Equals, string(val))
-		c.Assert(valToStr(c, next), Equals, string(val))
+		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
 
@@ -181,7 +181,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		it := buffer.NewIterator(nil)
 		for it.Valid() {
 			cnt++
-			it, _ = it.Next()
+			it.Next()
 		}
 		c.Assert(cnt, Equals, 6)
 

@@ -45,7 +45,10 @@ func ScanMetaWithPrefix(txn kv.Transaction, prefix string, filter func([]byte, [
 			if !filter([]byte(iter.Key()), iter.Value()) {
 				break
 			}
-			iter, err = iter.Next()
+			err = iter.Next()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		} else {
 			break
 		}
@@ -75,7 +78,10 @@ func DelKeyWithPrefix(ctx context.Context, prefix string) error {
 
 		if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
 			keys = append(keys, iter.Key())
-			iter, err = iter.Next()
+			err = iter.Next()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		} else {
 			break
 		}

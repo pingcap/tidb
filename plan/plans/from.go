@@ -84,7 +84,7 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	// Even though the data is nil, we should return not nil row,
 	// or the iteration will stop.
 	row = &plan.Row{}
-	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
+	err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
 	return
 }
 
@@ -311,7 +311,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	row.RowKeys = append(row.RowKeys, rke)
 
 	rk := r.T.RecordKey(handle, nil)
-	r.iter, err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
+	err = kv.NextUntil(r.iter, util.RowKeyPrefixFilter(rk))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

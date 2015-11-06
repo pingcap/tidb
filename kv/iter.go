@@ -69,13 +69,13 @@ func DecodeValue(data []byte) ([]interface{}, error) {
 
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
 // It will stop when fn returns true, or iterator is invalid or occur error
-func NextUntil(it Iterator, fn FnKeyCmp) (Iterator, error) {
+func NextUntil(it Iterator, fn FnKeyCmp) error {
 	var err error
 	for it.Valid() && !fn([]byte(it.Key())) {
-		it, err = it.Next()
+		err = it.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	return it, nil
+	return nil
 }

@@ -27,7 +27,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/peterh/liner"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -133,7 +133,7 @@ func executeLine(tx *sql.Tx, txnLine string) error {
 }
 
 func mayExit(err error, l string) bool {
-	if errors2.ErrorEqual(err, liner.ErrPromptAborted) || errors2.ErrorEqual(err, io.EOF) {
+	if terror.ErrorEqual(err, liner.ErrPromptAborted) || terror.ErrorEqual(err, io.EOF) {
 		fmt.Println("\nBye")
 		saveHistory()
 		return true

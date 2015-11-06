@@ -14,8 +14,11 @@
 package ast
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -26,6 +29,7 @@ var (
 	_ ExprNode = &CaseExpr{}
 	_ ExprNode = &SubqueryExpr{}
 	_ ExprNode = &CompareSubqueryExpr{}
+	_ Node     = &ColumnName{}
 	_ ExprNode = &ColumnNameExpr{}
 	_ ExprNode = &DefaultExpr{}
 	_ ExprNode = &IdentifierExpr{}
@@ -47,21 +51,58 @@ var (
 // ValueExpr is the simple value expression.
 type ValueExpr struct {
 	exprNode
-	// Val is the literal value.
-	Val interface{}
+}
+
+// NewValueExpr creates a ValueExpr with value, and sets default field type.
+func NewValueExpr(value interface{}) *ValueExpr {
+	ve := &ValueExpr{}
+	ve.Data = types.RawData(value)
+	// TODO: make it more precise.
+	switch value.(type) {
+	case nil:
+		ve.Type = types.NewFieldType(mysql.TypeNull)
+	case bool, int64:
+		ve.Type = types.NewFieldType(mysql.TypeLonglong)
+	case uint64:
+		ve.Type = types.NewFieldType(mysql.TypeLonglong)
+		ve.Type.Flag |= mysql.UnsignedFlag
+	case string, UnquoteString:
+		ve.Type = types.NewFieldType(mysql.TypeVarchar)
+		ve.Type.Charset = mysql.DefaultCharset
+		ve.Type.Collate = mysql.DefaultCollationName
+	case float64:
+		ve.Type = types.NewFieldType(mysql.TypeDouble)
+	case []byte:
+		ve.Type = types.NewFieldType(mysql.TypeBlob)
+		ve.Type.Charset = "binary"
+		ve.Type.Collate = "binary"
+	case mysql.Bit:
+		ve.Type = types.NewFieldType(mysql.TypeBit)
+	case mysql.Hex:
+		ve.Type = types.NewFieldType(mysql.TypeVarchar)
+		ve.Type.Charset = "binary"
+		ve.Type.Collate = "binary"
+	case *types.DataItem:
+		ve.Type = value.(*types.DataItem).Type
+	default:
+		panic(fmt.Sprintf("illegal literal value type:%T", value))
+	}
+	return ve
 }
 
 // IsStatic implements ExprNode interface.
-func (val *ValueExpr) IsStatic() bool {
+func (n *ValueExpr) IsStatic() bool {
 	return true
 }
 
 // Accept implements Node interface.
-func (val *ValueExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(val); skipChildren {
-		return val, ok
+func (n *ValueExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(val)
+	n = newNod.(*ValueExpr)
+	return v.Leave(n)
 }
 
 // BetweenExpr is for "between and" or "not between and" expression.
@@ -78,35 +119,37 @@ type BetweenExpr struct {
 }
 
 // Accept implements Node interface.
-func (b *BetweenExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(b); skipChildren {
-		return b, ok
+func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
+	n = newNod.(*BetweenExpr)
 
-	node, ok := b.Expr.Accept(v)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return b, false
+		return n, false
 	}
-	b.Expr = node.(ExprNode)
+	n.Expr = node.(ExprNode)
 
-	node, ok = b.Left.Accept(v)
+	node, ok = n.Left.Accept(v)
 	if !ok {
-		return b, false
+		return n, false
 	}
-	b.Left = node.(ExprNode)
+	n.Left = node.(ExprNode)
 
-	node, ok = b.Right.Accept(v)
+	node, ok = n.Right.Accept(v)
 	if !ok {
-		return b, false
+		return n, false
 	}
-	b.Right = node.(ExprNode)
+	n.Right = node.(ExprNode)
 
-	return v.Leave(b)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (b *BetweenExpr) IsStatic() bool {
-	return b.Expr.IsStatic() && b.Left.IsStatic() && b.Right.IsStatic()
+func (n *BetweenExpr) IsStatic() bool {
+	return n.Expr.IsStatic() && n.Left.IsStatic() && n.Right.IsStatic()
 }
 
 // BinaryOperationExpr is for binary operation like 1 + 1, 1 - 1, etc.
@@ -121,29 +164,31 @@ type BinaryOperationExpr struct {
 }
 
 // Accept implements Node interface.
-func (o *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(o); skipChildren {
-		return o, ok
+func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
+	n = newNod.(*BinaryOperationExpr)
 
-	node, ok := o.L.Accept(v)
+	node, ok := n.L.Accept(v)
 	if !ok {
-		return o, false
+		return n, false
 	}
-	o.L = node.(ExprNode)
+	n.L = node.(ExprNode)
 
-	node, ok = o.R.Accept(v)
+	node, ok = n.R.Accept(v)
 	if !ok {
-		return o, false
+		return n, false
 	}
-	o.R = node.(ExprNode)
+	n.R = node.(ExprNode)
 
-	return v.Leave(o)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (o *BinaryOperationExpr) IsStatic() bool {
-	return o.L.IsStatic() && o.R.IsStatic()
+func (n *BinaryOperationExpr) IsStatic() bool {
+	return n.L.IsStatic() && n.R.IsStatic()
 }
 
 // WhenClause is the when clause in Case expression for "when condition then result".
@@ -156,27 +201,29 @@ type WhenClause struct {
 }
 
 // Accept implements Node Accept interface.
-func (w *WhenClause) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(w); skipChildren {
-		return w, ok
+func (n *WhenClause) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := w.Expr.Accept(v)
+	n = newNod.(*WhenClause)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return w, false
+		return n, false
 	}
-	w.Expr = node.(ExprNode)
+	n.Expr = node.(ExprNode)
 
-	node, ok = w.Result.Accept(v)
+	node, ok = n.Result.Accept(v)
 	if !ok {
-		return w, false
+		return n, false
 	}
-	w.Result = node.(ExprNode)
-	return v.Leave(w)
+	n.Result = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (w *WhenClause) IsStatic() bool {
-	return w.Expr.IsStatic() && w.Result.IsStatic()
+func (n *WhenClause) IsStatic() bool {
+	return n.Expr.IsStatic() && n.Result.IsStatic()
 }
 
 // CaseExpr is the case expression.
@@ -191,45 +238,47 @@ type CaseExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (f *CaseExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(f); skipChildren {
-		return f, ok
+func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if f.Value != nil {
-		node, ok := f.Value.Accept(v)
+	n = newNod.(*CaseExpr)
+	if n.Value != nil {
+		node, ok := n.Value.Accept(v)
 		if !ok {
-			return f, false
+			return n, false
 		}
-		f.Value = node.(ExprNode)
+		n.Value = node.(ExprNode)
 	}
-	for i, val := range f.WhenClauses {
+	for i, val := range n.WhenClauses {
 		node, ok := val.Accept(v)
 		if !ok {
-			return f, false
+			return n, false
 		}
-		f.WhenClauses[i] = node.(*WhenClause)
+		n.WhenClauses[i] = node.(*WhenClause)
 	}
-	if f.ElseClause != nil {
-		node, ok := f.ElseClause.Accept(v)
+	if n.ElseClause != nil {
+		node, ok := n.ElseClause.Accept(v)
 		if !ok {
-			return f, false
+			return n, false
 		}
-		f.ElseClause = node.(ExprNode)
+		n.ElseClause = node.(ExprNode)
 	}
-	return v.Leave(f)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (f *CaseExpr) IsStatic() bool {
-	if f.Value != nil && !f.Value.IsStatic() {
+func (n *CaseExpr) IsStatic() bool {
+	if n.Value != nil && !n.Value.IsStatic() {
 		return false
 	}
-	for _, w := range f.WhenClauses {
+	for _, w := range n.WhenClauses {
 		if !w.IsStatic() {
 			return false
 		}
 	}
-	if f.ElseClause != nil && !f.ElseClause.IsStatic() {
+	if n.ElseClause != nil && !n.ElseClause.IsStatic() {
 		return false
 	}
 	return true
@@ -239,30 +288,32 @@ func (f *CaseExpr) IsStatic() bool {
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query *SelectStmt
+	Query ResultSetNode
 }
 
 // Accept implements Node Accept interface.
-func (sq *SubqueryExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(sq); skipChildren {
-		return sq, ok
+func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := sq.Query.Accept(v)
+	n = newNod.(*SubqueryExpr)
+	node, ok := n.Query.Accept(v)
 	if !ok {
-		return sq, false
+		return n, false
 	}
-	sq.Query = node.(*SelectStmt)
-	return v.Leave(sq)
+	n.Query = node.(ResultSetNode)
+	return v.Leave(n)
 }
 
 // SetResultFields implements ResultSet interface.
-func (sq *SubqueryExpr) SetResultFields(rfs []*ResultField) {
-	sq.Query.SetResultFields(rfs)
+func (n *SubqueryExpr) SetResultFields(rfs []*ResultField) {
+	n.Query.SetResultFields(rfs)
 }
 
 // GetResultFields implements ResultSet interface.
-func (sq *SubqueryExpr) GetResultFields() []*ResultField {
-	return sq.Query.GetResultFields()
+func (n *SubqueryExpr) GetResultFields() []*ResultField {
+	return n.Query.GetResultFields()
 }
 
 // CompareSubqueryExpr is the expression for "expr cmp (select ...)".
@@ -282,21 +333,23 @@ type CompareSubqueryExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (cs *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cs); skipChildren {
-		return cs, ok
+func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := cs.L.Accept(v)
+	n = newNod.(*CompareSubqueryExpr)
+	node, ok := n.L.Accept(v)
 	if !ok {
-		return cs, false
+		return n, false
 	}
-	cs.L = node.(ExprNode)
-	node, ok = cs.R.Accept(v)
+	n.L = node.(ExprNode)
+	node, ok = n.R.Accept(v)
 	if !ok {
-		return cs, false
+		return n, false
 	}
-	cs.R = node.(*SubqueryExpr)
-	return v.Leave(cs)
+	n.R = node.(*SubqueryExpr)
+	return v.Leave(n)
 }
 
 // ColumnName represents column name.
@@ -312,11 +365,13 @@ type ColumnName struct {
 }
 
 // Accept implements Node Accept interface.
-func (cn *ColumnName) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cn); skipChildren {
-		return cn, ok
+func (n *ColumnName) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(cn)
+	n = newNod.(*ColumnName)
+	return v.Leave(n)
 }
 
 // ColumnNameExpr represents a column name expression.
@@ -328,16 +383,18 @@ type ColumnNameExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (cr *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cr); skipChildren {
-		return cr, ok
+func (n *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := cr.Name.Accept(v)
+	n = newNod.(*ColumnNameExpr)
+	node, ok := n.Name.Accept(v)
 	if !ok {
-		return cr, false
+		return n, false
 	}
-	cr.Name = node.(*ColumnName)
-	return v.Leave(cr)
+	n.Name = node.(*ColumnName)
+	return v.Leave(n)
 }
 
 // DefaultExpr is the default expression using default value for a column.
@@ -348,18 +405,20 @@ type DefaultExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (d *DefaultExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(d); skipChildren {
-		return d, ok
+func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if d.Name != nil {
-		node, ok := d.Name.Accept(v)
+	n = newNod.(*DefaultExpr)
+	if n.Name != nil {
+		node, ok := n.Name.Accept(v)
 		if !ok {
-			return d, false
+			return n, false
 		}
-		d.Name = node.(*ColumnName)
+		n.Name = node.(*ColumnName)
 	}
-	return v.Leave(d)
+	return v.Leave(n)
 }
 
 // IdentifierExpr represents an identifier expression.
@@ -370,11 +429,13 @@ type IdentifierExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (i *IdentifierExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(i); skipChildren {
-		return i, ok
+func (n *IdentifierExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(i)
+	n = newNod.(*IdentifierExpr)
+	return v.Leave(n)
 }
 
 // ExistsSubqueryExpr is the expression for "exists (select ...)".
@@ -386,16 +447,18 @@ type ExistsSubqueryExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (es *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(es); skipChildren {
-		return es, ok
+func (n *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := es.Sel.Accept(v)
+	n = newNod.(*ExistsSubqueryExpr)
+	node, ok := n.Sel.Accept(v)
 	if !ok {
-		return es, false
+		return n, false
 	}
-	es.Sel = node.(*SubqueryExpr)
-	return v.Leave(es)
+	n.Sel = node.(*SubqueryExpr)
+	return v.Leave(n)
 }
 
 // PatternInExpr is the expression for in operator, like "expr in (1, 2, 3)" or "expr in (select c from t)".
@@ -412,30 +475,32 @@ type PatternInExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (pi *PatternInExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(pi); skipChildren {
-		return pi, ok
+func (n *PatternInExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := pi.Expr.Accept(v)
+	n = newNod.(*PatternInExpr)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return pi, false
+		return n, false
 	}
-	pi.Expr = node.(ExprNode)
-	for i, val := range pi.List {
+	n.Expr = node.(ExprNode)
+	for i, val := range n.List {
 		node, ok = val.Accept(v)
 		if !ok {
-			return pi, false
+			return n, false
 		}
-		pi.List[i] = node.(ExprNode)
+		n.List[i] = node.(ExprNode)
 	}
-	if pi.Sel != nil {
-		node, ok = pi.Sel.Accept(v)
+	if n.Sel != nil {
+		node, ok = n.Sel.Accept(v)
 		if !ok {
-			return pi, false
+			return n, false
 		}
-		pi.Sel = node.(*SubqueryExpr)
+		n.Sel = node.(*SubqueryExpr)
 	}
-	return v.Leave(pi)
+	return v.Leave(n)
 }
 
 // IsNullExpr is the expression for null check.
@@ -448,21 +513,23 @@ type IsNullExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (is *IsNullExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(is); skipChildren {
-		return is, ok
+func (n *IsNullExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := is.Expr.Accept(v)
+	n = newNod.(*IsNullExpr)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return is, false
+		return n, false
 	}
-	is.Expr = node.(ExprNode)
-	return v.Leave(is)
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (is *IsNullExpr) IsStatic() bool {
-	return is.Expr.IsStatic()
+func (n *IsNullExpr) IsStatic() bool {
+	return n.Expr.IsStatic()
 }
 
 // IsTruthExpr is the expression for true/false check.
@@ -477,21 +544,23 @@ type IsTruthExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (is *IsTruthExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(is); skipChildren {
-		return is, ok
+func (n *IsTruthExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := is.Expr.Accept(v)
+	n = newNod.(*IsTruthExpr)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return is, false
+		return n, false
 	}
-	is.Expr = node.(ExprNode)
-	return v.Leave(is)
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (is *IsTruthExpr) IsStatic() bool {
-	return is.Expr.IsStatic()
+func (n *IsTruthExpr) IsStatic() bool {
+	return n.Expr.IsStatic()
 }
 
 // PatternLikeExpr is the expression for like operator, e.g, expr like "%123%"
@@ -508,40 +577,49 @@ type PatternLikeExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (pl *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(pl); skipChildren {
-		return pl, ok
+func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := pl.Expr.Accept(v)
-	if !ok {
-		return pl, false
+	n = newNod.(*PatternLikeExpr)
+	if n.Expr != nil {
+		node, ok := n.Expr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Expr = node.(ExprNode)
 	}
-	pl.Expr = node.(ExprNode)
-	node, ok = pl.Pattern.Accept(v)
-	if !ok {
-		return pl, false
+	if n.Pattern != nil {
+		node, ok := n.Pattern.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Pattern = node.(ExprNode)
 	}
-	pl.Pattern = node.(ExprNode)
-	return v.Leave(pl)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (pl *PatternLikeExpr) IsStatic() bool {
-	return pl.Expr.IsStatic() && pl.Pattern.IsStatic()
+func (n *PatternLikeExpr) IsStatic() bool {
+	return n.Expr.IsStatic() && n.Pattern.IsStatic()
 }
 
 // ParamMarkerExpr expresion holds a place for another expression.
 // Used in parsing prepare statement.
 type ParamMarkerExpr struct {
 	exprNode
+	Offset int
 }
 
 // Accept implements Node Accept interface.
-func (pm *ParamMarkerExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(pm); skipChildren {
-		return pm, ok
+func (n *ParamMarkerExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(pm)
+	n = newNod.(*ParamMarkerExpr)
+	return v.Leave(n)
 }
 
 // ParenthesesExpr is the parentheses expression.
@@ -552,23 +630,25 @@ type ParenthesesExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (p *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(p); skipChildren {
-		return p, ok
+func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if p.Expr != nil {
-		node, ok := p.Expr.Accept(v)
+	n = newNod.(*ParenthesesExpr)
+	if n.Expr != nil {
+		node, ok := n.Expr.Accept(v)
 		if !ok {
-			return p, false
+			return n, false
 		}
-		p.Expr = node.(ExprNode)
+		n.Expr = node.(ExprNode)
 	}
-	return v.Leave(p)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (p *ParenthesesExpr) IsStatic() bool {
-	return p.Expr.IsStatic()
+func (n *ParenthesesExpr) IsStatic() bool {
+	return n.Expr.IsStatic()
 }
 
 // PositionExpr is the expression for order by and group by position.
@@ -583,16 +663,18 @@ type PositionExpr struct {
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (p *PositionExpr) IsStatic() bool {
+func (n *PositionExpr) IsStatic() bool {
 	return true
 }
 
 // Accept implements Node Accept interface.
-func (p *PositionExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(p); skipChildren {
-		return p, ok
+func (n *PositionExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(p)
+	n = newNod.(*PositionExpr)
+	return v.Leave(n)
 }
 
 // PatternRegexpExpr is the pattern expression for pattern match.
@@ -607,26 +689,28 @@ type PatternRegexpExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (p *PatternRegexpExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(p); skipChildren {
-		return p, ok
+func (n *PatternRegexpExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := p.Expr.Accept(v)
+	n = newNod.(*PatternRegexpExpr)
+	node, ok := n.Expr.Accept(v)
 	if !ok {
-		return p, false
+		return n, false
 	}
-	p.Expr = node.(ExprNode)
-	node, ok = p.Pattern.Accept(v)
+	n.Expr = node.(ExprNode)
+	node, ok = n.Pattern.Accept(v)
 	if !ok {
-		return p, false
+		return n, false
 	}
-	p.Pattern = node.(ExprNode)
-	return v.Leave(p)
+	n.Pattern = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (p *PatternRegexpExpr) IsStatic() bool {
-	return p.Expr.IsStatic() && p.Pattern.IsStatic()
+func (n *PatternRegexpExpr) IsStatic() bool {
+	return n.Expr.IsStatic() && n.Pattern.IsStatic()
 }
 
 // RowExpr is the expression for row constructor.
@@ -638,23 +722,25 @@ type RowExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (r *RowExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(r); skipChildren {
-		return r, ok
+func (n *RowExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range r.Values {
+	n = newNod.(*RowExpr)
+	for i, val := range n.Values {
 		node, ok := val.Accept(v)
 		if !ok {
-			return r, false
+			return n, false
 		}
-		r.Values[i] = node.(ExprNode)
+		n.Values[i] = node.(ExprNode)
 	}
-	return v.Leave(r)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (r *RowExpr) IsStatic() bool {
-	for _, v := range r.Values {
+func (n *RowExpr) IsStatic() bool {
+	for _, v := range n.Values {
 		if !v.IsStatic() {
 			return false
 		}
@@ -672,21 +758,23 @@ type UnaryOperationExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (u *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(u); skipChildren {
-		return u, ok
+func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := u.V.Accept(v)
+	n = newNod.(*UnaryOperationExpr)
+	node, ok := n.V.Accept(v)
 	if !ok {
-		return u, false
+		return n, false
 	}
-	u.V = node.(ExprNode)
-	return v.Leave(u)
+	n.V = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
-func (u *UnaryOperationExpr) IsStatic() bool {
-	return u.V.IsStatic()
+func (n *UnaryOperationExpr) IsStatic() bool {
+	return n.V.IsStatic()
 }
 
 // ValuesExpr is the expression used in INSERT VALUES
@@ -697,16 +785,18 @@ type ValuesExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (va *ValuesExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(va); skipChildren {
-		return va, ok
+func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := va.Column.Accept(v)
+	n = newNod.(*ValuesExpr)
+	node, ok := n.Column.Accept(v)
 	if !ok {
-		return va, false
+		return n, false
 	}
-	va.Column = node.(*ColumnName)
-	return v.Leave(va)
+	n.Column = node.(*ColumnName)
+	return v.Leave(n)
 }
 
 // VariableExpr is the expression for variable.
@@ -721,9 +811,11 @@ type VariableExpr struct {
 }
 
 // Accept implements Node Accept interface.
-func (va *VariableExpr) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(va); skipChildren {
-		return va, ok
+func (n *VariableExpr) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(va)
+	n = newNod.(*VariableExpr)
+	return v.Leave(n)
 }
