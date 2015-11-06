@@ -103,6 +103,18 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+func (txn *hbaseTxn) Fetch(keys []kv.Key) error {
+	encodedKeys := make([]kv.Key, len(keys))
+	for i, k := range keys {
+		encodedKeys[i] = kv.EncodeKey(k)
+	}
+	return txn.UnionStore.Cache.Fetch(keys)
+}
+
+func (txn *hbaseTxn) Scan(start, end kv.Key, maxSize int) error {
+	return txn.UnionStore.Cache.Scan(kv.EncodeKey(start), kv.EncodeKey(end), maxSize)
+}
+
 // GetInt64 get int64 which created by Inc method.
 func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
 	k = kv.EncodeKey(k)
@@ -152,7 +164,7 @@ func (txn *hbaseTxn) Delete(k kv.Key) error {
 }
 
 func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.Dirty.NewIterator(nil)
+	iter := txn.UnionStore.Buffer.NewIterator(nil)
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {

@@ -19,29 +19,11 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// conditionType is the type for condition consts.
-type conditionType int
-
-const (
-	// conditionIfNotExist means the condition doesn't exist.
-	conditionIfNotExist conditionType = iota + 1
-	// conditionIfEqual means the condition is equals.
-	conditionIfEqual
-	// conditionForceSet means the condition is force set.
-	conditionForceSet
-)
-
 var (
 	p = pool.NewCache("memdb pool", 100, func() interface{} {
 		return NewMemDbBuffer()
 	})
 )
-
-// conditionValue is a data structure used to store current stored data and data verification condition.
-type conditionValue struct {
-	originValue []byte
-	condition   conditionType
-}
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
@@ -52,37 +34,33 @@ func IsErrNotFound(err error) bool {
 	return false
 }
 
-// MemBuffer is the interface for transaction buffer of update in a transaction
-type MemBuffer interface {
-	// shares the same interface as the read-only snapshot
-	// and it implies that MemBuffer's iterator should iterate its kv pairs in the same order as snapshot
-	Snapshot
-	// Set associates key with value
-	Set([]byte, []byte) error
-}
-
-// UnionStore is an implement of Store which contains a buffer for update.
+// UnionStore is an in-memory Store which contains a buffer for write and a
+// cache for read.
 type UnionStore struct {
-	Dirty    MemBuffer // updates are buffered in memory
-	Snapshot Snapshot  // for read
+	Buffer MemBuffer // updates are buffered in memory
+	Cache  MemCache  // for read
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
-	dirty := p.Get().(MemBuffer)
+	buffer := p.Get().(MemBuffer)
+	cache := p.Get().(MemBuffer)
 	return UnionStore{
-		Dirty:    dirty,
-		Snapshot: snapshot,
+		Buffer: buffer,
+		Cache: MemCache{
+			Cache:    cache,
+			Snapshot: snapshot,
+		},
 	}
 }
 
 // Get implements the Store Get interface.
 func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 	// Get from update records frist
-	value, err = us.Dirty.Get(key)
+	value, err = us.Buffer.Get(key)
 	if IsErrNotFound(err) {
-		// Try get from snapshot
-		return us.Snapshot.Get(key)
+		// Try get from cache
+		return us.Cache.Get(key)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -97,28 +75,27 @@ func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 
 // Set implements the Store Set interface.
 func (us *UnionStore) Set(key []byte, value []byte) error {
-	return us.Dirty.Set(key, value)
+	return us.Buffer.Set(key, value)
 }
 
 // Seek implements the Snapshot Seek interface.
 func (us *UnionStore) Seek(key []byte, txn Transaction) (Iterator, error) {
-	snapshotIt := us.Snapshot.NewIterator(key)
-	dirtyIt := us.Dirty.NewIterator(key)
-	it := newUnionIter(dirtyIt, snapshotIt)
-	return it, nil
+	bufferIt := us.Buffer.NewIterator(key)
+	cacheIt := us.Cache.NewIterator(key)
+	return newUnionIter(bufferIt, cacheIt), nil
 }
 
 // Delete implements the Store Delete interface.
 func (us *UnionStore) Delete(k []byte) error {
 	// Mark as deleted
-	val, err := us.Dirty.Get(k)
+	val, err := us.Buffer.Get(k)
 	if err != nil {
 		if !IsErrNotFound(err) { // something wrong
 			return errors.Trace(err)
 		}
 
-		// missed in dirty
-		val, err = us.Snapshot.Get(k)
+		// missed in buffer
+		val, err = us.Cache.Get(k)
 		if err != nil {
 			if IsErrNotFound(err) {
 				return errors.Trace(ErrNotExist)
@@ -130,13 +107,15 @@ func (us *UnionStore) Delete(k []byte) error {
 		return errors.Trace(ErrNotExist)
 	}
 
-	return us.Dirty.Set(k, nil)
+	return us.Buffer.Set(k, nil)
 }
 
 // Close implements the Store Close interface.
 func (us *UnionStore) Close() error {
-	us.Snapshot.Release()
-	us.Dirty.Release()
-	p.Put(us.Dirty)
+	us.Cache.Snapshot.Release()
+	us.Cache.Cache.Release()
+	p.Put(us.Cache.Cache)
+	us.Buffer.Release()
+	p.Put(us.Buffer)
 	return nil
 }

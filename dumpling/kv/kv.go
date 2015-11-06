@@ -101,6 +101,10 @@ var ErrNotCommitted = errors.New("this transaction is not committed")
 type Transaction interface {
 	// Get gets the value for key k from KV store.
 	Get(k Key) ([]byte, error)
+	// Fetch fetches a batch of values and saves in cache for later use.
+	Fetch(keys []Key) error
+	// Scan scans a batch of values from snapshot and saves in cache for later use.
+	Scan(start, end Key, maxSize int) error
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
@@ -140,9 +144,25 @@ type MvccSnapshot interface {
 type Snapshot interface {
 	// Get gets the value for key k from snapshot.
 	Get(k Key) ([]byte, error)
+	// BatchGet gets a batch of values from snapshot.
+	BatchGet(keys []Key) (map[string][]byte, error)
+	// Scan gets values in specific range from snapshot.
+	Scan(start, end Key, maxSize int) (map[string][]byte, error)
 	// NewIterator gets a new iterator on the snapshot.
 	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
+	Release()
+}
+
+// MemBuffer is the interface for transaction buffer of update in a transaction
+type MemBuffer interface {
+	// Get gets the value for key k from buffer. If not found, it returns ErrNotExist.
+	Get(k Key) ([]byte, error)
+	// Set associates key with value
+	Set([]byte, []byte) error
+	// NewIterator gets a new iterator on the buffer.
+	NewIterator(param interface{}) Iterator
+	// Release releases the buffer.
 	Release()
 }
 
