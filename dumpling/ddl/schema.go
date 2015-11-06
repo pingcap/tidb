@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
@@ -136,7 +136,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 			return d.dropSchemaData(dbInfo, tables)
 		})
 
-		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
 		}

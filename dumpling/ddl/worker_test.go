@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -48,7 +48,7 @@ func testCheckOwner(c *C, d *ddl, isOwner bool) {
 		return
 	}
 
-	c.Assert(errors2.ErrorEqual(err, ErrNotOwner), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrNotOwner), IsTrue)
 }
 
 func (s *testDDLSuite) TestCheckOnwer(c *C) {

@@ -16,7 +16,7 @@ package kv
 import (
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 // conditionType is the type for condition consts.
@@ -45,7 +45,7 @@ type conditionValue struct {
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if errors2.ErrorEqual(err, ErrNotExist) {
+	if terror.ErrorEqual(err, ErrNotExist) {
 		return true
 	}
 

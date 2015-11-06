@@ -19,8 +19,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	qerror "github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
@@ -35,9 +34,9 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	tbInfo.State = model.StateNone
 
 	tables, err := t.ListTables(schemaID)
-	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return errors.Trace(qerror.ErrDatabaseNotExist)
+		return errors.Trace(terror.DatabaseNotExists)
 	} else if err != nil {
 		return errors.Trace(err)
 	}
@@ -94,9 +93,9 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	tableID := job.TableID
 
 	tblInfo, err := t.GetTable(schemaID, tableID)
-	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return errors.Trace(qerror.ErrDatabaseNotExist)
+		return errors.Trace(terror.DatabaseNotExists)
 	} else if err != nil {
 		return errors.Trace(err)
 	}
@@ -142,7 +141,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 			return d.dropTableData(tbl)
 		})
 
-		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
 		}
@@ -174,7 +173,7 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
-	if errors2.ErrorEqual(err, meta.ErrDBNotExists) {
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
 		return nil, errors.Trace(ErrNotExists)
 	} else if err != nil {

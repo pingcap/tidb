@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
@@ -176,7 +176,7 @@ func (d *ddl) handleJobQueue() error {
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			owner, err := d.checkOwner(t)
-			if errors2.ErrorEqual(err, ErrNotOwner) {
+			if terror.ErrorEqual(err, ErrNotOwner) {
 				// we are not owner, return and retry checking later.
 				return nil
 			} else if err != nil {

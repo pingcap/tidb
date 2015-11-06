@@ -20,8 +20,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/errors2"
 	"github.com/twinj/uuid"
 )
 
@@ -226,7 +226,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 
 	metaKey := codec.EncodeBytes(nil, []byte(key))
 	currValue, err := s.db.Get(metaKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		s.keysLocked[key] = tid
 		return nil
 	}
