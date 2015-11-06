@@ -200,6 +200,64 @@ func (ts *testSuite) TestConstraintNames(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (ts *testSuite) TestAlterTableColumn(c *C) {
+	se, _ := tidb.CreateSession(ts.store)
+	ctx := se.(context.Context)
+	schemaName := model.NewCIStr("test_alter_add_column")
+	tbIdent := table.Ident{
+		Schema: schemaName,
+		Name:   model.NewCIStr("t"),
+	}
+
+	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
+	c.Assert(err, IsNil)
+
+	tbStmt := statement("create table t (a int, b int)").(*stmts.CreateTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
+	c.Assert(err, IsNil)
+
+	alterStmt := statement("alter table t add column c int PRIMARY KEY").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	alterStmt = statement("alter table t add column c int AUTO_INCREMENT PRIMARY KEY").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	alterStmt = statement("alter table t add column c int UNIQUE").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	alterStmt = statement("alter table t add column c int UNIQUE KEY").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	// Notice: Now we have not supported.
+	// alterStmt = statement("alter table t add column c int KEY").(*stmts.AlterTableStmt)
+	// err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	// c.Assert(err, NotNil)
+
+	tbIdent2 := table.Ident{
+		Schema: schemaName,
+		Name:   model.NewCIStr("t1"),
+	}
+
+	tbStmt = statement("create table t1 (a int, b int, index A (a, b))").(*stmts.CreateTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
+	c.Assert(err, IsNil)
+
+	alterStmt = statement("alter table t1 drop column a").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	alterStmt = statement("alter table t1 drop column b").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, tbIdent.Schema)
+	c.Assert(err, IsNil)
+}
+
 func statement(sql string) stmt.Statement {
 	log.Debug("Compile", sql)
 	lexer := parser.NewLexer(sql)
