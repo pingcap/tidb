@@ -14,6 +14,7 @@
 package terror
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/juju/errors"
@@ -47,6 +48,18 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(optimizerErr.Equal(optimizerErr.Gen("def")), IsTrue)
 	c.Assert(optimizerErr.Equal(nil), IsFalse)
 	c.Assert(optimizerErr.Equal(errors.New("abc")), IsFalse)
+}
+
+var predefinedErr = ClassExecutor.New(ErrCode(123), "predefiend error")
+
+func example() error {
+	var err = errors.New("cause error")
+	return predefinedErr.Gen("error message:%s", "abc").Wrap(err)
+}
+
+func (s *testTErrorSuite) TestExample(c *C) {
+	err := example()
+	fmt.Println(errors.ErrorStack(err))
 }
 
 func (s *testTErrorSuite) TestErrorEqual(c *C) {
