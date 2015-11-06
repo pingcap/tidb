@@ -51,6 +51,7 @@ const (
 	ShowEngines
 	ShowDatabases
 	ShowTables
+	ShowTableStatus
 	ShowColumns
 	ShowWarnings
 	ShowCharset

@@ -395,6 +395,7 @@ primary		{p}{r}{i}{m}{a}{r}{y}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
+read		{r}{e}{a}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
@@ -413,6 +414,7 @@ share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
+status		{s}{t}{a}{t}{u}{s}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
@@ -430,6 +432,7 @@ min		{m}{i}{n}
 unknown		{u}{n}{k}{n}{o}{w}{n}
 union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
+unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
 upper		{u}{p}{p}{e}{r}
@@ -824,10 +827,13 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return some
 {start}			lval.item = string(l.val)
 			return start
+{status}		lval.item = string(l.val)
+			return status
 {global}		lval.item = string(l.val)
 			return global
 {rand}			lval.item = string(l.val)
 			return rand
+{read}			return read
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp
@@ -876,6 +882,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return unknown
 {nullif}		lval.item = string(l.val)
 			return nullIf
+{unlock}		return unlock
 {update}		return update
 {upper}			lval.item = string(l.val)
 			return upper
