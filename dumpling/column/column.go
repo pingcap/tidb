@@ -58,7 +58,7 @@ func (c *Col) String() string {
 func FindCol(cols []*Col, name string) (c *Col) {
 	for _, c := range cols {
 		if strings.EqualFold(c.Name.O, name) {
-			return
+			return c
 		}
 	}
 	return nil
