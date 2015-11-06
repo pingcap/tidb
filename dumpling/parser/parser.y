@@ -2341,11 +2341,11 @@ DateArithOpt:
 DateArithMultiFormsOpt:
 	"ADDDATE"
 	{
-		$$ = ast.AddDate
+		$$ = ast.DateAdd
 	}
 |	"SUBDATE"
 	{
-		$$ = ast.SubDate
+		$$ = ast.DateSub
 	}
 
 DateArithInterval:
