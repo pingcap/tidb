@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 // Table implements table.Table interface.
@@ -345,7 +345,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
-			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
+			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
 				iter, _, err1 := v.X.Seek(txn, colVals)

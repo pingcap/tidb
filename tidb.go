@@ -26,7 +26,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -132,15 +131,12 @@ func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
 	rawStmt := l.Stmts()
 	stmts := make([]stmt.Statement, len(rawStmt))
 	for i, v := range rawStmt {
-		if node, ok := v.(ast.Node); ok {
-			stm, err := optimizer.Compile(node)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			stmts[i] = stm
-		} else {
-			stmts[i] = v.(stmt.Statement)
+		compiler := &optimizer.Compiler{}
+		stm, err := compiler.Compile(v)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		stmts[i] = stm
 	}
 	return stmts, nil
 }
@@ -162,7 +158,12 @@ func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*express
 		return nil, nil, nil
 	}
 	sm := sms[0]
-	return sm.(stmt.Statement), l.ParamList, nil
+	compiler := &optimizer.Compiler{}
+	statement, err := compiler.Compile(sm)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return statement, compiler.ParamMarkers(), nil
 }
 
 func prepareStmt(ctx context.Context, sqlText string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {
