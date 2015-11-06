@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -28,10 +29,11 @@ import (
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store      kv.Storage
-	infoHandle *infoschema.Handle
-	ddl        ddl.DDL
-	leaseCh    chan time.Duration
+	store       kv.Storage
+	infoHandle  *infoschema.Handle
+	ddl         ddl.DDL
+	leaseCh     chan time.Duration
+	lastLeaseTS int64
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
@@ -101,6 +103,18 @@ func (do *Domain) SetLease(lease time.Duration) {
 	do.ddl.SetLease(lease)
 }
 
+// Stat returns the DDL statistic.
+func (do *Domain) Stat() (map[string]interface{}, error) {
+	m, err := do.ddl.Stat()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	m["ddl_last_reload_schema_ts"] = atomic.LoadInt64(&do.lastLeaseTS)
+
+	return m, nil
+}
+
 func (do *Domain) onDDLChange(err error) error {
 	if err != nil {
 		return err
@@ -132,6 +146,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err := do.reload(); err != nil {
 				log.Fatalf("reload schema err %v", err)
 			}
+			atomic.StoreInt64(&do.lastLeaseTS, time.Now().Unix())
 		case newLease := <-do.leaseCh:
 			if newLease <= 0 {
 				newLease = defaultLoadTime

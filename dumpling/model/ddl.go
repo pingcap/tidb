@@ -67,13 +67,15 @@ func (action ActionType) String() string {
 
 // Job is for a DDL operation.
 type Job struct {
-	ID       int64         `json:"id"`
-	Type     ActionType    `json:"type"`
-	SchemaID int64         `json:"schema_id"`
-	TableID  int64         `json:"table_id"`
-	State    JobState      `json:"state"`
-	Error    string        `json:"err"`
-	Args     []interface{} `json:"-"`
+	ID       int64      `json:"id"`
+	Type     ActionType `json:"type"`
+	SchemaID int64      `json:"schema_id"`
+	TableID  int64      `json:"table_id"`
+	State    JobState   `json:"state"`
+	Error    string     `json:"err"`
+	// every time we meet an error when running job, we will increase it
+	ErrorCount int64         `json:"err_count"`
+	Args       []interface{} `json:"-"`
 	// we must use json raw message for delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
