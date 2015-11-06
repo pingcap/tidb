@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,24 +29,33 @@ import (
 type DateArithType byte
 
 const (
+	// AddDate is to run adddate function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+	AddDate DateArithType = iota + 1
 	// DateAdd is to run date_add function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	DateAdd DateArithType = iota + 1
+	DateAdd
 	// DateSub is to run date_sub function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
+	// SubDate is to run subdate function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+	SubDate
+	// DateArithDaysForm is to run adddate or subdate function with days form Flag.
+	DateArithDaysForm
 )
 
 // DateArith is used for dealing with addition and substraction of time.
 type DateArith struct {
 	Op       DateArithType
-	Unit     string
+	Form     DateArithType
 	Date     Expression
+	Unit     string
 	Interval Expression
 }
 
 func (da *DateArith) isAdd() bool {
-	if da.Op == DateAdd {
+	if da.Op == AddDate || da.Op == DateAdd {
 		return true
 	}
 
@@ -71,10 +81,19 @@ func (da *DateArith) Accept(v Visitor) (Expression, error) {
 // String implements the Expression String interface.
 func (da *DateArith) String() string {
 	var str string
-	if da.isAdd() {
+	switch da.Op {
+	case AddDate:
+		str = "ADDDATE"
+	case DateAdd:
 		str = "DATE_ADD"
-	} else {
+	case DateSub:
 		str = "DATE_SUB"
+	case SubDate:
+		str = "SUBDATE"
+	}
+
+	if da.Form == DateArithDaysForm {
+		return fmt.Sprintf("%s(%s, %s)", str, da.Date, da.Interval)
 	}
 
 	return fmt.Sprintf("%s(%s, INTERVAL %s %s)", str, da.Date, da.Interval, strings.ToUpper(da.Unit))
@@ -107,6 +126,7 @@ func (da *DateArith) evalArgs(ctx context.Context, args map[interface{}]interfac
 	if dVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
+
 	dValStr, err := types.ToString(dVal)
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
@@ -126,6 +146,13 @@ func (da *DateArith) evalArgs(ctx context.Context, args map[interface{}]interfac
 	if iVal == nil || err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
 	}
+	// handle adddate(expr,days) or subdate(expr,days) form
+	if da.Form == DateArithDaysForm {
+		if iVal, err = da.evalDaysForm(iVal); err != nil {
+			return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
+		}
+	}
+
 	iValStr, err := types.ToString(iVal)
 	if err != nil {
 		return mysql.ZeroTimestamp, 0, 0, 0, 0, errors.Trace(err)
@@ -136,4 +163,20 @@ func (da *DateArith) evalArgs(ctx context.Context, args map[interface{}]interfac
 	}
 
 	return t, years, months, days, durations, nil
+}
+
+func (da *DateArith) evalDaysForm(val interface{}) (interface{}, error) {
+	switch val.(type) {
+	case string:
+		if strings.ToLower(val.(string)) == "false" {
+			return 0, nil
+		}
+		if strings.ToLower(val.(string)) == "true" {
+			return 1, nil
+		}
+		reg := regexp.MustCompile(`[\d]+`)
+		val = reg.FindString(val.(string))
+	}
+
+	return types.ToInt64(val)
 }
