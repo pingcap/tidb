@@ -55,7 +55,7 @@ func (c *Col) String() string {
 }
 
 // FindCol finds column in cols by name.
-func FindCol(cols []*Col, name string) (c *Col) {
+func FindCol(cols []*Col, name string) *Col {
 	for _, c := range cols {
 		if strings.EqualFold(c.Name.O, name) {
 			return c
