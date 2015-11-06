@@ -232,6 +232,10 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
+	alterStmt = statement("alter table t add column c int, add column d int").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
 	// Notice: Now we have not supported.
 	// alterStmt = statement("alter table t add column c int KEY").(*stmts.AlterTableStmt)
 	// err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
@@ -242,7 +246,7 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 		Name:   model.NewCIStr("t1"),
 	}
 
-	tbStmt = statement("create table t1 (a int, b int, index A (a, b))").(*stmts.CreateTableStmt)
+	tbStmt = statement("create table t1 (a int, b int, c int, d int, index A (a, b))").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 
@@ -252,6 +256,10 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 
 	alterStmt = statement("alter table t1 drop column b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	alterStmt = statement("alter table t1 drop column c, drop column d").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, tbIdent.Schema)
