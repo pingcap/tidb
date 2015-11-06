@@ -19,19 +19,18 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/ast/parser"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/table"
-	qerror "github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 func TestT(t *testing.T) {
@@ -64,16 +63,16 @@ func (ts *testSuite) TestT(c *C) {
 	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
 	c.Assert(err, IsNil)
 	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
-	c.Assert(errors2.ErrorEqual(err, ddl.ErrExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
 	tbStmt := statement("create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
 
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, table.Ident{Schema: noExist, Name: tbIdent.Name}, tbStmt.Cols, tbStmt.Constraints)
-	c.Assert(errors2.ErrorEqual(err, qerror.ErrDatabaseNotExist), IsTrue)
+	c.Assert(terror.DatabaseNotExists.Equal(err), IsTrue)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
-	c.Assert(errors2.ErrorEqual(err, ddl.ErrExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
 	tbIdent2 := tbIdent
 	tbIdent2.Name = model.NewCIStr("t2")
@@ -163,7 +162,7 @@ func (ts *testSuite) TestT(c *C) {
 	c.Assert(len(tbs), Equals, 1)
 
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, noExist)
-	c.Assert(errors2.ErrorEqual(err, ddl.ErrNotExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrNotExists), IsTrue)
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, tbIdent.Schema)
 	c.Assert(err, IsNil)
 }

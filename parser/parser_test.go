@@ -18,9 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/subquery"
-	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/ast"
 )
 
 func TestT(t *testing.T) {
@@ -30,23 +28,6 @@ func TestT(t *testing.T) {
 var _ = Suite(&testParserSuite{})
 
 type testParserSuite struct {
-}
-
-func (s *testParserSuite) TestOriginText(c *C) {
-	src := `SELECT stuff.id 
-		FROM stuff 
-		WHERE stuff.value >= ALL (SELECT stuff.value 
-		FROM stuff)`
-
-	l := NewLexer(src)
-	c.Assert(yyParse(l), Equals, 0)
-	node := l.Stmts()[0].(*stmts.SelectStmt)
-	sq := node.Where.Expr.(*expression.CompareSubQuery).R
-	c.Assert(sq, NotNil)
-	subsel := sq.(*subquery.SubQuery)
-	c.Assert(subsel.Stmt.OriginText(), Equals,
-		`SELECT stuff.value 
-		FROM stuff`)
 }
 
 func (s *testParserSuite) TestSimple(c *C) {
@@ -70,15 +51,12 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
 	l := NewLexer(src)
-	l.SetPrepare()
 	c.Assert(yyParse(l), Equals, 0)
-	c.Assert(len(l.ParamList), Equals, 2)
 	c.Assert(len(l.Stmts()), Equals, 1)
 
 	// Testcase for -- Comment and unary -- operator
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED); -- foo\nSelect --1 from foo;"
 	l = NewLexer(src)
-	l.SetPrepare()
 	c.Assert(yyParse(l), Equals, 0)
 	c.Assert(len(l.Stmts()), Equals, 2)
 
@@ -87,11 +65,12 @@ func (s *testParserSuite) TestSimple(c *C) {
 	l = NewLexer(src)
 	c.Assert(yyParse(l), Equals, 0)
 	st := l.Stmts()[0]
-	ss, ok := st.(*stmts.SelectStmt)
+	ss, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
-	cv, ok := ss.Fields[0].Expr.(*expression.FunctionCast)
+	c.Assert(len(ss.Fields.Fields), Equals, 1)
+	cv, ok := ss.Fields.Fields[0].Expr.(*ast.FuncCastExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(cv.FunctionType, Equals, expression.ConvertFunction)
+	c.Assert(cv.FunctionType, Equals, ast.CastConvertFunction)
 
 	// For query start with comment
 	srcs := []string{
@@ -105,7 +84,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		l = NewLexer(src)
 		c.Assert(yyParse(l), Equals, 0)
 		st = l.Stmts()[0]
-		ss, ok = st.(*stmts.SelectStmt)
+		ss, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)
 	}
 }
@@ -172,9 +151,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"REPLACE INTO foo () VALUES ()", true},
 		{"REPLACE INTO foo VALUE ()", true},
 		// 40
-		{`SELECT stuff.id 
-		FROM stuff 
-		WHERE stuff.value >= ALL (SELECT stuff.value 
+		{`SELECT stuff.id
+		FROM stuff
+		WHERE stuff.value >= ALL (SELECT stuff.value
 		FROM stuff)`, true},
 		{"BEGIN", true},
 		{"START TRANSACTION", true},

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -71,7 +71,7 @@ func (s *DropDatabaseStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *DropDatabaseStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	err := sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, model.NewCIStr(s.Name))
-	if errors2.ErrorEqual(err, ddl.ErrNotExists) && s.IfExists {
+	if terror.ErrorEqual(err, ddl.ErrNotExists) && s.IfExists {
 		err = nil
 	}
 	return nil, errors.Trace(err)

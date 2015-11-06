@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 func TestT(t *testing.T) {
@@ -84,7 +84,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(errors2.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
 	it.Close()
 
 	err = index.Create(txn, values, 0)
@@ -105,14 +105,14 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(hit, IsFalse)
 
 	_, _, err = it.Next()
-	c.Assert(errors2.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
 	it.Close()
 
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(errors2.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
 	it.Close()
 
 	err = txn.Commit()

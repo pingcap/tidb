@@ -13,7 +13,7 @@ TARGET = ""
 
 .PHONY: godep deps all build install parser clean todo test gotest interpreter server
 
-all: godep parser ast-parser build test check
+all: godep parser build test check
 
 godep:
 	go get github.com/tools/godep
@@ -31,7 +31,7 @@ parser:
 	goyacc -o /dev/null -xegen $$a parser/parser.y; \
 	goyacc -o parser/parser.go -xe $$a parser/parser.y 2>&1 | grep "shift/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; exit 1;}}';  \
 	rm -f $$a; \
-	rm -f y.output 
+	rm -f y.output
 
 	@if [ $(ARCH) = $(LINUX) ]; \
 	then \
@@ -43,24 +43,6 @@ parser:
 	fi
 
 	golex -o parser/scanner.go parser/scanner.l
-
-ast-parser:
-	a=`mktemp temp.XXXXXX`; \
-	goyacc -o /dev/null -xegen $$a ast/parser/parser.y; \
-	goyacc -o ast/parser/parser.go -xe $$a ast/parser/parser.y 2>&1 | grep "shift/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; exit 1;}}';  \
-	rm -f $$a; \
-	rm -f y.output
-
-	@if [ $(ARCH) = $(LINUX) ]; \
-	then \
-		sed -i -e 's|//line.*||' -e 's/yyEofCode/yyEOFCode/' ast/parser/parser.go; \
-	elif [ $(ARCH) = $(MAC) ]; \
-	then \
-		/usr/bin/sed -i "" 's|//line.*||' ast/parser/parser.go; \
-		/usr/bin/sed -i "" 's/yyEofCode/yyEOFCode/' ast/parser/parser.go; \
-	fi
-
-	golex -o ast/parser/scanner.go ast/parser/scanner.l
 
 check:
 	go get github.com/golang/lint/golint
