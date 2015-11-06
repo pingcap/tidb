@@ -19,7 +19,6 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 )
 
 // Common base error instances.
@@ -110,22 +109,17 @@ func (ec ErrClass) New(code ErrCode, message string) *Error {
 		class:   ec,
 		code:    code,
 		message: message,
-		isBase:  true,
 	}
 }
 
 // Error implements error interface and adds integer Class and Code, so
 // errors with different message can be compared.
 type Error struct {
-	class    ErrClass
-	code     ErrCode
-	message  string
-	cause    error
-	previous error
-	file     string
-	line     int
-	// base error is created by error class, should not be modified.
-	isBase bool
+	class   ErrClass
+	code    ErrCode
+	message string
+	file    string
+	line    int
 }
 
 // Class returns ErrClass
@@ -152,36 +146,9 @@ func (e *Error) Error() string {
 // Gen generates a new *Error with the same class and code, and a new formatted message.
 func (e *Error) Gen(format string, args ...interface{}) *Error {
 	err := *e
-	err.isBase = false
 	err.message = fmt.Sprintf(format, args...)
 	_, err.file, err.line, _ = runtime.Caller(1)
 	return &err
-}
-
-// Wrap wraps an error and returns itself.
-func (e *Error) Wrap(err error) *Error {
-	if e.isBase {
-		log.Fatal("base error should not call Wrap method.")
-	}
-	e.previous = err
-	e.cause = errors.Cause(err)
-	return e
-}
-
-// Cause returns the cause error, implements juju/errors causer interface.
-func (e *Error) Cause() error {
-	return e.cause
-}
-
-// Message returns the message of the error, implements juju/errors wrapper interface.
-func (e *Error) Message() string {
-	return e.message
-}
-
-// Underlying returns the Previous error, or nil
-// if there is none, implements juju/errors wrapper interface.
-func (e *Error) Underlying() error {
-	return e.previous
 }
 
 // Equal checks if err is equal to e.

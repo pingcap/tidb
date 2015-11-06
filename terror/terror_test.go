@@ -53,8 +53,7 @@ func (s *testTErrorSuite) TestTError(c *C) {
 var predefinedErr = ClassExecutor.New(ErrCode(123), "predefiend error")
 
 func example() error {
-	var err = errors.New("cause error")
-	return predefinedErr.Gen("error message:%s", "abc").Wrap(err)
+	return predefinedErr.Gen("error message:%s", "abc")
 }
 
 func (s *testTErrorSuite) TestExample(c *C) {
