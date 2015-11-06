@@ -51,28 +51,28 @@ func (d *ddl) Stat() (map[string]interface{}, error) {
 	}
 
 	m := make(map[string]interface{})
-	m["DDL_server_id"] = d.uuid
+	m["ddl_server_id"] = d.uuid
 
-	m["DDL_schema_version"] = schemaVer
+	m["ddl_schema_version"] = schemaVer
 
 	if owner != nil {
-		m["DDL_owner_id"] = owner.OwnerID
+		m["ddl_owner_id"] = owner.OwnerID
 		// LastUpdateTs uses nanosecond.
-		m["DDL_owner_last_update_ts"] = owner.LastUpdateTS / 1e9
+		m["ddl_owner_last_update_ts"] = owner.LastUpdateTS / 1e9
 	}
 
 	if job != nil {
-		m["DDL_job_id"] = job.ID
-		m["DDL_job_action"] = job.Type.String()
-		m["DDL_job_last_update_ts"] = job.LastUpdateTS
-		m["DDL_job_state"] = job.State.String()
-		m["DDL_job_error"] = job.Error
-		m["DDL_job_schema_state"] = job.SchemaState.String()
-		m["DDL_job_schema_id"] = job.SchemaID
-		m["DDL_job_table_id"] = job.TableID
-		m["DDL_job_snapshot_ver"] = job.SnapshotVer
-		m["DDL_job_reorg_handle"] = job.ReorgHandle
-		m["DDL_job_args"] = job.Args
+		m["ddl_job_id"] = job.ID
+		m["ddl_job_action"] = job.Type.String()
+		m["ddl_job_last_update_ts"] = job.LastUpdateTS
+		m["ddl_job_state"] = job.State.String()
+		m["ddl_job_error"] = job.Error
+		m["ddl_job_schema_state"] = job.SchemaState.String()
+		m["ddl_job_schema_id"] = job.SchemaID
+		m["ddl_job_table_id"] = job.TableID
+		m["ddl_job_snapshot_ver"] = job.SnapshotVer
+		m["ddl_job_reorg_handle"] = job.ReorgHandle
+		m["ddl_job_args"] = job.Args
 	}
 
 	return m, nil
