@@ -42,7 +42,7 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 	lease := 50 * time.Millisecond
 	s.d = newDDL(s.store, nil, nil, lease)
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test")
+	s.dbInfo = testSchemaInfo(c, s.d, "test_index")
 	testCreateSchema(c, mock.NewContext(), s.d, s.dbInfo)
 }
 
@@ -52,9 +52,9 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func (s *testIndexSuite) testCreateIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := &model.Job{
-		SchemaID: s.dbInfo.ID,
+		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{unique, model.NewCIStr(indexName), []*coldef.IndexColName{{ColumnName: colName, Length: 256}}},
@@ -65,9 +65,9 @@ func (s *testIndexSuite) testCreateIndex(c *C, ctx context.Context, d *ddl, tblI
 	return job
 }
 
-func (s *testIndexSuite) testDropIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, indexName string) *model.Job {
+func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := &model.Job{
-		SchemaID: s.dbInfo.ID,
+		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{model.NewCIStr(indexName)},
@@ -79,7 +79,7 @@ func (s *testIndexSuite) testDropIndex(c *C, ctx context.Context, d *ddl, tblInf
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
-	tblInfo := testTableInfo(c, s.d, "t1")
+	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
 	defer ctx.FinishTxn(true)
 
@@ -106,7 +106,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 		return true, nil
 	})
 
-	job := s.testCreateIndex(c, ctx, s.d, tblInfo, true, "c1_uni", "c1")
+	job := testCreateIndex(c, ctx, s.d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
@@ -130,7 +130,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	s.testDropIndex(c, ctx, s.d, tblInfo, "c1_uni")
+	testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c1_uni")
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	index1 := t.FindIndexByColName("c1")
@@ -159,7 +159,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	defer d.close()
 
-	tblInfo := testTableInfo(c, d, "t")
+	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
 	defer ctx.FinishTxn(true)
 
@@ -167,6 +167,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	defer testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
@@ -179,7 +180,7 @@ func (s *testIndexSuite) TestIndexWait(c *C) {
 
 	ctx.FinishTxn(false)
 	go func() {
-		done <- s.testCreateIndex(c, ctx, d, tblInfo, true, "c1_uni", "c1")
+		done <- testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
 	}()
 
 	var exist bool
@@ -241,7 +242,7 @@ LOOP:
 
 	ctx.FinishTxn(false)
 	go func() {
-		done <- s.testDropIndex(c, ctx, d, tblInfo, "c1_uni")
+		done <- testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c1_uni")
 	}()
 
 LOOP1:
