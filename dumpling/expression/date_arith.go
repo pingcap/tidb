@@ -168,6 +168,8 @@ func (da *DateArith) evalArgs(ctx context.Context, args map[interface{}]interfac
 	return ret, nil
 }
 
+var reg = regexp.MustCompile(`[\d]+`)
+
 func (da *DateArith) evalDaysForm(val interface{}) (interface{}, error) {
 	switch val.(type) {
 	case string:
@@ -177,7 +179,6 @@ func (da *DateArith) evalDaysForm(val interface{}) (interface{}, error) {
 		if strings.ToLower(val.(string)) == "true" {
 			return 1, nil
 		}
-		reg := regexp.MustCompile(`[\d]+`)
 		val = reg.FindString(val.(string))
 	}
 
