@@ -34,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
-	qerror "github.com/pingcap/tidb/util/errors"
 	"github.com/twinj/uuid"
 )
 
@@ -388,7 +388,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return errors.Trace(qerror.ErrDatabaseNotExist)
+		return terror.DatabaseNotExists.Gen("database %s not exists", ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(ErrExists)
@@ -436,7 +436,7 @@ func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterS
 
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return errors.Trace(qerror.ErrDatabaseNotExist)
+		return terror.DatabaseNotExists.Gen("database %s not exists", ident.Schema)
 	}
 
 	tbl, err := is.TableByName(ident.Schema, ident.Name)
@@ -557,7 +557,7 @@ func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error 
 		}
 
 		rk := t.RecordKey(handle, nil)
-		if it, err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
+		if err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
 			return errors.Trace(err0)
 		}
 	}
@@ -570,7 +570,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return errors.Trace(qerror.ErrDatabaseNotExist)
+		return terror.DatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
@@ -633,7 +633,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return errors.Trace(qerror.ErrDatabaseNotExist)
+		return terror.DatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -750,7 +750,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 		}
 
 		rk := []byte(t.RecordKey(handle, nil))
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -18,7 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 type listMeta struct {
@@ -58,10 +58,6 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.LockKeys(metaKey); err != nil {
-		return errors.Trace(err)
-	}
-
 	index := int64(0)
 	for _, v := range values {
 		if left {
@@ -95,10 +91,6 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return nil, errors.Trace(err)
-	}
-
-	if err = t.txn.LockKeys(metaKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -179,10 +171,6 @@ func (t *TxStructure) LClear(key []byte) error {
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.LockKeys(metaKey); err != nil {
-		return errors.Trace(err)
-	}
-
 	for index := meta.LIndex; index < meta.RIndex; index++ {
 		dataKey := t.encodeListDataKey(key, index)
 		if err = t.txn.Delete(dataKey); err != nil {
@@ -195,7 +183,7 @@ func (t *TxStructure) LClear(key []byte) error {
 
 func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	v, err := t.txn.Get(metaKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	} else if err != nil {
 		return listMeta{}, errors.Trace(err)

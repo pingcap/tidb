@@ -20,7 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 // HashPair is the pair for (field, value) in a hash.
@@ -54,7 +54,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
 	value, err := t.txn.Get(dataKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	}
 	return value, errors.Trace(err)
@@ -98,10 +98,6 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.LockKeys(metaKey); err != nil {
-		return errors.Trace(err)
-	}
-
 	dataKey := t.encodeHashDataKey(key, field)
 	var oldValue []byte
 	oldValue, err = t.loadHashValue(dataKey)
@@ -141,10 +137,6 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
-	}
-
-	if err = t.txn.LockKeys(metaKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -209,10 +201,6 @@ func (t *TxStructure) HClear(key []byte) error {
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.LockKeys(metaKey); err != nil {
-		return errors.Trace(err)
-	}
-
 	err = t.iterateHash(key, func(field []byte, value []byte) error {
 		k := t.encodeHashDataKey(key, field)
 		return errors.Trace(t.txn.Delete(k))
@@ -260,7 +248,7 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 
 func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 	v, err := t.txn.Get(metaKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	} else if err != nil {
 		return hashMeta{}, errors.Trace(err)
@@ -281,7 +269,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {
 	v, err := t.txn.Get(dataKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 		v = nil
 	} else if err != nil {

@@ -61,18 +61,18 @@ type ExplainStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *ExplainStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*ExplainStmt)
-	node, ok := nod.Stmt.Accept(v)
+	n = newNod.(*ExplainStmt)
+	node, ok := n.Stmt.Accept(v)
 	if !ok {
-		return nod, false
+		return n, false
 	}
-	nod.Stmt = node.(DMLNode)
-	return v.Leave(nod)
+	n.Stmt = node.(DMLNode)
+	return v.Leave(n)
 }
 
 // PrepareStmt is a statement to prepares a SQL statement which contains placeholders,
@@ -89,18 +89,18 @@ type PrepareStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *PrepareStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*PrepareStmt)
-	node, ok := nod.SQLVar.Accept(v)
+	n = newNod.(*PrepareStmt)
+	node, ok := n.SQLVar.Accept(v)
 	if !ok {
-		return nod, false
+		return n, false
 	}
-	nod.SQLVar = node.(*VariableExpr)
-	return v.Leave(nod)
+	n.SQLVar = node.(*VariableExpr)
+	return v.Leave(n)
 }
 
 // DeallocateStmt is a statement to release PreparedStmt.
@@ -113,13 +113,13 @@ type DeallocateStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *DeallocateStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*DeallocateStmt)
-	return v.Leave(nod)
+	n = newNod.(*DeallocateStmt)
+	return v.Leave(n)
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -133,20 +133,20 @@ type ExecuteStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *ExecuteStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*ExecuteStmt)
-	for i, val := range nod.UsingVars {
+	n = newNod.(*ExecuteStmt)
+	for i, val := range n.UsingVars {
 		node, ok := val.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.UsingVars[i] = node.(ExprNode)
+		n.UsingVars[i] = node.(ExprNode)
 	}
-	return v.Leave(nod)
+	return v.Leave(n)
 }
 
 // ShowStmtType is the type for SHOW statement.
@@ -187,41 +187,41 @@ type ShowStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *ShowStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*ShowStmt)
-	if nod.Table != nil {
-		node, ok := nod.Table.Accept(v)
+	n = newNod.(*ShowStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Table = node.(*TableName)
+		n.Table = node.(*TableName)
 	}
-	if nod.Column != nil {
-		node, ok := nod.Column.Accept(v)
+	if n.Column != nil {
+		node, ok := n.Column.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Column = node.(*ColumnName)
+		n.Column = node.(*ColumnName)
 	}
-	if nod.Pattern != nil {
-		node, ok := nod.Pattern.Accept(v)
+	if n.Pattern != nil {
+		node, ok := n.Pattern.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Pattern = node.(*PatternLikeExpr)
+		n.Pattern = node.(*PatternLikeExpr)
 	}
-	if nod.Where != nil {
-		node, ok := nod.Where.Accept(v)
+	if n.Where != nil {
+		node, ok := n.Where.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Where = node.(ExprNode)
+		n.Where = node.(ExprNode)
 	}
-	return v.Leave(nod)
+	return v.Leave(n)
 }
 
 // BeginStmt is a statement to start a new transaction.
@@ -231,13 +231,13 @@ type BeginStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *BeginStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*BeginStmt)
-	return v.Leave(nod)
+	n = newNod.(*BeginStmt)
+	return v.Leave(n)
 }
 
 // CommitStmt is a statement to commit the current transaction.
@@ -247,13 +247,13 @@ type CommitStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *CommitStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*CommitStmt)
-	return v.Leave(nod)
+	n = newNod.(*CommitStmt)
+	return v.Leave(n)
 }
 
 // RollbackStmt is a statement to roll back the current transaction.
@@ -263,13 +263,13 @@ type RollbackStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *RollbackStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*RollbackStmt)
-	return v.Leave(nod)
+	n = newNod.(*RollbackStmt)
+	return v.Leave(n)
 }
 
 // UseStmt is a statement to use the DBName database as the current database.
@@ -281,13 +281,13 @@ type UseStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *UseStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *UseStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*UseStmt)
-	return v.Leave(nod)
+	n = newNod.(*UseStmt)
+	return v.Leave(n)
 }
 
 // VariableAssignment is a variable assignment struct.
@@ -300,18 +300,18 @@ type VariableAssignment struct {
 }
 
 // Accept implements Node interface.
-func (nod *VariableAssignment) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*VariableAssignment)
-	node, ok := nod.Value.Accept(v)
+	n = newNod.(*VariableAssignment)
+	node, ok := n.Value.Accept(v)
 	if !ok {
-		return nod, false
+		return n, false
 	}
-	nod.Value = node.(ExprNode)
-	return v.Leave(nod)
+	n.Value = node.(ExprNode)
+	return v.Leave(n)
 }
 
 // SetStmt is the statement to set variables.
@@ -322,20 +322,20 @@ type SetStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *SetStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *SetStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*SetStmt)
-	for i, val := range nod.Variables {
+	n = newNod.(*SetStmt)
+	for i, val := range n.Variables {
 		node, ok := val.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Variables[i] = node.(*VariableAssignment)
+		n.Variables[i] = node.(*VariableAssignment)
 	}
-	return v.Leave(nod)
+	return v.Leave(n)
 }
 
 // SetCharsetStmt is a statement to assign values to character and collation variables.
@@ -348,13 +348,13 @@ type SetCharsetStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*SetCharsetStmt)
-	return v.Leave(nod)
+	n = newNod.(*SetCharsetStmt)
+	return v.Leave(n)
 }
 
 // SetPwdStmt is a statement to assign a password to user account.
@@ -367,13 +367,13 @@ type SetPwdStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *SetPwdStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*SetPwdStmt)
-	return v.Leave(nod)
+	n = newNod.(*SetPwdStmt)
+	return v.Leave(n)
 }
 
 // UserSpec is used for parsing create user statement.
@@ -392,13 +392,13 @@ type CreateUserStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *CreateUserStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*CreateUserStmt)
-	return v.Leave(nod)
+	n = newNod.(*CreateUserStmt)
+	return v.Leave(n)
 }
 
 // DoStmt is the struct for DO statement.
@@ -409,20 +409,20 @@ type DoStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *DoStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *DoStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*DoStmt)
-	for i, val := range nod.Exprs {
+	n = newNod.(*DoStmt)
+	for i, val := range n.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Exprs[i] = node.(ExprNode)
+		n.Exprs[i] = node.(ExprNode)
 	}
-	return v.Leave(nod)
+	return v.Leave(n)
 }
 
 // PrivElem is the privilege type and optional column list.
@@ -433,20 +433,20 @@ type PrivElem struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *PrivElem) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *PrivElem) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*PrivElem)
-	for i, val := range nod.Cols {
+	n = newNod.(*PrivElem)
+	for i, val := range n.Cols {
 		node, ok := val.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Cols[i] = node.(*ColumnName)
+		n.Cols[i] = node.(*ColumnName)
 	}
-	return v.Leave(nod)
+	return v.Leave(n)
 }
 
 // ObjectTypeType is the type for object type.
@@ -491,18 +491,18 @@ type GrantStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (nod *GrantStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(nod)
+func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNod)
 	}
-	nod = newNod.(*GrantStmt)
-	for i, val := range nod.Privs {
+	n = newNod.(*GrantStmt)
+	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
-			return nod, false
+			return n, false
 		}
-		nod.Privs[i] = node.(*PrivElem)
+		n.Privs[i] = node.(*PrivElem)
 	}
-	return v.Leave(nod)
+	return v.Leave(n)
 }

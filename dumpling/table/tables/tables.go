@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 // Table implements table.Table interface.
@@ -345,7 +345,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
-			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
+			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
 				iter, _, err1 := v.X.Seek(txn, colVals)
@@ -362,7 +362,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 	}
 
-	if err := t.LockRow(ctx, recordID, true); err != nil {
+	if err := t.LockRow(ctx, recordID); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -432,20 +432,13 @@ func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 }
 
 // LockRow implements table.Table LockRow interface.
-func (t *Table) LockRow(ctx context.Context, h int64, update bool) error {
+func (t *Table) LockRow(ctx context.Context, h int64) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get row lock key
 	lockKey := t.RecordKey(h, nil)
-	err = txn.LockKeys([]byte(lockKey))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !update {
-		return nil
-	}
 	// set row lock key to current txn
 	err = txn.Set([]byte(lockKey), []byte(txn.String()))
 	return errors.Trace(err)
@@ -453,7 +446,7 @@ func (t *Table) LockRow(ctx context.Context, h int64, update bool) error {
 
 // RemoveRow implements table.Table RemoveRow interface.
 func (t *Table) RemoveRow(ctx context.Context, h int64) error {
-	if err := t.LockRow(ctx, h, false); err != nil {
+	if err := t.LockRow(ctx, h); err != nil {
 		return errors.Trace(err)
 	}
 	txn, err := ctx.GetTxn(false)
@@ -559,7 +552,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		}
 
 		rk := t.RecordKey(handle, nil)
-		it, err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
 			return errors.Trace(err)
 		}

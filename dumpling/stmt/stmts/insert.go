@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -273,7 +273,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 			continue
 		}
 
-		if len(s.OnDuplicate) == 0 || !errors2.ErrorEqual(err, kv.ErrKeyExists) {
+		if len(s.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
 		if err = execOnDuplicateUpdate(ctx, t, row, h, toUpdateColumns); err != nil {

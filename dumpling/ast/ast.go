@@ -26,6 +26,11 @@ type Node interface {
 	// Accept accepts Visitor to visit itself.
 	// The returned node should replace original node.
 	// ok returns false to stop visiting.
+	//
+	// Implementation of this method should first call visitor.Enter,
+	// assign the returned node to its method receiver, if skipChildren returns true,
+	// children should be skipped. Otherwise, call its children in particular order that
+	// later elements depends on former elements. Finally, return visitor.Leave.
 	Accept(v Visitor) (node Node, ok bool)
 	// Text returns the original text of the element.
 	Text() string
@@ -97,12 +102,12 @@ type ResultSetNode interface {
 // Visitor visits a Node.
 type Visitor interface {
 	// VisitEnter is called before children nodes is visited.
-	// The returned node should be the same type as the input node n.
+	// The returned node must be the same type as the input node n.
 	// skipChildren returns true means children nodes should be skipped,
 	// this is useful when work is done in Enter and there is no need to visit children.
 	Enter(n Node) (node Node, skipChildren bool)
 	// VisitLeave is called after children nodes has been visited.
-	// The returned node should be the same type as the input node n.
+	// The returned node must be the same type as the input node n.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
 }
