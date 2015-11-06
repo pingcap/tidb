@@ -100,9 +100,24 @@ var (
 	// SchemaLease is the time(seconds) for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee
 	// all servers get the neweset schema.
-	SchemaLease    = 300
-	minSchemaLease = 120
+	// Default schema lease time is 300 seconds, you can change it with a proper time,
+	// but you must know that too little may cause badly performance degradation.
+	SchemaLease = 300
 )
+
+// SetSchemaLease changes the default schema lease time for DDL.
+// This function is very dangerous, don't use it if you really know
+// what you do.
+func SetSchemaLease(seconds int) {
+	SchemaLease = seconds
+
+	domap.mu.Lock()
+	defer domap.mu.Unlock()
+
+	for _, dm := range domap.domains {
+		dm.SetLease(time.Duration(SchemaLease) * time.Second)
+	}
+}
 
 // What character set should the server translate a statement to after receiving it?
 // For this, the server uses the character_set_connection and collation_connection system variables.
