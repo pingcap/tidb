@@ -110,7 +110,7 @@ func (do *Domain) Stat() (map[string]interface{}, error) {
 		return nil, errors.Trace(err)
 	}
 
-	m["DDL_last_reload_schema_ts"] = atomic.LoadInt64(&do.lastLeaseTS)
+	m["ddl_last_reload_schema_ts"] = atomic.LoadInt64(&do.lastLeaseTS)
 
 	return m, nil
 }
