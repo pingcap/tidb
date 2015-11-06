@@ -38,6 +38,14 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 	c.Assert(err, IsNil)
 	e.Op = DateSub
 	c.Assert(e.String(), Equals, `DATE_SUB("2011-11-11 10:10:10", INTERVAL "1" DAY)`)
+	e.Op = AddDate
+	c.Assert(e.String(), Equals, `ADDDATE("2011-11-11 10:10:10", INTERVAL "1" DAY)`)
+	e.Op = SubDate
+	c.Assert(e.String(), Equals, `SUBDATE("2011-11-11 10:10:10", INTERVAL "1" DAY)`)
+	e.Form = DateArithDaysForm
+	c.Assert(e.String(), Equals, `SUBDATE("2011-11-11 10:10:10", "1")`)
+	e.Op = AddDate
+	c.Assert(e.String(), Equals, `ADDDATE("2011-11-11 10:10:10", "1")`)
 
 	// Test null.
 	nullTbl := []struct {
@@ -46,8 +54,8 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		Date     interface{}
 		Interval interface{}
 	}{
-		{DateAdd, "DAY", nil, "1"},
-		{DateAdd, "DAY", input, nil},
+		{AddDate, "DAY", nil, "1"},
+		{AddDate, "DAY", input, nil},
 	}
 	for _, t := range nullTbl {
 		e := &DateArith{
@@ -59,7 +67,15 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		v, err := e.Eval(nil, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, IsNil)
+		e.Op = DateAdd
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, IsNil)
 		e.Op = DateSub
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, IsNil)
+		e.Op = SubDate
 		v, err = e.Eval(nil, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, IsNil)
@@ -116,6 +132,56 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		value, ok = v.(mysql.Time)
 		c.Assert(ok, IsTrue)
 		c.Assert(value.String(), Equals, t.SubExpect)
+
+		e.Op = AddDate
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		value, ok = v.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(value.String(), Equals, t.AddExpect)
+
+		e.Op = SubDate
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		value, ok = v.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(value.String(), Equals, t.SubExpect)
+	}
+
+	// Test eval for adddate and subdate with days form
+	tblDays := []struct {
+		Interval  interface{}
+		AddExpect string
+		SubExpect string
+	}{
+		{"20", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
+		{19.88, "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
+		{"19.88", "2011-11-30 10:10:10", "2011-10-23 10:10:10"},
+		{"20-11", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
+		{"20,11", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
+		{"1000", "2014-08-07 10:10:10", "2009-02-14 10:10:10"},
+		{"true", "2011-11-12 10:10:10", "2011-11-10 10:10:10"},
+	}
+	for _, t := range tblDays {
+		e := &DateArith{
+			Op:       AddDate,
+			Form:     DateArithDaysForm,
+			Unit:     "day",
+			Date:     Value{Val: input},
+			Interval: Value{Val: t.Interval},
+		}
+		v, err := e.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		value, ok := v.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(value.String(), Equals, t.AddExpect)
+
+		e.Op = DateSub
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, IsNil)
+		value, ok = v.(mysql.Time)
+		c.Assert(ok, IsTrue)
+		c.Assert(value.String(), Equals, t.SubExpect)
 	}
 
 	// Test error.
@@ -147,12 +213,21 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 		v, err := e.Eval(nil, nil)
 		c.Assert(err, NotNil, Commentf("%s", v))
 
-		e = &DateArith{
-			Op:       DateSub,
-			Unit:     t.Unit,
-			Date:     Value{Val: input},
-			Interval: Value{Val: t.Interval},
-		}
+		e.Op = DateSub
+		_, err = e.Eval(nil, nil)
+		c.Assert(err, NotNil)
+		e.Date = Value{Val: errInput}
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, NotNil, Commentf("%s", v))
+
+		e.Op = AddDate
+		_, err = e.Eval(nil, nil)
+		c.Assert(err, NotNil)
+		e.Date = Value{Val: errInput}
+		v, err = e.Eval(nil, nil)
+		c.Assert(err, NotNil, Commentf("%s", v))
+
+		e.Op = SubDate
 		_, err = e.Eval(nil, nil)
 		c.Assert(err, NotNil)
 		e.Date = Value{Val: errInput}

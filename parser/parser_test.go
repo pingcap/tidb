@@ -442,6 +442,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select adddate("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
 
 		// For date_sub
 		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
@@ -486,6 +489,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select subdate("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
 	}
 	s.RunTest(c, table)
 }
