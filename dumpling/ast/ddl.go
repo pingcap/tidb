@@ -70,11 +70,13 @@ type CreateDatabaseStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (cd *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cd); skipChildren {
-		return cd, ok
+func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(cd)
+	n = newNod.(*CreateDatabaseStmt)
+	return v.Leave(n)
 }
 
 // DropDatabaseStmt is a statement to drop a database and all tables in the database.
@@ -87,11 +89,13 @@ type DropDatabaseStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (dd *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(dd); skipChildren {
-		return dd, ok
+func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	return v.Leave(dd)
+	n = newNod.(*DropDatabaseStmt)
+	return v.Leave(n)
 }
 
 // IndexColName is used for parsing index column name from SQL.
@@ -103,16 +107,18 @@ type IndexColName struct {
 }
 
 // Accept implements Node Accept interface.
-func (ic *IndexColName) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ic); skipChildren {
-		return ic, ok
+func (n *IndexColName) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ic.Column.Accept(v)
+	n = newNod.(*IndexColName)
+	node, ok := n.Column.Accept(v)
 	if !ok {
-		return ic, false
+		return n, false
 	}
-	ic.Column = node.(*ColumnName)
-	return v.Leave(ic)
+	n.Column = node.(*ColumnName)
+	return v.Leave(n)
 }
 
 // ReferenceDef is used for parsing foreign key reference option from SQL.
@@ -125,23 +131,25 @@ type ReferenceDef struct {
 }
 
 // Accept implements Node Accept interface.
-func (rd *ReferenceDef) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(rd); skipChildren {
-		return rd, ok
+func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := rd.Table.Accept(v)
+	n = newNod.(*ReferenceDef)
+	node, ok := n.Table.Accept(v)
 	if !ok {
-		return rd, false
+		return n, false
 	}
-	rd.Table = node.(*TableName)
-	for i, val := range rd.IndexColNames {
+	n.Table = node.(*TableName)
+	for i, val := range n.IndexColNames {
 		node, ok = val.Accept(v)
 		if !ok {
-			return rd, false
+			return n, false
 		}
-		rd.IndexColNames[i] = node.(*IndexColName)
+		n.IndexColNames[i] = node.(*IndexColName)
 	}
-	return v.Leave(rd)
+	return v.Leave(n)
 }
 
 // ColumnOptionType is the type for ColumnOption.
@@ -175,18 +183,20 @@ type ColumnOption struct {
 }
 
 // Accept implements Node Accept interface.
-func (co *ColumnOption) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(co); skipChildren {
-		return co, ok
+func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if co.Expr != nil {
-		node, ok := co.Expr.Accept(v)
+	n = newNod.(*ColumnOption)
+	if n.Expr != nil {
+		node, ok := n.Expr.Accept(v)
 		if !ok {
-			return co, false
+			return n, false
 		}
-		co.Expr = node.(ExprNode)
+		n.Expr = node.(ExprNode)
 	}
-	return v.Leave(co)
+	return v.Leave(n)
 }
 
 // ConstraintType is the type for Constraint.
@@ -220,25 +230,27 @@ type Constraint struct {
 }
 
 // Accept implements Node Accept interface.
-func (tc *Constraint) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(tc); skipChildren {
-		return tc, ok
+func (n *Constraint) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range tc.Keys {
+	n = newNod.(*Constraint)
+	for i, val := range n.Keys {
 		node, ok := val.Accept(v)
 		if !ok {
-			return tc, false
+			return n, false
 		}
-		tc.Keys[i] = node.(*IndexColName)
+		n.Keys[i] = node.(*IndexColName)
 	}
-	if tc.Refer != nil {
-		node, ok := tc.Refer.Accept(v)
+	if n.Refer != nil {
+		node, ok := n.Refer.Accept(v)
 		if !ok {
-			return tc, false
+			return n, false
 		}
-		tc.Refer = node.(*ReferenceDef)
+		n.Refer = node.(*ReferenceDef)
 	}
-	return v.Leave(tc)
+	return v.Leave(n)
 }
 
 // ColumnDef is used for parsing column definition from SQL.
@@ -251,23 +263,25 @@ type ColumnDef struct {
 }
 
 // Accept implements Node Accept interface.
-func (cd *ColumnDef) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cd); skipChildren {
-		return cd, ok
+func (n *ColumnDef) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := cd.Name.Accept(v)
+	n = newNod.(*ColumnDef)
+	node, ok := n.Name.Accept(v)
 	if !ok {
-		return cd, false
+		return n, false
 	}
-	cd.Name = node.(*ColumnName)
-	for i, val := range cd.Options {
+	n.Name = node.(*ColumnName)
+	for i, val := range n.Options {
 		node, ok := val.Accept(v)
 		if !ok {
-			return cd, false
+			return n, false
 		}
-		cd.Options[i] = node.(*ColumnOption)
+		n.Options[i] = node.(*ColumnOption)
 	}
-	return v.Leave(cd)
+	return v.Leave(n)
 }
 
 // CreateTableStmt is a statement to create a table.
@@ -283,30 +297,32 @@ type CreateTableStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (ct *CreateTableStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ct); skipChildren {
-		return ct, ok
+func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ct.Table.Accept(v)
+	n = newNod.(*CreateTableStmt)
+	node, ok := n.Table.Accept(v)
 	if !ok {
-		return ct, false
+		return n, false
 	}
-	ct.Table = node.(*TableName)
-	for i, val := range ct.Cols {
+	n.Table = node.(*TableName)
+	for i, val := range n.Cols {
 		node, ok = val.Accept(v)
 		if !ok {
-			return ct, false
+			return n, false
 		}
-		ct.Cols[i] = node.(*ColumnDef)
+		n.Cols[i] = node.(*ColumnDef)
 	}
-	for i, val := range ct.Constraints {
+	for i, val := range n.Constraints {
 		node, ok = val.Accept(v)
 		if !ok {
-			return ct, false
+			return n, false
 		}
-		ct.Constraints[i] = node.(*Constraint)
+		n.Constraints[i] = node.(*Constraint)
 	}
-	return v.Leave(ct)
+	return v.Leave(n)
 }
 
 // DropTableStmt is a statement to drop one or more tables.
@@ -319,18 +335,20 @@ type DropTableStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (dt *DropTableStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(dt); skipChildren {
-		return dt, ok
+func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	for i, val := range dt.Tables {
+	n = newNod.(*DropTableStmt)
+	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
-			return dt, false
+			return n, false
 		}
-		dt.Tables[i] = node.(*TableName)
+		n.Tables[i] = node.(*TableName)
 	}
-	return v.Leave(dt)
+	return v.Leave(n)
 }
 
 // CreateIndexStmt is a statement to create an index.
@@ -345,23 +363,25 @@ type CreateIndexStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (ci *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ci); skipChildren {
-		return ci, ok
+func (n *CreateIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ci.Table.Accept(v)
+	n = newNod.(*CreateIndexStmt)
+	node, ok := n.Table.Accept(v)
 	if !ok {
-		return ci, false
+		return n, false
 	}
-	ci.Table = node.(*TableName)
-	for i, val := range ci.IndexColNames {
+	n.Table = node.(*TableName)
+	for i, val := range n.IndexColNames {
 		node, ok = val.Accept(v)
 		if !ok {
-			return ci, false
+			return n, false
 		}
-		ci.IndexColNames[i] = node.(*IndexColName)
+		n.IndexColNames[i] = node.(*IndexColName)
 	}
-	return v.Leave(ci)
+	return v.Leave(n)
 }
 
 // DropIndexStmt is a statement to drop the index.
@@ -375,16 +395,18 @@ type DropIndexStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (di *DropIndexStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(di); skipChildren {
-		return di, ok
+func (n *DropIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := di.Table.Accept(v)
+	n = newNod.(*DropIndexStmt)
+	node, ok := n.Table.Accept(v)
 	if !ok {
-		return di, false
+		return n, false
 	}
-	di.Table = node.(*TableName)
-	return v.Leave(di)
+	n.Table = node.(*TableName)
+	return v.Leave(n)
 }
 
 // TableOptionType is the type for TableOption
@@ -435,18 +457,20 @@ type ColumnPosition struct {
 }
 
 // Accept implements Node Accept interface.
-func (cp *ColumnPosition) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(cp); skipChildren {
-		return cp, ok
+func (n *ColumnPosition) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if cp.RelativeColumn != nil {
-		node, ok := cp.RelativeColumn.Accept(v)
+	n = newNod.(*ColumnPosition)
+	if n.RelativeColumn != nil {
+		node, ok := n.RelativeColumn.Accept(v)
 		if !ok {
-			return cp, false
+			return n, false
 		}
-		cp.RelativeColumn = node.(*ColumnName)
+		n.RelativeColumn = node.(*ColumnName)
 	}
-	return v.Leave(cp)
+	return v.Leave(n)
 }
 
 // AlterTableType is the type for AlterTableSpec.
@@ -474,44 +498,46 @@ type AlterTableSpec struct {
 	Constraint *Constraint
 	Options    []*TableOption
 	Column     *ColumnDef
-	ColumnName *ColumnName
+	DropColumn *ColumnName
 	Position   *ColumnPosition
 }
 
 // Accept implements Node Accept interface.
-func (as *AlterTableSpec) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(as); skipChildren {
-		return as, ok
+func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	if as.Constraint != nil {
-		node, ok := as.Constraint.Accept(v)
+	n = newNod.(*AlterTableSpec)
+	if n.Constraint != nil {
+		node, ok := n.Constraint.Accept(v)
 		if !ok {
-			return as, false
+			return n, false
 		}
-		as.Constraint = node.(*Constraint)
+		n.Constraint = node.(*Constraint)
 	}
-	if as.Column != nil {
-		node, ok := as.Column.Accept(v)
+	if n.Column != nil {
+		node, ok := n.Column.Accept(v)
 		if !ok {
-			return as, false
+			return n, false
 		}
-		as.Column = node.(*ColumnDef)
+		n.Column = node.(*ColumnDef)
 	}
-	if as.ColumnName != nil {
-		node, ok := as.ColumnName.Accept(v)
+	if n.DropColumn != nil {
+		node, ok := n.DropColumn.Accept(v)
 		if !ok {
-			return as, false
+			return n, false
 		}
-		as.ColumnName = node.(*ColumnName)
+		n.DropColumn = node.(*ColumnName)
 	}
-	if as.Position != nil {
-		node, ok := as.Position.Accept(v)
+	if n.Position != nil {
+		node, ok := n.Position.Accept(v)
 		if !ok {
-			return as, false
+			return n, false
 		}
-		as.Position = node.(*ColumnPosition)
+		n.Position = node.(*ColumnPosition)
 	}
-	return v.Leave(as)
+	return v.Leave(n)
 }
 
 // AlterTableStmt is a statement to change the structure of a table.
@@ -524,23 +550,25 @@ type AlterTableStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (at *AlterTableStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(at); skipChildren {
-		return at, ok
+func (n *AlterTableStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := at.Table.Accept(v)
+	n = newNod.(*AlterTableStmt)
+	node, ok := n.Table.Accept(v)
 	if !ok {
-		return at, false
+		return n, false
 	}
-	at.Table = node.(*TableName)
-	for i, val := range at.Specs {
+	n.Table = node.(*TableName)
+	for i, val := range n.Specs {
 		node, ok = val.Accept(v)
 		if !ok {
-			return at, false
+			return n, false
 		}
-		at.Specs[i] = node.(*AlterTableSpec)
+		n.Specs[i] = node.(*AlterTableSpec)
 	}
-	return v.Leave(at)
+	return v.Leave(n)
 }
 
 // TruncateTableStmt is a statement to empty a table completely.
@@ -552,14 +580,16 @@ type TruncateTableStmt struct {
 }
 
 // Accept implements Node Accept interface.
-func (ts *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
-	if skipChildren, ok := v.Enter(ts); skipChildren {
-		return ts, ok
+func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
 	}
-	node, ok := ts.Table.Accept(v)
+	n = newNod.(*TruncateTableStmt)
+	node, ok := n.Table.Accept(v)
 	if !ok {
-		return ts, false
+		return n, false
 	}
-	ts.Table = node.(*TableName)
-	return v.Leave(ts)
+	n.Table = node.(*TableName)
+	return v.Leave(n)
 }

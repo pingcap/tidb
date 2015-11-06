@@ -16,7 +16,7 @@ package kv
 import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 // IsRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
@@ -25,7 +25,7 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	if errors2.ErrorEqual(err, ErrLockConflict) || errors2.ErrorEqual(err, ErrConditionNotMatch) {
+	if terror.ErrorEqual(err, ErrLockConflict) || terror.ErrorEqual(err, ErrConditionNotMatch) {
 		return true
 	}
 

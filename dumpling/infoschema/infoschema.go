@@ -16,11 +16,11 @@ package infoschema
 import (
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
 	_ "github.com/pingcap/tidb/table/tables"
 )
@@ -105,7 +105,7 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	id, ok := is.tableNameToID[tableName{schema: schema.L, table: table.L}]
 	if !ok {
-		return nil, errors.Errorf("table %s.%s does not exist", schema, table)
+		return nil, terror.TableNotExists.Gen("table %s.%s does not exist", schema, table)
 	}
 	t = is.tables[id]
 	return

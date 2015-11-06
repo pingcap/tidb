@@ -26,8 +26,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	terrors "github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 const (
@@ -123,8 +122,8 @@ const (
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
-	if !errors2.ErrorEqual(err, terrors.ErrDatabaseNotExist) {
-		return false, errors.Trace(err)
+	if err != nil && terror.DatabaseNotExists.NotEqual(err) {
+		log.Fatal(err)
 	}
 	// Check bootstrapped variable value in TiDB table.
 	v, err := checkBootstrappedVar(s)
@@ -138,9 +137,7 @@ func checkBootstrappedVar(s Session) (bool, error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrappedVar)
 	rs, err := s.Execute(sql)
 	if err != nil {
-		// TODO: use terrors to compare error.
-		str := err.Error()
-		if strings.Contains(str, "does not exist") {
+		if terror.TableNotExists.Equal(err) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
