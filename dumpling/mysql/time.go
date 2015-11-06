@@ -107,6 +107,7 @@ type Time struct {
 	Fsp int
 }
 
+// GetCurrentTime returns current time with type tp.
 func GetCurrentTime(tp uint8) Time {
 	return Time{Time: time.Now(), Type: tp, Fsp: 0}
 }
