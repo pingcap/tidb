@@ -75,9 +75,6 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos
 		position = c.Offset + 1
 	}
 
-	// reset column offset here
-	colInfo.Offset = position
-
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
@@ -231,6 +228,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	}
 
 	if len(tblInfo.Columns) == 1 {
+		job.State = model.JobCancelled
 		return errors.Errorf("can't drop only column %s in table %s", colName, tblInfo.Name)
 	}
 
@@ -239,6 +237,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	for _, indexInfo := range tblInfo.Indices {
 		for _, col := range indexInfo.Columns {
 			if col.Name.L == colName.L {
+				job.State = model.JobCancelled
 				return errors.Errorf("can't drop column %s with index %s covered now", colName, indexInfo.Name)
 			}
 		}
