@@ -20,6 +20,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 )
@@ -106,7 +109,8 @@ func checkResult(c *C, r sql.Result, affectedRows int64, insertID int64) {
 }
 
 type testSessionSuite struct {
-	dbName string
+	dbName          string
+	dbNameBootstrap string
 
 	createDBSQL    string
 	dropDBSQL      string
@@ -332,6 +336,7 @@ func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
 
 func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dbName = "test_session_db"
+	s.dbNameBootstrap = "test_main_db_bootstrap"
 	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
 	s.dropDBSQL = fmt.Sprintf("drop database %s;", s.dbName)
 	s.useDBSQL = fmt.Sprintf("use %s;", s.dbName)
@@ -1023,6 +1028,61 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	v, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+}
+
+// Create a new session on store but only do ddl works.
+func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
+	ss := &session{
+		values: make(map[fmt.Stringer]interface{}),
+		store:  store,
+		sid:    atomic.AddInt64(&sessionID, 1),
+	}
+	domain, err := domap.Get(store)
+	c.Assert(err, IsNil)
+	sessionctx.BindDomain(ss, domain)
+	variable.BindSessionVars(ss)
+	variable.GetSessionVars(ss).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	// session implements autocommit.Checker. Bind it to ctx
+	autocommit.BindAutocommitChecker(ss, ss)
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	b, err := checkBootstrapped(ss)
+	c.Assert(b, IsFalse)
+	c.Assert(err, IsNil)
+	doDDLWorks(ss)
+	// Leave dml unfinished.
+}
+
+func (s *testSessionSuite) TestBootstrapWithError(c *C) {
+	store := newStore(c, s.dbNameBootstrap)
+	s.bootstrapWithError(store, c)
+	se := newSession(c, store, s.dbNameBootstrap)
+	mustExecSQL(c, se, "USE mysql;")
+	r := mustExecSQL(c, se, `select * from user;`)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	mustExecSQL(c, se, "USE test;")
+	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.db;")
+	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
+	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	// Check privilege tables.
+	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
+	v, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	c.Assert(row.Data, HasLen, 1)
+	c.Assert(row.Data[0], Equals, "True")
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
