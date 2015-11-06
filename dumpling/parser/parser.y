@@ -207,6 +207,7 @@ import (
 	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
+	read		"READ"
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
@@ -227,6 +228,7 @@ import (
 	signed		"SIGNED"
 	some 		"SOME"
 	start		"START"
+	status		"STATUS"
 	stringType	"string"
 	substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
@@ -246,6 +248,7 @@ import (
 	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
+	unlock		"UNLOCK"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	upper 		"UPPER"
@@ -432,6 +435,8 @@ import (
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
+	LockTablesStmt		"Lock tables statement"
+	LockType		"Table locks type"
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
@@ -495,6 +500,8 @@ import (
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
 	TableFactor 		"table factor"
+	TableLock		"Table name and lock type"
+	TableLockList		"Table lock list"
 	TableName		"Table name"
 	TableNameList		"Table name list"
 	TableOption		"create table option"
@@ -509,6 +516,7 @@ import (
 	UnionStmt		"Union select state ment"
 	UnionClauseList		"Union select clause list"
 	UnionSelect		"Union (select) item"
+	UnlockTablesStmt	"Unlock tables statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
 	UserSpec		"Username and auth option"
@@ -1650,7 +1658,7 @@ UnReservedKeyword:
 |	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "STATUS"
 
 NotKeywordToken:
 	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"
@@ -3236,6 +3244,21 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "TABLE" "STATUS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp:	ast.ShowTableStatus,
+			DBName:	$4.(string),
+		}
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 |	"SHOW" OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
 		$$ = &ast.ShowStmt{
@@ -3388,6 +3411,8 @@ Statement:
 		// TODO: This is used to fix issue #320. There may be a better solution.
 		$$ = $1.(*ast.SubqueryExpr).Query
 	}
+|	UnlockTablesStmt
+|	LockTablesStmt
 
 ExplainableStmt:
 	SelectStmt
@@ -4280,4 +4305,28 @@ PrivLevel:
 			TableName: $1.(string),
 		}
 	}
+
+/*********************************************************************
+ * Lock/Unlock Tables
+ * See: http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html
+ * All the statement leaves empty. This is used to prevent mysqldump error.
+ *********************************************************************/
+
+UnlockTablesStmt:
+	"UNLOCK" "TABLES"
+
+LockTablesStmt:
+	"LOCK" "TABLES" TableLockList
+
+TableLock:
+	 TableName LockType
+
+LockType:
+	"READ"
+|	"READ" "LOCAL"
+
+TableLockList:
+	TableLock
+|	TableLockList ',' TableLock 
+
 %%

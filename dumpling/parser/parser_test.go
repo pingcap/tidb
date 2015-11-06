@@ -656,3 +656,13 @@ func (s *testParserSuite) TestLikeEscape(c *C) {
 
 	s.RunTest(c, table)
 }
+
+func (s *testParserSuite) TestMysqlDump(c *C) {
+	// Statements used by mysqldump.
+	table := []testCase{
+		{`UNLOCK TABLES;`, true},
+		{`LOCK TABLES t1 READ;`, true},
+		{`show table status like 't'`, true},
+	}
+	s.RunTest(c, table)
+}

@@ -93,6 +93,15 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		if s.Full {
 			names = append(names, "Table_type")
 		}
+	case stmt.ShowTableStatus:
+		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
+			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
+			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
+			"Create_options", "Comment"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar}
 	case stmt.ShowColumns:
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
@@ -156,6 +165,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowDatabases(ctx)
 	case stmt.ShowTables:
 		return s.fetchShowTables(ctx)
+	case stmt.ShowTableStatus:
+		return s.fetchShowTableStatus(ctx)
 	case stmt.ShowColumns:
 		return s.fetchShowColumns(ctx)
 	case stmt.ShowWarnings:
@@ -351,6 +362,49 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 	return nil
 }
 
+func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	dbName := model.NewCIStr(s.DBName)
+	if !is.SchemaExists(dbName) {
+		return errors.Errorf("Can not find DB: %s", dbName)
+	}
+
+	// sort for tables
+	var tableNames []string
+	for _, v := range is.SchemaTables(dbName) {
+		tableNames = append(tableNames, v.TableName().L)
+	}
+
+	sort.Strings(tableNames)
+
+	m := map[interface{}]interface{}{}
+	for _, v := range tableNames {
+		// Check like/where clause.
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+		now := mysql.GetCurrentTime(mysql.TypeDatetime)
+		data := []interface{}{
+			v, "", "", "", "", 100, 100,
+			100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "",
+			"", "",
+		}
+		s.rows = append(s.rows, &plan.Row{Data: data})
+	}
+	return nil
+}
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
 	m := map[interface{}]interface{}{}

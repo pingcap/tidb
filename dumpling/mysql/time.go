@@ -107,6 +107,10 @@ type Time struct {
 	Fsp int
 }
 
+func GetCurrentTime(tp uint8) Time {
+	return Time{Time: time.Now(), Type: tp, Fsp: 0}
+}
+
 func (t Time) String() string {
 	if t.IsZero() {
 		if t.Type == TypeDate {
