@@ -23,6 +23,7 @@ import (
 // Common base error instances.
 var (
 	DatabaseNotExists = ClassSchema.New(CodeDatabaseNotExists, "database not exists")
+	TableNotExists    = ClassSchema.New(CodeTableNotExists, "table not exists")
 
 	CommitNotInTransaction   = ClassExecutor.New(CodeCommitNotInTransaction, "commit not in transaction")
 	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
@@ -35,6 +36,7 @@ type ErrCode int
 // Schema error codes.
 const (
 	CodeDatabaseNotExists ErrCode = iota + 1
+	CodeTableNotExists
 )
 
 // Executor error codes.
