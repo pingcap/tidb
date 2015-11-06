@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -181,7 +181,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		// so we update the job ReorgHandle here.
 		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
-		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
 		}
@@ -300,7 +300,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 
 		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
-		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
 		}

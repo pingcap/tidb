@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
@@ -192,7 +192,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		// so we update the job ReorgHandle here.
 		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
-		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
 		}
@@ -276,7 +276,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 			return d.dropTableIndex(tbl, indexInfo)
 		})
 
-		if errors2.ErrorEqual(err, errWaitReorgTimeout) {
+		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return nil
 		}
@@ -309,7 +309,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 
 func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error) {
 	_, err := txn.Get([]byte(t.RecordKey(handle, nil)))
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		// If row doesn't exist, we may have deleted the row already,
 		// no need to add index again.
 		return false, nil
@@ -411,7 +411,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if errors2.ErrorEqual(err, kv.ErrNotExist) {
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			break
 		} else if err != nil {
 			return nil, errors.Trace(err)

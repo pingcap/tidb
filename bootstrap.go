@@ -22,11 +22,11 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/errors"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 const (
@@ -92,45 +92,94 @@ const (
 	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
+	// CreateTiDBTable is the SQL statement creates a table in system db.
+	// This table is a key-value struct contains some information used by TiDB.
+	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
+	CreateTiDBTable = `CREATE TABLE if not exists mysql.tidb(
+		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
+		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
+		COMMENT VARCHAR(1024));`
 )
 
 // Bootstrap initiates system DB for a store.
 func bootstrap(s Session) {
-	// Create a test database.
-	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
-
-	//  Check if system db exists.
-	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
-	if err == nil {
-		// We have already finished bootstrap.
-		return
-	} else if !errors2.ErrorEqual(err, errors.ErrDatabaseNotExist) {
+	b, err := checkBootstrapped(s)
+	if err != nil {
 		log.Fatal(err)
 	}
-	mustExecute(s, fmt.Sprintf("CREATE DATABASE %s;", mysql.SystemDB))
-	initUserTable(s)
-	initPrivTables(s)
-	initGlobalVariables(s)
+	if b {
+		return
+	}
+	doDDLWorks(s)
+	doDMLWorks(s)
 }
 
-func initUserTable(s Session) {
+const (
+	bootstrappedVar     = "bootstrapped"
+	bootstrappedVarTrue = "True"
+)
+
+func checkBootstrapped(s Session) (bool, error) {
+	//  Check if system db exists.
+	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
+	if err != nil && terror.DatabaseNotExists.NotEqual(err) {
+		log.Fatal(err)
+	}
+	// Check bootstrapped variable value in TiDB table.
+	v, err := checkBootstrappedVar(s)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return v, nil
+}
+
+func checkBootstrappedVar(s Session) (bool, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrappedVar)
+	rs, err := s.Execute(sql)
+	if err != nil {
+		if terror.TableNotExists.Equal(err) {
+			return false, nil
+		}
+		return false, errors.Trace(err)
+	}
+	if len(rs) != 1 {
+		return false, errors.New("Wrong number of Recordset")
+	}
+	r := rs[0]
+	row, err := r.Next()
+	if err != nil || row == nil {
+		return false, errors.Trace(err)
+	}
+	return row.Data[0].(string) == bootstrappedVarTrue, nil
+}
+
+// Execute DDL statements in bootstrap stage.
+func doDDLWorks(s Session) {
+	// Create a test database.
+	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+	// Create system db.
+	mustExecute(s, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", mysql.SystemDB))
+	// Create user table.
 	mustExecute(s, CreateUserTable)
+	// Create privilege tables.
+	mustExecute(s, CreateDBPrivTable)
+	mustExecute(s, CreateTablePrivTable)
+	mustExecute(s, CreateColumnPrivTable)
+	// Create global systemt variable table.
+	mustExecute(s, CreateGloablVariablesTable)
+	// Create TiDB table.
+	mustExecute(s, CreateTiDBTable)
+}
+
+// Execute DML statements in bootstrap stage.
+// All the statements run in a single transaction.
+func doDMLWorks(s Session) {
+	mustExecute(s, "BEGIN")
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES ("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
 		("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
 		("::1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y");`)
-}
-
-// Initiates privilege tables including mysql.db, mysql.tables_priv and mysql.column_priv.
-func initPrivTables(s Session) {
-	mustExecute(s, CreateDBPrivTable)
-	mustExecute(s, CreateTablePrivTable)
-	mustExecute(s, CreateColumnPrivTable)
-}
-
-// Initiates global system variables table.
-func initGlobalVariables(s Session) {
-	mustExecute(s, CreateGloablVariablesTable)
+	// Init global system variable table.
 	values := make([]string, 0, len(variable.SysVars))
 	for k, v := range variable.SysVars {
 		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
@@ -138,6 +187,9 @@ func initGlobalVariables(s Session) {
 	}
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable, strings.Join(values, ", "))
 	mustExecute(s, sql)
+	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`, mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
+	mustExecute(s, sql)
+	mustExecute(s, "COMMIT")
 }
 
 func mustExecute(s Session, sql string) {

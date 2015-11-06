@@ -18,9 +18,9 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/bytes"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 var (
@@ -174,7 +174,7 @@ func (it *dbIter) Next() error {
 		}
 		// Get kv pair.
 		val, err := it.s.MvccGet(key, it.exceptedVersion)
-		if err != nil && !errors2.ErrorEqual(err, kv.ErrNotExist) {
+		if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 			// Get this version error
 			it.valid = false
 			retErr = err

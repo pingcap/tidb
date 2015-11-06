@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -133,7 +133,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	}
 
 	err := d1.startJob(ctx, job)
-	c.Assert(errors2.ErrorEqual(err, ErrNotExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrNotExists), IsTrue)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {

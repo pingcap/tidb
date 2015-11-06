@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 // Table implements table.Table interface.
@@ -399,7 +399,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(txn, colVals, recordID); err != nil {
-			if errors2.ErrorEqual(err, kv.ErrKeyExists) {
+			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
 				iter, _, err1 := v.X.Seek(txn, colVals)
@@ -529,7 +529,7 @@ func (t *Table) RemoveRow(ctx context.Context, h int64) error {
 		k := t.RecordKey(h, col)
 		err := txn.Delete([]byte(k))
 		if err != nil {
-			if col.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
+			if col.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If the column is not in public state, we may have not added the column,
 				// or already deleted the column, so skip ErrNotExist error.
 				continue
@@ -553,7 +553,7 @@ func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{},
 		return errors.Trace(err)
 	}
 	if err = idx.X.Delete(txn, vals, h); err != nil {
-		if idx.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
+		if idx.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 			// If the index is not in public state, we may have not created the index,
 			// or already deleted the index, so skip ErrNotExist error.
 			return nil
@@ -577,7 +577,7 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 			return errors.Trace(err)
 		}
 		if err = v.X.Delete(txn, vals, h); err != nil {
-			if v.State != model.StatePublic && errors2.ErrorEqual(err, kv.ErrNotExist) {
+			if v.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
 				continue
