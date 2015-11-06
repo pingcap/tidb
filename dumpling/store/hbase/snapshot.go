@@ -142,10 +142,10 @@ type hbaseIter struct {
 	valid bool
 }
 
-func (it *hbaseIter) Next() (kv.Iterator, error) {
+func (it *hbaseIter) Next() error {
 	it.rs = it.ThemisScanner.Next()
 	it.valid = it.rs != nil && len(it.rs.Columns) > 0 && !it.ThemisScanner.Closed()
-	return it, nil
+	return nil
 }
 
 func (it *hbaseIter) Valid() bool {
