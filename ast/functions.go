@@ -342,24 +342,22 @@ func (n *FuncTrimExpr) IsStatic() bool {
 type DateArithType byte
 
 const (
-	// AddDate is to run adddate function option.
+	// DateAdd is to run adddate or date_add function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-	AddDate DateArithType = iota + 1
-	// DateAdd is to run date_add function option.
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	DateAdd
-	// DateSub is to run date_sub function option.
+	DateAdd DateArithType = iota + 1
+	// DateSub is to run subdate or date_sub function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
-	// SubDate is to run subdate function option.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-	SubDate
-	// DateArithDaysForm is to run adddate or subdate function with days form.
+	// DateArithDaysForm is to run adddate or subdate function with days form Flag.
 	DateArithDaysForm
 )
 
 // DateArithInterval is the struct of DateArith interval part.
 type DateArithInterval struct {
+	// Form is the flag of DateArith running form.
+	// The function runs with interval or days.
 	Form     DateArithType
 	Unit     string
 	Interval ExprNode
@@ -369,6 +367,7 @@ type DateArithInterval struct {
 type FuncDateArithExpr struct {
 	funcNode
 
+	// Op is used for distinguishing date_add and date_sub.
 	Op   DateArithType
 	Date ExprNode
 	DateArithInterval
