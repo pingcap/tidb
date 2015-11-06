@@ -87,11 +87,10 @@ func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 		k = vv
 	}
 	// update new iter to next
-	newIt, err := c.it.Next()
+	err = c.it.Next()
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	c.it = newIt
 	return
 }
 
@@ -167,11 +166,6 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 		return errors.Trace(err)
 	}
 
-	// unique index
-	err = txn.LockKeys(key)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	_, err = txn.Get(key)
 	if IsErrNotFound(err) {
 		err = txn.Set(key, encodeHandle(h))
@@ -209,7 +203,7 @@ func (c *kvIndex) Drop(txn Transaction) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		it, err = it.Next()
+		err = it.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}

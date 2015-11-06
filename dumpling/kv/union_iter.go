@@ -44,13 +44,13 @@ func newUnionIter(dirtyIt Iterator, snapshotIt Iterator) *UnionIter {
 
 // Go next and update valid status.
 func (iter *UnionIter) dirtyNext() {
-	iter.dirtyIt, _ = iter.dirtyIt.Next()
+	iter.dirtyIt.Next()
 	iter.dirtyValid = iter.dirtyIt.Valid()
 }
 
 // Go next and update valid status.
 func (iter *UnionIter) snapshotNext() {
-	iter.snapshotIt, _ = iter.snapshotIt.Next()
+	iter.snapshotIt.Next()
 	iter.snapshotValid = iter.snapshotIt.Valid()
 }
 
@@ -115,14 +115,14 @@ func (iter *UnionIter) updateCur() {
 }
 
 // Next implements the Iterator Next interface.
-func (iter *UnionIter) Next() (Iterator, error) {
+func (iter *UnionIter) Next() error {
 	if !iter.curIsDirty {
 		iter.snapshotNext()
 	} else {
 		iter.dirtyNext()
 	}
 	iter.updateCur()
-	return iter, nil
+	return nil
 }
 
 // Value implements the Iterator Value interface.

@@ -20,8 +20,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/errors2"
 	"github.com/twinj/uuid"
 )
 
@@ -156,7 +156,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		valid:        true,
 		store:        s,
 		version:      kv.MinVersion,
-		snapshotVals: make(map[string][]byte),
+		snapshotVals: make(map[string]struct{}),
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
 	txn.UnionStore = kv.NewUnionStore(&dbSnapshot{
@@ -209,7 +209,7 @@ func (s *dbStore) newBatch() engine.Batch {
 }
 
 // Both lock and unlock are used for simulating scenario of percolator papers.
-func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte) error {
+func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -223,7 +223,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 
 	metaKey := codec.EncodeBytes(nil, []byte(key))
 	currValue, err := s.db.Get(metaKey)
-	if errors2.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		s.keysLocked[key] = tid
 		return nil
 	}
@@ -243,7 +243,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string, snapshotVal []byte
 
 	// If there's newer version of this key, returns error.
 	if ver > tid {
-		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q, snapshotVal:%q", tid, key, currValue, snapshotVal)
+		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q", tid, key, currValue)
 		return errors.Trace(kv.ErrConditionNotMatch)
 	}
 

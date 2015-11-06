@@ -22,25 +22,25 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"unicode"
 	"strings"
-	
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/charset"
+	"unicode"
+
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type lexer struct {
 	c		int
 	col		int
 	errs		[]error
-	expr		expression.Expression
+	expr		ast.ExprNode
 	i		int
 	inj		int
 	lcol		int
 	line		int
-	list		[]interface{}
+	list		[]ast.StmtNode
 	ncol		int
 	nline		int
 	sc		int
@@ -48,8 +48,7 @@ type lexer struct {
 	val		[]byte
 	ungetBuf	[]byte
 	root		bool
-	prepare		bool 
-	ParamList	[]*expression.ParamMarker
+	prepare		bool
 	stmtStartPos 	int
 	stringLit 	[]byte
 
@@ -78,11 +77,11 @@ func (l *lexer) Errors() []error {
 	return l.errs
 }
 
-func (l *lexer) Stmts() []interface{}{
+func (l *lexer) Stmts() []ast.StmtNode {
 	return l.list
 }
 
-func (l *lexer) Expr() expression.Expression {
+func (l *lexer) Expr() ast.ExprNode {
 	return l.expr
 }
 
@@ -90,16 +89,16 @@ func (l *lexer) Inj() int {
 	return l.inj
 }
 
+func (l *lexer) SetInj(inj int) {
+	l.inj = inj
+}
+
 func (l *lexer) SetPrepare() {
-	l.prepare = true	
+	l.prepare = true
 }
 
 func (l *lexer) IsPrepare() bool {
-	return l.prepare	
-}
-
-func (l *lexer) SetInj(inj int) {
-	l.inj = inj
+	return l.prepare
 }
 
 func (l *lexer) Root() bool {
@@ -116,7 +115,17 @@ func (l *lexer) SetCharsetInfo(charset, collation string) {
 }
 
 func (l *lexer) GetCharsetInfo() (string, string) {
-	return l.charset, l.collation	
+	return l.charset, l.collation
+}
+
+// The select statement is not at the end of the whole statement, if the last
+// field text was set from its offset to the end of the src string, update
+// the last field text.
+func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
+	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+	if lastField.Offset + len(lastField.Text()) >= len(l.src)-1 {
+		lastField.SetText(l.src[lastField.Offset:lastEnd])
+	}
 }
 
 func (l *lexer) unget(b byte) {
@@ -299,6 +308,7 @@ current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
 date_add	{d}{a}{t}{e}_{a}{d}{d}
+date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
@@ -650,6 +660,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {databases}		return databases
 {date_add}		lval.item = string(l.val)
 			return dateAdd
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
@@ -819,9 +831,9 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp
-{references}		return references
 {replace}		lval.item = string(l.val)
 			return replace
+{references}		return references
 {rlike}			return rlike
 
 {sys_var}		lval.item = string(l.val)

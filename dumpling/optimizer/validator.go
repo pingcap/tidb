@@ -11,17 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package errors
+package optimizer
 
-import (
-	"github.com/juju/errors"
-)
+import "github.com/pingcap/tidb/ast"
 
-// Portable analogs of some common call errors.
-var (
-	ErrCommitNotInTransaction   = errors.New("COMMIT: Not in transaction")
-	ErrIncompatibleDBFormat     = errors.New("incompatible DB format")
-	ErrNoDataForHandle          = errors.New("read: no data for handle")
-	ErrRollbackNotInTransaction = errors.New("ROLLBACK: Not in transaction")
-	ErrDatabaseNotExist         = errors.New("Database not exist")
-)
+// validator is an ast.Visitor that validates
+// ast parsed from parser.
+type validator struct {
+	err error
+}
+
+func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	return in, false
+}
+
+func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}

@@ -25,8 +25,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/errors2"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
@@ -106,7 +106,7 @@ func TypeToStr(tp byte, cs string) (r string) {
 // EOFAsNil filtrates errors,
 // If err is equal to io.EOF returns nil.
 func EOFAsNil(err error) error {
-	if errors2.ErrorEqual(err, io.EOF) {
+	if terror.ErrorEqual(err, io.EOF) {
 		return nil
 	}
 	return errors.Trace(err)

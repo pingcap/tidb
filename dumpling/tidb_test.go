@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -605,7 +605,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 
 	_, err := exec(c, se1, "commit")
 	// row lock conflict but can still success
-	if errors2.ErrorNotEqual(err, kv.ErrConditionNotMatch) {
+	if terror.ErrorNotEqual(err, kv.ErrConditionNotMatch) {
 		c.Fail()
 	}
 	// Retry should success
@@ -640,6 +640,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	// conflict
 	mustExecSQL(c, se1, "begin")
 	rs, err := exec(c, se1, "select * from t where c1=11 for update")
+	c.Assert(err, IsNil)
 	_, err = rs.Rows(-1, 0)
 
 	mustExecSQL(c, se2, "begin")

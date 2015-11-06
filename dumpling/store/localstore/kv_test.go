@@ -15,6 +15,7 @@ package localstore
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 )
 
@@ -109,13 +111,13 @@ func checkSeek(c *C, txn kv.Transaction) {
 		c.Assert(iter.Key(), Equals, string(val))
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
-		next, err := iter.Next()
+		err = iter.Next()
 		c.Assert(err, IsNil)
-		c.Assert(next.Valid(), IsTrue)
+		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert(next.Key(), Equals, string(val))
-		c.Assert(valToStr(c, next), Equals, string(val))
+		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
 
@@ -280,7 +282,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	for it.Valid() {
 		err = txn.Delete([]byte(it.Key()))
 		c.Assert(err, IsNil)
-		it, err = it.Next()
+		err = it.Next()
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
@@ -415,7 +417,7 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 	it, err := txn.Seek(nil)
 	for it.Valid() {
 		fmt.Printf("%s, %s\n", it.Key(), it.Value())
-		it, _ = it.Next()
+		it.Next()
 	}
 
 	it, err = txn.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))
@@ -554,4 +556,40 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	c.Assert(err, NotNil)
 
 	snap.MvccRelease()
+}
+
+func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
+	d := Driver{
+		boltdb.Driver{},
+	}
+	path := "boltdb_test"
+	defer os.Remove(path)
+	store, err := d.Open(path)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		txn.Set([]byte("a"), []byte("0"))
+		txn.Inc([]byte("a"), 1)
+
+		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			txn.Set([]byte("b"), []byte("0"))
+			txn.Inc([]byte("b"), 1)
+
+			return nil
+		})
+
+		return nil
+	})
+
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		n, err := txn.GetInt64([]byte("a"))
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, int64(1))
+
+		n, err = txn.GetInt64([]byte("b"))
+		c.Assert(err, IsNil)
+		c.Assert(n, Equals, int64(1))
+		return nil
+	})
 }
