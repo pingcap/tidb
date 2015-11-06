@@ -15,8 +15,10 @@ package terror
 
 import (
 	"fmt"
+	"runtime"
 	"strconv"
 
+	"github.com/cockroachdb/cockroach/util/log"
 	"github.com/juju/errors"
 )
 
@@ -91,7 +93,7 @@ func (ec ErrClass) EqualClass(err error) bool {
 		return false
 	}
 	if te, ok := e.(*Error); ok {
-		return te.Class == ec
+		return te.class == ec
 	}
 	return false
 }
@@ -105,30 +107,81 @@ func (ec ErrClass) NotEqualClass(err error) bool {
 // Usually used to create base *Error.
 func (ec ErrClass) New(code ErrCode, message string) *Error {
 	return &Error{
-		Class:   ec,
-		Code:    code,
-		Message: message,
+		class:   ec,
+		code:    code,
+		message: message,
+		isBase:  true,
 	}
 }
 
 // Error implements error interface and adds integer Class and Code, so
 // errors with different message can be compared.
 type Error struct {
-	Class   ErrClass
-	Code    ErrCode
-	Message string
+	class    ErrClass
+	code     ErrCode
+	message  string
+	cause    error
+	previous error
+	file     string
+	line     int
+	// base error is created by error class, should not be modified.
+	isBase bool
+}
+
+// Class returns ErrClass
+func (e *Error) Class() ErrClass {
+	return e.class
+}
+
+// Code returns ErrCode
+func (e *Error) Code() ErrCode {
+	return e.code
+}
+
+// Location returns the location where the error is created,
+// implements juju/errors locationer interface.
+func (e *Error) Location() (file string, line int) {
+	return e.file, e.line
 }
 
 // Error implements error interface.
 func (e *Error) Error() string {
-	return fmt.Sprintf("[%s:%d]%s", e.Class, e.Code, e.Message)
+	return fmt.Sprintf("[%s:%d]%s", e.class, e.code, e.message)
 }
 
 // Gen generates a new *Error with the same class and code, and a new formatted message.
 func (e *Error) Gen(format string, args ...interface{}) *Error {
 	err := *e
-	err.Message = fmt.Sprintf(format, args...)
+	err.isBase = false
+	err.message = fmt.Sprintf(format, args...)
+	_, err.file, err.line, _ = runtime.Caller(1)
 	return &err
+}
+
+// Wrap wraps an error and returns itself.
+func (e *Error) Wrap(err error) *Error {
+	if e.isBase {
+		log.Fatal("base error should not call Wrap method.")
+	}
+	e.previous = err
+	e.cause = errors.Cause(err)
+	return e
+}
+
+// Cause returns the cause error, implements juju/errors causer interface.
+func (e *Error) Cause() error {
+	return e.cause
+}
+
+// Message returns the message of the error, implements juju/errors wrapper interface.
+func (e *Error) Message() string {
+	return e.message
+}
+
+// Underlying returns the Previous error, or nil
+// if there is none, implements juju/errors wrapper interface.
+func (e *Error) Underlying() error {
+	return e.previous
 }
 
 // Equal checks if err is equal to e.
@@ -138,7 +191,7 @@ func (e *Error) Equal(err error) bool {
 		return false
 	}
 	inErr, ok := originErr.(*Error)
-	return ok && e.Class == inErr.Class && e.Code == inErr.Code
+	return ok && e.class == inErr.class && e.code == inErr.code
 }
 
 // NotEqual checks if err is not equal to e.
@@ -162,7 +215,7 @@ func ErrorEqual(err1, err2 error) bool {
 	te1, ok1 := e1.(*Error)
 	te2, ok2 := e2.(*Error)
 	if ok1 && ok2 {
-		return te1.Class == te2.Class && te1.Code == te2.Code
+		return te1.class == te2.class && te1.code == te2.code
 	}
 
 	return e1.Error() == e2.Error()
