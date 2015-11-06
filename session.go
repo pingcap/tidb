@@ -561,10 +561,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 	// if store is not local store, we will reset lease time after bootstrap
 	if !localstore.IsLocalStore(store) {
 		lease := SchemaLease
-		if lease < minSchemaLease {
-			lease = minSchemaLease
-		}
-
 		sessionctx.GetDomain(s).SetLease(time.Duration(lease) * time.Second)
 	}
 
