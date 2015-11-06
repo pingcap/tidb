@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/errors2"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -93,7 +93,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		if err == nil {
 			continue
 		}
-		if err != nil && !errors2.ErrorEqual(err, kv.ErrKeyExists) {
+		if err != nil && !terror.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
 

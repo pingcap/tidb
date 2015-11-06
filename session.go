@@ -42,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/errors2"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -219,7 +219,7 @@ func (s *session) Retry() error {
 			log.Warnf("Retry %s", st.OriginText())
 			_, err = runStmt(s, st)
 			if err != nil {
-				if errors2.ErrorEqual(err, kv.ErrConditionNotMatch) {
+				if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
 					success = false
 					break
 				}
