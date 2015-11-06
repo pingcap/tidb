@@ -375,7 +375,9 @@ import (
 	CreateTableStmt		"CREATE TABLE statement"
 	CreateUserStmt		"CREATE User statement"
 	CrossOpt		"Cross join option"
-	DateArithOpt		"Date Arith option"
+	DateArithOpt		"Date arith dateadd or datesub option"
+	DateArithMultiFormsOpt	"Date arith adddate or subdate option"
+	DateArithInterval       "Date arith interval part"
 	DatabaseSym		"DATABASE or SCHEMA"
 	DBName			"Database Name"
 	DeallocateSym		"Deallocate or drop"
@@ -2136,10 +2138,19 @@ FunctionCallNonKeyword:
 |	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
 		$$ = &ast.FuncDateArithExpr{
-			Op:$1.(ast.DateArithType),
-			Unit: $7.(string), 
+			Op: $1.(ast.DateArithType),
 			Date: $3.(ast.ExprNode),
-			Interval: $6.(ast.ExprNode),
+			DateArithInterval: ast.DateArithInterval{
+						Unit: $7.(string), 
+						Interval: $6.(ast.ExprNode)},
+		}
+	}
+|	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
+	{
+		$$ = &ast.FuncDateArithExpr{
+			Op: $1.(ast.DateArithType),
+			Date: $3.(ast.ExprNode),
+			DateArithInterval: $5.(ast.DateArithInterval),
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
@@ -2318,11 +2329,7 @@ FunctionCallNonKeyword:
 	}
 
 DateArithOpt:
-	"ADDDATE"
-	{
-		$$ = ast.DateAdd
-	}
-|	"DATE_ADD"
+	"DATE_ADD"
 	{
 		$$ = ast.DateAdd
 	}
@@ -2330,9 +2337,29 @@ DateArithOpt:
 	{
 		$$ = ast.DateSub
 	}
+
+DateArithMultiFormsOpt:
+	"ADDDATE"
+	{
+		$$ = ast.AddDate
+	}
 |	"SUBDATE"
 	{
-		$$ = ast.DateSub
+		$$ = ast.SubDate
+	}
+
+DateArithInterval:
+	Expression
+	{
+		$$ = ast.DateArithInterval{
+					Form: ast.DateArithDaysForm,
+					Unit: "day",
+					Interval: $1.(ast.ExprNode),
+		}
+	}
+|	"INTERVAL" Expression TimeUnit
+	{
+		$$ = ast.DateArithInterval{Unit: $3.(string), Interval: $2.(ast.ExprNode)}
 	}
 
 TrimDirection:
