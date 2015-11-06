@@ -413,7 +413,8 @@ func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, version 
 		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			for _, h := range handles {
 				key := t.RecordKey(h, col)
-				if err := txn.Delete(key); err != nil {
+				err := txn.Delete(key)
+				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 					return errors.Trace(err)
 				}
 			}
