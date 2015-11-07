@@ -231,7 +231,7 @@ func (txn *dbTxn) Commit() error {
 		txn.close()
 	}()
 
-	return txn.doCommit()
+	return errors.Trace(txn.doCommit())
 }
 
 func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
