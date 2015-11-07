@@ -15,6 +15,7 @@ package terror
 
 import (
 	"fmt"
+	"runtime"
 	"strconv"
 
 	"github.com/juju/errors"
@@ -91,7 +92,7 @@ func (ec ErrClass) EqualClass(err error) bool {
 		return false
 	}
 	if te, ok := e.(*Error); ok {
-		return te.Class == ec
+		return te.class == ec
 	}
 	return false
 }
@@ -105,29 +106,48 @@ func (ec ErrClass) NotEqualClass(err error) bool {
 // Usually used to create base *Error.
 func (ec ErrClass) New(code ErrCode, message string) *Error {
 	return &Error{
-		Class:   ec,
-		Code:    code,
-		Message: message,
+		class:   ec,
+		code:    code,
+		message: message,
 	}
 }
 
 // Error implements error interface and adds integer Class and Code, so
 // errors with different message can be compared.
 type Error struct {
-	Class   ErrClass
-	Code    ErrCode
-	Message string
+	class   ErrClass
+	code    ErrCode
+	message string
+	file    string
+	line    int
+}
+
+// Class returns ErrClass
+func (e *Error) Class() ErrClass {
+	return e.class
+}
+
+// Code returns ErrCode
+func (e *Error) Code() ErrCode {
+	return e.code
+}
+
+// Location returns the location where the error is created,
+// implements juju/errors locationer interface.
+func (e *Error) Location() (file string, line int) {
+	return e.file, e.line
 }
 
 // Error implements error interface.
 func (e *Error) Error() string {
-	return fmt.Sprintf("[%s:%d]%s", e.Class, e.Code, e.Message)
+	return fmt.Sprintf("[%s:%d]%s", e.class, e.code, e.message)
 }
 
 // Gen generates a new *Error with the same class and code, and a new formatted message.
 func (e *Error) Gen(format string, args ...interface{}) *Error {
 	err := *e
-	err.Message = fmt.Sprintf(format, args...)
+	err.message = fmt.Sprintf(format, args...)
+	_, err.file, err.line, _ = runtime.Caller(1)
 	return &err
 }
 
@@ -138,7 +158,7 @@ func (e *Error) Equal(err error) bool {
 		return false
 	}
 	inErr, ok := originErr.(*Error)
-	return ok && e.Class == inErr.Class && e.Code == inErr.Code
+	return ok && e.class == inErr.class && e.code == inErr.code
 }
 
 // NotEqual checks if err is not equal to e.
@@ -162,7 +182,7 @@ func ErrorEqual(err1, err2 error) bool {
 	te1, ok1 := e1.(*Error)
 	te2, ok2 := e2.(*Error)
 	if ok1 && ok2 {
-		return te1.Class == te2.Class && te1.Code == te2.Code
+		return te1.class == te2.class && te1.code == te2.code
 	}
 
 	return e1.Error() == e2.Error()
