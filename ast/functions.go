@@ -375,11 +375,11 @@ func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
 		n.Date = node.(ExprNode)
 	}
 	if n.Interval != nil {
-		node, ok := n.Date.Accept(v)
+		node, ok := n.Interval.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Date = node.(ExprNode)
+		n.Interval = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
