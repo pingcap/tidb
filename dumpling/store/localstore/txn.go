@@ -126,11 +126,11 @@ func (txn *dbTxn) Fetch(keys []kv.Key) error {
 	for i, k := range keys {
 		encodedKeys[i] = kv.EncodeKey(k)
 	}
-	return txn.UnionStore.Cache.Fetch(encodedKeys)
+	return txn.UnionStore.Snapshot.Fetch(encodedKeys)
 }
 
-func (txn *dbTxn) Scan(start, end kv.Key, maxSize int) error {
-	return txn.UnionStore.Cache.Scan(kv.EncodeKey(start), kv.EncodeKey(end), maxSize)
+func (txn *dbTxn) Scan(start, end kv.Key, limit int) error {
+	return txn.UnionStore.Snapshot.Scan(kv.EncodeKey(start), kv.EncodeKey(end), limit)
 }
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
@@ -179,7 +179,7 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 }
 
 func (txn *dbTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.Buffer.NewIterator(nil)
+	iter := txn.UnionStore.WBuffer.NewIterator(nil)
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {
@@ -198,7 +198,7 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 
-	txn.Cache.Release()
+	txn.Snapshot.Release()
 
 	// Check locked keys
 	for k := range txn.snapshotVals {

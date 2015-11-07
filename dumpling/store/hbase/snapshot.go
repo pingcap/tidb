@@ -74,11 +74,11 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 
 // BatchGet implements kv.Snapshot.BatchGet().
 func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
-	var gets []*hbase.Get
-	for _, key := range keys {
+	gets := make([]*hbase.Get, len(keys))
+	for i, key := range keys {
 		g := hbase.NewGet(key)
 		g.AddColumn([]byte(ColFamily), []byte(Qualifier))
-		gets = append(gets, g)
+		gets[i] = g
 	}
 	rows, err := s.txn.BatchGet(s.storeName, gets)
 	if err != nil {
@@ -96,12 +96,12 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 }
 
 // Scan implements kv.Snapshot.Scan().
-func (s *hbaseSnapshot) Scan(start, end kv.Key, maxSize int) (map[string][]byte, error) {
-	scanner := s.txn.GetScanner([]byte(s.storeName), start, end, maxSize)
+func (s *hbaseSnapshot) Scan(start, end kv.Key, limit int) (map[string][]byte, error) {
+	scanner := s.txn.GetScanner([]byte(s.storeName), start, end, limit)
 	defer scanner.Close()
 
 	m := make(map[string][]byte)
-	for i := 0; i < maxSize; i++ {
+	for i := 0; i < limit; i++ {
 		r := scanner.Next()
 		if r != nil && len(r.Columns) > 0 {
 			k := r.Row
