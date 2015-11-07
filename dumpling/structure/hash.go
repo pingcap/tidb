@@ -105,8 +105,9 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return errors.Trace(err)
 	}
 
+	newMeta := meta
 	if oldValue == nil {
-		meta.Length++
+		newMeta.Length++
 	}
 
 	var newValue []byte
@@ -115,11 +116,21 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return errors.Trace(err)
 	}
 
-	if err = t.txn.Set(dataKey, newValue); err != nil {
-		return errors.Trace(err)
+	// Check if hash field has been changed.
+	if bytes.Compare(oldValue, newValue) != 0 {
+		if err = t.txn.Set(dataKey, newValue); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	return errors.Trace(t.txn.Set(metaKey, meta.Value()))
+	// Check if hash meta has been changed.
+	if bytes.Compare(meta.Value(), newMeta.Value()) != 0 {
+		if err = t.txn.Set(metaKey, newMeta.Value()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 // HLen gets the number of fields in a hash.
