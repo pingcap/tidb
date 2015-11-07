@@ -163,7 +163,7 @@ func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 		return &kv.UnionIter{}, nil
 	}
 
-	return iter, nil
+	return kv.NewDecodeKeyIter(iter), nil
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
