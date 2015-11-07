@@ -19,6 +19,8 @@ godep:
 	go get github.com/tools/godep
 
 build:
+	go get github.com/pingcap/go-hbase
+	go get github.com/pingcap/go-themis
 	$(GO) build
 
 install:

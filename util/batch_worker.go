@@ -20,6 +20,7 @@ import (
 
 type batchWorkFunc func(jobs []interface{})
 
+// BatchWorker collects jobs then batch process them.
 type BatchWorker struct {
 	mu          sync.Mutex
 	pendingJobs *list.List
@@ -27,6 +28,7 @@ type BatchWorker struct {
 	fn          batchWorkFunc
 }
 
+// NewBatchWorker creates a BatchWorker.
 func NewBatchWorker(batchSize int, fn batchWorkFunc) *BatchWorker {
 	return &BatchWorker{
 		pendingJobs: list.New(),
@@ -35,6 +37,7 @@ func NewBatchWorker(batchSize int, fn batchWorkFunc) *BatchWorker {
 	}
 }
 
+// Submit submits a job to BatchWorker.
 func (b *BatchWorker) Submit(job interface{}) {
 	var jobs []interface{}
 	b.mu.Lock()
@@ -54,6 +57,7 @@ func (b *BatchWorker) Submit(job interface{}) {
 	}
 }
 
+// Flush instructs BatchWorker to finish remain jobs.
 func (b *BatchWorker) Flush() {
 	var jobs []interface{}
 	b.mu.Lock()
