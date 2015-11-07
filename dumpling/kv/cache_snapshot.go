@@ -15,21 +15,29 @@ package kv
 
 import "github.com/juju/errors"
 
-// CacheSnapshot wraps a snapshot and supports cache for read.
-type CacheSnapshot struct {
-	// Cache is an in-memory Store for caching KVs.
-	Cache MemBuffer
-	// Snapshot is a snapshot of a KV store.
-	Snapshot Snapshot
+var _ Snapshot = (*cacheSnapshot)(nil)
+
+// cacheSnapshot wraps a snapshot and supports cache for read.
+type cacheSnapshot struct {
+	cache    MemBuffer
+	snapshot Snapshot
 }
 
-// Get gets the value for key k from CacheSnapshot.
-func (c *CacheSnapshot) Get(k Key) ([]byte, error) {
-	v, err := c.Cache.Get(k)
+// NewCacheSnapshot creates a new snapshot with cache embedded.
+func NewCacheSnapshot(snapshot Snapshot) Snapshot {
+	return &cacheSnapshot{
+		cache:    p.Get().(MemBuffer),
+		snapshot: snapshot,
+	}
+}
+
+// Get gets value from snapshot and saves it in cache.
+func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
+	v, err := c.cache.Get(k)
 	if IsErrNotFound(err) {
-		v, err = c.Snapshot.Get(k)
+		v, err = c.snapshot.Get(k)
 		if err == nil {
-			c.Cache.Set([]byte(k), v)
+			c.cache.Set([]byte(k), v)
 		}
 		return v, errors.Trace(err)
 	}
@@ -39,46 +47,57 @@ func (c *CacheSnapshot) Get(k Key) ([]byte, error) {
 	return v, nil
 }
 
-// Fetch fetches a batch of values from KV store and saves in cache for later use.
-func (c *CacheSnapshot) Fetch(keys []Key) error {
+// BatchGet gets a batch of values from snapshot and saves them in cache.
+func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+	m := make(map[string][]byte)
 	var missKeys []Key
 	for _, k := range keys {
-		if _, err := c.Cache.Get(k); IsErrNotFound(err) {
+		v, err := c.cache.Get(k)
+		if IsErrNotFound(err) {
 			missKeys = append(missKeys, k)
+			continue
 		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m[string(k)] = v
 	}
 
-	values, err := c.Snapshot.BatchGet(missKeys)
+	values, err := c.snapshot.BatchGet(missKeys)
 	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for k, v := range values {
-		c.Cache.Set([]byte(k), v)
-	}
-	return nil
-}
-
-// Scan scans a batch of values from KV store and saves in cache for later use.
-func (c *CacheSnapshot) Scan(start, end Key, limit int) error {
-	values, err := c.Snapshot.Scan(start, end, limit)
-	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	for k, v := range values {
-		c.Cache.Set([]byte(k), v)
+		c.cache.Set([]byte(k), v)
+		m[k] = v
 	}
-	return nil
+	return m, nil
 }
 
-// NewIterator creates an iterator of CacheSnapshot.
-func (c *CacheSnapshot) NewIterator(param interface{}) Iterator {
-	cacheIt := c.Cache.NewIterator(param)
-	snapshotIt := c.Snapshot.NewIterator(param)
-	return newUnionIter(cacheIt, snapshotIt)
+// Scan scans values from snapshot and saves them in cache.
+func (c *cacheSnapshot) Scan(start, end Key, limit int) (map[string][]byte, error) {
+	values, err := c.snapshot.Scan(start, end, limit)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for k, v := range values {
+		c.cache.Set([]byte(k), v)
+	}
+	return values, nil
+}
+
+// NewIterator creates an iterator of snapshot.
+func (c *cacheSnapshot) NewIterator(param interface{}) Iterator {
+	return newUnionIter(c.cache.NewIterator(param), c.snapshot.NewIterator(param))
 }
 
 // Release reset membuffer and release snapshot.
-func (c *CacheSnapshot) Release() {
-	c.Snapshot.Release()
+func (c *cacheSnapshot) Release() {
+	if c.cache != nil {
+		c.cache.Release()
+		c.cache = nil
+	}
+	if c.snapshot != nil {
+		c.snapshot.Release()
+	}
 }

@@ -101,10 +101,10 @@ var ErrNotCommitted = errors.New("this transaction is not committed")
 type Transaction interface {
 	// Get gets the value for key k from KV store.
 	Get(k Key) ([]byte, error)
-	// Fetch fetches a batch of values and saves in cache for later use.
-	Fetch(keys []Key) error
-	// Scan scans a batch of values from snapshot and saves in cache for later use.
-	Scan(start, end Key, limit int) error
+	// BatchGet gets a batch of values from KV store.
+	BatchGet(keys []Key) (map[string][]byte, error)
+	// Scan gets values in specific range from KV store.
+	Scan(start, end Key, limit int) (map[string][]byte, error)
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
