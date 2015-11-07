@@ -121,15 +121,15 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-func (txn *dbTxn) Fetch(keys []kv.Key) error {
+func (txn *dbTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	encodedKeys := make([]kv.Key, len(keys))
 	for i, k := range keys {
 		encodedKeys[i] = kv.EncodeKey(k)
 	}
-	return txn.UnionStore.Snapshot.Fetch(encodedKeys)
+	return txn.UnionStore.Snapshot.BatchGet(encodedKeys)
 }
 
-func (txn *dbTxn) Scan(start, end kv.Key, limit int) error {
+func (txn *dbTxn) Scan(start, end kv.Key, limit int) (map[string][]byte, error) {
 	return txn.UnionStore.Snapshot.Scan(kv.EncodeKey(start), kv.EncodeKey(end), limit)
 }
 

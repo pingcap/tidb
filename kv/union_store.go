@@ -35,22 +35,18 @@ func IsErrNotFound(err error) bool {
 }
 
 // UnionStore is an in-memory Store which contains a buffer for write and a
-// cache for read.
+// snapshot for read.
 type UnionStore struct {
-	WBuffer  MemBuffer     // updates are buffered in memory
-	Snapshot CacheSnapshot // for read
+	WBuffer  MemBuffer // updates are buffered in memory
+	Snapshot Snapshot  // for read
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	buffer := p.Get().(MemBuffer)
-	cache := p.Get().(MemBuffer)
 	return UnionStore{
-		WBuffer: buffer,
-		Snapshot: CacheSnapshot{
-			Cache:    cache,
-			Snapshot: snapshot,
-		},
+		WBuffer:  buffer,
+		Snapshot: NewCacheSnapshot(snapshot),
 	}
 }
 
@@ -59,7 +55,7 @@ func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 	// Get from update records frist
 	value, err = us.WBuffer.Get(key)
 	if IsErrNotFound(err) {
-		// Try get from cache
+		// Try get from snapshot
 		return us.Snapshot.Get(key)
 	}
 	if err != nil {
@@ -112,9 +108,7 @@ func (us *UnionStore) Delete(k []byte) error {
 
 // Close implements the Store Close interface.
 func (us *UnionStore) Close() error {
-	us.Snapshot.Snapshot.Release()
-	us.Snapshot.Cache.Release()
-	p.Put(us.Snapshot.Cache)
+	us.Snapshot.Release()
 	us.WBuffer.Release()
 	p.Put(us.WBuffer)
 	return nil

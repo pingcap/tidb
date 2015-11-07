@@ -123,12 +123,13 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 func (s *dbSnapshot) Scan(start, end kv.Key, limit int) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	it := s.NewIterator(start)
+	defer it.Close()
 	endKey := string(end)
 	for i := 0; i < limit; i++ {
 		if !it.Valid() {
 			break
 		}
-		if endKey > it.Key() {
+		if it.Key() > endKey {
 			break
 		}
 		m[string(it.Key())] = it.Value()
