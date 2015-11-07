@@ -37,8 +37,8 @@ func IsErrNotFound(err error) bool {
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // cache for read.
 type UnionStore struct {
-	Buffer MemBuffer // updates are buffered in memory
-	Cache  MemCache  // for read
+	WBuffer  MemBuffer     // updates are buffered in memory
+	Snapshot CacheSnapshot // for read
 }
 
 // NewUnionStore builds a new UnionStore.
@@ -46,8 +46,8 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	buffer := p.Get().(MemBuffer)
 	cache := p.Get().(MemBuffer)
 	return UnionStore{
-		Buffer: buffer,
-		Cache: MemCache{
+		WBuffer: buffer,
+		Snapshot: CacheSnapshot{
 			Cache:    cache,
 			Snapshot: snapshot,
 		},
@@ -57,10 +57,10 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 // Get implements the Store Get interface.
 func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 	// Get from update records frist
-	value, err = us.Buffer.Get(key)
+	value, err = us.WBuffer.Get(key)
 	if IsErrNotFound(err) {
 		// Try get from cache
-		return us.Cache.Get(key)
+		return us.Snapshot.Get(key)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -75,27 +75,27 @@ func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 
 // Set implements the Store Set interface.
 func (us *UnionStore) Set(key []byte, value []byte) error {
-	return us.Buffer.Set(key, value)
+	return us.WBuffer.Set(key, value)
 }
 
 // Seek implements the Snapshot Seek interface.
 func (us *UnionStore) Seek(key []byte, txn Transaction) (Iterator, error) {
-	bufferIt := us.Buffer.NewIterator(key)
-	cacheIt := us.Cache.NewIterator(key)
+	bufferIt := us.WBuffer.NewIterator(key)
+	cacheIt := us.Snapshot.NewIterator(key)
 	return newUnionIter(bufferIt, cacheIt), nil
 }
 
 // Delete implements the Store Delete interface.
 func (us *UnionStore) Delete(k []byte) error {
 	// Mark as deleted
-	val, err := us.Buffer.Get(k)
+	val, err := us.WBuffer.Get(k)
 	if err != nil {
 		if !IsErrNotFound(err) { // something wrong
 			return errors.Trace(err)
 		}
 
 		// missed in buffer
-		val, err = us.Cache.Get(k)
+		val, err = us.Snapshot.Get(k)
 		if err != nil {
 			if IsErrNotFound(err) {
 				return errors.Trace(ErrNotExist)
@@ -107,15 +107,15 @@ func (us *UnionStore) Delete(k []byte) error {
 		return errors.Trace(ErrNotExist)
 	}
 
-	return us.Buffer.Set(k, nil)
+	return us.WBuffer.Set(k, nil)
 }
 
 // Close implements the Store Close interface.
 func (us *UnionStore) Close() error {
-	us.Cache.Snapshot.Release()
-	us.Cache.Cache.Release()
-	p.Put(us.Cache.Cache)
-	us.Buffer.Release()
-	p.Put(us.Buffer)
+	us.Snapshot.Snapshot.Release()
+	us.Snapshot.Cache.Release()
+	p.Put(us.Snapshot.Cache)
+	us.WBuffer.Release()
+	p.Put(us.WBuffer)
 	return nil
 }

@@ -108,11 +108,11 @@ func (txn *hbaseTxn) Fetch(keys []kv.Key) error {
 	for i, k := range keys {
 		encodedKeys[i] = kv.EncodeKey(k)
 	}
-	return txn.UnionStore.Cache.Fetch(keys)
+	return txn.UnionStore.Snapshot.Fetch(keys)
 }
 
-func (txn *hbaseTxn) Scan(start, end kv.Key, maxSize int) error {
-	return txn.UnionStore.Cache.Scan(kv.EncodeKey(start), kv.EncodeKey(end), maxSize)
+func (txn *hbaseTxn) Scan(start, end kv.Key, limit int) error {
+	return txn.UnionStore.Snapshot.Scan(kv.EncodeKey(start), kv.EncodeKey(end), limit)
 }
 
 // GetInt64 get int64 which created by Inc method.
@@ -164,7 +164,7 @@ func (txn *hbaseTxn) Delete(k kv.Key) error {
 }
 
 func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.Buffer.NewIterator(nil)
+	iter := txn.UnionStore.WBuffer.NewIterator(nil)
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {

@@ -104,7 +104,7 @@ type Transaction interface {
 	// Fetch fetches a batch of values and saves in cache for later use.
 	Fetch(keys []Key) error
 	// Scan scans a batch of values from snapshot and saves in cache for later use.
-	Scan(start, end Key, maxSize int) error
+	Scan(start, end Key, limit int) error
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
@@ -147,7 +147,7 @@ type Snapshot interface {
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	// Scan gets values in specific range from snapshot.
-	Scan(start, end Key, maxSize int) (map[string][]byte, error)
+	Scan(start, end Key, limit int) (map[string][]byte, error)
 	// NewIterator gets a new iterator on the snapshot.
 	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
