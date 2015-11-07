@@ -150,7 +150,7 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return iter, nil
+	return kv.NewDecodeKeyIter(iter), nil
 }
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
