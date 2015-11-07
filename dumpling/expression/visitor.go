@@ -108,7 +108,7 @@ type Visitor interface {
 	VisitFunctionTrim(v *FunctionTrim) (Expression, error)
 
 	// VisitDateArith visits DateArith expression.
-	VisitDateArith(dc *DateArith) (Expression, error)
+	VisitDateArith(da *DateArith) (Expression, error)
 }
 
 // BaseVisitor is the base implementation of Visitor.
