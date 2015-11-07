@@ -193,7 +193,7 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 
 	value, err = tx.HGet(key, []byte("fake"))
 	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
+	c.Assert(value, IsNil)
 
 	keys, err := tx.HKeys(key)
 	c.Assert(err, IsNil)
@@ -224,13 +224,33 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(2))
 
+	// Test set new value which equals to old value.
+	err = tx.HSet(key, []byte("1"), []byte("1"))
+	c.Assert(err, IsNil)
+
+	value, err = tx.HGet(key, []byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("1"))
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(2))
+
 	n, err = tx.HInc(key, []byte("1"), 1)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(2))
 
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(2))
+
+	n, err = tx.HInc(key, []byte("1"), 1)
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(3))
+
 	n, err = tx.HGetInt64(key, []byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(2))
+	c.Assert(n, Equals, int64(3))
 
 	l, err = tx.HLen(key)
 	c.Assert(err, IsNil)
