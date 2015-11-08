@@ -104,10 +104,10 @@ func (s *hbaseSnapshot) Scan(start, end kv.Key, limit int) (map[string][]byte, e
 	for i := 0; i < limit; i++ {
 		r := scanner.Next()
 		if r != nil && len(r.Columns) > 0 {
-			k := r.Row
+			k := string(r.Row)
 			v := r.Columns[FmlAndQual].Value
-			m[string(k)] = v
-			s.cache[string(k)] = v
+			m[k] = v
+			s.cache[k] = v
 		} else {
 			break
 		}
