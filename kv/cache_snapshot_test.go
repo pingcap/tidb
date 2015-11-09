@@ -89,7 +89,7 @@ func (s *testCacheSnapshotSuite) TestRangeGet(c *C) {
 
 	m, err := s.cache.RangeGet(s.k1, s.k2, 100)
 	c.Assert(err, IsNil)
-	c.Assert(len(m), Equals, 2)
+	c.Assert(m, HasLen, 2)
 	c.Assert(m[string(s.k1)], BytesEquals, s.v1)
 	c.Assert(m[string(s.k2)], BytesEquals, s.v2)
 
