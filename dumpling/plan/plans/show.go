@@ -353,6 +353,7 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalSysVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.SysVars {
@@ -384,13 +385,13 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 				value = sv
 			} else {
 				// If session scope variable is not set, get the global scope value.
-				value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+				value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
 				if err != nil {
 					return errors.Trace(err)
 				}
 			}
 		} else {
-			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}

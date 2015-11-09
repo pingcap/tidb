@@ -581,3 +581,27 @@ type GlobalSysVarAccessor interface {
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
 }
+
+// keyType is a dummy type to avoid naming collision in context.
+type globalSysVarAccessorKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k globalSysVarAccessorKeyType) String() string {
+	return "global_sysvar_accessor"
+}
+
+const accessorKey globalSysVarAccessorKeyType = 0
+
+// BindGlobalSysVarAccessor binds global sysvar accessor to context.
+func BindGlobalSysVarAccessor(ctx context.Context, accessor GlobalSysVarAccessor) {
+	ctx.SetValue(accessorKey, accessor)
+}
+
+// GetGlobalSysVarAccessor gets accessor from ctx.
+func GetGlobalSysVarAccessor(ctx context.Context) GlobalSysVarAccessor {
+	v, ok := ctx.Value(accessorKey).(GlobalSysVarAccessor)
+	if !ok {
+		panic("Miss global sysvar accessor")
+	}
+	return v
+}
