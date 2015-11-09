@@ -174,6 +174,13 @@ func convertUpdate(converter *expressionConverter, v *ast.UpdateStmt) (*stmts.Up
 	return oldUpdate, nil
 }
 
+func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
+		return getInnerFromParentheses(pexpr.Expr)
+	}
+	return expr
+}
+
 func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.SelectStmt, error) {
 	oldSelect := &stmts.SelectStmt{
 		Distinct: s.Distinct,
@@ -189,9 +196,21 @@ func convertSelect(converter *expressionConverter, s *ast.SelectStmt) (*stmts.Se
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// TODO: handle parenthesesed column name expression, which should not set AsName.
-			if _, ok := oldField.Expr.(*expression.Ident); !ok && oldField.AsName == "" {
-				oldField.AsName = val.Text()
+			if oldField.AsName == "" {
+				innerExpr := getInnerFromParentheses(val.Expr)
+				switch innerExpr.(type) {
+				case *ast.ColumnNameExpr:
+					// Do not set column name as name and remove parentheses.
+					oldField.Expr = converter.exprMap[innerExpr]
+				case *ast.ValueExpr:
+					if innerExpr.Text() != "" {
+						oldField.AsName = innerExpr.Text()
+					} else {
+						oldField.AsName = val.Text()
+					}
+				default:
+					oldField.AsName = val.Text()
+				}
 			}
 		} else if val.WildCard != nil {
 			str := "*"

@@ -128,6 +128,22 @@ func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	}
 }
 
+func (l *lexer) startOffset(offset int) int {
+	offset--
+	for unicode.IsSpace(rune(l.src[offset])) {
+		offset++
+	}
+	return offset
+}
+
+func (l *lexer) endOffset(offset int) int {
+	offset--
+	for offset > 0 && unicode.IsSpace(rune(l.src[offset-1])) {
+		offset--
+	}
+	return offset
+}
+
 func (l *lexer) unget(b byte) {
 	l.ungetBuf = append(l.ungetBuf, b)
 	l.i--
