@@ -286,9 +286,8 @@ func (s *session) getGlobalVar(ctx context.Context, name, sql string) (string, e
 // GetGlobalStatusVar implements RestrictedSQLExecutor.GetGlobalStatusVar interface.
 func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
 	// TODO: get global status variables from store.
-	statusVars := variable.StatusVars
-	v, ok := statusVars[strings.ToLower(name)]
-	if !ok {
+	v := variable.GetStatusVar(name)
+	if v == nil {
 		return "", nil
 	}
 
@@ -298,9 +297,8 @@ func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 // SetGlobalStatusVar implements RestrictedSQLExecutor.SetGlobalStatusVar interface.
 func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
 	// TODO: set global status variables from store.
-	statusVars := variable.StatusVars
-	v, ok := statusVars[strings.ToLower(name)]
-	if !ok {
+	v := variable.GetStatusVar(name)
+	if v == nil {
 		return fmt.Errorf("Unknown status var: %s", name)
 	}
 	v.Value = value
