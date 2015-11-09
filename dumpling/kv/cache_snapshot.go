@@ -75,6 +75,7 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 }
 
 // RangeGet gets values from snapshot and saves them in cache.
+// The range should be [start, end] as Snapshot.RangeGet() indicated.
 func (c *cacheSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, error) {
 	values, err := c.snapshot.RangeGet(start, end, limit)
 	if err != nil {
