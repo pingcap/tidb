@@ -57,7 +57,28 @@ func (c *Context) FinishTxn(rollback bool) error {
 	return nil
 }
 
-// GetGlobalSysVar implements GlobalSysVarAccessor GetGlobalSysVar interface.
+// GetGlobalStatusVar implements GlobalVarAccessor GetGlobalStatusVar interface.
+func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
+	statusVars := variable.StatusVars
+	v, ok := statusVars[strings.ToLower(name)]
+	if !ok {
+		return "", nil
+	}
+	return v.Value, nil
+}
+
+// SetGlobalStatusVar implements GlobalVarAccessor SetGlobalStatusVar interface.
+func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
+	statusVars := variable.StatusVars
+	v, ok := statusVars[strings.ToLower(name)]
+	if !ok {
+		return fmt.Errorf("Unknown status var: %s", name)
+	}
+	v.Value = value
+	return nil
+}
+
+// GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	sysvars := variable.SysVars
 	v, ok := sysvars[strings.ToLower(name)]
@@ -67,7 +88,7 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 	return v.Value, nil
 }
 
-// SetGlobalSysVar implements GlobalSysVarAccessor SetGlobalSysVar interface.
+// SetGlobalSysVar implements GlobalVarAccessor SetGlobalSysVar interface.
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	sysvars := variable.SysVars
 	v, ok := sysvars[strings.ToLower(name)]

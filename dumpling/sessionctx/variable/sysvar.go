@@ -574,10 +574,14 @@ const (
 	CollationConnection = "collation_connection"
 )
 
-// GlobalSysVarAccessor is the interface for accessing global scope system variables.
-type GlobalSysVarAccessor interface {
+// GlobalVarAccessor is the interface for accessing global scope system and status variables.
+type GlobalVarAccessor interface {
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(ctx context.Context, name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
+	// GetGlobalStatusVar gets the global status variable value for name.
+	GetGlobalStatusVar(ctx context.Context, name string) (string, error)
+	// SetGlobalStatusVar sets the global status variable name to value.
+	SetGlobalStatusVar(ctx context.Context, name string, value string) error
 }
