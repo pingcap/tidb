@@ -55,14 +55,26 @@ type Table struct {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
+	if tblInfo.State == model.StateNone {
+		log.Fatalf("table %s can't be in none state", tblInfo.Name)
+	}
+
 	t := NewTable(tblInfo.ID, tblInfo.Name.O, nil, alloc)
 
 	for _, colInfo := range tblInfo.Columns {
+		if colInfo.State == model.StateNone {
+			log.Fatalf("column %s can't be in none state", colInfo.Name)
+		}
+
 		col := &column.Col{ColumnInfo: *colInfo}
 		t.Columns = append(t.Columns, col)
 	}
 
 	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.State == model.StateNone {
+			log.Fatalf("index %s can't be in none state", idxInfo.Name)
+		}
+
 		idx := &column.IndexedCol{
 			IndexInfo: *idxInfo,
 			X:         kv.NewKVIndex(t.indexPrefix, idxInfo.Name.L, idxInfo.Unique),
