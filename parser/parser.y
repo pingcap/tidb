@@ -59,6 +59,7 @@ import (
 
 	abs		"ABS"
 	add		"ADD"
+	addDate		"ADDDATE"
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
@@ -228,6 +229,7 @@ import (
 	some 		"SOME"
 	start		"START"
 	stringType	"string"
+	subDate		"SUBDATE"
 	substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
@@ -373,6 +375,9 @@ import (
 	CreateTableStmt		"CREATE TABLE statement"
 	CreateUserStmt		"CREATE User statement"
 	CrossOpt		"Cross join option"
+	DateArithOpt		"Date arith dateadd or datesub option"
+	DateArithMultiFormsOpt	"Date arith adddate or subdate option"
+	DateArithInterval       "Date arith interval part"
 	DatabaseSym		"DATABASE or SCHEMA"
 	DBName			"Database Name"
 	DeallocateSym		"Deallocate or drop"
@@ -1653,9 +1658,11 @@ UnReservedKeyword:
 |	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
 
 NotKeywordToken:
-	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"
-|	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH"
+|	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
+|	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
+|	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
+|	"YEARWEEK"
 
 /************************************************************************************
  *
@@ -2128,22 +2135,22 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
 		$$ = &ast.FuncDateArithExpr{
-			Op:ast.DateAdd,
-			Unit: $7.(string),
+			Op: $1.(ast.DateArithType),
 			Date: $3.(ast.ExprNode),
-			Interval: $6.(ast.ExprNode),
+			DateArithInterval: ast.DateArithInterval{
+						Unit: $7.(string), 
+						Interval: $6.(ast.ExprNode)},
 		}
 	}
-|	"DATE_SUB" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
 	{
 		$$ = &ast.FuncDateArithExpr{
-			Op:ast.DateSub,
-			Unit: $7.(string),
+			Op: $1.(ast.DateArithType),
 			Date: $3.(ast.ExprNode),
-			Interval: $6.(ast.ExprNode),
+			DateArithInterval: $5.(ast.DateArithInterval),
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
@@ -2319,6 +2326,40 @@ FunctionCallNonKeyword:
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
+	}
+
+DateArithOpt:
+	"DATE_ADD"
+	{
+		$$ = ast.DateAdd
+	}
+|	"DATE_SUB"
+	{
+		$$ = ast.DateSub
+	}
+
+DateArithMultiFormsOpt:
+	"ADDDATE"
+	{
+		$$ = ast.DateAdd
+	}
+|	"SUBDATE"
+	{
+		$$ = ast.DateSub
+	}
+
+DateArithInterval:
+	Expression
+	{
+		$$ = ast.DateArithInterval{
+					Form: ast.DateArithDaysForm,
+					Unit: "day",
+					Interval: $1.(ast.ExprNode),
+		}
+	}
+|	"INTERVAL" Expression TimeUnit
+	{
+		$$ = ast.DateArithInterval{Unit: $3.(string), Interval: $2.(ast.ExprNode)}
 	}
 
 TrimDirection:
