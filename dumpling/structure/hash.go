@@ -92,40 +92,35 @@ func (t *TxStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 }
 
 func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
+	dataKey := t.encodeHashDataKey(key, field)
+	oldValue, err := t.loadHashValue(dataKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newValue, err := fn(oldValue)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check if new value is equal to old value.
+	if bytes.Equal(oldValue, newValue) {
+		return nil
+	}
+
+	if err = t.txn.Set(dataKey, newValue); err != nil {
+		return errors.Trace(err)
+	}
+
 	metaKey := t.encodeHashMetaKey(key)
 	meta, err := t.loadHashMeta(metaKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	dataKey := t.encodeHashDataKey(key, field)
-	var oldValue []byte
-	oldValue, err = t.loadHashValue(dataKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	newMeta := meta
 	if oldValue == nil {
-		newMeta.Length++
-	}
-
-	var newValue []byte
-	newValue, err = fn(oldValue)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Check if hash field has been changed.
-	if bytes.Compare(oldValue, newValue) != 0 {
-		if err = t.txn.Set(dataKey, newValue); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	// Check if hash meta has been changed.
-	if bytes.Compare(meta.Value(), newMeta.Value()) != 0 {
-		if err = t.txn.Set(metaKey, newMeta.Value()); err != nil {
+		meta.Length++
+		if err = t.txn.Set(metaKey, meta.Value()); err != nil {
 			return errors.Trace(err)
 		}
 	}

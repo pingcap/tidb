@@ -274,6 +274,55 @@ func (s *tesTxStructureSuite) TestHash(c *C) {
 	err = tx.HDel(key, []byte("fake_key"))
 	c.Assert(err, IsNil)
 
+	// Test set nil value.
+	value, err = tx.HGet(key, []byte("nil_key"))
+	c.Assert(err, IsNil)
+	c.Assert(value, IsNil)
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(0))
+
+	err = tx.HSet(key, []byte("nil_key"), nil)
+	c.Assert(err, IsNil)
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(0))
+
+	err = tx.HSet(key, []byte("nil_key"), []byte("1"))
+	c.Assert(err, IsNil)
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(1))
+
+	value, err = tx.HGet(key, []byte("nil_key"))
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("1"))
+
+	err = tx.HSet(key, []byte("nil_key"), nil)
+	c.Assert(err, NotNil)
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(1))
+
+	value, err = tx.HGet(key, []byte("nil_key"))
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("1"))
+
+	err = tx.HSet(key, []byte("nil_key"), []byte("2"))
+	c.Assert(err, IsNil)
+
+	l, err = tx.HLen(key)
+	c.Assert(err, IsNil)
+	c.Assert(l, Equals, int64(1))
+
+	value, err = tx.HGet(key, []byte("nil_key"))
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("2"))
+
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
