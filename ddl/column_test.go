@@ -49,7 +49,8 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 func (s *testColumnSuite) TearDownSuite(c *C) {
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
-	s.store.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
@@ -263,8 +264,11 @@ func (s *testIndexSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tblI
 func (s *testIndexSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
 	i := int64(0)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -483,6 +487,9 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 
 	colName := "c4"
 	defaultColValue := int64(4)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
 
 	go func() {
 		done <- testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, &ColumnPosition{Type: ColumnPositionNone}, defaultColValue)
