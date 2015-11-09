@@ -495,9 +495,7 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 		done <- testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, &ColumnPosition{Type: ColumnPositionNone}, defaultColValue)
 	}()
 
-	states := []model.SchemaState{model.StateDeleteOnly, model.StateWriteOnly, model.StateReorganization, model.StatePublic}
-	stateIndex := 0
-	lastStateIndex := -1
+	lastCheckState := model.StateNone
 	col := &column.Col{}
 
 	for {
@@ -516,18 +514,13 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 			}
 
 			// Here means column state is not changed, so just skipped.
-			if stateIndex == lastStateIndex {
+			if lastCheckState == col.State {
 				continue
 			}
 
-			if stateIndex == len(states) {
-				return
-			}
-
-			lastStateIndex = stateIndex
-			stateIndex++
-
 			s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, false)
+
+			lastCheckState = col.State
 
 			d.start()
 		}
@@ -566,9 +559,7 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 		done <- testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, colName, false)
 	}()
 
-	states := []model.SchemaState{model.StateWriteOnly, model.StateDeleteOnly, model.StateReorganization}
-	stateIndex := 0
-	lastStateIndex := -1
+	lastCheckState := model.StateNone
 	col := &column.Col{}
 
 	for {
@@ -587,18 +578,13 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 			}
 
 			// Here means column state is not changed, so just skipped.
-			if stateIndex == lastStateIndex {
+			if lastCheckState == col.State {
 				continue
 			}
 
-			if stateIndex == len(states) {
-				return
-			}
-
-			lastStateIndex = stateIndex
-			stateIndex++
-
 			s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, true)
+
+			lastCheckState = col.State
 
 			d.start()
 		}
