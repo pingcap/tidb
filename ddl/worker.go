@@ -191,9 +191,14 @@ func (d *ddl) handleJobQueue() error {
 			}
 
 			log.Warnf("run DDL job %v", job)
+
+			d.hook.OnJobRunBefore(job)
+
 			// if run job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			d.runJob(t, job)
+
+			d.hook.OnJobRunAfter(job)
 
 			if job.State == model.JobDone || job.State == model.JobCancelled {
 				err = d.finishJob(t, job)

@@ -115,15 +115,6 @@ func (do *Domain) Stat() (map[string]interface{}, error) {
 	return m, nil
 }
 
-func (do *Domain) onDDLChange(err error) error {
-	if err != nil {
-		return err
-	}
-	log.Warnf("on DDL change")
-
-	return do.reload()
-}
-
 func (do *Domain) reload() error {
 	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
 	return errors.Trace(err)
@@ -165,6 +156,20 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	}
 }
 
+type ddlCallback struct {
+	ddl.BaseCallback
+	do *Domain
+}
+
+func (c *ddlCallback) OnChanged(err error) error {
+	if err != nil {
+		return err
+	}
+	log.Warnf("on DDL change")
+
+	return errors.Trace(c.do.reload())
+}
+
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
@@ -173,7 +178,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)
-	d.ddl = ddl.NewDDL(d.store, d.infoHandle, d.onDDLChange, lease)
+	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
 	err = d.reload()
 	if err != nil {
 		log.Fatalf("load schema err %v", err)
