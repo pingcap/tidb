@@ -424,7 +424,8 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	for _, col := range t.writableCols() {
 		var value interface{}
 		key := t.RecordKey(recordID, col)
-		if col.State == model.StateWriteOnly {
+
+		if col.State == model.StateWriteOnly || col.State == model.StateReorganization {
 			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
