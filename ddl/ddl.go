@@ -593,28 +593,6 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	return errors.Trace(err)
 }
 
-func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
-	// Remove data.
-	err := t.Truncate(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Remove indices.
-	for _, v := range t.Indices() {
-		if v != nil && v.X != nil {
-			if err = v.X.Drop(txn); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	return nil
-}
-
 func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
