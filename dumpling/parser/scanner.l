@@ -413,6 +413,7 @@ share		{s}{h}{a}{r}{e}
 show		{s}{h}{o}{w}
 some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
+status          {s}{t}{a}{t}{u}{s}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
@@ -824,6 +825,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return some
 {start}			lval.item = string(l.val)
 			return start
+{status}		lval.item = string(l.val)
+			return status
 {global}		lval.item = string(l.val)
 			return global
 {rand}			lval.item = string(l.val)
