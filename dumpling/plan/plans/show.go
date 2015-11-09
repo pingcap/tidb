@@ -103,6 +103,8 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowVariables:
 		names = []string{"Variable_name", "Value"}
+	case stmt.ShowStatus:
+		names = []string{"Variable_name", "Value"}
 	case stmt.ShowCollation:
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
@@ -164,6 +166,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowCharset(ctx)
 	case stmt.ShowVariables:
 		return s.fetchShowVariables(ctx)
+	case stmt.ShowStatus:
+		return s.fetchShowStatus(ctx)
 	case stmt.ShowCollation:
 		return s.fetchShowCollation(ctx)
 	case stmt.ShowCreateTable:
@@ -384,7 +388,7 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 				value = sv
 			}
 		} else {
-			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			value, err = ctx.(variable.GlobalVarAccessor).GetGlobalSysVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -392,6 +396,50 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 		row := &plan.Row{Data: []interface{}{v.Name, value}}
 		s.rows = append(s.rows, row)
 	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
+	sessionVars := variable.GetSessionVars(ctx)
+	m := map[interface{}]interface{}{}
+
+	for _, v := range variable.StatusVars {
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v.Name}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if strings.EqualFold(name, "Variable_name") {
+					return v.Name, nil
+				}
+
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+
+		var value string
+		if !s.GlobalScope {
+			sv, ok := sessionVars.StatusVars[v.Name]
+			if ok {
+				value = sv
+			}
+		} else {
+			value, err = ctx.(variable.GlobalVarAccessor).GetGlobalStatusVar(ctx, v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		row := &plan.Row{Data: []interface{}{v.Name, value}}
+		s.rows = append(s.rows, row)
+	}
+
 	return nil
 }
 
