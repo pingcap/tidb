@@ -378,10 +378,16 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			// Try to get Session Scope variable value
+			// Try to get Session Scope variable value first.
 			sv, ok := sessionVars.Systems[v.Name]
 			if ok {
 				value = sv
+			} else {
+				// If session scope variable is not set, get the global scope value.
+				value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		} else {
 			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
