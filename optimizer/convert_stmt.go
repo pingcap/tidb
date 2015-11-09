@@ -845,6 +845,8 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 		oldShow.Target = stmt.ShowEngines
 	case ast.ShowVariables:
 		oldShow.Target = stmt.ShowVariables
+	case ast.ShowStatus:
+		oldShow.Target = stmt.ShowStatus
 	case ast.ShowWarnings:
 		oldShow.Target = stmt.ShowWarnings
 	case ast.ShowNone:
