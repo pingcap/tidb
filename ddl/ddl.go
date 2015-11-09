@@ -68,9 +68,9 @@ type DDL interface {
 type ddl struct {
 	m sync.Mutex
 
-	infoHandle  *infoschema.Handle
-	onDDLChange OnDDLChange
-	store       kv.Storage
+	infoHandle *infoschema.Handle
+	hook       Callback
+	store      kv.Storage
 	// schema lease seconds.
 	lease     time.Duration
 	uuid      string
@@ -90,31 +90,24 @@ type ddl struct {
 	wait   sync.WaitGroup
 }
 
-// OnDDLChange is used as hook function when schema changed.
-type OnDDLChange func(err error) error
-
-func fakeOnDDLChange(err error) error {
-	return err
-}
-
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease time.Duration) DDL {
+func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
 	return newDDL(store, infoHandle, hook, lease)
 }
 
-func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease time.Duration) *ddl {
+func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
 	if hook == nil {
-		hook = fakeOnDDLChange
+		hook = &BaseCallback{}
 	}
 
 	d := &ddl{
-		infoHandle:  infoHandle,
-		onDDLChange: hook,
-		store:       store,
-		lease:       lease,
-		uuid:        uuid.NewV4().String(),
-		jobCh:       make(chan struct{}, 1),
-		jobDoneCh:   make(chan struct{}, 1),
+		infoHandle: infoHandle,
+		hook:       hook,
+		store:      store,
+		lease:      lease,
+		uuid:       uuid.NewV4().String(),
+		jobCh:      make(chan struct{}, 1),
+		jobDoneCh:  make(chan struct{}, 1),
 	}
 
 	d.start()
@@ -200,7 +193,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -217,7 +210,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -444,7 +437,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -531,7 +524,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -556,7 +549,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -589,7 +582,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -613,7 +606,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -637,7 +630,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIS
 	}
 
 	err = d.startJob(ctx, job)
-	err = d.onDDLChange(err)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
