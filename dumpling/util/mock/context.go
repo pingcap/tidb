@@ -95,7 +95,7 @@ func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string
 }
 
 // NewContext creates a new mocked context.Context.
-func NewContext() context.Context {
+func NewContext() *Context {
 	return &Context{
 		values: make(map[fmt.Stringer]interface{}),
 	}

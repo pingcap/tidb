@@ -53,8 +53,10 @@ type testShowSuit struct {
 var _ = Suite(&testShowSuit{})
 
 func (p *testShowSuit) SetUpSuite(c *C) {
-	p.ctx = mock.NewContext()
+	nc := mock.NewContext()
+	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
+	variable.BindGlobalVarAccessor(p.ctx, nc)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
@@ -241,6 +243,28 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	v, ok = ret["aborted_clients"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "0")
+}
+
+func (p *testShowSuit) TestIssue540(c *C) {
+	// Show variables where variable_name="time_zone"
+	pln := &plans.ShowPlan{
+		Target:      stmt.ShowVariables,
+		GlobalScope: false,
+		Pattern: &expression.PatternLike{
+			Pattern: &expression.Value{
+				Val: "time_zone",
+			},
+		},
+	}
+	// Make sure the session scope var is not set.
+	sessionVars := variable.GetSessionVars(p.ctx)
+	_, ok := sessionVars.Systems["time_zone"]
+	c.Assert(ok, IsFalse)
+
+	r, err := pln.Next(p.ctx)
+	c.Assert(err, IsNil)
+	c.Assert(r.Data[0], Equals, "time_zone")
+	c.Assert(r.Data[1], Equals, "SYSTEM")
 }
 
 func (p *testShowSuit) TestShowCollation(c *C) {

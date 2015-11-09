@@ -30,17 +30,17 @@ type HashPair struct {
 }
 
 type hashMeta struct {
-	Length int64
+	FieldCount int64
 }
 
 func (meta hashMeta) Value() []byte {
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.Length))
+	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.FieldCount))
 	return buf
 }
 
 func (meta hashMeta) IsEmpty() bool {
-	return meta.Length <= 0
+	return meta.FieldCount <= 0
 }
 
 // HSet sets the string value of a hash field.
@@ -92,34 +92,40 @@ func (t *TxStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 }
 
 func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
-	metaKey := t.encodeHashMetaKey(key)
-	meta, err := t.loadHashMeta(metaKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	dataKey := t.encodeHashDataKey(key, field)
-	var oldValue []byte
-	oldValue, err = t.loadHashValue(dataKey)
+	oldValue, err := t.loadHashValue(dataKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if oldValue == nil {
-		meta.Length++
-	}
-
-	var newValue []byte
-	newValue, err = fn(oldValue)
+	newValue, err := fn(oldValue)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// Check if new value is equal to old value.
+	if bytes.Equal(oldValue, newValue) {
+		return nil
 	}
 
 	if err = t.txn.Set(dataKey, newValue); err != nil {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(t.txn.Set(metaKey, meta.Value()))
+	metaKey := t.encodeHashMetaKey(key)
+	meta, err := t.loadHashMeta(metaKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if oldValue == nil {
+		meta.FieldCount++
+		if err = t.txn.Set(metaKey, meta.Value()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 // HLen gets the number of fields in a hash.
@@ -129,7 +135,7 @@ func (t *TxStructure) HLen(key []byte) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return meta.Length, nil
+	return meta.FieldCount, nil
 }
 
 // HDel deletes one or more hash fields.
@@ -154,7 +160,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 				return errors.Trace(err)
 			}
 
-			meta.Length--
+			meta.FieldCount--
 		}
 	}
 
@@ -254,7 +260,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 		return hashMeta{}, errors.Trace(err)
 	}
 
-	meta := hashMeta{Length: 0}
+	meta := hashMeta{FieldCount: 0}
 	if v == nil {
 		return meta, nil
 	}
@@ -263,7 +269,7 @@ func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
 		return meta, errors.New("invalid list meta data")
 	}
 
-	meta.Length = int64(binary.BigEndian.Uint64(v[0:8]))
+	meta.FieldCount = int64(binary.BigEndian.Uint64(v[0:8]))
 	return meta, nil
 }
 

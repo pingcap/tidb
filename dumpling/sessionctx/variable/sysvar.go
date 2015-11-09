@@ -585,3 +585,27 @@ type GlobalVarAccessor interface {
 	// SetGlobalStatusVar sets the global status variable name to value.
 	SetGlobalStatusVar(ctx context.Context, name string, value string) error
 }
+
+// globalSysVarAccessorKeyType is a dummy type to avoid naming collision in context.
+type globalSysVarAccessorKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k globalSysVarAccessorKeyType) String() string {
+	return "global_sysvar_accessor"
+}
+
+const accessorKey globalSysVarAccessorKeyType = 0
+
+// BindGlobalVarAccessor binds global var accessor to context.
+func BindGlobalVarAccessor(ctx context.Context, accessor GlobalVarAccessor) {
+	ctx.SetValue(accessorKey, accessor)
+}
+
+// GetGlobalVarAccessor gets accessor from ctx.
+func GetGlobalVarAccessor(ctx context.Context) GlobalVarAccessor {
+	v, ok := ctx.Value(accessorKey).(GlobalVarAccessor)
+	if !ok {
+		panic("Miss global sysvar accessor")
+	}
+	return v
+}
