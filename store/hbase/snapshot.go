@@ -97,6 +97,7 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 }
 
 // RangeGet implements kv.Snapshot.RangeGet().
+// The range should be [start, end] as Snapshot.RangeGet() indicated.
 func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
 	scanner := s.txn.GetScanner([]byte(s.storeName), start, end, limit)
 	defer scanner.Close()
