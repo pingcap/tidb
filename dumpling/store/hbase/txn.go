@@ -111,8 +111,8 @@ func (txn *hbaseTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return txn.UnionStore.Snapshot.BatchGet(encodedKeys)
 }
 
-func (txn *hbaseTxn) Scan(start, end kv.Key, limit int) (map[string][]byte, error) {
-	return txn.UnionStore.Snapshot.Scan(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+func (txn *hbaseTxn) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
+	return txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
 }
 
 // GetInt64 get int64 which created by Inc method.

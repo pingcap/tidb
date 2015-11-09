@@ -129,8 +129,8 @@ func (txn *dbTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return txn.UnionStore.Snapshot.BatchGet(encodedKeys)
 }
 
-func (txn *dbTxn) Scan(start, end kv.Key, limit int) (map[string][]byte, error) {
-	return txn.UnionStore.Snapshot.Scan(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+func (txn *dbTxn) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
+	return txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
 }
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {

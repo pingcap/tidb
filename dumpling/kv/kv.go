@@ -103,8 +103,9 @@ type Transaction interface {
 	Get(k Key) ([]byte, error)
 	// BatchGet gets a batch of values from KV store.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// Scan gets values in specific range from KV store.
-	Scan(start, end Key, limit int) (map[string][]byte, error)
+	// RangeGet gets values in the range [start, end] from KV store. Maximum
+	// number of values is up to limit.
+	RangeGet(start, end Key, limit int) (map[string][]byte, error)
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
@@ -146,8 +147,9 @@ type Snapshot interface {
 	Get(k Key) ([]byte, error)
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// Scan gets values in specific range from snapshot.
-	Scan(start, end Key, limit int) (map[string][]byte, error)
+	// RangeGet gets values in the range [start, end] from snapshot. Maximum
+	// number of values is up to limit.
+	RangeGet(start, end Key, limit int) (map[string][]byte, error)
 	// NewIterator gets a new iterator on the snapshot.
 	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
@@ -185,7 +187,6 @@ type Storage interface {
 	Close() error
 	// Storage's unique ID
 	UUID() string
-
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
 }

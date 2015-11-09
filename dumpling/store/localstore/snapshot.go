@@ -120,7 +120,7 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *dbSnapshot) Scan(start, end kv.Key, limit int) (map[string][]byte, error) {
+func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	it := s.NewIterator(start)
 	defer it.Close()

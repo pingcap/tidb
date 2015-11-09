@@ -13,11 +13,7 @@
 
 package kv
 
-import (
-	"bytes"
-
-	. "github.com/pingcap/check"
-)
+import . "github.com/pingcap/check"
 
 var _ = Suite(&testUnionStoreSuite{})
 
@@ -51,11 +47,11 @@ func (s *testUnionStoreSuite) TestGetSet(c *C) {
 	s.store.Set(s.k1, s.v1)
 	v, err := s.us.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v1), Equals, 0)
+	c.Assert(v, BytesEquals, s.v1)
 	s.us.Set(s.k1, s.v2)
 	v, err = s.us.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v2), Equals, 0)
+	c.Assert(v, BytesEquals, s.v2)
 }
 
 func (s *testUnionStoreSuite) TestDelete(c *C) {
@@ -68,7 +64,7 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 	s.us.Set(s.k1, s.v2)
 	v, err := s.us.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v2), Equals, 0)
+	c.Assert(v, BytesEquals, s.v2)
 }
 
 func (s *testUnionStoreSuite) TestSeek(c *C) {
@@ -102,7 +98,7 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 		v := values[i]
 		c.Assert(iter.Valid(), IsTrue)
 		c.Assert(iter.Key(), Equals, string(k))
-		c.Assert(bytes.Compare(iter.Value(), v), Equals, 0)
+		c.Assert(iter.Value(), BytesEquals, v)
 		c.Assert(iter.Next(), IsNil)
 	}
 	c.Assert(iter.Valid(), IsFalse)

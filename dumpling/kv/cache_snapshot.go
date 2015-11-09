@@ -74,9 +74,9 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-// Scan scans values from snapshot and saves them in cache.
-func (c *cacheSnapshot) Scan(start, end Key, limit int) (map[string][]byte, error) {
-	values, err := c.snapshot.Scan(start, end, limit)
+// RangeGet gets values from snapshot and saves them in cache.
+func (c *cacheSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, error) {
+	values, err := c.snapshot.RangeGet(start, end, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
