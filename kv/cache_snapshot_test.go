@@ -14,8 +14,6 @@
 package kv
 
 import (
-	"bytes"
-
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 )
@@ -53,17 +51,17 @@ func (s *testCacheSnapshotSuite) TestGet(c *C) {
 
 	v, err := s.cache.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v1), Equals, 0)
+	c.Assert(v, BytesEquals, s.v1)
 
 	s.store.Set(s.k1, s.v3)
 	v, err = s.cache.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v1), Equals, 0)
+	c.Assert(v, BytesEquals, s.v1)
 
 	s.store.Set(s.k2, s.v4)
 	v, err = s.cache.Get(s.k2)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v4), Equals, 0)
+	c.Assert(v, BytesEquals, s.v4)
 }
 
 func (s *testCacheSnapshotSuite) TestBatchGet(c *C) {
@@ -72,8 +70,8 @@ func (s *testCacheSnapshotSuite) TestBatchGet(c *C) {
 
 	m, err := s.cache.BatchGet([]Key{s.k1, s.k2, s.k3})
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(m[string(s.k1)], s.v1), Equals, 0)
-	c.Assert(bytes.Compare(m[string(s.k2)], s.v2), Equals, 0)
+	c.Assert(m[string(s.k1)], BytesEquals, s.v1)
+	c.Assert(m[string(s.k2)], BytesEquals, s.v2)
 	_, exist := m[string(s.k3)]
 	c.Assert(exist, IsFalse)
 
@@ -81,25 +79,25 @@ func (s *testCacheSnapshotSuite) TestBatchGet(c *C) {
 	s.store.Set(s.k1, s.v4)
 	v, err := s.cache.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v1), Equals, 0)
+	c.Assert(v, BytesEquals, s.v1)
 }
 
-func (s *testCacheSnapshotSuite) TestScan(c *C) {
+func (s *testCacheSnapshotSuite) TestRangeGet(c *C) {
 	s.store.Set(s.k1, s.v1)
 	s.store.Set(s.k2, s.v2)
 	s.store.Set(s.k3, s.v3)
 
-	m, err := s.cache.Scan(s.k1, s.k2, 100)
+	m, err := s.cache.RangeGet(s.k1, s.k2, 100)
 	c.Assert(err, IsNil)
 	c.Assert(len(m), Equals, 2)
-	c.Assert(bytes.Compare(m[string(s.k1)], s.v1), Equals, 0)
-	c.Assert(bytes.Compare(m[string(s.k2)], s.v2), Equals, 0)
+	c.Assert(m[string(s.k1)], BytesEquals, s.v1)
+	c.Assert(m[string(s.k2)], BytesEquals, s.v2)
 
 	// result should be saved in cache
 	s.store.Set(s.k1, s.v4)
 	v, err := s.cache.Get(s.k1)
 	c.Assert(err, IsNil)
-	c.Assert(bytes.Compare(v, s.v1), Equals, 0)
+	c.Assert(v, BytesEquals, s.v1)
 }
 
 type mockSnapshot struct {
@@ -125,7 +123,7 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *mockSnapshot) Scan(start, end Key, limit int) (map[string][]byte, error) {
+func (s *mockSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	it := s.NewIterator([]byte(start))
 	defer it.Close()
