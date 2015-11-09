@@ -92,34 +92,40 @@ func (t *TxStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 }
 
 func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []byte) ([]byte, error)) error {
-	metaKey := t.encodeHashMetaKey(key)
-	meta, err := t.loadHashMeta(metaKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	dataKey := t.encodeHashDataKey(key, field)
-	var oldValue []byte
-	oldValue, err = t.loadHashValue(dataKey)
+	oldValue, err := t.loadHashValue(dataKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if oldValue == nil {
-		meta.Length++
-	}
-
-	var newValue []byte
-	newValue, err = fn(oldValue)
+	newValue, err := fn(oldValue)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// Check if new value is equal to old value.
+	if bytes.Equal(oldValue, newValue) {
+		return nil
 	}
 
 	if err = t.txn.Set(dataKey, newValue); err != nil {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(t.txn.Set(metaKey, meta.Value()))
+	metaKey := t.encodeHashMetaKey(key)
+	meta, err := t.loadHashMeta(metaKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if oldValue == nil {
+		meta.Length++
+		if err = t.txn.Set(metaKey, meta.Value()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 // HLen gets the number of fields in a hash.
