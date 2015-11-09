@@ -582,7 +582,7 @@ type GlobalSysVarAccessor interface {
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
 }
 
-// keyType is a dummy type to avoid naming collision in context.
+// globalSysVarAccessorKeyType is a dummy type to avoid naming collision in context.
 type globalSysVarAccessorKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
