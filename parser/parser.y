@@ -1526,12 +1526,6 @@ Field:
 	{
 		expr := $1.(ast.ExprNode)
 		asName := $2.(string)
-		if asName != "" {
-			// Set expr original text.
-			offset := yyS[yypt-1].offset
-			end := yyS[yypt].offset-1
-			expr.SetText(yylex.(*lexer).src[offset:end])
-		}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
@@ -1567,7 +1561,7 @@ FieldList:
 	Field
 	{
 		field := $1.(*ast.SelectField)
-		field.Offset = yyS[yypt].offset
+		field.Offset = yylex.(*lexer).startOffset(yyS[yypt].offset)
 		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
@@ -1575,12 +1569,13 @@ FieldList:
 
 		fl := $1.([]*ast.SelectField)
 		last := fl[len(fl)-1]
+		l := yylex.(*lexer)
 		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := yyS[yypt-1].offset-1 // Comma offset.
-			last.SetText(yylex.(*lexer).src[last.Offset:lastEnd])
+			lastEnd := l.endOffset(yyS[yypt-1].offset)
+			last.SetText(l.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
-		newField.Offset = yyS[yypt].offset
+		newField.Offset = l.startOffset(yyS[yypt].offset)
 		$$ = append(fl, newField)
 	}
 
@@ -1871,7 +1866,12 @@ Operand:
 	}
 |	'(' Expression ')'
 	{
-		$$ = &ast.ParenthesesExpr{Expr: $2.(ast.ExprNode)}
+		l := yylex.(*lexer)
+		startOffset := l.startOffset(yyS[yypt-1].offset)
+		endOffset := l.endOffset(yyS[yypt].offset)
+		expr := $2.(ast.ExprNode)
+		expr.SetText(l.src[startOffset:endOffset])
+		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	"DEFAULT" %prec lowerThanLeftParen
 	{
@@ -2862,7 +2862,9 @@ TableFactor:
 |	'(' SelectStmt ')' TableAsName
 	{
 		st := $2.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-1].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-1].offset)
+		l.SetLastSelectFieldText(st, endOffset)
 		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
 |	'(' UnionStmt ')' TableAsName
@@ -3009,7 +3011,9 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(s, yyS[yypt].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt].offset)
+		l.SetLastSelectFieldText(s, endOffset)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -3046,7 +3050,9 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.Selects[len(union.Selects)-1]
-		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-2].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-2].offset)
+		l.SetLastSelectFieldText(lastSelect, endOffset)
 		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3055,9 +3061,12 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.Selects[len(union.Selects)-1]
-		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-6].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-6].offset)
+		l.SetLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-2].offset-1)
+		endOffset = l.endOffset(yyS[yypt-2].offset)
+		l.SetLastSelectFieldText(st, endOffset)
 		union.Selects = append(union.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
@@ -3081,7 +3090,9 @@ UnionClauseList:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.Selects[len(union.Selects)-1]
-		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-2].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-2].offset)
+		l.SetLastSelectFieldText(lastSelect, endOffset)
 		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3091,7 +3102,9 @@ UnionSelect:
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt].offset)
+		l.SetLastSelectFieldText(st, endOffset)
 		$$ = st
 	}
 
