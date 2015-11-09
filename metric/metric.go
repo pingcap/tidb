@@ -31,7 +31,7 @@ func Register(name string, m interface{}) {
 	r.Register(name, m)
 }
 
-// Inc increments specific counter metric.
+// Inc increases specific counter metric.
 func Inc(name string, i int64) {
 	if c := r.GetOrRegister(name, metrics.NewCounter()); c != nil {
 		c.(metrics.Counter).Inc(i)
