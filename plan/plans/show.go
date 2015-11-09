@@ -357,6 +357,7 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.SysVars {
@@ -382,13 +383,19 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			// Try to get Session Scope variable value
+			// Try to get Session Scope variable value first.
 			sv, ok := sessionVars.Systems[v.Name]
 			if ok {
 				value = sv
+			} else {
+				// If session scope variable is not set, get the global scope value.
+				value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		} else {
-			value, err = ctx.(variable.GlobalVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -401,6 +408,7 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.StatusVars {
@@ -431,7 +439,7 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 				value = sv
 			}
 		} else {
-			value, err = ctx.(variable.GlobalVarAccessor).GetGlobalStatusVar(ctx, v.Name)
+			value, err = globalVars.GetGlobalStatusVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}

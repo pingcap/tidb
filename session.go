@@ -570,6 +570,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
 
+	// session implements variable.GlobalVarAccessor. Bind it to ctx.
+	variable.BindGlobalVarAccessor(s, s)
+
 	// session implements autocommit.Checker. Bind it to ctx
 	autocommit.BindAutocommitChecker(s, s)
 	sessionMu.Lock()
