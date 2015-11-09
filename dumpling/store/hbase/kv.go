@@ -15,7 +15,6 @@ package hbasekv
 
 import (
 	"strings"
-
 	"sync"
 
 	"github.com/juju/errors"
@@ -25,14 +24,14 @@ import (
 )
 
 const (
-	// ColFamily is the hbase column family name.
-	ColFamily = "f"
-	// Qualifier is the hbase column name.
-	Qualifier = "q"
-	// FmlAndQual is a shortcut.
-	FmlAndQual = ColFamily + ":" + Qualifier
-	// HbaseTableName is the table name in hbase which is invisible to SQL layer.
-	HbaseTableName = "tidb"
+	// hbaseColFamily is the hbase column family name.
+	hbaseColFamily = "f"
+	// hbaseQualifier is the hbase column name.
+	hbaseQualifier = "q"
+	// hbaseFmlAndQual is a shortcut.
+	hbaseFmlAndQual = hbaseColFamily + ":" + hbaseQualifier
+	// hbaseTableName is the table name in hbase which is invisible to SQL layer.
+	hbaseTableName = "tidb"
 )
 
 var (
@@ -40,8 +39,8 @@ var (
 )
 
 var (
-	// ErrZkInfoErr is returned when zookeeper info is invalid.
-	ErrZkInfoErr = errors.New("zk info error")
+	// ErrZkInvalid is returned when zookeeper info is invalid.
+	ErrZkInvalid = errors.New("zk info invalid")
 )
 
 type storeCache struct {
@@ -106,24 +105,21 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 	defer mc.mu.Unlock()
 
 	if len(zkInfo) == 0 {
-		return nil, ErrZkInfoErr
+		return nil, errors.Trace(ErrZkInvalid)
 	}
 	if store, ok := mc.cache[zkInfo]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
 		return store, nil
 	}
 	zks := strings.Split(zkInfo, ",")
-	if len(zks) == 0 {
-		return nil, ErrZkInfoErr
-	}
 	c, err := hbase.NewClient(zks, "/hbase")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !c.TableExists(HbaseTableName) {
+	if !c.TableExists(hbaseTableName) {
 		// Create new hbase table for store.
-		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(HbaseTableName))
-		cf := hbase.NewColumnFamilyDescriptor(ColFamily)
+		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(hbaseTableName))
+		cf := hbase.NewColumnFamilyDescriptor(hbaseColFamily)
 		cf.AddStrAddr("THEMIS_ENABLE", "true")
 		t.AddColumnDesc(cf)
 		//TODO: specify split?
@@ -133,7 +129,7 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 	}
 	s := &hbaseStore{
 		zkInfo:    zkInfo,
-		storeName: HbaseTableName,
+		storeName: hbaseTableName,
 		cli:       c,
 	}
 	mc.cache[zkInfo] = s

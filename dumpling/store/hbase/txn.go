@@ -95,7 +95,7 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) || len(val) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, errors.Trace(kv.ErrNotExist)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -137,7 +137,7 @@ func (txn *hbaseTxn) Set(k kv.Key, data []byte) error {
 	if len(data) == 0 {
 		// Incase someone use it in the wrong way, we can figure it out immediately
 		debug.PrintStack()
-		return ErrCannotSetNilValue
+		return errors.Trace(ErrCannotSetNilValue)
 	}
 
 	log.Debugf("set key:%q, txn:%d", k, txn.tid)
@@ -177,20 +177,24 @@ func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
 }
 
 func (txn *hbaseTxn) doCommit() error {
+	bColFamily, bQualifier := []byte(hbaseColFamily), []byte(hbaseQualifier)
 	err := txn.each(func(iter kv.Iterator) error {
 		var row, val []byte
 		row = make([]byte, len(iter.Key()))
 		if len(iter.Value()) == 0 { // Deleted marker
 			copy(row, iter.Key())
 			d := hbase.NewDelete(row)
-			d.AddStringColumn(ColFamily, Qualifier)
-			txn.Txn.Delete(txn.storeName, d)
+			d.AddStringColumn(hbaseColFamily, hbaseQualifier)
+			err := txn.Txn.Delete(txn.storeName, d)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		} else {
 			val = make([]byte, len(iter.Value()))
 			copy(row, iter.Key())
 			copy(val, iter.Value())
 			p := hbase.NewPut(row)
-			p.AddValue([]byte(ColFamily), []byte(Qualifier), val)
+			p.AddValue(bColFamily, bQualifier, val)
 			txn.Txn.Put(txn.storeName, p)
 		}
 		return nil
