@@ -159,6 +159,14 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(len(tbs), Equals, 2)
 	err = sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, tbIdent, idxName)
 	c.Assert(err, IsNil)
+	alterStmt = statement("alter table t add index idx_c (c)").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	alterStmt = statement("alter table t drop index idx_c").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	alterStmt = statement("alter table t add unique index idx_c (c)").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	alterStmt = statement("alter table t drop index idx_c").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, tbIdent)
 	c.Assert(err, IsNil)
 	tbs = sessionctx.GetDomain(ctx).InfoSchema().SchemaTables(tbIdent.Schema)
@@ -273,4 +281,8 @@ func statement(sql string) stmt.Statement {
 	compiler := &optimizer.Compiler{}
 	stm, _ := compiler.Compile(lexer.Stmts()[0])
 	return stm
+}
+
+func init() {
+	log.SetLevelByString("error")
 }
