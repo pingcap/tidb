@@ -128,17 +128,9 @@ func (l *lexer) SetLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	}
 }
 
-func isWhiteSpace(c byte) bool {
-	switch c {
-	case ' ', '\t', '\r', '\n':
-		return true
-	}
-	return false;
-}
-
 func (l *lexer) startOffset(offset int) int {
 	offset--
-	for isWhiteSpace(l.src[offset]) {
+	for unicode.IsSpace(rune(l.src[offset])) {
 		offset++
 	}
 	return offset
@@ -146,7 +138,7 @@ func (l *lexer) startOffset(offset int) int {
 
 func (l *lexer) endOffset(offset int) int {
 	offset--
-	for offset > 0 && isWhiteSpace(l.src[offset-1]) {
+	for offset > 0 && unicode.IsSpace(rune(l.src[offset-1])) {
 		offset--
 	}
 	return offset
