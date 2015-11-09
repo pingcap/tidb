@@ -28,7 +28,7 @@ func RoundFloat(val float64) float64 {
 			v += 1.0
 		}
 	} else {
-		if frac < -0.5 || (frac == -0.5 && uint64(v)%2 != 0) {
+		if frac < -0.5 || (frac == -0.5 && uint64(math.Abs(v))%2 != 0) {
 			v -= 1.0
 		}
 	}
