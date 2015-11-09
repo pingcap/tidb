@@ -263,9 +263,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	return rs, errors.Trace(err)
 }
 
-// GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
-func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
+func (s *session) getGlobalVar(ctx context.Context, name, sql string) (string, error) {
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -283,6 +281,37 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 		return "", errors.Trace(err)
 	}
 	return value, nil
+}
+
+// GetGlobalStatusVar implements RestrictedSQLExecutor.GetGlobalStatusVar interface.
+func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
+	// TODO: get global status variables from store.
+	statusVars := variable.StatusVars
+	v, ok := statusVars[strings.ToLower(name)]
+	if !ok {
+		return "", nil
+	}
+
+	return v.Value, nil
+}
+
+// SetGlobalStatusVar implements RestrictedSQLExecutor.SetGlobalStatusVar interface.
+func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
+	// TODO: set global status variables from store.
+	statusVars := variable.StatusVars
+	v, ok := statusVars[strings.ToLower(name)]
+	if !ok {
+		return fmt.Errorf("Unknown status var: %s", name)
+	}
+	v.Value = value
+
+	return nil
+}
+
+// GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
+func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	return s.getGlobalVar(ctx, name, sql)
 }
 
 // SetGlobalSysVar implements RestrictedSQLExecutor.SetGlobalSysVar interface.
