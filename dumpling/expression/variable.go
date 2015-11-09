@@ -82,7 +82,7 @@ func (v *Variable) Eval(ctx context.Context, args map[interface{}]interface{}) (
 			return value, nil
 		}
 	}
-	value, err := ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, name)
+	value, err := ctx.(variable.GlobalVarAccessor).GetGlobalSysVar(ctx, name)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

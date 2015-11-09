@@ -138,7 +138,7 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				err = ctx.(variable.GlobalSysVarAccessor).SetGlobalSysVar(ctx, name, svalue)
+				err = ctx.(variable.GlobalVarAccessor).SetGlobalSysVar(ctx, name, svalue)
 				return nil, errors.Trace(err)
 			}
 			return nil, errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)

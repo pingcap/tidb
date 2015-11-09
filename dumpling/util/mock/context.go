@@ -16,7 +16,6 @@ package mock
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -59,9 +58,8 @@ func (c *Context) FinishTxn(rollback bool) error {
 
 // GetGlobalStatusVar implements GlobalVarAccessor GetGlobalStatusVar interface.
 func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
-	statusVars := variable.StatusVars
-	v, ok := statusVars[strings.ToLower(name)]
-	if !ok {
+	v := variable.GetStatusVar(name)
+	if v == nil {
 		return "", nil
 	}
 	return v.Value, nil
@@ -69,9 +67,8 @@ func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 
 // SetGlobalStatusVar implements GlobalVarAccessor SetGlobalStatusVar interface.
 func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
-	statusVars := variable.StatusVars
-	v, ok := statusVars[strings.ToLower(name)]
-	if !ok {
+	v := variable.GetStatusVar(name)
+	if v == nil {
 		return fmt.Errorf("Unknown status var: %s", name)
 	}
 	v.Value = value
@@ -80,9 +77,8 @@ func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value str
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	sysvars := variable.SysVars
-	v, ok := sysvars[strings.ToLower(name)]
-	if !ok {
+	v := variable.GetSysVar(name)
+	if v == nil {
 		return "", nil
 	}
 	return v.Value, nil
@@ -90,9 +86,8 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 
 // SetGlobalSysVar implements GlobalVarAccessor SetGlobalSysVar interface.
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
-	sysvars := variable.SysVars
-	v, ok := sysvars[strings.ToLower(name)]
-	if !ok {
+	v := variable.GetSysVar(name)
+	if v == nil {
 		return fmt.Errorf("Unknown sys var: %s", name)
 	}
 	v.Value = value
