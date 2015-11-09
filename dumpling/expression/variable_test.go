@@ -27,8 +27,10 @@ type testVariableSuite struct {
 }
 
 func (s *testVariableSuite) SetUpSuite(c *C) {
-	s.ctx = mock.NewContext()
+	nc := mock.NewContext()
+	s.ctx = nc
 	variable.BindSessionVars(s.ctx)
+	variable.BindGlobalSysVarAccessor(s.ctx, nc)
 }
 
 func (s *testVariableSuite) TestVariable(c *C) {
