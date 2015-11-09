@@ -21,19 +21,11 @@ import (
 // RoundFloat uses default rounding mode, see http://www.gnu.org/software/libc/manual/html_node/Rounding.html
 // so we will choose the even number if the result is midway between two representable value.
 // e.g, 1.5 -> 2, 2.5 -> 2.
-func RoundFloat(val float64) float64 {
-	v, frac := math.Modf(val)
-	if val >= 0.0 {
-		if frac > 0.5 || (frac == 0.5 && uint64(v)%2 != 0) {
-			v += 1.0
-		}
-	} else {
-		if frac < -0.5 || (frac == -0.5 && uint64(math.Abs(v))%2 != 0) {
-			v -= 1.0
-		}
+func RoundFloat(f float64) float64 {
+	if math.Remainder(f, 1.0) < 0 {
+		return math.Ceil(f)
 	}
-
-	return v
+	return math.Floor(f)
 }
 
 func getMaxFloat(flen int, decimal int) float64 {
