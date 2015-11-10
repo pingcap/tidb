@@ -451,7 +451,9 @@ func (s *testIndexSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tb
 	c.Assert(err, IsNil)
 }
 
-func (s *testIndexSuite) checkAddOrDropColumn(c *C, state model.SchemaState, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+func (s *testIndexSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+	ctx := testNewContext(c, d)
+
 	switch state {
 	case model.StateNone:
 		s.checkNoneColumn(c, ctx, d, tblInfo, handle, col, columnValue)
@@ -511,13 +513,13 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 			return
 		}
 
-		ctx1 := testNewContext(c, d)
-		s.checkAddOrDropColumn(c, col.State, ctx1, d, tblInfo, handle, col, row, defaultColValue, false)
-		ctx.FinishTxn(false)
+		s.checkAddOrDropColumn(c, col.State, d, tblInfo, handle, col, row, defaultColValue, false)
+
 		if col.State == model.StatePublic {
 			checkOK = true
 		}
 	}
+
 	d.hook = tc
 
 	// Use local ddl for callback test.
@@ -564,6 +566,7 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	checkOK := false
+	oldCol := &column.Col{}
 
 	tc := &testDDLCallback{}
 	tc.onJobUpdated = func(job *model.Job) {
@@ -574,18 +577,15 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
 		col := testGetColumn(t, colName)
 		if col == nil {
+			s.checkAddOrDropColumn(c, model.StateNone, d, tblInfo, handle, oldCol, row, defaultColValue, true)
 			checkOK = true
 			return
 		}
 
-		ctx1 := testNewContext(c, d)
-		s.checkAddOrDropColumn(c, col.State, ctx1, d, tblInfo, handle, col, row, defaultColValue, true)
-		ctx.FinishTxn(false)
-
-		if col.State == model.StateNone {
-			checkOK = true
-		}
+		s.checkAddOrDropColumn(c, col.State, d, tblInfo, handle, col, row, defaultColValue, true)
+		oldCol = col
 	}
+
 	d.hook = tc
 
 	// Use local ddl for callback test.
