@@ -21,22 +21,11 @@ import (
 var _ = Suite(&testCacheSnapshotSuite{})
 
 type testCacheSnapshotSuite struct {
-	k1, k2, k3, k4 []byte
-	v1, v2, v3, v4 []byte
-	store          MemBuffer
-	cache          Snapshot
+	store MemBuffer
+	cache Snapshot
 }
 
 func (s *testCacheSnapshotSuite) SetUpTest(c *C) {
-	s.k1 = []byte("k1")
-	s.k2 = []byte("k2")
-	s.k3 = []byte("k3")
-	s.k4 = []byte("k4")
-	s.v1 = []byte("1")
-	s.v2 = []byte("2")
-	s.v3 = []byte("3")
-	s.v4 = []byte("4")
-
 	s.store = NewMemDbBuffer()
 	s.cache = NewCacheSnapshot(&mockSnapshot{s.store})
 }
@@ -46,58 +35,58 @@ func (s *testCacheSnapshotSuite) TearDownTest(c *C) {
 }
 
 func (s *testCacheSnapshotSuite) TestGet(c *C) {
-	s.store.Set(s.k1, s.v1)
-	s.store.Set(s.k2, s.v2)
+	s.store.Set([]byte("1"), []byte("1"))
+	s.store.Set([]byte("2"), []byte("2"))
 
-	v, err := s.cache.Get(s.k1)
+	v, err := s.cache.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v1)
+	c.Assert(v, BytesEquals, []byte("1"))
 
-	s.store.Set(s.k1, s.v3)
-	v, err = s.cache.Get(s.k1)
+	s.store.Set([]byte("1"), []byte("3"))
+	v, err = s.cache.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v1)
+	c.Assert(v, BytesEquals, []byte("1"))
 
-	s.store.Set(s.k2, s.v4)
-	v, err = s.cache.Get(s.k2)
+	s.store.Set([]byte("2"), []byte("4"))
+	v, err = s.cache.Get([]byte("2"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v4)
+	c.Assert(v, BytesEquals, []byte("4"))
 }
 
 func (s *testCacheSnapshotSuite) TestBatchGet(c *C) {
-	s.store.Set(s.k1, s.v1)
-	s.store.Set(s.k2, s.v2)
+	s.store.Set([]byte("1"), []byte("1"))
+	s.store.Set([]byte("2"), []byte("2"))
 
-	m, err := s.cache.BatchGet([]Key{s.k1, s.k2, s.k3})
+	m, err := s.cache.BatchGet([]Key{[]byte("1"), []byte("2"), []byte("3")})
 	c.Assert(err, IsNil)
-	c.Assert(m[string(s.k1)], BytesEquals, s.v1)
-	c.Assert(m[string(s.k2)], BytesEquals, s.v2)
-	_, exist := m[string(s.k3)]
+	c.Assert(m["1"], BytesEquals, []byte("1"))
+	c.Assert(m["2"], BytesEquals, []byte("2"))
+	_, exist := m["3"]
 	c.Assert(exist, IsFalse)
 
 	// result should be saved in cache
-	s.store.Set(s.k1, s.v4)
-	v, err := s.cache.Get(s.k1)
+	s.store.Set([]byte("1"), []byte("4"))
+	v, err := s.cache.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v1)
+	c.Assert(v, BytesEquals, []byte("1"))
 }
 
 func (s *testCacheSnapshotSuite) TestRangeGet(c *C) {
-	s.store.Set(s.k1, s.v1)
-	s.store.Set(s.k2, s.v2)
-	s.store.Set(s.k3, s.v3)
+	s.store.Set([]byte("1"), []byte("1"))
+	s.store.Set([]byte("2"), []byte("2"))
+	s.store.Set([]byte("3"), []byte("3"))
 
-	m, err := s.cache.RangeGet(s.k1, s.k2, 100)
+	m, err := s.cache.RangeGet([]byte("1"), []byte("2"), 100)
 	c.Assert(err, IsNil)
 	c.Assert(m, HasLen, 2)
-	c.Assert(m[string(s.k1)], BytesEquals, s.v1)
-	c.Assert(m[string(s.k2)], BytesEquals, s.v2)
+	c.Assert(m["1"], BytesEquals, []byte("1"))
+	c.Assert(m["2"], BytesEquals, []byte("2"))
 
 	// result should be saved in cache
-	s.store.Set(s.k1, s.v4)
-	v, err := s.cache.Get(s.k1)
+	s.store.Set([]byte("1"), []byte("4"))
+	v, err := s.cache.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v1)
+	c.Assert(v, BytesEquals, []byte("1"))
 }
 
 type mockSnapshot struct {
