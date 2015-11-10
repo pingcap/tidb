@@ -15,15 +15,10 @@ package variable
 
 import (
 	"strings"
-
-	"github.com/juju/errors"
 )
 
 // StatusVars is global status vars map.
 var StatusVars map[string]*SysVar
-
-// ErrUnknownStatusVar is used when can't find the status variable name.
-var ErrUnknownStatusVar = errors.New("Unknown status var")
 
 // GetStatusVar returns status var infomation for name.
 func GetStatusVar(name string) *SysVar {
