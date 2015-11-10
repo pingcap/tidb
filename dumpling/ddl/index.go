@@ -346,7 +346,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return nil
+			return errors.Trace(reorgInfo.RemoveHandle())
 		}
 
 		seekHandle = handles[len(handles)-1] + 1

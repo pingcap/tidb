@@ -172,6 +172,7 @@ func (d *ddl) delKeysWithPrefix(prefix string) error {
 type reorgInfo struct {
 	*model.Job
 	Handle int64
+	d      *ddl
 }
 
 func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
@@ -179,6 +180,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 
 	info := &reorgInfo{
 		Job: job,
+		d:   d,
 	}
 
 	if job.SnapshotVer == 0 {
@@ -190,11 +192,6 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 		}
 
 		job.SnapshotVer = ver.Ver
-
-		err = t.RemoveDDLReorgHandle(job)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 	} else {
 		info.Handle, err = t.GetDDLReorgHandle(job)
 		if err != nil {
@@ -213,4 +210,13 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 func (r *reorgInfo) UpdateHandle(txn kv.Transaction, handle int64) error {
 	t := meta.NewMeta(txn)
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, handle))
+}
+
+func (r *reorgInfo) RemoveHandle() error {
+	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := t.RemoveDDLReorgHandle(r.Job)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
 }
