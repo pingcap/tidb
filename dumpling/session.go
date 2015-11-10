@@ -263,6 +263,8 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	return rs, errors.Trace(err)
 }
 
+// getExecRet executes restricted sql and the result is one column.
+// It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -274,7 +276,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	if row == nil {
-		return "", errors.New("Unknown sys var")
+		return "", errors.New("result is empty")
 	}
 	value, err := types.ToString(row.Data[0])
 	if err != nil {
@@ -288,7 +290,8 @@ func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 	// TODO: get global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return "", errors.Errorf("Unknown status var :%s", name)
+		log.Errorf("get global status var %s is err:%v", name, variable.ErrUnknownStatusVar)
+		return "", variable.ErrUnknownStatusVar
 	}
 
 	return v.Value, nil
@@ -299,7 +302,8 @@ func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value str
 	// TODO: set global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return errors.Errorf("Unknown status var :%s", name)
+		log.Errorf("set global status var %s is err:%v", name, variable.ErrUnknownStatusVar)
+		return variable.ErrUnknownStatusVar
 	}
 	v.Value = value
 
@@ -309,7 +313,13 @@ func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value str
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	return s.getExecRet(ctx, sql)
+	sysVar, err := s.getExecRet(ctx, sql)
+	if err != nil {
+		log.Errorf("get global sys var %s is err:%v", name, err)
+		return "", errors.Trace(err)
+	}
+
+	return sysVar, nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.

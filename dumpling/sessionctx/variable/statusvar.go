@@ -15,10 +15,15 @@ package variable
 
 import (
 	"strings"
+
+	"github.com/juju/errors"
 )
 
 // StatusVars is global status vars map.
 var StatusVars map[string]*SysVar
+
+// ErrUnknownStatusVar is used when can't find the status variable name.
+var ErrUnknownStatusVar = errors.New("Unknown status var")
 
 // GetStatusVar returns status var infomation for name.
 func GetStatusVar(name string) *SysVar {
@@ -188,6 +193,7 @@ var defaultStatusVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "com_xa_rollback", "0"},
 	{ScopeGlobal | ScopeSession, "com_xa_start", "0"},
 	{ScopeGlobal | ScopeSession, "com_stmt_reprepare", "0"},
+	{ScopeSession, "compression", "off"},
 	{ScopeGlobal, "connection_errors_accept", "0"},
 	{ScopeGlobal, "connection_errors_internal", "0"},
 	{ScopeGlobal, "connection_errors_max_connections", "0"},
@@ -271,6 +277,8 @@ var defaultStatusVars = []*SysVar{
 	{ScopeGlobal, "innodb_num_open_files", "17"},
 	{ScopeGlobal, "innodb_truncated_status_writes", "0"},
 	{ScopeGlobal, "innodb_available_undo_logs", "128"},
+	{ScopeSession, "last_query_cost", "104.799000"},
+	{ScopeSession, "last_query_partial_plans", "1"},
 	{ScopeGlobal, "key_blocks_not_flushed", "0"},
 	{ScopeGlobal, "key_blocks_unused", "6695"},
 	{ScopeGlobal, "key_blocks_used", "3"},
