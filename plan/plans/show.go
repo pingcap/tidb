@@ -408,7 +408,6 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
-	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.StatusVars {
@@ -439,7 +438,7 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 				value = sv
 			}
 		} else {
-			value, err = globalVars.GetGlobalStatusVar(ctx, v.Name)
+			value, err = variable.GetGlobalVarAccessor(ctx).GetGlobalStatusVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
