@@ -306,7 +306,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	err = t.RemoveRow(ctx, handle)
+	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -366,7 +366,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	err = t.RemoveRow(ctx, handle)
+	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -423,7 +423,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	err = t.RemoveRow(ctx, handle)
+	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
