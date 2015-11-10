@@ -511,7 +511,10 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 			return
 		}
 
-		s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, false)
+		ctx1 := testNewContext(c, d)
+		defer ctx.FinishTxn(false)
+
+		s.checkAddOrDropColumn(c, col.State, ctx1, d, tblInfo, handle, col, row, defaultColValue, false)
 		if col.State == model.StatePublic {
 			checkOK = true
 		}
@@ -572,10 +575,13 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
 		col := testGetColumn(t, colName)
 		if col == nil {
+			checkOK = true
 			return
 		}
 
-		s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, true)
+		ctx1 := testNewContext(c, d)
+		defer ctx.FinishTxn(false)
+		s.checkAddOrDropColumn(c, col.State, ctx1, d, tblInfo, handle, col, row, defaultColValue, true)
 
 		if col.State == model.StateNone {
 			checkOK = true
