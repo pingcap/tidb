@@ -203,8 +203,6 @@ func (d *ddl) handleJobQueue() error {
 			// and retry later if the job is not cancelled.
 			d.runJob(t, job)
 
-			d.hook.OnJobRunAfter(job)
-
 			if job.State == model.JobDone || job.State == model.JobCancelled {
 				err = d.finishJob(t, job)
 				if err == nil {
@@ -233,6 +231,8 @@ func (d *ddl) handleJobQueue() error {
 			// no job now, return and retry get later.
 			return nil
 		}
+
+		d.hook.OnJobUpdated(job)
 
 		// here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// if the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
