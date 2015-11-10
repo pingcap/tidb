@@ -410,6 +410,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 //	mDDLOnwer: []byte
 //	mDDLJobList: list jobs
 //	mDDLJobHistory: hash
+//	mDDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
@@ -418,6 +419,7 @@ var (
 	mDDLOwnerKey      = []byte("mDDLOwner")
 	mDDLJobListKey    = []byte("mDDLJobList")
 	mDDLJobHistoryKey = []byte("mDDLJobHistory")
+	mDDLJobReorgKey   = []byte("mDDLJobReorg")
 )
 
 // GetDDLOwner gets the current owner for DDL.
@@ -531,4 +533,22 @@ func (m *Meta) IsBootstrapped() (bool, error) {
 func (m *Meta) FinishBootstrap() error {
 	err := m.txn.Set(mBootstrapKey, []byte("1"))
 	return errors.Trace(err)
+}
+
+// UpdateDDLReorgHandle saves the job reorganization latest processed handle for later resuming.
+func (m *Meta) UpdateDDLReorgHandle(job *model.Job, handle int64) error {
+	err := m.txn.HSet(mDDLJobReorgKey, m.jobIDKey(job.ID), []byte(strconv.FormatInt(handle, 10)))
+	return errors.Trace(err)
+}
+
+// RemoveDDLReorgHandle removes the job reorganization handle.
+func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
+	err := m.txn.HDel(mDDLJobReorgKey, m.jobIDKey(job.ID))
+	return errors.Trace(err)
+}
+
+// GetDDLReorgHandle gets the latest processed handle.
+func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
+	value, err := m.txn.HGetInt64(mDDLJobReorgKey, m.jobIDKey(job.ID))
+	return value, errors.Trace(err)
 }
