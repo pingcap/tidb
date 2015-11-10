@@ -263,7 +263,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	return rs, errors.Trace(err)
 }
 
-func (s *session) getGlobalVar(ctx context.Context, name, sql string) (string, error) {
+func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -274,7 +274,7 @@ func (s *session) getGlobalVar(ctx context.Context, name, sql string) (string, e
 		return "", errors.Trace(err)
 	}
 	if row == nil {
-		return "", errors.Errorf("Unknown sys var: %s", name)
+		return "", errors.New("Unknown sys var")
 	}
 	value, err := types.ToString(row.Data[0])
 	if err != nil {
@@ -283,7 +283,7 @@ func (s *session) getGlobalVar(ctx context.Context, name, sql string) (string, e
 	return value, nil
 }
 
-// GetGlobalStatusVar implements RestrictedSQLExecutor.GetGlobalStatusVar interface.
+// GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
 func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
 	// TODO: get global status variables from store.
 	v := variable.GetStatusVar(name)
@@ -294,7 +294,7 @@ func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 	return v.Value, nil
 }
 
-// SetGlobalStatusVar implements RestrictedSQLExecutor.SetGlobalStatusVar interface.
+// SetGlobalStatusVar implements GlobalVarAccessor.SetGlobalStatusVar interface.
 func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
 	// TODO: set global status variables from store.
 	v := variable.GetStatusVar(name)
@@ -306,13 +306,13 @@ func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value str
 	return nil
 }
 
-// GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
+// GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	return s.getGlobalVar(ctx, name, sql)
+	return s.getExecRet(ctx, sql)
 }
 
-// SetGlobalSysVar implements RestrictedSQLExecutor.SetGlobalSysVar interface.
+// SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
 	_, err := s.ExecRestrictedSQL(ctx, sql)
