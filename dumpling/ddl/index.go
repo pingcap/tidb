@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"bytes"
-	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -160,22 +159,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		indexInfo.State = model.StateReorganization
 		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		// initialize reorg handle to 0
-		job.ReorgHandle = 0
-		atomic.StoreInt64(&d.reorgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorganization:
 		// reorganization -> public
-		// get the current version for reorganization if we don't have
-		if job.SnapshotVer == 0 {
-			var ver kv.Version
-			ver, err = d.store.CurrentVersion()
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			job.SnapshotVer = ver.Ver
+		reorgInfo, err := d.getReorgInfo(t, job)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		var tbl table.Table
@@ -185,12 +175,8 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.addTableIndex(tbl, indexInfo, job.SnapshotVer, job.ReorgHandle)
+			return d.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
-
-		// addTableIndex updates ReorgHandle after one batch.
-		// so we update the job ReorgHandle here.
-		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -346,29 +332,28 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 const maxBatchSize = 1024
 
 // How to add index in reorganization state?
-//  1, Generate a snapshot with special version.
-//  2, Traverse the snapshot, get every row in the table.
-//  3, For one row, if the row has been already deleted, skip to next row.
-//  4, If not deleted, check whether index has existed, if existed, skip to next row.
-//  5, If index doesn't exist, create the index and then continue to handle next row.
-func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, version uint64, seekHandle int64) error {
+//  1. Generate a snapshot with special version.
+//  2. Traverse the snapshot, get every row in the table.
+//  3. For one row, if the row has been already deleted, skip to next row.
+//  4. If not deleted, check whether index has existed, if existed, skip to next row.
+//  5. If index doesn't exist, create the index and then continue to handle next row.
+func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+	seekHandle := reorgInfo.Handle
+	version := reorgInfo.SnapshotVer
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return nil
+			return errors.Trace(reorgInfo.RemoveHandle())
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
 
-		err = d.backfillTableIndex(t, indexInfo, handles)
+		err = d.backfillTableIndex(t, indexInfo, handles, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// update reorgHandle here after every successful batch.
-		atomic.StoreInt64(&d.reorgHandle, seekHandle)
 	}
 }
 
@@ -421,7 +406,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	return handles, nil
 }
 
-func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64) error {
+func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
 
 	for _, handle := range handles {
@@ -453,7 +438,12 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 
 			// create the index.
 			err = kvX.Create(txn, vals, handle)
-			return errors.Trace(err)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// update reorg next handle
+			return errors.Trace(reorgInfo.UpdateHandle(txn, handle))
 		})
 
 		if err != nil {

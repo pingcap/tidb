@@ -1347,6 +1347,31 @@ func (s *testSessionSuite) TestBuiltin(c *C) {
 	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
 }
 
+func (s *testSessionSuite) TestFieldText(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (a int)")
+	cases := []struct {
+		sql   string
+		field string
+	}{
+		{"select distinct(a) from t", "a"},
+		{"select (1)", "1"},
+		{"select (1+1)", "(1+1)"},
+		{"select a from t", "a"},
+		{"select        ((a+1))     from t", "((a+1))"},
+	}
+	for _, v := range cases {
+		results, err := se.Execute(v.sql)
+		c.Assert(err, IsNil)
+		result := results[0]
+		fields, err := result.Fields()
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].Name, Equals, v.field)
+	}
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)

@@ -200,6 +200,16 @@ func (s *testSuite) TestDDL(c *C) {
 	err = t.UpdateDDLJob(0, job)
 	c.Assert(err, IsNil)
 
+	err = t.UpdateDDLReorgHandle(job, 1)
+	c.Assert(err, IsNil)
+
+	h, err := t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(1))
+
+	err = t.RemoveDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
