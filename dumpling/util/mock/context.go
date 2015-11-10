@@ -61,7 +61,7 @@ func (c *Context) FinishTxn(rollback bool) error {
 func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return "", nil
+		return "", terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
 	}
 	return v.Value, nil
 }
@@ -80,7 +80,7 @@ func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value str
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", nil
+		return "", terror.UnknownSystemVar.Gen("unknown sys variable: %s", name)
 	}
 	return v.Value, nil
 }
@@ -89,7 +89,7 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return terror.UnknownStatusVar.Gen("unknown sys variable: %s", name)
+		return terror.UnknownSystemVar.Gen("unknown sys variable: %s", name)
 	}
 	v.Value = value
 	return nil
