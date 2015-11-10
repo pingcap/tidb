@@ -53,8 +53,10 @@ type testShowSuit struct {
 var _ = Suite(&testShowSuit{})
 
 func (p *testShowSuit) SetUpSuite(c *C) {
-	p.ctx = mock.NewContext()
+	nc := mock.NewContext()
+	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
+	variable.BindGlobalSysVarAccessor(p.ctx, nc)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)

@@ -100,7 +100,7 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	log.Debug("Set sys/user variables")
 
 	sessionVars := variable.GetSessionVars(ctx)
-
+	globalVars := variable.GetGlobalSysVarAccessor(ctx)
 	for _, v := range s.Variables {
 		// Variable is case insensitive, we use lower case.
 		name := strings.ToLower(v.Name)
@@ -138,7 +138,7 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				err = ctx.(variable.GlobalSysVarAccessor).SetGlobalSysVar(ctx, name, svalue)
+				err = globalVars.SetGlobalSysVar(ctx, name, svalue)
 				return nil, errors.Trace(err)
 			}
 			return nil, errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
