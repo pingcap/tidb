@@ -39,7 +39,7 @@ func (t *testSuite) TestRegMetric(c *C) {
 	Register(testMetricName, metrics.NewHistogram(metrics.NewUniformSample(1000)))
 
 	v := r.Get(testMetricName)
-	c.Assert(v != nil, Equals, true)
+	c.Assert(v, NotNil)
 
 	// Will not overwrite
 	_, ok := v.(metrics.Counter)
