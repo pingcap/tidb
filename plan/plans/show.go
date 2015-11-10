@@ -120,6 +120,11 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = []string{"Table", "Create Table"}
 	case stmt.ShowGrants:
 		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+	case stmt.ShowTriggers:
+		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
+			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
@@ -181,6 +186,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowCreateTable(ctx)
 	case stmt.ShowGrants:
 		return s.fetchShowGrants(ctx)
+	case stmt.ShowTriggers:
+		return s.fetchShowTriggers(ctx)
 	}
 	return nil
 }
@@ -396,7 +403,7 @@ func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
 		}
 		now := mysql.GetCurrentTime(mysql.TypeDatetime)
 		data := []interface{}{
-			v, "", "", "", "", 100, 100,
+			v, "InnoDB", "10", "Compact", 100, 100,
 			100, 100, 100, 100, 100,
 			now, now, now, "utf8_general_ci", "",
 			"", "",
@@ -407,6 +414,7 @@ func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
 }
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalSysVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.SysVars {
@@ -432,13 +440,19 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			// Try to get Session Scope variable value
+			// Try to get Session Scope variable value first.
 			sv, ok := sessionVars.Systems[v.Name]
 			if ok {
 				value = sv
+			} else {
+				// If session scope variable is not set, get the global scope value.
+				value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		} else {
-			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -462,6 +476,7 @@ func (s *ShowPlan) fetchShowCharset(ctx context.Context) error {
 }
 
 func (s *ShowPlan) fetchShowEngines(ctx context.Context) error {
+	// Mock data
 	row := &plan.Row{
 		Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
 	}
@@ -572,5 +587,9 @@ func (s *ShowPlan) fetchShowGrants(ctx context.Context) error {
 		data := []interface{}{g}
 		s.rows = append(s.rows, &plan.Row{Data: data})
 	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowTriggers(ctx context.Context) error {
 	return nil
 }

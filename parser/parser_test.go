@@ -244,6 +244,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{`SHOW FULL TABLES WHERE Table_Type != 'VIEW'`, true},
 		{`SHOW GRANTS`, true},
 		{`SHOW GRANTS FOR 'test'@'localhost'`, true},
+		{`SHOW COLUMNS FROM City;`, true},
+		{`SHOW FIELDS FROM City;`, true},
+		{`SHOW TRIGGERS LIKE 't'`, true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
@@ -421,6 +424,31 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_add("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
 
+		// For adddate
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10 second)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10 hour)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 10 day)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 1 week)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 1 month)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 1 quarter)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval 1 year)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "10.10" second_microsecond)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10.10" minute_microsecond)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10" minute_second)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
+
 		// For date_sub
 		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval 10 second)`, true},
@@ -442,6 +470,31 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
 		{`select date_sub("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+
+		// For subdate
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10 second)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10 minute)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10 hour)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 10 day)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 1 week)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 1 month)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 1 quarter)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval 1 year)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "10.10" second_microsecond)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10.10" minute_microsecond)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10" minute_second)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10:10.10" hour_microsecond)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10:10" hour_second)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "10:10" hour_minute)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10:10.10" day_microsecond)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10:10" day_second)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10:10" day_minute)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "11 10" day_hour)`, true},
+		{`select subdate("2011-11-11 10:10:10.123456", interval "11-11" year_month)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", 0.10)`, true},
+		{`select adddate("2011-11-11 10:10:10.123456", "11,11")`, true},
 	}
 	s.RunTest(c, table)
 }
