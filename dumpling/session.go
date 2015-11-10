@@ -256,7 +256,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
-	log.Infof("Executing %s [%s]", st.OriginText(), sql)
+	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
 	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
 	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
@@ -542,6 +542,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+
+	// session implements variable.GlobalSysVarAccessor. Bind it to ctx.
+	variable.BindGlobalSysVarAccessor(s, s)
 
 	// session implements autocommit.Checker. Bind it to ctx
 	autocommit.BindAutocommitChecker(s, s)

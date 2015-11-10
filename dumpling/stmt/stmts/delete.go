@@ -100,14 +100,11 @@ func (s *DeleteStmt) plan(ctx context.Context) (plan.Plan, error) {
 }
 
 func removeRow(ctx context.Context, t table.Table, h int64, data []interface{}) error {
-	// remove row's all indexies
-	if err := t.RemoveRowAllIndex(ctx, h, data); err != nil {
-		return err
+	err := t.RemoveRecord(ctx, h, data)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	// remove row
-	if err := t.RemoveRow(ctx, h); err != nil {
-		return err
-	}
+
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return nil
 }

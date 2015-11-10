@@ -59,6 +59,7 @@ const (
 	ShowCollation
 	ShowCreateTable
 	ShowGrants
+	ShowTriggers
 )
 
 const (
