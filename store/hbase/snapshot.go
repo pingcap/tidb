@@ -72,6 +72,52 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	return nil, kv.ErrNotExist
 }
 
+// BatchGet implements kv.Snapshot.BatchGet().
+func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	gets := make([]*hbase.Get, len(keys))
+	bColFamily, bQualifier := []byte(ColFamily), []byte(Qualifier)
+	for i, key := range keys {
+		g := hbase.NewGet(key)
+		g.AddColumn(bColFamily, bQualifier)
+		gets[i] = g
+	}
+	rows, err := s.txn.BatchGet(s.storeName, gets)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	m := make(map[string][]byte)
+	for _, r := range rows {
+		k := string(r.Row)
+		v := r.Columns[FmlAndQual].Value
+		m[k] = v
+		s.cache[k] = v
+	}
+	return m, nil
+}
+
+// RangeGet implements kv.Snapshot.RangeGet().
+// The range should be [start, end] as Snapshot.RangeGet() indicated.
+func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
+	scanner := s.txn.GetScanner([]byte(s.storeName), start, end, limit)
+	defer scanner.Close()
+
+	m := make(map[string][]byte)
+	for i := 0; i < limit; i++ {
+		r := scanner.Next()
+		if r != nil && len(r.Columns) > 0 {
+			k := string(r.Row)
+			v := r.Columns[FmlAndQual].Value
+			m[k] = v
+			s.cache[k] = v
+		} else {
+			break
+		}
+	}
+
+	return m, nil
+}
+
 // MvccGet returns the specific version of given key, if the version doesn't
 // exist, returns the nearest(lower) version's data.
 func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {

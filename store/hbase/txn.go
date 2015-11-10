@@ -103,6 +103,20 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
+	encodedKeys := make([]kv.Key, len(keys))
+	for i, k := range keys {
+		encodedKeys[i] = kv.EncodeKey(k)
+	}
+	_, err := txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	return err
+}
+
+func (txn *hbaseTxn) RangePrefetch(start, end kv.Key, limit int) error {
+	_, err := txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+	return err
+}
+
 // GetInt64 get int64 which created by Inc method.
 func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
 	k = kv.EncodeKey(k)
@@ -138,7 +152,7 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return iter, nil
+	return kv.NewDecodeKeyIter(iter), nil
 }
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
@@ -152,7 +166,7 @@ func (txn *hbaseTxn) Delete(k kv.Key) error {
 }
 
 func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.Dirty.NewIterator(nil)
+	iter := txn.UnionStore.WBuffer.NewIterator(nil)
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {
