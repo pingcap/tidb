@@ -227,7 +227,7 @@ func (d *ddl) handleJobQueue() error {
 			return nil
 		}
 
-		d.hook.OnJobRunAfter(job)
+		d.hook.OnJobUpdated(job)
 
 		// here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// if the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
