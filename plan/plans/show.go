@@ -406,8 +406,41 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	return nil
 }
 
+func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
+	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+	sv, ok := sessionVars.StatusVars[name]
+	if ok {
+		return sv, nil
+	}
+
+	value, err := globalVars.GetGlobalStatusVar(ctx, name)
+	if err != nil && err != variable.ErrUnknownStatusVar {
+		return "", errors.Trace(err)
+	}
+
+	return value, nil
+}
+
+func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
+	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+
+	value, err := globalVars.GetGlobalStatusVar(ctx, name)
+	if err == nil {
+		return value, nil
+	}
+
+	if err != variable.ErrUnknownStatusVar {
+		return "", errors.Trace(err)
+	}
+
+	sv, _ := sessionVars.StatusVars[name]
+
+	return sv, nil
+}
+
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.StatusVars {
@@ -433,16 +466,19 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			sv, ok := sessionVars.StatusVars[v.Name]
-			if ok {
-				value = sv
-			}
-		} else {
-			value, err = variable.GetGlobalVarAccessor(ctx).GetGlobalStatusVar(ctx, v.Name)
+			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
+		} else if v.Scope != variable.ScopeSession {
+			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			continue
 		}
+
 		row := &plan.Row{Data: []interface{}{v.Name, value}}
 		s.rows = append(s.rows, row)
 	}

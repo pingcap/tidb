@@ -213,9 +213,9 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	v, ok := ret["tc_log_page_size"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "0")
-	sessionVars.StatusVars["tc_log_page_size"] = "1024"
 	pln.Close()
 
+	sessionVars.StatusVars["tc_log_page_size"] = "1024"
 	pln.GlobalScope = false
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
@@ -225,6 +225,31 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	v, ok = ret["tc_log_page_size"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "1024")
+	pln.Close()
+
+	pln.Pattern = &expression.PatternLike{
+		Pattern: &expression.Value{
+			Val: "compression",
+		},
+	}
+	sessionVars.StatusVars["compression"] = "on"
+	pln.GlobalScope = true
+	ret = map[string]string{}
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 0)
+
+	pln.GlobalScope = false
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 1)
+	v, ok = ret["compression"]
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "on")
 	pln.Close()
 
 	pln.Pattern = nil
