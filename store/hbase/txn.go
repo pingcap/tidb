@@ -177,7 +177,6 @@ func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
 }
 
 func (txn *hbaseTxn) doCommit() error {
-	bColFamily, bQualifier := []byte(hbaseColFamily), []byte(hbaseQualifier)
 	err := txn.each(func(iter kv.Iterator) error {
 		var row, val []byte
 		row = make([]byte, len(iter.Key()))
@@ -194,7 +193,7 @@ func (txn *hbaseTxn) doCommit() error {
 			copy(row, iter.Key())
 			copy(val, iter.Value())
 			p := hbase.NewPut(row)
-			p.AddValue(bColFamily, bQualifier, val)
+			p.AddValue(hbaseColFamilyBytes, hbaseQualifierBytes, val)
 			txn.Txn.Put(txn.storeName, p)
 		}
 		return nil
