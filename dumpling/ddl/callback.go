@@ -21,8 +21,8 @@ type Callback interface {
 	OnChanged(err error) error
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)
-	// OnJobRunAfter is called after job is run.
-	OnJobRunAfter(job *model.Job)
+	// OnJobUpdated is called after the running job is updated.
+	OnJobUpdated(job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -39,7 +39,7 @@ func (c *BaseCallback) OnJobRunBefore(job *model.Job) {
 	// Nothing to do.
 }
 
-// OnJobRunAfter implements Callback.OnJobRunAfter interface.
-func (c *BaseCallback) OnJobRunAfter(job *model.Job) {
+// OnJobUpdated implements Callback.OnJobUpdated interface.
+func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 	// Nothing to do.
 }

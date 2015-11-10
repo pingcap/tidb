@@ -33,11 +33,11 @@ var _ = Suite(&testColumnSuite{})
 type testDDLCallback struct {
 	*BaseCallback
 
-	onJobAfterFunc func(*model.Job)
+	onJobUpdated func(*model.Job)
 }
 
-func (tc *testDDLCallback) OnJobRunAfter(job *model.Job) {
-	tc.onJobAfterFunc(job)
+func (tc *testDDLCallback) OnJobUpdated(job *model.Job) {
+	tc.onJobUpdated(job)
 }
 
 type testColumnSuite struct {
@@ -500,7 +500,7 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 	checkOK := false
 
 	tc := &testDDLCallback{}
-	tc.onJobAfterFunc = func(job *model.Job) {
+	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -566,7 +566,7 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 	checkOK := false
 
 	tc := &testDDLCallback{}
-	tc.onJobAfterFunc = func(job *model.Job) {
+	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
 			return
 		}
