@@ -79,19 +79,6 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 	return job
 }
 
-func RemoveRecord(ctx context.Context, t table.Table, h int64, data []interface{}) error {
-	if err := t.RemoveRowAllIndex(ctx, h, data); err != nil {
-		return err
-	}
-
-	// remove row
-	if err := t.RemoveRow(ctx, h); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (s *testIndexSuite) TestIndex(c *C) {
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
@@ -268,7 +255,7 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	err = RemoveRecord(ctx, t, handle, newUpdateRow)
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -354,7 +341,7 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	err = RemoveRecord(ctx, t, handle, newUpdateRow)
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -440,7 +427,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	err = RemoveRecord(ctx, t, handle, newUpdateRow)
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
