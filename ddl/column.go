@@ -366,9 +366,12 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 			}
 
 			backfillKey := t.RecordKey(handle, &column.Col{ColumnInfo: *columnInfo})
-			_, err = txn.Get(backfillKey)
+			backfillValue, err := txn.Get(backfillKey)
 			if err != nil && !kv.IsErrNotFound(err) {
 				return errors.Trace(err)
+			}
+			if backfillValue != nil {
+				return nil
 			}
 
 			value, _, err := tables.GetColDefaultValue(nil, columnInfo)
