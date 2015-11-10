@@ -101,11 +101,11 @@ var ErrNotCommitted = errors.New("this transaction is not committed")
 type Transaction interface {
 	// Get gets the value for key k from KV store.
 	Get(k Key) ([]byte, error)
-	// BatchGet gets a batch of values from KV store.
-	BatchGet(keys []Key) (map[string][]byte, error)
-	// RangeGet gets values in the range [start, end] from KV store. Maximum
-	// number of values is up to limit.
-	RangeGet(start, end Key, limit int) (map[string][]byte, error)
+	// BatchPrefetch fetches values from KV storage to cache for later use.
+	BatchPrefetch(keys []Key) error
+	// RangePrefetch fetches values in the range [start, end] from KV storage
+	// to cache for later use. Maximum number of values is up to limit.
+	RangePrefetch(start, end Key, limit int) error
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.

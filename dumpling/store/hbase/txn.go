@@ -103,16 +103,18 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-func (txn *hbaseTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
 	encodedKeys := make([]kv.Key, len(keys))
 	for i, k := range keys {
 		encodedKeys[i] = kv.EncodeKey(k)
 	}
-	return txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	_, err := txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	return err
 }
 
-func (txn *hbaseTxn) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
-	return txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+func (txn *hbaseTxn) RangePrefetch(start, end kv.Key, limit int) error {
+	_, err := txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+	return err
 }
 
 // GetInt64 get int64 which created by Inc method.
