@@ -60,7 +60,9 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		m[string(k)] = v
+		if len(v) > 0 {
+			m[string(k)] = v
+		}
 	}
 
 	values, err := c.snapshot.BatchGet(missKeys)
@@ -70,6 +72,11 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	for k, v := range values {
 		c.cache.Set([]byte(k), v)
 		m[k] = v
+	}
+	for _, k := range missKeys {
+		if _, ok := values[string(k)]; !ok {
+			c.cache.Set(k, nil)
+		}
 	}
 	return m, nil
 }
