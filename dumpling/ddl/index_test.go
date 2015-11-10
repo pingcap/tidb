@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -49,7 +48,9 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 func (s *testIndexSuite) TearDownSuite(c *C) {
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
-	s.store.Close()
+
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
@@ -130,7 +131,8 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c1_uni")
+	job = testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c1_uni")
+	testCheckJobDone(c, s.d, job, false)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	index1 := t.FindIndexByColName("c1")
@@ -142,9 +144,12 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
+
+	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	c.Assert(err, IsNil)
 }
 
-func testGetIndex(t table.Table, name string) *column.IndexedCol {
+func getIndex(t table.Table, name string) *column.IndexedCol {
 	for _, idx := range t.Indices() {
 		// only public index can be read.
 
@@ -155,153 +160,454 @@ func testGetIndex(t table.Table, name string) *column.IndexedCol {
 	return nil
 }
 
-func (s *testIndexSuite) TestIndexWait(c *C) {
-	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
-	defer d.close()
+func (s *testIndexSuite) testGetIndex(c *C, t table.Table, name string, isNil bool) {
+	index := t.FindIndexByColName(name)
+	if isNil {
+		c.Assert(index, IsNil)
+	} else {
+		c.Assert(index, NotNil)
+	}
+}
 
-	tblInfo := testTableInfo(c, d, "t", 3)
-	ctx := testNewContext(c, d)
-	defer ctx.FinishTxn(true)
+func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Table, handle int64, indexCol *column.IndexedCol, columnValues []interface{}, isExist bool) {
+	c.Assert(len(indexCol.Columns), Equals, len(columnValues))
 
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
+	exist, _, err := indexCol.X.Exist(txn, columnValues, handle)
+	c.Assert(err, IsNil)
+	c.Assert(exist, Equals, isExist)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+}
+
+func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	columnValues := make([]interface{}, len(indexCol.Columns))
+	for i, column := range indexCol.Columns {
+		columnValues[i] = row[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+}
+
+func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i := int64(0)
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+
+	columnValues := make([]interface{}, len(indexCol.Columns))
+	for i, column := range indexCol.Columns {
+		columnValues[i] = row[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, isDropped)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+
+	// Test update a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newUpdateRow := []interface{}{int64(44), int64(55), int64(66)}
+	touched := map[int]bool{0: true, 1: true, 2: true}
+	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
+	c.Assert(err, IsNil)
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newUpdateRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+
+	// Test remove a row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(1))
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+}
+
+func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i := int64(0)
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+
+	columnValues := make([]interface{}, len(indexCol.Columns))
+	for i, column := range indexCol.Columns {
+		columnValues[i] = row[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, isDropped)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
+
+	// Test update a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newUpdateRow := []interface{}{int64(44), int64(55), int64(66)}
+	touched := map[int]bool{0: true, 1: true, 2: true}
+	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
+	c.Assert(err, IsNil)
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newUpdateRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
+
+	// Test remove a row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(1))
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+}
+
+func (s *testIndexSuite) checkReorganizationIndex(c *C, d *ddl, tblInfo *model.TableInfo, indexCol *column.IndexedCol) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+}
+
+func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}) {
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i := int64(0)
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+
+	columnValues := make([]interface{}, len(indexCol.Columns))
+	for i, column := range indexCol.Columns {
+		columnValues[i] = row[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
+
+	// Test update a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newUpdateRow := []interface{}{int64(44), int64(55), int64(66)}
+	touched := map[int]bool{0: true, 1: true, 2: true}
+	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
+	c.Assert(err, IsNil)
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newUpdateRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
+
+	// Test remove a row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(1))
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
+}
+
+func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
+	ctx := testNewContext(c, d)
+
+	switch state {
+	case model.StateNone:
+		s.checkNoneIndex(c, ctx, d, tblInfo, handle, indexCol, row)
+	case model.StateDeleteOnly:
+		s.checkDeleteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
+	case model.StateWriteOnly:
+		s.checkWriteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
+	case model.StateReorganization:
+		s.checkReorganizationIndex(c, d, tblInfo, indexCol)
+	case model.StatePublic:
+		s.checkPublicIndex(c, ctx, d, tblInfo, handle, indexCol, row)
+	}
+}
+
+func (s *testIndexSuite) TestAddIndex(c *C) {
+	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	tblInfo := testTableInfo(c, d, "t", 3)
+	ctx := testNewContext(c, d)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	defer testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	var h int64
-	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	row := []interface{}{int64(1), int64(2), int64(3)}
+	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	ticker := time.NewTicker(d.lease)
-	done := make(chan *model.Job, 1)
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
 
-	ctx.FinishTxn(false)
-	go func() {
-		done <- testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
-	}()
+	checkOK := false
 
-	var exist bool
-LOOP:
-	for {
-		select {
-		case job := <-done:
-			testCheckJobDone(c, d, job, true)
-			break LOOP
-		case <-ticker.C:
-			d.close()
+	tc := &testDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
+		if checkOK {
+			return
+		}
 
-			t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-			index := testGetIndex(t, "c1")
-			if index == nil {
-				d.start()
-				continue
-			}
+		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		indexCol := getIndex(t, "c1")
+		if indexCol == nil {
+			return
+		}
 
-			err = t.RemoveRowAllIndex(ctx, h, []interface{}{1})
-			c.Assert(err, IsNil)
+		s.checkAddOrDropIndex(c, indexCol.State, d, tblInfo, handle, indexCol, row, false)
 
-			err = t.RemoveRow(ctx, h)
-			c.Assert(err, IsNil)
-
-			txn, err = ctx.GetTxn(true)
-			c.Assert(err, IsNil)
-
-			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
-			c.Assert(err, IsNil)
-			c.Assert(exist, IsFalse)
-
-			h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
-			c.Assert(err, IsNil)
-
-			txn, err = ctx.GetTxn(true)
-			c.Assert(err, IsNil)
-
-			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
-			c.Assert(err, IsNil)
-			switch index.State {
-			case model.StateDeleteOnly:
-				c.Assert(exist, IsFalse)
-			case model.StateNone:
-				c.Fatalf("can be none state")
-			default:
-				c.Assert(exist, IsTrue)
-			}
-
-			err = ctx.FinishTxn(false)
-			c.Assert(err, IsNil)
-
-			d.start()
+		if indexCol.State == model.StatePublic {
+			checkOK = true
 		}
 	}
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	c.Assert(t.FindIndexByColName("c1"), NotNil)
+	d.hook = tc
 
-	ctx.FinishTxn(false)
-	go func() {
-		done <- testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c1_uni")
-	}()
+	// Use local ddl for callback test.
+	s.d.close()
 
-LOOP1:
-	for {
-		select {
-		case job := <-done:
-			testCheckJobDone(c, d, job, false)
-			break LOOP1
-		case <-ticker.C:
-			d.close()
+	d.close()
+	d.start()
 
-			t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-			index := testGetIndex(t, "c1")
-			if index == nil {
-				d.start()
-				continue
-			}
+	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
+	testCheckJobDone(c, d, job, true)
 
-			err = t.RemoveRowAllIndex(ctx, h, []interface{}{1})
-			c.Assert(err, IsNil)
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
 
-			err = t.RemoveRow(ctx, h)
-			c.Assert(err, IsNil)
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
 
-			txn, err = ctx.GetTxn(true)
-			c.Assert(err, IsNil)
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
 
-			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
-			c.Assert(err, IsNil)
-			c.Assert(exist, IsFalse)
-
-			h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
-			c.Assert(err, IsNil)
-
-			txn, err = ctx.GetTxn(true)
-			c.Assert(err, IsNil)
-
-			exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
-			c.Assert(err, IsNil)
-			switch index.State {
-			case model.StateDeleteOnly:
-				c.Assert(exist, IsFalse)
-			case model.StateNone:
-				c.Fatalf("can be none state")
-			default:
-				c.Assert(exist, IsTrue)
-			}
-
-			err = ctx.FinishTxn(false)
-			c.Assert(err, IsNil)
-
-			d.start()
-		}
-	}
-
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	c.Assert(t.FindIndexByColName("c1"), IsNil)
+	d.close()
+	s.d.start()
 }
 
-func init() {
-	log.SetLevelByString("error")
+func (s *testIndexSuite) TestDropIndex(c *C) {
+	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	tblInfo := testTableInfo(c, d, "t", 3)
+	ctx := testNewContext(c, d)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	row := []interface{}{int64(1), int64(2), int64(3)}
+	handle, err := t.AddRecord(ctx, row)
+	c.Assert(err, IsNil)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	job := testCreateIndex(c, ctx, s.d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
+	testCheckJobDone(c, d, job, true)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	checkOK := false
+	oldIndexCol := &column.IndexedCol{}
+
+	tc := &testDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
+		if checkOK {
+			return
+		}
+
+		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		indexCol := getIndex(t, "c1")
+		if indexCol == nil {
+			s.checkAddOrDropIndex(c, model.StateNone, d, tblInfo, handle, oldIndexCol, row, true)
+			checkOK = true
+			return
+		}
+
+		s.checkAddOrDropIndex(c, indexCol.State, d, tblInfo, handle, indexCol, row, true)
+		oldIndexCol = indexCol
+	}
+
+	d.hook = tc
+
+	// Use local ddl for callback test.
+	s.d.close()
+
+	d.close()
+	d.start()
+
+	job = testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c1_uni")
+	testCheckJobDone(c, d, job, false)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	d.close()
+	s.d.start()
 }

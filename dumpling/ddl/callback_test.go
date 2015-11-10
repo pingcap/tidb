@@ -13,7 +13,35 @@
 
 package ddl
 
-import . "github.com/pingcap/check"
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/model"
+)
+
+type testDDLCallback struct {
+	*BaseCallback
+
+	onJobRunBefore func(*model.Job)
+	onJobUpdated   func(*model.Job)
+}
+
+func (tc *testDDLCallback) OnJobRunBefore(job *model.Job) {
+	if tc.onJobRunBefore != nil {
+		tc.onJobRunBefore(job)
+		return
+	}
+
+	tc.BaseCallback.OnJobRunBefore(job)
+}
+
+func (tc *testDDLCallback) OnJobUpdated(job *model.Job) {
+	if tc.onJobUpdated != nil {
+		tc.onJobUpdated(job)
+		return
+	}
+
+	tc.BaseCallback.OnJobUpdated(job)
+}
 
 func (s *testDDLSuite) TestCallback(c *C) {
 	cb := &BaseCallback{}

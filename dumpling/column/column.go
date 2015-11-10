@@ -57,10 +57,6 @@ func (c *Col) String() string {
 // FindCol finds column in cols by name.
 func FindCol(cols []*Col, name string) *Col {
 	for _, col := range cols {
-		if col.State != model.StatePublic {
-			continue
-		}
-
 		if strings.EqualFold(col.Name.O, name) {
 			return col
 		}
@@ -87,10 +83,6 @@ func FindCols(cols []*Col, names []string) ([]*Col, error) {
 func FindOnUpdateCols(cols []*Col) []*Col {
 	var rcols []*Col
 	for _, col := range cols {
-		if col.State != model.StatePublic {
-			continue
-		}
-
 		if mysql.HasOnUpdateNowFlag(col.Flag) {
 			rcols = append(rcols, col)
 		}
@@ -190,10 +182,6 @@ func ColDescFieldNames(full bool) []string {
 func CheckOnce(cols []*Col) error {
 	m := map[string]struct{}{}
 	for _, col := range cols {
-		if col.State != model.StatePublic {
-			continue
-		}
-
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {

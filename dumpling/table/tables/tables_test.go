@@ -88,9 +88,8 @@ func (ts *testSuite) TestBasic(c *C) {
 		return true, nil
 	})
 
-	c.Assert(tb.RemoveRowAllIndex(ctx, rid, []interface{}{1, "cba"}), IsNil)
+	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
 
-	c.Assert(tb.RemoveRow(ctx, rid), IsNil)
 	// Make sure there is index data in the storage.
 	prefix := tb.IndexPrefix()
 	cnt, err := countEntriesWithPrefix(ctx, prefix)
