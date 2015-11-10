@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
@@ -73,4 +74,8 @@ func (s *testDDLSuite) TestAlterSpecification(c *C) {
 	for _, spec := range tbl {
 		c.Assert(len(spec.String()), GreaterEqual, 0)
 	}
+}
+
+func init() {
+	log.SetLevelByString("error")
 }
