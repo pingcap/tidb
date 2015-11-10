@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -49,7 +48,9 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 func (s *testIndexSuite) TearDownSuite(c *C) {
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
-	s.store.Close()
+
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
@@ -130,7 +131,8 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c1_uni")
+	job = testDropIndex(c, ctx, s.d, s.dbInfo, tblInfo, "c1_uni")
+	testCheckJobDone(c, s.d, job, false)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
 	index1 := t.FindIndexByColName("c1")
@@ -142,6 +144,9 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
+
+	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	c.Assert(err, IsNil)
 }
 
 func testGetIndex(t table.Table, name string) *column.IndexedCol {
@@ -155,7 +160,88 @@ func testGetIndex(t table.Table, name string) *column.IndexedCol {
 	return nil
 }
 
-func (s *testIndexSuite) TestIndexWait(c *C) {
+func (s *testIndexSuite) checkAddIndex(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
+	// ctx := testNewContext(c, d)
+
+	switch state {
+	case model.StateNone:
+		// s.checkNoneIndex(c, ctx, d, tblInfo, handle, indexCol)
+	case model.StateDeleteOnly:
+		// s.checkDeleteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
+	case model.StateWriteOnly:
+		// s.checkWriteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
+	case model.StateReorganization:
+		// do nothing
+	case model.StatePublic:
+		// s.checkPublicIndex(c, ctx, d, tblInfo, handle, indexCol, row)
+	}
+}
+
+func (s *testIndexSuite) TestAddIndex(c *C) {
+	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	tblInfo := testTableInfo(c, d, "t", 3)
+	ctx := testNewContext(c, d)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	row := []interface{}{int64(1), int64(2), int64(3)}
+	handle, err := t.AddRecord(ctx, row)
+	c.Assert(err, IsNil)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	checkOK := false
+
+	tc := &testDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
+		if checkOK {
+			return
+		}
+
+		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		indexCol := testGetIndex(t, "c1")
+		if indexCol == nil {
+			return
+		}
+
+		s.checkAddIndex(c, indexCol.State, d, tblInfo, handle, indexCol, row, false)
+
+		if indexCol.State == model.StatePublic {
+			checkOK = true
+		}
+	}
+
+	d.hook = tc
+
+	// Use local ddl for callback test.
+	s.d.close()
+
+	d.close()
+	d.start()
+
+	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
+	testCheckJobDone(c, d, job, true)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	d.close()
+	s.d.start()
+}
+
+func (s *testIndexSuite) TestIndexState(c *C) {
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	defer d.close()
 
@@ -300,8 +386,4 @@ LOOP1:
 
 	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	c.Assert(t.FindIndexByColName("c1"), IsNil)
-}
-
-func init() {
-	log.SetLevelByString("error")
 }
