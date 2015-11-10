@@ -305,11 +305,11 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 }
 
 // How to backfill column data in reorganization state?
-//  1, Generate a snapshot with special version.
-//  2, Traverse the snapshot, get every row in the table.
-//  3, For one row, if the row has been already deleted, skip to next row.
-//  4, If not deleted, check whether column data has existed, if existed, skip to next row.
-//  5, If column data doesn't exist, backfill the column with default value and then continue to handle next row.
+//  1. Generate a snapshot with special version.
+//  2. Traverse the snapshot, get every row in the table.
+//  3. For one row, if the row has been already deleted, skip to next row.
+//  4. If not deleted, check whether column data has existed, if existed, skip to next row.
+//  5. If column data doesn't exist, backfill the column with default value and then continue to handle next row.
 func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
