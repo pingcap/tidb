@@ -18,23 +18,11 @@ import . "github.com/pingcap/check"
 var _ = Suite(&testUnionStoreSuite{})
 
 type testUnionStoreSuite struct {
-	k1, k2, k3, k4 []byte
-	v1, v2, v3, v4 []byte
-
 	store MemBuffer
 	us    UnionStore
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
-	s.k1 = []byte("k1")
-	s.k2 = []byte("k2")
-	s.k3 = []byte("k3")
-	s.k4 = []byte("k4")
-	s.v1 = []byte("1")
-	s.v2 = []byte("2")
-	s.v3 = []byte("3")
-	s.v4 = []byte("4")
-
 	s.store = NewMemDbBuffer()
 	s.us = NewUnionStore(&mockSnapshot{s.store})
 }
@@ -44,51 +32,51 @@ func (s *testUnionStoreSuite) TearDownTest(c *C) {
 }
 
 func (s *testUnionStoreSuite) TestGetSet(c *C) {
-	s.store.Set(s.k1, s.v1)
-	v, err := s.us.Get(s.k1)
+	s.store.Set([]byte("1"), []byte("1"))
+	v, err := s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v1)
-	s.us.Set(s.k1, s.v2)
-	v, err = s.us.Get(s.k1)
+	c.Assert(v, BytesEquals, []byte("1"))
+	s.us.Set([]byte("1"), []byte("2"))
+	v, err = s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v2)
+	c.Assert(v, BytesEquals, []byte("2"))
 }
 
 func (s *testUnionStoreSuite) TestDelete(c *C) {
-	s.store.Set(s.k1, s.v1)
-	err := s.us.Delete(s.k1)
+	s.store.Set([]byte("1"), []byte("1"))
+	err := s.us.Delete([]byte("1"))
 	c.Assert(err, IsNil)
-	_, err = s.us.Get(s.k1)
+	_, err = s.us.Get([]byte("1"))
 	c.Assert(IsErrNotFound(err), IsTrue)
 
-	s.us.Set(s.k1, s.v2)
-	v, err := s.us.Get(s.k1)
+	s.us.Set([]byte("1"), []byte("2"))
+	v, err := s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, s.v2)
+	c.Assert(v, BytesEquals, []byte("2"))
 }
 
 func (s *testUnionStoreSuite) TestSeek(c *C) {
-	s.store.Set(s.k1, s.v1)
-	s.store.Set(s.k2, s.v2)
-	s.store.Set(s.k3, s.v3)
+	s.store.Set([]byte("1"), []byte("1"))
+	s.store.Set([]byte("2"), []byte("2"))
+	s.store.Set([]byte("3"), []byte("3"))
 
 	iter, err := s.us.Seek(nil, nil)
 	c.Assert(err, IsNil)
-	checkIterator(c, iter, [][]byte{s.k1, s.k2, s.k3}, [][]byte{s.v1, s.v2, s.v3})
+	checkIterator(c, iter, [][]byte{[]byte("1"), []byte("2"), []byte("3")}, [][]byte{[]byte("1"), []byte("2"), []byte("3")})
 
-	iter, err = s.us.Seek(s.k2, nil)
+	iter, err = s.us.Seek([]byte("2"), nil)
 	c.Assert(err, IsNil)
-	checkIterator(c, iter, [][]byte{s.k2, s.k3}, [][]byte{s.v2, s.v3})
+	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("3")}, [][]byte{[]byte("2"), []byte("3")})
 
-	s.us.Set(s.k4, s.v4)
-	iter, err = s.us.Seek(s.k2, nil)
+	s.us.Set([]byte("4"), []byte("4"))
+	iter, err = s.us.Seek([]byte("2"), nil)
 	c.Assert(err, IsNil)
-	checkIterator(c, iter, [][]byte{s.k2, s.k3, s.k4}, [][]byte{s.v2, s.v3, s.v4})
+	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("3"), []byte("4")}, [][]byte{[]byte("2"), []byte("3"), []byte("4")})
 
-	s.us.Delete(s.k3)
-	iter, err = s.us.Seek(s.k2, nil)
+	s.us.Delete([]byte("3"))
+	iter, err = s.us.Seek([]byte("2"), nil)
 	c.Assert(err, IsNil)
-	checkIterator(c, iter, [][]byte{s.k2, s.k4}, [][]byte{s.v2, s.v4})
+	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
 }
 
 func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
