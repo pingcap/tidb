@@ -612,7 +612,11 @@ func convertDropIndex(converter *expressionConverter, v *ast.DropIndexStmt) (*st
 	return &stmts.DropIndexStmt{
 		IfExists:  v.IfExists,
 		IndexName: v.IndexName,
-		Text:      v.Text(),
+		TableIdent: table.Ident{
+			Schema: v.Table.Schema,
+			Name:   v.Table.Name,
+		},
+		Text: v.Text(),
 	}, nil
 }
 
