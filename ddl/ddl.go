@@ -82,10 +82,6 @@ type ddl struct {
 	// use a persistent job list.
 	reorgDoneCh chan error
 
-	// reorgHandle is used for adding data reorganization, after every batch,
-	// we will update for later job update.
-	reorgHandle int64
-
 	quitCh chan struct{}
 	wait   sync.WaitGroup
 }
