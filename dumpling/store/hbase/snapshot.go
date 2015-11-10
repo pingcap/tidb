@@ -34,7 +34,6 @@ const hbaseBatchSize = 1000
 type hbaseSnapshot struct {
 	txn       *themis.Txn
 	storeName string
-	cache     map[string][]byte
 }
 
 // newHBaseSnapshot creates a snapshot of an HBase store.
@@ -42,43 +41,26 @@ func newHbaseSnapshot(txn *themis.Txn, storeName string) *hbaseSnapshot {
 	return &hbaseSnapshot{
 		txn:       txn,
 		storeName: storeName,
-		cache:     make(map[string][]byte),
 	}
 }
 
-// Get gets the value for key k from snapshot. It internally uses a cache to
-// reduce RPC calls. If cache not hit, it uses a Scanner to query a batch of
-// data.
+// Get gets the value for key k from snapshot.
 func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
-	if b, ok := s.cache[string(k)]; ok {
-		return b, nil
+	g := hbase.NewGet([]byte(k))
+	g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
+	v, err := internalGet(s, g)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-
-	s.cache = make(map[string][]byte)
-	scanner := s.txn.GetScanner([]byte(s.storeName), k, nil, hbaseBatchSize)
-	for i := 0; i < hbaseBatchSize; i++ {
-		r := scanner.Next()
-		if r != nil && len(r.Columns) > 0 {
-			s.cache[string(r.Row)] = r.Columns[FmlAndQual].Value
-		} else {
-			break
-		}
-	}
-	scanner.Close()
-
-	if b, ok := s.cache[string(k)]; ok {
-		return b, nil
-	}
-	return nil, kv.ErrNotExist
+	return v, nil
 }
 
 // BatchGet implements kv.Snapshot.BatchGet().
 func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	gets := make([]*hbase.Get, len(keys))
-	bColFamily, bQualifier := []byte(ColFamily), []byte(Qualifier)
 	for i, key := range keys {
 		g := hbase.NewGet(key)
-		g.AddColumn(bColFamily, bQualifier)
+		g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
 		gets[i] = g
 	}
 	rows, err := s.txn.BatchGet(s.storeName, gets)
@@ -86,12 +68,11 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	m := make(map[string][]byte)
+	m := make(map[string][]byte, len(rows))
 	for _, r := range rows {
 		k := string(r.Row)
-		v := r.Columns[FmlAndQual].Value
+		v := r.Columns[hbaseFmlAndQual].Value
 		m[k] = v
-		s.cache[k] = v
 	}
 	return m, nil
 }
@@ -107,9 +88,8 @@ func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byt
 		r := scanner.Next()
 		if r != nil && len(r.Columns) > 0 {
 			k := string(r.Row)
-			v := r.Columns[FmlAndQual].Value
+			v := r.Columns[hbaseFmlAndQual].Value
 			m[k] = v
-			s.cache[k] = v
 		} else {
 			break
 		}
@@ -122,7 +102,7 @@ func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byt
 // exist, returns the nearest(lower) version's data.
 func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	g := hbase.NewGet([]byte(k))
-	g.AddColumn([]byte(ColFamily), []byte(Qualifier))
+	g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
 	g.TsRangeFrom = 0
 	g.TsRangeTo = ver.Ver + 1
 	v, err := internalGet(s, g)
@@ -138,9 +118,9 @@ func internalGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	if r == nil || len(r.Columns) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, errors.Trace(kv.ErrNotExist)
 	}
-	return r.Columns[FmlAndQual].Value, nil
+	return r.Columns[hbaseFmlAndQual].Value, nil
 }
 
 func (s *hbaseSnapshot) NewIterator(param interface{}) kv.Iterator {
@@ -184,18 +164,22 @@ func (s *hbaseSnapshot) MvccRelease() {
 
 type hbaseIter struct {
 	*themis.ThemisScanner
-	rs    *hbase.ResultRow
-	valid bool
+	rs *hbase.ResultRow
 }
 
 func (it *hbaseIter) Next() error {
 	it.rs = it.ThemisScanner.Next()
-	it.valid = it.rs != nil && len(it.rs.Columns) > 0 && !it.ThemisScanner.Closed()
 	return nil
 }
 
 func (it *hbaseIter) Valid() bool {
-	return it.valid
+	if it.rs == nil || len(it.rs.Columns) == 0 {
+		return false
+	}
+	if it.ThemisScanner.Closed() {
+		return false
+	}
+	return true
 }
 
 func (it *hbaseIter) Key() string {
@@ -203,7 +187,7 @@ func (it *hbaseIter) Key() string {
 }
 
 func (it *hbaseIter) Value() []byte {
-	return it.rs.Columns[FmlAndQual].Value
+	return it.rs.Columns[hbaseFmlAndQual].Value
 }
 
 func (it *hbaseIter) Close() {
