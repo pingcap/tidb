@@ -121,16 +121,18 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-func (txn *dbTxn) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+func (txn *dbTxn) BatchPrefetch(keys []kv.Key) error {
 	encodedKeys := make([]kv.Key, len(keys))
 	for i, k := range keys {
 		encodedKeys[i] = kv.EncodeKey(k)
 	}
-	return txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	_, err := txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	return err
 }
 
-func (txn *dbTxn) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
-	return txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+func (txn *dbTxn) RangePrefetch(start, end kv.Key, limit int) error {
+	_, err := txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+	return err
 }
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
