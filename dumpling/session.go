@@ -274,7 +274,7 @@ func (s *session) getGlobalVar(ctx context.Context, name, sql string) (string, e
 		return "", errors.Trace(err)
 	}
 	if row == nil {
-		return "", fmt.Errorf("Unknown sys var: %s", name)
+		return "", errors.Errorf("Unknown sys var: %s", name)
 	}
 	value, err := types.ToString(row.Data[0])
 	if err != nil {
@@ -288,7 +288,7 @@ func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 	// TODO: get global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return "", nil
+		return "", errors.Errorf("Unknown status var :%s", name)
 	}
 
 	return v.Value, nil
@@ -299,7 +299,7 @@ func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value str
 	// TODO: set global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return fmt.Errorf("Unknown status var: %s", name)
+		return errors.Errorf("Unknown status var :%s", name)
 	}
 	v.Value = value
 
