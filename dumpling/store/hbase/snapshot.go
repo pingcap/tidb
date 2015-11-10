@@ -47,7 +47,7 @@ func newHbaseSnapshot(txn *themis.Txn, storeName string) *hbaseSnapshot {
 // Get gets the value for key k from snapshot.
 func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	g := hbase.NewGet([]byte(k))
-	g.AddColumn([]byte(hbaseColFamily), []byte(hbaseQualifier))
+	g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
 	v, err := internalGet(s, g)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -58,10 +58,9 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 // BatchGet implements kv.Snapshot.BatchGet().
 func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	gets := make([]*hbase.Get, len(keys))
-	bColFamily, bQualifier := []byte(hbaseColFamily), []byte(hbaseQualifier)
 	for i, key := range keys {
 		g := hbase.NewGet(key)
-		g.AddColumn(bColFamily, bQualifier)
+		g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
 		gets[i] = g
 	}
 	rows, err := s.txn.BatchGet(s.storeName, gets)
@@ -69,7 +68,7 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	m := make(map[string][]byte)
+	m := make(map[string][]byte, len(rows))
 	for _, r := range rows {
 		k := string(r.Row)
 		v := r.Columns[hbaseFmlAndQual].Value
@@ -103,7 +102,7 @@ func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byt
 // exist, returns the nearest(lower) version's data.
 func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	g := hbase.NewGet([]byte(k))
-	g.AddColumn([]byte(hbaseColFamily), []byte(hbaseQualifier))
+	g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
 	g.TsRangeFrom = 0
 	g.TsRangeTo = ver.Ver + 1
 	v, err := internalGet(s, g)
@@ -119,7 +118,7 @@ func internalGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	if r == nil || len(r.Columns) == 0 {
-		return nil, kv.ErrNotExist
+		return nil, errors.Trace(kv.ErrNotExist)
 	}
 	return r.Columns[hbaseFmlAndQual].Value, nil
 }

@@ -35,6 +35,11 @@ const (
 )
 
 var (
+	hbaseColFamilyBytes = []byte(hbaseColFamily)
+	hbaseQualifierBytes = []byte(hbaseQualifier)
+)
+
+var (
 	_ kv.Storage = (*hbaseStore)(nil)
 )
 
