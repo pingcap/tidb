@@ -332,11 +332,11 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 const maxBatchSize = 1024
 
 // How to add index in reorganization state?
-//  1, Generate a snapshot with special version.
-//  2, Traverse the snapshot, get every row in the table.
-//  3, For one row, if the row has been already deleted, skip to next row.
-//  4, If not deleted, check whether index has existed, if existed, skip to next row.
-//  5, If index doesn't exist, create the index and then continue to handle next row.
+//  1. Generate a snapshot with special version.
+//  2. Traverse the snapshot, get every row in the table.
+//  3. For one row, if the row has been already deleted, skip to next row.
+//  4. If not deleted, check whether index has existed, if existed, skip to next row.
+//  5. If index doesn't exist, create the index and then continue to handle next row.
 func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	seekHandle := reorgInfo.Handle
 	version := reorgInfo.SnapshotVer
