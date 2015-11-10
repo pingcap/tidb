@@ -33,11 +33,11 @@ var _ = Suite(&testColumnSuite{})
 type testDDLCallback struct {
 	*BaseCallback
 
-	onJobAfterFunc func(*model.Job)
+	onJobUpdated func(*model.Job)
 }
 
-func (tc *testDDLCallback) OnJobRunAfter(job *model.Job) {
-	tc.onJobAfterFunc(job)
+func (tc *testDDLCallback) OnJobUpdated(job *model.Job) {
+	tc.onJobUpdated(job)
 }
 
 type testColumnSuite struct {
@@ -500,7 +500,7 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 	checkOK := false
 
 	tc := &testDDLCallback{}
-	tc.onJobAfterFunc = func(job *model.Job) {
+	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -511,7 +511,9 @@ func (s *testIndexSuite) TestAddColumn(c *C) {
 			return
 		}
 
-		s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, false)
+		ctx1 := testNewContext(c, d)
+		s.checkAddOrDropColumn(c, col.State, ctx1, d, tblInfo, handle, col, row, defaultColValue, false)
+		ctx.FinishTxn(false)
 		if col.State == model.StatePublic {
 			checkOK = true
 		}
@@ -564,7 +566,7 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 	checkOK := false
 
 	tc := &testDDLCallback{}
-	tc.onJobAfterFunc = func(job *model.Job) {
+	tc.onJobUpdated = func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -572,10 +574,13 @@ func (s *testIndexSuite) TestDropColumn(c *C) {
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
 		col := testGetColumn(t, colName)
 		if col == nil {
+			checkOK = true
 			return
 		}
 
-		s.checkAddOrDropColumn(c, col.State, ctx, d, tblInfo, handle, col, row, defaultColValue, true)
+		ctx1 := testNewContext(c, d)
+		s.checkAddOrDropColumn(c, col.State, ctx1, d, tblInfo, handle, col, row, defaultColValue, true)
+		ctx.FinishTxn(false)
 
 		if col.State == model.StateNone {
 			checkOK = true
