@@ -41,14 +41,8 @@ type Table interface {
 	// Row returns a row for all columns.
 	Row(ctx context.Context, h int64) ([]interface{}, error)
 
-	// RemoveRow removes the row of handle h.
-	RemoveRow(ctx context.Context, h int64) error
-
 	// RemoveRowIndex removes an index of a row.
 	RemoveRowIndex(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error
-
-	// RemoveRowAllIndex removes all the indices of a row.
-	RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{}) error
 
 	// BuildIndexForRow builds an index for a row.
 	BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error
@@ -88,6 +82,9 @@ type Table interface {
 
 	// UpdateRecord updates a row in the table.
 	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched []bool) error
+
+	// RemoveRecord removes a row in the table.
+	RemoveRecord(ctx context.Context, h int64, r []interface{}) error
 
 	// TableID returns the ID of the table.
 	TableID() int64
