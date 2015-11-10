@@ -159,11 +159,6 @@ func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	err = t.RemoveDDLReorgHandle(job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }

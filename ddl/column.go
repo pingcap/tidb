@@ -315,7 +315,7 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return nil
+			return errors.Trace(reorgInfo.RemoveHandle())
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
@@ -385,7 +385,7 @@ func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInf
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return nil
+			return errors.Trace(reorgInfo.RemoveHandle())
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
