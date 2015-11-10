@@ -451,7 +451,8 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 		}()
 	}
 	wg.Wait()
-	c.Assert(success, Greater, int64(1))
+	// At least one txn can success.
+	c.Assert(success, Greater, int64(0))
 
 	// Clean up
 	txn, err := s.s.Begin()
