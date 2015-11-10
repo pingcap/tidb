@@ -22,9 +22,10 @@ import (
 
 func (d *ddl) Stat() (map[string]interface{}, error) {
 	var (
-		owner     *model.Owner
-		job       *model.Job
-		schemaVer int64
+		owner       *model.Owner
+		job         *model.Job
+		schemaVer   int64
+		reorgHandle int64
 	)
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -42,6 +43,13 @@ func (d *ddl) Stat() (map[string]interface{}, error) {
 		schemaVer, err = t.GetSchemaVersion()
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		if job != nil {
+			reorgHandle, err = t.GetDDLReorgHandle(job)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		return nil
@@ -71,7 +79,7 @@ func (d *ddl) Stat() (map[string]interface{}, error) {
 		m["ddl_job_schema_id"] = job.SchemaID
 		m["ddl_job_table_id"] = job.TableID
 		m["ddl_job_snapshot_ver"] = job.SnapshotVer
-		m["ddl_job_reorg_handle"] = job.ReorgHandle
+		m["ddl_job_reorg_handle"] = reorgHandle
 		m["ddl_job_args"] = job.Args
 	}
 
