@@ -153,8 +153,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	case model.StateReorganization:
 		// reorganization -> public
 		// get the current version for reorganization if we don't have
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
+		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -262,8 +261,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateReorganization:
 		// reorganization -> absent
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
+		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil {
 			return errors.Trace(err)
 		}

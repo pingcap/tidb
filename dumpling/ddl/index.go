@@ -163,8 +163,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateReorganization:
 		// reorganization -> public
-		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
+		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil {
 			return errors.Trace(err)
 		}
