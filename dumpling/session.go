@@ -276,7 +276,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	if row == nil {
-		return "", errors.New("result is empty")
+		return "", terror.ExecResultIsEmpty
 	}
 	value, err := types.ToString(row.Data[0])
 	if err != nil {
@@ -290,8 +290,7 @@ func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 	// TODO: get global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		log.Errorf("get global status var %s is err:%v", name, variable.ErrUnknownStatusVar)
-		return "", variable.ErrUnknownStatusVar
+		return "", terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
 	}
 
 	return v.Value, nil
@@ -302,8 +301,7 @@ func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value str
 	// TODO: set global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		log.Errorf("set global status var %s is err:%v", name, variable.ErrUnknownStatusVar)
-		return variable.ErrUnknownStatusVar
+		return terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
 	}
 	v.Value = value
 
@@ -315,7 +313,9 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(ctx, sql)
 	if err != nil {
-		log.Errorf("get global sys var %s is err:%v", name, err)
+		if terror.ExecResultIsEmpty.Equal(err) {
+			return "", terror.ExecResultIsEmpty.Gen("unknown sys variable:%s", name)
+		}
 		return "", errors.Trace(err)
 	}
 

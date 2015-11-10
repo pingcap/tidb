@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -414,7 +415,7 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	}
 
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
-	if err != nil && err != variable.ErrUnknownStatusVar {
+	if err != nil && terror.UnknownStatusVar.Equal(err) {
 		return "", errors.Trace(err)
 	}
 
@@ -429,7 +430,7 @@ func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 		return value, nil
 	}
 
-	if err != variable.ErrUnknownStatusVar {
+	if terror.UnknownStatusVar.Equal(err) {
 		return "", errors.Trace(err)
 	}
 
