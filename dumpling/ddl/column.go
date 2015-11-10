@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	"sync/atomic"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
@@ -150,22 +148,14 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		columnInfo.State = model.StateReorganization
 		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		// initialize reorg handle to 0
-		job.ReorgHandle = 0
-		atomic.StoreInt64(&d.reorgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorganization:
 		// reorganization -> public
 		// get the current version for reorganization if we don't have
-		if job.SnapshotVer == 0 {
-			var ver kv.Version
-			ver, err = d.store.CurrentVersion()
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			job.SnapshotVer = ver.Ver
+		reorgInfo, err := d.getReorgInfo(t, job)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		tbl, err := d.getTable(t, schemaID, tblInfo)
@@ -174,12 +164,8 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.backfillColumn(tbl, columnInfo, job.SnapshotVer, job.ReorgHandle)
+			return d.backfillColumn(tbl, columnInfo, reorgInfo)
 		})
-
-		// backfillColumn updates ReorgHandle after one batch.
-		// so we update the job ReorgHandle here.
-		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -271,22 +257,13 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		colInfo.State = model.StateReorganization
 		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		// initialize reorg handle to 0
-		job.ReorgHandle = 0
-		atomic.StoreInt64(&d.reorgHandle, 0)
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
 	case model.StateReorganization:
 		// reorganization -> absent
-		// get the current version for reorganization if we don't have
-		if job.SnapshotVer == 0 {
-			var ver kv.Version
-			ver, err = d.store.CurrentVersion()
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			job.SnapshotVer = ver.Ver
+		reorgInfo, err := d.getReorgInfo(t, job)
+		if err != nil {
+			return errors.Trace(err)
 		}
 
 		tbl, err := d.getTable(t, schemaID, tblInfo)
@@ -295,10 +272,8 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		}
 
 		err = d.runReorgJob(func() error {
-			return d.dropTableColumn(tbl, colInfo, job.SnapshotVer, job.ReorgHandle)
+			return d.dropTableColumn(tbl, colInfo, reorgInfo)
 		})
-
-		job.ReorgHandle = atomic.LoadInt64(&d.reorgHandle)
 
 		if terror.ErrorEqual(err, errWaitReorgTimeout) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -335,29 +310,29 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 //  3, For one row, if the row has been already deleted, skip to next row.
 //  4, If not deleted, check whether column data has existed, if existed, skip to next row.
 //  5, If column data doesn't exist, backfill the column with default value and then continue to handle next row.
-func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, version uint64, seekHandle int64) error {
+func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+	seekHandle := reorgInfo.Handle
+	version := reorgInfo.SnapshotVer
+
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return nil
+			return errors.Trace(reorgInfo.RemoveHandle())
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
 		// TODO: save seekHandle in reorganization job, so we can resume this job later from this handle.
 
-		err = d.backfillColumnData(t, columnInfo, handles)
+		err = d.backfillColumnData(t, columnInfo, handles, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// update reorgHandle here after every successful batch.
-		atomic.StoreInt64(&d.reorgHandle, seekHandle)
 	}
 }
 
-func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64) error {
+func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, handles []int64, reorgInfo *reorgInfo) error {
 	for _, handle := range handles {
 		log.Info("backfill column...", handle)
 
@@ -396,7 +371,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			return nil
+			return errors.Trace(reorgInfo.UpdateHandle(txn, handle))
 		})
 
 		if err != nil {
@@ -407,33 +382,34 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 	return nil
 }
 
-func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, version uint64, seekHandle int64) error {
+func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+	version := reorgInfo.SnapshotVer
+	seekHandle := reorgInfo.Handle
+
 	col := &column.Col{ColumnInfo: *colInfo}
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return nil
+			return errors.Trace(reorgInfo.RemoveHandle())
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
 
 		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			for _, h := range handles {
+			var h int64
+			for _, h = range handles {
 				key := t.RecordKey(h, col)
 				err := txn.Delete(key)
 				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 					return errors.Trace(err)
 				}
 			}
-			return nil
+			return errors.Trace(reorgInfo.UpdateHandle(txn, h))
 		})
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// update reorgHandle here after every successful batch.
-		atomic.StoreInt64(&d.reorgHandle, seekHandle)
 	}
 }

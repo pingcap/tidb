@@ -21,6 +21,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/model"
 )
 
 var _ context.Context = &reorgContext{}
@@ -165,4 +167,56 @@ func (d *ddl) delKeysWithPrefix(prefix string) error {
 			return nil
 		}
 	}
+}
+
+type reorgInfo struct {
+	*model.Job
+	Handle int64
+	d      *ddl
+}
+
+func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
+	var err error
+
+	info := &reorgInfo{
+		Job: job,
+		d:   d,
+	}
+
+	if job.SnapshotVer == 0 {
+		// get the current version for reorganization if we don't have
+		var ver kv.Version
+		ver, err = d.store.CurrentVersion()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		job.SnapshotVer = ver.Ver
+	} else {
+		info.Handle, err = t.GetDDLReorgHandle(job)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if info.Handle > 0 {
+		// we have already handled this handle, so use next
+		info.Handle++
+	}
+
+	return info, errors.Trace(err)
+}
+
+func (r *reorgInfo) UpdateHandle(txn kv.Transaction, handle int64) error {
+	t := meta.NewMeta(txn)
+	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, handle))
+}
+
+func (r *reorgInfo) RemoveHandle() error {
+	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := t.RemoveDDLReorgHandle(r.Job)
+		return errors.Trace(err)
+	})
+	return errors.Trace(err)
 }
