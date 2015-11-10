@@ -269,6 +269,7 @@ import (
 	weekofyear	"WEEKOFYEAR"
 	when		"WHEN"
 	where		"WHERE"
+	write		"WRITE"
 	xor 		"XOR"
 	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
@@ -4405,6 +4406,7 @@ TableLock:
 LockType:
 	"READ"
 |	"READ" "LOCAL"
+|	"WRITE"
 
 TableLockList:
 	TableLock

@@ -465,6 +465,7 @@ weekday		{w}{e}{e}{k}{d}{a}{y}
 weekofyear	{w}{e}{e}{k}{o}{f}{y}{e}{a}{r}
 where		{w}{h}{e}{r}{e}
 when		{w}{h}{e}{n}
+write		{w}{r}{i}{t}{e}
 xor		{x}{o}{r}
 yearweek	{y}{e}{a}{r}{w}{e}{e}{k}
 
@@ -929,6 +930,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return weekofyear
 {when}			return when
 {where}			return where
+{write}			return write
 {xor}			return xor
 {yearweek}		lval.item = string(l.val)
 			return yearweek
