@@ -31,6 +31,7 @@ var (
 	ExecResultIsEmpty        = ClassExecutor.New(CodeExecResultIsEmpty, "exec result is empty")
 
 	UnknownStatusVar = ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -59,6 +60,7 @@ const (
 // Variable error codes.
 const (
 	CodeUnknownStatusVar ErrCode = iota + 1
+	CodeUnknownSystemVar
 )
 
 // ErrClass represents a class of errors.
