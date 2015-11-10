@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -69,7 +70,7 @@ func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return fmt.Errorf("Unknown status var: %s", name)
+		return terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
 	}
 	v.Value = value
 	return nil
@@ -88,7 +89,7 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return fmt.Errorf("Unknown sys var: %s", name)
+		return terror.UnknownStatusVar.Gen("unknown sys variable: %s", name)
 	}
 	v.Value = value
 	return nil
