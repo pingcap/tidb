@@ -574,12 +574,16 @@ const (
 	CollationConnection = "collation_connection"
 )
 
-// GlobalSysVarAccessor is the interface for accessing global scope system variables.
-type GlobalSysVarAccessor interface {
+// GlobalVarAccessor is the interface for accessing global scope system and status variables.
+type GlobalVarAccessor interface {
 	// GetGlobalSysVar gets the global system variable value for name.
 	GetGlobalSysVar(ctx context.Context, name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
+	// GetGlobalStatusVar gets the global status variable value for name.
+	GetGlobalStatusVar(ctx context.Context, name string) (string, error)
+	// SetGlobalStatusVar sets the global status variable name to value.
+	SetGlobalStatusVar(ctx context.Context, name string, value string) error
 }
 
 // globalSysVarAccessorKeyType is a dummy type to avoid naming collision in context.
@@ -592,14 +596,14 @@ func (k globalSysVarAccessorKeyType) String() string {
 
 const accessorKey globalSysVarAccessorKeyType = 0
 
-// BindGlobalSysVarAccessor binds global sysvar accessor to context.
-func BindGlobalSysVarAccessor(ctx context.Context, accessor GlobalSysVarAccessor) {
+// BindGlobalVarAccessor binds global var accessor to context.
+func BindGlobalVarAccessor(ctx context.Context, accessor GlobalVarAccessor) {
 	ctx.SetValue(accessorKey, accessor)
 }
 
-// GetGlobalSysVarAccessor gets accessor from ctx.
-func GetGlobalSysVarAccessor(ctx context.Context) GlobalSysVarAccessor {
-	v, ok := ctx.Value(accessorKey).(GlobalSysVarAccessor)
+// GetGlobalVarAccessor gets accessor from ctx.
+func GetGlobalVarAccessor(ctx context.Context) GlobalVarAccessor {
+	v, ok := ctx.Value(accessorKey).(GlobalVarAccessor)
 	if !ok {
 		panic("Miss global sysvar accessor")
 	}
