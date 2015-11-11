@@ -218,7 +218,10 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		err = ctx.FinishTxn(false)
 		// We should retry for autocommit
 		if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
-			return nil, ctx.(Session).Retry()
+			se, ok := ctx.(Session)
+			if ok {
+				return nil, se.Retry()
+			}
 		}
 	}
 	return rs, errors.Trace(err)
