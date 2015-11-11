@@ -30,7 +30,7 @@ func (s *testVariableSuite) SetUpSuite(c *C) {
 	nc := mock.NewContext()
 	s.ctx = nc
 	variable.BindSessionVars(s.ctx)
-	variable.BindGlobalSysVarAccessor(s.ctx, nc)
+	variable.BindGlobalVarAccessor(s.ctx, nc)
 }
 
 func (s *testVariableSuite) TestVariable(c *C) {

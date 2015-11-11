@@ -56,6 +56,7 @@ const (
 	ShowWarnings
 	ShowCharset
 	ShowVariables
+	ShowStatus
 	ShowCollation
 	ShowCreateTable
 	ShowGrants
