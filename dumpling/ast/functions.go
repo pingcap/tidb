@@ -338,26 +338,39 @@ func (n *FuncTrimExpr) IsStatic() bool {
 	return n.Str.IsStatic() && n.RemStr.IsStatic()
 }
 
-// DateArithType is type for DateArith option.
+// DateArithType is type for DateArith type.
 type DateArithType byte
 
 const (
-	// DateAdd is to run date_add function option.
+	// DateAdd is to run adddate or date_add function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
 	DateAdd DateArithType = iota + 1
-	// DateSub is to run date_sub function option.
+	// DateSub is to run subdate or date_sub function option.
+	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
+	// DateArithDaysForm is to run adddate or subdate function with days form Flag.
+	DateArithDaysForm
 )
+
+// DateArithInterval is the struct of DateArith interval part.
+type DateArithInterval struct {
+	// Form is the flag of DateArith running form.
+	// The function runs with interval or days.
+	Form     DateArithType
+	Unit     string
+	Interval ExprNode
+}
 
 // FuncDateArithExpr is the struct for date arithmetic functions.
 type FuncDateArithExpr struct {
 	funcNode
 
-	Op       DateArithType
-	Unit     string
-	Date     ExprNode
-	Interval ExprNode
+	// Op is used for distinguishing date_add and date_sub.
+	Op   DateArithType
+	Date ExprNode
+	DateArithInterval
 }
 
 // Accept implements Node Accept interface.
@@ -375,11 +388,11 @@ func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
 		n.Date = node.(ExprNode)
 	}
 	if n.Interval != nil {
-		node, ok := n.Date.Accept(v)
+		node, ok := n.Interval.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Date = node.(ExprNode)
+		n.Interval = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
