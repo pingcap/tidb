@@ -39,7 +39,7 @@ Read the [Roadmap](./ROADMAP.md).
 #### Run tidb with docker
 
 You can quickly test tidb with docker, the source repository contains Dockerfile,
-You can build docker and then run an docker container with tidb
+You can build docker and then run a docker container with tidb.
 To install docker on your system, you can read the document on https://docs.docker.com/
 
 
@@ -51,9 +51,9 @@ docker images
 docker run -d -p 4000:4000 --name tidb-server tidb-server
 ```
 Then you can connect 127.0.0.1:4000 by mysql client or telnet.
-The tidb is ready for serve.
+The tidb is ready for serving.
 
-Please do not just put this on production environment, you need write your own configure replace the default configure.
+Please do not just put this on production environment, you need to write your own config to replace the default config.
 
 #### __Pre-requirement__
 
