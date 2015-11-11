@@ -192,7 +192,22 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
-	values, err = t.RowWithCols(ctx, h, t.Cols())
+	cols := t.Cols()
+	c.Assert(cols, HasLen, 6)
+	c.Assert(cols[0].Offset, Equals, 0)
+	c.Assert(cols[0].Name.L, Equals, "c6")
+	c.Assert(cols[1].Offset, Equals, 1)
+	c.Assert(cols[1].Name.L, Equals, "c1")
+	c.Assert(cols[2].Offset, Equals, 2)
+	c.Assert(cols[2].Name.L, Equals, "c2")
+	c.Assert(cols[3].Offset, Equals, 3)
+	c.Assert(cols[3].Name.L, Equals, "c3")
+	c.Assert(cols[4].Offset, Equals, 4)
+	c.Assert(cols[4].Name.L, Equals, "c4")
+	c.Assert(cols[5].Offset, Equals, 5)
+	c.Assert(cols[5].Name.L, Equals, "c5")
+
+	values, err = t.RowWithCols(ctx, h, cols)
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 6)
