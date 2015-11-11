@@ -275,7 +275,7 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 func (s *testColumnSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, columnValue interface{}) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
-	s.testGetColumn(c, t, col.Name.L, true)
+	s.testGetColumn(c, t, col.Name.L, false)
 }
 
 func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
@@ -336,7 +336,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	c.Assert(i, Equals, int64(1))
 
 	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
-	s.testGetColumn(c, t, col.Name.L, true)
+	s.testGetColumn(c, t, col.Name.L, false)
 }
 
 func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
@@ -397,12 +397,68 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	c.Assert(i, Equals, int64(1))
 
 	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
-	s.testGetColumn(c, t, col.Name.L, true)
+	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(c *C, d *ddl, tblInfo *model.TableInfo, col *column.Col) {
+func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	s.testGetColumn(c, t, col.Name.L, true)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i := int64(0)
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, isDropped)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, !isDropped)
+
+	// Test remove a row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	err = t.RemoveRecord(ctx, handle, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(1))
+
+	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
+	s.testGetColumn(c, t, col.Name.L, false)
 }
 
 func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}) {
@@ -462,7 +518,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 
 	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
-	s.testGetColumn(c, t, col.Name.L, false)
+	s.testGetColumn(c, t, col.Name.L, true)
 }
 
 func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
@@ -475,10 +531,8 @@ func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d 
 		s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
 	case model.StateWriteOnly:
 		s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
-	case model.StateWriteReorganization:
-		s.checkReorganizationColumn(c, d, tblInfo, col)
-	case model.StateDeleteReorganization:
-		s.checkReorganizationColumn(c, d, tblInfo, col)
+	case model.StateWriteReorganization, model.StateDeleteReorganization:
+		s.checkReorganizationColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
 	case model.StatePublic:
 		s.checkPublicColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
 	}
@@ -494,12 +548,12 @@ func getColumn(name string, cols []*column.Col) *column.Col {
 	return nil
 }
 
-func (s *testColumnSuite) testGetColumn(c *C, t table.Table, name string, isNil bool) {
+func (s *testColumnSuite) testGetColumn(c *C, t table.Table, name string, isExist bool) {
 	col := getColumn(name, t.Cols())
-	if isNil {
-		c.Assert(col, IsNil)
-	} else {
+	if isExist {
 		c.Assert(col, NotNil)
+	} else {
+		c.Assert(col, IsNil)
 	}
 }
 
