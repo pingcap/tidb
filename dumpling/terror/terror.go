@@ -28,6 +28,10 @@ var (
 
 	CommitNotInTransaction   = ClassExecutor.New(CodeCommitNotInTransaction, "commit not in transaction")
 	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
+	ExecResultIsEmpty        = ClassExecutor.New(CodeExecResultIsEmpty, "exec result is empty")
+
+	UnknownStatusVar = ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -44,12 +48,19 @@ const (
 const (
 	CodeCommitNotInTransaction ErrCode = iota + 1
 	CodeRollbackNotInTransaction
+	CodeExecResultIsEmpty
 )
 
 // KV error codes.
 const (
 	CodeIncompatibleDBFormat ErrCode = iota + 1
 	CodeNoDataForHandle
+)
+
+// Variable error codes.
+const (
+	CodeUnknownStatusVar ErrCode = iota + 1
+	CodeUnknownSystemVar
 )
 
 // ErrClass represents a class of errors.
@@ -63,6 +74,7 @@ const (
 	ClassExecutor
 	ClassKV
 	ClassServer
+	ClassVariable
 	// Add more as needed.
 )
 
