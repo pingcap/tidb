@@ -28,10 +28,10 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
@@ -131,8 +131,8 @@ func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
 	rawStmt := l.Stmts()
 	stmts := make([]stmt.Statement, len(rawStmt))
 	for i, v := range rawStmt {
-		compiler := &optimizer.Compiler{}
-		stm, err := compiler.Compile(v)
+		compiler := &executor.Compiler{}
+		stm, err := compiler.Compile(ctx, v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -158,8 +158,8 @@ func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*express
 		return nil, nil, nil
 	}
 	sm := sms[0]
-	compiler := &optimizer.Compiler{}
-	statement, err := compiler.Compile(sm)
+	compiler := &executor.Compiler{}
+	statement, err := compiler.Compile(ctx, sm)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

@@ -11,38 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package converter
 
 import (
-	"sort"
-
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/stmt"
+	"sort"
 )
 
-// Compiler compiles ast.Node into an executable statement.
-type Compiler struct {
+// Converter converts ast.Node into an old stmt.Statement.
+type Converter struct {
 	converter *expressionConverter
 }
 
-// Compile compiles a ast.Node into an executable statement.
-func (com *Compiler) Compile(node ast.Node) (stmt.Statement, error) {
-	validator := &validator{}
-	if _, ok := node.Accept(validator); !ok {
-		return nil, errors.Trace(validator.err)
-	}
-
-	binder := &InfoBinder{}
-	if _, ok := node.Accept(validator); !ok {
-		return nil, errors.Trace(binder.Err)
-	}
-
-	tpComputer := &typeComputer{}
-	if _, ok := node.Accept(tpComputer); !ok {
-		return nil, errors.Trace(tpComputer.err)
-	}
+// Convert converts a ast.Node into an old stmt.Statement.
+func (com *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 	c := newExpressionConverter()
 	com.converter = c
 	switch v := node.(type) {
@@ -121,7 +105,7 @@ func (p paramMarkers) Swap(i, j int) {
 }
 
 // ParamMarkers returns parameter markers for prepared statement.
-func (com *Compiler) ParamMarkers() []*expression.ParamMarker {
+func (com *Converter) ParamMarkers() []*expression.ParamMarker {
 	c := com.converter
 	sort.Sort(c.paramMarkers)
 	oldMarkers := make([]*expression.ParamMarker, len(c.paramMarkers))

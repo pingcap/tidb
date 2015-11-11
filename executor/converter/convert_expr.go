@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package converter
 
 import (
 	"github.com/juju/errors"
@@ -70,8 +70,6 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.columnNameExpr(v)
 	case *ast.DefaultExpr:
 		c.defaultExpr(v)
-	case *ast.IdentifierExpr:
-		c.identifier(v)
 	case *ast.ExistsSubqueryExpr:
 		c.existsSubquery(v)
 	case *ast.PatternInExpr:
@@ -217,12 +215,6 @@ func (c *expressionConverter) defaultExpr(v *ast.DefaultExpr) {
 		oldDefault.Name = joinColumnName(v.Name)
 	}
 	c.exprMap[v] = oldDefault
-}
-
-func (c *expressionConverter) identifier(v *ast.IdentifierExpr) {
-	oldIdent := &expression.Ident{}
-	oldIdent.CIStr = v.Name
-	c.exprMap[v] = oldIdent
 }
 
 func (c *expressionConverter) existsSubquery(v *ast.ExistsSubqueryExpr) {

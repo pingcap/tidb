@@ -311,7 +311,11 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 		if x.Equal(CurrentTimeExpr) {
 			return CurrentTimestamp, nil
 		}
-
+		return nil, errors.Trace(errDefaultValue)
+	case *Call:
+		if x.F == CurrentTimestamp {
+			return CurrentTimestamp, nil
+		}
 		return nil, errors.Trace(errDefaultValue)
 	case *UnaryOperation:
 		// support some expression, like `-1`

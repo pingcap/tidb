@@ -32,7 +32,6 @@ var (
 	_ Node     = &ColumnName{}
 	_ ExprNode = &ColumnNameExpr{}
 	_ ExprNode = &DefaultExpr{}
-	_ ExprNode = &IdentifierExpr{}
 	_ ExprNode = &ExistsSubqueryExpr{}
 	_ ExprNode = &PatternInExpr{}
 	_ ExprNode = &IsNullExpr{}
@@ -358,10 +357,6 @@ type ColumnName struct {
 	Schema model.CIStr
 	Table  model.CIStr
 	Name   model.CIStr
-
-	DBInfo     *model.DBInfo
-	TableInfo  *model.TableInfo
-	ColumnInfo *model.ColumnInfo
 }
 
 // Accept implements Node Accept interface.
@@ -380,6 +375,10 @@ type ColumnNameExpr struct {
 
 	// Name is the referenced column name.
 	Name *ColumnName
+
+	// Refer is the result field the column name refers to.
+	// The value of Refer.Expr is used as the value of the expression.
+	Refer *ResultField
 }
 
 // Accept implements Node Accept interface.
@@ -418,23 +417,6 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 		}
 		n.Name = node.(*ColumnName)
 	}
-	return v.Leave(n)
-}
-
-// IdentifierExpr represents an identifier expression.
-type IdentifierExpr struct {
-	exprNode
-	// Name is the identifier name.
-	Name model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *IdentifierExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNod)
-	}
-	n = newNod.(*IdentifierExpr)
 	return v.Leave(n)
 }
 

@@ -11,42 +11,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package executor
 
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Evaluator is a ast visitor that evaluates an expression.
-type Evaluator struct {
-	// columnMap is the map from ColumnName to the position of the rowStack.
-	// It is used to find the value of the column.
-	columnMap map[*ast.ColumnName]position
-	// rowStack is the current row values while scanning.
-	// It should be updated after scaned a new row.
-	rowStack []*plan.Row
-
-	// the map from AggregateFuncExpr to aggregator index.
-	aggregateMap map[*ast.AggregateFuncExpr]int
-
-	// aggregators for the current row
-	// only outer query aggregate functions are handled.
-	aggregators []Aggregator
-
-	// when aggregation phase is done, the input is
-	aggregateDone bool
-
-	err error
+// Eval evaluates an expression to a value.
+func Eval(expr ast.ExprNode) (interface{}, error) {
+	var e Evaluator
+	expr.Accept(&e)
+	if e.err != nil {
+		return nil, errors.Trace(e.err)
+	}
+	return expr.GetValue(), nil
 }
 
-type position struct {
-	stackOffset  int
-	fieldList    bool
-	columnOffset int
+// EvalBool evalueates an expression to a boolean value.
+func EvalBool(expr ast.ExprNode) (bool, error) {
+	val, err := Eval(expr)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	i, err := types.ToBool(val)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return i != 0, nil
+}
+
+// Evaluator is a ast Visitor that evaluates an expression.
+//
+type Evaluator struct {
+	err error
 }
 
 // Enter implements ast.Visitor interface.
@@ -73,8 +73,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.columnName(v)
 	case *ast.DefaultExpr:
 		ok = e.defaultExpr(v)
-	case *ast.IdentifierExpr:
-		ok = e.identifier(v)
 	case *ast.ExistsSubqueryExpr:
 		ok = e.existsSubquery(v)
 	case *ast.PatternInExpr:
@@ -222,14 +220,11 @@ func (e *Evaluator) compareSubquery(v *ast.CompareSubqueryExpr) bool {
 }
 
 func (e *Evaluator) columnName(v *ast.ColumnNameExpr) bool {
+	v.SetValue(v.Refer.Expr.GetValue())
 	return true
 }
 
 func (e *Evaluator) defaultExpr(v *ast.DefaultExpr) bool {
-	return true
-}
-
-func (e *Evaluator) identifier(v *ast.IdentifierExpr) bool {
 	return true
 }
 
@@ -314,13 +309,5 @@ func (e *Evaluator) funcTrim(v *ast.FuncTrimExpr) bool {
 }
 
 func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
-	idx := e.aggregateMap[v]
-	aggr := e.aggregators[idx]
-	if e.aggregateDone {
-		v.SetValue(aggr.Output())
-		return true
-	}
-	// TODO: currently only single argument aggregate functions are supported.
-	e.err = aggr.Input(v.Args[0].GetValue())
-	return e.err == nil
+	return true
 }
