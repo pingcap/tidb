@@ -406,7 +406,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	}
 	for _, v := range t.indices {
 		if v == nil || v.State == model.StateDeleteOnly || v.State == model.StateDeleteReorganization {
-			// if index is in delete only or delete reorganization, we can't add it.
+			// if index is in delete only or delete reorganization state, we can't add it.
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
@@ -438,7 +438,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		key := t.RecordKey(recordID, col)
 
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
-			// if col is in write only or write reorganization, we must add it with its default value.
+			// if col is in write only or write reorganization state, we must add it with its default value.
 			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -613,8 +613,8 @@ func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{},
 
 // BuildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
-	if idx.State == model.StateDeleteOnly {
-		// If the index is in delete only state, we can not add index.
+	if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
+		// If the index is in delete only or write reorganization state, we can not add index.
 		return nil
 	}
 
