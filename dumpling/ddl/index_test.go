@@ -471,7 +471,9 @@ func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *d
 		s.checkDeleteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
 	case model.StateWriteOnly:
 		s.checkWriteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
-	case model.StateReorganization:
+	case model.StateWriteReorganization:
+		s.checkReorganizationIndex(c, d, tblInfo, indexCol)
+	case model.StateDeleteReorganization:
 		s.checkReorganizationIndex(c, d, tblInfo, indexCol)
 	case model.StatePublic:
 		s.checkPublicIndex(c, ctx, d, tblInfo, handle, indexCol, row)

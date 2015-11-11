@@ -475,7 +475,9 @@ func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d 
 		s.checkDeleteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
 	case model.StateWriteOnly:
 		s.checkWriteOnlyColumn(c, ctx, d, tblInfo, handle, col, row, columnValue, isDropped)
-	case model.StateReorganization:
+	case model.StateWriteReorganization:
+		s.checkReorganizationColumn(c, d, tblInfo, col)
+	case model.StateDeleteReorganization:
 		s.checkReorganizationColumn(c, d, tblInfo, col)
 	case model.StatePublic:
 		s.checkPublicColumn(c, ctx, d, tblInfo, handle, col, row, columnValue)
