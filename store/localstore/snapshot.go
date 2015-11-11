@@ -112,10 +112,12 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	m := make(map[string][]byte)
 	for _, k := range keys {
 		v, err := s.Get(k)
-		if err != nil {
+		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
 		}
-		m[string(k)] = v
+		if len(v) > 0 {
+			m[string(k)] = v
+		}
 	}
 	return m, nil
 }
@@ -132,7 +134,7 @@ func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, 
 		if it.Key() > endKey {
 			break
 		}
-		m[string(it.Key())] = it.Value()
+		m[it.Key()] = it.Value()
 		err := it.Next()
 		if err != nil {
 			return nil, err

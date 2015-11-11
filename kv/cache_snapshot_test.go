@@ -69,6 +69,13 @@ func (s *testCacheSnapshotSuite) TestBatchGet(c *C) {
 	v, err := s.cache.Get([]byte("1"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
+
+	// nil result should also be saved in cache
+	s.store.Set([]byte("3"), []byte("3"))
+	m, err = s.cache.BatchGet([]Key{[]byte("3")})
+	c.Assert(err, IsNil)
+	_, exist = m["3"]
+	c.Assert(exist, IsFalse)
 }
 
 func (s *testCacheSnapshotSuite) TestRangeGet(c *C) {
