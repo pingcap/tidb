@@ -328,21 +328,21 @@ func toSpans(op opcode.Op, val, seekVal interface{}) []*indexSpan {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 	for {
 		if r.cursor == len(r.spans) {
-			return
+			return nil, nil
 		}
 		span := r.spans[r.cursor]
 		if r.isPointLookup(span) {
 			// Do point lookup on index will prevent prefetch cost.
-			row, err = r.pointLookup(ctx, span.lowVal)
+			row, err := r.pointLookup(ctx, span.lowVal)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			r.cursor++
 			if row != nil {
-				return
+				return row, nil
 			}
 			continue
 		}
@@ -352,7 +352,7 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 				seekVal = []byte{}
 			}
 			var txn kv.Transaction
-			txn, err = ctx.GetTxn(false)
+			txn, err := ctx.GetTxn(false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -361,9 +361,7 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 				return nil, types.EOFAsNil(err)
 			}
 		}
-		var idxKey []interface{}
-		var h int64
-		idxKey, h, err = r.iter.Next()
+		idxKey, h, err := r.iter.Next()
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
@@ -385,11 +383,12 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			r.skipLowCmp = false
 			continue
 		}
+		var row *plan.Row
 		row, err = r.lookupRow(ctx, h)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return
+		return row, nil
 	}
 }
 
@@ -397,8 +396,9 @@ func (r *indexPlan) isPointLookup(span *indexSpan) bool {
 	return r.unique && span.lowVal != nil && span.lowVal == span.highVal && !span.lowExclude && !span.highExclude
 }
 
-func (r *indexPlan) lookupRow(ctx context.Context, h int64) (row *plan.Row, err error) {
-	row = &plan.Row{}
+func (r *indexPlan) lookupRow(ctx context.Context, h int64) (*plan.Row, error) {
+	row := &plan.Row{}
+	var err error
 	row.Data, err = r.src.Row(ctx, h)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -408,13 +408,12 @@ func (r *indexPlan) lookupRow(ctx context.Context, h int64) (row *plan.Row, err 
 		Key: string(r.src.RecordKey(h, nil)),
 	}
 	row.RowKeys = append(row.RowKeys, rowKey)
-	return
+	return row, nil
 }
 
 // pointLookup do not seek index but call Exists method to get a handle, which is cheaper.
-func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (row *plan.Row, err error) {
-	var txn kv.Transaction
-	txn, err = ctx.GetTxn(false)
+func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (*plan.Row, error) {
+	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -428,11 +427,12 @@ func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (row *plan
 	if terror.ErrorNotEqual(kv.ErrKeyExists, err) {
 		return nil, errors.Trace(err)
 	}
+	var row *plan.Row
 	row, err = r.lookupRow(ctx, h)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return
+	return row, nil
 }
 
 // Close implements plan.Plan Close interface.
