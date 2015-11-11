@@ -20,9 +20,8 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
-// InfoBinder binds schema information for table name and column name and set result fields
-// for ResetSetNode.
-// We need to know which table a table name refers to, which column a column name refers to.
+// InfoBinder binds schema information for table name and column name.
+// It generates ResultFields for ResetSetNode and resolve ColumnNameExpr to a ResultField.
 //
 // In general, a reference can only refer to information that are available for it.
 // So children elements are visited in the order that previous elements make information
@@ -40,8 +39,8 @@ type InfoBinder struct {
 	contextStack []*binderContext
 }
 
-// binderContext stores information that table name and column name
-// can be bind to.
+// binderContext stores information in a single level of select statement
+// that table name and column name can be bind to.
 type binderContext struct {
 	/* For Select Statement. */
 	// table map to lookup and check table name conflict.
@@ -148,7 +147,7 @@ func (sb *InfoBinder) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
 	case *ast.TableName:
 		sb.handleTableName(v)
-	case *ast.ColumnName:
+	case *ast.ColumnNameExpr:
 		sb.handleColumnName(v)
 	case *ast.TableSource:
 		sb.handleTableSource(v)
@@ -204,6 +203,7 @@ func (sb *InfoBinder) handleTableName(tn *ast.TableName) {
 			Column: v,
 			Table:  tn.TableInfo,
 			DBName: tn.Schema,
+			Expr:   &ast.ValueExpr{},
 		}
 	}
 	tn.SetResultFields(rfs)
@@ -249,7 +249,7 @@ func (sb *InfoBinder) handleJoin(j *ast.Join) {
 
 // handleColumnName looks up and binds schema information to
 // the column name.
-func (sb *InfoBinder) handleColumnName(cn *ast.ColumnName) {
+func (sb *InfoBinder) handleColumnName(cn *ast.ColumnNameExpr) {
 	ctx := sb.currentContext()
 	if ctx.inOnCondition {
 		// In on condition, only tables within current join is available.
@@ -264,12 +264,12 @@ func (sb *InfoBinder) handleColumnName(cn *ast.ColumnName) {
 			return
 		}
 	}
-	sb.Err = errors.Errorf("unknown column %s", cn.Name.L)
+	sb.Err = errors.Errorf("unknown column %s", cn.Name.Name.L)
 }
 
 // bindColumnNameInContext looks up and binds schema information for a column with the ctx.
-func (sb *InfoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.ColumnName) (done bool) {
-	if cn.Table.L == "" {
+func (sb *InfoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.ColumnNameExpr) (done bool) {
+	if cn.Name.Table.L == "" {
 		// If qualified table name is not specified in column name, the column name may be ambiguous,
 		// We need to iterate over all tables and
 	}
@@ -336,27 +336,29 @@ func (sb *InfoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.Column
 
 // bindColumnNameInOnCondition looks up for column name in current join, and
 // binds the schema information.
-func (sb *InfoBinder) bindColumnNameInOnCondition(cn *ast.ColumnName) {
+func (sb *InfoBinder) bindColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	ctx := sb.currentContext()
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
 	if !sb.bindColumnInTableSources(cn, tableSources) {
-		sb.Err = errors.Errorf("unkown column name %s", cn.Name.O)
+		sb.Err = errors.Errorf("unkown column name %s", cn.Name.Name.O)
 	}
 }
 
-func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnName, tableSources []*ast.TableSource) (done bool) {
+func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnNameExpr, tableSources []*ast.TableSource) (done bool) {
 	var matchedResultField *ast.ResultField
-	if cn.Table.L != "" {
+	tableNameL := cn.Name.Table.L
+	columnNameL := cn.Name.Name.L
+	if tableNameL != "" {
 		var matchedTable ast.ResultSetNode
 		for _, ts := range tableSources {
-			if cn.Table.L == ts.AsName.L {
+			if tableNameL == ts.AsName.L {
 				// different table name.
 				matchedTable = ts
 				break
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
-				if cn.Table.L == tn.Name.L {
+				if tableNameL == tn.Name.L {
 					matchedTable = ts
 				}
 			}
@@ -364,7 +366,7 @@ func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnName, tableSources 
 		if matchedTable != nil {
 			resultFields := matchedTable.GetResultFields()
 			for _, rf := range resultFields {
-				if rf.ColumnAsName.L == cn.Name.L || rf.Column.Name.L == cn.Name.L {
+				if rf.ColumnAsName.L == columnNameL || rf.Column.Name.L == columnNameL {
 					// bind column.
 					matchedResultField = rf
 					break
@@ -375,11 +377,11 @@ func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnName, tableSources 
 		for _, ts := range tableSources {
 			rfs := ts.GetResultFields()
 			for _, rf := range rfs {
-				matchAsName := rf.ColumnAsName.L != "" && rf.ColumnAsName.L == cn.Name.L
-				matchColumnName := rf.ColumnAsName.L == "" && rf.Column.Name.L == cn.Name.L
+				matchAsName := rf.ColumnAsName.L != "" && rf.ColumnAsName.L == columnNameL
+				matchColumnName := rf.ColumnAsName.L == "" && rf.Column.Name.L == columnNameL
 				if matchAsName || matchColumnName {
 					if matchedResultField != nil {
-						sb.Err = errors.Errorf("column %s is ambiguous.", cn.Name.O)
+						sb.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
 						return true
 					}
 					matchedResultField = rf
@@ -388,47 +390,42 @@ func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnName, tableSources 
 		}
 	}
 	if matchedResultField != nil {
-		// bind column.
-		cn.ColumnInfo = matchedResultField.Column
-		cn.TableInfo = matchedResultField.Table
+		// Bind column.
+		cn.Refer = matchedResultField
 		return true
 	}
 	return false
 }
 
-func (sb *InfoBinder) bindColumnInResultFields(cn *ast.ColumnName, rfs []*ast.ResultField) bool {
-	if cn.Table.L != "" {
+func (sb *InfoBinder) bindColumnInResultFields(cn *ast.ColumnNameExpr, rfs []*ast.ResultField) bool {
+	if cn.Name.Table.L != "" {
 		// Skip result fields, bind the column in table source.
 		return false
 	}
-	var matchedColumn *model.ColumnInfo
-	var matchedTable *model.TableInfo
+	var matched *ast.ResultField
 	for _, rf := range rfs {
-		matchAsName := cn.Name.L == rf.ColumnAsName.L
-		matchColumnName := rf.ColumnAsName.L == "" && cn.Name.L == rf.Column.Name.L
+		matchAsName := cn.Name.Name.L == rf.ColumnAsName.L
+		matchColumnName := rf.ColumnAsName.L == "" && cn.Name.Name.L == rf.Column.Name.L
 		if matchAsName || matchColumnName {
 			if rf.Column.Name.L == "" {
 				// This is not a real table column, bind it directly.
-				cn.ColumnInfo = rf.Column
-				cn.TableInfo = rf.Table
+				cn.Refer = rf
 				return true
 			}
-			if matchedColumn == nil {
-				matchedColumn = rf.Column
-				matchedTable = rf.Table
+			if matched == nil {
+				matched = rf
 			} else {
-				sameColumn := matchedTable.Name.L == rf.Table.Name.L && matchedColumn.Name.L == rf.Column.Name.L
+				sameColumn := matched.Table.Name.L == rf.Table.Name.L && matched.Column.Name.L == rf.Column.Name.L
 				if !sameColumn {
-					sb.Err = errors.Errorf("column %s is ambiguous.", cn.Name.O)
+					sb.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
 					return true
 				}
 			}
 		}
 	}
-	if matchedColumn != nil {
-		// bind column.
-		cn.ColumnInfo = matchedColumn
-		cn.TableInfo = matchedTable
+	if matched != nil {
+		// Bind column.
+		cn.Refer = matched
 		return true
 	}
 	return false
@@ -469,17 +466,17 @@ func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.Res
 	rf := &ast.ResultField{ColumnAsName: field.AsName}
 	switch v := field.Expr.(type) {
 	case *ast.ColumnNameExpr:
-		rf.Column = v.Name.ColumnInfo
-		rf.Table = v.Name.TableInfo
-		rf.DBName = v.Name.Schema
+		rf.Column = v.Refer.Column
+		rf.Table = v.Refer.Table
+		rf.DBName = v.Refer.DBName
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.
 		if field.AsName.L == "" {
-			rf.ColumnAsName.L = field.Expr.Text()
-			rf.ColumnAsName.O = rf.ColumnAsName.L
+			rf.ColumnAsName = model.NewCIStr(field.Text())
 		}
 	}
+	rf.Expr = field.Expr
 	rfs = append(rfs, rf)
 	return
 }

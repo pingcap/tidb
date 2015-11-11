@@ -15,16 +15,20 @@ package optimizer
 
 import "github.com/pingcap/tidb/ast"
 
-// validator is an ast.Visitor that validates
-// ast Nodes parsed from parser.
-type validator struct {
-	err error
+// conditionNormalizer converts an condition expression into
+// CNF(Conjunctive normal form).
+// See https://en.wikipedia.org/wiki/Conjunctive_normal_form
+// An boolean expression(usually a where condition) need to be converted
+// to a series of AND conditions, so if a sub condition match an index,
+// it can be pushed to that index to reduce cost.
+// Ssub conditions that can not be pushed to index will be put into a Filter plan.
+type conditionNormalizer struct {
 }
 
-func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (b *conditionNormalizer) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (b *conditionNormalizer) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }

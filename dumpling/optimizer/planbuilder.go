@@ -13,14 +13,16 @@
 
 package optimizer
 
-// Aggregator is the interface to
-// compute aggregate function result.
-type Aggregator interface {
-	// Input adds an input value to aggregator.
-	// The input values are accumulated in the aggregator.
-	Input(in ...interface{}) error
-	// Output uses input values to compute the aggregated result.
-	Output() interface{}
-	// Clear clears the input values.
-	Clear()
+import (
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/optimizer/plan"
+)
+
+// planBuilder builds Plan from an ast.Node.
+// It just build the ast node straightforwardly.
+type planBuilder struct {
+}
+
+func (b *planBuilder) build(node ast.Node) (plan.Plan, error) {
+	return nil, nil
 }

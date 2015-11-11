@@ -47,8 +47,8 @@ func (bv *binderVerifier) Enter(node ast.Node) (ast.Node, bool) {
 
 func (bv *binderVerifier) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch v := in.(type) {
-	case *ast.ColumnName:
-		bv.c.Assert(v.ColumnInfo, NotNil, Commentf("%s", bv.src))
+	case *ast.ColumnNameExpr:
+		bv.c.Assert(v.Refer, NotNil, Commentf("%s", bv.src))
 	case *ast.TableName:
 		bv.c.Assert(v.TableInfo, NotNil, Commentf("%s", bv.src))
 	}

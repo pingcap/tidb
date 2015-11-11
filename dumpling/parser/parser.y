@@ -942,14 +942,14 @@ ReferDef:
  */
 DefaultValueExpr:
 	NowSym
+	{
+		$$ = &ast.FuncCallExpr{FnName: "CURRENT_TIMESTAMP"}
+	}
 |	SignedLiteral
 
 // TODO: Process other three keywords
 NowSym:
 	"CURRENT_TIMESTAMP"
-	{
-		$$ = &ast.IdentifierExpr{Name: model.NewCIStr("CURRENT_TIMESTAMP")}
-	}
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
 |	"NOW"

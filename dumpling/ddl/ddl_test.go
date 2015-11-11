@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
@@ -65,7 +65,7 @@ func (ts *testSuite) TestT(c *C) {
 	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
 	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
-	tbStmt := statement("create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
+	tbStmt := statement(ctx, "create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
 
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, table.Ident{Schema: noExist, Name: tbIdent.Name}, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(terror.DatabaseNotExists.Equal(err), IsTrue)
@@ -76,7 +76,7 @@ func (ts *testSuite) TestT(c *C) {
 
 	tbIdent2 := tbIdent
 	tbIdent2.Name = model.NewCIStr("t2")
-	tbStmt = statement("create table t2 (a int unique not null)").(*stmts.CreateTableStmt)
+	tbStmt = statement(ctx, "create table t2 (a int unique not null)").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 	tb, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
@@ -86,7 +86,7 @@ func (ts *testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	rid1, err := tb.AddRecord(ctx, []interface{}{2})
 	c.Assert(err, IsNil)
-	alterStmt := statement(`alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
+	alterStmt := statement(ctx, `alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 	cols, err := tb.Row(ctx, rid0)
@@ -94,7 +94,7 @@ func (ts *testSuite) TestT(c *C) {
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(cols[0], Equals, nil)
 	c.Assert(cols[1], Equals, int64(1))
-	alterStmt = statement("alter table t2 add c varchar(255) after b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t2 add c varchar(255) after b").(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
@@ -121,7 +121,7 @@ func (ts *testSuite) TestT(c *C) {
 	_, err = tb.AddRecord(ctx, []interface{}{1, "b", 2, 4})
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t add column aa int first").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column aa int first").(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 	// Check indices info
@@ -139,16 +139,16 @@ func (ts *testSuite) TestT(c *C) {
 			c.Assert(col.Offset, Equals, o)
 		}
 	}
-	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 	// Inserting a duplicated column will cause error.
-	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	idxStmt := statement("CREATE INDEX idx_c ON t (c)").(*stmts.CreateIndexStmt)
+	idxStmt := statement(ctx, "CREATE INDEX idx_c ON t (c)").(*stmts.CreateIndexStmt)
 	idxName := model.NewCIStr(idxStmt.IndexName)
 	err = sessionctx.GetDomain(ctx).DDL().CreateIndex(ctx, tbIdent, idxStmt.Unique, idxName, idxStmt.IndexColNames)
 	c.Assert(err, IsNil)
@@ -177,11 +177,11 @@ func (ts *testSuite) TestConstraintNames(c *C) {
 		Name:   tblName,
 	}
 
-	tbStmt := statement("create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
+	tbStmt := statement(ctx, "create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
 	err := sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, NotNil)
 
-	tbStmt = statement("create table t (a int, b int, index A (a, b), index (a))").(*stmts.CreateTableStmt)
+	tbStmt = statement(ctx, "create table t (a int, b int, index A (a, b), index (a))").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(schemaName, tblName)
@@ -194,11 +194,11 @@ func (ts *testSuite) TestConstraintNames(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func statement(sql string) stmt.Statement {
+func statement(ctx context.Context, sql string) stmt.Statement {
 	log.Debug("Compile", sql)
 	lexer := parser.NewLexer(sql)
 	parser.YYParse(lexer)
-	compiler := &optimizer.Compiler{}
-	stm, _ := compiler.Compile(lexer.Stmts()[0])
+	compiler := &executor.Compiler{}
+	stm, _ := compiler.Compile(ctx, lexer.Stmts()[0])
 	return stm
 }
