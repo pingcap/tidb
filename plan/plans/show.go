@@ -401,7 +401,7 @@ func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
 		if !match {
 			continue
 		}
-		now := mysql.GetCurrentTime(mysql.TypeDatetime)
+		now := mysql.CurrentTime(mysql.TypeDatetime)
 		data := []interface{}{
 			v, "InnoDB", "10", "Compact", 100, 100,
 			100, 100, 100, 100, 100,
