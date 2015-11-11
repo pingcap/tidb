@@ -160,12 +160,12 @@ func getIndex(t table.Table, name string) *column.IndexedCol {
 	return nil
 }
 
-func (s *testIndexSuite) testGetIndex(c *C, t table.Table, name string, isNil bool) {
+func (s *testIndexSuite) testGetIndex(c *C, t table.Table, name string, isExist bool) {
 	index := t.FindIndexByColName(name)
-	if isNil {
-		c.Assert(index, IsNil)
-	} else {
+	if isExist {
 		c.Assert(index, NotNil)
+	} else {
+		c.Assert(index, IsNil)
 	}
 }
 
@@ -192,7 +192,7 @@ func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblIn
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
-	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
 }
 
 func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
@@ -279,7 +279,7 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	c.Assert(i, Equals, int64(1))
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
-	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
 }
 
 func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
@@ -366,12 +366,94 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	c.Assert(i, Equals, int64(1))
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
-	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
 }
 
-func (s *testIndexSuite) checkReorganizationIndex(c *C, d *ddl, tblInfo *model.TableInfo, indexCol *column.IndexedCol) {
+func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i := int64(0)
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, row)
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+
+	columnValues := make([]interface{}, len(indexCol.Columns))
+	for i, column := range indexCol.Columns {
+		columnValues[i] = row[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, isDropped)
+
+	// Test add a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	handle, err = t.AddRecord(ctx, newRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	rows := [][]interface{}{row, newRow}
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		c.Assert(data, DeepEquals, rows[i])
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(2))
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, !isDropped)
+
+	// Test update a new row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	newUpdateRow := []interface{}{int64(44), int64(55), int64(66)}
+	touched := map[int]bool{0: true, 1: true, 2: true}
+	err = t.UpdateRecord(ctx, handle, newRow, newUpdateRow, touched)
+	c.Assert(err, IsNil)
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+
+	for i, column := range indexCol.Columns {
+		columnValues[i] = newUpdateRow[column.Offset]
+	}
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, !isDropped)
+
+	// Test remove a row.
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	err = t.RemoveRecord(ctx, handle, newUpdateRow)
+	c.Assert(err, IsNil)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	i = int64(0)
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(i, Equals, int64(1))
+
+	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
 }
 
 func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}) {
@@ -458,7 +540,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	c.Assert(i, Equals, int64(1))
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
-	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
+	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, true)
 }
 
 func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
@@ -471,10 +553,8 @@ func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *d
 		s.checkDeleteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
 	case model.StateWriteOnly:
 		s.checkWriteOnlyIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
-	case model.StateWriteReorganization:
-		s.checkReorganizationIndex(c, d, tblInfo, indexCol)
-	case model.StateDeleteReorganization:
-		s.checkReorganizationIndex(c, d, tblInfo, indexCol)
+	case model.StateWriteReorganization, model.StateDeleteReorganization:
+		s.checkReorganizationIndex(c, ctx, d, tblInfo, handle, indexCol, row, isDropped)
 	case model.StatePublic:
 		s.checkPublicIndex(c, ctx, d, tblInfo, handle, indexCol, row)
 	}
