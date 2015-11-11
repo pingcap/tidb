@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"strings"
 )
 
 func TestT(t *testing.T) {
@@ -47,6 +48,27 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(optimizerErr.Equal(optimizerErr.Gen("def")), IsTrue)
 	c.Assert(optimizerErr.Equal(nil), IsFalse)
 	c.Assert(optimizerErr.Equal(errors.New("abc")), IsFalse)
+}
+
+var predefinedErr = ClassExecutor.New(ErrCode(123), "predefiend error")
+
+func example() error {
+	err := call()
+	return errors.Trace(err)
+}
+
+func call() error {
+	return predefinedErr.Gen("error message:%s", "abc")
+}
+
+func (s *testTErrorSuite) TestTraceAndLocation(c *C) {
+	err := example()
+	stack := errors.ErrorStack(err)
+	lines := strings.Split(stack, "\n")
+	c.Assert(len(lines), Equals, 2)
+	for _, v := range lines {
+		c.Assert(strings.Contains(v, "terror_test.go"), IsTrue)
+	}
 }
 
 func (s *testTErrorSuite) TestErrorEqual(c *C) {
