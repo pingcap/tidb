@@ -406,6 +406,14 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	return handles, nil
 }
 
+func lockRow(txn kv.Transaction, t table.Table, h int64) error {
+	// Get row lock key
+	lockKey := t.RecordKey(h, nil)
+	// set row lock key to current txn
+	err := txn.Set([]byte(lockKey), []byte(txn.String()))
+	return errors.Trace(err)
+}
+
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
 	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
 
@@ -434,6 +442,11 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 			} else if exist {
 				// index already exists, skip it.
 				return nil
+			}
+
+			err = lockRow(txn, t, handle)
+			if err != nil {
+				return errors.Trace(err)
 			}
 
 			// create the index.
