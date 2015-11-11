@@ -125,11 +125,11 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateReorganization
-		tblInfo.State = model.StateReorganization
+		job.SchemaState = model.StateDeleteReorganization
+		tblInfo.State = model.StateDeleteReorganization
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorganization:
+	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		var tbl table.Table
 		tbl, err = d.getTable(t, schemaID, tblInfo)

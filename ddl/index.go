@@ -155,13 +155,13 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		job.SchemaState = model.StateReorganization
-		indexInfo.State = model.StateReorganization
+		job.SchemaState = model.StateWriteReorganization
+		indexInfo.State = model.StateWriteReorganization
 		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorganization:
+	case model.StateWriteReorganization:
 		// reorganization -> public
 		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil {
@@ -247,11 +247,11 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateReorganization
-		indexInfo.State = model.StateReorganization
+		job.SchemaState = model.StateDeleteReorganization
+		indexInfo.State = model.StateDeleteReorganization
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorganization:
+	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		tbl, err := d.getTable(t, schemaID, tblInfo)
 		if err != nil {
