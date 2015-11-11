@@ -35,6 +35,26 @@ Read the [Roadmap](./ROADMAP.md).
 
 ## Quick start
 
+
+#### Run tidb with docker
+
+You can quickly test tidb with docker, the source repository contains Dockerfile,
+You can build docker and then run an docker container with tidb
+To install docker on your system, you can read the document on https://docs.docker.com/
+
+
+```
+git clone https://github.com/pingcap/tidb.git
+cd tidb
+docker build --rm -t tidb-server .
+docker images
+docker run -d -p 4000:4000 --name tidb-server tidb-server
+```
+Then you can connect 127.0.0.1:4000 by mysql client or telnet.
+The tidb is ready for serve.
+
+Please do not just put this on production environment, you need write your own configure replace the default configure.
+
 #### __Pre-requirement__
 
 Go environment. Currently a 64-bit version of go >= 1.5 is required.
