@@ -153,11 +153,11 @@ func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte,
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there already exists an entry with the same key, Create will return ErrKeyExists
 func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) error {
-	key, _, err := c.GenIndexKey(indexedValues, h)
+	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !c.unique {
+	if !distinct {
 		// TODO: reconsider value
 		err = txn.Set(key, []byte("timestamp?"))
 		return errors.Trace(err)
@@ -237,7 +237,7 @@ func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 }
 
 func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error) {
-	key, _, err := c.GenIndexKey(indexedValues, h)
+	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -250,8 +250,8 @@ func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (
 		return false, 0, errors.Trace(err)
 	}
 
-	// For uniq index, the value of key is handle.
-	if c.unique {
+	// For distinct index, the value of key is handle.
+	if distinct {
 		handle, err := decodeHandle(value)
 		if err != nil {
 			return false, 0, errors.Trace(err)
