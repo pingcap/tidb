@@ -258,7 +258,11 @@ func (c *driverConn) Commit() error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(c.s.FinishTxn(false))
+	err = c.s.FinishTxn(false)
+	if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		return c.s.Retry()
+	}
+	return errors.Trace(err)
 }
 
 func (c *driverConn) Rollback() error {

@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/terror"
 )
 
 // Engine prefix name
@@ -215,6 +216,10 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 	// MySQL DDL should be auto-commit
 	if err == nil && (s.IsDDL() || autocommit.ShouldAutocommit(ctx)) {
 		err = ctx.FinishTxn(false)
+		// We should retry for autocommit
+		if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
+			return nil, ctx.(Session).Retry()
+		}
 	}
 	return rs, errors.Trace(err)
 }
