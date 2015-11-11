@@ -120,11 +120,11 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateReorganization
-		dbInfo.State = model.StateReorganization
+		job.SchemaState = model.StateDeleteReorganization
+		dbInfo.State = model.StateDeleteReorganization
 		err = t.UpdateDatabase(dbInfo)
 		return errors.Trace(err)
-	case model.StateReorganization:
+	case model.StateDeleteReorganization:
 		// wait reorganization jobs done and drop meta.
 		var tables []*model.TableInfo
 		tables, err = t.ListTables(dbInfo.ID)

@@ -167,7 +167,7 @@ func (t *Table) writableCols() []*column.Col {
 
 	t.writableColumns = make([]*column.Col, 0, len(t.Columns))
 	for _, col := range t.Columns {
-		if col.State == model.StateDeleteOnly {
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
 		}
 
@@ -405,7 +405,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		return 0, errors.Trace(err)
 	}
 	for _, v := range t.indices {
-		if v == nil || v.State == model.StateDeleteOnly {
+		if v == nil || v.State == model.StateDeleteOnly || v.State == model.StateDeleteReorganization {
 			// if index is in delete only, we can't add it.
 			continue
 		}
@@ -437,7 +437,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		var value interface{}
 		key := t.RecordKey(recordID, col)
 
-		if col.State == model.StateWriteOnly || col.State == model.StateReorganization {
+		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
