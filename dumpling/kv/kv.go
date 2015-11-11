@@ -215,6 +215,7 @@ type Index interface {
 	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
 	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
 	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist
+	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)     // supports index check
 	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
 	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
 }
