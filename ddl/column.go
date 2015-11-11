@@ -366,6 +366,11 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
+			err = lockRow(txn, t, handle)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			err = t.SetColValue(txn, backfillKey, v)
 			if err != nil {
 				return errors.Trace(err)
