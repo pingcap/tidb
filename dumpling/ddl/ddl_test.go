@@ -66,68 +66,25 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
 	tbStmt := statement("create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
-
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, table.Ident{Schema: noExist, Name: tbIdent.Name}, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(terror.DatabaseNotExists.Equal(err), IsTrue)
+
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
+
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
-	tbIdent2 := tbIdent
-	tbIdent2.Name = model.NewCIStr("t2")
-	tbStmt = statement("create table t2 (a int unique not null)").(*stmts.CreateTableStmt)
-	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
-	c.Assert(err, IsNil)
-	tb, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
-	c.Assert(err, IsNil)
-	c.Assert(tb, NotNil)
-	rid0, err := tb.AddRecord(ctx, []interface{}{1})
-	c.Assert(err, IsNil)
-	rid1, err := tb.AddRecord(ctx, []interface{}{2})
-	c.Assert(err, IsNil)
-	alterStmt := statement(`alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
-	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
-	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
-	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
-	c.Assert(err, IsNil)
-	c.Assert(tb, NotNil)
-	cols, err := tb.Row(ctx, rid0)
-	c.Assert(err, IsNil)
-	c.Assert(len(cols), Equals, 2)
-	c.Assert(cols[0], Equals, nil)
-	c.Assert(cols[1], Equals, int64(1))
-	alterStmt = statement("alter table t2 add c varchar(255) after b").(*stmts.AlterTableStmt)
-	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
-	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
-	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
-	c.Assert(err, IsNil)
-	c.Assert(tb, NotNil)
-	cols, err = tb.Row(ctx, rid1)
-	c.Assert(err, IsNil)
-	c.Assert(len(cols), Equals, 3)
-	c.Assert(cols[0], Equals, nil)
-	c.Assert(cols[1], Equals, nil)
-	c.Assert(cols[2], Equals, int64(2))
-	rid3, err := tb.AddRecord(ctx, []interface{}{mysql.Enum{Name: "bb", Value: 1}, "c", 3})
-	c.Assert(err, IsNil)
-	cols, err = tb.Row(ctx, rid3)
-	c.Assert(err, IsNil)
-	c.Assert(len(cols), Equals, 3)
-	c.Assert(cols[0], Equals, mysql.Enum{Name: "bb", Value: 1})
-	c.Assert(cols[1], Equals, "c")
-	c.Assert(cols[2], Equals, int64(3))
-
-	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent.Schema, tbIdent.Name)
+	tb, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent.Schema, tbIdent.Name)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 	_, err = tb.AddRecord(ctx, []interface{}{1, "b", 2, 4})
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t add column aa int first").(*stmts.AlterTableStmt)
+	alterStmt := statement("alter table t add column aa int first").(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
-	// Check indices info
+
 	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(schemaName, tblName)
 	c.Assert(err, IsNil)
 	c.Assert(tbl, NotNil)
@@ -142,15 +99,100 @@ func (ts *testSuite) TestDDL(c *C) {
 			c.Assert(col.Offset, Equals, o)
 		}
 	}
+
 	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
-	// Inserting a duplicated column will cause error.
+
+	// Test add a duplicated column to table, get an error.
 	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
+	// Test column schema change in t2.
+	tbIdent2 := tbIdent
+	tbIdent2.Name = model.NewCIStr("t2")
+	tbStmt = statement("create table t2 (a int unique not null)").(*stmts.CreateTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
+	c.Assert(err, IsNil)
+	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	rid0, err := tb.AddRecord(ctx, []interface{}{1})
+	c.Assert(err, IsNil)
+	rid1, err := tb.AddRecord(ctx, []interface{}{2})
+	c.Assert(err, IsNil)
+
+	alterStmt = statement(`alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
+	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
+	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	cols, err := tb.Row(ctx, rid0)
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 2)
+	c.Assert(cols[0], Equals, nil)
+	c.Assert(cols[1], Equals, int64(1))
+
+	alterStmt = statement(`alter table t2 add c varchar(255) default "abc" after b`).(*stmts.AlterTableStmt)
+	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
+	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	cols, err = tb.Row(ctx, rid1)
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 3)
+	c.Assert(cols[0], Equals, nil)
+	c.Assert(cols[1], Equals, "abc")
+	c.Assert(cols[2], Equals, int64(2))
+	rid3, err := tb.AddRecord(ctx, []interface{}{mysql.Enum{Name: "bb", Value: 1}, "c", 3})
+	c.Assert(err, IsNil)
+	cols, err = tb.Row(ctx, rid3)
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 3)
+	c.Assert(cols[0], Equals, mysql.Enum{Name: "bb", Value: 1})
+	c.Assert(cols[1], Equals, "c")
+	c.Assert(cols[2], Equals, int64(3))
+
+	// Test add column after a not exist column, get an error.
+	alterStmt = statement(`alter table t2 add b int after xxxx`).(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	// Test add column to a not exist table, get an error.
+	tbIdent3 := tbIdent
+	tbIdent3.Name = model.NewCIStr("t3")
+	alterStmt = statement(`alter table t3 add b int first`).(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent3, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	// Test drop column.
+	alterStmt = statement("alter table t2 drop column b").(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(err, IsNil)
+	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+	cols, err = tb.Row(ctx, rid0)
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 2)
+	c.Assert(cols[0], Equals, "abc")
+	c.Assert(cols[1], Equals, int64(1))
+
+	// Test drop a not exist column from table, get an error.
+	alterStmt = statement(`alter table t2 drop column xxx`).(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	// Test drop column from a not exist table, get an error.
+	alterStmt = statement(`alter table t3 drop column a`).(*stmts.AlterTableStmt)
+	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent3, alterStmt.Specs)
+	c.Assert(err, NotNil)
+
+	// Test index schema change.
 	idxStmt := statement("CREATE INDEX idx_c ON t (c)").(*stmts.CreateIndexStmt)
 	idxName := model.NewCIStr(idxStmt.IndexName)
 	err = sessionctx.GetDomain(ctx).DDL().CreateIndex(ctx, tbIdent, idxStmt.Unique, idxName, idxStmt.IndexColNames)
@@ -159,21 +201,32 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(len(tbs), Equals, 2)
 	err = sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, tbIdent, idxName)
 	c.Assert(err, IsNil)
+
 	alterStmt = statement("alter table t add index idx_c (c)").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, IsNil)
+
 	alterStmt = statement("alter table t drop index idx_c").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, IsNil)
+
 	alterStmt = statement("alter table t add unique index idx_c (c)").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, IsNil)
+
 	alterStmt = statement("alter table t drop index idx_c").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
+	c.Assert(err, IsNil)
+
 	err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, tbIdent)
 	c.Assert(err, IsNil)
+
 	tbs = sessionctx.GetDomain(ctx).InfoSchema().SchemaTables(tbIdent.Schema)
 	c.Assert(len(tbs), Equals, 1)
 
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, noExist)
 	c.Assert(terror.ErrorEqual(err, ddl.ErrNotExists), IsTrue)
+
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, tbIdent.Schema)
 	c.Assert(err, IsNil)
 }
