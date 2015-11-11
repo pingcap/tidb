@@ -39,7 +39,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
-		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants",
+		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "FIELDS", "TRIGGERS",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -716,6 +716,7 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 		{`UNLOCK TABLES;`, true},
 		{`LOCK TABLES t1 READ;`, true},
 		{`show table status like 't'`, true},
+		{`LOCK TABLES t2 WRITE`, true},
 	}
 	s.RunTest(c, table)
 }
