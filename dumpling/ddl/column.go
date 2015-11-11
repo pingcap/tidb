@@ -144,13 +144,13 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		job.SchemaState = model.StateReorganization
-		columnInfo.State = model.StateReorganization
+		job.SchemaState = model.StateWriteReorganization
+		columnInfo.State = model.StateWriteReorganization
 		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorganization:
+	case model.StateWriteReorganization:
 		// reorganization -> public
 		// get the current version for reorganization if we don't have
 		reorgInfo, err := d.getReorgInfo(t, job)
@@ -253,13 +253,13 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateReorganization
-		colInfo.State = model.StateReorganization
+		job.SchemaState = model.StateDeleteReorganization
+		colInfo.State = model.StateDeleteReorganization
 		// initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		err = t.UpdateTable(schemaID, tblInfo)
 		return errors.Trace(err)
-	case model.StateReorganization:
+	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		reorgInfo, err := d.getReorgInfo(t, job)
 		if err != nil {
