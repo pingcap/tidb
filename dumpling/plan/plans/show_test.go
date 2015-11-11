@@ -56,7 +56,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	nc := mock.NewContext()
 	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
-	variable.BindGlobalSysVarAccessor(p.ctx, nc)
+	variable.BindGlobalVarAccessor(p.ctx, nc)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
@@ -106,7 +106,7 @@ func (p *testShowSuit) TestSimple(c *C) {
 	c.Assert(fls, HasLen, 2)
 }
 
-func (p *testShowSuit) TestShowVariables(c *C) {
+func (p *testShowSuit) TestShowSysVariables(c *C) {
 	pln := &plans.ShowPlan{
 		Target:      stmt.ShowVariables,
 		GlobalScope: true,
@@ -180,6 +180,94 @@ func (p *testShowSuit) TestShowVariables(c *C) {
 	v, ok = ret["autocommit"]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "on")
+}
+
+func (p *testShowSuit) TestShowStatusVariables(c *C) {
+	pln := &plans.ShowPlan{
+		Target:      stmt.ShowStatus,
+		GlobalScope: true,
+		Pattern: &expression.PatternLike{
+			Pattern: &expression.Value{
+				Val: "tc_log_page_size",
+			},
+		},
+	}
+	fls := pln.GetFields()
+	c.Assert(fls, HasLen, 2)
+	c.Assert(fls[0].Name, Equals, "Variable_name")
+	c.Assert(fls[1].Name, Equals, "Value")
+	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
+	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeVarchar)
+
+	sessionVars := variable.GetSessionVars(p.ctx)
+	ret := map[string]string{}
+	rset := rsets.Recordset{
+		Ctx:  p.ctx,
+		Plan: pln,
+	}
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 1)
+	v, ok := ret["tc_log_page_size"]
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "0")
+	pln.Close()
+
+	sessionVars.StatusVars["tc_log_page_size"] = "1024"
+	pln.GlobalScope = false
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 1)
+	v, ok = ret["tc_log_page_size"]
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "1024")
+	pln.Close()
+
+	pln.Pattern = &expression.PatternLike{
+		Pattern: &expression.Value{
+			Val: "compression",
+		},
+	}
+	sessionVars.StatusVars["compression"] = "on"
+	pln.GlobalScope = true
+	ret = map[string]string{}
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 0)
+
+	pln.GlobalScope = false
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 1)
+	v, ok = ret["compression"]
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "on")
+	pln.Close()
+
+	pln.Pattern = nil
+	pln.Where = &expression.BinaryOperation{
+		L:  &expression.Ident{CIStr: model.NewCIStr("Variable_name")},
+		R:  expression.Value{Val: "aborted_clients"},
+		Op: opcode.EQ,
+	}
+	ret = map[string]string{}
+	sessionVars.StatusVars["aborted_clients"] = "0"
+	rset.Do(func(data []interface{}) (bool, error) {
+		ret[data[0].(string)] = data[1].(string)
+		return true, nil
+	})
+	c.Assert(ret, HasLen, 1)
+	v, ok = ret["aborted_clients"]
+	c.Assert(ok, IsTrue)
+	c.Assert(v, Equals, "0")
 }
 
 func (p *testShowSuit) TestIssue540(c *C) {

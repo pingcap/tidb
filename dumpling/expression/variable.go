@@ -62,7 +62,7 @@ func (v *Variable) String() string {
 func (v *Variable) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	name := strings.ToLower(v.Name)
 	sessionVars := variable.GetSessionVars(ctx)
-	globalVars := variable.GetGlobalSysVarAccessor(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	if !v.IsSystem {
 		// user vars
 		if value, ok := sessionVars.Users[name]; ok {
