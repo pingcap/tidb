@@ -175,7 +175,7 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 
 func (s *testDBSuite) TestColumn(c *C) {
 	s.testAddColumn(c)
-	//s.testDropColumn(c)
+	s.testDropColumn(c)
 }
 
 func (s *testDBSuite) testAddColumn(c *C) {
