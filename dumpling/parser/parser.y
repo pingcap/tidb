@@ -228,6 +228,7 @@ import (
 	signed		"SIGNED"
 	some 		"SOME"
 	start		"START"
+	status		"STATUS"
 	stringType	"string"
 	subDate		"SUBDATE"
 	substring	"SUBSTRING"
@@ -482,10 +483,10 @@ import (
 	SelectStmtOpts		"Select statement options"
 	SelectStmtGroup		"SELECT statement optional GROUP BY clause"
 	SetStmt			"Set variable statement"
-	ShowStmt		"Show engines/databases/tables/columns/warnings statement"
+	ShowStmt		"Show engines/databases/tables/columns/warnings/status statement"
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
 	ShowTableAliasOpt       "Show table alias option"
-	ShowLikeOrWhereOpt	"Show like or where condition option"
+	ShowLikeOrWhereOpt	"Show like or where clause option"
 	SignedLiteral		"Literal or NumLiteral with sign"
 	Statement		"statement"
 	StatementList		"statement list"
@@ -1647,7 +1648,7 @@ UnReservedKeyword:
 	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
-|	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
+|	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
@@ -3307,6 +3308,19 @@ ShowStmt:
 	{
 		stmt := &ast.ShowStmt{
 			Tp: ast.ShowVariables,
+			GlobalScope: $2.(bool),
+		}
+		if x, ok := $4.(*ast.PatternLikeExpr); ok {
+			stmt.Pattern = x
+		} else if $4 != nil {
+			stmt.Where = $4.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
+|	"SHOW" GlobalScope "STATUS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatus,
 			GlobalScope: $2.(bool),
 		}
 		if x, ok := $4.(*ast.PatternLikeExpr); ok {

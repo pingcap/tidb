@@ -100,7 +100,7 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	log.Debug("Set sys/user variables")
 
 	sessionVars := variable.GetSessionVars(ctx)
-	globalVars := variable.GetGlobalSysVarAccessor(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	for _, v := range s.Variables {
 		// Variable is case insensitive, we use lower case.
 		name := strings.ToLower(v.Name)
