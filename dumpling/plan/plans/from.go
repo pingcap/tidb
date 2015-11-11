@@ -148,6 +148,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 	return &indexPlan{
 		src:     t,
 		col:     c,
+		unique:  ix.Unique,
 		idxName: ix.Name.O,
 		idx:     ix.X,
 		spans:   toSpans(x.Op, rval, seekVal),
@@ -179,6 +180,7 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 		return &indexPlan{
 			src:     t,
 			col:     v,
+			unique:  ix.Unique,
 			idxName: ix.Name.L,
 			idx:     ix.X,
 			spans:   spans,
@@ -215,6 +217,7 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	return &indexPlan{
 		src:     t,
 		col:     col,
+		unique:  ix.Unique,
 		idxName: ix.Name.L,
 		idx:     ix.X,
 		spans:   spans,

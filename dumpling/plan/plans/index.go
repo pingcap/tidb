@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -124,6 +125,7 @@ func (span *indexSpan) cutOffHigh(val interface{}, exclude bool) *indexSpan {
 type indexPlan struct {
 	src        table.Table
 	col        *column.Col
+	unique     bool
 	idxName    string
 	idx        kv.Index
 	spans      []*indexSpan // multiple spans are ordered by their values and without overlapping.
@@ -243,6 +245,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 	return &indexPlan{
 		src:     r.src,
 		col:     r.col,
+		unique:  r.unique,
 		idxName: r.idxName,
 		idx:     r.idx,
 		spans:   spans,
@@ -331,6 +334,18 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			return
 		}
 		span := r.spans[r.cursor]
+		if r.isPointLookup(span) {
+			// Do point lookup on index will prevent prefetch cost.
+			row, err = r.pointLookup(ctx, span.lowVal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			r.cursor++
+			if row != nil {
+				return
+			}
+			continue
+		}
 		if r.iter == nil {
 			seekVal := span.seekVal
 			if span.lowVal == minNotNullVal {
@@ -370,18 +385,54 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			r.skipLowCmp = false
 			continue
 		}
-		row = &plan.Row{}
-		row.Data, err = r.src.Row(ctx, h)
+		row, err = r.lookupRow(ctx, h)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rowKey := &plan.RowKeyEntry{
-			Tbl: r.src,
-			Key: string(r.src.RecordKey(h, nil)),
-		}
-		row.RowKeys = append(row.RowKeys, rowKey)
 		return
 	}
+}
+
+func (r *indexPlan) isPointLookup(span *indexSpan) bool {
+	return r.unique && span.lowVal != nil && span.lowVal == span.highVal && !span.lowExclude && !span.highExclude
+}
+
+func (r *indexPlan) lookupRow(ctx context.Context, h int64) (row *plan.Row, err error) {
+	row = &plan.Row{}
+	row.Data, err = r.src.Row(ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rowKey := &plan.RowKeyEntry{
+		Tbl: r.src,
+		Key: string(r.src.RecordKey(h, nil)),
+	}
+	row.RowKeys = append(row.RowKeys, rowKey)
+	return
+}
+
+// pointLookup do not seek index but call Exists method to get a handle, which is cheaper.
+func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (row *plan.Row, err error) {
+	var txn kv.Transaction
+	txn, err = ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var exist bool
+	var h int64
+	// We expect a kv.ErrKeyExists Error because we pass -1 as the handle which is not equal to the existed error.
+	exist, h, err = r.idx.Exist(txn, []interface{}{val}, -1)
+	if !exist {
+		return nil, errors.Trace(err)
+	}
+	if terror.ErrorNotEqual(kv.ErrKeyExists, err) {
+		return nil, errors.Trace(err)
+	}
+	row, err = r.lookupRow(ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return
 }
 
 // Close implements plan.Plan Close interface.
