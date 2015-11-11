@@ -89,11 +89,11 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	var info *reorgInfo
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		var err error
-		info, err = d.getReorgInfo(t, job)
-		c.Assert(err, IsNil)
-		err = info.UpdateHandle(txn, 1)
-		c.Assert(err, IsNil)
+		var err1 error
+		info, err1 = d.getReorgInfo(t, job)
+		c.Assert(err1, IsNil)
+		err1 = info.UpdateHandle(txn, 1)
+		c.Assert(err1, IsNil)
 
 		return nil
 	})
@@ -101,9 +101,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		var err error
-		info, err = d.getReorgInfo(t, job)
-		c.Assert(err, IsNil)
+		var err1 error
+		info, err1 = d.getReorgInfo(t, job)
+		c.Assert(err1, IsNil)
 		c.Assert(info.Handle, Greater, int64(0))
 		return nil
 	})
