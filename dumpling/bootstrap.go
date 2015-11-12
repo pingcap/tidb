@@ -198,12 +198,12 @@ func doDMLWorks(s Session) {
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
 	// Init global status variable table.
-	values := make([]string, 0, len(variable.StatusVars))
+	values = make([]string, 0, len(variable.StatusVars))
 	for k, v := range variable.StatusVars {
 		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
 		values = append(values, value)
 	}
-	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalStatusTable,
+	sql = fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalStatusTable,
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
 	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
