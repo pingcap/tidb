@@ -351,6 +351,7 @@ execute		{e}{x}{e}{c}{u}{t}{e}
 exists		{e}{x}{i}{s}{t}{s}
 explain		{e}{x}{p}{l}{a}{i}{n}
 extract		{e}{x}{t}{r}{a}{c}{t}
+fields		{f}{i}{e}{l}{d}{s}
 first		{f}{i}{r}{s}{t}
 for		{f}{o}{r}
 foreign		{f}{o}{r}{e}{i}{g}{n}
@@ -412,6 +413,7 @@ primary		{p}{r}{i}{m}{a}{r}{y}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
+read		{r}{e}{a}{d}
 repeat		{r}{e}{p}{e}{a}{t}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
@@ -442,6 +444,7 @@ then		{t}{h}{e}{n}
 to		{t}{o}
 trailing	{t}{r}{a}{i}{l}{i}{n}{g}
 transaction	{t}{r}{a}{n}{s}{a}{c}{t}{i}{o}{n}
+triggers	{t}{r}{i}{g}{g}{e}{r}{s}
 trim		{t}{r}{i}{m}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
 max		{m}{a}{x}
@@ -449,6 +452,7 @@ min		{m}{i}{n}
 unknown		{u}{n}{k}{n}{o}{w}{n}
 union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
+unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
 upper		{u}{p}{p}{e}{r}
@@ -461,6 +465,7 @@ weekday		{w}{e}{e}{k}{d}{a}{y}
 weekofyear	{w}{e}{e}{k}{o}{f}{y}{e}{a}{r}
 where		{w}{h}{e}{r}{e}
 when		{w}{h}{e}{n}
+write		{w}{r}{i}{t}{e}
 xor		{x}{o}{r}
 yearweek	{y}{e}{a}{r}{w}{e}{e}{k}
 
@@ -727,6 +732,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {explain}		return explain
 {extract}		lval.item = string(l.val)
 			return extract
+{fields}		lval.item = string(l.val)
+			return fields
 {first}			lval.item = string(l.val)
 			return first
 {for}			return forKwd
@@ -848,6 +855,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return global
 {rand}			lval.item = string(l.val)
 			return rand
+{read}			return read
 {repeat}		lval.item = string(l.val)
 			return repeat
 {regexp}		return regexp
@@ -887,6 +895,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {trailing}		return trailing
 {transaction}		lval.item = string(l.val)
 			return transaction
+{triggers}		lval.item = string(l.val)
+			return triggers
 {trim}			lval.item = string(l.val)
 			return trim
 {truncate}		lval.item = string(l.val)
@@ -897,6 +907,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return unknown
 {nullif}		lval.item = string(l.val)
 			return nullIf
+{unlock}		return unlock
 {update}		return update
 {upper}			lval.item = string(l.val)
 			return upper
@@ -919,6 +930,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return weekofyear
 {when}			return when
 {where}			return where
+{write}			return write
 {xor}			return xor
 {yearweek}		lval.item = string(l.val)
 			return yearweek
