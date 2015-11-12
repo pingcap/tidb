@@ -1372,6 +1372,19 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	}
 }
 
+func (s *testSessionSuite) TestIndexPointLookup(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (a int)")
+	mustExecSQL(c, se, "insert t values (1), (2), (3)")
+	mustExecMatch(c, se, "select * from t where a = '1.1';", [][]interface{}{})
+	mustExecMatch(c, se, "select * from t where a = '2';", [][]interface{}{{2}})
+	mustExecMatch(c, se, "select * from t where a = 3;", [][]interface{}{{3}})
+	mustExecMatch(c, se, "select * from t where a = 4;", [][]interface{}{})
+	mustExecSQL(c, se, "drop table t")
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
