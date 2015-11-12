@@ -301,3 +301,13 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	c.Assert(it.Value(), DeepEquals, []byte("2"))
 	tx.Commit()
 }
+
+func encodeInt(n int) []byte {
+	return []byte(fmt.Sprintf("%010d", n))
+}
+
+func decodeInt(s []byte) int {
+	var n int
+	fmt.Sscanf(string(s), "%010d", &n)
+	return n
+}
