@@ -158,6 +158,7 @@ const (
 	ShowEngines
 	ShowDatabases
 	ShowTables
+	ShowTableStatus
 	ShowColumns
 	ShowWarnings
 	ShowCharset
@@ -166,6 +167,7 @@ const (
 	ShowCollation
 	ShowCreateTable
 	ShowGrants
+	ShowTriggers
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.
