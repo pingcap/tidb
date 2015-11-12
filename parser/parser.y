@@ -135,6 +135,7 @@ import (
 	explain		"EXPLAIN"
 	extract		"EXTRACT"
 	falseKwd	"false"
+	fields		"FIELDS"
 	first		"FIRST"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
@@ -208,6 +209,7 @@ import (
 	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
+	read		"READ"
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
@@ -242,6 +244,7 @@ import (
 	to		"TO"
 	trailing	"TRAILING"
 	transaction	"TRANSACTION"
+	triggers	"TRIGGERS"
 	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
@@ -249,6 +252,7 @@ import (
 	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
+	unlock		"UNLOCK"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	upper 		"UPPER"
@@ -265,6 +269,7 @@ import (
 	weekofyear	"WEEKOFYEAR"
 	when		"WHEN"
 	where		"WHERE"
+	write		"WRITE"
 	xor 		"XOR"
 	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
@@ -438,6 +443,8 @@ import (
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
+	LockTablesStmt		"Lock tables statement"
+	LockType		"Table locks type"
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
@@ -501,6 +508,8 @@ import (
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
 	TableFactor 		"table factor"
+	TableLock		"Table name and lock type"
+	TableLockList		"Table lock list"
 	TableName		"Table name"
 	TableNameList		"Table name list"
 	TableOption		"create table option"
@@ -515,6 +524,7 @@ import (
 	UnionStmt		"Union select state ment"
 	UnionClauseList		"Union select clause list"
 	UnionSelect		"Union (select) item"
+	UnlockTablesStmt	"Unlock tables statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
 	UserSpec		"Username and auth option"
@@ -1651,7 +1661,7 @@ UnReservedKeyword:
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "STATUS" | "FIELDS" | "TRIGGERS"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH"
@@ -3291,8 +3301,33 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "TABLE" "STATUS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp:	ast.ShowTableStatus,
+			DBName:	$4.(string),
+		}
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 |	"SHOW" OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
+		$$ = &ast.ShowStmt{
+			Tp:     ast.ShowColumns,
+			Table:	$4.(*ast.TableName),
+			DBName:	$5.(string),
+			Full:	$2.(bool),
+		}
+	}
+|	"SHOW" OptFull "FIELDS" ShowTableAliasOpt ShowDatabaseNameOpt
+	{
+		// SHOW FIELDS is a synonym for SHOW COLUMNS.
 		$$ = &ast.ShowStmt{
 			Tp:     ast.ShowColumns,
 			Table:	$4.(*ast.TableName),
@@ -3361,6 +3396,21 @@ ShowStmt:
 			Tp:	ast.ShowGrants,
 			User:	$4.(string),
 		}
+	}
+|	"SHOW" "TRIGGERS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp:	ast.ShowTriggers,
+			DBName:	$3.(string),
+		}
+		if $4 != nil {
+			if x, ok := $4.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $4.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
 	}
 
 ShowLikeOrWhereOpt:
@@ -3456,6 +3506,8 @@ Statement:
 		// TODO: This is used to fix issue #320. There may be a better solution.
 		$$ = $1.(*ast.SubqueryExpr).Query
 	}
+|	UnlockTablesStmt
+|	LockTablesStmt
 
 ExplainableStmt:
 	SelectStmt
@@ -4348,4 +4400,29 @@ PrivLevel:
 			TableName: $1.(string),
 		}
 	}
+
+/*********************************************************************
+ * Lock/Unlock Tables
+ * See: http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html
+ * All the statement leaves empty. This is used to prevent mysqldump error.
+ *********************************************************************/
+
+UnlockTablesStmt:
+	"UNLOCK" "TABLES"
+
+LockTablesStmt:
+	"LOCK" "TABLES" TableLockList
+
+TableLock:
+	 TableName LockType
+
+LockType:
+	"READ"
+|	"READ" "LOCAL"
+|	"WRITE"
+
+TableLockList:
+	TableLock
+|	TableLockList ',' TableLock 
+
 %%
