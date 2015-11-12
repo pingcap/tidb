@@ -72,7 +72,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	// run server in single machine mode, so we don't need wait
 	// 2 * lease time for DDL operation.
 	// if not local storage, first we will use a little lease time to
-	// bootstrap quickly, after boostrapped, we will reset the lease time.
+	// bootstrap quickly, after bootstrapped, we will reset the lease time.
 	if !localstore.IsLocalStore(store) {
 		lease = 100 * time.Second
 	}
