@@ -1379,6 +1379,7 @@ func (s *testSessionSuite) TestIndexPointLookup(c *C) {
 	mustExecSQL(c, se, "create table t (a int)")
 	mustExecSQL(c, se, "insert t values (1), (2), (3)")
 	mustExecMatch(c, se, "select * from t where a = '1.1';", [][]interface{}{})
+	mustExecMatch(c, se, "select * from t where a > '1.1';", [][]interface{}{{2}, {3}})
 	mustExecMatch(c, se, "select * from t where a = '2';", [][]interface{}{{2}})
 	mustExecMatch(c, se, "select * from t where a = 3;", [][]interface{}{{3}})
 	mustExecMatch(c, se, "select * from t where a = 4;", [][]interface{}{})
