@@ -34,8 +34,6 @@ const (
 	ActionDropColumn
 	ActionAddIndex
 	ActionDropIndex
-	ActionAddConstraint
-	ActionDropConstraint
 )
 
 func (action ActionType) String() string {
@@ -56,10 +54,6 @@ func (action ActionType) String() string {
 		return "add index"
 	case ActionDropIndex:
 		return "drop index"
-	case ActionAddConstraint:
-		return "add constraint"
-	case ActionDropConstraint:
-		return "drop constraint"
 	default:
 		return "none"
 	}
