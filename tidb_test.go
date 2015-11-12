@@ -1372,6 +1372,41 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 	}
 }
 
+// For https://github.com/pingcap/tidb/issues/571
+func (s *testSessionSuite) TestIssue571(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "begin")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c int)")
+	mustExecSQL(c, se, "insert t values (1), (2), (3)")
+	mustExecSQL(c, se, "commit")
+
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
+	se2 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	f1 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			mustExecSQL(c, se1, "update t set c = 1;")
+		}
+	}
+	f2 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			mustExecSQL(c, se2, "update t set c = 1;")
+		}
+	}
+	go f1()
+	go f2()
+	wg.Wait()
+}
+
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
