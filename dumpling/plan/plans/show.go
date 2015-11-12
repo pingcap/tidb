@@ -94,6 +94,15 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		if s.Full {
 			names = append(names, "Table_type")
 		}
+	case stmt.ShowTableStatus:
+		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
+			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
+			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
+			"Create_options", "Comment"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar}
 	case stmt.ShowColumns:
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
@@ -114,6 +123,11 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = []string{"Table", "Create Table"}
 	case stmt.ShowGrants:
 		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+	case stmt.ShowTriggers:
+		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
+			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
@@ -159,6 +173,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowDatabases(ctx)
 	case stmt.ShowTables:
 		return s.fetchShowTables(ctx)
+	case stmt.ShowTableStatus:
+		return s.fetchShowTableStatus(ctx)
 	case stmt.ShowColumns:
 		return s.fetchShowColumns(ctx)
 	case stmt.ShowWarnings:
@@ -175,6 +191,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowCreateTable(ctx)
 	case stmt.ShowGrants:
 		return s.fetchShowGrants(ctx)
+	case stmt.ShowTriggers:
+		return s.fetchShowTriggers(ctx)
 	}
 	return nil
 }
@@ -356,6 +374,49 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 	return nil
 }
 
+func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	dbName := model.NewCIStr(s.DBName)
+	if !is.SchemaExists(dbName) {
+		return errors.Errorf("Can not find DB: %s", dbName)
+	}
+
+	// sort for tables
+	var tableNames []string
+	for _, v := range is.SchemaTables(dbName) {
+		tableNames = append(tableNames, v.TableName().L)
+	}
+
+	sort.Strings(tableNames)
+
+	m := map[interface{}]interface{}{}
+	for _, v := range tableNames {
+		// Check like/where clause.
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+		now := mysql.CurrentTime(mysql.TypeDatetime)
+		data := []interface{}{
+			v, "InnoDB", "10", "Compact", 100, 100,
+			100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "",
+			"", "",
+		}
+		s.rows = append(s.rows, &plan.Row{Data: data})
+	}
+	return nil
+}
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
 	globalVars := variable.GetGlobalVarAccessor(ctx)
@@ -500,6 +561,7 @@ func (s *ShowPlan) fetchShowCharset(ctx context.Context) error {
 }
 
 func (s *ShowPlan) fetchShowEngines(ctx context.Context) error {
+	// Mock data
 	row := &plan.Row{
 		Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
 	}
@@ -610,5 +672,9 @@ func (s *ShowPlan) fetchShowGrants(ctx context.Context) error {
 		data := []interface{}{g}
 		s.rows = append(s.rows, &plan.Row{Data: data})
 	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowTriggers(ctx context.Context) error {
 	return nil
 }
