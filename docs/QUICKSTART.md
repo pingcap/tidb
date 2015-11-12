@@ -42,7 +42,7 @@ Press `Ctrl+C` to quit.
 
 #### __Run as go library__
 
-See [USAGE.md](./docs/USAGE.md) for detailed instructions to use TiDB as library in Go code.
+See [USAGE.md](./USAGE.md) for detailed instructions to use TiDB as library in Go code.
 
 #### __Run as MySQL protocol server__
 
