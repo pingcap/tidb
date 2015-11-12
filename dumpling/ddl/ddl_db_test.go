@@ -43,7 +43,8 @@ type testDBSuite struct {
 	store      kv.Storage
 	schemaName string
 
-	s tidb.Session
+	s     tidb.Session
+	lease time.Duration
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
@@ -64,8 +65,10 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
 	s.mustExec(c, "create table t2 (c1 int, c2 int, c3 int)")
 
-	// set schema lease to 1s, so we may use about 8s to finish a schema change.
-	tidb.SetSchemaLease(1)
+	// set proper schema lease
+	s.lease = 500 * time.Millisecond
+	ctx := s.s.(context.Context)
+	sessionctx.GetDomain(ctx).SetLease(s.lease)
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
@@ -102,7 +105,7 @@ func (s *testDBSuite) testAddIndex(c *C) {
 
 	deletedKeys := make(map[int]struct{})
 
-	ticker := time.NewTicker(time.Second / 2)
+	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -206,7 +209,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 		done <- struct{}{}
 	}()
 
-	ticker := time.NewTicker(time.Second / 2)
+	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -283,7 +286,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		done <- struct{}{}
 	}()
 
-	ticker := time.NewTicker(time.Second / 2)
+	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 	step := 10
 LOOP:
@@ -372,7 +375,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 		done <- struct{}{}
 	}()
 
-	ticker := time.NewTicker(time.Second / 2)
+	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 	step := 10
 LOOP:
