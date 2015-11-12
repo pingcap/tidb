@@ -250,7 +250,7 @@ func (c *driverConn) Commit() error {
 	}
 	_, err := c.s.Execute(txCommitSQL)
 
-	if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
+	if kv.IsRetryableError(err) {
 		return c.s.Retry()
 	}
 
@@ -259,7 +259,7 @@ func (c *driverConn) Commit() error {
 	}
 
 	err = c.s.FinishTxn(false)
-	if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
+	if kv.IsRetryableError(err) {
 		return c.s.Retry()
 	}
 	return errors.Trace(err)
