@@ -16,29 +16,50 @@ package ddl_test
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"math/rand"
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/column"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testDBSuite{})
 
 type testDBSuite struct {
 	db *sql.DB
+
+	store      kv.Storage
+	schemaName string
+
+	s tidb.Session
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
-	s.db, err = sql.Open("tidb", "memory://test/test_db")
+
+	s.schemaName = "test_db"
+
+	uri := "memory://test"
+	s.store, err = tidb.NewStore(uri)
 	c.Assert(err, IsNil)
 
-	// force bootstrap
-	s.mustExec(c, "use test_db")
+	s.db, err = sql.Open("tidb", fmt.Sprintf("%s/%s", uri, s.schemaName))
+	c.Assert(err, IsNil)
+
+	s.s, err = tidb.CreateSession(s.store)
+	c.Assert(err, IsNil)
 
 	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int, primary key(c1))")
 	s.mustExec(c, "create table t2 (c1 int, c2 int, c3 int)")
@@ -49,11 +70,20 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 
 func (s *testDBSuite) TearDownSuite(c *C) {
 	s.db.Close()
+
+	s.s.Close()
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
 	s.testAddIndex(c)
 	s.testDropIndex(c)
+}
+
+func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+	ctx := s.s.(context.Context)
+	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	c.Assert(err, IsNil)
+	return tbl
 }
 
 func (s *testDBSuite) testAddIndex(c *C) {
@@ -124,6 +154,40 @@ LOOP:
 
 	ay := dumpRows(c, rows)
 	c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsTrue)
+
+	// get all row handles
+	ctx := s.s.(context.Context)
+	t := s.testGetTable(c, "t1")
+	handles := make(map[int64]struct{})
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		handles[h] = struct{}{}
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+
+	// check in index
+	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", false)
+	txn, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+	defer ctx.FinishTxn(true)
+
+	it, err := idx.SeekFirst(txn)
+	c.Assert(err, IsNil)
+	defer it.Close()
+
+	for {
+		_, h, err := it.Next()
+		if terror.ErrorEqual(err, io.EOF) {
+			break
+		}
+
+		c.Assert(err, IsNil)
+		_, ok := handles[h]
+		c.Assert(ok, IsTrue)
+		delete(handles, h)
+	}
+
+	c.Assert(len(handles), Equals, 0)
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
@@ -165,6 +229,33 @@ LOOP:
 
 	ay := dumpRows(c, rows)
 	c.Assert(strings.Contains(fmt.Sprintf("%v", ay), "c3_index"), IsFalse)
+
+	// check in index, must no index in kv
+	ctx := s.s.(context.Context)
+
+	handles := make(map[int64]struct{})
+
+	t := s.testGetTable(c, "t1")
+	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", false)
+	txn, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+	defer ctx.FinishTxn(true)
+
+	it, err := idx.SeekFirst(txn)
+	c.Assert(err, IsNil)
+	defer it.Close()
+
+	for {
+		_, h, err := it.Next()
+		if terror.ErrorEqual(err, io.EOF) {
+			break
+		}
+
+		c.Assert(err, IsNil)
+		handles[h] = struct{}{}
+	}
+
+	c.Assert(len(handles), Equals, 0)
 }
 
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
@@ -204,11 +295,9 @@ LOOP:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
-				// we may meet condition not match here
-				_, err := s.db.Exec("delete from t2 where c1 = ?", n)
-				c.Assert(err, IsNil, Commentf("%s", errors.ErrorStack(err)))
+				s.mustExec(c, "delete from t2 where c1 = ?", n)
 
-				_, err = s.db.Exec("insert into t2 values (?, ?, ?)", i, i, i)
+				_, err := s.db.Exec("insert into t2 values (?, ?, ?)", i, i, i)
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
@@ -230,6 +319,7 @@ LOOP:
 	c.Assert(values[0], HasLen, 1)
 	count, ok := values[0][0].(int64)
 	c.Assert(ok, IsTrue)
+	c.Assert(count, Greater, int64(0))
 
 	rows = s.mustQuery(c, "select count(c4) from t2 where c4 = -1")
 	matchRows(c, rows, [][]interface{}{{count - int64(step)}})
@@ -238,6 +328,27 @@ LOOP:
 		rows := s.mustQuery(c, "select c4 from t2 where c4 = ?", i)
 		matchRows(c, rows, [][]interface{}{{i}})
 	}
+
+	ctx := s.s.(context.Context)
+	t := s.testGetTable(c, "t2")
+	i := 0
+	j := 0
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		// c4 must be -1 or > 0
+		v, err := types.ToInt64(data[3])
+		c.Assert(err, IsNil)
+		if v == -1 {
+			j++
+		} else {
+			c.Assert(v, Greater, int64(0))
+		}
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int(count))
+	c.Assert(i, LessEqual, num+step)
+	c.Assert(j, Equals, int(count)-step)
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -250,6 +361,11 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
+
+	// get c4 column id
+	ctx := s.s.(context.Context)
+	t := s.testGetTable(c, "t2")
+	col := t.Cols()[3]
 
 	go func() {
 		s.mustExec(c, "alter table t2 drop column c4")
@@ -282,10 +398,41 @@ LOOP:
 	for i := num; i < num+step; i++ {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
+
+	rows := s.mustQuery(c, "select count(*) from t2")
+	values := dumpRows(c, rows)
+	c.Assert(values, HasLen, 1)
+	c.Assert(values[0], HasLen, 1)
+	count, ok := values[0][0].(int64)
+	c.Assert(ok, IsTrue)
+	c.Assert(count, Greater, int64(0))
+
+	txn, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+	defer ctx.FinishTxn(false)
+
+	i := 0
+	t = s.testGetTable(c, "t2")
+	// check c4 does not exist
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+		i++
+		k := t.RecordKey(h, col)
+		_, err1 := txn.Get([]byte(k))
+		c.Assert(terror.ErrorEqual(err1, kv.ErrNotExist), IsTrue)
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int(count))
+	c.Assert(i, LessEqual, num+step)
 }
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {
 	r, err := s.db.Exec(query, args...)
+	// here we just skip condition not match error
+	if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
+		log.Errorf("exec %s, %v, condition not match", query, args)
+		return nil
+	}
 	c.Assert(err, IsNil, Commentf("query %s, args %v", query, args))
 	return r
 }
