@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
@@ -431,11 +430,6 @@ LOOP:
 
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) sql.Result {
 	r, err := s.db.Exec(query, args...)
-	// here we just skip condition not match error
-	if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
-		log.Errorf("exec %s, %v, condition not match", query, args)
-		return nil
-	}
 	c.Assert(err, IsNil, Commentf("query %s, args %v", query, args))
 	return r
 }
