@@ -155,8 +155,13 @@ func (s *session) FinishTxn(rollback bool) error {
 
 	err := s.txn.Commit()
 	if err != nil {
-		log.Warnf("txn:%s, %v", s.txn, err)
-		return errors.Trace(err)
+		if kv.IsRetryableError(err) {
+			err = s.Retry()
+		}
+		if err != nil {
+			log.Warnf("txn:%s, %v", s.txn, err)
+			return errors.Trace(err)
+		}
 	}
 
 	s.resetHistory()
@@ -230,7 +235,10 @@ func (s *session) Retry() error {
 			}
 		}
 		if success {
-			break
+			err = s.FinishTxn(false)
+			if err == nil {
+				break
+			}
 		}
 	}
 
@@ -490,7 +498,12 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		err = s.txn.Commit()
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
 		if err != nil {
-			return nil, err
+			if kv.IsRetryableError(err) {
+				err = s.Retry()
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		s.resetHistory()
 		s.txn, err = s.store.Begin()
