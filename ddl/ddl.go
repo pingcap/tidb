@@ -502,7 +502,13 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		return errors.Trace(ErrNotExists)
 	}
 
-	var col *column.Col
+	// Check whether added column has existed.
+	colName := spec.Column.Name
+	col := column.FindCol(t.Cols(), colName)
+	if col != nil {
+		return errors.Errorf("column %s already exists", colName)
+	}
+
 	// ingore table constraints now, maybe return error later
 	// we use length(t.Cols()) as the default offset first, later we will change the
 	// column's offset later.
@@ -534,6 +540,12 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return errors.Trace(ErrNotExists)
+	}
+
+	// Check whether dropped column has existed.
+	col := column.FindCol(t.Cols(), colName.L)
+	if col == nil {
+		return errors.Errorf("column %s doesn’t exist", colName.L)
 	}
 
 	job := &model.Job{
