@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -609,13 +608,14 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	mustExecSQL(c, se2, "commit")
 
 	_, err := exec(c, se1, "commit")
-	// row lock conflict but can still success
-	if terror.ErrorNotEqual(err, kv.ErrConditionNotMatch) {
-		c.Fail()
-	}
-	// Retry should success
-	err = se.Retry()
+	// se1 will retry and the final value is 21
 	c.Assert(err, IsNil)
+	// Check the result is correct
+	se3 := newSession(c, store, s.dbName)
+	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
+	rows, err := r.Rows(-1, 0)
+	fmt.Println(rows)
+	matches(c, rows, [][]interface{}{{21}})
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
@@ -1387,9 +1387,11 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
 	se2 := newSession(c, store, s.dbName)
 	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
+	se3 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	f1 := func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
@@ -1402,8 +1404,17 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 			mustExecSQL(c, se2, "update t set c = 1;")
 		}
 	}
+	f3 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			mustExecSQL(c, se3, "begin")
+			mustExecSQL(c, se3, "update t set c = 1;")
+			mustExecSQL(c, se3, "commit")
+		}
+	}
 	go f1()
 	go f2()
+	go f3()
 	wg.Wait()
 }
 

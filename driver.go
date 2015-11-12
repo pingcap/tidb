@@ -29,7 +29,6 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
@@ -250,18 +249,11 @@ func (c *driverConn) Commit() error {
 	}
 	_, err := c.s.Execute(txCommitSQL)
 
-	if kv.IsRetryableError(err) {
-		return c.s.Retry()
-	}
-
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	err = c.s.FinishTxn(false)
-	if kv.IsRetryableError(err) {
-		return c.s.Retry()
-	}
 	return errors.Trace(err)
 }
 

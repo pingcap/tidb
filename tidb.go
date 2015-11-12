@@ -215,13 +215,6 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 	// MySQL DDL should be auto-commit
 	if err == nil && (s.IsDDL() || autocommit.ShouldAutocommit(ctx)) {
 		err = ctx.FinishTxn(false)
-		// We should retry for autocommit
-		if kv.IsRetryableError(err) {
-			se, ok := ctx.(Session)
-			if ok {
-				return nil, se.Retry()
-			}
-		}
 	}
 	return rs, errors.Trace(err)
 }
