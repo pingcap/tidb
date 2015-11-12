@@ -4,3 +4,5 @@
 /interpreter/test
 /tidb-server/tidb-server
 coverage.out
+.idea/
+*.iml

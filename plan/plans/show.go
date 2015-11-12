@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -103,6 +104,8 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowVariables:
 		names = []string{"Variable_name", "Value"}
+	case stmt.ShowStatus:
+		names = []string{"Variable_name", "Value"}
 	case stmt.ShowCollation:
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
@@ -164,6 +167,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowCharset(ctx)
 	case stmt.ShowVariables:
 		return s.fetchShowVariables(ctx)
+	case stmt.ShowStatus:
+		return s.fetchShowStatus(ctx)
 	case stmt.ShowCollation:
 		return s.fetchShowCollation(ctx)
 	case stmt.ShowCreateTable:
@@ -353,7 +358,7 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
-	globalVars := variable.GetGlobalSysVarAccessor(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.SysVars {
@@ -399,6 +404,86 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 		row := &plan.Row{Data: []interface{}{v.Name, value}}
 		s.rows = append(s.rows, row)
 	}
+	return nil
+}
+
+func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
+	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+	sv, ok := sessionVars.StatusVars[name]
+	if ok {
+		return sv, nil
+	}
+
+	value, err := globalVars.GetGlobalStatusVar(ctx, name)
+	if err != nil && terror.UnknownStatusVar.Equal(err) {
+		return "", errors.Trace(err)
+	}
+
+	return value, nil
+}
+
+func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
+	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+
+	value, err := globalVars.GetGlobalStatusVar(ctx, name)
+	if err == nil {
+		return value, nil
+	}
+
+	if terror.UnknownStatusVar.Equal(err) {
+		return "", errors.Trace(err)
+	}
+
+	sv, _ := sessionVars.StatusVars[name]
+
+	return sv, nil
+}
+
+func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
+	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
+	m := map[interface{}]interface{}{}
+
+	for _, v := range variable.StatusVars {
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v.Name}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if strings.EqualFold(name, "Variable_name") {
+					return v.Name, nil
+				}
+
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+
+		var value string
+		if !s.GlobalScope {
+			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else if v.Scope != variable.ScopeSession {
+			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			continue
+		}
+
+		row := &plan.Row{Data: []interface{}{v.Name, value}}
+		s.rows = append(s.rows, row)
+	}
+
 	return nil
 }
 
