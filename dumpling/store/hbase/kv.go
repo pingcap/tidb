@@ -30,8 +30,6 @@ const (
 	hbaseQualifier = "q"
 	// hbaseFmlAndQual is a shortcut.
 	hbaseFmlAndQual = hbaseColFamily + ":" + hbaseQualifier
-	// hbaseTableName is the table name in hbase which is invisible to SQL layer.
-	hbaseTableName = "tidb"
 )
 
 var (
@@ -112,18 +110,25 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 	if len(zkInfo) == 0 {
 		return nil, errors.Trace(ErrZkInvalid)
 	}
+	pos := strings.LastIndex(zkInfo, "/")
+	if pos == -1 {
+		return nil, errors.Trace(ErrZkInvalid)
+	}
+	tableName := zkInfo[pos+1:]
+	zks := strings.Split(zkInfo[:pos], ",")
+
 	if store, ok := mc.cache[zkInfo]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
 		return store, nil
 	}
-	zks := strings.Split(zkInfo, ",")
+
 	c, err := hbase.NewClient(zks, "/hbase")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !c.TableExists(hbaseTableName) {
+	if !c.TableExists(tableName) {
 		// Create new hbase table for store.
-		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(hbaseTableName))
+		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(tableName))
 		cf := hbase.NewColumnFamilyDescriptor(hbaseColFamily)
 		cf.AddStrAddr("THEMIS_ENABLE", "true")
 		t.AddColumnDesc(cf)
@@ -134,7 +139,7 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 	}
 	s := &hbaseStore{
 		zkInfo:    zkInfo,
-		storeName: hbaseTableName,
+		storeName: tableName,
 		cli:       c,
 	}
 	mc.cache[zkInfo] = s
