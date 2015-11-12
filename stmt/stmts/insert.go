@@ -254,6 +254,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	rows := make([][]interface{}, len(s.Lists))
+	lastInsertIds := make([]uint64, len(s.Lists))
 	for i, list := range s.Lists {
 		if err = s.checkValueCount(insertValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
@@ -263,6 +264,8 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		lastInsertIds[i] = variable.GetSessionVars(ctx).LastInsertID
 	}
 
 	err = s.prefetchIndices(ctx, t, rows)
@@ -270,12 +273,13 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		return nil, errors.Trace(err)
 	}
 
-	for _, row := range rows {
+	for i, row := range rows {
 		// Notes: incompatible with mysql
 		// MySQL will set last insert id to the first row, as follows:
 		// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
 		// `insert t (c1) values(1),(2),(3);`
 		// Last insert id will be 1, not 3.
+		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
 		h, err := t.AddRecord(ctx, row)
 		if err == nil {
 			continue

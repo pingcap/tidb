@@ -96,3 +96,30 @@ func (s *testStmtSuite) TestInsert(c *C) {
 	_, err = s.testDB.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	c.Assert(err, NotNil)
 }
+
+func (s *testStmtSuite) TestInsertAutoInc(c *C) {
+	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int auto_increment, c1 int);`
+	mustExec(c, s.testDB, createSQL)
+
+	insertSQL := `insert into insert_autoinc_test(c1) values (1), (2)`
+	mustExec(c, s.testDB, insertSQL)
+
+	tx := mustBegin(c, s.testDB)
+	rows, err := tx.Query("select * from insert_autoinc_test;")
+	c.Assert(err, IsNil)
+
+	c.Assert(rows.Next(), IsTrue)
+	var id, c1 int
+	rows.Scan(&id, &c1)
+	c.Assert(id, Equals, 1)
+	c.Assert(c1, Equals, 1)
+
+	c.Assert(rows.Next(), IsTrue)
+	rows.Scan(&id, &c1)
+	c.Assert(id, Equals, 2)
+	c.Assert(c1, Equals, 2)
+
+	c.Assert(rows.Next(), IsFalse)
+	rows.Close()
+	mustCommit(c, tx)
+}
