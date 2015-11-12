@@ -542,6 +542,12 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 		return errors.Trace(ErrNotExists)
 	}
 
+	// Check whether dropped column has existed.
+	col := column.FindCol(t.Cols(), colName.L)
+	if col == nil {
+		return errors.Errorf("Try to drop a none exist column - %s", colName.L)
+	}
+
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
