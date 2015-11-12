@@ -53,8 +53,6 @@ docker run -d -p 4000:4000 --name tidb-server tidb-server
 Then you can connect 127.0.0.1:4000 by mysql client or telnet.
 The tidb is ready for serving.
 
-Please do not just put this on production environment, you need to write your own config to replace the default config.
-
 #### __Pre-requirement__
 
 Go environment. Currently a 64-bit version of go >= 1.5 is required.
