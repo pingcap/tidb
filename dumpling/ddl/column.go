@@ -323,8 +323,6 @@ func (d *ddl) backfillColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
-		// TODO: save seekHandle in reorganization job, so we can resume this job later from this handle.
-
 		err = d.backfillColumnData(t, columnInfo, handles, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
