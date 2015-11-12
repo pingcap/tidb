@@ -187,7 +187,7 @@ LOOP:
 		delete(handles, h)
 	}
 
-	c.Assert(len(handles), Equals, 0)
+	c.Assert(handles, HasLen, 0)
 }
 
 func (s *testDBSuite) testDropIndex(c *C) {
@@ -255,7 +255,7 @@ LOOP:
 		handles[h] = struct{}{}
 	}
 
-	c.Assert(len(handles), Equals, 0)
+	c.Assert(handles, HasLen, 0)
 }
 
 func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {

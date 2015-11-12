@@ -502,7 +502,13 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		return errors.Trace(ErrNotExists)
 	}
 
-	var col *column.Col
+	// Check whether added column has existed.
+	colName := spec.Column.Name
+	col := column.FindCol(t.Cols(), colName)
+	if col != nil {
+		return errors.Errorf("Try to add a column with the same name of an already exists column - %s", colName)
+	}
+
 	// ingore table constraints now, maybe return error later
 	// we use length(t.Cols()) as the default offset first, later we will change the
 	// column's offset later.
