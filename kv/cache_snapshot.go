@@ -37,7 +37,7 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 	if IsErrNotFound(err) {
 		v, err = c.snapshot.Get(k)
 		if err == nil {
-			c.cache.Set([]byte(k), v)
+			err = c.cache.Set([]byte(k), v)
 		}
 		return v, errors.Trace(err)
 	}
@@ -50,11 +50,11 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 // BatchGet gets a batch of values from snapshot and saves them in cache.
 func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	m := make(map[string][]byte)
-	var missKeys []Key
+	var missedKeys []Key
 	for _, k := range keys {
 		v, err := c.cache.Get(k)
 		if IsErrNotFound(err) {
-			missKeys = append(missKeys, k)
+			missedKeys = append(missedKeys, k)
 			continue
 		}
 		if err != nil {
@@ -66,17 +66,20 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 		// If len(v) == 0, it means that the key does not exist.
 	}
 
-	values, err := c.snapshot.BatchGet(missKeys)
+	values, err := c.snapshot.BatchGet(missedKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, k := range missKeys {
+	for _, k := range missedKeys {
 		ks := string(k)
 		if v, ok := values[ks]; ok && len(v) > 0 {
-			c.cache.Set(k, v)
+			err = c.cache.Set(k, v)
 			m[ks] = v
 		} else {
-			c.cache.Set(k, nil)
+			err = c.cache.Set(k, nil)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return m, nil
@@ -90,7 +93,10 @@ func (c *cacheSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, 
 		return nil, errors.Trace(err)
 	}
 	for k, v := range values {
-		c.cache.Set([]byte(k), v)
+		err = c.cache.Set([]byte(k), v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return values, nil
 }
