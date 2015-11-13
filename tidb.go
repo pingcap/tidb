@@ -74,7 +74,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	// if not local storage, first we will use a little lease time to
 	// bootstrap quickly, after bootstrapped, we will reset the lease time.
 	if !localstore.IsLocalStore(store) {
-		lease = 100 * time.Second
+		lease = 100 * time.Millisecond
 	}
 	d, err = domain.NewDomain(store, lease)
 	if err != nil {
