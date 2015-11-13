@@ -421,6 +421,10 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 		log.Debug("building index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			if err := d.isOwnerInReorg(txn); err != nil {
+				return errors.Trace(err)
+			}
+
 			// first check row exists
 			exist, err := checkRowExist(txn, t, handle)
 			if err != nil {

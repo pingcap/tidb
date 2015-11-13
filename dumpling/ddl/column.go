@@ -335,6 +335,10 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 		log.Info("backfill column...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			if err := d.isOwnerInReorg(txn); err != nil {
+				return errors.Trace(err)
+			}
+
 			// First check if row exists.
 			exist, err := checkRowExist(txn, t, handle)
 			if err != nil {
@@ -401,6 +405,10 @@ func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInf
 		seekHandle = handles[len(handles)-1] + 1
 
 		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			if err := d.isOwnerInReorg(txn); err != nil {
+				return errors.Trace(err)
+			}
+
 			var h int64
 			for _, h = range handles {
 				key := t.RecordKey(h, col)
