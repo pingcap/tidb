@@ -872,6 +872,10 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 		oldShow.Target = stmt.ShowStatus
 	case ast.ShowWarnings:
 		oldShow.Target = stmt.ShowWarnings
+	case ast.ShowTableStatus:
+		oldShow.Target = stmt.ShowTableStatus
+	case ast.ShowTriggers:
+		oldShow.Target = stmt.ShowTriggers
 	case ast.ShowNone:
 		oldShow.Target = stmt.ShowNone
 	}

@@ -336,7 +336,7 @@ func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 		span := r.spans[r.cursor]
 		if r.isPointLookup(span) {
 			// Do point lookup on index will prevent prefetch cost.
-			row, err := r.pointLookup(ctx, span.lowVal)
+			row, err := r.pointLookup(ctx, span.seekVal)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -393,7 +393,15 @@ func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 }
 
 func (r *indexPlan) isPointLookup(span *indexSpan) bool {
-	return r.unique && span.lowVal != nil && span.lowVal == span.highVal && !span.lowExclude && !span.highExclude
+	equalOp := span.lowVal == span.highVal && !span.lowExclude && !span.highExclude
+	if !equalOp || !r.unique || span.lowVal == nil {
+		return false
+	}
+	n, err := types.Compare(span.seekVal, span.lowVal)
+	if err != nil {
+		return false
+	}
+	return n == 0
 }
 
 func (r *indexPlan) lookupRow(ctx context.Context, h int64) (*plan.Row, error) {
