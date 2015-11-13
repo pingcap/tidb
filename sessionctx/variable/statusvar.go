@@ -18,7 +18,30 @@ import (
 )
 
 // StatusVars is global status vars map.
-var StatusVars map[string]*SysVar
+var StatusVars []string
+var Statists []Statist
+
+// DefaultScopeFlag is the default scope flag.
+var DefaultScopeFlag ScopeFlag = ScopeGlobal | ScopeSession
+
+// StatusVal is the value of the corresponding status variable.
+type StatusVal struct {
+	Scope ScopeFlag
+	Value interface{}
+}
+
+type Statist interface {
+	GetStatusVars() []string
+	SetStatusScope(status string, scope ScopeFlag)
+	FillStatusVal(status string, value interface{})
+	Stat() (map[string]*StatusVal, error)
+}
+
+//
+func RegisterStatist(s Statist) {
+	Statists = append(Statists, s)
+	StatusVars = append(StatusVars, s.GetStatusVars()...)
+}
 
 // GetStatusVar returns status var infomation for name.
 func GetStatusVar(name string) *SysVar {

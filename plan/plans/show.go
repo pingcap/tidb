@@ -485,7 +485,6 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 
 func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	globalVars variable.GlobalVarAccessor, name string) (string, error) {
-
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
 	if err == nil {
 		return value, nil
@@ -505,13 +504,13 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
-	for _, v := range variable.StatusVars {
+	for _, status := range variable.StatusVals {
 		if s.Pattern != nil {
-			s.Pattern.Expr = expression.Value{Val: v.Name}
+			s.Pattern.Expr = expression.Value{Val: status}
 		} else if s.Where != nil {
 			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				if strings.EqualFold(name, "Variable_name") {
-					return v.Name, nil
+					return status, nil
 				}
 
 				return nil, errors.Errorf("unknown field %s", name)
@@ -528,12 +527,12 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, v.Name)
+			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, status)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else if v.Scope != variable.ScopeSession {
-			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, v.Name)
+			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, status)
 			if err != nil {
 				return errors.Trace(err)
 			}
