@@ -108,20 +108,42 @@ func (d *ddl) runReorgJob(f func() error) error {
 		}()
 	}
 
-	waitTimeout := chooseLeaseTime(d.lease, waitReorgTimeout)
+	waitTimeout := waitReorgTimeout
+	// if d.lease is 0, we are using a local storage,
+	// and we can wait the reorganization to be done here.
+	// if d.lease > 0, we don't need to wait here because
+	// we will wait 2 * lease outer and try checking again,
+	// so we use a very little timeout here.
+	if d.lease > 0 {
+		waitTimeout = 1 * time.Millisecond
+	}
 
 	// wait reorganization job done or timeout
 	select {
 	case err := <-d.reorgDoneCh:
 		d.reorgDoneCh = nil
 		return errors.Trace(err)
-	case <-time.After(waitTimeout):
-		// if timeout, we will return, check the owner and retry wait job done again.
-		return errWaitReorgTimeout
 	case <-d.quitCh:
 		// we return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
+	case <-time.After(waitTimeout):
+		// if timeout, we will return, check the owner and retry to wait job done again.
+		return errWaitReorgTimeout
 	}
+}
+
+func (d *ddl) isOwnerInReorg(txn kv.Transaction) error {
+	t := meta.NewMeta(txn)
+	owner, err := t.GetDDLOwner()
+	if err != nil {
+		return errors.Trace(err)
+	} else if owner == nil || owner.OwnerID != d.uuid {
+		// if no owner, we will try later, so here just return error.
+		// or another server is owner, return error too.
+		return errors.Trace(ErrNotOwner)
+	}
+
+	return nil
 }
 
 func (d *ddl) delKeysWithPrefix(prefix string) error {
@@ -130,6 +152,10 @@ func (d *ddl) delKeysWithPrefix(prefix string) error {
 	for {
 		keys := keys[0:0]
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			if err := d.isOwnerInReorg(txn); err != nil {
+				return errors.Trace(err)
+			}
+
 			iter, err := txn.Seek([]byte(prefix))
 			if err != nil {
 				return errors.Trace(err)
