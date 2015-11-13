@@ -276,6 +276,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
+	cleanTxn := s.txn == nil
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -291,6 +292,11 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	value, err := types.ToString(row.Data[0])
 	if err != nil {
 		return "", errors.Trace(err)
+	}
+	if cleanTxn {
+		// This function has some side effect. Run select may create new txn.
+		// We should make environment unchanged.
+		s.txn = nil
 	}
 	return value, nil
 }
