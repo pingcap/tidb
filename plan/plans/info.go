@@ -52,6 +52,8 @@ var (
 	characterSetsRecords = buildCharacterSetsRecords()
 	collationsFields     = buildResultFieldsForCollations()
 	collationsRecords    = buildColltionsRecords()
+	filesFields          = buildFilesFields()
+	filesRecords         = buildFilesRecords()
 )
 
 const (
@@ -61,6 +63,7 @@ const (
 	tableStatistics    = "STATISTICS"
 	tableCharacterSets = "CHARACTER_SETS"
 	tableCollations    = "COLLATIONS"
+	tableFiles         = "FILES"
 	catalogVal         = "def"
 )
 
@@ -74,6 +77,7 @@ func NewInfoSchemaPlan(tableName string) (isp *InfoSchemaPlan, err error) {
 	case tableStatistics:
 	case tableCharacterSets:
 	case tableCollations:
+	case tableFiles:
 	default:
 		return nil, errors.Errorf("table INFORMATION_SCHEMA.%s does not exist", tableName)
 	}
@@ -216,6 +220,50 @@ func buildColltionsRecords() (records [][]interface{}) {
 	return records
 }
 
+func buildFilesRecords() (records [][]interface{}) {
+	// We do not have files, so we return empty records.
+	return records
+}
+
+func buildFilesFields() (rfs []*field.ResultField) {
+	tbName := tableFiles
+	rfs = append(rfs, buildResultField(tbName, "FILE_ID", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "FILE_NAME", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "TABLESPACE_NAME", mysql.TypeVarchar, 20))
+	rfs = append(rfs, buildResultField(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "LOGFILE_GROUP_NAME", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "LOGFILE_GROUP_NUMBER", mysql.TypeLonglong, 32))
+	rfs = append(rfs, buildResultField(tbName, "ENGINE", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "FULLTEXT_KEYS", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "DELETED_ROWS", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "UPDATE_COUNT", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "FREE_EXTENTS", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "TOTAL_EXTENTS", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "EXTENT_SIZE", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "INITIAL_SIZE", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "MAXIMUM_SIZE", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "AUTOEXTEND_SIZE", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "CREATION_TIME", mysql.TypeDatetime, -1))
+	rfs = append(rfs, buildResultField(tbName, "LAST_UPDATE_TIME", mysql.TypeDatetime, -1))
+	rfs = append(rfs, buildResultField(tbName, "LAST_ACCESS_TIME", mysql.TypeDatetime, -1))
+	rfs = append(rfs, buildResultField(tbName, "RECOVER_TIME", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "TRANSACTION_COUNTER", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "VERSION", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "ROW_FORMAT", mysql.TypeVarchar, 21))
+	rfs = append(rfs, buildResultField(tbName, "TABLE_ROWS", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "AVG_ROW_LENGTH", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "DATA_FREE", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "CREATE_TIME", mysql.TypeDatetime, -1))
+	rfs = append(rfs, buildResultField(tbName, "UPDATE_TIME", mysql.TypeDatetime, -1))
+	rfs = append(rfs, buildResultField(tbName, "CHECK_TIME", mysql.TypeDatetime, -1))
+	rfs = append(rfs, buildResultField(tbName, "CHECKSUM", mysql.TypeLonglong, 21))
+	rfs = append(rfs, buildResultField(tbName, "STATUS", mysql.TypeVarchar, 20))
+	rfs = append(rfs, buildResultField(tbName, "EXTRA", mysql.TypeVarchar, 255))
+	return rfs
+}
+
 // Explain implements plan.Plan Explain interface.
 func (isp *InfoSchemaPlan) Explain(w format.Formatter) {}
 
@@ -239,6 +287,8 @@ func (isp *InfoSchemaPlan) GetFields() []*field.ResultField {
 		return characterSetsFields
 	case tableCollations:
 		return collationsFields
+	case tableFiles:
+		return filesFields
 	}
 	return nil
 }
@@ -301,6 +351,8 @@ func (isp *InfoSchemaPlan) fetchAll(ctx context.Context) {
 		isp.fetchCharacterSets()
 	case tableCollations:
 		isp.fetchCollations()
+	case tableFiles:
+		isp.fetchFiles()
 	}
 }
 
@@ -442,6 +494,13 @@ func (isp *InfoSchemaPlan) fetchCharacterSets() {
 
 func (isp *InfoSchemaPlan) fetchCollations() error {
 	for _, record := range collationsRecords {
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
+	}
+	return nil
+}
+
+func (isp *InfoSchemaPlan) fetchFiles() error {
+	for _, record := range filesRecords {
 		isp.rows = append(isp.rows, &plan.Row{Data: record})
 	}
 	return nil
