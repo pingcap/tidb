@@ -124,7 +124,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 
 		err = t.CreateDatabase(info)
 
-		log.Warnf("save schema %s", info)
+		log.Warnf("save schema %v", info)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
