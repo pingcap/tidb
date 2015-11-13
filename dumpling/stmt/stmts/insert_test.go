@@ -98,7 +98,7 @@ func (s *testStmtSuite) TestInsert(c *C) {
 }
 
 func (s *testStmtSuite) TestInsertAutoInc(c *C) {
-	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int auto_increment, c1 int);`
+	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
 	mustExec(c, s.testDB, createSQL)
 
 	insertSQL := `insert into insert_autoinc_test(c1) values (1), (2)`

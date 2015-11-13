@@ -55,7 +55,7 @@ func (s *hbaseSnapshot) Get(k kv.Key) ([]byte, error) {
 	return v, nil
 }
 
-// BatchGet implements kv.Snapshot.BatchGet().
+// BatchGet implements kv.Snapshot.BatchGet interface.
 func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	gets := make([]*hbase.Get, len(keys))
 	for i, key := range keys {
@@ -77,7 +77,7 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-// RangeGet implements kv.Snapshot.RangeGet().
+// RangeGet implements kv.Snapshot.RangeGet interface.
 // The range should be [start, end] as Snapshot.RangeGet() indicated.
 func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
 	scanner := s.txn.GetScanner([]byte(s.storeName), start, end, limit)

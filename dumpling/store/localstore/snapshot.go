@@ -113,7 +113,7 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	for _, k := range keys {
 		v, err := s.Get(k)
 		if err != nil && !kv.IsErrNotFound(err) {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if len(v) > 0 {
 			m[string(k)] = v
