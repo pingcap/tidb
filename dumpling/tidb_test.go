@@ -614,7 +614,6 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	se3 := newSession(c, store, s.dbName)
 	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
 	rows, err := r.Rows(-1, 0)
-	fmt.Println(rows)
 	matches(c, rows, [][]interface{}{{21}})
 
 	mustExecSQL(c, se1, "begin")

@@ -388,18 +388,29 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 	var rs []rset.Recordset
 
 	for _, st := range statements {
+		inHistory := false
+		if s.ShouldAutocommit(s) {
+			if isPreparedStmt(st) {
+				ps := st.(*stmts.PreparedStmt)
+				s.history.add(ps.ID, st)
+			} else {
+				s.history.add(0, st)
+			}
+			inHistory = true
+		}
 		r, err := runStmt(s, st)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
 		}
-
-		// Record executed query
-		if isPreparedStmt(st) {
-			ps := st.(*stmts.PreparedStmt)
-			s.history.add(ps.ID, st)
-		} else {
-			s.history.add(0, st)
+		if !inHistory {
+			// Record executed query
+			if isPreparedStmt(st) {
+				ps := st.(*stmts.PreparedStmt)
+				s.history.add(ps.ID, st)
+			} else {
+				s.history.add(0, st)
+			}
 		}
 
 		if r != nil {
@@ -467,10 +478,17 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 	if err != nil {
 		return nil, err
 	}
-
 	st := &stmts.ExecuteStmt{ID: stmtID}
-	s.history.add(stmtID, st, args...)
-	return runStmt(s, st, args...)
+	inHistory := false
+	if s.ShouldAutocommit(s) {
+		inHistory = true
+		s.history.add(stmtID, st, args...)
+	}
+	r, err := runStmt(s, st, args...)
+	if !inHistory {
+		s.history.add(stmtID, st, args...)
+	}
+	return r, errors.Trace(err)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
