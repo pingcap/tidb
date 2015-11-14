@@ -101,21 +101,14 @@ var (
 	// all servers get the neweset schema.
 	// Default schema lease time is 300 seconds, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
-	SchemaLease = 300
+	schemaLease = 300
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
-// This function is very dangerous, don't use it if you really know
-// what you do.
+// This function is very dangerous, don't use it if you really know what you do.
+// SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(seconds int) {
-	SchemaLease = seconds
-
-	domap.mu.Lock()
-	defer domap.mu.Unlock()
-
-	for _, dm := range domap.domains {
-		dm.SetLease(time.Duration(SchemaLease) * time.Second)
-	}
+	schemaLease = seconds
 }
 
 // What character set should the server translate a statement to after receiving it?
