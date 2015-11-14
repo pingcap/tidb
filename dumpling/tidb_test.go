@@ -66,7 +66,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
 	s.selectSQL = `SELECT * from tbl_test;`
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	log.SetLevelByString("debug")
+	log.SetLevelByString("error")
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
@@ -1411,7 +1411,7 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 			mustExecSQL(c, se1, "update t set c = 1;")
 			v, ok := se1.(*session).debugInfos[retryEmptyHistoryList]
 			if ok {
-				c.Assert(v.(bool), IsFalse)
+				c.Assert(v, IsFalse)
 			}
 		}
 	}
@@ -1421,7 +1421,7 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 			mustExecSQL(c, se2, "update t set c = 1;")
 			v, ok := se2.(*session).debugInfos[retryEmptyHistoryList]
 			if ok {
-				c.Assert(v.(bool), IsFalse)
+				c.Assert(v, IsFalse)
 			}
 		}
 	}
@@ -1433,7 +1433,7 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 			mustExecSQL(c, se3, "commit")
 			v, ok := se3.(*session).debugInfos[retryEmptyHistoryList]
 			if ok {
-				c.Assert(v.(bool), IsFalse)
+				c.Assert(v, IsFalse)
 			}
 		}
 	}
