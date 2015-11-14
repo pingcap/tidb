@@ -32,6 +32,7 @@ var (
 	storePath = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel  = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
 	port      = flag.String("P", "4000", "mp server port")
+	lease     = flag.Int("lease", 300, "schema lease seconds, very dangerous to change only if you know what you do")
 )
 
 func main() {
@@ -39,6 +40,12 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	flag.Parse()
+
+	if *lease <= 0 {
+		log.Fatalf("invalid lease seconds %d", *lease)
+	}
+
+	tidb.SetSchemaLease(*lease)
 
 	cfg := &server.Config{
 		Addr:     fmt.Sprintf(":%s", *port),
