@@ -384,13 +384,6 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
 
-	columnValues := make([]interface{}, len(indexCol.Columns))
-	for i, column := range indexCol.Columns {
-		columnValues[i] = row[column.Offset]
-	}
-
-	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, isDropped)
-
 	// Test add a new row.
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
@@ -412,6 +405,7 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	})
 	c.Assert(i, Equals, int64(2))
 
+	columnValues := make([]interface{}, len(indexCol.Columns))
 	for i, column := range indexCol.Columns {
 		columnValues[i] = newRow[column.Offset]
 	}
@@ -452,7 +446,6 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	})
 	c.Assert(i, Equals, int64(1))
 
-	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
 	s.testGetIndex(c, t, indexCol.Columns[0].Name.L, false)
 }
 
