@@ -481,14 +481,14 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 		return "", errors.Trace(err)
 	}
 
-	return types.ToString(value)
+	return types.ToString(value.Value)
 }
 
 func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	globalVars variable.GlobalVarAccessor, name string) (string, error) {
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
 	if err == nil {
-		return types.ToString(value)
+		return types.ToString(value.Value)
 	}
 
 	if terror.UnknownStatusVar.Equal(err) {

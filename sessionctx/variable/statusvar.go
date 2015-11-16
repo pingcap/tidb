@@ -26,10 +26,10 @@ var Statists []Statist
 var statusVars map[string]*StatusVal
 
 // DefaultStatusScopes is the default status variables scope.
-var DefaultStatusScopes map[string]ScopeFlag = make(map[string]ScopeFlag)
+var DefaultStatusScopes = make(map[string]ScopeFlag)
 
 // DefaultScopeFlag is the default scope flag.
-var DefaultScopeFlag ScopeFlag = ScopeGlobal | ScopeSession
+var DefaultScopeFlag = ScopeGlobal | ScopeSession
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {

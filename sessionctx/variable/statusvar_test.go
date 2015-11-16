@@ -20,45 +20,38 @@ import (
 var _ = Suite(&testStatusVarSuite{})
 
 type testStatusVarSuite struct {
-	ms *MockStatist
+	ms *mockStatist
 }
 
 func (s *testStatusVarSuite) SetUpSuite(c *C) {
-	s.ms = &MockStatist{}
+	s.ms = &mockStatist{}
 	RegisterStatist(s.ms)
 }
 
-// MockStatist represents mocked statist.
-type MockStatist struct{}
+// mockStatist represents mocked statist.
+type mockStatist struct{}
 
 const (
-	TestStatusSessionScope    = "test_status_session_scope"
-	TestStatusGlobalScope     = "test_status_global_scope"
-	TestStatusBothScopes      = "test_status_both_scope"
-	TestStatusValSessionScope = "test_status_val_session_scope"
-	TestStatusValGlobalScope  = "test_status_val_global_scope"
-	TestStatusValBothScope    = "test_status_val_both_scope"
+	testStatus    = "test_status"
+	testStatusVal = "test_status_val"
 )
 
-var defaultStatusScopes map[string]ScopeFlag = map[string]ScopeFlag{
-	TestStatusSessionScope: ScopeSession,
-	TestStatusGlobalScope:  ScopeGlobal,
-	TestStatusBothScopes:   ScopeGlobal | ScopeSession,
+var defaultStatusScopes = map[string]ScopeFlag{
+	testStatus: ScopeGlobal | ScopeSession,
 }
 
-func (ms *MockStatist) GetDefaultStatusScopes() map[string]ScopeFlag {
+func (ms *mockStatist) GetDefaultStatusScopes() map[string]ScopeFlag {
 	return defaultStatusScopes
 }
 
-func (ms *MockStatist) Stat() (map[string]*StatusVal, error) {
+func (ms *mockStatist) Stat() (map[string]*StatusVal, error) {
 	m := make(map[string]*StatusVal, len(defaultStatusScopes))
-	m[TestStatusSessionScope] = FillStatusVal(TestStatusSessionScope, TestStatusValSessionScope)
-	m[TestStatusGlobalScope] = FillStatusVal(TestStatusGlobalScope, TestStatusValGlobalScope)
-	m[TestStatusBothScopes] = FillStatusVal(TestStatusBothScopes, TestStatusValBothScope)
+	m[testStatus] = FillStatusVal(testStatus, testStatusVal)
 
 	return m, nil
 }
-func (s *testStatusVarSuite) TestStatusVar(c *C) {
+
+func (s *testStatusVarSuite) testStatusVar(c *C) {
 	scopes := s.ms.GetDefaultStatusScopes()
 	c.Assert(scopes, NotNil)
 

@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
-var ddl_last_reload_schema_ts = "ddl_last_reload_schema_ts"
+var ddlLastReloadSchemaTs = "ddl_last_reload_schema_ts"
 
-var defaultStatusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
-	ddl_last_reload_schema_ts: variable.ScopeGlobal | variable.ScopeSession,
+var defaultStatusScopes = map[string]variable.ScopeFlag{
+	ddlLastReloadSchemaTs: variable.ScopeGlobal | variable.ScopeSession,
 }
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -113,7 +113,7 @@ func (do *Domain) SetLease(lease time.Duration) {
 // Stat returns the DDL statistic.
 func (do *Domain) Stat() (map[string]*variable.StatusVal, error) {
 	m := make(map[string]*variable.StatusVal)
-	m["ddl_last_reload_schema_ts"] = variable.FillStatusVal(ddl_last_reload_schema_ts,
+	m[ddlLastReloadSchemaTs] = variable.FillStatusVal(ddlLastReloadSchemaTs,
 		atomic.LoadInt64(&do.lastLeaseTS))
 
 	return m, nil

@@ -35,7 +35,7 @@ import (
 type testShowSuit struct {
 	txn kv.Transaction
 	ctx context.Context
-	ms  *variable.MockStatist
+	ms  *MockStatist
 
 	store  kv.Storage
 	dbName string
@@ -58,7 +58,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
 	variable.BindGlobalVarAccessor(p.ctx, nc)
-	RegisterStatist(ms)
+	variable.RegisterStatist(p.ms)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
@@ -149,7 +149,7 @@ func (p *testShowSuit) TestShowSysVariables(c *C) {
 	c.Assert(ret, HasLen, 1)
 	v, ok = ret["character_set_results"]
 	c.Assert(ok, IsTrue)
-	// Show global varibale get latin1
+	// Show global variablee get latin1
 	c.Assert(v, Equals, "latin1")
 
 	pln.GlobalScope = false
@@ -161,7 +161,7 @@ func (p *testShowSuit) TestShowSysVariables(c *C) {
 	c.Assert(ret, HasLen, 1)
 	v, ok = ret["character_set_results"]
 	c.Assert(ok, IsTrue)
-	// Show session varibale get utf8
+	// Show session variablee get utf8
 	c.Assert(v, Equals, "utf8")
 	pln.Close()
 	pln.Pattern = nil
@@ -184,13 +184,42 @@ func (p *testShowSuit) TestShowSysVariables(c *C) {
 	c.Assert(v, Equals, "on")
 }
 
+// MockStatist represents mocked statist.
+type MockStatist struct{}
+
+const (
+	testStatusSessionScope    = "test_status_session_scope"
+	testStatusBothScopes      = "test_status_both_scope"
+	testStatusValSessionScope = "test_status_val_session_scope"
+	testStatusValBothScope    = "test_status_val_both_scope"
+)
+
+var defaultStatusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
+	testStatusSessionScope: variable.ScopeSession,
+	testStatusBothScopes:   variable.ScopeGlobal | variable.ScopeSession,
+}
+
+func (ms *MockStatist) GetDefaultStatusScopes() map[string]variable.ScopeFlag {
+	return defaultStatusScopes
+}
+
+func (ms *MockStatist) Stat() (map[string]*variable.StatusVal, error) {
+	m := make(map[string]*variable.StatusVal, len(defaultStatusScopes))
+	m[testStatusSessionScope] =
+		variable.FillStatusVal(testStatusSessionScope, testStatusValSessionScope)
+	m[testStatusBothScopes] =
+		variable.FillStatusVal(testStatusBothScopes, testStatusValBothScope)
+
+	return m, nil
+}
+
 func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	pln := &plans.ShowPlan{
 		Target:      stmt.ShowStatus,
 		GlobalScope: true,
 		Pattern: &expression.PatternLike{
 			Pattern: &expression.Value{
-				Val: variable.TestStatusBothScopes,
+				Val: testStatusBothScopes,
 			},
 		},
 	}
@@ -212,31 +241,29 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 1)
-	v, ok := ret[variable.TestStatusBothScopes]
+	v, ok := ret[testStatusBothScopes]
 	c.Assert(ok, IsTrue)
-	c.Assert(v, DeepEquals, variable.FillStatusVal(
-		variable.TestStatusBothScopes, variable.TestStatusValBothScope))
+	c.Assert(v, DeepEquals, testStatusValBothScope)
 	pln.Close()
 
-	sessionVars.StatusVars[variable.TestStatusBothScopes] = "changed_val"
+	sessionVars.StatusVars[testStatusBothScopes] = "changed_val"
 	pln.GlobalScope = false
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 1)
-	v, ok = ret[variable.TestStatusBothScopes]
+	v, ok = ret[testStatusBothScopes]
 	c.Assert(ok, IsTrue)
-	c.Assert(v, DeepEquals, variable.FillStatusVal(
-		variable.TestStatusBothScopes, "changed_val"))
+	c.Assert(v, DeepEquals, "changed_val")
 	pln.Close()
 
 	pln.Pattern = &expression.PatternLike{
 		Pattern: &expression.Value{
-			Val: "compression",
+			Val: testStatusSessionScope,
 		},
 	}
-	sessionVars.StatusVars["compression"] = "on"
+	sessionVars.StatusVars[testStatusSessionScope] = "on"
 	pln.GlobalScope = true
 	ret = map[string]string{}
 	rset.Do(func(data []interface{}) (bool, error) {
@@ -251,7 +278,7 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 1)
-	v, ok = ret["compression"]
+	v, ok = ret[testStatusSessionScope]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "on")
 	pln.Close()
@@ -259,17 +286,17 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	pln.Pattern = nil
 	pln.Where = &expression.BinaryOperation{
 		L:  &expression.Ident{CIStr: model.NewCIStr("Variable_name")},
-		R:  expression.Value{Val: "aborted_clients"},
+		R:  expression.Value{Val: testStatusBothScopes},
 		Op: opcode.EQ,
 	}
 	ret = map[string]string{}
-	sessionVars.StatusVars["aborted_clients"] = "0"
+	sessionVars.StatusVars[testStatusBothScopes] = "0"
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 1)
-	v, ok = ret["aborted_clients"]
+	v, ok = ret[testStatusBothScopes]
 	c.Assert(ok, IsTrue)
 	c.Assert(v, Equals, "0")
 }
