@@ -144,9 +144,9 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
-	// SetOption enables an option and bind a value to it.
+	// SetOption sets an option with a value.
 	SetOption(opt Option, val interface{})
-	// DelOption disables an option.
+	// DelOption deletes an option.
 	DelOption(opt Option)
 }
 
