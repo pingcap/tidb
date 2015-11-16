@@ -261,11 +261,11 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 	return nil
 }
 
-func (txn *hbaseTxn) EnableOption(opt kv.Option, val interface{}) {
+func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.opts[opt] = val
 }
 
-func (txn *hbaseTxn) DisableOption(opt kv.Option) {
+func (txn *hbaseTxn) DelOption(opt kv.Option) {
 	delete(txn.opts, opt)
 }
 
