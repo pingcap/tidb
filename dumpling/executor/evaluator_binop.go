@@ -44,17 +44,17 @@ func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 		}
 	}
 
-	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	rightVal, err := types.Convert(o.R.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	if leftVal == nil || rightVal == nil {
+	//	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
+	//	if err != nil {
+	//		e.err = err
+	//		return false
+	//	}
+	//	rightVal, err := types.Convert(o.R.GetValue(), o.GetType())
+	//	if err != nil {
+	//		e.err = err
+	//		return false
+	//	}
+	if o.L.GetValue() == nil || o.R.GetValue() == nil {
 		o.SetValue(nil)
 		return true
 	}

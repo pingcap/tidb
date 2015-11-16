@@ -26,5 +26,9 @@ func (v *typeComputer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 }
 
 func (v *typeComputer) Leave(in ast.Node) (out ast.Node, ok bool) {
+	switch x := in.(type) {
+	case *ast.ColumnNameExpr:
+		x.SetType(&x.Refer.Column.FieldType)
+	}
 	return in, true
 }

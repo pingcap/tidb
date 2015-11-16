@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
@@ -36,6 +37,9 @@ func EvalBool(expr ast.ExprNode) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	if val == nil {
+		return false, nil
+	}
 	i, err := types.ToBool(val)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -50,7 +54,7 @@ type Evaluator struct {
 
 // Enter implements ast.Visitor interface.
 func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	return
+	return in, false
 }
 
 // Leave implements ast.Visitor interface.
@@ -68,6 +72,8 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.subquery(v)
 	case *ast.CompareSubqueryExpr:
 		ok = e.compareSubquery(v)
+	case *ast.ColumnName:
+		ok = true
 	case *ast.ColumnNameExpr:
 		ok = e.columnName(v)
 	case *ast.DefaultExpr:
@@ -116,6 +122,9 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.aggregateFunc(v)
 	}
 	out = in
+	if !ok {
+		log.Errorf("eval not ok %T", in)
+	}
 	return
 }
 

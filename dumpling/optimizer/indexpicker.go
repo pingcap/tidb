@@ -56,7 +56,7 @@ func (p *indexPicker) pickIndex(f *plan.Filter) {
 	var bestIndexPlan *plan.IndexScan
 	var bestIndexInfo *model.IndexInfo
 	for _, v := range f.Conditions {
-		var finder indexFinder
+		finder := indexFinder{is: p.is}
 		v.Accept(&finder)
 		if finder.invalid || finder.index == nil {
 			continue
@@ -105,7 +105,7 @@ func (p *indexFinder) Leave(in ast.Node) (ast.Node, bool) {
 		}
 	case *ast.SubqueryExpr:
 		p.invalid = true
-	case ast.AggregateFuncExpr:
+	case *ast.AggregateFuncExpr:
 		p.invalid = true
 	}
 	return in, true
