@@ -29,6 +29,8 @@ var (
 	ErrConditionNotMatch = errors.New("Error: Condition not match")
 	// ErrLockConflict is used when try to lock an already locked key.
 	ErrLockConflict = errors.New("Error: Lock conflict")
+	// ErrExpectCheck is used when value in store differs from expect value.
+	ErrExpectCheck = errors.New("Error: Expect check failed")
 )
 
 var (

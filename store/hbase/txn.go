@@ -180,6 +180,10 @@ func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
 }
 
 func (txn *hbaseTxn) doCommit() error {
+	if err := txn.UnionStore.CheckExpect(); err != nil {
+		return errors.Trace(err)
+	}
+
 	err := txn.each(func(iter kv.Iterator) error {
 		var row, val []byte
 		row = make([]byte, len(iter.Key()))
