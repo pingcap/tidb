@@ -201,6 +201,11 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 
+	// check expect
+	if err := txn.UnionStore.CheckExpect(); err != nil {
+		return errors.Trace(err)
+	}
+
 	txn.Snapshot.Release()
 
 	// Check locked keys

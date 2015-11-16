@@ -21,17 +21,20 @@ import (
 var _ = Suite(&testCacheSnapshotSuite{})
 
 type testCacheSnapshotSuite struct {
-	store MemBuffer
-	cache Snapshot
+	store  MemBuffer
+	expect MemBuffer
+	cache  Snapshot
 }
 
 func (s *testCacheSnapshotSuite) SetUpTest(c *C) {
 	s.store = NewMemDbBuffer()
-	s.cache = NewCacheSnapshot(&mockSnapshot{s.store}, &mockOptions{})
+	s.expect = NewMemDbBuffer()
+	s.cache = NewCacheSnapshot(&mockSnapshot{s.store}, s.expect, &mockOptions{})
 }
 
 func (s *testCacheSnapshotSuite) TearDownTest(c *C) {
 	s.cache.Release()
+	s.expect.Release()
 }
 
 func (s *testCacheSnapshotSuite) TestGet(c *C) {
@@ -148,8 +151,9 @@ func (s *mockSnapshot) Release() {
 	s.store.Release()
 }
 
-type mockOptions struct{}
+type mockOptions map[Option]interface{}
 
-func (opts *mockOptions) Get(opt Option) (interface{}, bool) {
-	return nil, false
+func (opts mockOptions) Get(opt Option) (interface{}, bool) {
+	v, ok := opts[opt]
+	return v, ok
 }
