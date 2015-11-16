@@ -62,7 +62,9 @@ type DDL interface {
 	// all servers have the same lease time.
 	SetLease(lease time.Duration)
 	// Stat returns the DDL statistics.
-	Stat() (map[string]interface{}, error)
+	Stat() (map[string]*variable.StatusVal, error)
+	// GetDefaultStatusScopes gets default status variables scope.
+	GetDefaultStatusScopes() map[string]variable.ScopeFlag
 }
 
 type ddl struct {
@@ -108,7 +110,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 
 	d.start()
 
-	variables.RegisterStatist(d)
+	variable.RegisterStatist(d)
 
 	return d
 }
