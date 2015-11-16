@@ -21,19 +21,34 @@ var _ Snapshot = (*cacheSnapshot)(nil)
 type cacheSnapshot struct {
 	cache    MemBuffer
 	snapshot Snapshot
+	opts     Options
 }
 
 // NewCacheSnapshot creates a new snapshot with cache embedded.
-func NewCacheSnapshot(snapshot Snapshot) Snapshot {
+func NewCacheSnapshot(snapshot Snapshot, opts Options) Snapshot {
 	return &cacheSnapshot{
 		cache:    p.Get().(MemBuffer),
 		snapshot: snapshot,
+		opts:     opts,
 	}
 }
 
 // Get gets value from snapshot and saves it in cache.
 func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 	v, err := c.cache.Get(k)
+	if IsErrNotFound(err) {
+		if opt, ok := c.opts.Get(RangePrefetchOnCacheMiss); ok {
+			if limit, ok := opt.(int); ok && limit > 0 {
+				vals, err2 := c.RangeGet(k, nil, limit)
+				if err2 != nil {
+					return nil, errors.Trace(err2)
+				}
+				if val, ok := vals[string(k)]; ok {
+					v, err = val, nil
+				}
+			}
+		}
+	}
 	if IsErrNotFound(err) {
 		v, err = c.snapshot.Get(k)
 		if err == nil {

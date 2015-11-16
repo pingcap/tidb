@@ -300,6 +300,16 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 		return nil, errors.Trace(err)
 	}
 
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// It is very likely that we will fetch rows after current row later, enable the RangePrefetchOnCacheMiss may
+	// help reducing RPC calls.
+	// TODO: choose a wiser option value.
+	txn.EnableOption(kv.RangePrefetchOnCacheMiss, 1024)
+	defer txn.DisableOption(kv.RangePrefetchOnCacheMiss)
+
 	// TODO: we could just fetch mentioned columns' values
 	row = &plan.Row{}
 	row.Data, err = r.T.Row(ctx, handle)

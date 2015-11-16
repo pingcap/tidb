@@ -27,7 +27,7 @@ type testCacheSnapshotSuite struct {
 
 func (s *testCacheSnapshotSuite) SetUpTest(c *C) {
 	s.store = NewMemDbBuffer()
-	s.cache = NewCacheSnapshot(&mockSnapshot{s.store})
+	s.cache = NewCacheSnapshot(&mockSnapshot{s.store}, &mockOptions{})
 }
 
 func (s *testCacheSnapshotSuite) TearDownTest(c *C) {
@@ -146,4 +146,10 @@ func (s *mockSnapshot) NewIterator(param interface{}) Iterator {
 
 func (s *mockSnapshot) Release() {
 	s.store.Release()
+}
+
+type mockOptions struct{}
+
+func (opts *mockOptions) Get(opt Option) (interface{}, bool) {
+	return nil, false
 }
