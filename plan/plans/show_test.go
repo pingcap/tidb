@@ -35,6 +35,7 @@ import (
 type testShowSuit struct {
 	txn kv.Transaction
 	ctx context.Context
+	ms  *variable.MockStatist
 
 	store  kv.Storage
 	dbName string
@@ -57,6 +58,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
 	variable.BindGlobalVarAccessor(p.ctx, nc)
+	RegisterStatist(ms)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
@@ -188,7 +190,7 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 		GlobalScope: true,
 		Pattern: &expression.PatternLike{
 			Pattern: &expression.Value{
-				Val: "tc_log_page_size",
+				Val: variable.TestStatusBothScopes,
 			},
 		},
 	}
@@ -210,21 +212,23 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 1)
-	v, ok := ret["tc_log_page_size"]
+	v, ok := ret[variable.TestStatusBothScopes]
 	c.Assert(ok, IsTrue)
-	c.Assert(v, Equals, "0")
+	c.Assert(v, DeepEquals, variable.FillStatusVal(
+		variable.TestStatusBothScopes, variable.TestStatusValBothScope))
 	pln.Close()
 
-	sessionVars.StatusVars["tc_log_page_size"] = "1024"
+	sessionVars.StatusVars[variable.TestStatusBothScopes] = "changed_val"
 	pln.GlobalScope = false
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 1)
-	v, ok = ret["tc_log_page_size"]
+	v, ok = ret[variable.TestStatusBothScopes]
 	c.Assert(ok, IsTrue)
-	c.Assert(v, Equals, "1024")
+	c.Assert(v, DeepEquals, variable.FillStatusVal(
+		variable.TestStatusBothScopes, "changed_val"))
 	pln.Close()
 
 	pln.Pattern = &expression.PatternLike{

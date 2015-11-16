@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -29,8 +30,8 @@ type testStatSuite struct {
 func (s *testStatSuite) getSchemaVer(c *C, d *ddl) int64 {
 	m, err := d.Stat()
 	c.Assert(err, IsNil)
-	v := m["ddl_schema_version"]
-	return v.(int64)
+	v := m[ddl_schema_version]
+	return v.Value.(int64)
 }
 
 func (s *testStatSuite) TestStat(c *C) {
@@ -48,7 +49,8 @@ func (s *testStatSuite) TestStat(c *C) {
 
 	m, err := d.Stat()
 	c.Assert(err, IsNil)
-	c.Assert(m["ddl_owner_id"], Equals, d.uuid)
+	owner_id_status := variable.FillStatusVal(ddl_owner_id, d.uuid)
+	c.Assert(m[ddl_owner_id], DeepEquals, owner_id_status)
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
