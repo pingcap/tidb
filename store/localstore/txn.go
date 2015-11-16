@@ -280,11 +280,11 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	return nil
 }
 
-func (txn *dbTxn) EnableOption(opt kv.Option, val interface{}) {
+func (txn *dbTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.opts[opt] = val
 }
 
-func (txn *dbTxn) DisableOption(opt kv.Option) {
+func (txn *dbTxn) DelOption(opt kv.Option) {
 	delete(txn.opts, opt)
 }
 

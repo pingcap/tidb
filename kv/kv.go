@@ -110,7 +110,7 @@ const (
 	// it will launch a RangePrefetch to underlying storage instead of Get. The range starts from requested key and
 	// has a limit of the option value. The feature is disabled if option value <= 0 or value type is not int.
 	// This option is particularly useful when we have to do sequential Gets, e.g. table scans.
-	RangePrefetchOnCacheMiss Option = 1 + iota
+	RangePrefetchOnCacheMiss Option = iota + 1
 )
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -144,10 +144,10 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
-	// EnableOption enables an option and bind a value to it.
-	EnableOption(opt Option, val interface{})
-	// DisableOption disables an option.
-	DisableOption(opt Option)
+	// SetOption enables an option and bind a value to it.
+	SetOption(opt Option, val interface{})
+	// DelOption disables an option.
+	DelOption(opt Option)
 }
 
 // MvccSnapshot is used to get/seek a specific version in a snapshot.
