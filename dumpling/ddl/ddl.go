@@ -62,6 +62,10 @@ type DDL interface {
 	SetLease(lease time.Duration)
 	// Stat returns the DDL statistics.
 	Stat() (map[string]interface{}, error)
+	// Stop stops DDL worker.
+	Stop() error
+	// Start starts DDL worker.
+	Start() error
 }
 
 type ddl struct {
@@ -108,6 +112,42 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	d.start()
 
 	return d
+}
+
+func (d *ddl) Stop() error {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	d.close()
+
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		owner, err := t.GetDDLOwner()
+		if err != nil || owner == nil {
+			return errors.Trace(err)
+		}
+
+		if owner.OwnerID != d.uuid {
+			return nil
+		}
+
+		// owner is mine, clean it so other servers can compete for it quickly.
+		return errors.Trace(t.SetDDLOwner(&model.Owner{}))
+	})
+	return errors.Trace(err)
+}
+
+func (d *ddl) Start() error {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	if !d.isClosed() {
+		return nil
+	}
+
+	d.start()
+
+	return nil
 }
 
 func (d *ddl) start() {
