@@ -58,7 +58,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
 	variable.BindGlobalVarAccessor(p.ctx, nc)
-	variable.RegisterStatist(p.ms)
+	variable.RegisterStatist("testShowSuit", p.ms)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
@@ -89,6 +89,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 
 func (p *testShowSuit) TearDownSuite(c *C) {
 	p.txn.Commit()
+	variable.DeleteStatist("testShowSuit")
 }
 
 func (p *testShowSuit) TestSimple(c *C) {

@@ -15,21 +15,19 @@ package variable
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/juju/errors"
 )
 
-// Statists is the set of all statists.
-var Statists []Statist
-
 // statusVars is global status vars map.
 var statusVars map[string]*StatusVal
+var globalStatusScopes = make(map[string]ScopeFlag)
+var defaultScopeFlag = ScopeGlobal | ScopeSession
+var statistMu sync.RWMutex
 
-// DefaultStatusScopes is the default status variables scope.
-var DefaultStatusScopes = make(map[string]ScopeFlag)
-
-// DefaultScopeFlag is the default scope flag.
-var DefaultScopeFlag = ScopeGlobal | ScopeSession
+// Statists is the set of all statists.
+var Statists = make(map[string]Statist)
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
@@ -46,19 +44,29 @@ type Statist interface {
 }
 
 // RegisterStatist registers statist.
-func RegisterStatist(s Statist) {
-	Statists = append(Statists, s)
+func RegisterStatist(id string, s Statist) {
+	statistMu.Lock()
+	Statists[id] = s
+	statistMu.Unlock()
+
 	scopes := s.GetDefaultStatusScopes()
 	for status, scope := range scopes {
-		DefaultStatusScopes[status] = scope
+		globalStatusScopes[status] = scope
 	}
+}
+
+// DeleteStatist deletes statist.
+func DeleteStatist(id string) {
+	statistMu.Lock()
+	delete(Statists, id)
+	statistMu.Unlock()
 }
 
 // FillStatusVal fills the status variable value.
 func FillStatusVal(status string, value interface{}) *StatusVal {
-	scope, ok := DefaultStatusScopes[status]
+	scope, ok := globalStatusScopes[status]
 	if !ok {
-		scope = DefaultScopeFlag
+		scope = defaultScopeFlag
 	}
 
 	return &StatusVal{Scope: scope, Value: value}
@@ -68,6 +76,7 @@ func FillStatusVal(status string, value interface{}) *StatusVal {
 func GetStatusVars() (map[string]*StatusVal, error) {
 	statusVars = make(map[string]*StatusVal)
 
+	statistMu.RLock()
 	for _, statist := range Statists {
 		stat, err := statist.Stat()
 		if err != nil {
@@ -78,6 +87,7 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 			statusVars[name] = s
 		}
 	}
+	statistMu.RUnlock()
 
 	return statusVars, nil
 }
