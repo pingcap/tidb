@@ -22,39 +22,39 @@ import (
 )
 
 var (
-	ddl_server_id            = "ddl_server_id"
-	ddl_schema_version       = "ddl_schema_version"
-	ddl_owner_id             = "ddl_owner_id"
-	ddl_owner_last_update_ts = "ddl_owner_last_update_ts"
-	ddl_job_id               = "ddl_job_id"
-	ddl_job_action           = "ddl_job_action"
-	ddl_job_last_update_ts   = "ddl_job_last_update_ts"
-	ddl_job_state            = "ddl_job_state"
-	ddl_job_error            = "ddl_job_error"
-	ddl_job_schema_state     = "ddl_job_schema_state"
-	ddl_job_schema_id        = "ddl_job_schema_id"
-	ddl_job_table_id         = "ddl_job_table_id"
-	ddl_job_snapshot_ver     = "ddl_job_snapshot_ver"
-	ddl_job_reorg_handle     = "ddl_job_reorg_handle"
-	ddl_job_args             = "ddl_job_args"
+	ddlServerID          = "ddl_server_id"
+	ddlSchemaVersion     = "ddl_schema_version"
+	ddlOwnerID           = "ddl_owner_id"
+	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
+	ddlJobID             = "ddl_job_id"
+	ddlJobAction         = "ddl_job_action"
+	ddlJobLastUpdateTS   = "ddl_job_last_update_ts"
+	ddlJobState          = "ddl_job_state"
+	ddlJobError          = "ddl_job_error"
+	ddlJobSchemaState    = "ddl_job_schema_state"
+	ddlJobSchemaID       = "ddl_job_schema_id"
+	ddlJobTableID        = "ddl_job_table_id"
+	ddlJobSnapshotVer    = "ddl_job_snapshot_ver"
+	ddlJobReorgHandle    = "ddl_job_reorg_handle"
+	ddlJobArgs           = "ddl_job_args"
 )
 
-var defaultStatusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
-	ddl_server_id:            variable.ScopeGlobal | variable.ScopeSession,
-	ddl_schema_version:       variable.ScopeGlobal | variable.ScopeSession,
-	ddl_owner_id:             variable.ScopeGlobal | variable.ScopeSession,
-	ddl_owner_last_update_ts: variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_id:               variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_action:           variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_last_update_ts:   variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_state:            variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_error:            variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_schema_state:     variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_schema_id:        variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_table_id:         variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_snapshot_ver:     variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_reorg_handle:     variable.ScopeGlobal | variable.ScopeSession,
-	ddl_job_args:             variable.ScopeGlobal | variable.ScopeSession,
+var defaultStatusScopes = map[string]variable.ScopeFlag{
+	ddlServerID:          variable.ScopeGlobal | variable.ScopeSession,
+	ddlSchemaVersion:     variable.ScopeGlobal | variable.ScopeSession,
+	ddlOwnerID:           variable.ScopeGlobal | variable.ScopeSession,
+	ddlOwnerLastUpdateTS: variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobID:             variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobAction:         variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobLastUpdateTS:   variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobState:          variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobError:          variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobSchemaState:    variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobSchemaID:       variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobTableID:        variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobSnapshotVer:    variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobReorgHandle:    variable.ScopeGlobal | variable.ScopeSession,
+	ddlJobArgs:           variable.ScopeGlobal | variable.ScopeSession,
 }
 
 // GetDefaultStatusScopes gets default status variables scope.
@@ -102,31 +102,31 @@ func (d *ddl) Stat() (map[string]*variable.StatusVal, error) {
 	}
 
 	m := make(map[string]*variable.StatusVal)
-	m[ddl_server_id] = variable.FillStatusVal(ddl_server_id, d.uuid)
+	m[ddlServerID] = variable.FillStatusVal(ddlServerID, d.uuid)
 
-	m[ddl_schema_version] = variable.FillStatusVal(ddl_schema_version, schemaVer)
+	m[ddlSchemaVersion] = variable.FillStatusVal(ddlSchemaVersion, schemaVer)
 
 	if owner != nil {
-		m[ddl_owner_id] = variable.FillStatusVal(ddl_owner_id, owner.OwnerID)
-		// LastUpdateTs uses nanosecond.
-		m[ddl_owner_last_update_ts] = variable.FillStatusVal(ddl_owner_last_update_ts, owner.LastUpdateTS/1e9)
+		m[ddlOwnerID] = variable.FillStatusVal(ddlOwnerID, owner.OwnerID)
+		// LastUpdateTS uses nanosecond.
+		m[ddlOwnerLastUpdateTS] = variable.FillStatusVal(ddlOwnerLastUpdateTS, owner.LastUpdateTS/1e9)
 	}
 
 	if job != nil {
-		m[ddl_job_id] = variable.FillStatusVal(ddl_job_id, job.ID)
-		m[ddl_job_action] = variable.FillStatusVal(ddl_job_action, job.Type.String())
-		m[ddl_job_last_update_ts] = variable.FillStatusVal(ddl_job_last_update_ts,
+		m[ddlJobID] = variable.FillStatusVal(ddlJobID, job.ID)
+		m[ddlJobAction] = variable.FillStatusVal(ddlJobAction, job.Type.String())
+		m[ddlJobLastUpdateTS] = variable.FillStatusVal(ddlJobLastUpdateTS,
 			job.LastUpdateTS)
-		m[ddl_job_state] = variable.FillStatusVal(ddl_job_state, job.State.String())
-		m[ddl_job_error] = variable.FillStatusVal(ddl_job_error, job.Error)
-		m[ddl_job_schema_state] = variable.FillStatusVal(ddl_job_schema_state,
+		m[ddlJobState] = variable.FillStatusVal(ddlJobState, job.State.String())
+		m[ddlJobError] = variable.FillStatusVal(ddlJobError, job.Error)
+		m[ddlJobSchemaState] = variable.FillStatusVal(ddlJobSchemaState,
 			job.SchemaState.String())
-		m[ddl_job_schema_id] = variable.FillStatusVal(ddl_job_schema_id, job.SchemaID)
-		m[ddl_job_table_id] = variable.FillStatusVal(ddl_job_table_id, job.TableID)
-		m[ddl_job_snapshot_ver] = variable.FillStatusVal(ddl_job_snapshot_ver,
+		m[ddlJobSchemaID] = variable.FillStatusVal(ddlJobSchemaID, job.SchemaID)
+		m[ddlJobTableID] = variable.FillStatusVal(ddlJobTableID, job.TableID)
+		m[ddlJobSnapshotVer] = variable.FillStatusVal(ddlJobSnapshotVer,
 			job.SnapshotVer)
-		m[ddl_job_reorg_handle] = variable.FillStatusVal(ddl_job_reorg_handle, reorgHandle)
-		m[ddl_job_args] = variable.FillStatusVal(ddl_job_args, job.Args)
+		m[ddlJobReorgHandle] = variable.FillStatusVal(ddlJobReorgHandle, reorgHandle)
+		m[ddlJobArgs] = variable.FillStatusVal(ddlJobArgs, job.Args)
 	}
 
 	return m, nil
