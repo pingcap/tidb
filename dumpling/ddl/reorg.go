@@ -237,12 +237,3 @@ func (r *reorgInfo) UpdateHandle(txn kv.Transaction, handle int64) error {
 	t := meta.NewMeta(txn)
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, handle))
 }
-
-func (r *reorgInfo) RemoveHandle() error {
-	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err := t.RemoveDDLReorgHandle(r.Job)
-		return errors.Trace(err)
-	})
-	return errors.Trace(err)
-}
