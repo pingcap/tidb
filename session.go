@@ -109,15 +109,15 @@ func (h *stmtHistory) clone() *stmtHistory {
 }
 
 type session struct {
-	txn          kv.Transaction // Current transaction
-	args         []interface{}  // Statment execution args, this should be cleaned up after exec
-	values       map[fmt.Stringer]interface{}
-	store        kv.Storage
-	sid          int64
-	history      stmtHistory
-	initing      bool // Running bootstrap using this session.
-	retrying     bool
-	maxRetryTime int // Max retry times. If maxRetryTime <=0, there is no limitation for retry times.
+	txn         kv.Transaction // Current transaction
+	args        []interface{}  // Statment execution args, this should be cleaned up after exec
+	values      map[fmt.Stringer]interface{}
+	store       kv.Storage
+	sid         int64
+	history     stmtHistory
+	initing     bool // Running bootstrap using this session.
+	retrying    bool
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 }
@@ -225,7 +225,7 @@ func (s *session) Retry() error {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	var err error
-	retryTime := 0
+	retryCnt := 0
 	for {
 		s.resetHistory()
 		s.FinishTxn(true)
@@ -253,8 +253,8 @@ func (s *session) Retry() error {
 				break
 			}
 		}
-		retryTime++
-		if (s.maxRetryTime > 0) && (retryTime >= s.maxRetryTime) {
+		retryCnt++
+		if (s.maxRetryCnt > 0) && (retryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
 	}
@@ -605,12 +605,12 @@ const (
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
 	s := &session{
-		values:       make(map[fmt.Stringer]interface{}),
-		store:        store,
-		sid:          atomic.AddInt64(&sessionID, 1),
-		debugInfos:   make(map[string]interface{}),
-		retrying:     false,
-		maxRetryTime: 10,
+		values:      make(map[fmt.Stringer]interface{}),
+		store:       store,
+		sid:         atomic.AddInt64(&sessionID, 1),
+		debugInfos:  make(map[string]interface{}),
+		retrying:    false,
+		maxRetryCnt: 10,
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
