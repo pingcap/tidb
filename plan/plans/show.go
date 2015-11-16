@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -472,7 +473,7 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	globalVars variable.GlobalVarAccessor, name string) (string, error) {
 	sv, ok := sessionVars.StatusVars[name]
 	if ok {
-		return sv, nil
+		return types.ToString(sv)
 	}
 
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
@@ -480,14 +481,14 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 		return "", errors.Trace(err)
 	}
 
-	return value, nil
+	return types.ToString(value)
 }
 
 func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	globalVars variable.GlobalVarAccessor, name string) (string, error) {
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
 	if err == nil {
-		return value, nil
+		return types.ToString(value)
 	}
 
 	if terror.UnknownStatusVar.Equal(err) {
@@ -496,7 +497,7 @@ func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 
 	sv, _ := sessionVars.StatusVars[name]
 
-	return sv, nil
+	return types.ToString(sv)
 }
 
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
@@ -504,7 +505,12 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
-	for _, status := range variable.StatusVals {
+	statusVars, err := variable.GetStatusVars()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for status, v := range statusVars {
 		if s.Pattern != nil {
 			s.Pattern.Expr = expression.Value{Val: status}
 		} else if s.Where != nil {
@@ -540,7 +546,7 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 			continue
 		}
 
-		row := &plan.Row{Data: []interface{}{v.Name, value}}
+		row := &plan.Row{Data: []interface{}{status, value}}
 		s.rows = append(s.rows, row)
 	}
 

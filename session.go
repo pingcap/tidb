@@ -296,24 +296,24 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 }
 
 // GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
-func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
+func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (*variable.StatusVal, error) {
 	// TODO: get global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return "", terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
+		return nil, terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
 	}
 
-	return v.Value, nil
+	return v, nil
 }
 
 // SetGlobalStatusVar implements GlobalVarAccessor.SetGlobalStatusVar interface.
-func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
+func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value *variable.StatusVal) error {
 	// TODO: set global status variables from store.
 	v := variable.GetStatusVar(name)
 	if v == nil {
 		return terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
 	}
-	v.Value = value
+	v = value
 
 	return nil
 }
