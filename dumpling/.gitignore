@@ -6,3 +6,5 @@
 coverage.out
 .idea/
 *.iml
+temp_parser_file
+y.output
