@@ -120,47 +120,44 @@ func NewKVIndex(indexPrefix, indexName string, unique bool) Index {
 	}
 }
 
-func (c *kvIndex) genIndexKey(indexedValues []interface{}, h int64) ([]byte, error) {
-	var (
-		encVal []byte
-		err    error
-	)
-	// only support single value index
-	if !c.unique {
-		encVal, err = EncodeValue(append(indexedValues, h)...)
-	} else {
+// GenIndexKey generates storage key for index values. Returned distinct indicates whether the
+// indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
+func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error) {
+	if c.unique {
 		// See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
 		// An error occurs if you try to add a new row with a key value that matches an existing row.
 		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
-		containsNull := false
+		distinct = true
 		for _, cv := range indexedValues {
 			if cv == nil {
-				containsNull = true
+				distinct = false
+				break
 			}
 		}
-		if containsNull {
-			encVal, err = EncodeValue(append(indexedValues, h)...)
-		} else {
-			encVal, err = EncodeValue(indexedValues...)
-		}
+	}
+
+	var encVal []byte
+	if distinct {
+		encVal, err = EncodeValue(indexedValues...)
+	} else {
+		encVal, err = EncodeValue(append(indexedValues, h)...)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
-	buf := append([]byte(nil), []byte(c.prefix)...)
-	buf = append(buf, encVal...)
-	return buf, nil
+	key = append([]byte(c.prefix), encVal...)
+	return
 }
 
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there already exists an entry with the same key, Create will return ErrKeyExists
 func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) error {
-	key, err := c.genIndexKey(indexedValues, h)
+	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !c.unique {
+	if !distinct {
 		// TODO: reconsider value
 		err = txn.Set(key, []byte("timestamp?"))
 		return errors.Trace(err)
@@ -177,7 +174,7 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 
 // Delete removes the entry for handle h and indexdValues from KV index.
 func (c *kvIndex) Delete(txn Transaction, indexedValues []interface{}, h int64) error {
-	key, err := c.genIndexKey(indexedValues, h)
+	key, _, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -213,7 +210,7 @@ func (c *kvIndex) Drop(txn Transaction) error {
 
 // Seek searches KV index for the entry with indexedValues.
 func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
-	key, err := c.genIndexKey(indexedValues, 0)
+	key, _, err := c.GenIndexKey(indexedValues, 0)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -240,7 +237,7 @@ func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
 }
 
 func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error) {
-	key, err := c.genIndexKey(indexedValues, h)
+	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -253,8 +250,8 @@ func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (
 		return false, 0, errors.Trace(err)
 	}
 
-	// For uniq index, the value of key is handle.
-	if c.unique {
+	// For distinct index, the value of key is handle.
+	if distinct {
 		handle, err := decodeHandle(value)
 		if err != nil {
 			return false, 0, errors.Trace(err)
