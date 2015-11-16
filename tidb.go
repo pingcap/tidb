@@ -226,6 +226,13 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		rs, err = s.Exec(ctx)
 		stmt.ClearExecArgs(ctx)
 	}
+	se := ctx.(*session)
+	if isPreparedStmt(s) {
+		ps := s.(*stmts.PreparedStmt)
+		se.history.add(ps.ID, s)
+	} else {
+		se.history.add(0, s)
+	}
 	// MySQL DDL should be auto-commit
 	if err == nil && (s.IsDDL() || autocommit.ShouldAutocommit(ctx)) {
 		err = ctx.FinishTxn(false)

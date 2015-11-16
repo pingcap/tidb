@@ -109,15 +109,17 @@ func (h *stmtHistory) clone() *stmtHistory {
 }
 
 type session struct {
-	txn        kv.Transaction // Current transaction
-	args       []interface{}  // Statment execution args, this should be cleaned up after exec
-	values     map[fmt.Stringer]interface{}
-	store      kv.Storage
-	sid        int64
-	history    stmtHistory
-	initing    bool                   // Running bootstrap using this session.
+	txn          kv.Transaction // Current transaction
+	args         []interface{}  // Statment execution args, this should be cleaned up after exec
+	values       map[fmt.Stringer]interface{}
+	store        kv.Storage
+	sid          int64
+	history      stmtHistory
+	initing      bool // Running bootstrap using this session.
+	retrying     bool
+	maxRetryTime int // Max retry times. If maxRetryTime <=0, there is no limitation for retry times.
+
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
-	retrying   bool
 }
 
 func (s *session) Status() uint16 {
@@ -206,6 +208,7 @@ func isPreparedStmt(st stmt.Statement) bool {
 }
 
 func (s *session) Retry() error {
+	s.retrying = true
 	nh := s.history.clone()
 	// Debug infos.
 	if len(nh.history) == 0 {
@@ -215,13 +218,14 @@ func (s *session) Retry() error {
 	}
 	defer func() {
 		s.history.history = nh.history
+		s.retrying = false
 	}()
 
 	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
 		return errors.Errorf("can not retry select for update statement")
 	}
 	var err error
-	s.retrying = true
+	retryTime := 0
 	for {
 		s.resetHistory()
 		s.FinishTxn(true)
@@ -249,8 +253,11 @@ func (s *session) Retry() error {
 				break
 			}
 		}
+		retryTime++
+		if (s.maxRetryTime > 0) && (retryTime >= s.maxRetryTime) {
+			return errors.Trace(err)
+		}
 	}
-	s.retrying = false
 	return nil
 }
 
@@ -403,29 +410,10 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 	var rs []rset.Recordset
 
 	for _, st := range statements {
-		inHistory := false
-		if s.ShouldAutocommit(s) {
-			if isPreparedStmt(st) {
-				ps := st.(*stmts.PreparedStmt)
-				s.history.add(ps.ID, st)
-			} else {
-				s.history.add(0, st)
-			}
-			inHistory = true
-		}
 		r, err := runStmt(s, st)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
-		}
-		if !inHistory {
-			// Record executed query
-			if isPreparedStmt(st) {
-				ps := st.(*stmts.PreparedStmt)
-				s.history.add(ps.ID, st)
-			} else {
-				s.history.add(0, st)
-			}
 		}
 		if r != nil {
 			rs = append(rs, r)
@@ -617,11 +605,12 @@ const (
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
 	s := &session{
-		values:     make(map[fmt.Stringer]interface{}),
-		store:      store,
-		sid:        atomic.AddInt64(&sessionID, 1),
-		debugInfos: make(map[string]interface{}),
-		retrying:   false,
+		values:       make(map[fmt.Stringer]interface{}),
+		store:        store,
+		sid:          atomic.AddInt64(&sessionID, 1),
+		debugInfos:   make(map[string]interface{}),
+		retrying:     false,
+		maxRetryTime: 10,
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
