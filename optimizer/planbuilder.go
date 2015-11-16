@@ -16,6 +16,7 @@ package optimizer
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/parser/opcode"
 )
 
 // planBuilder builds Plan from an ast.Node.
@@ -23,6 +24,98 @@ import (
 type planBuilder struct {
 }
 
-func (b *planBuilder) build(node ast.Node) (plan.Plan, error) {
-	return nil, nil
+func (b *planBuilder) build(node ast.Node) plan.Plan {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		return b.buildSelect(x)
+	}
+	panic("not supported")
+}
+
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt) plan.Plan {
+	var p plan.Plan
+	if sel.From != nil {
+		p = b.buildJoin(sel.From.TableRefs)
+		if sel.Where != nil {
+			p = b.buildFilter(p, sel.Where)
+		}
+	}
+	p = b.buildSelectFields(p, sel.GetResultFields())
+	if sel.OrderBy != nil {
+		p = b.buildSort(p, sel.OrderBy.Items)
+	}
+	if sel.Limit != nil {
+		p = b.buildLimit(p, sel.Limit)
+	}
+	return p
+}
+
+func (b *planBuilder) buildJoin(from *ast.Join) plan.Plan {
+	// Only support single table for now.
+	ts, ok := from.Left.(*ast.TableSource)
+	if !ok {
+		panic("not supported")
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		panic("not supported")
+	}
+	p := &plan.TableScan{
+		Table: tn.TableInfo,
+	}
+	p.SetFields(tn.GetResultFields())
+	return p
+}
+
+// splitWhere split a where expression to a list of AND conditions.
+func (b *planBuilder) splitWhere(where ast.ExprNode) []ast.ExprNode {
+	var conditions []ast.ExprNode
+	switch x := where.(type) {
+	case *ast.BinaryOperationExpr:
+		if x.Op == opcode.AndAnd {
+			conditions = append(conditions, x.L)
+			conditions = append(conditions, b.splitWhere(x.R)...)
+		} else {
+			conditions = append(conditions, x)
+		}
+	default:
+		conditions = append(conditions, where)
+	}
+	return conditions
+}
+
+func (b *planBuilder) buildFilter(src plan.Plan, where ast.ExprNode) *plan.Filter {
+	filter := &plan.Filter{
+		Src:        src,
+		Conditions: b.splitWhere(where),
+	}
+	filter.SetFields(src.Fields())
+	return filter
+}
+
+func (b *planBuilder) buildSelectFields(src plan.Plan, fields []*ast.ResultField) plan.Plan {
+	selectFields := &plan.SelectFields{
+		Src: src,
+	}
+	selectFields.SetFields(fields)
+	return selectFields
+}
+
+func (b *planBuilder) buildSort(src plan.Plan, byItems []*ast.ByItem) plan.Plan {
+	sort := &plan.Sort{
+		Src:     src,
+		ByItems: byItems,
+	}
+	sort.SetFields(src.Fields())
+	return sort
+}
+
+func (b *planBuilder) buildLimit(src plan.Plan, limit *ast.Limit) plan.Plan {
+	li := &plan.Limit{
+		Src:    src,
+		Offset: limit.Offset,
+		Count:  limit.Count,
+	}
+	li.SetFields(src.Fields())
+	return li
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"sort"
 )
 
 var (
@@ -110,6 +111,11 @@ func (e *TableScanExec) Next() (row *Row, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Set result fields value.
+	for i, v := range e.fields {
+		v.Expr.SetValue(row.Data[i])
+	}
+
 	// Put rowKey to the tail of record row
 	rke := &RowKeyEntry{
 		Tbl: e.t,
@@ -231,6 +237,7 @@ func (e *IndexScanExec) Close() error {
 type SelectFieldsExec struct {
 	Src          Executor
 	ResultFields []*ast.ResultField
+	executed     bool
 }
 
 // Fields implements Executor Fields interface.
@@ -240,18 +247,31 @@ func (e *SelectFieldsExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *SelectFieldsExec) Next() (*Row, error) {
-	srcRow, err := e.Src.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
+	var rowKeys []*RowKeyEntry
+	if e.Src != nil {
+		srcRow, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if srcRow == nil {
+			return nil, nil
+		}
+		rowKeys = srcRow.RowKeys
+	} else {
+		// If Src is nil, only one row should be returned.
+		if e.executed {
+			return nil, nil
+		}
 	}
-	if srcRow == nil {
-		return nil, nil
-	}
+	e.executed = true
 	row := &Row{
-		RowKeys: srcRow.RowKeys,
+		RowKeys: rowKeys,
 		Data:    make([]interface{}, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
+		if cn, ok := field.Expr.(*ast.ColumnNameExpr); ok {
+			log.Errorf("refer %v", cn.Refer.Column)
+		}
 		val, err := Eval(field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -263,7 +283,10 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *SelectFieldsExec) Close() error {
-	return e.Src.Close()
+	if e.Src != nil {
+		return e.Src.Close()
+	}
+	return nil
 }
 
 // FilterExec represents an filter executor.
@@ -305,9 +328,9 @@ func (e *FilterExec) Close() error {
 // LimitExec represents limit executor
 type LimitExec struct {
 	Src    Executor
-	Offset int
-	Limit  int
-	Idx    int
+	Offset uint64
+	Count  uint64
+	Idx    uint64
 }
 
 // Fields implements Executor Fields interface.
@@ -328,7 +351,7 @@ func (e *LimitExec) Next() (*Row, error) {
 		e.Idx++
 	}
 	// Negative Limit means no limit.
-	if e.Limit >= 0 && e.Idx >= e.Offset+e.Limit {
+	if e.Count >= 0 && e.Idx >= e.Offset+e.Count {
 		return nil, nil
 	}
 	srcRow, err := e.Src.Next()
@@ -355,7 +378,6 @@ type orderByRow struct {
 
 // SortExec represents sorting executor.
 type SortExec struct {
-	Ctx     context.Context
 	Src     Executor
 	ByItems []*ast.ByItem
 	Rows    []*orderByRow
@@ -425,6 +447,7 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}
+		sort.Sort(e)
 		e.fetched = true
 	}
 	if e.Idx >= len(e.Rows) {
@@ -437,5 +460,5 @@ func (e *SortExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *SortExec) Close() error {
-	return nil
+	return e.Src.Close()
 }

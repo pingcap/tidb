@@ -133,10 +133,12 @@ func (p *SelectFields) Accept(v Visitor) (Plan, bool) {
 		v.Leave(np)
 	}
 	p = np.(*SelectFields)
-	var ok bool
-	p.Src, ok = p.Src.Accept(v)
-	if !ok {
-		return p, false
+	if p.Src != nil {
+		var ok bool
+		p.Src, ok = p.Src.Accept(v)
+		if !ok {
+			return p, false
+		}
 	}
 	return v.Leave(p)
 }
@@ -191,8 +193,8 @@ type Limit struct {
 	basePlan
 
 	Src    Plan
-	Offset int
-	Count  int
+	Offset uint64
+	Count  uint64
 }
 
 // Accept implements Plan Accept interface.

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/stmt"
 )
 
@@ -36,7 +37,8 @@ type Compiler struct {
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
 	if optimizer.Supported(node) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		p, err := optimizer.Optimize(is, node)
+		defaultSchema := db.GetCurrentSchema(ctx)
+		p, err := optimizer.Optimize(is, defaultSchema, node)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

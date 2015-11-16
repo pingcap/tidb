@@ -17,19 +17,20 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
 )
 
 // Optimize do optimization and create a Plan.
 // InfoSchema has to be passed in as parameter because
 // it can not be changed after binding.
-func Optimize(is infoschema.InfoSchema, node ast.Node) (plan.Plan, error) {
+func Optimize(is infoschema.InfoSchema, defaultSchema string, node ast.Node) (plan.Plan, error) {
 	var va validator
 	node.Accept(&va)
 	if va.err != nil {
 		return nil, errors.Trace(va.err)
 	}
-	binder := &InfoBinder{Info: is}
+	binder := &InfoBinder{Info: is, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(binder)
 	if binder.Err != nil {
 		return nil, errors.Trace(binder.Err)
@@ -42,11 +43,8 @@ func Optimize(is infoschema.InfoSchema, node ast.Node) (plan.Plan, error) {
 	cn := &conditionNormalizer{}
 	node.Accept(cn)
 	var builder planBuilder
-	p, err := builder.build(node)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var picker indexPicker
+	p := builder.build(node)
+	picker := indexPicker{is: is, root: p}
 	p, _ = p.Accept(&picker)
 	return p, nil
 }
@@ -63,9 +61,20 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 		x := in.(*ast.Join)
 		if x.Right != nil {
 			c.unsupported = true
+		} else {
+			ts, ok := x.Left.(*ast.TableSource)
+			if !ok {
+				c.unsupported = true
+			} else {
+				_, ok = ts.Source.(*ast.TableName)
+				if !ok {
+					c.unsupported = true
+				}
+			}
 		}
 	case *ast.SelectStmt:
-		if x := in.(*ast.SelectStmt); x.Distinct {
+		x := in.(*ast.SelectStmt)
+		if x.Distinct {
 			c.unsupported = true
 		}
 	}
@@ -84,6 +93,7 @@ func Supported(node ast.Node) bool {
 		return false
 	}
 	var checker supportChecker
-	node.Accept(checker)
+	node.Accept(&checker)
 	return !checker.unsupported
+	//	return false
 }

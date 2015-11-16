@@ -199,11 +199,13 @@ func (sb *InfoBinder) handleTableName(tn *ast.TableName) {
 
 	rfs := make([]*ast.ResultField, len(tn.TableInfo.Columns))
 	for i, v := range tn.TableInfo.Columns {
+		expr := &ast.ValueExpr{}
+		expr.SetType(&v.FieldType)
 		rfs[i] = &ast.ResultField{
 			Column: v,
 			Table:  tn.TableInfo,
 			DBName: tn.Schema,
-			Expr:   &ast.ValueExpr{},
+			Expr:   expr,
 		}
 	}
 	tn.SetResultFields(rfs)
@@ -469,14 +471,15 @@ func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.Res
 		rf.Column = v.Refer.Column
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
+		rf.Expr = v.Refer.Expr
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.
 		if field.AsName.L == "" {
 			rf.ColumnAsName = model.NewCIStr(field.Text())
 		}
+		rf.Expr = v
 	}
-	rf.Expr = field.Expr
 	rfs = append(rfs, rf)
 	return
 }
