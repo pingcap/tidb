@@ -81,7 +81,6 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	hbaseCli := s.getHBaseClient()
 	t := themis.NewTxn(hbaseCli)
 	txn := newHbaseTxn(t, s.storeName)
-	txn.UnionStore = kv.NewUnionStore(newHbaseSnapshot(t, s.storeName))
 	return txn, nil
 }
 
