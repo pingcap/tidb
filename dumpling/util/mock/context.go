@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -58,21 +59,21 @@ func (c *Context) FinishTxn(rollback bool) error {
 }
 
 // GetGlobalStatusVar implements GlobalVarAccessor GetGlobalStatusVar interface.
-func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (*variable.StatusVal, error) {
+func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetStatusVar(name)
 	if v == nil {
-		return nil, terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
+		return "", terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
 	}
-	return v, nil
+	return types.ToString(v.Value)
 }
 
 // SetGlobalStatusVar implements GlobalVarAccessor SetGlobalStatusVar interface.
-func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value *variable.StatusVal) error {
+func (c *Context) SetGlobalStatusVar(ctx context.Context, name, value string) error {
 	v := variable.GetStatusVar(name)
 	if v == nil {
 		return terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
 	}
-	v = value
+	v = variable.FillStatusVal(name, v)
 	return nil
 }
 

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
@@ -49,8 +50,8 @@ import (
 const (
 	EngineGoLevelDBMemory     = "memory://"
 	EngineGoLevelDBPersistent = "goleveldb://"
-	EngineHBase               = "zk://"
 	EngineBoltDB              = "boltdb://"
+	EngineHBase               = "hbase://"
 )
 
 type domainMap struct {
@@ -74,7 +75,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	// if not local storage, first we will use a little lease time to
 	// bootstrap quickly, after bootstrapped, we will reset the lease time.
 	if !localstore.IsLocalStore(store) {
-		lease = 100 * time.Second
+		lease = 100 * time.Millisecond
 	}
 	d, err = domain.NewDomain(store, lease)
 	if err != nil {
@@ -101,21 +102,14 @@ var (
 	// all servers get the neweset schema.
 	// Default schema lease time is 300 seconds, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
-	SchemaLease = 300
+	schemaLease = 300
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
-// This function is very dangerous, don't use it if you really know
-// what you do.
+// This function is very dangerous, don't use it if you really know what you do.
+// SetSchemaLease only affects not local storage after bootstrapped.
 func SetSchemaLease(seconds int) {
-	SchemaLease = seconds
-
-	domap.mu.Lock()
-	defer domap.mu.Unlock()
-
-	for _, dm := range domap.domains {
-		dm.SetLease(time.Duration(SchemaLease) * time.Second)
-	}
+	schemaLease = seconds
 }
 
 // What character set should the server translate a statement to after receiving it?
@@ -341,6 +335,7 @@ func init() {
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
 	RegisterLocalStore("boltdb", boltdb.Driver{})
+	RegisterStore("hbase", hbasekv.Driver{})
 
 	// start pprof handlers
 	if Debug {
