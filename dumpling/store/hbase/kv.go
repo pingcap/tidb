@@ -14,6 +14,7 @@
 package hbasekv
 
 import (
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,7 @@ var mc storeCache
 
 func init() {
 	mc.cache = make(map[string]*hbaseStore)
+	rand.Seed(time.Now().UnixNano())
 }
 
 type hbaseStore struct {
@@ -68,11 +70,15 @@ type hbaseStore struct {
 	conns     []hbase.HBaseClient
 }
 
+func (s *hbaseStore) getHBaseClient() hbase.HBaseClient {
+	// return hbase connection randomly
+	return s.conns[rand.Intn(hbaseConnPoolSize)]
+}
+
 func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// get random conn
-	hbaseCli := s.conns[time.Now().UnixNano()%hbaseConnPoolSize]
+	hbaseCli := s.getHBaseClient()
 	t := themis.NewTxn(hbaseCli)
 	txn := newHbaseTxn(t, s.storeName)
 	txn.UnionStore = kv.NewUnionStore(newHbaseSnapshot(t, s.storeName))
@@ -80,8 +86,7 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 }
 
 func (s *hbaseStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
-	// get random conn
-	hbaseCli := s.conns[time.Now().UnixNano()%hbaseConnPoolSize]
+	hbaseCli := s.getHBaseClient()
 	t := themis.NewTxn(hbaseCli)
 	return newHbaseSnapshot(t, s.storeName), nil
 }
@@ -108,7 +113,7 @@ func (s *hbaseStore) UUID() string {
 }
 
 func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
-	hbaseCli := s.conns[time.Now().UnixNano()%hbaseConnPoolSize]
+	hbaseCli := s.getHBaseClient()
 	t := themis.NewTxn(hbaseCli)
 	defer t.Release()
 
