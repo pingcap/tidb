@@ -24,7 +24,7 @@ type testUnionStoreSuite struct {
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
 	s.store = NewMemDbBuffer()
-	s.us = NewUnionStore(&mockSnapshot{s.store})
+	s.us = NewUnionStore(&mockSnapshot{s.store}, &mockOptions{})
 }
 
 func (s *testUnionStoreSuite) TearDownTest(c *C) {
