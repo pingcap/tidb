@@ -296,31 +296,37 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 }
 
 // GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
-func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (*variable.StatusVal, error) {
-	// TODO: get global status variables from store.
+func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetStatusVar(name)
-	if v == nil {
-		return nil, terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
+	if v != nil {
+		return types.ToString(v.Value)
 	}
 
-	return v, nil
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalStatusTable, name)
+	statusVar, err := s.getExecRet(ctx, sql)
+	if err != nil {
+		if terror.ExecResultIsEmpty.Equal(err) {
+			return "", terror.ExecResultIsEmpty.Gen("unknown status variable:%s", name)
+		}
+		return "", errors.Trace(err)
+	}
+
+	return statusVar, nil
 }
 
 // SetGlobalStatusVar implements GlobalVarAccessor.SetGlobalStatusVar interface.
-func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value *variable.StatusVal) error {
-	// TODO: set global status variables from store.
-	v := variable.GetStatusVar(name)
-	if v == nil {
-		return terror.UnknownStatusVar.Gen("unknown status variable:%s", name)
-	}
-	v = value
-
-	return nil
+func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
+	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalStatusTable, value, strings.ToLower(name))
+	_, err := s.ExecRestrictedSQL(ctx, sql)
+	return errors.Trace(err)
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(ctx, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
@@ -334,7 +340,8 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) error {
-	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
+	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
 	_, err := s.ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
@@ -613,8 +620,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	// if store is not local store, we will reset lease time after bootstrap
 	if !localstore.IsLocalStore(store) {
-		lease := SchemaLease
-		sessionctx.GetDomain(s).SetLease(time.Duration(lease) * time.Second)
+		sessionctx.GetDomain(s).SetLease(time.Duration(schemaLease) * time.Second)
 	}
 
 	// TODO: Add auth here

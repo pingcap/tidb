@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -473,7 +472,7 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	globalVars variable.GlobalVarAccessor, name string) (string, error) {
 	sv, ok := sessionVars.StatusVars[name]
 	if ok {
-		return types.ToString(sv)
+		return sv, nil
 	}
 
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
@@ -481,14 +480,14 @@ func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 		return "", errors.Trace(err)
 	}
 
-	return types.ToString(value.Value)
+	return value, nil
 }
 
 func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 	globalVars variable.GlobalVarAccessor, name string) (string, error) {
 	value, err := globalVars.GetGlobalStatusVar(ctx, name)
 	if err == nil {
-		return types.ToString(value.Value)
+		return value, nil
 	}
 
 	if terror.UnknownStatusVar.Equal(err) {
@@ -497,7 +496,7 @@ func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
 
 	sv, _ := sessionVars.StatusVars[name]
 
-	return types.ToString(sv)
+	return sv, nil
 }
 
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {

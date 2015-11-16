@@ -415,8 +415,6 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
 
-	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, isDropped)
-
 	// Test add a new row.
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
@@ -457,7 +455,6 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	})
 	c.Assert(i, Equals, int64(1))
 
-	s.checkColumnKVExist(c, ctx, t, handle, col, columnValue, false)
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 

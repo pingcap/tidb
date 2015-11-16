@@ -44,16 +44,16 @@ type InfoSchemaPlan struct {
 }
 
 var (
-	schemataFields       = buildResultFieldsForSchemata()
-	tablesFields         = buildResultFieldsForTables()
-	columnsFields        = buildResultFieldsForColumns()
-	statisticsFields     = buildResultFieldsForStatistics()
-	characterSetsFields  = buildResultFieldsForCharacterSets()
-	characterSetsRecords = buildCharacterSetsRecords()
-	collationsFields     = buildResultFieldsForCollations()
-	collationsRecords    = buildColltionsRecords()
-	filesFields          = buildFilesFields()
-	filesRecords         = buildFilesRecords()
+	schemataFields       []*field.ResultField
+	tablesFields         []*field.ResultField
+	columnsFields        []*field.ResultField
+	statisticsFields     []*field.ResultField
+	characterSetsFields  []*field.ResultField
+	collationsFields     []*field.ResultField
+	filesFields          []*field.ResultField
+	characterSetsRecords [][]interface{}
+	collationsRecords    [][]interface{}
+	filesRecords         [][]interface{}
 )
 
 const (
@@ -511,4 +511,17 @@ func (isp *InfoSchemaPlan) Close() error {
 	isp.rows = nil
 	isp.cursor = 0
 	return nil
+}
+
+func init() {
+	schemataFields = buildResultFieldsForSchemata()
+	tablesFields = buildResultFieldsForTables()
+	columnsFields = buildResultFieldsForColumns()
+	statisticsFields = buildResultFieldsForStatistics()
+	characterSetsFields = buildResultFieldsForCharacterSets()
+	collationsFields = buildResultFieldsForCollations()
+	filesFields = buildFilesFields()
+	characterSetsRecords = buildCharacterSetsRecords()
+	collationsRecords = buildColltionsRecords()
+	filesRecords = buildFilesRecords()
 }
