@@ -108,6 +108,41 @@ func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	return s.MvccGet(k, s.version)
 }
 
+func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	m := make(map[string][]byte)
+	for _, k := range keys {
+		v, err := s.Get(k)
+		if err != nil && !kv.IsErrNotFound(err) {
+			return nil, errors.Trace(err)
+		}
+		if len(v) > 0 {
+			m[string(k)] = v
+		}
+	}
+	return m, nil
+}
+
+func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
+	m := make(map[string][]byte)
+	it := s.NewIterator(start)
+	defer it.Close()
+	endKey := string(end)
+	for i := 0; i < limit; i++ {
+		if !it.Valid() {
+			break
+		}
+		if it.Key() > endKey {
+			break
+		}
+		m[it.Key()] = it.Value()
+		err := it.Next()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
+}
+
 func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
 	k, ok := param.([]byte)
 	if !ok {
