@@ -57,7 +57,6 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 // ParamMarkers gets parameter markers collected during conversion.
 // Used by prepared statement.
 func (c *Compiler) ParamMarkers() []*expression.ParamMarker {
-
 	if c.converter != nil {
 		return c.converter.ParamMarkers()
 	}
