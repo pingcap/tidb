@@ -44,7 +44,6 @@ func EvalBool(expr ast.ExprNode) (bool, error) {
 }
 
 // Evaluator is a ast Visitor that evaluates an expression.
-//
 type Evaluator struct {
 	err error
 }
