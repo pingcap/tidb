@@ -1407,6 +1407,8 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	wg.Add(3)
 	f1 := func() {
 		defer wg.Done()
+		// Unlimited retry times.
+		se1.(*session).maxRetryTime = -1
 		for i := 0; i < 50; i++ {
 			mustExecSQL(c, se1, "update t set c = 1;")
 			v, ok := se1.(*session).debugInfos[retryEmptyHistoryList]
@@ -1417,6 +1419,8 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	}
 	f2 := func() {
 		defer wg.Done()
+		// Unlimited retry times.
+		se2.(*session).maxRetryTime = -1
 		for i := 0; i < 50; i++ {
 			mustExecSQL(c, se2, "update t set c = 1;")
 			v, ok := se2.(*session).debugInfos[retryEmptyHistoryList]
@@ -1427,6 +1431,8 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	}
 	f3 := func() {
 		defer wg.Done()
+		// Unlimited retry times.
+		se3.(*session).maxRetryTime = -1
 		for i := 0; i < 50; i++ {
 			mustExecSQL(c, se3, "begin")
 			mustExecSQL(c, se3, "update t set c = 1;")
