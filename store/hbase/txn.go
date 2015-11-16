@@ -42,15 +42,18 @@ type hbaseTxn struct {
 	tid       uint64
 	valid     bool
 	version   kv.Version // commit version
+	opts      map[kv.Option]interface{}
 }
 
 func newHbaseTxn(t *themis.Txn, storeName string) *hbaseTxn {
+	opts := make(map[kv.Option]interface{})
 	return &hbaseTxn{
 		Txn:        t,
 		valid:      true,
 		storeName:  storeName,
 		tid:        t.GetStartTS(),
-		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
+		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName), options(opts)),
+		opts:       opts,
 	}
 }
 
@@ -256,4 +259,19 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 		}
 	}
 	return nil
+}
+
+func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
+	txn.opts[opt] = val
+}
+
+func (txn *hbaseTxn) DelOption(opt kv.Option) {
+	delete(txn.opts, opt)
+}
+
+type options map[kv.Option]interface{}
+
+func (opts options) Get(opt kv.Option) (interface{}, bool) {
+	v, ok := opts[opt]
+	return v, ok
 }
