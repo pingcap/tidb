@@ -193,7 +193,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		log.Fatalf("load schema err %v", err)
 	}
 
-	variable.RegisterStatist(d)
+	variable.RegisterStatist("domain_"+store.UUID(), d)
 
 	go d.loadSchemaInLoop(lease)
 

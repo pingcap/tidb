@@ -114,7 +114,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 
 	d.start()
 
-	variable.RegisterStatist(d)
+	variable.RegisterStatist(d.uuid, d)
 
 	return d
 }
@@ -169,6 +169,7 @@ func (d *ddl) close() {
 		return
 	}
 
+	variable.DeleteStatist(d.uuid)
 	close(d.quitCh)
 
 	d.wait.Wait()
