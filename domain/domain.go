@@ -24,7 +24,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
+
+var ddl_last_reload_schema_ts = "ddl_last_reload_schema_ts"
+
+var defaultStatusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
+	ddl_last_reload_schema_ts: variable.ScopeGlobal | variable.ScopeSession,
+}
 
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
@@ -104,15 +111,17 @@ func (do *Domain) SetLease(lease time.Duration) {
 }
 
 // Stat returns the DDL statistic.
-func (do *Domain) Stat() (map[string]interface{}, error) {
-	m, err := do.ddl.Stat()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	m["ddl_last_reload_schema_ts"] = atomic.LoadInt64(&do.lastLeaseTS)
+func (do *Domain) Stat() (map[string]*variable.StatusVal, error) {
+	m := make(map[string]*variable.StatusVal)
+	m["ddl_last_reload_schema_ts"] = variable.FillStatusVal(ddl_last_reload_schema_ts,
+		atomic.LoadInt64(&do.lastLeaseTS))
 
 	return m, nil
+}
+
+// GetDefaultStatusScopes gets default status variables scope.
+func (do *Domain) GetDefaultStatusScopes() map[string]variable.ScopeFlag {
+	return defaultStatusScopes
 }
 
 func (do *Domain) reload() error {
@@ -183,6 +192,8 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	if err != nil {
 		log.Fatalf("load schema err %v", err)
 	}
+
+	variable.RegisterStatist(d)
 
 	go d.loadSchemaInLoop(lease)
 
