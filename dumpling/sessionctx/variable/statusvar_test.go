@@ -25,7 +25,7 @@ type testStatusVarSuite struct {
 
 func (s *testStatusVarSuite) SetUpSuite(c *C) {
 	s.ms = &mockStatist{}
-	RegisterStatist(s.ms)
+	RegisterStatistics(s.ms)
 }
 
 // mockStatist represents mocked statist.

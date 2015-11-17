@@ -114,7 +114,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 
 	d.start()
 
-	variable.RegisterStatist(d)
+	variable.RegisterStatistics(d)
 
 	return d
 }

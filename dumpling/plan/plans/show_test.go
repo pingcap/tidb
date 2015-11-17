@@ -58,7 +58,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
 	variable.BindGlobalVarAccessor(p.ctx, nc)
-	variable.RegisterStatist(p.ms)
+	variable.RegisterStatistics(p.ms)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
