@@ -268,9 +268,11 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		lastInsertIds[i] = variable.GetSessionVars(ctx).LastInsertID
 	}
 
-	err = s.prefetchIndices(ctx, t, rows)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if len(s.OnDuplicate) > 0 {
+		err = s.prefetchIndices(ctx, t, rows)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	txn, err := ctx.GetTxn(false)
