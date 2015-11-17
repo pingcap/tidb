@@ -12,7 +12,7 @@ git clone https://github.com/pingcap/tidb.git
 cd tidb
 docker build --rm -t tidb-server .
 docker images
-docker run -d -p 4000:4000 --name tidb-server tidb-server
+docker run -d --net=host --name tidb-server tidb-server
 ```
 
 Then you can use official mysql client to connect to TiDB.
