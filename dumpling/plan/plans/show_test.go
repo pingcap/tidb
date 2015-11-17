@@ -149,7 +149,7 @@ func (p *testShowSuit) TestShowSysVariables(c *C) {
 	c.Assert(ret, HasLen, 1)
 	v, ok = ret["character_set_results"]
 	c.Assert(ok, IsTrue)
-	// Show global variablee get latin1
+	// Show global variable get latin1
 	c.Assert(v, Equals, "latin1")
 
 	pln.GlobalScope = false
@@ -161,7 +161,7 @@ func (p *testShowSuit) TestShowSysVariables(c *C) {
 	c.Assert(ret, HasLen, 1)
 	v, ok = ret["character_set_results"]
 	c.Assert(ok, IsTrue)
-	// Show session variablee get utf8
+	// Show session variable get utf8
 	c.Assert(v, Equals, "utf8")
 	pln.Close()
 	pln.Pattern = nil

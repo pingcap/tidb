@@ -20,13 +20,11 @@ import (
 )
 
 var statusVars map[string]*StatusVal
+var statisticsList []Statistics
 var globalStatusScopes = make(map[string]ScopeFlag)
 
 // DefaultScopeFlag is the status default scope.
 var DefaultScopeFlag = ScopeGlobal | ScopeSession
-
-// StatisticsList is the set of all statistics.
-var StatisticsList []Statistics
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
@@ -44,7 +42,7 @@ type Statistics interface {
 
 // RegisterStatistics registers statistics.
 func RegisterStatistics(s Statistics) {
-	StatisticsList = append(StatisticsList, s)
+	statisticsList = append(statisticsList, s)
 }
 
 // GetStatusVars gets registered statistics status variables.
@@ -52,7 +50,7 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 	statusVars = make(map[string]*StatusVal)
 	ret := make(map[string]*StatusVal)
 
-	for _, statistics := range StatisticsList {
+	for _, statistics := range statisticsList {
 		vals, err := statistics.Stats()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -71,7 +69,7 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 	}
 	for status := range defaultStatusVars {
 		// To get more accurate value from the global status variables table.
-		ret[status] = &StatusVal{}
+		ret[status] = &StatusVal{Scope: DefaultScopeFlag}
 	}
 
 	return ret, nil
