@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/terror"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -127,19 +129,27 @@ func (do *Domain) tryReload() {
 
 	// if lease is 0, we use the local store, so no need to reload.
 	if lease > 0 && time.Now().UnixNano()-last > lease.Nanoseconds() {
-		do.reload()
+		do.mustReload()
 	}
 }
 
-func (do *Domain) reload() {
-	// if reload error, we will terminate whole program to guarantee data safe.
-	// TODO: retry some times if reload error.
+func (do *Domain) reload() error {
 	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
 	if err != nil {
-		log.Fatalf("reload schema err %v", err)
+		return errors.Trace(err)
 	}
 
 	atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
+	return nil
+}
+
+func (do *Domain) mustReload() {
+	// if reload error, we will terminate whole program to guarantee data safe.
+	// TODO: retry some times if reload error.
+	err := do.reload()
+	if err != nil {
+		log.Fatalf("reload schema err %v", err)
+	}
 }
 
 // check schema every 300 seconds default.
@@ -156,7 +166,14 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			do.reload()
+			err := do.reload()
+			// we may close store in test, but the domain load schema loop is still checking,
+			// so we can't panic for ErrDBClosed and just return here.
+			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
+				return
+			} else if err != nil {
+				log.Fatalf("reload schema err %v", err)
+			}
 		case newLease := <-do.leaseCh:
 			if newLease <= 0 {
 				newLease = defaultLoadTime
@@ -186,7 +203,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 	}
 	log.Warnf("on DDL change")
 
-	c.do.reload()
+	c.do.mustReload()
 	return nil
 }
 
@@ -199,7 +216,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 
 	d.infoHandle = infoschema.NewHandle(d.store)
 	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
-	d.reload()
+	d.mustReload()
 
 	go d.loadSchemaInLoop(lease)
 
