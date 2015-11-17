@@ -1081,7 +1081,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_status;")
 	v, err = r.FirstRow()
 	c.Assert(err, IsNil)
-	statusVars, err := variable.GetStatusVars()
+	statusVars, err := variable.GetDefaultStatusVars()
 	c.Assert(err, IsNil)
 	c.Assert(v[0], Equals, int64(len(statusVars)))
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)

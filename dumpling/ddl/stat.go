@@ -39,31 +39,20 @@ var (
 	ddlJobArgs           = "ddl_job_args"
 )
 
-var defaultStatusScopes = map[string]variable.ScopeFlag{
-	ddlServerID:          variable.ScopeGlobal | variable.ScopeSession,
-	ddlSchemaVersion:     variable.ScopeGlobal | variable.ScopeSession,
-	ddlOwnerID:           variable.ScopeGlobal | variable.ScopeSession,
-	ddlOwnerLastUpdateTS: variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobID:             variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobAction:         variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobLastUpdateTS:   variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobState:          variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobError:          variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobSchemaState:    variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobSchemaID:       variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobTableID:        variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobSnapshotVer:    variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobReorgHandle:    variable.ScopeGlobal | variable.ScopeSession,
-	ddlJobArgs:           variable.ScopeGlobal | variable.ScopeSession,
-}
+var specificStatusScopes = map[string]variable.ScopeFlag{}
 
-// GetDefaultStatusScopes gets default status variables scope.
-func (d *ddl) GetDefaultStatusScopes() map[string]variable.ScopeFlag {
-	return defaultStatusScopes
+// GetScope gets the status variables scope.
+func (d *ddl) GetScope(status string) variable.ScopeFlag {
+	scope, ok := specificStatusScopes[status]
+	if !ok {
+		scope = variable.DefaultScopeFlag
+	}
+
+	return scope
 }
 
 // Stat returns the DDL statistics.
-func (d *ddl) Stat() (map[string]*variable.StatusVal, error) {
+func (d *ddl) Stats() (map[string]interface{}, error) {
 	var (
 		owner       *model.Owner
 		job         *model.Job
@@ -101,32 +90,29 @@ func (d *ddl) Stat() (map[string]*variable.StatusVal, error) {
 		return nil, errors.Trace(err)
 	}
 
-	m := make(map[string]*variable.StatusVal)
-	m[ddlServerID] = variable.FillStatusVal(ddlServerID, d.uuid)
+	m := make(map[string]interface{})
+	m[ddlServerID] = d.uuid
 
-	m[ddlSchemaVersion] = variable.FillStatusVal(ddlSchemaVersion, schemaVer)
+	m[ddlSchemaVersion] = schemaVer
 
 	if owner != nil {
-		m[ddlOwnerID] = variable.FillStatusVal(ddlOwnerID, owner.OwnerID)
+		m[ddlOwnerID] = owner.OwnerID
 		// LastUpdateTS uses nanosecond.
-		m[ddlOwnerLastUpdateTS] = variable.FillStatusVal(ddlOwnerLastUpdateTS, owner.LastUpdateTS/1e9)
+		m[ddlOwnerLastUpdateTS] = owner.LastUpdateTS / 1e9
 	}
 
 	if job != nil {
-		m[ddlJobID] = variable.FillStatusVal(ddlJobID, job.ID)
-		m[ddlJobAction] = variable.FillStatusVal(ddlJobAction, job.Type.String())
-		m[ddlJobLastUpdateTS] = variable.FillStatusVal(ddlJobLastUpdateTS,
-			job.LastUpdateTS)
-		m[ddlJobState] = variable.FillStatusVal(ddlJobState, job.State.String())
-		m[ddlJobError] = variable.FillStatusVal(ddlJobError, job.Error)
-		m[ddlJobSchemaState] = variable.FillStatusVal(ddlJobSchemaState,
-			job.SchemaState.String())
-		m[ddlJobSchemaID] = variable.FillStatusVal(ddlJobSchemaID, job.SchemaID)
-		m[ddlJobTableID] = variable.FillStatusVal(ddlJobTableID, job.TableID)
-		m[ddlJobSnapshotVer] = variable.FillStatusVal(ddlJobSnapshotVer,
-			job.SnapshotVer)
-		m[ddlJobReorgHandle] = variable.FillStatusVal(ddlJobReorgHandle, reorgHandle)
-		m[ddlJobArgs] = variable.FillStatusVal(ddlJobArgs, job.Args)
+		m[ddlJobID] = job.ID
+		m[ddlJobAction] = job.Type.String()
+		m[ddlJobLastUpdateTS] = job.LastUpdateTS
+		m[ddlJobState] = job.State.String()
+		m[ddlJobError] = job.Error
+		m[ddlJobSchemaState] = job.SchemaState.String()
+		m[ddlJobSchemaID] = job.SchemaID
+		m[ddlJobTableID] = job.TableID
+		m[ddlJobSnapshotVer] = job.SnapshotVer
+		m[ddlJobReorgHandle] = reorgHandle
+		m[ddlJobArgs] = job.Args
 	}
 
 	return m, nil

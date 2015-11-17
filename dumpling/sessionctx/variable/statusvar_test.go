@@ -25,49 +25,49 @@ type testStatusVarSuite struct {
 
 func (s *testStatusVarSuite) SetUpSuite(c *C) {
 	s.ms = &mockStatist{}
-	RegisterStatist("testStatusVarSuite", s.ms)
-}
-
-func (s *testStatusVarSuite) TearDownSuite(c *C) {
-	DeleteStatist("testStatusVarSuite")
+	RegisterStatist(s.ms)
 }
 
 // mockStatist represents mocked statist.
 type mockStatist struct{}
 
 const (
-	testStatus    = "test_status"
-	testStatusVal = "test_status_val"
+	testStatus        = "test_status"
+	testSessionStatus = "test_session_status"
+	testStatusVal     = "test_status_val"
 )
 
-var defaultStatusScopes = map[string]ScopeFlag{
-	testStatus: ScopeGlobal | ScopeSession,
+var specificStatusScopes = map[string]ScopeFlag{
+	testSessionStatus: ScopeSession,
 }
 
-func (ms *mockStatist) GetDefaultStatusScopes() map[string]ScopeFlag {
-	return defaultStatusScopes
+func (ms *mockStatist) GetScope(status string) ScopeFlag {
+	scope, ok := specificStatusScopes[status]
+	if !ok {
+		return DefaultScopeFlag
+	}
+
+	return scope
 }
 
-func (ms *mockStatist) Stat() (map[string]*StatusVal, error) {
-	m := make(map[string]*StatusVal, len(defaultStatusScopes))
-	m[testStatus] = FillStatusVal(testStatus, testStatusVal)
+func (ms *mockStatist) Stats() (map[string]interface{}, error) {
+	m := make(map[string]interface{}, len(specificStatusScopes))
+	m[testStatus] = testStatusVal
 
 	return m, nil
 }
 
-func (s *testStatusVarSuite) testStatusVar(c *C) {
-	scopes := s.ms.GetDefaultStatusScopes()
-	c.Assert(scopes, NotNil)
+func (s *testStatusVarSuite) TestStatusVar(c *C) {
+	scope := s.ms.GetScope(testStatus)
+	c.Assert(scope, Equals, DefaultScopeFlag)
+	scope = s.ms.GetScope(testSessionStatus)
+	c.Assert(scope, Equals, ScopeSession)
 
 	vars, err := GetStatusVars()
 	c.Assert(err, IsNil)
 	for status, val := range vars {
-		scope, ok := scopes[status]
-		c.Assert(ok, IsTrue)
-		c.Assert(scope, Equals, val.Scope)
-
 		v := GetStatusVar(status)
-		c.Assert(v, Equals, val)
+		c.Assert(v, DeepEquals, val)
 	}
 
 	v := GetStatusVar("wrong-var-name")

@@ -297,14 +297,14 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
 func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
-	v := variable.GetStatusVar(name)
-	if v != nil {
-		return types.ToString(v.Value)
+	sv := variable.GetStatusVar(name)
+	if sv != nil {
+		return types.ToString(sv.Value)
 	}
 
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalStatusTable, name)
-	statusVar, err := s.getExecRet(ctx, sql)
+	val, err := s.getExecRet(ctx, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
 			return "", terror.ExecResultIsEmpty.Gen("unknown status variable:%s", name)
@@ -312,7 +312,7 @@ func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, 
 		return "", errors.Trace(err)
 	}
 
-	return statusVar, nil
+	return val, nil
 }
 
 // SetGlobalStatusVar implements GlobalVarAccessor.SetGlobalStatusVar interface.

@@ -61,10 +61,10 @@ type DDL interface {
 	// SetLease will reset the lease time for online DDL change, it is a very dangerous function and you must guarantee that
 	// all servers have the same lease time.
 	SetLease(lease time.Duration)
-	// Stat returns the DDL statistics.
-	Stat() (map[string]*variable.StatusVal, error)
-	// GetDefaultStatusScopes gets default status variables scope.
-	GetDefaultStatusScopes() map[string]variable.ScopeFlag
+	// Stats returns the DDL statistics.
+	Stats() (map[string]interface{}, error)
+	// GetScope gets the status variables scope.
+	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
 	// Start starts DDL worker.
@@ -114,7 +114,7 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 
 	d.start()
 
-	variable.RegisterStatist(d.uuid, d)
+	variable.RegisterStatist(d)
 
 	return d
 }
@@ -169,7 +169,6 @@ func (d *ddl) close() {
 		return
 	}
 
-	variable.DeleteStatist(d.uuid)
 	close(d.quitCh)
 
 	d.wait.Wait()
