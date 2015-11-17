@@ -29,6 +29,15 @@ func (v *typeComputer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)
+	case *ast.FuncCastExpr:
+		x.SetType(x.Tp)
+	case *ast.SelectStmt:
+		rf := x.GetResultFields()
+		for _, val := range rf {
+			if val.Column.ID == 0 && val.Expr.GetType() != nil {
+				val.Column.FieldType = *(val.Expr.GetType())
+			}
+		}
 	}
 	return in, true
 }

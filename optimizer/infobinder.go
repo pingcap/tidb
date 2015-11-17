@@ -168,6 +168,7 @@ func (sb *InfoBinder) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.OrderByClause:
 		sb.currentContext().inOrderBy = false
 	case *ast.ByItem:
+		sb.handlePositionByItem(v)
 		sb.currentContext().inByItemExpression = false
 	case *ast.SelectStmt:
 		v.SetResultFields(sb.currentContext().fieldList)
@@ -472,6 +473,9 @@ func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.Res
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
 		rf.Expr = v.Refer.Expr
+		if field.AsName.L == "" {
+			rf.ColumnAsName = model.NewCIStr(field.Text())
+		}
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.
@@ -502,4 +506,31 @@ func (sb *InfoBinder) tableUniqueName(schema, table model.CIStr) string {
 		return schema.L + "." + table.L
 	}
 	return table.L
+}
+
+func (sb *InfoBinder) handlePositionByItem(by *ast.ByItem) {
+	v, ok := by.Expr.(*ast.ValueExpr)
+	if !ok {
+		return
+	}
+
+	var position int
+	switch u := v.Data.(type) {
+	case int64:
+		position = int(u)
+	case uint64:
+		position = int(u)
+	default:
+		return
+	}
+	ctx := sb.currentContext()
+	if position < 1 || position > len(ctx.fieldList) {
+		sb.Err = errors.Errorf("Unknown column '%d'", position)
+		return
+	}
+	by.Expr = &ast.PositionExpr{
+		N:     position,
+		Refer: ctx.fieldList[position-1],
+	}
+	return
 }

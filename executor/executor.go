@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/juju/errors"
@@ -21,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
-	"sort"
 )
 
 var (
@@ -201,6 +202,7 @@ type IndexScanExec struct {
 	fields   []*ast.ResultField
 	Ranges   []*IndexRangeExec
 	rangeIdx int
+	ctx      context.Context
 }
 
 // Fields implements Executor Fields interface.
@@ -238,6 +240,7 @@ type SelectFieldsExec struct {
 	Src          Executor
 	ResultFields []*ast.ResultField
 	executed     bool
+	ctx          context.Context
 }
 
 // Fields implements Executor Fields interface.
@@ -272,7 +275,7 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		if cn, ok := field.Expr.(*ast.ColumnNameExpr); ok {
 			log.Errorf("refer %v", cn.Refer.Column)
 		}
-		val, err := Eval(field.Expr)
+		val, err := Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -293,6 +296,7 @@ func (e *SelectFieldsExec) Close() error {
 type FilterExec struct {
 	Src       Executor
 	Condition ast.ExprNode
+	ctx       context.Context
 }
 
 // Fields implements Executor Fields interface.
@@ -310,7 +314,7 @@ func (e *FilterExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		truth, err := EvalBool(e.Condition)
+		truth, err := EvalBool(e.ctx, e.Condition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -322,6 +326,48 @@ func (e *FilterExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *FilterExec) Close() error {
+	return e.Src.Close()
+}
+
+// SelectLockExec represents a select lock executor.
+type SelectLockExec struct {
+	Src  Executor
+	Lock ast.SelectLockType
+	ctx  context.Context
+}
+
+// Fields implements Executor Fields interface.
+func (e *SelectLockExec) Fields() []*ast.ResultField {
+	return e.Src.Fields()
+}
+
+// Next implements Executor Next interface.
+func (e *SelectLockExec) Next() (*Row, error) {
+	row, err := e.Src.Next()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if row == nil {
+		return nil, nil
+	}
+	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
+		forupdate.SetForUpdate(e.ctx)
+		txn, err := e.ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, k := range row.RowKeys {
+			err = txn.LockKeys([]byte(k.Key))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *SelectLockExec) Close() error {
 	return e.Src.Close()
 }
 
@@ -381,6 +427,7 @@ type SortExec struct {
 	Src     Executor
 	ByItems []*ast.ByItem
 	Rows    []*orderByRow
+	ctx     context.Context
 	Idx     int
 	fetched bool
 }
@@ -443,7 +490,7 @@ func (e *SortExec) Next() (*Row, error) {
 				key: make([]interface{}, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = Eval(byItem.Expr)
+				orderRow.key[i], err = Eval(e.ctx, byItem.Expr)
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}

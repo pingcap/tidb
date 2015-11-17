@@ -23,6 +23,7 @@ import (
 	oplan "github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // adapter wraps a executor, implements rset.Recordset interface
@@ -40,24 +41,65 @@ func (a *recordsetAdapter) Fields() ([]*field.ResultField, error) {
 }
 
 func (a *recordsetAdapter) FirstRow() ([]interface{}, error) {
-	return nil, nil
+	ro, err := a.Next()
+	a.Close()
+	if ro == nil || err != nil {
+		return nil, errors.Trace(err)
+	}
+	return ro.Data, nil
 }
 
 func (a *recordsetAdapter) Rows(limit, offset int) ([][]interface{}, error) {
-	return nil, nil
+	var rows [][]interface{}
+	defer a.Close()
+	// Move to offset.
+	for offset > 0 {
+		row, err := a.Next()
+		if row == nil || err != nil {
+			return nil, errors.Trace(err)
+		}
+		offset--
+	}
+	// Negative limit means no limit.
+	for limit != 0 {
+		row, err := a.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row.Data)
+		if limit > 0 {
+			limit--
+		}
+	}
+	return rows, nil
 }
 
 func (a *recordsetAdapter) Next() (*oplan.Row, error) {
 	row, err := a.executor.Next()
-	if err != nil {
+	if row == nil || err != nil {
 		return nil, errors.Trace(err)
 	}
-	if row == nil {
-		return nil, nil
-	}
 	oRow := &oplan.Row{
-		Data: row.Data,
+		Data: make([]interface{}, len(row.Data)),
 	}
+	for i, v := range row.Data {
+		d := types.RawData(v)
+		switch v := d.(type) {
+		case bool:
+			// Convert bool field to int
+			if v {
+				oRow.Data[i] = uint8(1)
+			} else {
+				oRow.Data[i] = uint8(0)
+			}
+		default:
+			oRow.Data[i] = d
+		}
+	}
+
 	for _, v := range row.RowKeys {
 		oldRowKey := &oplan.RowKeyEntry{
 			Key: v.Key,
