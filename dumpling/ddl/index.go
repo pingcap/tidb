@@ -345,7 +345,7 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 		if err != nil {
 			return errors.Trace(err)
 		} else if len(handles) == 0 {
-			return errors.Trace(reorgInfo.RemoveHandle())
+			return nil
 		}
 
 		seekHandle = handles[len(handles)-1] + 1
@@ -421,7 +421,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 		log.Debug("building index...", handle)
 
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isOwnerInReorg(txn); err != nil {
+			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)
 			}
 

@@ -61,6 +61,8 @@ type DDL interface {
 	// SetLease will reset the lease time for online DDL change, it is a very dangerous function and you must guarantee that
 	// all servers have the same lease time.
 	SetLease(lease time.Duration)
+	// GetLease returns current schema lease time.
+	GetLease() time.Duration
 	// Stats returns the DDL statistics.
 	Stats() (map[string]interface{}, error)
 	// GetScope gets the status variables scope.
@@ -72,7 +74,7 @@ type DDL interface {
 }
 
 type ddl struct {
-	m sync.Mutex
+	m sync.RWMutex
 
 	infoHandle *infoschema.Handle
 	hook       Callback
@@ -192,11 +194,24 @@ func (d *ddl) SetLease(lease time.Duration) {
 	}
 
 	log.Warnf("change schema lease %s -> %s", d.lease, lease)
-	d.lease = lease
+
+	if d.isClosed() {
+		// if already closed, just set lease and return
+		d.lease = lease
+		return
+	}
 
 	// close the running worker and start again
 	d.close()
+	d.lease = lease
 	d.start()
+}
+
+func (d *ddl) GetLease() time.Duration {
+	d.m.RLock()
+	lease := d.lease
+	d.m.RUnlock()
+	return lease
 }
 
 func (d *ddl) GetInformationSchema() infoschema.InfoSchema {

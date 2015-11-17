@@ -166,6 +166,9 @@ func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 // ErrNotOwner means we are not owner and can't handle DDL jobs.
 var ErrNotOwner = errors.New("DDL: not owner")
 
+// ErrWorkerClosed means we have already closed the DDL worker.
+var ErrWorkerClosed = errors.New("DDL: worker is closed")
+
 func (d *ddl) handleJobQueue() error {
 	for {
 		if d.isClosed() {
