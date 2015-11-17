@@ -614,7 +614,6 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	se3 := newSession(c, store, s.dbName)
 	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
 	rows, err := r.Rows(-1, 0)
-	fmt.Println(rows)
 	matches(c, rows, [][]interface{}{{21}})
 
 	mustExecSQL(c, se1, "begin")
@@ -1415,22 +1414,40 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	wg.Add(3)
 	f1 := func() {
 		defer wg.Done()
-		for i := 0; i < 30; i++ {
+		// Unlimited retry times.
+		se1.(*session).maxRetryCnt = -1
+		for i := 0; i < 50; i++ {
 			mustExecSQL(c, se1, "update t set c = 1;")
+			v, ok := se1.(*session).debugInfos[retryEmptyHistoryList]
+			if ok {
+				c.Assert(v, IsFalse)
+			}
 		}
 	}
 	f2 := func() {
 		defer wg.Done()
-		for i := 0; i < 30; i++ {
+		// Unlimited retry times.
+		se2.(*session).maxRetryCnt = -1
+		for i := 0; i < 50; i++ {
 			mustExecSQL(c, se2, "update t set c = 1;")
+			v, ok := se2.(*session).debugInfos[retryEmptyHistoryList]
+			if ok {
+				c.Assert(v, IsFalse)
+			}
 		}
 	}
 	f3 := func() {
 		defer wg.Done()
-		for i := 0; i < 30; i++ {
+		// Unlimited retry times.
+		se3.(*session).maxRetryCnt = -1
+		for i := 0; i < 50; i++ {
 			mustExecSQL(c, se3, "begin")
 			mustExecSQL(c, se3, "update t set c = 1;")
 			mustExecSQL(c, se3, "commit")
+			v, ok := se3.(*session).debugInfos[retryEmptyHistoryList]
+			if ok {
+				c.Assert(v, IsFalse)
+			}
 		}
 	}
 	go f1()

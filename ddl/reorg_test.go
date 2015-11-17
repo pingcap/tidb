@@ -108,9 +108,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
-
-	err = info.RemoveHandle()
-	c.Assert(err, IsNil)
 }
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {
