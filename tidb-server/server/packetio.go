@@ -43,6 +43,11 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
+const (
+	DefaultReaderSize = 16 * 1024
+	DefaultWriterSize = 16 * 1024
+)
+
 type packetIO struct {
 	rb *bufio.Reader
 	wb *bufio.Writer
@@ -52,17 +57,17 @@ type packetIO struct {
 
 func newPacketIO(conn net.Conn) *packetIO {
 	p := &packetIO{
-		rb: bufio.NewReaderSize(conn, 8192),
-		wb: bufio.NewWriterSize(conn, 8192),
+		rb: bufio.NewReaderSize(conn, DefaultReaderSize),
+		wb: bufio.NewWriterSize(conn, DefaultWriterSize),
 	}
 
 	return p
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
-	header := []byte{0, 0, 0, 0}
+	var header [4]byte
 
-	if _, err := io.ReadFull(p.rb, header); err != nil {
+	if _, err := io.ReadFull(p.rb, header[:]); err != nil {
 		return nil, errors.Trace(err)
 	}
 
