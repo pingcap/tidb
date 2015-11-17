@@ -15,19 +15,18 @@ package variable
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/juju/errors"
 )
 
-// statusVars is global status vars map.
 var statusVars map[string]*StatusVal
 var globalStatusScopes = make(map[string]ScopeFlag)
-var defaultScopeFlag = ScopeGlobal | ScopeSession
-var statistMu sync.RWMutex
+
+// DefaultScopeFlag is the status default scope.
+var DefaultScopeFlag = ScopeGlobal | ScopeSession
 
 // Statists is the set of all statists.
-var Statists = make(map[string]Statist)
+var Statists []Statist
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
@@ -37,63 +36,55 @@ type StatusVal struct {
 
 // Statist is the interface of statist.
 type Statist interface {
-	// GetDefaultStatusScopes gets default status variables scope.
-	GetDefaultStatusScopes() map[string]ScopeFlag
-	// Stat returns the statist statistics.
-	Stat() (map[string]*StatusVal, error)
+	// GetScope gets the status variables scope.
+	GetScope(status string) ScopeFlag
+	// Stats returns the statist statistics.
+	Stats() (map[string]interface{}, error)
 }
 
 // RegisterStatist registers statist.
-func RegisterStatist(id string, s Statist) {
-	statistMu.Lock()
-	Statists[id] = s
-	statistMu.Unlock()
-
-	scopes := s.GetDefaultStatusScopes()
-	for status, scope := range scopes {
-		globalStatusScopes[status] = scope
-	}
-}
-
-// DeleteStatist deletes statist.
-func DeleteStatist(id string) {
-	statistMu.Lock()
-	delete(Statists, id)
-	statistMu.Unlock()
-}
-
-// FillStatusVal fills the status variable value.
-func FillStatusVal(status string, value interface{}) *StatusVal {
-	scope, ok := globalStatusScopes[status]
-	if !ok {
-		scope = defaultScopeFlag
-	}
-
-	return &StatusVal{Scope: scope, Value: value}
+func RegisterStatist(s Statist) {
+	Statists = append(Statists, s)
 }
 
 // GetStatusVars gets registered statists status variables.
 func GetStatusVars() (map[string]*StatusVal, error) {
 	statusVars = make(map[string]*StatusVal)
+	ret := make(map[string]*StatusVal)
 
-	statistMu.RLock()
 	for _, statist := range Statists {
-		stat, err := statist.Stat()
+		vals, err := statist.Stats()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		for name, s := range stat {
-			statusVars[name] = s
+		for name, val := range vals {
+			scope := statist.GetScope(name)
+			statusVars[name] = &StatusVal{Value: val, Scope: scope}
+			ret[name] = &StatusVal{Value: val, Scope: scope}
 		}
 	}
-	statistMu.RUnlock()
 
-	return statusVars, nil
+	defaultStatusVars, err := GetDefaultStatusVars()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for status := range defaultStatusVars {
+		// To get more accurate value from the global status variables table.
+		ret[status] = &StatusVal{}
+	}
+
+	return ret, nil
 }
 
 // GetStatusVar returns status var infomation for name.
 func GetStatusVar(name string) *StatusVal {
 	name = strings.ToLower(name)
 	return statusVars[name]
+}
+
+// GetDefaultStatusVars gets status variables from the global status variables table.
+// TODO: Fill status variables.
+func GetDefaultStatusVars() (map[string]*StatusVal, error) {
+	return nil, nil
 }

@@ -73,7 +73,7 @@ func (c *Context) SetGlobalStatusVar(ctx context.Context, name, value string) er
 	if v == nil {
 		return terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
 	}
-	v = variable.FillStatusVal(name, v)
+	v = &variable.StatusVal{Scope: variable.DefaultScopeFlag, Value: value}
 	return nil
 }
 

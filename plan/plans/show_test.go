@@ -58,7 +58,7 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 	p.ctx = nc
 	variable.BindSessionVars(p.ctx)
 	variable.BindGlobalVarAccessor(p.ctx, nc)
-	variable.RegisterStatist("testShowSuit", p.ms)
+	variable.RegisterStatist(p.ms)
 
 	p.dbName = "testshowplan"
 	p.store = newStore(c, p.dbName)
@@ -89,7 +89,6 @@ func (p *testShowSuit) SetUpSuite(c *C) {
 
 func (p *testShowSuit) TearDownSuite(c *C) {
 	p.txn.Commit()
-	variable.DeleteStatist("testShowSuit")
 }
 
 func (p *testShowSuit) TestSimple(c *C) {
@@ -195,21 +194,19 @@ const (
 	testStatusValBothScope    = "test_status_val_both_scope"
 )
 
-var defaultStatusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
+var statusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
 	testStatusSessionScope: variable.ScopeSession,
-	testStatusBothScopes:   variable.ScopeGlobal | variable.ScopeSession,
+	testStatusBothScopes:   variable.ScopeGlobal,
 }
 
-func (ms *MockStatist) GetDefaultStatusScopes() map[string]variable.ScopeFlag {
-	return defaultStatusScopes
+func (ms *MockStatist) GetScope(status string) variable.ScopeFlag {
+	return statusScopes[status]
 }
 
-func (ms *MockStatist) Stat() (map[string]*variable.StatusVal, error) {
-	m := make(map[string]*variable.StatusVal, len(defaultStatusScopes))
-	m[testStatusSessionScope] =
-		variable.FillStatusVal(testStatusSessionScope, testStatusValSessionScope)
-	m[testStatusBothScopes] =
-		variable.FillStatusVal(testStatusBothScopes, testStatusValBothScope)
+func (ms *MockStatist) Stats() (map[string]interface{}, error) {
+	m := make(map[string]interface{}, len(statusScopes))
+	m[testStatusSessionScope] = testStatusValSessionScope
+	m[testStatusBothScopes] = testStatusValBothScope
 
 	return m, nil
 }
