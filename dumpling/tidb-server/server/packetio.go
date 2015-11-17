@@ -44,8 +44,8 @@ import (
 )
 
 const (
-	DefaultReaderSize = 16 * 1024
-	DefaultWriterSize = 16 * 1024
+	defaultReaderSize = 16 * 1024
+	defaultWriterSize = 16 * 1024
 )
 
 type packetIO struct {
@@ -57,8 +57,8 @@ type packetIO struct {
 
 func newPacketIO(conn net.Conn) *packetIO {
 	p := &packetIO{
-		rb: bufio.NewReaderSize(conn, DefaultReaderSize),
-		wb: bufio.NewWriterSize(conn, DefaultWriterSize),
+		rb: bufio.NewReaderSize(conn, defaultReaderSize),
+		wb: bufio.NewWriterSize(conn, defaultWriterSize),
 	}
 
 	return p
