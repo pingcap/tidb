@@ -201,8 +201,8 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 
-	// check expect
-	if err := txn.UnionStore.CheckExpect(); err != nil {
+	// check lazy condition pairs
+	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
 	}
 

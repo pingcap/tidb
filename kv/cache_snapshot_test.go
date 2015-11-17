@@ -21,20 +21,20 @@ import (
 var _ = Suite(&testCacheSnapshotSuite{})
 
 type testCacheSnapshotSuite struct {
-	store  MemBuffer
-	expect MemBuffer
-	cache  Snapshot
+	store              MemBuffer
+	lazyConditionPairs MemBuffer
+	cache              Snapshot
 }
 
 func (s *testCacheSnapshotSuite) SetUpTest(c *C) {
 	s.store = NewMemDbBuffer()
-	s.expect = NewMemDbBuffer()
-	s.cache = NewCacheSnapshot(&mockSnapshot{s.store}, s.expect, &mockOptions{})
+	s.lazyConditionPairs = NewMemDbBuffer()
+	s.cache = NewCacheSnapshot(&mockSnapshot{s.store}, s.lazyConditionPairs, &mockOptions{})
 }
 
 func (s *testCacheSnapshotSuite) TearDownTest(c *C) {
 	s.cache.Release()
-	s.expect.Release()
+	s.lazyConditionPairs.Release()
 }
 
 func (s *testCacheSnapshotSuite) TestGet(c *C) {

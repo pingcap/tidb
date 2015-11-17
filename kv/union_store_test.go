@@ -84,7 +84,7 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
 }
 
-func (s *testUnionStoreSuite) TestExpect(c *C) {
+func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	s.store.Set([]byte("1"), []byte("1"))
 	s.store.Set([]byte("2"), []byte("2"))
 
@@ -96,7 +96,7 @@ func (s *testUnionStoreSuite) TestExpect(c *C) {
 	_, err = s.us.Get([]byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue)
 
-	err = s.us.CheckExpect()
+	err = s.us.CheckLazyConditionPairs()
 	c.Assert(err, NotNil)
 }
 

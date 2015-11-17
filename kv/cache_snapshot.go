@@ -19,19 +19,19 @@ var _ Snapshot = (*cacheSnapshot)(nil)
 
 // cacheSnapshot wraps a snapshot and supports cache for read.
 type cacheSnapshot struct {
-	cache    MemBuffer
-	snapshot Snapshot
-	expect   MemBuffer
-	opts     Options
+	cache              MemBuffer
+	snapshot           Snapshot
+	lazyConditionPairs MemBuffer
+	opts               Options
 }
 
 // NewCacheSnapshot creates a new snapshot with cache embedded.
-func NewCacheSnapshot(snapshot Snapshot, expect MemBuffer, opts Options) Snapshot {
+func NewCacheSnapshot(snapshot Snapshot, lazyConditionPairs MemBuffer, opts Options) Snapshot {
 	return &cacheSnapshot{
-		cache:    p.Get().(MemBuffer),
-		snapshot: snapshot,
-		expect:   expect,
-		opts:     opts,
+		cache:              p.Get().(MemBuffer),
+		snapshot:           snapshot,
+		lazyConditionPairs: lazyConditionPairs,
+		opts:               opts,
 	}
 }
 
@@ -40,7 +40,7 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 	v, err := c.cache.Get(k)
 	if IsErrNotFound(err) {
 		if _, ok := c.opts.Get(PresumeKeyNotExists); ok {
-			err = c.expect.Set(k, nil)
+			err = c.lazyConditionPairs.Set(k, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

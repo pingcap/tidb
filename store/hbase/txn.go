@@ -194,7 +194,7 @@ func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
 }
 
 func (txn *hbaseTxn) doCommit() error {
-	if err := txn.UnionStore.CheckExpect(); err != nil {
+	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
 	}
 
