@@ -52,8 +52,8 @@ type packetIO struct {
 
 func newPacketIO(conn net.Conn) *packetIO {
 	p := &packetIO{
-		rb: bufio.NewReaderSize(conn, 2048),
-		wb: bufio.NewWriterSize(conn, 2048),
+		rb: bufio.NewReaderSize(conn, 8192),
+		wb: bufio.NewWriterSize(conn, 8192),
 	}
 
 	return p
