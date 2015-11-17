@@ -102,8 +102,10 @@ var errWaitReorgTimeout = errors.New("wait for reorganization timeout")
 func (d *ddl) runReorgJob(f func() error) error {
 	if d.reorgDoneCh == nil {
 		// start a reorganization job
+		d.wait.Add(1)
 		d.reorgDoneCh = make(chan error, 1)
 		go func() {
+			defer d.wait.Done()
 			d.reorgDoneCh <- f()
 		}()
 	}
@@ -132,7 +134,12 @@ func (d *ddl) runReorgJob(f func() error) error {
 	}
 }
 
-func (d *ddl) isOwnerInReorg(txn kv.Transaction) error {
+func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
+	if d.isClosed() {
+		// worker is closed, can't run reorganization.
+		return errors.Trace(ErrWorkerClosed)
+	}
+
 	t := meta.NewMeta(txn)
 	owner, err := t.GetDDLOwner()
 	if err != nil {
@@ -152,7 +159,7 @@ func (d *ddl) delKeysWithPrefix(prefix string) error {
 	for {
 		keys := keys[0:0]
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isOwnerInReorg(txn); err != nil {
+			if err := d.isReorgRunnable(txn); err != nil {
 				return errors.Trace(err)
 			}
 
