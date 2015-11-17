@@ -54,4 +54,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	dom.SetLease(10 * time.Second)
+
+	m, err := dom.Stat()
+	c.Assert(err, IsNil)
+	c.Assert(m["ddl_last_reload_schema_ts"], GreaterEqual, int64(0))
+
+	dom.SetLease(50 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 }
