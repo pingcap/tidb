@@ -89,6 +89,10 @@ func (s *testDDLSuite) TestCheckOnwer(c *C) {
 	c.Assert(err, IsNil)
 
 	testCheckOwner(c, d1, true)
+
+	d2.SetLease(1 * time.Second)
+	d2.SetLease(2 * time.Second)
+	c.Assert(d2.GetLease(), Equals, 2*time.Second)
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
