@@ -25,8 +25,8 @@ var globalStatusScopes = make(map[string]ScopeFlag)
 // DefaultScopeFlag is the status default scope.
 var DefaultScopeFlag = ScopeGlobal | ScopeSession
 
-// Statists is the set of all statists.
-var Statists []Statist
+// StatisticsList is the set of all statistics.
+var StatisticsList []Statistics
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
@@ -34,32 +34,32 @@ type StatusVal struct {
 	Value interface{}
 }
 
-// Statist is the interface of statist.
-type Statist interface {
+// Statistics is the interface of statistics.
+type Statistics interface {
 	// GetScope gets the status variables scope.
 	GetScope(status string) ScopeFlag
-	// Stats returns the statist statistics.
+	// Stats returns the statistics status variables.
 	Stats() (map[string]interface{}, error)
 }
 
-// RegisterStatist registers statist.
-func RegisterStatist(s Statist) {
-	Statists = append(Statists, s)
+// RegisterStatistics registers statistics.
+func RegisterStatistics(s Statistics) {
+	StatisticsList = append(StatisticsList, s)
 }
 
-// GetStatusVars gets registered statists status variables.
+// GetStatusVars gets registered statistics status variables.
 func GetStatusVars() (map[string]*StatusVal, error) {
 	statusVars = make(map[string]*StatusVal)
 	ret := make(map[string]*StatusVal)
 
-	for _, statist := range Statists {
-		vals, err := statist.Stats()
+	for _, statistics := range StatisticsList {
+		vals, err := statistics.Stats()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		for name, val := range vals {
-			scope := statist.GetScope(name)
+			scope := statistics.GetScope(name)
 			statusVars[name] = &StatusVal{Value: val, Scope: scope}
 			ret[name] = &StatusVal{Value: val, Scope: scope}
 		}

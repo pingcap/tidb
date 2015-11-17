@@ -108,7 +108,7 @@ func (do *Domain) SetLease(lease time.Duration) {
 	do.ddl.SetLease(lease)
 }
 
-// Stats returns the DDL statistic.
+// Stats returns the domain statistic.
 func (do *Domain) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[ddlLastReloadSchemaTS] = atomic.LoadInt64(&do.lastLeaseTS)
@@ -195,7 +195,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		log.Fatalf("load schema err %v", err)
 	}
 
-	variable.RegisterStatist(d)
+	variable.RegisterStatistics(d)
 
 	go d.loadSchemaInLoop(lease)
 
