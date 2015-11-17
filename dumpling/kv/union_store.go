@@ -39,19 +39,19 @@ func IsErrNotFound(err error) bool {
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type UnionStore struct {
-	WBuffer  MemBuffer // updates are buffered in memory
-	Snapshot Snapshot  // for read
-	expect   MemBuffer // for delay check
+	WBuffer            MemBuffer // updates are buffered in memory
+	Snapshot           Snapshot  // for read
+	lazyConditionPairs MemBuffer // for delay check
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot, opts Options) UnionStore {
 	wbuffer := p.Get().(MemBuffer)
-	expect := p.Get().(MemBuffer)
+	lazy := p.Get().(MemBuffer)
 	return UnionStore{
-		WBuffer:  wbuffer,
-		Snapshot: NewCacheSnapshot(snapshot, expect, opts),
-		expect:   expect,
+		WBuffer:            wbuffer,
+		Snapshot:           NewCacheSnapshot(snapshot, lazy, opts),
+		lazyConditionPairs: lazy,
 	}
 }
 
@@ -111,10 +111,10 @@ func (us *UnionStore) Delete(k []byte) error {
 	return us.WBuffer.Set(k, nil)
 }
 
-// CheckExpect loads all expect values from store then checks if all values are matched.
-func (us *UnionStore) CheckExpect() error {
+// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
+func (us *UnionStore) CheckLazyConditionPairs() error {
 	var keys []Key
-	for it := us.expect.NewIterator(nil); it.Valid(); it.Next() {
+	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
 		keys = append(keys, []byte(it.Key()))
 	}
 	if len(keys) == 0 {
@@ -124,14 +124,14 @@ func (us *UnionStore) CheckExpect() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for it := us.expect.NewIterator(nil); it.Valid(); it.Next() {
+	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
 		if len(it.Value()) == 0 {
 			if _, exist := values[it.Key()]; exist {
 				return errors.Trace(ErrKeyExists)
 			}
 		} else {
 			if bytes.Compare(values[it.Key()], it.Value()) != 0 {
-				return errors.Trace(ErrExpectCheck)
+				return errors.Trace(ErrLazyConditionPairsNotMatch)
 			}
 		}
 	}
@@ -143,7 +143,7 @@ func (us *UnionStore) Close() error {
 	us.Snapshot.Release()
 	us.WBuffer.Release()
 	p.Put(us.WBuffer)
-	us.expect.Release()
-	p.Put(us.expect)
+	us.lazyConditionPairs.Release()
+	p.Put(us.lazyConditionPairs)
 	return nil
 }
