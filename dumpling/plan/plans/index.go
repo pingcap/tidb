@@ -393,6 +393,7 @@ func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 		// in one RPC call fill the cache, for reducing RPC calls.
 		txn.SetOption(kv.RangePrefetchOnCacheMiss, nil)
 		row, err = r.lookupRow(ctx, h)
+		txn.DelOption(kv.RangePrefetchOnCacheMiss)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -444,9 +445,6 @@ func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (*plan.Row
 		return nil, errors.Trace(err)
 	}
 	var row *plan.Row
-	// Remove prefetch flag, because point query only produces 1~2 RPC call, no
-	// need to prefetch.
-	txn.DelOption(kv.RangePrefetchOnCacheMiss)
 	row, err = r.lookupRow(ctx, h)
 	if err != nil {
 		return nil, errors.Trace(err)
