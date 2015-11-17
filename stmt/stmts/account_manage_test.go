@@ -53,7 +53,6 @@ func (s *testStmtSuite) TestCreateUserStmt(c *C) {
 
 func (s *testStmtSuite) TestSetPwdStmt(c *C) {
 	tx := mustBegin(c, s.testDB)
-	tx.Query(`INSERT INTO mysql.User VALUES ("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), ("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	rows, err := tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
 	c.Assert(err, IsNil)
 	rows.Next()
