@@ -119,6 +119,35 @@ func (p *Filter) SetLimit(limit float64) {
 	p.Src.SetLimit(limit)
 }
 
+// SelectLock represents a select lock plan.
+type SelectLock struct {
+	basePlan
+
+	Src  Plan
+	Lock ast.SelectLockType
+}
+
+// Accept implements Plan Accept interface.
+func (p *SelectLock) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*SelectLock)
+	var ok bool
+	p.Src, ok = p.Src.Accept(v)
+	if !ok {
+		return p, false
+	}
+	return v.Leave(p)
+}
+
+// SetLimit implements Plan SetLimit interface.
+func (p *SelectLock) SetLimit(limit float64) {
+	p.limit = limit
+	p.Src.SetLimit(p.limit)
+}
+
 // SelectFields represents a select fields plan.
 type SelectFields struct {
 	basePlan

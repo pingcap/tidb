@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -43,6 +44,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildIndexScan(v)
 	case *plan.Filter:
 		return b.buildFilter(v)
+	case *plan.SelectLock:
+		return b.buildSelectLock(v)
 	case *plan.SelectFields:
 		return b.buildSelectFields(v)
 	case *plan.Sort:
@@ -67,6 +70,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	e := &IndexScanExec{
 		Table:  table,
 		fields: v.Fields(),
+		ctx:    b.ctx,
 	}
 	return e
 }
@@ -88,6 +92,24 @@ func (b *executorBuilder) buildFilter(v *plan.Filter) Executor {
 	e := &FilterExec{
 		Src:       src,
 		Condition: b.joinConditions(v.Conditions),
+		ctx:       b.ctx,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
+	src := b.build(v.Src)
+	if autocommit.ShouldAutocommit(b.ctx) {
+		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+		// is disabled (either by beginning transaction with START TRANSACTION or by setting
+		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+		// See: https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+		return src
+	}
+	e := &SelectLockExec{
+		Src:  src,
+		Lock: v.Lock,
+		ctx:  b.ctx,
 	}
 	return e
 }
@@ -97,6 +119,7 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 	e := &SelectFieldsExec{
 		Src:          src,
 		ResultFields: v.Fields(),
+		ctx:          b.ctx,
 	}
 	return e
 }
@@ -106,6 +129,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	e := &SortExec{
 		Src:     src,
 		ByItems: v.ByItems,
+		ctx:     b.ctx,
 	}
 	return e
 }

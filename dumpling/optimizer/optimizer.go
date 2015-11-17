@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"strings"
 )
 
 // Optimize do optimization and create a Plan.
@@ -44,8 +45,8 @@ func Optimize(is infoschema.InfoSchema, defaultSchema string, node ast.Node) (pl
 	node.Accept(cn)
 	var builder planBuilder
 	p := builder.build(node)
-	picker := indexPicker{is: is, root: p}
-	p, _ = p.Accept(&picker)
+	//	picker := indexPicker{is: is, root: p}
+	//	p, _ = p.Accept(&picker)
 	return p, nil
 }
 
@@ -55,19 +56,21 @@ type supportChecker struct {
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch in.(type) {
-	case *ast.SubqueryExpr, *ast.AggregateFuncExpr, *ast.GroupByClause:
+	case *ast.SubqueryExpr, *ast.AggregateFuncExpr, *ast.GroupByClause, *ast.HavingClause, *ast.ParamMarkerExpr:
 		c.unsupported = true
 	case *ast.Join:
 		x := in.(*ast.Join)
 		if x.Right != nil {
 			c.unsupported = true
 		} else {
-			ts, ok := x.Left.(*ast.TableSource)
-			if !ok {
+			ts, tsok := x.Left.(*ast.TableSource)
+			if !tsok {
 				c.unsupported = true
 			} else {
-				_, ok = ts.Source.(*ast.TableName)
-				if !ok {
+				tn, tnok := ts.Source.(*ast.TableName)
+				if !tnok {
+					c.unsupported = true
+				} else if strings.EqualFold(tn.Schema.O, infoschema.Name) {
 					c.unsupported = true
 				}
 			}
@@ -95,5 +98,5 @@ func Supported(node ast.Node) bool {
 	var checker supportChecker
 	node.Accept(&checker)
 	return !checker.unsupported
-	//	return false
+	//		return false
 }

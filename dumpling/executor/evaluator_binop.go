@@ -29,21 +29,6 @@ const (
 )
 
 func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
-	// all operands must have same column.
-	if e.err = hasSameColumnCount(o.L, o.R); e.err != nil {
-		return false
-	}
-
-	// row constructor only supports comparison operation.
-	switch o.Op {
-	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
-	default:
-		if !checkAllOneColumn(o.L) {
-			e.err = errors.Errorf("Operand should contain 1 column(s)")
-			return false
-		}
-	}
-
 	//	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
 	//	if err != nil {
 	//		e.err = err
@@ -75,19 +60,22 @@ func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 }
 
 func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
-	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	rightVal, err := types.Convert(o.R.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
-	}
+	leftVal := o.L.GetValue()
+	rightVal := o.R.GetValue()
 	if leftVal == nil || rightVal == nil {
 		o.SetValue(nil)
 		return true
+	}
+	var err error
+	leftVal, err = types.ToBool(o.L.GetValue())
+	if err != nil {
+		e.err = err
+		return false
+	}
+	rightVal, err = types.ToBool(o.R.GetValue())
+	if err != nil {
+		e.err = err
+		return false
 	}
 	var boolVal bool
 	switch o.Op {

@@ -15,6 +15,8 @@ package ast
 
 import (
 	"fmt"
+	"regexp"
+
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -556,6 +558,9 @@ type PatternLikeExpr struct {
 	Not bool
 
 	Escape byte
+
+	PatChars []byte
+	PatTypes []byte
 }
 
 // Accept implements Node Accept interface.
@@ -640,8 +645,8 @@ type PositionExpr struct {
 	exprNode
 	// N is the position, started from 1 now.
 	N int
-	// Name is the corresponding field name if we want better format and explain instead of position.
-	Name string
+	// Refer is the result field the position refers to.
+	Refer *ResultField
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
@@ -668,6 +673,11 @@ type PatternRegexpExpr struct {
 	Pattern ExprNode
 	// Not is true, the expression is "not rlike",
 	Not bool
+
+	// Re is the compiled regexp.
+	Re *regexp.Regexp
+	// Sexpr is the string for Expr expression.
+	Sexpr *string
 }
 
 // Accept implements Node Accept interface.

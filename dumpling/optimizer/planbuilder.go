@@ -14,7 +14,10 @@
 package optimizer
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 )
@@ -39,6 +42,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) plan.Plan {
 		if sel.Where != nil {
 			p = b.buildFilter(p, sel.Where)
 		}
+		if sel.LockTp != ast.SelectLockNone {
+			p = b.buildSelectLock(p, sel.LockTp)
+		}
 	}
 	p = b.buildSelectFields(p, sel.GetResultFields())
 	if sel.OrderBy != nil {
@@ -60,6 +66,10 @@ func (b *planBuilder) buildJoin(from *ast.Join) plan.Plan {
 	if !ok {
 		panic("not supported")
 	}
+	if strings.EqualFold(tn.Name.L, infoschema.Name) {
+
+	}
+
 	p := &plan.TableScan{
 		Table: tn.TableInfo,
 	}
@@ -91,6 +101,15 @@ func (b *planBuilder) buildFilter(src plan.Plan, where ast.ExprNode) *plan.Filte
 	}
 	filter.SetFields(src.Fields())
 	return filter
+}
+
+func (b *planBuilder) buildSelectLock(src plan.Plan, lock ast.SelectLockType) *plan.SelectLock {
+	selectLock := &plan.SelectLock{
+		Src:  src,
+		Lock: lock,
+	}
+	selectLock.SetFields(src.Fields())
+	return selectLock
 }
 
 func (b *planBuilder) buildSelectFields(src plan.Plan, fields []*ast.ResultField) plan.Plan {

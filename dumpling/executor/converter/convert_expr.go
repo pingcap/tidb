@@ -272,7 +272,7 @@ func (c *expressionConverter) parentheses(v *ast.ParenthesesExpr) {
 }
 
 func (c *expressionConverter) position(v *ast.PositionExpr) {
-	c.exprMap[v] = &expression.Position{N: v.N, Name: v.Name}
+	c.exprMap[v] = &expression.Position{N: v.N}
 }
 
 func (c *expressionConverter) patternRegexp(v *ast.PatternRegexpExpr) {
