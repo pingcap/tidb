@@ -487,8 +487,17 @@ func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.Res
 		rf.Expr = v
 	}
 	if field.AsName.L == "" {
-		switch innerExpr.(type) {
-		case *ast.ColumnNameExpr, *ast.ValueExpr:
+		switch x := innerExpr.(type) {
+		case *ast.ColumnNameExpr:
+			var fieldText string
+			if innerExpr.Text() != "" {
+				fieldText = innerExpr.Text()
+			} else {
+				fieldText = field.Text()
+			}
+			fieldText = fieldText[len(fieldText)-len(x.Name.Name.L):]
+			rf.ColumnAsName = model.NewCIStr(fieldText)
+		case *ast.ValueExpr:
 			if innerExpr.Text() != "" {
 				rf.ColumnAsName = model.NewCIStr(innerExpr.Text())
 			} else {

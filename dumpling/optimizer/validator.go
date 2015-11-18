@@ -24,19 +24,22 @@ const (
 	CodeOneColumn terror.ErrCode = iota + 1
 	CodeRowColumns
 	CodeSameColumns
+	CodeMultiWildCard
 )
 
 // Optimizer base errors.
 var (
-	ErrOneColumn   = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrRowColumns  = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
-	ErrSameColumns = terror.ClassOptimizer.New(CodeRowColumns, "Operands should contain same columns")
+	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
+	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
+	ErrSameColumns   = terror.ClassOptimizer.New(CodeRowColumns, "Operands should contain same columns")
+	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
 )
 
 // validator is an ast.Visitor that validates
 // ast Nodes parsed from parser.
 type validator struct {
-	err error
+	err           error
+	wildCardCount int
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -59,6 +62,10 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkBinaryOperation(x)
 	case *ast.PatternInExpr:
 		v.checkSameColumns(append(x.List, x.Expr)...)
+	case *ast.FieldList:
+		v.checkFieldList(x)
+	case *ast.ByItem:
+		v.checkAllOneColumn(x.Expr)
 	}
 	return in, v.err == nil
 }
@@ -106,6 +113,23 @@ func (v *validator) checkSameColumns(exprs ...ast.ExprNode) {
 	for i := 1; i < len(exprs); i++ {
 		if columnCount(exprs[i]) != count {
 			v.err = ErrSameColumns
+			return
+		}
+	}
+}
+
+func (v *validator) checkFieldList(x *ast.FieldList) {
+	var hasWildCard bool
+	for _, val := range x.Fields {
+		if val.WildCard != nil && val.WildCard.Table.L == "" {
+			if hasWildCard {
+				v.err = ErrMultiWildCard
+				return
+			}
+			hasWildCard = true
+		}
+		v.checkAllOneColumn(val.Expr)
+		if v.err != nil {
 			return
 		}
 	}

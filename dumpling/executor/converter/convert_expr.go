@@ -316,7 +316,7 @@ func (c *expressionConverter) variable(v *ast.VariableExpr) {
 
 func (c *expressionConverter) funcCall(v *ast.FuncCallExpr) {
 	oldCall := &expression.Call{
-		F: v.FnName,
+		F: v.FnName.O,
 	}
 	oldCall.Args = make([]expression.Expression, len(v.Args))
 	for i, val := range v.Args {

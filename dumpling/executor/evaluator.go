@@ -77,6 +77,8 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.binaryOperation(v)
 	case *ast.CaseExpr:
 		ok = e.caseExpr(v)
+	case *ast.WhenClause:
+		ok = true
 	case *ast.SubqueryExpr:
 		ok = e.subquery(v)
 	case *ast.CompareSubqueryExpr:
@@ -133,9 +135,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.aggregateFunc(v)
 	}
 	out = in
-	if !ok {
-		log.Errorf("eval not ok %T", in)
-	}
 	return
 }
 
@@ -164,15 +163,21 @@ func (e *Evaluator) between(v *ast.BetweenExpr) bool {
 }
 
 func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
-	for _, val := range v.WhenClauses {
-		cmp, err := types.Compare(v.Value.GetValue(), val.Expr.GetValue())
-		if err != nil {
-			e.err = err
-			return false
-		}
-		if cmp == 0 {
-			v.SetValue(val.Result.GetValue())
-			return true
+	var target interface{} = true
+	if v.Value != nil {
+		target = v.Value.GetValue()
+	}
+	if target != nil {
+		for _, val := range v.WhenClauses {
+			cmp, err := types.Compare(target, val.Expr.GetValue())
+			if err != nil {
+				e.err = err
+				return false
+			}
+			if cmp == 0 {
+				v.SetValue(val.Result.GetValue())
+				return true
+			}
 		}
 	}
 	if v.ElseClause != nil {
@@ -237,7 +242,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 	}
 	hasNull := false
 	for _, v := range n.List {
-		if types.IsNil(v) {
+		if types.IsNil(v.GetValue()) {
 			hasNull = true
 			continue
 		}
@@ -282,7 +287,7 @@ func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 			e.err = err
 			return false
 		}
-		if ival != 0 {
+		if ival == v.True {
 			boolVal = true
 		}
 	}
@@ -344,7 +349,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 			e.err = err
 			return false
 		}
-		u.SetValue(^n)
+		u.SetValue(uint64(^n))
 	case opcode.Plus:
 		switch x := a.(type) {
 		case nil:
@@ -509,9 +514,9 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 }
 
 func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
-	f, ok := builtin.Funcs[strings.ToLower(v.FnName)]
+	f, ok := builtin.Funcs[v.FnName.L]
 	if !ok {
-		e.err = errors.Errorf("unknown function %s", v.FnName)
+		e.err = errors.Errorf("unknown function %s", v.FnName.O)
 		return false
 	}
 	a := make([]interface{}, len(v.Args))
@@ -519,7 +524,7 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 		a[i] = arg.GetValue()
 	}
 	var argMap map[interface{}]interface{}
-	switch v.FnName {
+	switch v.FnName.L {
 	case "current_user", "database", "found_rows", "user":
 		argMap = make(map[interface{}]interface{})
 		argMap[builtin.ExprEvalArgCtx] = e.ctx
