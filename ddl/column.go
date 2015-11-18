@@ -153,8 +153,10 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// get the current version for reorganization if we don't have
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil {
+		reorgInfo, firstReorg, err := d.getReorgInfo(t, job)
+		if err != nil || firstReorg {
+			// if we run reorg firstly, we should update the job snapshot version
+			// and then run the reorg next time.
 			return errors.Trace(err)
 		}
 
@@ -261,8 +263,10 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil {
+		reorgInfo, firstReorg, err := d.getReorgInfo(t, job)
+		if err != nil || firstReorg {
+			// if we run reorg firstly, we should update the job snapshot version
+			// and then run the reorg next time.
 			return errors.Trace(err)
 		}
 
