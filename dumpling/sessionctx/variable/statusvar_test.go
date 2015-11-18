@@ -20,16 +20,16 @@ import (
 var _ = Suite(&testStatusVarSuite{})
 
 type testStatusVarSuite struct {
-	ms *mockStatist
+	ms *mockStatistics
 }
 
 func (s *testStatusVarSuite) SetUpSuite(c *C) {
-	s.ms = &mockStatist{}
+	s.ms = &mockStatistics{}
 	RegisterStatistics(s.ms)
 }
 
-// mockStatist represents mocked statist.
-type mockStatist struct{}
+// mockStatistics represents mocked statistics.
+type mockStatistics struct{}
 
 const (
 	testStatus        = "test_status"
@@ -41,7 +41,7 @@ var specificStatusScopes = map[string]ScopeFlag{
 	testSessionStatus: ScopeSession,
 }
 
-func (ms *mockStatist) GetScope(status string) ScopeFlag {
+func (ms *mockStatistics) GetScope(status string) ScopeFlag {
 	scope, ok := specificStatusScopes[status]
 	if !ok {
 		return DefaultScopeFlag
@@ -50,7 +50,7 @@ func (ms *mockStatist) GetScope(status string) ScopeFlag {
 	return scope
 }
 
-func (ms *mockStatist) Stats() (map[string]interface{}, error) {
+func (ms *mockStatistics) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(specificStatusScopes))
 	m[testStatus] = testStatusVal
 

@@ -82,7 +82,7 @@ func GetStatusVar(name string) *StatusVal {
 }
 
 // GetDefaultStatusVars gets status variables from the global status variables table.
-// TODO: Fill status variables.
+// TODO: Fill default status variables.
 func GetDefaultStatusVars() (map[string]*StatusVal, error) {
 	return nil, nil
 }

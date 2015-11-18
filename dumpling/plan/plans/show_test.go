@@ -35,7 +35,7 @@ import (
 type testShowSuit struct {
 	txn kv.Transaction
 	ctx context.Context
-	ms  *MockStatist
+	ms  *MockStatistics
 
 	store  kv.Storage
 	dbName string
@@ -184,8 +184,8 @@ func (p *testShowSuit) TestShowSysVariables(c *C) {
 	c.Assert(v, Equals, "on")
 }
 
-// MockStatist represents mocked statist.
-type MockStatist struct{}
+// MockStatistics represents mocked statistics.
+type MockStatistics struct{}
 
 const (
 	testStatusSessionScope    = "test_status_session_scope"
@@ -199,11 +199,11 @@ var statusScopes map[string]variable.ScopeFlag = map[string]variable.ScopeFlag{
 	testStatusBothScopes:   variable.ScopeGlobal,
 }
 
-func (ms *MockStatist) GetScope(status string) variable.ScopeFlag {
+func (ms *MockStatistics) GetScope(status string) variable.ScopeFlag {
 	return statusScopes[status]
 }
 
-func (ms *MockStatist) Stats() (map[string]interface{}, error) {
+func (ms *MockStatistics) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(statusScopes))
 	m[testStatusSessionScope] = testStatusValSessionScope
 	m[testStatusBothScopes] = testStatusValBothScope

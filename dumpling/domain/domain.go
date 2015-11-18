@@ -31,8 +31,6 @@ import (
 
 var ddlLastReloadSchemaTS = "ddl_last_reload_schema_ts"
 
-var specificStatusScopes = map[string]variable.ScopeFlag{}
-
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
@@ -123,12 +121,8 @@ func (do *Domain) Stats() (map[string]interface{}, error) {
 
 // GetScope gets the status variables scope.
 func (do *Domain) GetScope(status string) variable.ScopeFlag {
-	scope, ok := specificStatusScopes[status]
-	if !ok {
-		scope = variable.DefaultScopeFlag
-	}
-
-	return scope
+	// Now domain status variables scope are all default scope.
+	return variable.DefaultScopeFlag
 }
 
 func (do *Domain) tryReload() {
