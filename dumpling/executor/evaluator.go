@@ -474,6 +474,7 @@ func (e *Evaluator) values(v *ast.ValuesExpr) bool {
 func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	name := strings.ToLower(v.Name)
 	sessionVars := variable.GetSessionVars(e.ctx)
+	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	if !v.IsSystem {
 		// user vars
 		if value, ok := sessionVars.Users[name]; ok {
@@ -498,7 +499,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 			return true
 		}
 	}
-	value, err := e.ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(e.ctx, name)
+	value, err := globalVars.GetGlobalSysVar(e.ctx, name)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false

@@ -443,6 +443,13 @@ func (sb *InfoBinder) handleFieldList(fieldList *ast.FieldList) {
 	sb.currentContext().fieldList = resultFields
 }
 
+func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
+		return getInnerFromParentheses(pexpr.Expr)
+	}
+	return expr
+}
+
 // createResultFields creates result field list for a single select field.
 func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.ResultField) {
 	ctx := sb.currentContext()
@@ -467,22 +474,29 @@ func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.Res
 	}
 	// The column is visited before so it must has been bound already.
 	rf := &ast.ResultField{ColumnAsName: field.AsName}
-	switch v := field.Expr.(type) {
+	innerExpr := getInnerFromParentheses(field.Expr)
+	switch v := innerExpr.(type) {
 	case *ast.ColumnNameExpr:
 		rf.Column = v.Refer.Column
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
 		rf.Expr = v.Refer.Expr
-		if field.AsName.L == "" {
-			rf.ColumnAsName = model.NewCIStr(field.Text())
-		}
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.
-		if field.AsName.L == "" {
+		rf.Expr = v
+	}
+	if field.AsName.L == "" {
+		switch innerExpr.(type) {
+		case *ast.ColumnNameExpr, *ast.ValueExpr:
+			if innerExpr.Text() != "" {
+				rf.ColumnAsName = model.NewCIStr(innerExpr.Text())
+			} else {
+				rf.ColumnAsName = model.NewCIStr(field.Text())
+			}
+		default:
 			rf.ColumnAsName = model.NewCIStr(field.Text())
 		}
-		rf.Expr = v
 	}
 	rfs = append(rfs, rf)
 	return
