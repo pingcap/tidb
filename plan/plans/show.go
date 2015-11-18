@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -469,39 +469,22 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 }
 
 func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
-	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+	name string, globalVal *variable.StatusVal) (string, error) {
 	sv, ok := sessionVars.StatusVars[name]
 	if ok {
 		return sv, nil
 	}
 
-	value, err := globalVars.GetGlobalStatusVar(ctx, name)
-	if err != nil && terror.UnknownStatusVar.Equal(err) {
+	gv, err := types.ToString(globalVal.Value)
+	if err != nil {
 		return "", errors.Trace(err)
 	}
 
-	return value, nil
-}
-
-func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
-	globalVars variable.GlobalVarAccessor, name string) (string, error) {
-	value, err := globalVars.GetGlobalStatusVar(ctx, name)
-	if err == nil {
-		return value, nil
-	}
-
-	if terror.UnknownStatusVar.Equal(err) {
-		return "", errors.Trace(err)
-	}
-
-	sv, _ := sessionVars.StatusVars[name]
-
-	return sv, nil
+	return gv, nil
 }
 
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
-	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	statusVars, err := variable.GetStatusVars()
@@ -532,12 +515,12 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, status)
+			value, err = getSessionStatusVar(ctx, sessionVars, status, v)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else if v.Scope != variable.ScopeSession {
-			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, status)
+			value, err = types.ToString(v.Value)
 			if err != nil {
 				return errors.Trace(err)
 			}

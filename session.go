@@ -319,11 +319,6 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
 func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
-	sv := variable.GetStatusVar(name)
-	if sv != nil {
-		return types.ToString(sv.Value)
-	}
-
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalStatusTable, name)
 	val, err := s.getExecRet(ctx, sql)

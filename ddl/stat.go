@@ -39,16 +39,10 @@ var (
 	ddlJobArgs           = "ddl_job_args"
 )
 
-var specificStatusScopes = map[string]variable.ScopeFlag{}
-
 // GetScope gets the status variables scope.
 func (d *ddl) GetScope(status string) variable.ScopeFlag {
-	scope, ok := specificStatusScopes[status]
-	if !ok {
-		scope = variable.DefaultScopeFlag
-	}
-
-	return scope
+	// Now ddl status variables scope are all default scope.
+	return variable.DefaultScopeFlag
 }
 
 // Stat returns the DDL statistics.
