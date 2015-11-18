@@ -65,8 +65,6 @@ func (s *testStatusVarSuite) TestStatusVar(c *C) {
 
 	vars, err := GetStatusVars()
 	c.Assert(err, IsNil)
-	for status, val := range vars {
-		v := statusVars[status]
-		c.Assert(v, DeepEquals, val)
-	}
+	v := &StatusVal{Scope: DefaultScopeFlag, Value: testStatusVal}
+	c.Assert(v, DeepEquals, vars[testStatus])
 }

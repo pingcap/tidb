@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 )
 
-var statusVars map[string]*StatusVal
 var statisticsList []Statistics
 var globalStatusScopes = make(map[string]ScopeFlag)
 
@@ -45,8 +44,7 @@ func RegisterStatistics(s Statistics) {
 
 // GetStatusVars gets registered statistics status variables.
 func GetStatusVars() (map[string]*StatusVal, error) {
-	statusVars = make(map[string]*StatusVal)
-	ret := make(map[string]*StatusVal)
+	statusVars := make(map[string]*StatusVal)
 
 	for _, statistics := range statisticsList {
 		vals, err := statistics.Stats()
@@ -57,7 +55,6 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 		for name, val := range vals {
 			scope := statistics.GetScope(name)
 			statusVars[name] = &StatusVal{Value: val, Scope: scope}
-			ret[name] = &StatusVal{Value: val, Scope: scope}
 		}
 	}
 
@@ -67,10 +64,10 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 	}
 	for status := range defaultStatusVars {
 		// To get more accurate value from the global status variables table.
-		ret[status] = &StatusVal{Scope: DefaultScopeFlag}
+		statusVars[status] = &StatusVal{Scope: DefaultScopeFlag}
 	}
 
-	return ret, nil
+	return statusVars, nil
 }
 
 // GetDefaultStatusVars gets status variables from the global status variables table.
