@@ -74,8 +74,10 @@ type Job struct {
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	// snapshot version for this job.
-	SnapshotVer  uint64 `json:"snapshot_ver"`
-	LastUpdateTS int64  `json:"last_update_ts"`
+	SnapshotVer uint64 `json:"snapshot_ver"`
+	// unix nano seconds
+	// TODO: use timestamp allocated by TSO
+	LastUpdateTS int64 `json:"last_update_ts"`
 }
 
 // Encode encodes job with json format.
@@ -138,6 +140,8 @@ func (s JobState) String() string {
 
 // Owner is for DDL Owner.
 type Owner struct {
-	OwnerID      string `json:"owner_id"`
-	LastUpdateTS int64  `json:"last_update_ts"`
+	OwnerID string `json:"owner_id"`
+	// unix nano seconds
+	// TODO: use timestamp allocated by TSO
+	LastUpdateTS int64 `json:"last_update_ts"`
 }
