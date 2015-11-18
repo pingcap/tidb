@@ -355,6 +355,7 @@ func (s *session) isAutocommit(ctx context.Context) bool {
 			log.Errorf("Get global sys var error: %v", err)
 			return false
 		}
+		variable.GetSessionVars(ctx).Systems["autocommit"] = autocommit
 		ok = true
 	}
 	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
