@@ -72,7 +72,7 @@ func (d *ddl) Stat() (map[string]interface{}, error) {
 	if job != nil {
 		m["ddl_job_id"] = job.ID
 		m["ddl_job_action"] = job.Type.String()
-		m["ddl_job_last_update_ts"] = job.LastUpdateTS
+		m["ddl_job_last_update_ts"] = job.LastUpdateTS / 1e9
 		m["ddl_job_state"] = job.State.String()
 		m["ddl_job_error"] = job.Error
 		m["ddl_job_schema_state"] = job.SchemaState.String()

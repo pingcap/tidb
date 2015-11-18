@@ -175,6 +175,8 @@ func (d *ddl) handleJobQueue() error {
 			return nil
 		}
 
+		waitTime := 2 * d.lease
+
 		var job *model.Job
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
@@ -191,6 +193,20 @@ func (d *ddl) handleJobQueue() error {
 			job, err = d.getFirstJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
+			}
+
+			if job.State == model.JobRunning {
+				// if we enter a new state, crash when waiting 2 * lease time, and restart quickly,
+				// we may run the job immediately again, but we don't wait enough 2 * lease time to
+				// let other servers update the schema.
+				// so here we must check the elapsed time from last update, if < 2 * lease, we must
+				// wait again.
+				elapsed := time.Duration(time.Now().UnixNano() - job.LastUpdateTS)
+				if elapsed > 0 && elapsed < waitTime {
+					log.Warnf("the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
+					waitTime -= elapsed
+					return nil
+				}
 			}
 
 			log.Warnf("run DDL job %v", job)
@@ -236,7 +252,7 @@ func (d *ddl) handleJobQueue() error {
 		// if the job is done or still running, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		if job.State == model.JobRunning || job.State == model.JobDone {
-			d.waitSchemaChanged()
+			d.waitSchemaChanged(waitTime)
 		}
 	}
 }
@@ -322,11 +338,13 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
 
 // for every lease seconds, we will re-update the whole schema, so we will wait 2 * lease time
 // to guarantee that all servers have already updated schema.
-func (d *ddl) waitSchemaChanged() {
-	if d.lease > 0 {
-		select {
-		case <-time.After(d.lease * 2):
-		case <-d.quitCh:
-		}
+func (d *ddl) waitSchemaChanged(waitTime time.Duration) {
+	if waitTime == 0 {
+		return
+	}
+
+	select {
+	case <-time.After(waitTime):
+	case <-d.quitCh:
 	}
 }
