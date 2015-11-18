@@ -206,32 +206,33 @@ type reorgInfo struct {
 	*model.Job
 	Handle int64
 	d      *ddl
+	first  bool
 }
 
-func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, bool, error) {
+func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{
-		Job: job,
-		d:   d,
+		Job:   job,
+		d:     d,
+		first: job.SnapshotVer == 0,
 	}
 
-	first := job.SnapshotVer == 0
-	if first {
+	if info.first {
 		// get the current version for reorganization if we don't have
 		var ver kv.Version
 		ver, err = d.store.CurrentVersion()
 		if err != nil {
-			return nil, first, errors.Trace(err)
+			return nil, errors.Trace(err)
 		} else if ver.Ver <= 0 {
-			return nil, first, errors.Errorf("invalid storage current version %d", ver.Ver)
+			return nil, errors.Errorf("invalid storage current version %d", ver.Ver)
 		}
 
 		job.SnapshotVer = ver.Ver
 	} else {
 		info.Handle, err = t.GetDDLReorgHandle(job)
 		if err != nil {
-			return nil, first, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -240,7 +241,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, bool, erro
 		info.Handle++
 	}
 
-	return info, first, errors.Trace(err)
+	return info, errors.Trace(err)
 }
 
 func (r *reorgInfo) UpdateHandle(txn kv.Transaction, handle int64) error {
