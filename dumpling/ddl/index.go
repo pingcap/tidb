@@ -163,8 +163,10 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateWriteReorganization:
 		// reorganization -> public
-		reorgInfo, err := d.getReorgInfo(t, job)
-		if err != nil {
+		reorgInfo, firstReorg, err := d.getReorgInfo(t, job)
+		if err != nil || firstReorg {
+			// if we run reorg firstly, we should update the job snapshot version
+			// and then run the reorg next time.
 			return errors.Trace(err)
 		}
 
