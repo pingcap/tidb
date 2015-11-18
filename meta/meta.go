@@ -479,7 +479,7 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 // UpdateDDLJob updates the DDL job with index.
 func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
 	// TODO: use timestamp allocated by TSO
-	job.LastUpdateTS = time.Now().Unix()
+	job.LastUpdateTS = time.Now().UnixNano()
 	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
