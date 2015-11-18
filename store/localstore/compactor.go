@@ -125,7 +125,7 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 			gc.mu.Unlock()
 			log.Info("GC trigger")
 			for k := range m {
-				err := gc.Compact(nil, []byte(k))
+				err := gc.Compact([]byte(k))
 				if err != nil {
 					log.Error(err)
 				}
@@ -159,7 +159,7 @@ func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.Enco
 	return ret
 }
 
-func (gc *localstoreCompactor) Compact(ctx interface{}, k kv.Key) error {
+func (gc *localstoreCompactor) Compact(k kv.Key) error {
 	keys, err := gc.getAllVersions(k)
 	if err != nil {
 		return errors.Trace(err)

@@ -36,5 +36,5 @@ type Compactor interface {
 	// OnDelete is the hook point on Txn.Delete.
 	OnDelete(k Key)
 	// Compact is the function removes the given key.
-	Compact(ctx interface{}, k Key) error
+	Compact(k Key) error
 }
