@@ -20,6 +20,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -106,7 +108,8 @@ func checkResult(c *C, r sql.Result, affectedRows int64, insertID int64) {
 }
 
 type testSessionSuite struct {
-	dbName string
+	dbName          string
+	dbNameBootstrap string
 
 	createDBSQL    string
 	dropDBSQL      string
@@ -332,6 +335,7 @@ func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
 
 func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dbName = "test_session_db"
+	s.dbNameBootstrap = "test_main_db_bootstrap"
 	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
 	s.dropDBSQL = fmt.Sprintf("drop database %s;", s.dbName)
 	s.useDBSQL = fmt.Sprintf("use %s;", s.dbName)
@@ -604,13 +608,14 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	mustExecSQL(c, se2, "commit")
 
 	_, err := exec(c, se1, "commit")
-	// row lock conflict but can still success
-	if terror.ErrorNotEqual(err, kv.ErrConditionNotMatch) {
-		c.Fail()
-	}
-	// Retry should success
-	err = se.Retry()
+	// se1 will retry and the final value is 21
 	c.Assert(err, IsNil)
+	// Check the result is correct
+	se3 := newSession(c, store, s.dbName)
+	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
+	rows, err := r.Rows(-1, 0)
+	fmt.Println(rows)
+	matches(c, rows, [][]interface{}{{21}})
 
 	mustExecSQL(c, se1, "begin")
 	mustExecSQL(c, se1, "update t set c2=21 where c1=11")
@@ -1025,6 +1030,66 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
 }
 
+// Create a new session on store but only do ddl works.
+func (s *testSessionSuite) bootstrapWithError(store kv.Storage, c *C) {
+	ss := &session{
+		values: make(map[fmt.Stringer]interface{}),
+		store:  store,
+		sid:    atomic.AddInt64(&sessionID, 1),
+	}
+	domain, err := domap.Get(store)
+	c.Assert(err, IsNil)
+	sessionctx.BindDomain(ss, domain)
+	variable.BindSessionVars(ss)
+	variable.GetSessionVars(ss).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	// session implements autocommit.Checker. Bind it to ctx
+	autocommit.BindAutocommitChecker(ss, ss)
+	sessionMu.Lock()
+	defer sessionMu.Unlock()
+	b, err := checkBootstrapped(ss)
+	c.Assert(b, IsFalse)
+	c.Assert(err, IsNil)
+	doDDLWorks(ss)
+	// Leave dml unfinished.
+}
+
+func (s *testSessionSuite) TestBootstrapWithError(c *C) {
+	store := newStore(c, s.dbNameBootstrap)
+	s.bootstrapWithError(store, c)
+	se := newSession(c, store, s.dbNameBootstrap)
+	mustExecSQL(c, se, "USE mysql;")
+	r := mustExecSQL(c, se, `select * from user;`)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	mustExecSQL(c, se, "USE test;")
+	// Check privilege tables.
+	mustExecSQL(c, se, "SELECT * from mysql.db;")
+	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
+	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	// Check global variables.
+	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
+	v, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+	// Check global status.
+	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_status;")
+	v, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(v[0], Equals, int64(len(variable.StatusVars)))
+	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+	c.Assert(row.Data, HasLen, 1)
+	c.Assert(row.Data[0], Equals, "True")
+}
+
 func (s *testSessionSuite) TestEnum(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -1285,6 +1350,91 @@ func (s *testSessionSuite) TestBuiltin(c *C) {
 
 	// Testcase for https://github.com/pingcap/tidb/issues/382
 	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
+}
+
+func (s *testSessionSuite) TestFieldText(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (a int)")
+	cases := []struct {
+		sql   string
+		field string
+	}{
+		{"select distinct(a) from t", "a"},
+		{"select (1)", "1"},
+		{"select (1+1)", "(1+1)"},
+		{"select a from t", "a"},
+		{"select        ((a+1))     from t", "((a+1))"},
+	}
+	for _, v := range cases {
+		results, err := se.Execute(v.sql)
+		c.Assert(err, IsNil)
+		result := results[0]
+		fields, err := result.Fields()
+		c.Assert(err, IsNil)
+		c.Assert(fields[0].Name, Equals, v.field)
+	}
+}
+
+func (s *testSessionSuite) TestIndexPointLookup(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (a int)")
+	mustExecSQL(c, se, "insert t values (1), (2), (3)")
+	mustExecMatch(c, se, "select * from t where a = '1.1';", [][]interface{}{})
+	mustExecMatch(c, se, "select * from t where a > '1.1';", [][]interface{}{{2}, {3}})
+	mustExecMatch(c, se, "select * from t where a = '2';", [][]interface{}{{2}})
+	mustExecMatch(c, se, "select * from t where a = 3;", [][]interface{}{{3}})
+	mustExecMatch(c, se, "select * from t where a = 4;", [][]interface{}{})
+	mustExecSQL(c, se, "drop table t")
+}
+
+// For https://github.com/pingcap/tidb/issues/571
+func (s *testSessionSuite) TestIssue571(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "begin")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c int)")
+	mustExecSQL(c, se, "insert t values (1), (2), (3)")
+	mustExecSQL(c, se, "commit")
+
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
+	se2 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
+	se3 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	f1 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			mustExecSQL(c, se1, "update t set c = 1;")
+		}
+	}
+	f2 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			mustExecSQL(c, se2, "update t set c = 1;")
+		}
+	}
+	f3 := func() {
+		defer wg.Done()
+		for i := 0; i < 30; i++ {
+			mustExecSQL(c, se3, "begin")
+			mustExecSQL(c, se3, "update t set c = 1;")
+			mustExecSQL(c, se3, "commit")
+		}
+	}
+	go f1()
+	go f2()
+	go f3()
+	wg.Wait()
 }
 
 func newSession(c *C, store kv.Storage, dbName string) Session {

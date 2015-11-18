@@ -402,6 +402,9 @@ func (c *expressionConverter) funcDateArith(v *ast.FuncDateArithExpr) {
 	case ast.DateSub:
 		oldDateArith.Op = expression.DateSub
 	}
+	if v.Form == ast.DateArithDaysForm {
+		oldDateArith.Form = expression.DateArithDaysForm
+	}
 	c.exprMap[v] = oldDateArith
 }
 

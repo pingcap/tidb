@@ -444,8 +444,22 @@ func (t *Table) LockRow(ctx context.Context, h int64) error {
 	return errors.Trace(err)
 }
 
-// RemoveRow implements table.Table RemoveRow interface.
-func (t *Table) RemoveRow(ctx context.Context, h int64) error {
+// RemoveRecord implements table.Table RemoveRecord interface.
+func (t *Table) RemoveRecord(ctx context.Context, h int64, r []interface{}) error {
+	err := t.removeRowData(ctx, h)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = t.removeRowIndices(ctx, h, r)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	if err := t.LockRow(ctx, h); err != nil {
 		return errors.Trace(err)
 	}
@@ -469,20 +483,8 @@ func (t *Table) RemoveRow(ctx context.Context, h int64) error {
 	return nil
 }
 
-// RemoveRowIndex implements table.Table RemoveRowIndex interface.
-func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = idx.X.Delete(txn, vals, h); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// RemoveRowAllIndex implements table.Table RemoveRowAllIndex interface.
-func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{}) error {
+// removeRowAllIndex removes all the indices of a row.
+func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []interface{}) error {
 	for _, v := range t.indices {
 		vals, err := v.FetchValues(rec)
 		if vals == nil {
@@ -496,6 +498,18 @@ func (t *Table) RemoveRowAllIndex(ctx context.Context, h int64, rec []interface{
 		if err = v.X.Delete(txn, vals, h); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+// RemoveRowIndex implements table.Table RemoveRowIndex interface.
+func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = idx.X.Delete(txn, vals, h); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }

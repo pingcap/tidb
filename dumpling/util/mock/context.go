@@ -16,11 +16,11 @@ package mock
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -57,29 +57,46 @@ func (c *Context) FinishTxn(rollback bool) error {
 	return nil
 }
 
-// GetGlobalSysVar implements GlobalSysVarAccessor GetGlobalSysVar interface.
-func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	sysvars := variable.SysVars
-	v, ok := sysvars[strings.ToLower(name)]
-	if !ok {
-		return "", nil
+// GetGlobalStatusVar implements GlobalVarAccessor GetGlobalStatusVar interface.
+func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
+	v := variable.GetStatusVar(name)
+	if v == nil {
+		return "", terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
 	}
 	return v.Value, nil
 }
 
-// SetGlobalSysVar implements GlobalSysVarAccessor SetGlobalSysVar interface.
+// SetGlobalStatusVar implements GlobalVarAccessor SetGlobalStatusVar interface.
+func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
+	v := variable.GetStatusVar(name)
+	if v == nil {
+		return terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
+	}
+	v.Value = value
+	return nil
+}
+
+// GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
+func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	v := variable.GetSysVar(name)
+	if v == nil {
+		return "", terror.UnknownSystemVar.Gen("unknown sys variable: %s", name)
+	}
+	return v.Value, nil
+}
+
+// SetGlobalSysVar implements GlobalVarAccessor SetGlobalSysVar interface.
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
-	sysvars := variable.SysVars
-	v, ok := sysvars[strings.ToLower(name)]
-	if !ok {
-		return fmt.Errorf("Unknown sys var: %s", name)
+	v := variable.GetSysVar(name)
+	if v == nil {
+		return terror.UnknownSystemVar.Gen("unknown sys variable: %s", name)
 	}
 	v.Value = value
 	return nil
 }
 
 // NewContext creates a new mocked context.Context.
-func NewContext() context.Context {
+func NewContext() *Context {
 	return &Context{
 		values: make(map[fmt.Stringer]interface{}),
 	}

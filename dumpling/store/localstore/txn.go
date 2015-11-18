@@ -40,6 +40,7 @@ type dbTxn struct {
 	valid        bool
 	version      kv.Version          // commit version
 	snapshotVals map[string]struct{} // origin version in snapshot
+	opts         map[kv.Option]interface{}
 }
 
 func (txn *dbTxn) markOrigin(k []byte) {
@@ -121,6 +122,20 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+func (txn *dbTxn) BatchPrefetch(keys []kv.Key) error {
+	encodedKeys := make([]kv.Key, len(keys))
+	for i, k := range keys {
+		encodedKeys[i] = kv.EncodeKey(k)
+	}
+	_, err := txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	return err
+}
+
+func (txn *dbTxn) RangePrefetch(start, end kv.Key, limit int) error {
+	_, err := txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+	return err
+}
+
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if len(data) == 0 {
 		// Incase someone use it in the wrong way, we can figure it out immediately.
@@ -151,7 +166,7 @@ func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 		return &kv.UnionIter{}, nil
 	}
 
-	return iter, nil
+	return kv.NewDecodeKeyIter(iter), nil
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
@@ -167,7 +182,7 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 }
 
 func (txn *dbTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.Dirty.NewIterator(nil)
+	iter := txn.UnionStore.WBuffer.NewIterator(nil)
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {
@@ -231,7 +246,7 @@ func (txn *dbTxn) Commit() error {
 		txn.close()
 	}()
 
-	return txn.doCommit()
+	return errors.Trace(txn.doCommit())
 }
 
 func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
@@ -263,4 +278,19 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 		txn.markOrigin(key)
 	}
 	return nil
+}
+
+func (txn *dbTxn) SetOption(opt kv.Option, val interface{}) {
+	txn.opts[opt] = val
+}
+
+func (txn *dbTxn) DelOption(opt kv.Option) {
+	delete(txn.opts, opt)
+}
+
+type options map[kv.Option]interface{}
+
+func (opts options) Get(opt kv.Option) (interface{}, bool) {
+	v, ok := opts[opt]
+	return v, ok
 }

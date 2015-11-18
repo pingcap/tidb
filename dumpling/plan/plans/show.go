@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -93,6 +94,15 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		if s.Full {
 			names = append(names, "Table_type")
 		}
+	case stmt.ShowTableStatus:
+		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
+			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
+			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
+			"Create_options", "Comment"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar}
 	case stmt.ShowColumns:
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
@@ -103,6 +113,8 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowVariables:
 		names = []string{"Variable_name", "Value"}
+	case stmt.ShowStatus:
+		names = []string{"Variable_name", "Value"}
 	case stmt.ShowCollation:
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
@@ -111,6 +123,11 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = []string{"Table", "Create Table"}
 	case stmt.ShowGrants:
 		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+	case stmt.ShowTriggers:
+		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
+			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
@@ -156,6 +173,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowDatabases(ctx)
 	case stmt.ShowTables:
 		return s.fetchShowTables(ctx)
+	case stmt.ShowTableStatus:
+		return s.fetchShowTableStatus(ctx)
 	case stmt.ShowColumns:
 		return s.fetchShowColumns(ctx)
 	case stmt.ShowWarnings:
@@ -164,12 +183,16 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowCharset(ctx)
 	case stmt.ShowVariables:
 		return s.fetchShowVariables(ctx)
+	case stmt.ShowStatus:
+		return s.fetchShowStatus(ctx)
 	case stmt.ShowCollation:
 		return s.fetchShowCollation(ctx)
 	case stmt.ShowCreateTable:
 		return s.fetchShowCreateTable(ctx)
 	case stmt.ShowGrants:
 		return s.fetchShowGrants(ctx)
+	case stmt.ShowTriggers:
+		return s.fetchShowTriggers(ctx)
 	}
 	return nil
 }
@@ -351,8 +374,52 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 	return nil
 }
 
+func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	dbName := model.NewCIStr(s.DBName)
+	if !is.SchemaExists(dbName) {
+		return errors.Errorf("Can not find DB: %s", dbName)
+	}
+
+	// sort for tables
+	var tableNames []string
+	for _, v := range is.SchemaTables(dbName) {
+		tableNames = append(tableNames, v.TableName().L)
+	}
+
+	sort.Strings(tableNames)
+
+	m := map[interface{}]interface{}{}
+	for _, v := range tableNames {
+		// Check like/where clause.
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+		now := mysql.CurrentTime(mysql.TypeDatetime)
+		data := []interface{}{
+			v, "InnoDB", "10", "Compact", 100, 100,
+			100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "",
+			"", "",
+		}
+		s.rows = append(s.rows, &plan.Row{Data: data})
+	}
+	return nil
+}
 func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
 	for _, v := range variable.SysVars {
@@ -378,13 +445,19 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 
 		var value string
 		if !s.GlobalScope {
-			// Try to get Session Scope variable value
+			// Try to get Session Scope variable value first.
 			sv, ok := sessionVars.Systems[v.Name]
 			if ok {
 				value = sv
+			} else {
+				// If session scope variable is not set, get the global scope value.
+				value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		} else {
-			value, err = ctx.(variable.GlobalSysVarAccessor).GetGlobalSysVar(ctx, v.Name)
+			value, err = globalVars.GetGlobalSysVar(ctx, v.Name)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -392,6 +465,86 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 		row := &plan.Row{Data: []interface{}{v.Name, value}}
 		s.rows = append(s.rows, row)
 	}
+	return nil
+}
+
+func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
+	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+	sv, ok := sessionVars.StatusVars[name]
+	if ok {
+		return sv, nil
+	}
+
+	value, err := globalVars.GetGlobalStatusVar(ctx, name)
+	if err != nil && terror.UnknownStatusVar.Equal(err) {
+		return "", errors.Trace(err)
+	}
+
+	return value, nil
+}
+
+func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
+	globalVars variable.GlobalVarAccessor, name string) (string, error) {
+
+	value, err := globalVars.GetGlobalStatusVar(ctx, name)
+	if err == nil {
+		return value, nil
+	}
+
+	if terror.UnknownStatusVar.Equal(err) {
+		return "", errors.Trace(err)
+	}
+
+	sv, _ := sessionVars.StatusVars[name]
+
+	return sv, nil
+}
+
+func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
+	sessionVars := variable.GetSessionVars(ctx)
+	globalVars := variable.GetGlobalVarAccessor(ctx)
+	m := map[interface{}]interface{}{}
+
+	for _, v := range variable.StatusVars {
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: v.Name}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if strings.EqualFold(name, "Variable_name") {
+					return v.Name, nil
+				}
+
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
+
+		var value string
+		if !s.GlobalScope {
+			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else if v.Scope != variable.ScopeSession {
+			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, v.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			continue
+		}
+
+		row := &plan.Row{Data: []interface{}{v.Name, value}}
+		s.rows = append(s.rows, row)
+	}
+
 	return nil
 }
 
@@ -408,6 +561,7 @@ func (s *ShowPlan) fetchShowCharset(ctx context.Context) error {
 }
 
 func (s *ShowPlan) fetchShowEngines(ctx context.Context) error {
+	// Mock data
 	row := &plan.Row{
 		Data: []interface{}{"InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"},
 	}
@@ -518,5 +672,9 @@ func (s *ShowPlan) fetchShowGrants(ctx context.Context) error {
 		data := []interface{}{g}
 		s.rows = append(s.rows, &plan.Row{Data: data})
 	}
+	return nil
+}
+
+func (s *ShowPlan) fetchShowTriggers(ctx context.Context) error {
 	return nil
 }

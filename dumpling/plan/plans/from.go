@@ -148,6 +148,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 	return &indexPlan{
 		src:     t,
 		col:     c,
+		unique:  ix.Unique,
 		idxName: ix.Name.O,
 		idx:     ix.X,
 		spans:   toSpans(x.Op, rval, seekVal),
@@ -179,6 +180,7 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 		return &indexPlan{
 			src:     t,
 			col:     v,
+			unique:  ix.Unique,
 			idxName: ix.Name.L,
 			idx:     ix.X,
 			spans:   spans,
@@ -215,6 +217,7 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	return &indexPlan{
 		src:     t,
 		col:     col,
+		unique:  ix.Unique,
 		idxName: ix.Name.L,
 		idx:     ix.X,
 		spans:   spans,
@@ -296,6 +299,16 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// It is very likely that we will fetch rows after current row later, enable the RangePrefetchOnCacheMiss
+	// option may help reducing RPC calls.
+	// TODO: choose a wiser option value.
+	txn.SetOption(kv.RangePrefetchOnCacheMiss, 1024)
+	defer txn.DelOption(kv.RangePrefetchOnCacheMiss)
 
 	// TODO: we could just fetch mentioned columns' values
 	row = &plan.Row{}

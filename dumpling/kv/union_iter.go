@@ -137,9 +137,9 @@ func (iter *UnionIter) Value() []byte {
 // Key implements the Iterator Key interface.
 func (iter *UnionIter) Key() string {
 	if !iter.curIsDirty {
-		return string(DecodeKey([]byte(iter.snapshotIt.Key())))
+		return iter.snapshotIt.Key()
 	}
-	return string(DecodeKey([]byte(iter.dirtyIt.Key())))
+	return iter.dirtyIt.Key()
 }
 
 // Valid implements the Iterator Valid interface.
