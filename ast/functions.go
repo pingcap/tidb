@@ -14,9 +14,8 @@
 package ast
 
 import (
-	"strings"
-
 	"github.com/pingcap/tidb/expression/builtin"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -39,7 +38,7 @@ type UnquoteString string
 type FuncCallExpr struct {
 	funcNode
 	// F is the function name.
-	FnName string
+	FnName model.CIStr
 	// Args is the function args.
 	Args []ExprNode
 }
@@ -63,7 +62,7 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *FuncCallExpr) IsStatic() bool {
-	v := builtin.Funcs[strings.ToLower(n.FnName)]
+	v := builtin.Funcs[n.FnName.L]
 	if v.F == nil || !v.IsStatic {
 		return false
 	}

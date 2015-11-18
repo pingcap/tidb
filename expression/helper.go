@@ -226,12 +226,12 @@ func staticExpr(e Expression) (Expression, error) {
 
 // IsCurrentTimeExpr returns whether e is CurrentTimeExpr.
 func IsCurrentTimeExpr(e Expression) bool {
-	x, ok := e.(*Ident)
+	x, ok := e.(*Call)
 	if !ok {
 		return false
 	}
 
-	return x.Equal(CurrentTimeExpr)
+	return strings.EqualFold(x.F, CurrentTimestamp)
 }
 
 func getSystemTimestamp(ctx context.Context) (time.Time, error) {

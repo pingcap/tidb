@@ -212,6 +212,6 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 	if p.Not {
 		match = !match
 	}
-	p.SetValue(!match)
+	p.SetValue(match)
 	return true
 }

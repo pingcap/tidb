@@ -26,6 +26,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -120,16 +121,24 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 	return charset, collation
 }
 
-// Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
-	log.Debug("compiling", src)
+// Parse parses a query string to raw ast.StmtNode.
+func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	l := parser.NewLexer(src)
 	l.SetCharsetInfo(getCtxCharsetInfo(ctx))
 	if parser.YYParse(l) != 0 {
 		log.Warnf("compiling %s, error: %v", src, l.Errors()[0])
 		return nil, errors.Trace(l.Errors()[0])
 	}
-	rawStmt := l.Stmts()
+	return l.Stmts(), nil
+}
+
+// Compile is safe for concurrent use by multiple goroutines.
+func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
+	log.Debug("compiling", src)
+	rawStmt, err := Parse(ctx, src)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	stmts := make([]stmt.Statement, len(rawStmt))
 	for i, v := range rawStmt {
 		compiler := &executor.Compiler{}

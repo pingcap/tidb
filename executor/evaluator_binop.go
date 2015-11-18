@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -28,22 +29,9 @@ const (
 	oneI64  int64 = 1
 )
 
-func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
-	//	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
-	//	if err != nil {
-	//		e.err = err
-	//		return false
-	//	}
-	//	rightVal, err := types.Convert(o.R.GetValue(), o.GetType())
-	//	if err != nil {
-	//		e.err = err
-	//		return false
-	//	}
-	if o.L.GetValue() == nil || o.R.GetValue() == nil {
-		o.SetValue(nil)
-		return true
-	}
+var _ = log.LOG_DEBUG
 
+func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 	switch o.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
 		return e.handleLogicOperation(o)
@@ -60,38 +48,104 @@ func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 }
 
 func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
-	leftVal := o.L.GetValue()
-	rightVal := o.R.GetValue()
-	if leftVal == nil || rightVal == nil {
-		o.SetValue(nil)
-		return true
-	}
-	var err error
-	leftVal, err = types.ToBool(o.L.GetValue())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	rightVal, err = types.ToBool(o.R.GetValue())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	var boolVal bool
 	switch o.Op {
 	case opcode.AndAnd:
-		boolVal = leftVal != zeroI64 && rightVal != zeroI64
+		return e.handleAndAnd(o)
 	case opcode.OrOr:
-		boolVal = leftVal != zeroI64 || rightVal != zeroI64
+		return e.handleOrOr(o)
 	case opcode.LogicXor:
-		boolVal = (leftVal == zeroI64 && rightVal != zeroI64) || (leftVal != zeroI64 && rightVal == zeroI64)
+		return e.handleXor(o)
 	default:
 		panic("should never happen")
 	}
-	if boolVal {
-		o.SetValue(oneI64)
+}
+
+func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
+	leftVal := o.L.GetValue()
+	righVal := o.R.GetValue()
+	if !types.IsNil(leftVal) {
+		x, err := types.ToBool(leftVal)
+		if err != nil {
+			e.err = err
+			return false
+		} else if x == 0 {
+			// false && any other types is false
+			o.SetValue(x)
+			return true
+		}
+	}
+	if !types.IsNil(righVal) {
+		y, err := types.ToBool(righVal)
+		if err != nil {
+			e.err = err
+			return false
+		} else if y == 0 {
+			o.SetValue(y)
+			return true
+		}
+	}
+	if types.IsNil(leftVal) || types.IsNil(righVal) {
+		o.SetValue(nil)
+		return true
+	}
+	o.SetValue(int64(1))
+	return true
+}
+
+func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
+	leftVal := o.L.GetValue()
+	righVal := o.R.GetValue()
+	if !types.IsNil(leftVal) {
+		x, err := types.ToBool(leftVal)
+		if err != nil {
+			e.err = err
+			return false
+		} else if x == 1 {
+			// true || any other types is true.
+			o.SetValue(x)
+			return true
+		}
+	}
+	if !types.IsNil(righVal) {
+		y, err := types.ToBool(righVal)
+		if err != nil {
+			e.err = err
+			return false
+		} else if y == 1 {
+			o.SetValue(y)
+			return true
+		}
+	}
+	if types.IsNil(leftVal) || types.IsNil(righVal) {
+		o.SetValue(nil)
+		return true
+	}
+	o.SetValue(int64(0))
+	return true
+}
+
+func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
+	leftVal := o.L.GetValue()
+	righVal := o.R.GetValue()
+	if types.IsNil(leftVal) || types.IsNil(righVal) {
+		o.SetValue(nil)
+		return true
+	}
+	x, err := types.ToBool(leftVal)
+	if err != nil {
+		e.err = err
+		return false
+	}
+
+	y, err := types.ToBool(righVal)
+	if err != nil {
+		e.err = err
+		return false
+	}
+	if x == y {
+		o.SetValue(int64(0))
 	} else {
-		o.SetValue(zeroI64)
+		o.SetValue(int64(1))
 	}
 	return true
 }
@@ -193,13 +247,13 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 }
 
 func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
-	a, err := coerceArithmetic(o.L.GetValue())
+	a, err := coerceArithmetic(types.RawData(o.L.GetValue()))
 	if err != nil {
 		e.err = err
 		return false
 	}
 
-	b, err := coerceArithmetic(o.R.GetValue())
+	b, err := coerceArithmetic(types.RawData(o.R.GetValue()))
 	if err != nil {
 		e.err = err
 		return false
