@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
@@ -125,7 +124,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 
 		err = t.CreateDatabase(info)
 
-		log.Warnf("save schema %s", info)
+		log.Warnf("save schema %v", info)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
@@ -577,16 +576,6 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Check Privilege
-	privChecker := privilege.GetPrivilegeChecker(ctx)
-	hasPriv, err := privChecker.Check(ctx, schema, tb.Meta(), mysql.DropPriv)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if !hasPriv {
-		return errors.Errorf("You do not have the privilege to drop table %s.%s.", ti.Schema, ti.Name)
-	}
-
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())

@@ -17,6 +17,8 @@ all: godep parser build test check
 
 godep:
 	go get github.com/tools/godep
+	go get github.com/pingcap/go-hbase
+	go get github.com/pingcap/go-themis
 
 build:
 	$(GO) build
@@ -24,13 +26,14 @@ build:
 install:
 	$(GO) install ./...
 
+TEMP_FILE = temp_parser_file
+
 parser:
 	go get github.com/qiuyesuifeng/goyacc
 	go get github.com/qiuyesuifeng/golex
-	a=`mktemp temp.XXXXXX`; \
-	goyacc -o /dev/null -xegen $$a parser/parser.y; \
-	goyacc -o parser/parser.go -xe $$a parser/parser.y 2>&1 | grep "shift/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; exit 1;}}';  \
-	rm -f $$a; \
+	goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y; \
+	goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}';
+	rm -f $(TEMP_FILE); \
 	rm -f y.output
 
 	@if [ $(ARCH) = $(LINUX) ]; \

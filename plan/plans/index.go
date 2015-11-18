@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -124,6 +125,7 @@ func (span *indexSpan) cutOffHigh(val interface{}, exclude bool) *indexSpan {
 type indexPlan struct {
 	src        table.Table
 	col        *column.Col
+	unique     bool
 	idxName    string
 	idx        kv.Index
 	spans      []*indexSpan // multiple spans are ordered by their values and without overlapping.
@@ -243,6 +245,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 	return &indexPlan{
 		src:     r.src,
 		col:     r.col,
+		unique:  r.unique,
 		idxName: r.idxName,
 		idx:     r.idx,
 		spans:   spans,
@@ -325,19 +328,31 @@ func toSpans(op opcode.Op, val, seekVal interface{}) []*indexSpan {
 }
 
 // Next implements plan.Plan Next interface.
-func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 	for {
 		if r.cursor == len(r.spans) {
-			return
+			return nil, nil
 		}
 		span := r.spans[r.cursor]
+		if r.isPointLookup(span) {
+			// Do point lookup on index will prevent prefetch cost.
+			row, err := r.pointLookup(ctx, span.seekVal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			r.cursor++
+			if row != nil {
+				return row, nil
+			}
+			continue
+		}
 		if r.iter == nil {
 			seekVal := span.seekVal
 			if span.lowVal == minNotNullVal {
 				seekVal = []byte{}
 			}
 			var txn kv.Transaction
-			txn, err = ctx.GetTxn(false)
+			txn, err := ctx.GetTxn(false)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -346,9 +361,7 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 				return nil, types.EOFAsNil(err)
 			}
 		}
-		var idxKey []interface{}
-		var h int64
-		idxKey, h, err = r.iter.Next()
+		idxKey, h, err := r.iter.Next()
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
@@ -370,18 +383,64 @@ func (r *indexPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			r.skipLowCmp = false
 			continue
 		}
-		row = &plan.Row{}
-		row.Data, err = r.src.Row(ctx, h)
+		var row *plan.Row
+		row, err = r.lookupRow(ctx, h)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rowKey := &plan.RowKeyEntry{
-			Tbl: r.src,
-			Key: string(r.src.RecordKey(h, nil)),
-		}
-		row.RowKeys = append(row.RowKeys, rowKey)
-		return
+		return row, nil
 	}
+}
+
+func (r *indexPlan) isPointLookup(span *indexSpan) bool {
+	equalOp := span.lowVal == span.highVal && !span.lowExclude && !span.highExclude
+	if !equalOp || !r.unique || span.lowVal == nil {
+		return false
+	}
+	n, err := types.Compare(span.seekVal, span.lowVal)
+	if err != nil {
+		return false
+	}
+	return n == 0
+}
+
+func (r *indexPlan) lookupRow(ctx context.Context, h int64) (*plan.Row, error) {
+	row := &plan.Row{}
+	var err error
+	row.Data, err = r.src.Row(ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rowKey := &plan.RowKeyEntry{
+		Tbl: r.src,
+		Key: string(r.src.RecordKey(h, nil)),
+	}
+	row.RowKeys = append(row.RowKeys, rowKey)
+	return row, nil
+}
+
+// pointLookup do not seek index but call Exists method to get a handle, which is cheaper.
+func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (*plan.Row, error) {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var exist bool
+	var h int64
+	// We expect a kv.ErrKeyExists Error because we pass -1 as the handle which is not equal to the existed handle.
+	exist, h, err = r.idx.Exist(txn, []interface{}{val}, -1)
+	if !exist {
+		return nil, errors.Trace(err)
+	}
+	if terror.ErrorNotEqual(kv.ErrKeyExists, err) {
+		return nil, errors.Trace(err)
+	}
+	var row *plan.Row
+	row, err = r.lookupRow(ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return row, nil
 }
 
 // Close implements plan.Plan Close interface.

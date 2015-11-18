@@ -11,9 +11,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package localstore
+package store
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -22,9 +23,16 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+)
+
+var (
+	testStore     = flag.String("teststore", "memory", "test store name, [memory, goleveldb, boltdb, hbase]")
+	testStorePath = flag.String("testpath", "testkv", "test storage path")
 )
 
 const (
@@ -44,16 +52,11 @@ type testKVSuite struct {
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
-	path := "memory:"
-	d := Driver{
-		goleveldb.MemoryDriver{},
-	}
-	store, err := d.Open(path)
+	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *testStore, *testStorePath))
 	c.Assert(err, IsNil)
 	s.s = store
 
-	// must in cache
-	cacheS, _ := d.Open(path)
+	cacheS, _ := tidb.NewStore(fmt.Sprintf("%s://%s", *testStore, *testStorePath))
 	c.Assert(cacheS, Equals, store)
 }
 
@@ -451,7 +454,8 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 		}()
 	}
 	wg.Wait()
-	c.Assert(success, Greater, int64(1))
+	// At least one txn can success.
+	c.Assert(success, Greater, int64(0))
 
 	// Clean up
 	txn, err := s.s.Begin()
@@ -512,8 +516,8 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 
 func (s *testKVSuite) TestDBClose(c *C) {
 	path := "memory:test"
-	d := Driver{
-		goleveldb.MemoryDriver{},
+	d := localstore.Driver{
+		Driver: goleveldb.MemoryDriver{},
 	}
 	store, err := d.Open(path)
 	c.Assert(err, IsNil)
@@ -559,8 +563,8 @@ func (s *testKVSuite) TestDBClose(c *C) {
 }
 
 func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
-	d := Driver{
-		boltdb.Driver{},
+	d := localstore.Driver{
+		Driver: boltdb.Driver{},
 	}
 	path := "boltdb_test"
 	defer os.Remove(path)

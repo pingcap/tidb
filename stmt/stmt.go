@@ -51,13 +51,16 @@ const (
 	ShowEngines
 	ShowDatabases
 	ShowTables
+	ShowTableStatus
 	ShowColumns
 	ShowWarnings
 	ShowCharset
 	ShowVariables
+	ShowStatus
 	ShowCollation
 	ShowCreateTable
 	ShowGrants
+	ShowTriggers
 )
 
 const (

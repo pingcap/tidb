@@ -96,11 +96,33 @@ type EncodeFn func(raw interface{}) (interface{}, error)
 // transaction is not committed.
 var ErrNotCommitted = errors.New("this transaction is not committed")
 
+// Option is used for customizing kv store's behaviors during a transaction.
+type Option int
+
+// Options is an interface of a set of options. Each option is associated with a value.
+type Options interface {
+	// Get gets an option value.
+	Get(opt Option) (v interface{}, ok bool)
+}
+
+const (
+	// RangePrefetchOnCacheMiss directives that when dealing with a Get operation and failed to read data from cache,
+	// it will launch a RangePrefetch to underlying storage instead of Get. The range starts from requested key and
+	// has a limit of the option value. The feature is disabled if option value <= 0 or value type is not int.
+	// This option is particularly useful when we have to do sequential Gets, e.g. table scans.
+	RangePrefetchOnCacheMiss Option = iota + 1
+)
+
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
 	// Get gets the value for key k from KV store.
 	Get(k Key) ([]byte, error)
+	// BatchPrefetch fetches values from KV storage to cache for later use.
+	BatchPrefetch(keys []Key) error
+	// RangePrefetch fetches values in the range [start, end] from KV storage
+	// to cache for later use. Maximum number of values is up to limit.
+	RangePrefetch(start, end Key, limit int) error
 	// Set sets the value for key k as v into KV store.
 	Set(k Key, v []byte) error
 	// Seek searches for the entry with key k in KV store.
@@ -122,6 +144,10 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
+	// SetOption sets an option with a value.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
 }
 
 // MvccSnapshot is used to get/seek a specific version in a snapshot.
@@ -140,9 +166,26 @@ type MvccSnapshot interface {
 type Snapshot interface {
 	// Get gets the value for key k from snapshot.
 	Get(k Key) ([]byte, error)
+	// BatchGet gets a batch of values from snapshot.
+	BatchGet(keys []Key) (map[string][]byte, error)
+	// RangeGet gets values in the range [start, end] from snapshot. Maximum
+	// number of values is up to limit.
+	RangeGet(start, end Key, limit int) (map[string][]byte, error)
 	// NewIterator gets a new iterator on the snapshot.
 	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
+	Release()
+}
+
+// MemBuffer is the interface for transaction buffer of update in a transaction
+type MemBuffer interface {
+	// Get gets the value for key k from buffer. If not found, it returns ErrNotExist.
+	Get(k Key) ([]byte, error)
+	// Set associates key with value
+	Set([]byte, []byte) error
+	// NewIterator gets a new iterator on the buffer.
+	NewIterator(param interface{}) Iterator
+	// Release releases the buffer.
 	Release()
 }
 
@@ -165,7 +208,6 @@ type Storage interface {
 	Close() error
 	// Storage's unique ID
 	UUID() string
-
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
 }
@@ -194,6 +236,7 @@ type Index interface {
 	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
 	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
 	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist
+	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)     // supports index check
 	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
 	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
 }

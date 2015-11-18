@@ -130,6 +130,10 @@ const (
 	ColumnPrivTable = "Columns_priv"
 	// GlobalVariablesTable is the table contains global system variables.
 	GlobalVariablesTable = "GLOBAL_VARIABLES"
+	// GlobalStatusTable is the table contains global status variables.
+	GlobalStatusTable = "GLOBAL_STATUS"
+	// TiDBTable is the table contains tidb info.
+	TiDBTable = "tidb"
 )
 
 // PrivilegeType  privilege

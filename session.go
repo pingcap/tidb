@@ -153,8 +153,13 @@ func (s *session) FinishTxn(rollback bool) error {
 
 	err := s.txn.Commit()
 	if err != nil {
-		log.Warnf("txn:%s, %v", s.txn, err)
-		return errors.Trace(err)
+		if kv.IsRetryableError(err) {
+			err = s.Retry()
+		}
+		if err != nil {
+			log.Warnf("txn:%s, %v", s.txn, err)
+			return errors.Trace(err)
+		}
 	}
 
 	s.resetHistory()
@@ -228,7 +233,10 @@ func (s *session) Retry() error {
 			}
 		}
 		if success {
-			break
+			err = s.FinishTxn(false)
+			if err == nil {
+				break
+			}
 		}
 	}
 
@@ -256,16 +264,16 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
-	log.Infof("Executing %s [%s]", st.OriginText(), sql)
+	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
 	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
 	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
 	return rs, errors.Trace(err)
 }
 
-// GetGlobalSysVar implements RestrictedSQLExecutor.GetGlobalSysVar interface.
-func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
+// getExecRet executes restricted sql and the result is one column.
+// It returns a string value.
+func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -276,7 +284,7 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 		return "", errors.Trace(err)
 	}
 	if row == nil {
-		return "", fmt.Errorf("Unknown sys var: %s", name)
+		return "", terror.ExecResultIsEmpty
 	}
 	value, err := types.ToString(row.Data[0])
 	if err != nil {
@@ -285,9 +293,48 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 	return value, nil
 }
 
-// SetGlobalSysVar implements RestrictedSQLExecutor.SetGlobalSysVar interface.
+// GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
+func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalStatusTable, name)
+	statusVar, err := s.getExecRet(ctx, sql)
+	if err != nil {
+		if terror.ExecResultIsEmpty.Equal(err) {
+			return "", terror.ExecResultIsEmpty.Gen("unknown status variable:%s", name)
+		}
+		return "", errors.Trace(err)
+	}
+
+	return statusVar, nil
+}
+
+// SetGlobalStatusVar implements GlobalVarAccessor.SetGlobalStatusVar interface.
+func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
+	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalStatusTable, value, strings.ToLower(name))
+	_, err := s.ExecRestrictedSQL(ctx, sql)
+	return errors.Trace(err)
+}
+
+// GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
+func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
+	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	sysVar, err := s.getExecRet(ctx, sql)
+	if err != nil {
+		if terror.ExecResultIsEmpty.Equal(err) {
+			return "", terror.ExecResultIsEmpty.Gen("unknown sys variable:%s", name)
+		}
+		return "", errors.Trace(err)
+	}
+
+	return sysVar, nil
+}
+
+// SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string) error {
-	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`, mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
+	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
+		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
 	_, err := s.ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
@@ -451,7 +498,12 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		err = s.txn.Commit()
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
 		if err != nil {
-			return nil, err
+			if kv.IsRetryableError(err) {
+				err = s.Retry()
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		s.resetHistory()
 		s.txn, err = s.store.Begin()
@@ -542,6 +594,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+
+	// session implements variable.GlobalVarAccessor. Bind it to ctx.
+	variable.BindGlobalVarAccessor(s, s)
 
 	// session implements autocommit.Checker. Bind it to ctx
 	autocommit.BindAutocommitChecker(s, s)

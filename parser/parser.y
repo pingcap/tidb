@@ -59,6 +59,7 @@ import (
 
 	abs		"ABS"
 	add		"ADD"
+	addDate		"ADDDATE"
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
@@ -134,6 +135,7 @@ import (
 	explain		"EXPLAIN"
 	extract		"EXTRACT"
 	falseKwd	"false"
+	fields		"FIELDS"
 	first		"FIRST"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
@@ -207,6 +209,7 @@ import (
 	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
+	read		"READ"
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
@@ -227,7 +230,9 @@ import (
 	signed		"SIGNED"
 	some 		"SOME"
 	start		"START"
+	status		"STATUS"
 	stringType	"string"
+	subDate		"SUBDATE"
 	substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
@@ -239,6 +244,7 @@ import (
 	to		"TO"
 	trailing	"TRAILING"
 	transaction	"TRANSACTION"
+	triggers	"TRIGGERS"
 	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
@@ -246,6 +252,7 @@ import (
 	unknown 	"UNKNOWN"
 	union		"UNION"
 	unique		"UNIQUE"
+	unlock		"UNLOCK"
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	upper 		"UPPER"
@@ -262,6 +269,7 @@ import (
 	weekofyear	"WEEKOFYEAR"
 	when		"WHEN"
 	where		"WHERE"
+	write		"WRITE"
 	xor 		"XOR"
 	yearweek	"YEARWEEK"
 	zerofill	"ZEROFILL"
@@ -373,6 +381,9 @@ import (
 	CreateTableStmt		"CREATE TABLE statement"
 	CreateUserStmt		"CREATE User statement"
 	CrossOpt		"Cross join option"
+	DateArithOpt		"Date arith dateadd or datesub option"
+	DateArithMultiFormsOpt	"Date arith adddate or subdate option"
+	DateArithInterval       "Date arith interval part"
 	DatabaseSym		"DATABASE or SCHEMA"
 	DBName			"Database Name"
 	DeallocateSym		"Deallocate or drop"
@@ -432,6 +443,8 @@ import (
 	LikeEscapeOpt 		"like escape option"
 	LimitClause		"LIMIT clause"
 	Literal			"literal value"
+	LockTablesStmt		"Lock tables statement"
+	LockType		"Table locks type"
 	logAnd			"logical and operator"
 	logOr			"logical or operator"
 	LowPriorityOptional	"LOW_PRIORITY or empty"
@@ -477,10 +490,10 @@ import (
 	SelectStmtOpts		"Select statement options"
 	SelectStmtGroup		"SELECT statement optional GROUP BY clause"
 	SetStmt			"Set variable statement"
-	ShowStmt		"Show engines/databases/tables/columns/warnings statement"
+	ShowStmt		"Show engines/databases/tables/columns/warnings/status statement"
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
 	ShowTableAliasOpt       "Show table alias option"
-	ShowLikeOrWhereOpt	"Show like or where condition option"
+	ShowLikeOrWhereOpt	"Show like or where clause option"
 	SignedLiteral		"Literal or NumLiteral with sign"
 	Statement		"statement"
 	StatementList		"statement list"
@@ -495,6 +508,8 @@ import (
 	TableElement		"table definition element"
 	TableElementList	"table definition element list"
 	TableFactor 		"table factor"
+	TableLock		"Table name and lock type"
+	TableLockList		"Table lock list"
 	TableName		"Table name"
 	TableNameList		"Table name list"
 	TableOption		"create table option"
@@ -509,6 +524,7 @@ import (
 	UnionStmt		"Union select state ment"
 	UnionClauseList		"Union select clause list"
 	UnionSelect		"Union (select) item"
+	UnlockTablesStmt	"Unlock tables statement"
 	UpdateStmt		"UPDATE statement"
 	Username		"Username"
 	UserSpec		"Username and auth option"
@@ -1521,12 +1537,6 @@ Field:
 	{
 		expr := $1.(ast.ExprNode)
 		asName := $2.(string)
-		if asName != "" {
-			// Set expr original text.
-			offset := yyS[yypt-1].offset
-			end := yyS[yypt].offset-1
-			expr.SetText(yylex.(*lexer).src[offset:end])
-		}
 		$$ = &ast.SelectField{Expr: expr, AsName: model.NewCIStr(asName)}
 	}
 
@@ -1562,7 +1572,7 @@ FieldList:
 	Field
 	{
 		field := $1.(*ast.SelectField)
-		field.Offset = yyS[yypt].offset
+		field.Offset = yylex.(*lexer).startOffset(yyS[yypt].offset)
 		$$ = []*ast.SelectField{field}
 	}
 |	FieldList ',' Field
@@ -1570,12 +1580,13 @@ FieldList:
 
 		fl := $1.([]*ast.SelectField)
 		last := fl[len(fl)-1]
+		l := yylex.(*lexer)
 		if last.Expr != nil && last.AsName.O == "" {
-			lastEnd := yyS[yypt-1].offset-1 // Comma offset.
-			last.SetText(yylex.(*lexer).src[last.Offset:lastEnd])
+			lastEnd := l.endOffset(yyS[yypt-1].offset)
+			last.SetText(l.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
-		newField.Offset = yyS[yypt].offset
+		newField.Offset = l.startOffset(yyS[yypt].offset)
 		$$ = append(fl, newField)
 	}
 
@@ -1647,15 +1658,17 @@ UnReservedKeyword:
 	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
-|	"START" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" 
+|	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS"
 
 NotKeywordToken:
-	"ABS" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"
-|	"HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" 
-|	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH"
+|	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
+|	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
+|	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
+|	"YEARWEEK"
 
 /************************************************************************************
  *
@@ -1864,7 +1877,12 @@ Operand:
 	}
 |	'(' Expression ')'
 	{
-		$$ = &ast.ParenthesesExpr{Expr: $2.(ast.ExprNode)}
+		l := yylex.(*lexer)
+		startOffset := l.startOffset(yyS[yypt-1].offset)
+		endOffset := l.endOffset(yyS[yypt].offset)
+		expr := $2.(ast.ExprNode)
+		expr.SetText(l.src[startOffset:endOffset])
+		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	"DEFAULT" %prec lowerThanLeftParen
 	{
@@ -2128,22 +2146,22 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
-|	"DATE_ADD" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
 		$$ = &ast.FuncDateArithExpr{
-			Op:ast.DateAdd,
-			Unit: $7.(string),
+			Op: $1.(ast.DateArithType),
 			Date: $3.(ast.ExprNode),
-			Interval: $6.(ast.ExprNode),
+			DateArithInterval: ast.DateArithInterval{
+						Unit: $7.(string), 
+						Interval: $6.(ast.ExprNode)},
 		}
 	}
-|	"DATE_SUB" '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
+|	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
 	{
 		$$ = &ast.FuncDateArithExpr{
-			Op:ast.DateSub,
-			Unit: $7.(string),
+			Op: $1.(ast.DateArithType),
 			Date: $3.(ast.ExprNode),
-			Interval: $6.(ast.ExprNode),
+			DateArithInterval: $5.(ast.DateArithInterval),
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
@@ -2319,6 +2337,40 @@ FunctionCallNonKeyword:
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: $1.(string), Args: $3.([]ast.ExprNode)}
+	}
+
+DateArithOpt:
+	"DATE_ADD"
+	{
+		$$ = ast.DateAdd
+	}
+|	"DATE_SUB"
+	{
+		$$ = ast.DateSub
+	}
+
+DateArithMultiFormsOpt:
+	"ADDDATE"
+	{
+		$$ = ast.DateAdd
+	}
+|	"SUBDATE"
+	{
+		$$ = ast.DateSub
+	}
+
+DateArithInterval:
+	Expression
+	{
+		$$ = ast.DateArithInterval{
+					Form: ast.DateArithDaysForm,
+					Unit: "day",
+					Interval: $1.(ast.ExprNode),
+		}
+	}
+|	"INTERVAL" Expression TimeUnit
+	{
+		$$ = ast.DateArithInterval{Unit: $3.(string), Interval: $2.(ast.ExprNode)}
 	}
 
 TrimDirection:
@@ -2821,7 +2873,9 @@ TableFactor:
 |	'(' SelectStmt ')' TableAsName
 	{
 		st := $2.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-1].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-1].offset)
+		l.SetLastSelectFieldText(st, endOffset)
 		$$ = &ast.TableSource{Source: $2.(*ast.SelectStmt), AsName: $4.(model.CIStr)}
 	}
 |	'(' UnionStmt ')' TableAsName
@@ -2968,7 +3022,9 @@ SubSelect:
 	'(' SelectStmt ')'
 	{
 		s := $2.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(s, yyS[yypt].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt].offset)
+		l.SetLastSelectFieldText(s, endOffset)
 		src := yylex.(*lexer).src
 		// See the implemention of yyParse function
 		s.SetText(src[yyS[yypt-1].offset-1:yyS[yypt].offset-1])
@@ -3005,7 +3061,9 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.Selects[len(union.Selects)-1]
-		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-2].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-2].offset)
+		l.SetLastSelectFieldText(lastSelect, endOffset)
 		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3014,9 +3072,12 @@ UnionStmt:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.Selects[len(union.Selects)-1]
-		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-6].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-6].offset)
+		l.SetLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt-2].offset-1)
+		endOffset = l.endOffset(yyS[yypt-2].offset)
+		l.SetLastSelectFieldText(st, endOffset)
 		union.Selects = append(union.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
@@ -3040,7 +3101,9 @@ UnionClauseList:
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
 		lastSelect := union.Selects[len(union.Selects)-1]
-		yylex.(*lexer).SetLastSelectFieldText(lastSelect, yyS[yypt-2].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt-2].offset)
+		l.SetLastSelectFieldText(lastSelect, endOffset)
 		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
@@ -3050,7 +3113,9 @@ UnionSelect:
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
-		yylex.(*lexer).SetLastSelectFieldText(st, yyS[yypt].offset-1)
+		l := yylex.(*lexer)
+		endOffset := l.endOffset(yyS[yypt].offset)
+		l.SetLastSelectFieldText(st, endOffset)
 		$$ = st
 	}
 
@@ -3236,8 +3301,33 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "TABLE" "STATUS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp:	ast.ShowTableStatus,
+			DBName:	$4.(string),
+		}
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
 |	"SHOW" OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
 	{
+		$$ = &ast.ShowStmt{
+			Tp:     ast.ShowColumns,
+			Table:	$4.(*ast.TableName),
+			DBName:	$5.(string),
+			Full:	$2.(bool),
+		}
+	}
+|	"SHOW" OptFull "FIELDS" ShowTableAliasOpt ShowDatabaseNameOpt
+	{
+		// SHOW FIELDS is a synonym for SHOW COLUMNS.
 		$$ = &ast.ShowStmt{
 			Tp:     ast.ShowColumns,
 			Table:	$4.(*ast.TableName),
@@ -3253,6 +3343,19 @@ ShowStmt:
 	{
 		stmt := &ast.ShowStmt{
 			Tp: ast.ShowVariables,
+			GlobalScope: $2.(bool),
+		}
+		if x, ok := $4.(*ast.PatternLikeExpr); ok {
+			stmt.Pattern = x
+		} else if $4 != nil {
+			stmt.Where = $4.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
+|	"SHOW" GlobalScope "STATUS" ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp: ast.ShowStatus,
 			GlobalScope: $2.(bool),
 		}
 		if x, ok := $4.(*ast.PatternLikeExpr); ok {
@@ -3293,6 +3396,21 @@ ShowStmt:
 			Tp:	ast.ShowGrants,
 			User:	$4.(string),
 		}
+	}
+|	"SHOW" "TRIGGERS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{
+			Tp:	ast.ShowTriggers,
+			DBName:	$3.(string),
+		}
+		if $4 != nil {
+			if x, ok := $4.(*ast.PatternLikeExpr); ok {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $4.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
 	}
 
 ShowLikeOrWhereOpt:
@@ -3388,6 +3506,8 @@ Statement:
 		// TODO: This is used to fix issue #320. There may be a better solution.
 		$$ = $1.(*ast.SubqueryExpr).Query
 	}
+|	UnlockTablesStmt
+|	LockTablesStmt
 
 ExplainableStmt:
 	SelectStmt
@@ -4280,4 +4400,29 @@ PrivLevel:
 			TableName: $1.(string),
 		}
 	}
+
+/*********************************************************************
+ * Lock/Unlock Tables
+ * See: http://dev.mysql.com/doc/refman/5.7/en/lock-tables.html
+ * All the statement leaves empty. This is used to prevent mysqldump error.
+ *********************************************************************/
+
+UnlockTablesStmt:
+	"UNLOCK" "TABLES"
+
+LockTablesStmt:
+	"LOCK" "TABLES" TableLockList
+
+TableLock:
+	 TableName LockType
+
+LockType:
+	"READ"
+|	"READ" "LOCAL"
+|	"WRITE"
+
+TableLockList:
+	TableLock
+|	TableLockList ',' TableLock 
+
 %%
