@@ -14,8 +14,6 @@
 package variable
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 )
 
@@ -73,12 +71,6 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 	}
 
 	return ret, nil
-}
-
-// GetStatusVar returns status var infomation for name.
-func GetStatusVar(name string) *StatusVal {
-	name = strings.ToLower(name)
-	return statusVars[name]
 }
 
 // GetDefaultStatusVars gets status variables from the global status variables table.

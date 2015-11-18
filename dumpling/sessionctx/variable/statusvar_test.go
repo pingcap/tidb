@@ -66,10 +66,7 @@ func (s *testStatusVarSuite) TestStatusVar(c *C) {
 	vars, err := GetStatusVars()
 	c.Assert(err, IsNil)
 	for status, val := range vars {
-		v := GetStatusVar(status)
+		v := statusVars[status]
 		c.Assert(v, DeepEquals, val)
 	}
-
-	v := GetStatusVar("wrong-var-name")
-	c.Assert(v, IsNil)
 }
