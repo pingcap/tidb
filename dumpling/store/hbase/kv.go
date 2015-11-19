@@ -14,6 +14,7 @@
 package hbasekv
 
 import (
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync"
@@ -23,6 +24,8 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/go-hbase"
 	"github.com/pingcap/go-themis"
+	"github.com/pingcap/go-themis/oracle"
+	"github.com/pingcap/go-themis/oracle/oracles"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -47,8 +50,8 @@ var (
 )
 
 var (
-	// ErrZkInvalid is returned when zookeeper info is invalid.
-	ErrZkInvalid = errors.New("zk info invalid")
+	// ErrInvalidDSN is returned when store dsn is invalid.
+	ErrInvalidDSN = errors.New("invalid dsn")
 )
 
 type storeCache struct {
@@ -65,8 +68,9 @@ func init() {
 
 type hbaseStore struct {
 	mu        sync.Mutex
-	zkInfo    string
+	dsn       string
 	storeName string
+	oracle    oracle.Oracle
 	conns     []hbase.HBaseClient
 }
 
@@ -79,14 +83,20 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	hbaseCli := s.getHBaseClient()
-	t := themis.NewTxn(hbaseCli)
+	t, err := themis.NewTxn(hbaseCli, s.oracle)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	txn := newHbaseTxn(t, s.storeName)
 	return txn, nil
 }
 
 func (s *hbaseStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
 	hbaseCli := s.getHBaseClient()
-	t := themis.NewTxn(hbaseCli)
+	t, err := themis.NewTxn(hbaseCli, s.oracle)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return newHbaseSnapshot(t, s.storeName), nil
 }
 
@@ -94,7 +104,7 @@ func (s *hbaseStore) Close() error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	delete(mc.cache, s.zkInfo)
+	delete(mc.cache, s.dsn)
 
 	var err error
 	for _, conn := range s.conns {
@@ -108,12 +118,15 @@ func (s *hbaseStore) Close() error {
 }
 
 func (s *hbaseStore) UUID() string {
-	return "hbase." + s.storeName + "." + s.zkInfo
+	return fmt.Sprintf("hbase.%s.%s", s.storeName, s.dsn)
 }
 
 func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
 	hbaseCli := s.getHBaseClient()
-	t := themis.NewTxn(hbaseCli)
+	t, err := themis.NewTxn(hbaseCli, s.oracle)
+	if err != nil {
+		return kv.Version{Ver: 0}, errors.Trace(err)
+	}
 	defer t.Release()
 
 	return kv.Version{Ver: t.GetStartTS()}, nil
@@ -123,24 +136,20 @@ func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
 type Driver struct {
 }
 
-// Open opens or creates a storage database with given path.
-func (d Driver) Open(zkInfo string) (kv.Storage, error) {
+// Open opens or creates an HBase storage with given dsn, format should be 'zk1,zk2,zk3|tsoaddr:port/tblName'.
+// If tsoAddr is not provided, it will use a local oracle instead.
+func (d Driver) Open(dsn string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if len(zkInfo) == 0 {
-		return nil, errors.Trace(ErrZkInvalid)
-	}
-	pos := strings.LastIndex(zkInfo, "/")
-	if pos == -1 {
-		return nil, errors.Trace(ErrZkInvalid)
-	}
-	tableName := zkInfo[pos+1:]
-	zks := strings.Split(zkInfo[:pos], ",")
-
-	if store, ok := mc.cache[zkInfo]; ok {
+	if store, ok := mc.cache[dsn]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
 		return store, nil
+	}
+
+	zks, oracleAddr, tableName, err := parseDSN(dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// create buffered HBase connections, HBaseClient is goroutine-safe, so
@@ -167,11 +176,37 @@ func (d Driver) Open(zkInfo string) (kv.Storage, error) {
 		}
 	}
 
+	var ora oracle.Oracle
+	if len(oracleAddr) == 0 {
+		ora = oracles.NewLocalOracle()
+	} else {
+		ora = oracles.NewRemoteOracle(oracleAddr)
+	}
+
 	s := &hbaseStore{
-		zkInfo:    zkInfo,
+		dsn:       dsn,
 		storeName: tableName,
+		oracle:    ora,
 		conns:     conns,
 	}
-	mc.cache[zkInfo] = s
+	mc.cache[dsn] = s
 	return s, nil
+}
+
+func parseDSN(dsn string) (zks []string, oracleAddr, tableName string, err error) {
+	pos := strings.LastIndex(dsn, "/")
+	if pos == -1 {
+		err = errors.Trace(ErrInvalidDSN)
+		return
+	}
+	tableName = dsn[pos+1:]
+	addrs := dsn[:pos]
+
+	pos = strings.LastIndex(addrs, "|")
+	if pos != -1 {
+		oracleAddr = addrs[pos+1:]
+		addrs = addrs[:pos]
+	}
+	zks = strings.Split(addrs, ",")
+	return
 }
