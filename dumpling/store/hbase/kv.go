@@ -176,7 +176,7 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	}
 
 	var ora oracle.Oracle
-	if oracleAddr == "" {
+	if len(oracleAddr) == 0 {
 		ora = oracles.NewLocalOracle()
 	} else {
 		ora = oracles.NewRemoteOracle(oracleAddr)
