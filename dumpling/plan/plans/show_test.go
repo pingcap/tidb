@@ -228,7 +228,6 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	c.Assert(fls[0].Col.Tp, Equals, mysql.TypeVarchar)
 	c.Assert(fls[1].Col.Tp, Equals, mysql.TypeVarchar)
 
-	sessionVars := variable.GetSessionVars(p.ctx)
 	ret := map[string]string{}
 	rset := rsets.Recordset{
 		Ctx:  p.ctx,
@@ -244,51 +243,28 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	c.Assert(v, DeepEquals, testStatusValBothScope)
 	pln.Close()
 
-	sessionVars.StatusVars[testStatusBothScopes] = "changed_val"
-	pln.GlobalScope = false
-	rset.Do(func(data []interface{}) (bool, error) {
-		ret[data[0].(string)] = data[1].(string)
-		return true, nil
-	})
-	c.Assert(ret, HasLen, 1)
-	v, ok = ret[testStatusBothScopes]
-	c.Assert(ok, IsTrue)
-	c.Assert(v, DeepEquals, "changed_val")
-	pln.Close()
-
+	pln.GlobalScope = true
 	pln.Pattern = &expression.PatternLike{
 		Pattern: &expression.Value{
 			Val: testStatusSessionScope,
 		},
 	}
-	sessionVars.StatusVars[testStatusSessionScope] = "on"
-	pln.GlobalScope = true
 	ret = map[string]string{}
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil
 	})
 	c.Assert(ret, HasLen, 0)
-
-	pln.GlobalScope = false
-	rset.Do(func(data []interface{}) (bool, error) {
-		ret[data[0].(string)] = data[1].(string)
-		return true, nil
-	})
-	c.Assert(ret, HasLen, 1)
-	v, ok = ret[testStatusSessionScope]
-	c.Assert(ok, IsTrue)
-	c.Assert(v, Equals, "on")
 	pln.Close()
 
 	pln.Pattern = nil
+	pln.GlobalScope = false
 	pln.Where = &expression.BinaryOperation{
 		L:  &expression.Ident{CIStr: model.NewCIStr("Variable_name")},
 		R:  expression.Value{Val: testStatusBothScopes},
 		Op: opcode.EQ,
 	}
 	ret = map[string]string{}
-	sessionVars.StatusVars[testStatusBothScopes] = "0"
 	rset.Do(func(data []interface{}) (bool, error) {
 		ret[data[0].(string)] = data[1].(string)
 		return true, nil
@@ -296,7 +272,7 @@ func (p *testShowSuit) TestShowStatusVariables(c *C) {
 	c.Assert(ret, HasLen, 1)
 	v, ok = ret[testStatusBothScopes]
 	c.Assert(ok, IsTrue)
-	c.Assert(v, Equals, "0")
+	c.Assert(v, Equals, testStatusValBothScope)
 }
 
 func (p *testShowSuit) TestIssue540(c *C) {
