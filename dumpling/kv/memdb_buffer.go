@@ -34,7 +34,7 @@ type memDbIter struct {
 
 // NewMemDbBuffer creates a new memDbBuffer.
 func NewMemDbBuffer() MemBuffer {
-	return &memDbBuffer{db: memdb.New(comparer.DefaultComparer, 1*1024*1024)}
+	return &memDbBuffer{db: memdb.New(comparer.DefaultComparer, 4*1024)}
 }
 
 // NewIterator creates an Iterator.
