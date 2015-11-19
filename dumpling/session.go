@@ -642,7 +642,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	// if store is not local store, we will reset lease time after bootstrap
 	if !localstore.IsLocalStore(store) {
-		sessionctx.GetDomain(s).SetLease(time.Duration(schemaLease) * time.Second)
+		sessionctx.GetDomain(s).SetLease(schemaLease)
 	}
 
 	// TODO: Add auth here

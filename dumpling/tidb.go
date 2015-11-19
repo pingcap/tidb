@@ -102,14 +102,14 @@ var (
 	// all servers get the neweset schema.
 	// Default schema lease time is 300 seconds, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
-	schemaLease = 300
+	schemaLease = 300 * time.Second
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.
 // This function is very dangerous, don't use it if you really know what you do.
 // SetSchemaLease only affects not local storage after bootstrapped.
-func SetSchemaLease(seconds int) {
-	schemaLease = seconds
+func SetSchemaLease(lease time.Duration) {
+	schemaLease = lease
 }
 
 // What character set should the server translate a statement to after receiving it?
