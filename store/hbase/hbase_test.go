@@ -13,11 +13,7 @@
 
 package hbasekv
 
-import (
-	"strings"
-
-	. "github.com/pingcap/check"
-)
+import . "github.com/pingcap/check"
 
 var _ = Suite(&testHBaseSuite{})
 
@@ -26,13 +22,13 @@ type testHBaseSuite struct {
 
 func (t *testHBaseSuite) TestParseDSN(c *C) {
 	zks, oracle, table, err := parseDSN("zk1.com,zk2,192.168.0.1|localhost:1234/tidb")
-	c.Assert(strings.Join(zks, " "), Equals, "zk1.com zk2 192.168.0.1")
+	c.Assert(zks, DeepEquals, []string{"zk1.com", "zk2", "192.168.0.1"})
 	c.Assert(oracle, Equals, "localhost:1234")
 	c.Assert(table, Equals, "tidb")
 	c.Assert(err, IsNil)
 
 	zks, oracle, table, err = parseDSN("zk1,zk2/tidb")
-	c.Assert(strings.Join(zks, " "), Equals, "zk1 zk2")
+	c.Assert(zks, DeepEquals, []string{"zk1", "zk2"})
 	c.Assert(oracle, Equals, "")
 	c.Assert(table, Equals, "tidb")
 	c.Assert(err, IsNil)
