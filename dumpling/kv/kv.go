@@ -106,14 +106,14 @@ type Options interface {
 }
 
 const (
-	// RangePrefetchOnCacheMiss directives that when dealing with a Get operation and failed to read data from cache,
+	// RangePrefetchOnCacheMiss directives that when dealing with a Get operation but failing to read data from cache,
 	// it will launch a RangePrefetch to underlying storage instead of Get. The range starts from requested key and
 	// has a limit of the option value. The feature is disabled if option value <= 0 or value type is not int.
 	// This option is particularly useful when we have to do sequential Gets, e.g. table scans.
 	RangePrefetchOnCacheMiss Option = iota + 1
 
-	// PresumeKeyNotExists directives that when dealing with a Get operation and failed to read data from cache,
-	// we presume that the key does not exist in Store. The actual existences will be checked before the
+	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
+	// we presume that the key does not exist in Store. The actual existence will be checked before the
 	// transaction's commit.
 	// This option is an optimization for frequent checks during a transaction, e.g. batch inserts.
 	PresumeKeyNotExists
