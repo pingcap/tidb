@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/stmt"
+	"github.com/pingcap/tidb/model"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
@@ -38,7 +39,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 	if optimizer.Supported(node) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		defaultSchema := db.GetCurrentSchema(ctx)
-		p, err := optimizer.Optimize(is, defaultSchema, node)
+		p, err := optimizer.Optimize(is, model.NewCIStr(defaultSchema), node)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
