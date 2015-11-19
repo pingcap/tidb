@@ -14,21 +14,14 @@
 package tidb
 
 import (
-	"database/sql"
-	"flag"
 	"fmt"
-	"os"
-	"runtime"
 	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
-	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
