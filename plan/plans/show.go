@@ -468,23 +468,7 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	return nil
 }
 
-func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
-	name string, globalVal *variable.StatusVal) (string, error) {
-	sv, ok := sessionVars.StatusVars[name]
-	if ok {
-		return sv, nil
-	}
-
-	gv, err := types.ToString(globalVal.Value)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
-	return gv, nil
-}
-
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
-	sessionVars := variable.GetSessionVars(ctx)
 	m := map[interface{}]interface{}{}
 
 	statusVars, err := variable.GetStatusVars()
@@ -514,12 +498,7 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 		}
 
 		var value string
-		if !s.GlobalScope {
-			value, err = getSessionStatusVar(ctx, sessionVars, status, v)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else if v.Scope != variable.ScopeSession {
+		if !s.GlobalScope || (s.GlobalScope && v.Scope != variable.ScopeSession) {
 			value, err = types.ToString(v.Value)
 			if err != nil {
 				return errors.Trace(err)
