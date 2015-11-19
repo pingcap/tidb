@@ -49,8 +49,8 @@ var (
 )
 
 var (
-	// ErrDsnInvalid is returned when store dsn is invalid.
-	ErrDsnInvalid = errors.New("dsn invalid")
+	// ErrInvalidDSN is returned when store dsn is invalid.
+	ErrInvalidDSN = errors.New("invalid dsn")
 )
 
 type storeCache struct {
@@ -141,28 +141,14 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if len(dsn) == 0 {
-		return nil, errors.Trace(ErrDsnInvalid)
-	}
-	pos := strings.LastIndex(dsn, "/")
-	if pos == -1 {
-		return nil, errors.Trace(ErrDsnInvalid)
-	}
-	tableName := dsn[pos+1:]
-	addrs := dsn[:pos]
-
-	var tsoAddr string
-	pos = strings.LastIndex(addrs, "|")
-	if pos != -1 {
-		tsoAddr = addrs[pos+1:]
-		addrs = addrs[:pos]
-	}
-
-	zks := strings.Split(addrs, ",")
-
 	if store, ok := mc.cache[dsn]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
 		return store, nil
+	}
+
+	zks, oracleAddr, tableName, err := parseDSN(dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// create buffered HBase connections, HBaseClient is goroutine-safe, so
@@ -190,10 +176,10 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	}
 
 	var ora oracle.Oracle
-	if tsoAddr == "" {
-		ora = &oracles.LocalOracle{}
+	if oracleAddr == "" {
+		ora = oracles.NewLocalOracle()
 	} else {
-		ora = oracles.NewTsoOracle(tsoAddr)
+		ora = oracles.NewRemoteOracle(oracleAddr)
 	}
 
 	s := &hbaseStore{
@@ -204,4 +190,22 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	}
 	mc.cache[dsn] = s
 	return s, nil
+}
+
+func parseDSN(dsn string) (zks []string, oracleAddr, tableName string, err error) {
+	pos := strings.LastIndex(dsn, "/")
+	if pos == -1 {
+		err = errors.Trace(ErrInvalidDSN)
+		return
+	}
+	tableName = dsn[pos+1:]
+	addrs := dsn[:pos]
+
+	pos = strings.LastIndex(addrs, "|")
+	if pos != -1 {
+		oracleAddr = addrs[pos+1:]
+		addrs = addrs[:pos]
+	}
+	zks = strings.Split(addrs, ",")
+	return
 }
