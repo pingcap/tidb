@@ -174,6 +174,9 @@ func main() {
 	line.SetCtrlCAborts(true)
 	openHistory()
 
+	// For interpreter, we don't must run DDL quickly with remote storage too.
+	tidb.SetSchemaLease(100 * time.Millisecond)
+
 	mdb, err := sql.Open(tidb.DriverName, *store+"://"+*dbPath)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
