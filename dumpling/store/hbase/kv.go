@@ -14,6 +14,7 @@
 package hbasekv
 
 import (
+	"fmt"
 	"math/rand"
 	"strings"
 	"sync"
@@ -117,7 +118,7 @@ func (s *hbaseStore) Close() error {
 }
 
 func (s *hbaseStore) UUID() string {
-	return "hbase." + s.storeName + "." + s.dsn
+	return fmt.Sprintf("hbase.%s.%s", s.storeName, s.dsn)
 }
 
 func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
