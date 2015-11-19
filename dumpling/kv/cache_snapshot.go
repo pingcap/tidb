@@ -125,6 +125,7 @@ func (c *cacheSnapshot) NewIterator(param interface{}) Iterator {
 func (c *cacheSnapshot) Release() {
 	if c.cache != nil {
 		c.cache.Release()
+		p.Put(c.cache)
 		c.cache = nil
 	}
 	if c.snapshot != nil {
