@@ -84,6 +84,8 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 	}
 
 	t.state = tblInfo.State
+	t.publicColumns = t.Cols()
+	t.writableColumns = t.writableCols()
 	return t
 }
 
@@ -100,8 +102,6 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 		state:        model.StatePublic,
 	}
 
-	t.publicColumns = t.Cols()
-	t.writableColumns = t.writableCols()
 	return t
 }
 
