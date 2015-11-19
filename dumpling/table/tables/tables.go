@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Table implements table.Table interface.
@@ -440,6 +441,10 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
 			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			value, err = types.Convert(value, &col.FieldType)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
