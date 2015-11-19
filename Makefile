@@ -19,6 +19,7 @@ godep:
 	go get github.com/tools/godep
 	go get github.com/pingcap/go-hbase
 	go get github.com/pingcap/go-themis
+	go get github.com/ngaut/tso/client
 
 build:
 	$(GO) build
