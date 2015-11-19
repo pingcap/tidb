@@ -268,7 +268,6 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		}
 
 		rows[i], err = s.fillRowData(ctx, t, cols, list, defaultValMap)
-
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
