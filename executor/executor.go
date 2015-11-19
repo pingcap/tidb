@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
+	"fmt"
+	"github.com/pingcap/tidb/optimizer/evaluator"
 )
 
 var (
@@ -164,6 +166,8 @@ type IndexRangeExec struct {
 	Desc        bool
 
 	iter kv.IndexIterator
+	skipLowCmp  bool
+	finished    bool
 }
 
 // Fields implements Executor Fields interface.
@@ -187,12 +191,98 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			return nil, types.EOFAsNil(err)
 		}
 	}
-	// TODO: implement
-	return nil, nil
+	for {
+		if e.finished {
+			return nil, nil
+		}
+		idxKey, h, err := e.iter.Next()
+		if err != nil {
+			return nil, types.EOFAsNil(err)
+		}
+		val := idxKey[0]
+		if !e.skipLowCmp {
+			cmp := indexCompare(val, e.lowVal)
+			if cmp < 0 || (cmp == 0 && e.lowExclude) {
+				continue
+			}
+			e.skipLowCmp = true
+		}
+		cmp := indexCompare(val, e.highVal)
+		if cmp > 0 || (cmp == 0 && e.highExclude) {
+			// This span has finished iteration.
+			e.finished = true
+			e.skipLowCmp = false
+			continue
+		}
+		var row *Row
+		row, err = e.lookupRow(h)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return row, nil
+	}
+}
+
+// comparison function that takes minNotNullVal and maxVal into account.
+func indexCompare(a interface{}, b interface{}) int {
+	if a == nil && b == nil {
+		return 0
+	} else if b == nil {
+		return 1
+	} else if b == nil {
+		return -1
+	}
+
+	// a and b both not nil
+	if a == minNotNullVal && b == minNotNullVal {
+		return 0
+	} else if b == minNotNullVal {
+		return 1
+	} else if a == minNotNullVal {
+		return -1
+	}
+
+	// a and b both not min value
+	if a == maxVal && b == maxVal {
+		return 0
+	} else if a == maxVal {
+		return 1
+	} else if b == maxVal {
+		return -1
+	}
+
+	n, err := types.Compare(a, b)
+	if err != nil {
+		// Old compare panics if err, so here we do the same thing now.
+		// TODO: return err instead of panic.
+		panic(fmt.Sprintf("should never happend %v", err))
+	}
+	return n
+}
+
+func (r *IndexRangeExec) lookupRow(h int64) (*Row, error) {
+	row := &Row{}
+	var err error
+	row.Data, err = r.tbl.Row(r.ctx, h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	rowKey := &RowKeyEntry{
+		Tbl: r.tbl,
+		Key: string(r.tbl.RecordKey(h, nil)),
+	}
+	row.RowKeys = append(row.RowKeys, rowKey)
+	return row, nil
 }
 
 // Close implements Executor Close interface.
 func (e *IndexRangeExec) Close() error {
+	if e.iter != nil {
+		e.iter.Close()
+		e.iter = nil
+	}
+	e.finished = false
+	e.skipLowCmp = false
 	return nil
 }
 
@@ -201,6 +291,7 @@ type IndexScanExec struct {
 	Table    table.Table
 	fields   []*ast.ResultField
 	Ranges   []*IndexRangeExec
+	Desc     bool
 	rangeIdx int
 	ctx      context.Context
 }
@@ -232,6 +323,11 @@ func (e *IndexScanExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *IndexScanExec) Close() error {
+	for e.rangeIdx < len(e.Ranges) {
+		ran := e.Ranges[e.rangeIdx]
+		ran.Close()
+		e.rangeIdx++
+	}
 	return nil
 }
 
@@ -275,7 +371,7 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		if cn, ok := field.Expr.(*ast.ColumnNameExpr); ok {
 			log.Errorf("refer %v", cn.Refer.Column)
 		}
-		val, err := Eval(e.ctx, field.Expr)
+		val, err := evaluator.Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -314,7 +410,7 @@ func (e *FilterExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		truth, err := EvalBool(e.ctx, e.Condition)
+		truth, err := evaluator.EvalBool(e.ctx, e.Condition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -490,7 +586,7 @@ func (e *SortExec) Next() (*Row, error) {
 				key: make([]interface{}, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = Eval(e.ctx, byItem.Expr)
+				orderRow.key[i], err = evaluator.Eval(e.ctx, byItem.Expr)
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}

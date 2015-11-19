@@ -17,37 +17,39 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/model"
 	"strings"
 )
 
 // Optimize do optimization and create a Plan.
 // InfoSchema has to be passed in as parameter because
 // it can not be changed after binding.
-func Optimize(is infoschema.InfoSchema, defaultSchema string, node ast.Node) (plan.Plan, error) {
-	var va validator
-	node.Accept(&va)
-	if va.err != nil {
-		return nil, errors.Trace(va.err)
+func Optimize(is infoschema.InfoSchema, defaultSchema model.CIStr, node ast.Node) (plan.Plan, error) {
+	if err := validate(node); err != nil {
+		return nil, errors.Trace(err)
 	}
-	binder := &InfoBinder{Info: is, DefaultSchema: model.NewCIStr(defaultSchema)}
-	node.Accept(binder)
-	if binder.Err != nil {
-		return nil, errors.Trace(binder.Err)
+	if err := bindInfo(node, is, defaultSchema); err != nil {
+		return nil, errors.Trace(err)
 	}
-	tc := &typeComputer{}
-	node.Accept(tc)
-	if tc.err != nil {
-		return nil, errors.Trace(tc.err)
+	if err := computeType(node); err != nil {
+		return nil, errors.Trace(err)
 	}
-	cn := &conditionNormalizer{}
-	node.Accept(cn)
-	var builder planBuilder
-	p := builder.build(node)
-	//	picker := indexPicker{is: is, root: p}
-	//	p, _ = p.Accept(&picker)
-	return p, nil
+	normalizeCondition(node)
+	p := buildPlan(node)
+	refine(p)
+	bestCost := plan.EstimateCost(p)
+	bestPlan := p
+	alts := alternatives(p)
+	for _, alt := range alts {
+		refine(alt)
+		cost := plan.EstimateCost(alt)
+		if cost < bestCost {
+			bestCost = cost
+			bestPlan = alt
+		}
+	}
+	return bestPlan, nil
 }
 
 type supportChecker struct {

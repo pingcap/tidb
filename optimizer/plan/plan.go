@@ -40,6 +40,12 @@ type Plan interface {
 	SetLimit(limit float64)
 }
 
+type PlanWithSrc interface {
+	Plan
+	Src() Plan
+	SetSrc(src Plan)
+}
+
 // Visitor visits a Plan.
 type Visitor interface {
 	// Enter is called before visit children.
@@ -95,4 +101,26 @@ func (p *basePlan) Fields() []*ast.ResultField {
 // SetFields implements Plan SetFields interface.
 func (p *basePlan) SetFields(fields []*ast.ResultField) {
 	p.fields = fields
+}
+
+// srcPlan implements base PlanWithSrc interface.
+type planWithSrc struct {
+	basePlan
+	src Plan
+}
+
+// Src implements PlanWithSrc interface.
+func (p *planWithSrc) Src() Plan {
+	return p.src
+}
+
+// SetSrc implements PlanWithSrc interface.
+func (p *planWithSrc) SetSrc(src Plan) {
+	p.src = src
+}
+
+// SetLimit implements Plan interface.
+func (p *planWithSrc) SetLimit(limit float64) {
+	p.limit = limit
+	p.src.SetLimit(limit)
 }

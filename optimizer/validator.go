@@ -35,6 +35,12 @@ var (
 	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
 )
 
+func validate(node ast.Node) error {
+	var v validator
+	node.Accept(&v)
+	return v.err
+}
+
 // validator is an ast.Visitor that validates
 // ast Nodes parsed from parser.
 type validator struct {

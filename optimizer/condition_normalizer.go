@@ -32,3 +32,7 @@ func (b *conditionNormalizer) Enter(in ast.Node) (ast.Node, bool) {
 func (b *conditionNormalizer) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
+
+func normalizeCondition(node ast.Node) {
+
+}

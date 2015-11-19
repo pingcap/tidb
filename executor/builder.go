@@ -72,6 +72,18 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		fields: v.Fields(),
 		ctx:    b.ctx,
 	}
+	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
+	for i, val := range v.Ranges {
+		e.Ranges[i] = b.buildIndexRange(val)
+	}
+	return e
+}
+
+func (b *executorBuilder) buildIndexRange(v *plan.IndexRange) *IndexRangeExec {
+	// TODO implement
+	e := &IndexRangeExec{
+
+	}
 	return e
 }
 
@@ -88,7 +100,7 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 }
 
 func (b *executorBuilder) buildFilter(v *plan.Filter) Executor {
-	src := b.build(v.Src)
+	src := b.build(v.Src())
 	e := &FilterExec{
 		Src:       src,
 		Condition: b.joinConditions(v.Conditions),
@@ -98,7 +110,7 @@ func (b *executorBuilder) buildFilter(v *plan.Filter) Executor {
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
-	src := b.build(v.Src)
+	src := b.build(v.Src())
 	if autocommit.ShouldAutocommit(b.ctx) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
@@ -115,7 +127,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 }
 
 func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
-	src := b.build(v.Src)
+	src := b.build(v.Src())
 	e := &SelectFieldsExec{
 		Src:          src,
 		ResultFields: v.Fields(),
@@ -125,7 +137,7 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
-	src := b.build(v.Src)
+	src := b.build(v.Src())
 	e := &SortExec{
 		Src:     src,
 		ByItems: v.ByItems,
@@ -135,7 +147,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	src := b.build(v.Src)
+	src := b.build(v.Src())
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,

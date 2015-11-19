@@ -15,6 +15,12 @@ package optimizer
 
 import "github.com/pingcap/tidb/ast"
 
+func computeType(node ast.Node) error {
+	var computer typeComputer
+	node.Accept(&computer)
+	return computer.err
+}
+
 // typeComputer is an ast Visitor that
 // computes result type for ast.ExprNode.
 type typeComputer struct {

@@ -20,6 +20,12 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
+func bindInfo(node ast.Node, info infoschema.InfoSchema, defaultSchema model.CIStr) error {
+	binder := InfoBinder{Info: info, DefaultSchema: defaultSchema}
+	node.Accept(&binder)
+	return binder.Err
+}
+
 // InfoBinder binds schema information for table name and column name.
 // It generates ResultFields for ResetSetNode and resolve ColumnNameExpr to a ResultField.
 //

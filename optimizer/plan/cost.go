@@ -22,16 +22,16 @@ const (
 )
 
 // CostEstimator estimates the cost of a plan.
-type CostEstimator struct {
+type costEstimator struct {
 }
 
 // Enter implements Visitor Enter interface.
-func (c *CostEstimator) Enter(p Plan) (Plan, bool) {
+func (c *costEstimator) Enter(p Plan) (Plan, bool) {
 	return p, false
 }
 
 // Leave implements Visitor Leave interface.
-func (c *CostEstimator) Leave(p Plan) (Plan, bool) {
+func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	switch v := p.(type) {
 	case *IndexScan:
 		c.indexScan(v)
@@ -39,6 +39,10 @@ func (c *CostEstimator) Leave(p Plan) (Plan, bool) {
 	return p, true
 }
 
-func (c *CostEstimator) indexScan(v *IndexScan) {
+func (c *costEstimator) indexScan(v *IndexScan) {
 
+}
+
+func EstimateCost(p Plan) float64 {
+	return 0
 }

@@ -14,13 +14,15 @@
 package optimizer
 
 import (
-	"strings"
-
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 )
+
+func buildPlan(node ast.Node) plan.Plan {
+	var builder planBuilder
+	return builder.build(node)
+}
 
 // planBuilder builds Plan from an ast.Node.
 // It just build the ast node straightforwardly.
@@ -66,10 +68,6 @@ func (b *planBuilder) buildJoin(from *ast.Join) plan.Plan {
 	if !ok {
 		panic("not supported")
 	}
-	if strings.EqualFold(tn.Name.L, infoschema.Name) {
-
-	}
-
 	p := &plan.TableScan{
 		Table: tn.TableInfo,
 	}
@@ -96,45 +94,44 @@ func (b *planBuilder) splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *planBuilder) buildFilter(src plan.Plan, where ast.ExprNode) *plan.Filter {
 	filter := &plan.Filter{
-		Src:        src,
 		Conditions: b.splitWhere(where),
 	}
+	filter.SetSrc(src)
 	filter.SetFields(src.Fields())
 	return filter
 }
 
 func (b *planBuilder) buildSelectLock(src plan.Plan, lock ast.SelectLockType) *plan.SelectLock {
 	selectLock := &plan.SelectLock{
-		Src:  src,
 		Lock: lock,
 	}
+	selectLock.SetSrc(src)
 	selectLock.SetFields(src.Fields())
 	return selectLock
 }
 
 func (b *planBuilder) buildSelectFields(src plan.Plan, fields []*ast.ResultField) plan.Plan {
-	selectFields := &plan.SelectFields{
-		Src: src,
-	}
+	selectFields := &plan.SelectFields{}
+	selectFields.SetSrc(src)
 	selectFields.SetFields(fields)
 	return selectFields
 }
 
 func (b *planBuilder) buildSort(src plan.Plan, byItems []*ast.ByItem) plan.Plan {
 	sort := &plan.Sort{
-		Src:     src,
 		ByItems: byItems,
 	}
+	sort.SetSrc(src)
 	sort.SetFields(src.Fields())
 	return sort
 }
 
 func (b *planBuilder) buildLimit(src plan.Plan, limit *ast.Limit) plan.Plan {
 	li := &plan.Limit{
-		Src:    src,
 		Offset: limit.Offset,
 		Count:  limit.Count,
 	}
+	li.SetSrc(src)
 	li.SetFields(src.Fields())
 	return li
 }

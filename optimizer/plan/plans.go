@@ -34,37 +34,28 @@ func (p *TableScan) Accept(v Visitor) (Plan, bool) {
 
 type bound int
 
+// Bound values.
 const (
-	minNotNullVal bound = 0
-	maxVal        bound = 1
+	MinNotNullVal bound = 0
+	MaxVal        bound = 1
 )
 
 // String implements fmt.Stringer interface.
 func (b bound) String() string {
-	if b == minNotNullVal {
+	if b == MinNotNullVal {
 		return "-inf"
-	} else if b == maxVal {
+	} else if b == MaxVal {
 		return "+inf"
 	}
 	return ""
 }
 
-// IndexRange represents an index range scan plan.
+// IndexRange represents an index range to be scanned.
 type IndexRange struct {
-	basePlan
-	// seekVal is different from lowVal, it is casted from lowVal and
-	// must be less than or equal to lowVal, used to seek the index.
-	SeekVal     interface{}
-	LowVal      interface{}
+	LowVal      []interface{}
 	LowExclude  bool
-	HighVal     interface{}
+	HighVal     []interface{}
 	HighExclude bool
-}
-
-// Accept implements Plan Accept interface.
-func (p *IndexRange) Accept(v Visitor) (Plan, bool) {
-	np, _ := v.Enter(p)
-	return v.Leave(np)
 }
 
 // IndexScan represents an index scan plan.
@@ -79,6 +70,9 @@ type IndexScan struct {
 
 	// Ordered and non-overlapping ranges to be scanned.
 	Ranges []*IndexRange
+
+	// Desc indicates whether the index should be scanned in descending order.
+	Desc   bool
 }
 
 // Accept implements Plan Accept interface.
@@ -89,9 +83,8 @@ func (p *IndexScan) Accept(v Visitor) (Plan, bool) {
 
 // Filter represents a filter plan.
 type Filter struct {
-	basePlan
+	planWithSrc
 
-	Src Plan
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
@@ -106,7 +99,7 @@ func (p *Filter) Accept(v Visitor) (Plan, bool) {
 	}
 	p = np.(*Filter)
 	var ok bool
-	p.Src, ok = p.Src.Accept(v)
+	p.src, ok = p.src.Accept(v)
 	if !ok {
 		return p, false
 	}
@@ -116,14 +109,16 @@ func (p *Filter) Accept(v Visitor) (Plan, bool) {
 // SetLimit implements Plan SetLimit interface.
 func (p *Filter) SetLimit(limit float64) {
 	p.limit = limit
-	p.Src.SetLimit(limit)
+	if len(p.Conditions) == 0 {
+		// We assume 50% of the src row is filtered out.
+		p.src.SetLimit(limit*2)
+	}
 }
 
 // SelectLock represents a select lock plan.
 type SelectLock struct {
-	basePlan
+	planWithSrc
 
-	Src  Plan
 	Lock ast.SelectLockType
 }
 
@@ -135,7 +130,7 @@ func (p *SelectLock) Accept(v Visitor) (Plan, bool) {
 	}
 	p = np.(*SelectLock)
 	var ok bool
-	p.Src, ok = p.Src.Accept(v)
+	p.src, ok = p.src.Accept(v)
 	if !ok {
 		return p, false
 	}
@@ -145,14 +140,12 @@ func (p *SelectLock) Accept(v Visitor) (Plan, bool) {
 // SetLimit implements Plan SetLimit interface.
 func (p *SelectLock) SetLimit(limit float64) {
 	p.limit = limit
-	p.Src.SetLimit(p.limit)
+	p.src.SetLimit(p.limit)
 }
 
 // SelectFields represents a select fields plan.
 type SelectFields struct {
-	basePlan
-
-	Src Plan
+	planWithSrc
 }
 
 // Accept implements Plan Accept interface.
@@ -162,9 +155,9 @@ func (p *SelectFields) Accept(v Visitor) (Plan, bool) {
 		v.Leave(np)
 	}
 	p = np.(*SelectFields)
-	if p.Src != nil {
+	if p.src != nil {
 		var ok bool
-		p.Src, ok = p.Src.Accept(v)
+		p.src, ok = p.src.Accept(v)
 		if !ok {
 			return p, false
 		}
@@ -175,16 +168,15 @@ func (p *SelectFields) Accept(v Visitor) (Plan, bool) {
 // SetLimit implements Plan SetLimit interface.
 func (p *SelectFields) SetLimit(limit float64) {
 	p.limit = limit
-	if p.Src != nil {
-		p.Src.SetLimit(limit)
+	if p.src != nil {
+		p.src.SetLimit(limit)
 	}
 }
 
 // Sort represents a sorting plan.
 type Sort struct {
-	basePlan
+	planWithSrc
 
-	Src     Plan
 	ByItems []*ast.ByItem
 	// If the source is already in the same order, the sort process can be by passed.
 	// It depends on the Src plan, so if the Src plan has been modified, Bypass needs
@@ -200,7 +192,7 @@ func (p *Sort) Accept(v Visitor) (Plan, bool) {
 	}
 	p = np.(*Sort)
 	var ok bool
-	p.Src, ok = p.Src.Accept(v)
+	p.src, ok = p.src.Accept(v)
 	if !ok {
 		return p, false
 	}
@@ -213,15 +205,14 @@ func (p *Sort) Accept(v Visitor) (Plan, bool) {
 func (p *Sort) SetLimit(limit float64) {
 	p.limit = limit
 	if p.Bypass {
-		p.Src.SetLimit(limit)
+		p.src.SetLimit(limit)
 	}
 }
 
 // Limit represents offset and limit plan.
 type Limit struct {
-	basePlan
+	planWithSrc
 
-	Src    Plan
 	Offset uint64
 	Count  uint64
 }
@@ -234,7 +225,7 @@ func (p *Limit) Accept(v Visitor) (Plan, bool) {
 	}
 	p = np.(*Limit)
 	var ok bool
-	p.Src, ok = p.Src.Accept(v)
+	p.src, ok = p.src.Accept(v)
 	if !ok {
 		return p, false
 	}
@@ -246,5 +237,5 @@ func (p *Limit) Accept(v Visitor) (Plan, bool) {
 // We just ignore the input, and set the real limit.
 func (p *Limit) SetLimit(limit float64) {
 	p.limit = float64(p.Offset + p.Count)
-	p.Src.SetLimit(p.limit)
+	p.src.SetLimit(p.limit)
 }
