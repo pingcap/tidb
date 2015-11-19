@@ -60,16 +60,17 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 		log.Fatalf("table %s can't be in none state", tblInfo.Name)
 	}
 
-	t := NewTable(tblInfo.ID, tblInfo.Name.O, nil, alloc)
-
+	columns := make([]*column.Col, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
 			log.Fatalf("column %s can't be in none state", colInfo.Name)
 		}
 
 		col := &column.Col{ColumnInfo: *colInfo}
-		t.Columns = append(t.Columns, col)
+		columns = append(columns, col)
 	}
+
+	t := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
