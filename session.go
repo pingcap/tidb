@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,6 +73,15 @@ var (
 	_         Session = (*session)(nil)
 	sessionID int64
 	sessionMu sync.Mutex
+)
+
+var (
+	// RetryLimit is the max number of attempts trying to commit a transaction
+	RetryLimit = 100
+	// BackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
+	BackOffBase = 1
+	// BackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
+	BackOffCap = 100
 )
 
 type stmtRecord struct {
@@ -200,6 +211,8 @@ func isPreparedStmt(st stmt.Statement) bool {
 	}
 }
 
+// Retry tries tidb.RetryLimit times to commit the transaction
+// and returns the error from the last attempt if it eventually failed.
 func (s *session) Retry() error {
 	nh := s.history.clone()
 	defer func() {
@@ -211,7 +224,7 @@ func (s *session) Retry() error {
 	}
 
 	var err error
-	for {
+	for i := 0; i < RetryLimit; i++ {
 		s.resetHistory()
 		s.FinishTxn(true)
 		success := true
@@ -235,12 +248,20 @@ func (s *session) Retry() error {
 		if success {
 			err = s.FinishTxn(false)
 			if err == nil {
-				break
+				return nil
 			}
 		}
-	}
+		expoBackOffFullJitter(i)
 
-	return nil
+	}
+	return err
+}
+
+// Implements exponential backoff with full jitter
+func expoBackOffFullJitter(attempts int) {
+	upper := int(math.Min(float64(BackOffCap), float64(BackOffBase)*math.Pow(2.0, float64(attempts))))
+	sleep := time.Duration(rand.Intn(upper))
+	time.Sleep(time.Microsecond * sleep)
 }
 
 // ExecRestrictedSQL implements SQLHelper interface.
