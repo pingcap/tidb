@@ -206,22 +206,26 @@ type reorgInfo struct {
 	*model.Job
 	Handle int64
 	d      *ddl
+	first  bool
 }
 
 func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 	var err error
 
 	info := &reorgInfo{
-		Job: job,
-		d:   d,
+		Job:   job,
+		d:     d,
+		first: job.SnapshotVer == 0,
 	}
 
-	if job.SnapshotVer == 0 {
+	if info.first {
 		// get the current version for reorganization if we don't have
 		var ver kv.Version
 		ver, err = d.store.CurrentVersion()
 		if err != nil {
 			return nil, errors.Trace(err)
+		} else if ver.Ver <= 0 {
+			return nil, errors.Errorf("invalid storage current version %d", ver.Ver)
 		}
 
 		job.SnapshotVer = ver.Ver

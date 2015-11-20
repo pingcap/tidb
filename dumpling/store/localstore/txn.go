@@ -40,6 +40,7 @@ type dbTxn struct {
 	valid        bool
 	version      kv.Version          // commit version
 	snapshotVals map[string]struct{} // origin version in snapshot
+	opts         map[kv.Option]interface{}
 }
 
 func (txn *dbTxn) markOrigin(k []byte) {
@@ -277,4 +278,19 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 		txn.markOrigin(key)
 	}
 	return nil
+}
+
+func (txn *dbTxn) SetOption(opt kv.Option, val interface{}) {
+	txn.opts[opt] = val
+}
+
+func (txn *dbTxn) DelOption(opt kv.Option) {
+	delete(txn.opts, opt)
+}
+
+type options map[kv.Option]interface{}
+
+func (opts options) Get(opt kv.Option) (interface{}, bool) {
+	v, ok := opts[opt]
+	return v, ok
 }

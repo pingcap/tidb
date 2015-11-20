@@ -48,7 +48,7 @@ func main() {
 		log.Fatalf("invalid lease seconds %d", *lease)
 	}
 
-	tidb.SetSchemaLease(*lease)
+	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
 
 	cfg := &server.Config{
 		Addr:     fmt.Sprintf(":%s", *port),
