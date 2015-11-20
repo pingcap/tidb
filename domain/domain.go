@@ -43,21 +43,18 @@ type Domain struct {
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
-	log.Infof("loadInfoSchema start")
 	m := meta.NewMeta(txn)
 	schemaMetaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Infof("loadInfoSchema get")
 	info := do.infoHandle.Get()
 	if info != nil && schemaMetaVersion > 0 && schemaMetaVersion == info.SchemaMetaVersion() {
 		log.Debugf("schema version is still %d, no need reload", schemaMetaVersion)
 		return nil
 	}
 
-	log.Infof("loadInfoSchema list database")
 	schemas, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
@@ -69,7 +66,6 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 			continue
 		}
 
-		log.Infof("loadInfoSchema list table")
 		tables, err := m.ListTables(di.ID)
 		if err != nil {
 			return errors.Trace(err)
@@ -173,21 +169,17 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer ticker.Stop()
 
 	for {
-		log.Warnf("reload, loop")
 		select {
 		case <-ticker.C:
-			log.Warnf("reload, lease:%v", lease)
 			err := do.reload()
 			// we may close store in test, but the domain load schema loop is still checking,
 			// so we can't panic for ErrDBClosed and just return here.
 			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
-				log.Warnf("reload, lease:%v, err:%v", lease, err)
 				return
 			} else if err != nil {
 				log.Fatalf("reload schema err %v", err)
 			}
 		case newLease := <-do.leaseCh:
-			log.Warnf("reload, new lease:%v", newLease)
 			if newLease <= 0 {
 				newLease = defaultLoadTime
 			}
