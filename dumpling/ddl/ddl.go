@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
@@ -62,8 +63,10 @@ type DDL interface {
 	SetLease(lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
-	// Stat returns the DDL statistics.
-	Stat() (map[string]interface{}, error)
+	// Stats returns the DDL statistics.
+	Stats() (map[string]interface{}, error)
+	// GetScope gets the status variables scope.
+	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
 	// Start starts DDL worker.
@@ -112,6 +115,8 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	}
 
 	d.start()
+
+	variable.RegisterStatistics(d)
 
 	return d
 }

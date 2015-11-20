@@ -27,9 +27,9 @@ type testStatSuite struct {
 }
 
 func (s *testStatSuite) getSchemaVer(c *C, d *ddl) int64 {
-	m, err := d.Stat()
+	m, err := d.Stats()
 	c.Assert(err, IsNil)
-	v := m["ddl_schema_version"]
+	v := m[ddlSchemaVersion]
 	return v.(int64)
 }
 
@@ -46,9 +46,9 @@ func (s *testStatSuite) TestStat(c *C) {
 
 	dbInfo := testSchemaInfo(c, d, "test")
 
-	m, err := d.Stat()
+	m, err := d.Stats()
 	c.Assert(err, IsNil)
-	c.Assert(m["ddl_owner_id"], Equals, d.uuid)
+	c.Assert(m[ddlOwnerID], Equals, d.uuid)
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
