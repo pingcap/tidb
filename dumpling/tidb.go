@@ -69,13 +69,8 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	}
 
 	lease := time.Duration(0)
-	// if storage is local storage, we may in test environment or
-	// run server in single machine mode, so we don't need wait
-	// 2 * lease time for DDL operation.
-	// if not local storage, first we will use a little lease time to
-	// bootstrap quickly, after bootstrapped, we will reset the lease time.
 	if !localstore.IsLocalStore(store) {
-		lease = 100 * time.Millisecond
+		lease = schemaLease
 	}
 	d, err = domain.NewDomain(store, lease)
 	if err != nil {
