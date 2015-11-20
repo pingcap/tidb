@@ -24,9 +24,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 )
+
+var ddlLastReloadSchemaTS = "ddl_last_reload_schema_ts"
 
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
@@ -40,18 +43,21 @@ type Domain struct {
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
+	log.Infof("loadInfoSchema start")
 	m := meta.NewMeta(txn)
 	schemaMetaVersion, err := m.GetSchemaVersion()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	log.Infof("loadInfoSchema get")
 	info := do.infoHandle.Get()
 	if info != nil && schemaMetaVersion > 0 && schemaMetaVersion == info.SchemaMetaVersion() {
 		log.Debugf("schema version is still %d, no need reload", schemaMetaVersion)
 		return nil
 	}
 
+	log.Infof("loadInfoSchema list database")
 	schemas, err := m.ListDatabases()
 	if err != nil {
 		return errors.Trace(err)
@@ -63,6 +69,7 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 			continue
 		}
 
+		log.Infof("loadInfoSchema list table")
 		tables, err := m.ListTables(di.ID)
 		if err != nil {
 			return errors.Trace(err)
@@ -108,16 +115,18 @@ func (do *Domain) SetLease(lease time.Duration) {
 	do.ddl.SetLease(lease)
 }
 
-// Stat returns the DDL statistic.
-func (do *Domain) Stat() (map[string]interface{}, error) {
-	m, err := do.ddl.Stat()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	m["ddl_last_reload_schema_ts"] = atomic.LoadInt64(&do.lastLeaseTS) / 1e9
+// Stats returns the domain statistic.
+func (do *Domain) Stats() (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	m[ddlLastReloadSchemaTS] = atomic.LoadInt64(&do.lastLeaseTS) / 1e9
 
 	return m, nil
+}
+
+// GetScope gets the status variables scope.
+func (do *Domain) GetScope(status string) variable.ScopeFlag {
+	// Now domain status variables scope are all default scope.
+	return variable.DefaultScopeFlag
 }
 
 func (do *Domain) tryReload() {
@@ -164,17 +173,21 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer ticker.Stop()
 
 	for {
+		log.Warnf("reload, loop")
 		select {
 		case <-ticker.C:
+			log.Warnf("reload, lease:%v", lease)
 			err := do.reload()
 			// we may close store in test, but the domain load schema loop is still checking,
 			// so we can't panic for ErrDBClosed and just return here.
 			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
+				log.Warnf("reload, lease:%v, err:%v", lease, err)
 				return
 			} else if err != nil {
 				log.Fatalf("reload schema err %v", err)
 			}
 		case newLease := <-do.leaseCh:
+			log.Warnf("reload, new lease:%v", newLease)
 			if newLease <= 0 {
 				newLease = defaultLoadTime
 			}
@@ -217,6 +230,8 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d.infoHandle = infoschema.NewHandle(d.store)
 	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
 	d.mustReload()
+
+	variable.RegisterStatistics(d)
 
 	go d.loadSchemaInLoop(lease)
 

@@ -20,12 +20,51 @@ import (
 var _ = Suite(&testStatusVarSuite{})
 
 type testStatusVarSuite struct {
+	ms *mockStatistics
 }
 
-func (*testStatusVarSuite) TestStatusVar(c *C) {
-	f := GetStatusVar("aborted_clients")
-	c.Assert(f, NotNil)
+func (s *testStatusVarSuite) SetUpSuite(c *C) {
+	s.ms = &mockStatistics{}
+	RegisterStatistics(s.ms)
+}
 
-	f = GetStatusVar("wrong-var-name")
-	c.Assert(f, IsNil)
+// mockStatistics represents mocked statistics.
+type mockStatistics struct{}
+
+const (
+	testStatus        = "test_status"
+	testSessionStatus = "test_session_status"
+	testStatusVal     = "test_status_val"
+)
+
+var specificStatusScopes = map[string]ScopeFlag{
+	testSessionStatus: ScopeSession,
+}
+
+func (ms *mockStatistics) GetScope(status string) ScopeFlag {
+	scope, ok := specificStatusScopes[status]
+	if !ok {
+		return DefaultScopeFlag
+	}
+
+	return scope
+}
+
+func (ms *mockStatistics) Stats() (map[string]interface{}, error) {
+	m := make(map[string]interface{}, len(specificStatusScopes))
+	m[testStatus] = testStatusVal
+
+	return m, nil
+}
+
+func (s *testStatusVarSuite) TestStatusVar(c *C) {
+	scope := s.ms.GetScope(testStatus)
+	c.Assert(scope, Equals, DefaultScopeFlag)
+	scope = s.ms.GetScope(testSessionStatus)
+	c.Assert(scope, Equals, ScopeSession)
+
+	vars, err := GetStatusVars()
+	c.Assert(err, IsNil)
+	v := &StatusVal{Scope: DefaultScopeFlag, Value: testStatusVal}
+	c.Assert(v, DeepEquals, vars[testStatus])
 }

@@ -18,9 +18,35 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
-func (d *ddl) Stat() (map[string]interface{}, error) {
+var (
+	ddlServerID          = "ddl_server_id"
+	ddlSchemaVersion     = "ddl_schema_version"
+	ddlOwnerID           = "ddl_owner_id"
+	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
+	ddlJobID             = "ddl_job_id"
+	ddlJobAction         = "ddl_job_action"
+	ddlJobLastUpdateTS   = "ddl_job_last_update_ts"
+	ddlJobState          = "ddl_job_state"
+	ddlJobError          = "ddl_job_error"
+	ddlJobSchemaState    = "ddl_job_schema_state"
+	ddlJobSchemaID       = "ddl_job_schema_id"
+	ddlJobTableID        = "ddl_job_table_id"
+	ddlJobSnapshotVer    = "ddl_job_snapshot_ver"
+	ddlJobReorgHandle    = "ddl_job_reorg_handle"
+	ddlJobArgs           = "ddl_job_args"
+)
+
+// GetScope gets the status variables scope.
+func (d *ddl) GetScope(status string) variable.ScopeFlag {
+	// Now ddl status variables scope are all default scope.
+	return variable.DefaultScopeFlag
+}
+
+// Stat returns the DDL statistics.
+func (d *ddl) Stats() (map[string]interface{}, error) {
 	var (
 		owner       *model.Owner
 		job         *model.Job
@@ -59,28 +85,28 @@ func (d *ddl) Stat() (map[string]interface{}, error) {
 	}
 
 	m := make(map[string]interface{})
-	m["ddl_server_id"] = d.uuid
+	m[ddlServerID] = d.uuid
 
-	m["ddl_schema_version"] = schemaVer
+	m[ddlSchemaVersion] = schemaVer
 
 	if owner != nil {
-		m["ddl_owner_id"] = owner.OwnerID
-		// LastUpdateTs uses nanosecond.
-		m["ddl_owner_last_update_ts"] = owner.LastUpdateTS / 1e9
+		m[ddlOwnerID] = owner.OwnerID
+		// LastUpdateTS uses nanosecond.
+		m[ddlOwnerLastUpdateTS] = owner.LastUpdateTS / 1e9
 	}
 
 	if job != nil {
-		m["ddl_job_id"] = job.ID
-		m["ddl_job_action"] = job.Type.String()
-		m["ddl_job_last_update_ts"] = job.LastUpdateTS / 1e9
-		m["ddl_job_state"] = job.State.String()
-		m["ddl_job_error"] = job.Error
-		m["ddl_job_schema_state"] = job.SchemaState.String()
-		m["ddl_job_schema_id"] = job.SchemaID
-		m["ddl_job_table_id"] = job.TableID
-		m["ddl_job_snapshot_ver"] = job.SnapshotVer
-		m["ddl_job_reorg_handle"] = reorgHandle
-		m["ddl_job_args"] = job.Args
+		m[ddlJobID] = job.ID
+		m[ddlJobAction] = job.Type.String()
+		m[ddlJobLastUpdateTS] = job.LastUpdateTS / 1e9
+		m[ddlJobState] = job.State.String()
+		m[ddlJobError] = job.Error
+		m[ddlJobSchemaState] = job.SchemaState.String()
+		m[ddlJobSchemaID] = job.SchemaID
+		m[ddlJobTableID] = job.TableID
+		m[ddlJobSnapshotVer] = job.SnapshotVer
+		m[ddlJobReorgHandle] = reorgHandle
+		m[ddlJobArgs] = job.Args
 	}
 
 	return m, nil
