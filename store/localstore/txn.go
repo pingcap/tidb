@@ -201,6 +201,11 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 
+	// check lazy condition pairs
+	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
+		return errors.Trace(err)
+	}
+
 	txn.Snapshot.Release()
 
 	// Check locked keys

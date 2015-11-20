@@ -14,6 +14,8 @@
 package kv
 
 import (
+	"bytes"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
 	"github.com/pingcap/tidb/terror"
@@ -37,16 +39,19 @@ func IsErrNotFound(err error) bool {
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type UnionStore struct {
-	WBuffer  MemBuffer // updates are buffered in memory
-	Snapshot Snapshot  // for read
+	WBuffer            MemBuffer // updates are buffered in memory
+	Snapshot           Snapshot  // for read
+	lazyConditionPairs MemBuffer // for delay check
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot, opts Options) UnionStore {
-	buffer := p.Get().(MemBuffer)
+	wbuffer := p.Get().(MemBuffer)
+	lazy := p.Get().(MemBuffer)
 	return UnionStore{
-		WBuffer:  buffer,
-		Snapshot: NewCacheSnapshot(snapshot, opts),
+		WBuffer:            wbuffer,
+		Snapshot:           NewCacheSnapshot(snapshot, lazy, opts),
+		lazyConditionPairs: lazy,
 	}
 }
 
@@ -106,10 +111,39 @@ func (us *UnionStore) Delete(k []byte) error {
 	return us.WBuffer.Set(k, nil)
 }
 
+// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
+func (us *UnionStore) CheckLazyConditionPairs() error {
+	var keys []Key
+	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
+		keys = append(keys, []byte(it.Key()))
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	values, err := us.Snapshot.BatchGet(keys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
+		if len(it.Value()) == 0 {
+			if _, exist := values[it.Key()]; exist {
+				return errors.Trace(ErrKeyExists)
+			}
+		} else {
+			if bytes.Compare(values[it.Key()], it.Value()) != 0 {
+				return errors.Trace(ErrLazyConditionPairsNotMatch)
+			}
+		}
+	}
+	return nil
+}
+
 // Close implements the Store Close interface.
 func (us *UnionStore) Close() error {
 	us.Snapshot.Release()
 	us.WBuffer.Release()
 	p.Put(us.WBuffer)
+	us.lazyConditionPairs.Release()
+	p.Put(us.lazyConditionPairs)
 	return nil
 }

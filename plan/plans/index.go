@@ -384,7 +384,16 @@ func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 			continue
 		}
 		var row *plan.Row
+
+		txn, err := ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Because we're in a range query, we can prefetch next few lines
+		// in one RPC call fill the cache, for reducing RPC calls.
+		txn.SetOption(kv.RangePrefetchOnCacheMiss, nil)
 		row, err = r.lookupRow(ctx, h)
+		txn.DelOption(kv.RangePrefetchOnCacheMiss)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
