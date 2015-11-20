@@ -138,20 +138,26 @@ func (do *Domain) tryReload() {
 	}
 }
 
-func (do *Domain) reload() error {
+func (do *Domain) reload(retCh chan error) error {
 	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
 	if err != nil {
+		if retCh != nil {
+			retCh <- errors.Trace(err)
+		}
 		return errors.Trace(err)
 	}
 
 	atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
+	if retCh != nil {
+		retCh <- nil
+	}
 	return nil
 }
 
 func (do *Domain) mustReload() {
 	// if reload error, we will terminate whole program to guarantee data safe.
 	// TODO: retry some times if reload error.
-	err := do.reload()
+	err := do.reload(nil)
 	if err != nil {
 		log.Fatalf("reload schema err %v", err)
 	}
@@ -168,16 +174,24 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
+	reloadTimeout := lease / 4
+	reloadErrCh := make(chan error, 1)
+
 	for {
 		select {
 		case <-ticker.C:
-			err := do.reload()
-			// we may close store in test, but the domain load schema loop is still checking,
-			// so we can't panic for ErrDBClosed and just return here.
-			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
-				return
-			} else if err != nil {
-				log.Fatalf("reload schema err %v", err)
+			go do.reload(reloadErrCh)
+			select {
+			case err := <-reloadErrCh:
+				// we may close store in test, but the domain load schema loop is still checking,
+				// so we can't panic for ErrDBClosed and just return here.
+				if terror.ErrorEqual(err, localstore.ErrDBClosed) {
+					return
+				} else if err != nil {
+					log.Fatalf("reload schema err %v", err)
+				}
+			case <-time.After(reloadTimeout):
+				log.Fatalf("reload schema timeout:%d", reloadTimeout)
 			}
 		case newLease := <-do.leaseCh:
 			if newLease <= 0 {
@@ -190,6 +204,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 
 			lease = newLease
+			reloadTimeout = lease / 4
 			// reset ticker too.
 			ticker.Stop()
 			ticker = time.NewTicker(lease)
