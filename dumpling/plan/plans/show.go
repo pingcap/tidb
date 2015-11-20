@@ -497,16 +497,14 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 			continue
 		}
 
-		var value string
-		if !s.GlobalScope || (s.GlobalScope && v.Scope != variable.ScopeSession) {
-			value, err = types.ToString(v.Value)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
+		if s.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
 		}
 
+		value, err := types.ToString(v.Value)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		row := &plan.Row{Data: []interface{}{status, value}}
 		s.rows = append(s.rows, row)
 	}
