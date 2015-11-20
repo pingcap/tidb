@@ -96,6 +96,23 @@ type EncodeFn func(raw interface{}) (interface{}, error)
 // transaction is not committed.
 var ErrNotCommitted = errors.New("this transaction is not committed")
 
+// Option is used for customizing kv store's behaviors during a transaction.
+type Option int
+
+// Options is an interface of a set of options. Each option is associated with a value.
+type Options interface {
+	// Get gets an option value.
+	Get(opt Option) (v interface{}, ok bool)
+}
+
+const (
+	// RangePrefetchOnCacheMiss directives that when dealing with a Get operation and failed to read data from cache,
+	// it will launch a RangePrefetch to underlying storage instead of Get. The range starts from requested key and
+	// has a limit of the option value. The feature is disabled if option value <= 0 or value type is not int.
+	// This option is particularly useful when we have to do sequential Gets, e.g. table scans.
+	RangePrefetchOnCacheMiss Option = iota + 1
+)
+
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
@@ -127,6 +144,10 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
+	// SetOption sets an option with a value.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
 }
 
 // MvccSnapshot is used to get/seek a specific version in a snapshot.

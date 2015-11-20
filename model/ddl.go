@@ -113,6 +113,17 @@ func (job *Job) String() string {
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, job.RawArgs)
 }
 
+// IsFinished returns whether job is finished or not.
+// If the job state is Done or Cancelled, it is finished.
+func (job *Job) IsFinished() bool {
+	return job.State == JobDone || job.State == JobCancelled
+}
+
+// IsRunning returns whether job is still running or not.
+func (job *Job) IsRunning() bool {
+	return job.State == JobRunning
+}
+
 // JobState is for job state.
 type JobState byte
 

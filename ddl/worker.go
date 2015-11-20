@@ -195,7 +195,7 @@ func (d *ddl) handleJobQueue() error {
 				return errors.Trace(err)
 			}
 
-			if job.State == model.JobRunning {
+			if job.IsRunning() {
 				// if we enter a new state, crash when waiting 2 * lease time, and restart quickly,
 				// we may run the job immediately again, but we don't wait enough 2 * lease time to
 				// let other servers update the schema.
@@ -217,11 +217,8 @@ func (d *ddl) handleJobQueue() error {
 			// and retry later if the job is not cancelled.
 			d.runJob(t, job)
 
-			if job.State == model.JobDone || job.State == model.JobCancelled {
+			if job.IsFinished() {
 				err = d.finishJob(t, job)
-				if err == nil {
-					asyncNotify(d.jobDoneCh)
-				}
 			} else {
 				err = d.updateJob(t, job)
 			}
@@ -253,6 +250,10 @@ func (d *ddl) handleJobQueue() error {
 		// the newest schema.
 		if job.State == model.JobRunning || job.State == model.JobDone {
 			d.waitSchemaChanged(waitTime)
+		}
+
+		if job.IsFinished() {
+			asyncNotify(d.jobDoneCh)
 		}
 	}
 }
@@ -294,7 +295,7 @@ func (d *ddl) onWorker() {
 }
 
 func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
-	if job.State == model.JobDone || job.State == model.JobCancelled {
+	if job.IsFinished() {
 		return
 	}
 

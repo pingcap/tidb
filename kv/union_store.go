@@ -42,11 +42,11 @@ type UnionStore struct {
 }
 
 // NewUnionStore builds a new UnionStore.
-func NewUnionStore(snapshot Snapshot) UnionStore {
+func NewUnionStore(snapshot Snapshot, opts Options) UnionStore {
 	buffer := p.Get().(MemBuffer)
 	return UnionStore{
 		WBuffer:  buffer,
-		Snapshot: NewCacheSnapshot(snapshot),
+		Snapshot: NewCacheSnapshot(snapshot, opts),
 	}
 }
 

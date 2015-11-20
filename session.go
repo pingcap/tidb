@@ -379,6 +379,7 @@ func (s *session) isAutocommit(ctx context.Context) bool {
 			log.Errorf("Get global sys var error: %v", err)
 			return false
 		}
+		variable.GetSessionVars(ctx).Systems["autocommit"] = autocommit
 		ok = true
 	}
 	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
@@ -641,7 +642,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	// if store is not local store, we will reset lease time after bootstrap
 	if !localstore.IsLocalStore(store) {
-		sessionctx.GetDomain(s).SetLease(time.Duration(schemaLease) * time.Second)
+		sessionctx.GetDomain(s).SetLease(schemaLease)
 	}
 
 	// TODO: Add auth here
