@@ -103,4 +103,47 @@ func (*testSuite) TestJobCodec(c *C) {
 	c.Assert(a, DeepEquals, A{Name: "abc"})
 
 	c.Assert(len(newJob.String()), Greater, 0)
+
+	job.State = JobDone
+	c.Assert(job.IsFinished(), IsTrue)
+	c.Assert(job.IsRunning(), IsFalse)
+}
+
+func (testSuite) TestState(c *C) {
+	schemaTbl := []SchemaState{
+		StateDeleteOnly,
+		StateWriteOnly,
+		StateWriteReorganization,
+		StateDeleteReorganization,
+		StatePublic,
+	}
+
+	for _, state := range schemaTbl {
+		c.Assert(len(state.String()), Greater, 0)
+	}
+
+	jobTbl := []JobState{
+		JobRunning,
+		JobDone,
+		JobCancelled,
+	}
+
+	for _, state := range jobTbl {
+		c.Assert(len(state.String()), Greater, 0)
+	}
+
+	actionTbl := []ActionType{
+		ActionCreateSchema,
+		ActionDropSchema,
+		ActionCreateTable,
+		ActionDropTable,
+		ActionAddColumn,
+		ActionDropColumn,
+		ActionAddIndex,
+		ActionDropIndex,
+	}
+
+	for _, action := range actionTbl {
+		c.Assert(len(action.String()), Greater, 0)
+	}
 }
