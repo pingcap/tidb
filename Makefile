@@ -1,10 +1,37 @@
-# tidb build rules.
-ARCH="`uname -s`"
+### Makefile for tidb
 
-LINUX="Linux"
-MAC="Darwin"
+# Ensure GOPATH is set before running build process.
+ifeq "$(GOPATH)" ""
+  $(error Please set the environment variable GOPATH before running `make`)
+endif
 
-GO=godep go
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
+export PATH := $(path_to_add):$(PATH)
+
+# Check the version of make and set env varirables/commands accordingly.
+version_list := $(subst ., ,$(MAKE_VERSION))
+major_version := $(firstword $(version_list))
+old_versions := 0 1 2 3
+ifeq "$(major_version)" "$(filter $(major_version),$(old_versions))"
+  # Old version of `make` installed. It fails to search golex/goyacc
+  # by using the modified `PATH`, so we specify these commands with full path.
+  GODEP   = $$(which godep)
+  GOLEX   = $$(which golex)
+  GOYACC  = $$(which goyacc)
+  GOLINT  = $$(which golint)
+else
+  # After version 4, `make` could follow modified `PATH` to find
+  # golex/goyacc correctly.
+  GODEP   := godep
+  GOLEX   := golex
+  GOYACC  := goyacc
+  GOLINT  := golint
+endif
+
+GO        := $(GODEP) go
+ARCH      := "`uname -s`"
+LINUX     := "Linux"
+MAC       := "Darwin"
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
@@ -32,9 +59,9 @@ TEMP_FILE = temp_parser_file
 parser:
 	go get github.com/qiuyesuifeng/goyacc
 	go get github.com/qiuyesuifeng/golex
-	goyacc -o /dev/null -xegen $(TEMP_FILE) parser/parser.y; \
-	goyacc -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}';
-	rm -f $(TEMP_FILE); \
+	$(GOYACC) -o /dev/null -xegen $(TEMP_FILE) parser/parser.y
+	$(GOYACC) -o parser/parser.go -xe $(TEMP_FILE) parser/parser.y 2>&1 | egrep "(shift|reduce)/reduce" | awk '{print} END {if (NR > 0) {print "Find conflict in parser.y. Please check y.output for more information."; system("rm -f $(TEMP_FILE)"); exit 1;}}'
+	rm -f $(TEMP_FILE)
 	rm -f y.output
 
 	@if [ $(ARCH) = $(LINUX) ]; \
@@ -46,7 +73,7 @@ parser:
 		/usr/bin/sed -i "" 's/yyEofCode/yyEOFCode/' parser/parser.go; \
 	fi
 
-	golex -o parser/scanner.go parser/scanner.l
+	$(GOLEX) -o parser/scanner.go parser/scanner.l
 
 check:
 	go get github.com/golang/lint/golint
@@ -56,7 +83,7 @@ check:
 	@echo "vet --shadow"
 	@ go tool vet --shadow . 2>&1 | grep -vE 'Godeps' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ golint ./... 2>&1 | grep -vE 'LastInsertId|NewLexer' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ $(GOLINT) ./... 2>&1 | grep -vE 'LastInsertId|NewLexer' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 
@@ -78,7 +105,7 @@ todo:
 	@grep -n BUG */*.go parser/scanner.l parser/parser.y || true
 	@grep -n println */*.go parser/scanner.l parser/parser.y || true
 
-test: gotest 
+test: gotest
 
 gotest:
 	$(GO) test -cover ./...
