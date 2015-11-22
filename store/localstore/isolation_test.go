@@ -1,7 +1,6 @@
 package localstore_test
 
 import (
-	"log"
 	"sync"
 
 	. "github.com/pingcap/check"
@@ -43,10 +42,7 @@ func (t *testIsolationSuite) TestInc(c *C) {
 
 				m.Lock()
 				_, ok := ids[id]
-				if ok {
-					log.Fatal("")
-				}
-				//c.Assert(ok, IsFalse)
+				c.Assert(ok, IsFalse)
 				ids[id] = struct{}{}
 				m.Unlock()
 			}
