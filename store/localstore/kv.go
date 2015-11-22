@@ -152,11 +152,10 @@ func (s *dbStore) CurrentVersion() (kv.Version, error) {
 func (s *dbStore) Begin() (kv.Transaction, error) {
 	lockVersionProvider()
 	beginVer, err := globalVersionProvider.CurrentVersion()
+	unlockVersionProvider()
 	if err != nil {
-		unlockVersionProvider()
 		return nil, errors.Trace(err)
 	}
-	unlockVersionProvider()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

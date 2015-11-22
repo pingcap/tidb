@@ -494,7 +494,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 		}()
 	}
 	wg.Wait()
-	c.Assert(success, Greater, int64(1))
+	c.Assert(success, Greater, int64(0))
 
 	// Clean up
 	txn, err = s.s.Begin()

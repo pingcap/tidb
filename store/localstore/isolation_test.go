@@ -15,11 +15,8 @@ type testIsolationSuite struct {
 }
 
 func (t *testIsolationSuite) TestInc(c *C) {
-	store, err := tidb.NewStore("memory://test_ddl/test_ddl")
+	store, err := tidb.NewStore("memory://test/test_isolation")
 	defer store.Close()
-
-	s, err := tidb.CreateSession(store)
-	s.Execute("use test_ddl")
 
 	threadCnt := 4
 
@@ -42,9 +39,9 @@ func (t *testIsolationSuite) TestInc(c *C) {
 
 				m.Lock()
 				_, ok := ids[id]
-				c.Assert(ok, IsFalse)
 				ids[id] = struct{}{}
 				m.Unlock()
+				c.Assert(ok, IsFalse)
 			}
 		}()
 	}
