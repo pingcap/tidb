@@ -217,7 +217,10 @@ func (txn *dbTxn) doCommit() error {
 		keysLocked = append(keysLocked, k)
 	}
 
-	// Check dirty store
+	// disable version provider temporarily
+	lockVersionProvider()
+	defer unlockVersionProvider()
+
 	curVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		return errors.Trace(err)
