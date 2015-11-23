@@ -46,13 +46,51 @@ type UnionStore struct {
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot, opts Options) UnionStore {
-	wbuffer := p.Get().(MemBuffer)
-	lazy := p.Get().(MemBuffer)
+	lazy := &lazyMemBuffer{}
 	return UnionStore{
-		WBuffer:            wbuffer,
+		WBuffer:            &lazyMemBuffer{},
 		Snapshot:           NewCacheSnapshot(snapshot, lazy, opts),
 		lazyConditionPairs: lazy,
 	}
+}
+
+type lazyMemBuffer struct {
+	mb MemBuffer
+}
+
+func (lw *lazyMemBuffer) Get(k Key) ([]byte, error) {
+	if lw.mb == nil {
+		return nil, ErrNotExist
+	}
+
+	return lw.mb.Get(k)
+}
+
+func (lw *lazyMemBuffer) Set(key []byte, value []byte) error {
+	if lw.mb == nil {
+		lw.mb = p.Get().(MemBuffer)
+	}
+
+	return lw.mb.Set(key, value)
+}
+
+func (lw *lazyMemBuffer) NewIterator(param interface{}) Iterator {
+	if lw.mb == nil {
+		lw.mb = p.Get().(MemBuffer)
+	}
+
+	return lw.mb.NewIterator(param)
+}
+
+func (lw *lazyMemBuffer) Release() {
+	if lw.mb == nil {
+		return
+	}
+
+	lw.mb.Release()
+
+	p.Put(lw.mb)
+	lw.mb = nil
 }
 
 // Get implements the Store Get interface.
@@ -142,8 +180,6 @@ func (us *UnionStore) CheckLazyConditionPairs() error {
 func (us *UnionStore) Close() error {
 	us.Snapshot.Release()
 	us.WBuffer.Release()
-	p.Put(us.WBuffer)
 	us.lazyConditionPairs.Release()
-	p.Put(us.lazyConditionPairs)
 	return nil
 }
