@@ -14,8 +14,9 @@ package check_test
 
 import (
 	"fmt"
-	"github.com/pingcap/check"
 	"strings"
+
+	"github.com/pingcap/check"
 )
 
 type BootstrapS struct{}

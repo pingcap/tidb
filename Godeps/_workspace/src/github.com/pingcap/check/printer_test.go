@@ -42,12 +42,6 @@ func printTestFunc() {
     _ = func() { println(21)
         println(22)
     }
-    println(24, func() {
-        println(25)
-    })
-    // Leading comment
-    // with multiple lines.
-    println(29)  // Comment29
 }
 
 var printLineTests = []struct {
@@ -70,10 +64,6 @@ var printLineTests = []struct {
     {20, "println(19,\n    20)"},
     {21, "_ = func() {\n    println(21)\n    println(22)\n}"},
     {22, "println(22)"},
-    {24, "println(24, func() {\n    println(25)\n})"},
-    {25, "println(25)"},
-    {26, "println(24, func() {\n    println(25)\n})"},
-    {29, "// Leading comment\n// with multiple lines.\nprintln(29) // Comment29"},
 }
 
 func (s *PrinterS) TestPrintLine(c *C) {
