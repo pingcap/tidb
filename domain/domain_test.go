@@ -63,3 +63,12 @@ func (*testSuite) TestT(c *C) {
 	store.Close()
 	time.Sleep(1 * time.Second)
 }
+
+func (*testSuite) TestGetReloadTimeout(c *C) {
+	timeout := getReloadTimeout(241 * time.Second)
+	c.Assert(timeout, Equals, maxReloadTimeout)
+	timeout = getReloadTimeout(76 * time.Second)
+	c.Assert(timeout, Equals, minReloadTimeout)
+	timeout = getReloadTimeout(120 * time.Second)
+	c.Assert(timeout, Equals, 30*time.Second)
+}
