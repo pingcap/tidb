@@ -28,7 +28,7 @@ var (
 )
 
 var (
-	bucketName = []byte("tidb_bucket")
+	bucketName = []byte("tidb")
 )
 
 type db struct {
@@ -46,7 +46,6 @@ func (d *db) Get(key []byte) ([]byte, error) {
 		}
 
 		value = append([]byte(nil), v...)
-
 		return nil
 	})
 
