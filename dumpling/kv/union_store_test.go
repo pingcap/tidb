@@ -13,18 +13,23 @@
 
 package kv
 
-import . "github.com/pingcap/check"
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/terror"
+)
 
 var _ = Suite(&testUnionStoreSuite{})
 
 type testUnionStoreSuite struct {
 	store MemBuffer
 	us    UnionStore
+	opts  map[Option]interface{}
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
 	s.store = NewMemDbBuffer()
-	s.us = NewUnionStore(&mockSnapshot{s.store}, &mockOptions{})
+	s.opts = make(map[Option]interface{})
+	s.us = NewUnionStore(&mockSnapshot{s.store}, mockOptions(s.opts))
 }
 
 func (s *testUnionStoreSuite) TearDownTest(c *C) {
@@ -77,6 +82,22 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 	iter, err = s.us.Seek([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
+}
+
+func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
+	s.store.Set([]byte("1"), []byte("1"))
+	s.store.Set([]byte("2"), []byte("2"))
+
+	v, err := s.us.Get([]byte("1"))
+	c.Assert(err, IsNil)
+	c.Assert(v, BytesEquals, []byte("1"))
+
+	s.opts[PresumeKeyNotExists] = 1
+	_, err = s.us.Get([]byte("2"))
+	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue)
+
+	err = s.us.CheckLazyConditionPairs()
+	c.Assert(err, NotNil)
 }
 
 func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {

@@ -33,6 +33,20 @@ var (
 	ErrCannotSetNilValue = errors.New("can not set nil value")
 )
 
+var (
+	// default values for txn.SetOption
+	optionDefaultVals = map[kv.Option]interface{}{
+		kv.RangePrefetchOnCacheMiss: 1024,
+	}
+)
+
+func getOptionDefaultVal(opt kv.Option) interface{} {
+	if v, ok := optionDefaultVals[opt]; ok {
+		return v
+	}
+	return nil
+}
+
 // dbTxn is not thread safe
 type hbaseTxn struct {
 	kv.UnionStore
@@ -182,6 +196,10 @@ func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
 }
 
 func (txn *hbaseTxn) doCommit() error {
+	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
+		return errors.Trace(err)
+	}
+
 	err := txn.each(func(iter kv.Iterator) error {
 		var row, val []byte
 		row = make([]byte, len(iter.Key()))
@@ -264,7 +282,11 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 }
 
 func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
-	txn.opts[opt] = val
+	if val == nil {
+		txn.opts[opt] = getOptionDefaultVal(opt)
+	} else {
+		txn.opts[opt] = val
+	}
 }
 
 func (txn *hbaseTxn) DelOption(opt kv.Option) {

@@ -50,7 +50,9 @@ type storeCache struct {
 }
 
 var (
-	globalID              int64
+	globalID int64
+
+	providerMu            sync.Mutex
 	globalVersionProvider kv.VersionProvider
 	mc                    storeCache
 
@@ -73,6 +75,14 @@ type Driver struct {
 func IsLocalStore(s kv.Storage) bool {
 	_, ok := s.(*dbStore)
 	return ok
+}
+
+func lockVersionProvider() {
+	providerMu.Lock()
+}
+
+func unlockVersionProvider() {
+	providerMu.Unlock()
 }
 
 // Open opens or creates a storage with specific format for a local engine Driver.
@@ -140,16 +150,18 @@ func (s *dbStore) CurrentVersion() (kv.Version, error) {
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
+	lockVersionProvider()
+	beginVer, err := globalVersionProvider.CurrentVersion()
+	unlockVersionProvider()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.closed {
 		return nil, errors.Trace(ErrDBClosed)
-	}
-
-	beginVer, err := globalVersionProvider.CurrentVersion()
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	txn := &dbTxn{
 		tid:          beginVer.Ver,
