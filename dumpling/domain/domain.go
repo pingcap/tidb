@@ -160,6 +160,22 @@ func (do *Domain) mustReload() {
 // check schema every 300 seconds default.
 const defaultLoadTime = 300 * time.Second
 
+const maxReloadTimeout = 60 * time.Second
+const minReloadTimeout = 20 * time.Second
+
+func getReloadTimeout(lease time.Duration) time.Duration {
+	timeout := lease / 4
+
+	if timeout >= maxReloadTimeout {
+		return maxReloadTimeout
+	}
+	if timeout <= minReloadTimeout {
+		return minReloadTimeout
+	}
+
+	return timeout
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	if lease <= 0 {
 		lease = defaultLoadTime
@@ -168,7 +184,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
-	reloadTimeout := lease / 4
+	reloadTimeout := getReloadTimeout(lease)
 	reloadErrCh := make(chan error, 1)
 
 	for {
@@ -200,7 +216,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 
 			lease = newLease
-			reloadTimeout = lease / 4
+			reloadTimeout = getReloadTimeout(lease)
 			// reset ticker too.
 			ticker.Stop()
 			ticker = time.NewTicker(lease)
