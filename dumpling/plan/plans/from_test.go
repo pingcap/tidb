@@ -100,7 +100,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 
 	var i int64
 	for i = 0; i < 10; i++ {
-		p.tbl.AddRecord(p, []interface{}{i * 10, "hello"})
+		p.tbl.AddRecord(p, []interface{}{i * 10, "hello"}, 0)
 	}
 }
 
