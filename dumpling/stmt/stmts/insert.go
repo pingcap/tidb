@@ -97,7 +97,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 	}
 
 	var bufRecords [][]interface{}
-	var lastInsertIds []uint64
+	var recordIDs []int64
 	for {
 		var row *plan.Row
 		row, err = r.Next(ctx)
@@ -114,8 +114,8 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 			marked[cols[i].Offset] = struct{}{}
 		}
 
-		variable.GetSessionVars(ctx).SetLastInsertID(0)
-		if err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
+		var recordID int64
+		if recordID, err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -133,13 +133,14 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 		}
 
 		bufRecords = append(bufRecords, v.([]interface{}))
-		lastInsertIds = append(lastInsertIds, variable.GetSessionVars(ctx).LastInsertID)
+		recordIDs = append(recordIDs, recordID)
 	}
 
 	for i, r := range bufRecords {
-		if _, err = t.AddRecord(ctx, r, int64(lastInsertIds[i])); err != nil {
+		if _, err = t.AddRecord(ctx, r, recordIDs[i]); err != nil {
 			return nil, errors.Trace(err)
 		}
+		variable.GetSessionVars(ctx).SetLastInsertID(uint64(recordIDs[i]))
 	}
 	return nil, nil
 }
@@ -254,18 +255,16 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	rows := make([][]interface{}, len(s.Lists))
-	lastInsertIds := make([]uint64, len(s.Lists))
+	recordIDs := make([]int64, len(s.Lists))
 	for i, list := range s.Lists {
 		if err = s.checkValueCount(insertValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		rows[i], err = s.getRow(ctx, t, cols, list, m)
+		rows[i], recordIDs[i], err = s.getRow(ctx, t, cols, list, m)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
-		lastInsertIds[i] = variable.GetSessionVars(ctx).LastInsertID
 	}
 
 	if len(s.OnDuplicate) > 0 {
@@ -289,9 +288,10 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		if len(s.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := t.AddRecord(ctx, row, int64(lastInsertIds[i]))
+		h, err := t.AddRecord(ctx, row, recordIDs[i])
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
+			variable.GetSessionVars(ctx).SetLastInsertID(uint64(recordIDs[i]))
 			continue
 		}
 
@@ -364,7 +364,7 @@ func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, error) {
+func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, int64, error) {
 	r := make([]interface{}, len(t.Cols()))
 	marked := make(map[int]struct{}, len(list))
 	for i, expr := range list {
@@ -373,27 +373,24 @@ func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column
 
 		val, err := expr.Eval(ctx, m)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		r[cols[i].Offset] = val
 		marked[cols[i].Offset] = struct{}{}
 	}
 
-	// Clear last insert id.
-	variable.GetSessionVars(ctx).SetLastInsertID(0)
-
-	err := s.initDefaultValues(ctx, t, r, marked)
+	recordID, err := s.initDefaultValues(ctx, t, r, marked)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if err = column.CastValues(ctx, r, cols); err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if err = column.CheckNotNull(t.Cols(), r); err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 
-	return r, nil
+	return r, recordID, nil
 }
 
 func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]*expression.Assignment) error {
@@ -434,8 +431,7 @@ func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Ta
 	return m, nil
 }
 
-func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
-	var err error
+func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) (recordID int64, err error) {
 	var defaultValueCols []*column.Col
 	for i, c := range t.Cols() {
 		if row[i] != nil {
@@ -449,17 +445,15 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 		}
 
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			var id int64
-			if id, err = t.AllocAutoID(); err != nil {
-				return errors.Trace(err)
+			if recordID, err = t.AllocAutoID(); err != nil {
+				return 0, errors.Trace(err)
 			}
-			row[i] = id
-			variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
+			row[i] = recordID
 		} else {
 			var value interface{}
 			value, _, err = getDefaultValue(ctx, c)
 			if err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			row[i] = value
@@ -469,8 +463,8 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 	}
 
 	if err = column.CastValues(ctx, row, defaultValueCols); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
-	return nil
+	return
 }
