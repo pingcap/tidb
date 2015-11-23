@@ -184,7 +184,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				if terror.ErrorEqual(err, localstore.ErrDBClosed) {
 					return
 				} else if err != nil {
-					log.Fatalf("reload schema err %v", err)
+					log.Fatalf("reload schema err %v", errors.Trace(err))
 				}
 			case <-time.After(reloadTimeout):
 				log.Fatalf("reload schema timeout:%d", reloadTimeout)
