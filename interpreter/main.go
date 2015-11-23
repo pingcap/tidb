@@ -208,7 +208,7 @@ func main() {
 				}
 
 				if strings.HasPrefix(txnLine, "COMMIT") || strings.HasPrefix(txnLine, "commit") {
-					err := tx.Commit()
+					err = tx.Commit()
 					if err != nil {
 						log.Error(errors.ErrorStack(err))
 						tx.Rollback()
