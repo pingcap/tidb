@@ -19,23 +19,34 @@ var _ Snapshot = (*cacheSnapshot)(nil)
 
 // cacheSnapshot wraps a snapshot and supports cache for read.
 type cacheSnapshot struct {
-	cache    MemBuffer
-	snapshot Snapshot
-	opts     Options
+	cache              MemBuffer
+	snapshot           Snapshot
+	lazyConditionPairs MemBuffer
+	opts               Options
 }
 
 // NewCacheSnapshot creates a new snapshot with cache embedded.
-func NewCacheSnapshot(snapshot Snapshot, opts Options) Snapshot {
+func NewCacheSnapshot(snapshot Snapshot, lazyConditionPairs MemBuffer, opts Options) Snapshot {
 	return &cacheSnapshot{
-		cache:    p.Get().(MemBuffer),
-		snapshot: snapshot,
-		opts:     opts,
+		cache:              p.Get().(MemBuffer),
+		snapshot:           snapshot,
+		lazyConditionPairs: lazyConditionPairs,
+		opts:               opts,
 	}
 }
 
 // Get gets value from snapshot and saves it in cache.
 func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 	v, err := c.cache.Get(k)
+	if IsErrNotFound(err) {
+		if _, ok := c.opts.Get(PresumeKeyNotExists); ok {
+			err = c.lazyConditionPairs.Set(k, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return nil, errors.Trace(ErrNotExist)
+		}
+	}
 	if IsErrNotFound(err) {
 		if opt, ok := c.opts.Get(RangePrefetchOnCacheMiss); ok {
 			if limit, ok := opt.(int); ok && limit > 0 {
