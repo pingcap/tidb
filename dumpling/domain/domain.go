@@ -138,26 +138,20 @@ func (do *Domain) tryReload() {
 	}
 }
 
-func (do *Domain) reload(retCh chan error) error {
+func (do *Domain) reload() error {
 	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
 	if err != nil {
-		if retCh != nil {
-			retCh <- errors.Trace(err)
-		}
 		return errors.Trace(err)
 	}
 
 	atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
-	if retCh != nil {
-		retCh <- nil
-	}
 	return nil
 }
 
 func (do *Domain) mustReload() {
 	// if reload error, we will terminate whole program to guarantee data safe.
 	// TODO: retry some times if reload error.
-	err := do.reload(nil)
+	err := do.reload()
 	if err != nil {
 		log.Fatalf("reload schema err %v", err)
 	}
@@ -180,7 +174,10 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			go do.reload(reloadErrCh)
+			go func() {
+				err := do.reload()
+				reloadErrCh <- err
+			}()
 			select {
 			case err := <-reloadErrCh:
 				// we may close store in test, but the domain load schema loop is still checking,
