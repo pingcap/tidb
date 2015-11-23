@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -474,6 +475,59 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	err := d.delKeysWithPrefix(kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.Name.L))
-	return errors.Trace(err)
+	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.Name.L)
+	prefixBytes := []byte(prefix)
+
+	keys := make([]string, maxBatchSize)
+
+	for {
+		keys := keys[0:0]
+		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			iter, err := txn.Seek(prefixBytes)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			defer iter.Close()
+			for i := 0; i < maxBatchSize; i++ {
+				if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
+					keys = append(keys, iter.Key())
+					err = iter.Next()
+					if err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					break
+				}
+			}
+
+			return nil
+		})
+
+		// if err or delete no keys, return.
+		if err != nil || len(keys) == 0 {
+			return errors.Trace(err)
+		}
+
+		// delete index key one by one
+		for _, key := range keys {
+			err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+				if err := d.isReorgRunnable(txn); err != nil {
+					return errors.Trace(err)
+				}
+
+				err1 := txn.Delete([]byte(key))
+				// if key doesn't exist, skip this error.
+				if err1 != nil && !terror.ErrorEqual(err1, kv.ErrNotExist) {
+					return errors.Trace(err1)
+				}
+
+				return nil
+			})
+
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
 }
