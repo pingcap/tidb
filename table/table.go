@@ -78,7 +78,7 @@ type Table interface {
 	Truncate(ctx context.Context) (err error)
 
 	// AddRecord inserts a row into the table.
-	AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error)
+	AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error)
 
 	// UpdateRecord updates a row in the table.
 	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched []bool) error

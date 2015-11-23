@@ -89,7 +89,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		h, err := t.AddRecord(ctx, row)
+		h, err := t.AddRecord(ctx, row, int64(variable.GetSessionVars(ctx).LastInsertID))
 		if err == nil {
 			continue
 		}

@@ -136,8 +136,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 	}
 
 	for i, r := range bufRecords {
-		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
-		if _, err = t.AddRecord(ctx, r); err != nil {
+		if _, err = t.AddRecord(ctx, r, int64(lastInsertIds[i])); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -286,11 +285,10 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
 		// `insert t (c1) values(1),(2),(3);`
 		// Last insert id will be 1, not 3.
-		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
 		if len(s.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := t.AddRecord(ctx, row)
+		h, err := t.AddRecord(ctx, row, int64(lastInsertIds[i]))
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			continue
