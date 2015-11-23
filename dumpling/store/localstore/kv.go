@@ -52,7 +52,7 @@ type storeCache struct {
 var (
 	globalID int64
 
-	ProviderMu            sync.RWMutex
+	providerMu            sync.RWMutex
 	globalVersionProvider kv.VersionProvider
 	mc                    storeCache
 
@@ -142,15 +142,16 @@ func (s *dbStore) CurrentVersion() (kv.Version, error) {
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
-	ProviderMu.RLock()
+	providerMu.RLock()
 	beginVer, err := globalVersionProvider.CurrentVersion()
-	ProviderMu.RUnlock()
+	providerMu.RUnlock()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	s.mu.Lock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, errors.Trace(ErrDBClosed)
 	}
 	s.mu.Unlock()
