@@ -1100,6 +1100,19 @@ func (s *testSessionSuite) TestIndexPointLookup(c *C) {
 	mustExecSQL(c, se, "drop table t")
 }
 
+func (s *testSessionSuite) TestIssue454(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "drop table if exists t1")
+	mustExecSQL(c, se, "create table t1 (c1 int, c2 int, c3 int);")
+	mustExecSQL(c, se, "insert into t1 set c1=1, c2=2, c3=1;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int, primary key (c1));")
+	mustExecSQL(c, se, "insert into t set c1=1, c2=4;")
+	mustExecSQL(c, se, "insert into t select * from t1 limit 1 on duplicate key update c3=3333;")
+}
+
 // For https://github.com/pingcap/tidb/issues/571
 func (s *testSessionSuite) TestIssue571(c *C) {
 	store := newStore(c, s.dbName)
@@ -1150,6 +1163,9 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 
+	mustExecSQL(c, se, "drop table if exists t1")
+	mustExecSQL(c, se, "drop table if exists t2")
+	mustExecSQL(c, se, "drop table if exists t3")
 	mustExecSQL(c, se, "create table t1(id int primary key auto_increment, c int);")
 	mustExecSQL(c, se, "create table t2(c int); insert into t2 values (1);")
 	mustExecSQL(c, se, "create table t3(id int, c int); insert into t3 values (2,2);")
