@@ -148,6 +148,7 @@ func checkBootstrappedVar(s Session) (bool, error) {
 		}
 		return false, errors.Trace(err)
 	}
+
 	if len(rs) != 1 {
 		return false, errors.New("Wrong number of Recordset")
 	}
@@ -156,7 +157,14 @@ func checkBootstrappedVar(s Session) (bool, error) {
 	if err != nil || row == nil {
 		return false, errors.Trace(err)
 	}
-	return row.Data[0].(string) == bootstrappedVarTrue, nil
+
+	isBootstrapped := row.Data[0].(string) == bootstrappedVarTrue
+	if isBootstrapped {
+		// Make sure that doesn't affect the next operations.
+		s.FinishTxn(false)
+	}
+
+	return isBootstrapped, nil
 }
 
 // Execute DDL statements in bootstrap stage.
