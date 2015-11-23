@@ -106,7 +106,7 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 	// remove 0,1,2
 	for i := 0; i < 3; i++ {
 		val := encodeInt(i)
-		err := txn.Delete(val)
+		err = txn.Delete(val)
 		c.Assert(err, IsNil)
 	}
 	txn.Commit()
