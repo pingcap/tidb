@@ -142,14 +142,15 @@ func (n *PatternIn) Eval(ctx context.Context, args map[interface{}]interface{}) 
 	}
 
 	if n.Sel == nil {
-		if err := hasSameColumnCount(ctx, n.Expr, n.List...); err != nil {
-			return nil, errors.Trace(err)
+		err1 := hasSameColumnCount(ctx, n.Expr, n.List...)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 
 		var values []interface{}
-		values, err = evalExprList(ctx, args, n.List)
-		if err != nil {
-			return nil, errors.Trace(err)
+		values, err1 = evalExprList(ctx, args, n.List)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 
 		return n.checkInList(lhs, values)
