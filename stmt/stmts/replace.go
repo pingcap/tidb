@@ -85,11 +85,11 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 		if err = s.checkValueCount(replaceValueCount, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		row, err := s.getRow(ctx, t, cols, list, m)
+		row, recordID, err := s.getRow(ctx, t, cols, list, m)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		h, err := t.AddRecord(ctx, row, int64(variable.GetSessionVars(ctx).LastInsertID))
+		h, err := t.AddRecord(ctx, row, recordID)
 		if err == nil {
 			continue
 		}
