@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/terror"
 )
 
 var _ context.Context = &reorgContext{}
@@ -183,7 +184,8 @@ func (d *ddl) delKeysWithPrefix(prefix string) error {
 
 			for _, key := range keys {
 				err := txn.Delete([]byte(key))
-				if err != nil {
+				// must skip ErrNotExist
+				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 					return errors.Trace(err)
 				}
 			}
