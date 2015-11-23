@@ -63,14 +63,14 @@ func (is *IsTruth) String() string {
 }
 
 // Eval implements the Expression Eval interface.
-func (is *IsTruth) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
+func (is *IsTruth) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	if err := CheckOneColumn(ctx, is.Expr); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	val, err := is.Expr.Eval(ctx, args)
 	if err != nil {
-		return
+		return nil, errors.Trace(err)
 	}
 
 	if types.IsNil(val) {
@@ -81,7 +81,7 @@ func (is *IsTruth) Eval(ctx context.Context, args map[interface{}]interface{}) (
 
 	b, err := types.ToBool(val)
 	if err != nil {
-		return
+		return nil, errors.Trace(err)
 	}
 
 	if !is.Not {

@@ -214,7 +214,7 @@ func (r *JoinRset) buildSourcePlan(ctx context.Context, t *TableSource) (plan.Pl
 			return nil, nil, errors.Trace(err)
 		}
 		src = tr
-		if err := r.checkTableDuplicate(t, tr); err != nil {
+		if err = r.checkTableDuplicate(t, tr); err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	case stmt.Statement:

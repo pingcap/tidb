@@ -117,15 +117,15 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
+		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
+		if err1 != nil {
 			return errors.Trace(err)
 		}
 
-		err = t.CreateDatabase(info)
+		err1 = t.CreateDatabase(info)
 
 		log.Warnf("save schema %v", info)
-		return errors.Trace(err)
+		return errors.Trace(err1)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
@@ -186,13 +186,13 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
+		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 
-		err = t.DropDatabase(old.ID)
-		return errors.Trace(err)
+		err1 = t.DropDatabase(old.ID)
+		return errors.Trace(err1)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
@@ -414,13 +414,13 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
+		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 
 		err = t.CreateTable(schema.ID, tbInfo)
-		return errors.Trace(err)
+		return errors.Trace(err1)
 	})
 
 	if d.onDDLChange != nil {
@@ -516,13 +516,13 @@ func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Tab
 	// update infomation schema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, schemaMetaVersion)
-		if err != nil {
-			return errors.Trace(err)
+		err1 := d.verifySchemaMetaVersion(t, schemaMetaVersion)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 
 		err = t.UpdateTable(schema.ID, tb.Meta())
-		return errors.Trace(err)
+		return errors.Trace(err1)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
@@ -578,13 +578,13 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	}
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
+		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
+		if err1 != nil {
 			return errors.Trace(err)
 		}
 
-		err = t.DropTable(schema.ID, tb.Meta().ID)
-		return errors.Trace(err)
+		err1 = t.DropTable(schema.ID, tb.Meta().ID)
+		return errors.Trace(err1)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)

@@ -2,9 +2,10 @@ package check_test
 
 import (
 	"errors"
-	"github.com/pingcap/check"
 	"reflect"
 	"runtime"
+
+	"github.com/pingcap/check"
 )
 
 type CheckersS struct{}

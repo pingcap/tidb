@@ -4,9 +4,10 @@ package check_test
 
 import (
 	"errors"
-	. "github.com/pingcap/check"
 	"os"
 	"sync"
+
+	. "github.com/pingcap/check"
 )
 
 var runnerS = Suite(&RunS{})

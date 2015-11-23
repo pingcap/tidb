@@ -470,7 +470,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	// Remove row's colume one by one
 	for _, col := range t.Cols() {
 		k := t.RecordKey(h, col)
-		err := txn.Delete([]byte(k))
+		err = txn.Delete([]byte(k))
 		if err != nil {
 			return errors.Trace(err)
 		}

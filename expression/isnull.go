@@ -54,14 +54,14 @@ func (is *IsNull) String() string {
 }
 
 // Eval implements the Expression Eval interface.
-func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (v interface{}, err error) {
+func (is *IsNull) Eval(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
 	if err := CheckOneColumn(ctx, is.Expr); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	val, err := is.Expr.Eval(ctx, args)
 	if err != nil {
-		return
+		return nil, errors.Trace(err)
 	}
 
 	return types.IsNil(val) != is.Not, nil
