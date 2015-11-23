@@ -175,8 +175,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		select {
 		case <-ticker.C:
 			go func() {
-				err := do.reload()
-				reloadErrCh <- err
+				reloadErrCh <- do.reload()
 			}()
 			select {
 			case err := <-reloadErrCh:
