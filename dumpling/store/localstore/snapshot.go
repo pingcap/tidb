@@ -37,6 +37,8 @@ type dbSnapshot struct {
 	version kv.Version // transaction begin version
 }
 
+var minKey = []byte{0}
+
 func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
 	s.store.snapLock.RLock()
 	defer s.store.snapLock.RUnlock()
@@ -47,7 +49,7 @@ func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
 
 	if s.rawIt == nil {
 		var err error
-		s.rawIt, err = s.db.Seek([]byte{0})
+		s.rawIt, err = s.db.Seek(minKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
