@@ -417,7 +417,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 		}
 	}
 
-	if err := cc.writeEOF(); err != nil {
+	if err = cc.writeEOF(); err != nil {
 		return errors.Trace(err)
 	}
 
