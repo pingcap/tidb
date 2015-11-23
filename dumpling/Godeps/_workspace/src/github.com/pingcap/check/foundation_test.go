@@ -8,11 +8,12 @@ package check_test
 
 import (
 	"fmt"
-	"github.com/pingcap/check"
 	"log"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/pingcap/check"
 )
 
 // -----------------------------------------------------------------------
