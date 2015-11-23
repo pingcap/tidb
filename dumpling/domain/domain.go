@@ -157,9 +157,6 @@ func (do *Domain) mustReload() {
 	}
 }
 
-// check schema every 300 seconds default.
-const defaultLoadTime = 300 * time.Second
-
 const maxReloadTimeout = 60 * time.Second
 const minReloadTimeout = 20 * time.Second
 
@@ -175,6 +172,9 @@ func getReloadTimeout(lease time.Duration) time.Duration {
 
 	return timeout
 }
+
+// check schema every 300 seconds default.
+const defaultLoadTime = 300 * time.Second
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	if lease <= 0 {
