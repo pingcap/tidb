@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ stmt.Statement = (*InsertIntoStmt)(nil)
@@ -302,7 +301,18 @@ func (s *InsertValues) getRows(ctx context.Context, t table.Table, cols []*colum
 			return nil, nil, errors.Trace(err)
 		}
 
-		rows[i], recordIDs[i], err = s.getRow(ctx, t, cols, list, m)
+		vals := make([]interface{}, len(list))
+		for j, expr := range list {
+			// For "insert into t values (default)" Default Eval.
+			m[expression.ExprEvalDefaultName] = cols[j].Name.O
+
+			vals[j], err = expr.Eval(ctx, m)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+
+		rows[i], recordIDs[i], err = s.getRow(ctx, t, cols, vals)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -322,60 +332,34 @@ func (s *InsertValues) getRowsSelect(ctx context.Context, t table.Table, cols []
 	}
 
 	for {
-		var row *plan.Row
-		row, err = r.Next(ctx)
+		var planRow *plan.Row
+		planRow, err = r.Next(ctx)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		if row == nil {
+		if planRow == nil {
 			break
 		}
-		data0 := make([]interface{}, len(t.Cols()))
-		marked := make(map[int]struct{}, len(cols))
-		for i, d := range row.Data {
-			data0[cols[i].Offset] = d
-			marked[cols[i].Offset] = struct{}{}
-		}
 
+		var row []interface{}
 		var recordID int64
-		if recordID, err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		if err = column.CastValues(ctx, data0, cols); err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		if err = column.CheckNotNull(t.Cols(), data0); err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		var v interface{}
-		v, err = types.Clone(data0)
+		row, recordID, err = s.getRow(ctx, t, cols, planRow.Data)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-
-		rows = append(rows, v.([]interface{}))
+		rows = append(rows, row)
 		recordIDs = append(recordIDs, recordID)
 	}
 	return
 }
 
-func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, int64, error) {
+func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, vals []interface{}) ([]interface{}, int64, error) {
 	r := make([]interface{}, len(t.Cols()))
-	marked := make(map[int]struct{}, len(list))
-	for i, expr := range list {
-		// For "insert into t values (default)" Default Eval.
-		m[expression.ExprEvalDefaultName] = cols[i].Name.O
-
-		val, err := expr.Eval(ctx, m)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
-		r[cols[i].Offset] = val
+	marked := make(map[int]struct{}, len(vals))
+	for i, v := range vals {
+		r[cols[i].Offset] = v
 		marked[cols[i].Offset] = struct{}{}
 	}
-
 	recordID, err := s.initDefaultValues(ctx, t, r, marked)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
