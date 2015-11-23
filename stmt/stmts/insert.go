@@ -114,6 +114,7 @@ func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context
 			marked[cols[i].Offset] = struct{}{}
 		}
 
+		variable.GetSessionVars(ctx).SetLastInsertID(0)
 		if err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
 			return nil, errors.Trace(err)
 		}

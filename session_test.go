@@ -1146,6 +1146,17 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	wg.Wait()
 }
 
+func (s *testSessionSuite) TestIssue620(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "create table t1(id int primary key auto_increment, c int);")
+	mustExecSQL(c, se, "create table t2(c int); insert into t2 values (1);")
+	mustExecSQL(c, se, "create table t3(id int, c int); insert into t3 values (2,2);")
+	mustExecSQL(c, se, "insert into t1(c) select * from t2; insert into t1 select * from t3;")
+	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1, 1}, {2, 2}})
+}
+
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
 	store := newStore(c, s.dbName)
