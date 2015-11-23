@@ -48,7 +48,7 @@ import (
 // The encoded value is >= SmallestNoneNilValue and < InfiniteValue.
 func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing
-	bs := make([]byte, len(b), len(data)+20)
+	bs := make([]byte, len(b), len(b)+len(data)+20)
 	copy(bs, b)
 	if len(data) > 0 && data[0] == 0xFF {
 		// we must escape 0xFF here to guarantee encoded value < InfiniteValue \xFF\xFF.
