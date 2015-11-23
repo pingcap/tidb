@@ -561,7 +561,7 @@ func (t *Table) removeRowData(ctx context.Context, h int64) error {
 	// Remove row's colume one by one
 	for _, col := range t.Columns {
 		k := t.RecordKey(h, col)
-		err := txn.Delete([]byte(k))
+		err = txn.Delete([]byte(k))
 		if err != nil {
 			if col.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If the column is not in public state, we may have not added the column,

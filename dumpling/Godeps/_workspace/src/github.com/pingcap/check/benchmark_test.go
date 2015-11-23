@@ -3,8 +3,9 @@
 package check_test
 
 import (
-	. "github.com/pingcap/check"
 	"time"
+
+	. "github.com/pingcap/check"
 )
 
 var benchmarkS = Suite(&BenchmarkS{})
