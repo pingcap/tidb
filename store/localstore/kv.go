@@ -52,7 +52,7 @@ type storeCache struct {
 var (
 	globalID int64
 
-	providerMu            sync.Mutex
+	ProviderMu            sync.RWMutex
 	globalVersionProvider kv.VersionProvider
 	mc                    storeCache
 
@@ -75,14 +75,6 @@ type Driver struct {
 func IsLocalStore(s kv.Storage) bool {
 	_, ok := s.(*dbStore)
 	return ok
-}
-
-func lockVersionProvider() {
-	providerMu.Lock()
-}
-
-func unlockVersionProvider() {
-	providerMu.Unlock()
 }
 
 // Open opens or creates a storage with specific format for a local engine Driver.
@@ -150,19 +142,19 @@ func (s *dbStore) CurrentVersion() (kv.Version, error) {
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
-	lockVersionProvider()
+	ProviderMu.RLock()
 	beginVer, err := globalVersionProvider.CurrentVersion()
-	unlockVersionProvider()
+	ProviderMu.RUnlock()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.closed {
 		return nil, errors.Trace(ErrDBClosed)
 	}
+	s.mu.Unlock()
+
 	txn := &dbTxn{
 		tid:          beginVer.Ver,
 		valid:        true,
@@ -223,6 +215,8 @@ func (s *dbStore) newBatch() engine.Batch {
 
 // Both lock and unlock are used for simulating scenario of percolator papers.
 func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
+	metaKey := codec.EncodeBytes(nil, []byte(key))
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -234,7 +228,6 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 		return errors.Trace(kv.ErrLockConflict)
 	}
 
-	metaKey := codec.EncodeBytes(nil, []byte(key))
 	currValue, err := s.db.Get(metaKey)
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		s.keysLocked[key] = tid

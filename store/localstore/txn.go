@@ -218,8 +218,8 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	// disable version provider temporarily
-	lockVersionProvider()
-	defer unlockVersionProvider()
+	ProviderMu.Lock()
+	defer ProviderMu.Unlock()
 
 	curVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
