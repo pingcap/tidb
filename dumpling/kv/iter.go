@@ -32,7 +32,7 @@ var (
 	// ErrLazyConditionPairsNotMatch is used when value in store differs from expect pairs.
 	ErrLazyConditionPairsNotMatch = errors.New("Error: Lazy condition pairs not match")
 	// ErrRetryable is used when KV store occurs RPC error or some other
-	// error which can be safely retry
+	// errors which SQL layer can safely retry.
 	ErrRetryable = errors.New("Error: KV error safe to retry")
 )
 
