@@ -719,6 +719,7 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
+	c.Assert(r, NotNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
@@ -734,9 +735,31 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
+	c.Assert(r, NotNil)
 	v, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+
+	// Check a storage operations are default autocommit after the second start.
+	mustExecSQL(c, se, "USE test;")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (id int)")
+	delete(storeBootstrapped, store.UUID())
+	se.Close()
+	se, err = CreateSession(store)
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se, "USE test;")
+	mustExecSQL(c, se, "insert t values (?)", 3)
+	se, err = CreateSession(store)
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se, "USE test;")
+	r = mustExecSQL(c, se, "select * from t")
+	c.Assert(r, NotNil)
+	v, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, v, 3)
+	mustExecSQL(c, se, "drop table if exists t")
+	se.Close()
 }
 
 // Create a new session on store but only do ddl works.
