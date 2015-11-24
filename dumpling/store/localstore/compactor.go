@@ -41,7 +41,7 @@ type localstoreCompactor struct {
 	recentKeys      map[string]struct{}
 	stopCh          chan struct{}
 	delCh           chan kv.EncodedKey
-	workerWaitGroup sync.WaitGroup
+	workerWaitGroup *sync.WaitGroup
 	ticker          *time.Ticker
 	db              engine.DB
 	policy          kv.CompactPolicy
@@ -191,11 +191,12 @@ func (gc *localstoreCompactor) Stop() {
 
 func newLocalCompactor(policy kv.CompactPolicy, db engine.DB) *localstoreCompactor {
 	return &localstoreCompactor{
-		recentKeys: make(map[string]struct{}),
-		stopCh:     make(chan struct{}),
-		delCh:      make(chan kv.EncodedKey, 100),
-		ticker:     time.NewTicker(policy.TriggerInterval),
-		policy:     policy,
-		db:         db,
+		recentKeys:      make(map[string]struct{}),
+		stopCh:          make(chan struct{}),
+		delCh:           make(chan kv.EncodedKey, 100),
+		ticker:          time.NewTicker(policy.TriggerInterval),
+		policy:          policy,
+		db:              db,
+		workerWaitGroup: &sync.WaitGroup{},
 	}
 }
