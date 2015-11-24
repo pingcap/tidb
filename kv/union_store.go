@@ -58,39 +58,39 @@ type lazyMemBuffer struct {
 	mb MemBuffer
 }
 
-func (lw *lazyMemBuffer) Get(k Key) ([]byte, error) {
-	if lw.mb == nil {
+func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
+	if lmb.mb == nil {
 		return nil, ErrNotExist
 	}
 
-	return lw.mb.Get(k)
+	return lmb.mb.Get(k)
 }
 
-func (lw *lazyMemBuffer) Set(key []byte, value []byte) error {
-	if lw.mb == nil {
-		lw.mb = p.Get().(MemBuffer)
+func (lmb *lazyMemBuffer) Set(key []byte, value []byte) error {
+	if lmb.mb == nil {
+		lmb.mb = p.Get().(MemBuffer)
 	}
 
-	return lw.mb.Set(key, value)
+	return lmb.mb.Set(key, value)
 }
 
-func (lw *lazyMemBuffer) NewIterator(param interface{}) Iterator {
-	if lw.mb == nil {
-		lw.mb = p.Get().(MemBuffer)
+func (lmb *lazyMemBuffer) NewIterator(param interface{}) Iterator {
+	if lmb.mb == nil {
+		lmb.mb = p.Get().(MemBuffer)
 	}
 
-	return lw.mb.NewIterator(param)
+	return lmb.mb.NewIterator(param)
 }
 
-func (lw *lazyMemBuffer) Release() {
-	if lw.mb == nil {
+func (lmb *lazyMemBuffer) Release() {
+	if lmb.mb == nil {
 		return
 	}
 
-	lw.mb.Release()
+	lmb.mb.Release()
 
-	p.Put(lw.mb)
-	lw.mb = nil
+	p.Put(lmb.mb)
+	lmb.mb = nil
 }
 
 // Get implements the Store Get interface.
