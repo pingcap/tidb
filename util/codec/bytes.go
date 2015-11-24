@@ -48,8 +48,7 @@ import (
 // The encoded value is >= SmallestNoneNilValue and < InfiniteValue.
 func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing
-	bs := make([]byte, len(b), len(b)+len(data)+20)
-	copy(bs, b)
+	bs := reallocBytes(b, len(data)+20)
 	if len(data) > 0 && data[0] == 0xFF {
 		// we must escape 0xFF here to guarantee encoded value < InfiniteValue \xFF\xFF.
 		bs = append(bs, 0xFF, 0x00)
@@ -81,8 +80,7 @@ func decodeBytes(b []byte, escapeFirst byte, escape byte, term byte) ([]byte, []
 		return nil, nil, errors.Errorf("insufficient bytes to decode value")
 	}
 
-	// Allocate more space to avoid unnecessary slice growing
-	r := make([]byte, 0, len(b)+20)
+	var r []byte
 
 	if b[0] == escapeFirst {
 		if b[1] != ^escapeFirst {
@@ -116,6 +114,10 @@ func decodeBytes(b []byte, escapeFirst byte, escape byte, term byte) ([]byte, []
 			return nil, nil, errors.Errorf("invalid escape byte, must 0x%x, but got 0x%0x", ^escape, b[i+1])
 		}
 
+		// here mean we may have \x00 in origin slice, so realloc a large buffer
+		// to avoid relloaction again, the final decoded slice length is < len(b) certainly.
+		// TODO: we can record the escape offset and then do the alloc + copy in the end.
+		r = reallocBytes(r, len(b))
 		r = append(r, b[:i]...)
 		r = append(r, escape)
 		b = b[i+2:]
@@ -180,4 +182,16 @@ func reverseBytes(b []byte) {
 	}
 
 	safeReverseBytes(b)
+}
+
+// like realloc.
+func reallocBytes(b []byte, n int) []byte {
+	if cap(b) < n {
+		bs := make([]byte, len(b), len(b)+n)
+		copy(bs, b)
+		return bs
+	}
+
+	// slice b has capability to store n bytes
+	return b
 }
