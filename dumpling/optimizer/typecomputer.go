@@ -13,12 +13,22 @@
 
 package optimizer
 
-import "github.com/pingcap/tidb/ast"
+import (
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/optimizer/evaluator"
+)
 
 func computeType(node ast.Node) error {
 	var computer typeComputer
 	node.Accept(&computer)
 	return computer.err
+}
+
+func rewriteStatic(ctx context.Context, node ast.Node) error {
+	rewriter := staticRewriter{ctx: ctx}
+	node.Accept(&rewriter)
+	return rewriter.err
 }
 
 // typeComputer is an ast Visitor that
@@ -43,6 +53,36 @@ func (v *typeComputer) Leave(in ast.Node) (out ast.Node, ok bool) {
 			if val.Column.ID == 0 && val.Expr.GetType() != nil {
 				val.Column.FieldType = *(val.Expr.GetType())
 			}
+		}
+	}
+	return in, true
+}
+
+// staticRewriter rewrites static expression to value expression.
+type staticRewriter struct {
+	ctx context.Context
+	err error
+}
+
+func (r *staticRewriter) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
+}
+
+func (r *staticRewriter) Leave(in ast.Node) (ast.Node, bool) {
+	if expr, ok := in.(ast.ExprNode); ok {
+		if _, ok = expr.(*ast.ValueExpr); ok {
+			return in, true
+		} else if expr.IsStatic() {
+			val, err := evaluator.Eval(r.ctx, expr)
+			if err != nil {
+				r.err = err
+				return in, false
+			}
+			valExpr := &ast.ValueExpr{}
+			valExpr.SetText(expr.Text())
+			valExpr.SetType(expr.GetType())
+			valExpr.SetValue(val)
+			return valExpr, true
 		}
 	}
 	return in, true

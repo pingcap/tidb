@@ -18,10 +18,13 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx/db"
 )
 
-func bindInfo(node ast.Node, info infoschema.InfoSchema, defaultSchema model.CIStr) error {
-	binder := InfoBinder{Info: info, DefaultSchema: defaultSchema}
+func bindInfo(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
+	defaultSchema := db.GetCurrentSchema(ctx)
+	binder := InfoBinder{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&binder)
 	return binder.Err
 }
@@ -39,6 +42,7 @@ func bindInfo(node ast.Node, info infoschema.InfoSchema, defaultSchema model.CIS
 // we look up from top to bottom in the contextStack.
 type InfoBinder struct {
 	Info          infoschema.InfoSchema
+	Ctx           context.Context
 	DefaultSchema model.CIStr
 	Err           error
 

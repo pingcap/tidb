@@ -112,13 +112,14 @@ type ResultSetNode interface {
 
 // Visitor visits a Node.
 type Visitor interface {
-	// VisitEnter is called before children nodes is visited.
+	// Enter is called before children nodes is visited.
 	// The returned node must be the same type as the input node n.
 	// skipChildren returns true means children nodes should be skipped,
 	// this is useful when work is done in Enter and there is no need to visit children.
 	Enter(n Node) (node Node, skipChildren bool)
-	// VisitLeave is called after children nodes has been visited.
-	// The returned node must be the same type as the input node n.
+	// Leave is called after children nodes has been visited.
+	// The returned node can be different type as the input node if it is ExprNode,
+	// Non-expression node must be the same type as the input node n.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
 }

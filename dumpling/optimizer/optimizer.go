@@ -14,35 +14,38 @@
 package optimizer
 
 import (
+	"strings"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
-	"github.com/pingcap/tidb/model"
-	"strings"
+	"github.com/pingcap/tidb/context"
 )
 
 // Optimize do optimization and create a Plan.
 // InfoSchema has to be passed in as parameter because
 // it can not be changed after binding.
-func Optimize(is infoschema.InfoSchema, defaultSchema model.CIStr, node ast.Node) (plan.Plan, error) {
+func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (plan.Plan, error) {
 	if err := validate(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := bindInfo(node, is, defaultSchema); err != nil {
+	if err := bindInfo(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := computeType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err := rewriteStatic(ctx, node); err != nil {
+		return nil, errors.Trace(err)
+	}
 	normalizeCondition(node)
 	p := buildPlan(node)
-	refine(p)
+	refine(ctx, p)
 	bestCost := plan.EstimateCost(p)
 	bestPlan := p
 	alts := alternatives(p)
 	for _, alt := range alts {
-		refine(alt)
+		refine(ctx, alt)
 		cost := plan.EstimateCost(alt)
 		if cost < bestCost {
 			bestCost = cost
