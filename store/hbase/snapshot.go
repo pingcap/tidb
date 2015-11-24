@@ -32,12 +32,12 @@ const hbaseBatchSize = 1000
 
 // hbaseSnapshot implements MvccSnapshot interface.
 type hbaseSnapshot struct {
-	txn       *themis.Txn
+	txn       themis.Txn
 	storeName string
 }
 
 // newHBaseSnapshot creates a snapshot of an HBase store.
-func newHbaseSnapshot(txn *themis.Txn, storeName string) *hbaseSnapshot {
+func newHbaseSnapshot(txn themis.Txn, storeName string) *hbaseSnapshot {
 	return &hbaseSnapshot{
 		txn:       txn,
 		storeName: storeName,
@@ -63,7 +63,7 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 		g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
 		gets[i] = g
 	}
-	rows, err := s.txn.BatchGet(s.storeName, gets)
+	rows, err := s.txn.Gets(s.storeName, gets)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
