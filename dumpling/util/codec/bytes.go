@@ -114,8 +114,8 @@ func decodeBytes(b []byte, escapeFirst byte, escape byte, term byte) ([]byte, []
 			return nil, nil, errors.Errorf("invalid escape byte, must 0x%x, but got 0x%0x", ^escape, b[i+1])
 		}
 
-		// here mean we may have \x00 in origin slice, so realloc a large buffer
-		// to avoid relloaction again, the final decoded slice length is < len(b) certainly.
+		// here mean we have \x00 in origin slice, so realloc a large buffer
+		// to avoid reallocation again, the final decoded slice length is < len(b) certainly.
 		// TODO: we can record the escape offset and then do the alloc + copy in the end.
 		r = reallocBytes(r, len(b))
 		r = append(r, b[:i]...)
