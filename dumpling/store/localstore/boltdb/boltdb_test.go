@@ -63,8 +63,8 @@ func (s *testSuite) TestPutNilAndDelete(c *C) {
 
 	found := false
 	rawDB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketName)
-		c := b.Cursor()
+		b1 := tx.Bucket(bucketName)
+		c := b1.Cursor()
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			if string(k) == "aa" {
 				found = true

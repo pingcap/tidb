@@ -234,13 +234,13 @@ func (s *session) Retry() error {
 		}
 		if success {
 			err = s.FinishTxn(false)
-			if err == nil {
+			if !kv.IsRetryableError(err) {
 				break
 			}
 		}
 	}
 
-	return nil
+	return err
 }
 
 // ExecRestrictedSQL implements SQLHelper interface.

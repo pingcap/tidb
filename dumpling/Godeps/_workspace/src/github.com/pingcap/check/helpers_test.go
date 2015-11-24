@@ -4,11 +4,12 @@
 package check_test
 
 import (
-	"github.com/pingcap/check"
 	"os"
 	"reflect"
 	"runtime"
 	"sync"
+
+	"github.com/pingcap/check"
 )
 
 var helpersS = check.Suite(&HelpersS{})

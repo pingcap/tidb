@@ -201,6 +201,11 @@ func (txn *dbTxn) doCommit() error {
 		}
 	}()
 
+	// check lazy condition pairs
+	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
+		return errors.Trace(err)
+	}
+
 	txn.Snapshot.Release()
 
 	// Check locked keys
@@ -212,7 +217,10 @@ func (txn *dbTxn) doCommit() error {
 		keysLocked = append(keysLocked, k)
 	}
 
-	// Check dirty store
+	// disable version provider temporarily
+	lockVersionProvider()
+	defer unlockVersionProvider()
+
 	curVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		return errors.Trace(err)

@@ -29,6 +29,8 @@ var (
 	ErrConditionNotMatch = errors.New("Error: Condition not match")
 	// ErrLockConflict is used when try to lock an already locked key.
 	ErrLockConflict = errors.New("Error: Lock conflict")
+	// ErrLazyConditionPairsNotMatch is used when value in store differs from expect pairs.
+	ErrLazyConditionPairsNotMatch = errors.New("Error: Lazy condition pairs not match")
 )
 
 var (
