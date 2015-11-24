@@ -127,7 +127,7 @@ func (us *UnionStore) CheckLazyConditionPairs() error {
 	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
 		if len(it.Value()) == 0 {
 			if _, exist := values[it.Key()]; exist {
-				return errors.Trace(ErrKeyExists)
+				return errors.Trace(errors.New("Error: key already exist in " + it.Key()))
 			}
 		} else {
 			if bytes.Compare(values[it.Key()], it.Value()) != 0 {
