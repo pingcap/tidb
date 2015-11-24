@@ -30,9 +30,7 @@ var (
 )
 
 type dbStore struct {
-	mu       sync.Mutex
-	snapLock sync.RWMutex
-
+	mu sync.RWMutex
 	db engine.DB
 
 	txns       map[uint64]*dbTxn
@@ -113,14 +111,17 @@ func (s *dbStore) UUID() string {
 }
 
 func (s *dbStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
-	s.snapLock.RLock()
-	defer s.snapLock.RUnlock()
+	s.mu.RLock()
+	closed := s.closed
+	s.mu.RUnlock()
 
-	if s.closed {
+	if closed {
 		return nil, errors.Trace(ErrDBClosed)
 	}
 
+	providerMu.RLock()
 	currentVer, err := globalVersionProvider.CurrentVersion()
+	providerMu.RUnlock()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -149,12 +150,12 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, errors.Trace(err)
 	}
 
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
+	s.mu.RLock()
+	closed := s.closed
+	s.mu.RUnlock()
+	if closed {
 		return nil, errors.Trace(ErrDBClosed)
 	}
-	s.mu.Unlock()
 
 	txn := &dbTxn{
 		tid:          beginVer.Ver,
@@ -165,20 +166,13 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		opts:         make(map[kv.Option]interface{}),
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
-	txn.UnionStore = kv.NewUnionStore(&dbSnapshot{
-		store:   s,
-		db:      s.db,
-		version: beginVer,
-	}, options(txn.opts))
+	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, s.db, beginVer), options(txn.opts))
 	return txn, nil
 }
 
 func (s *dbStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	s.snapLock.Lock()
-	defer s.snapLock.Unlock()
 
 	if s.closed {
 		return nil
@@ -194,6 +188,10 @@ func (s *dbStore) Close() error {
 }
 
 func (s *dbStore) writeBatch(b engine.Batch) error {
+	if b.Len() == 0 {
+		return nil
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
