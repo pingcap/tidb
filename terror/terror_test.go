@@ -14,11 +14,11 @@
 package terror
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"strings"
 )
 
 func TestT(t *testing.T) {
@@ -109,4 +109,8 @@ func (s *testTErrorSuite) TestErrorEqual(c *C) {
 	c.Assert(ErrorEqual(te1, te2), IsTrue)
 	c.Assert(ErrorEqual(te1, te3), IsFalse)
 	c.Assert(ErrorEqual(te3, te4), IsFalse)
+
+	c.Assert(nil, IsError, nil)
+	c.Assert(te1, IsError, te2)
+	c.Assert(te1, IsNotError, te3)
 }

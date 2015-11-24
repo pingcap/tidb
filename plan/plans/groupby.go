@@ -275,14 +275,14 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		// TODO: later order by will use the same mechanism, so we may use another plan to do this
 		evalArgs := map[interface{}]interface{}{}
 		// must first eval none aggregate fields, because alias group by will use this.
-		if err := r.evalNoneAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
+		if err = r.evalNoneAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}
 
 		// update outer query becuase group by may use it if it has a subquery.
 		updateRowStack(ctx, row.Data, row.FromData)
 
-		if err := r.evalGroupKey(ctx, k, row.Data, srcRow.Data); err != nil {
+		if err = r.evalGroupKey(ctx, k, row.Data, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -298,7 +298,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 			index = len(r.rows)
 			r.rows = append(r.rows, &groupRow{Row: row, Args: evalArgs})
 
-			if err := t.Set(k, []interface{}{index}); err != nil {
+			if err = t.Set(k, []interface{}{index}); err != nil {
 				return errors.Trace(err)
 			}
 		} else {
@@ -310,7 +310,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 		}
 
 		// eval aggregate fields
-		if err := r.evalAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
+		if err = r.evalAggFields(ctx, row.Data, evalArgs, srcRow.Data); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -326,7 +326,7 @@ func (r *GroupByDefaultPlan) fetchAll(ctx context.Context) error {
 	} else {
 		for _, row := range r.rows {
 			// eval aggregate done
-			if err := r.evalAggDone(ctx, row.Row.Data, row.Args); err != nil {
+			if err = r.evalAggDone(ctx, row.Row.Data, row.Args); err != nil {
 				return errors.Trace(err)
 			}
 		}
