@@ -97,26 +97,28 @@ func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 // kvIndex is the data structure for index data in the KV store.
 type kvIndex struct {
 	indexName string
+	indexID   int64
 	unique    bool
 	prefix    string
 }
 
-func genIndexPrefix(indexPrefix, indexName string) string {
+func genIndexPrefix(indexPrefix string, indexID int64) string {
 	// Use EncodeBytes to guarantee generating different index prefix.
 	// e.g, two indices c1 and c with index prefix p, if no EncodeBytes,
 	// the index format looks p_c and p_c1, if c has an index value which the first encoded byte is '1',
 	// we will meet an error, because p_c1 is for index c1.
 	// If EncodeBytes, c1 -> c1\x00\x01 and c -> c\x00\x01, the prefixs are different.
-	key := fmt.Sprintf("%s_%s", indexPrefix, indexName)
+	key := fmt.Sprintf("%s_%d", indexPrefix, indexID)
 	return string(codec.EncodeBytes(nil, []byte(key)))
 }
 
 // NewKVIndex builds a new kvIndex object.
-func NewKVIndex(indexPrefix, indexName string, unique bool) Index {
+func NewKVIndex(indexPrefix, indexName string, indexID int64, unique bool) Index {
 	return &kvIndex{
 		indexName: indexName,
+		indexID:   indexID,
 		unique:    unique,
-		prefix:    genIndexPrefix(indexPrefix, indexName),
+		prefix:    genIndexPrefix(indexPrefix, indexID),
 	}
 }
 

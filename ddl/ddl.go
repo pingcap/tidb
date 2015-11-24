@@ -378,6 +378,10 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		case coldef.ConstrUniq, coldef.ConstrUniqKey, coldef.ConstrUniqIndex:
 			idxInfo.Unique = true
 		}
+		idxInfo.ID, err = d.genGlobalID()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 	return
@@ -732,7 +736,7 @@ func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.Inde
 			vals = append(vals, val)
 		}
 		// build index
-		kvX := kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, unique)
+		kvX := kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, unique)
 		err = kvX.Create(txn, vals, handle)
 		if err != nil {
 			return errors.Trace(err)

@@ -62,7 +62,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 	for _, idxInfo := range tblInfo.Indices {
 		idx := &column.IndexedCol{
 			IndexInfo: *idxInfo,
-			X:         kv.NewKVIndex(t.indexPrefix, idxInfo.Name.L, idxInfo.Unique),
+			X:         kv.NewKVIndex(t.indexPrefix, idxInfo.Name.L, idxInfo.ID, idxInfo.Unique),
 		}
 		t.AddIndex(idx)
 	}

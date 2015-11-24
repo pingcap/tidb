@@ -172,7 +172,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 			Unique:  false,
 			Primary: false,
 		},
-		X: kv.NewKVIndex("i", "id", false),
+		X: kv.NewKVIndex("i", "id", 0, false),
 	}
 	p.tbl.AddIndex(idxCol)
 
