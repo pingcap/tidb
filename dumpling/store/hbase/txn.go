@@ -47,7 +47,7 @@ func getOptionDefaultVal(opt kv.Option) interface{} {
 	return nil
 }
 
-// dbTxn is not thread safe
+// dbTxn implements kv.Transacton. It is not thread safe.
 type hbaseTxn struct {
 	kv.UnionStore
 	txn       themis.Txn
