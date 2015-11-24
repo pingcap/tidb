@@ -77,7 +77,7 @@ type Table interface {
 	// Truncate truncates the table.
 	Truncate(ctx context.Context) (err error)
 
-	// AddRecord inserts a row into the table.
+	// AddRecord inserts a row into the table. Is h is 0, it will alloc an unique id inside.
 	AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error)
 
 	// UpdateRecord updates a row in the table.

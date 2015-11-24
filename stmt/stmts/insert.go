@@ -199,17 +199,17 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	for i, row := range rows {
-		// Notes: incompatible with mysql
-		// MySQL will set last insert id to the first row, as follows:
-		// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-		// `insert t (c1) values(1),(2),(3);`
-		// Last insert id will be 1, not 3.
 		if len(s.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
 		h, err := t.AddRecord(ctx, row, recordIDs[i])
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
+			// Notes: incompatible with mysql
+			// MySQL will set last insert id to the first row, as follows:
+			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
+			// `insert t (c1) values(1),(2),(3);`
+			// Last insert id will be 1, not 3.
 			variable.GetSessionVars(ctx).SetLastInsertID(uint64(recordIDs[i]))
 			continue
 		}
