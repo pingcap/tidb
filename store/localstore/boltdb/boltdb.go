@@ -182,6 +182,10 @@ func (b *batch) Delete(key []byte) {
 	b.writes = append(b.writes, w)
 }
 
+func (b *batch) Len() int {
+	return len(b.writes)
+}
+
 // Driver implements engine Driver.
 type Driver struct {
 }
