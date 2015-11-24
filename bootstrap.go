@@ -160,8 +160,11 @@ func checkBootstrappedVar(s Session) (bool, error) {
 
 	isBootstrapped := row.Data[0].(string) == bootstrappedVarTrue
 	if isBootstrapped {
-		// Make sure that doesn't affect the next operations.
-		s.FinishTxn(false)
+		// Make sure that doesn't affect the following operations.
+
+		if err = s.FinishTxn(false); err != nil {
+			return false, errors.Trace(err)
+		}
 	}
 
 	return isBootstrapped, nil
