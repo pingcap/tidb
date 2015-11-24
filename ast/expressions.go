@@ -222,11 +222,6 @@ func (n *WhenClause) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *WhenClause) IsStatic() bool {
-	return n.Expr.IsStatic() && n.Result.IsStatic()
-}
-
 // CaseExpr is the case expression.
 type CaseExpr struct {
 	exprNode
@@ -275,7 +270,7 @@ func (n *CaseExpr) IsStatic() bool {
 		return false
 	}
 	for _, w := range n.WhenClauses {
-		if !w.IsStatic() {
+		if !w.Expr.IsStatic() || !w.Result.IsStatic() {
 			return false
 		}
 	}
@@ -328,7 +323,7 @@ type CompareSubqueryExpr struct {
 	// Op is the comparison opcode.
 	Op opcode.Op
 	// R is the sub query for right expression.
-	R *SubqueryExpr
+	R ExprNode
 	// All is true, we should compare all records in subquery.
 	All bool
 }
@@ -349,7 +344,7 @@ func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.R = node.(*SubqueryExpr)
+	n.R = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -427,7 +422,7 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the sub query.
-	Sel *SubqueryExpr
+	Sel ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -441,7 +436,7 @@ func (n *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Sel = node.(*SubqueryExpr)
+	n.Sel = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -455,7 +450,7 @@ type PatternInExpr struct {
 	// Not is true, the expression is "not in".
 	Not bool
 	// Sel is the sub query.
-	Sel *SubqueryExpr
+	Sel ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -482,7 +477,7 @@ func (n *PatternInExpr) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Sel = node.(*SubqueryExpr)
+		n.Sel = node.(ExprNode)
 	}
 	return v.Leave(n)
 }

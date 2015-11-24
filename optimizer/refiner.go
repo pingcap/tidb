@@ -18,16 +18,18 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/context"
 )
 
-func refine(p plan.Plan) {
-	var r refiner
+func refine(ctx context.Context, p plan.Plan) {
+	r := refiner{ctx: ctx}
 	p.Accept(&r)
 }
 
 // refiner tries to build index range, bypass sort, set limit for source plan.
 // It prepares the plan for cost estimation.
 type refiner struct {
+	ctx context.Context
 	conditions []ast.ExprNode
 	newConditions []ast.ExprNode
 	// store index scan plan for sort to use.
@@ -95,20 +97,26 @@ func (r *refiner) sortBypass(p *plan.Sort) {
 }
 
 func (r *refiner) buildIndexRange(p *plan.IndexScan) {
+	rb := rangeBuilder{ctx: r.ctx}
 	for i := 0; i < len(p.Index.Columns); i++ {
 		checker := conditionChecker{idx: p.Index, columnOffset: i}
-		var ranges []valueRange
+		var rangePoints []rangePoint
 		var newConditions []ast.ExprNode
 		for _, cond := range r.conditions {
 			if checker.check(cond) {
-				ranges = filterValueRanges(ranges, buildValueRanges(cond))
+				rangePoints = rb.intersection(rangePoints, rb.build(cond))
 			} else {
 				newConditions = append(newConditions, cond)
 			}
 		}
 		r.conditions = newConditions
-		if ranges == nil {
+		if rangePoints == nil {
 			break
+		}
+		if i == 0 {
+			p.Ranges = rb.buildIndexRanges(rangePoints)
+		} else {
+			p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 		}
 	}
 }
