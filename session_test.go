@@ -1151,7 +1151,7 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	f2 := func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se2, "update t set c = 1;")
+			mustExecSQL(c, se2, "update t set c = ?;", 1)
 		}
 	}
 	f3 := func() {
