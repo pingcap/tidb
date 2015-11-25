@@ -108,6 +108,8 @@ func (h *stmtHistory) clone() *stmtHistory {
 	return &nh
 }
 
+const unlimitedRetryCnt = -1
+
 type session struct {
 	txn         kv.Transaction // Current transaction
 	args        []interface{}  // Statment execution args, this should be cleaned up after exec
@@ -254,7 +256,7 @@ func (s *session) Retry() error {
 			}
 		}
 		retryCnt++
-		if (s.maxRetryCnt > 0) && (retryCnt >= s.maxRetryCnt) {
+		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
 	}

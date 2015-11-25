@@ -1131,10 +1131,13 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	mustExecSQL(c, se, "commit")
 
 	se1 := newSession(c, store, s.dbName)
+	se1.(*session).maxRetryCnt = unlimitedRetryCnt
 	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
 	se2 := newSession(c, store, s.dbName)
+	se2.(*session).maxRetryCnt = unlimitedRetryCnt
 	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
 	se3 := newSession(c, store, s.dbName)
+	se3.(*session).maxRetryCnt = unlimitedRetryCnt
 	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
 
 	var wg sync.WaitGroup
