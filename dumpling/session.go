@@ -200,17 +200,6 @@ func needRetry(st stmt.Statement) bool {
 	}
 }
 
-/*
-func isPreparedStmt(st stmt.Statement) bool {
-	switch st.(type) {
-	case *stmts.PreparedStmt:
-		return true
-	default:
-		return false
-	}
-}
-*/
-
 func (s *session) Retry() error {
 	s.retrying = true
 	nh := s.history.clone()
