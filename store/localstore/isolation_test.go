@@ -22,6 +22,7 @@ type testIsolationSuite struct {
 
 func (t *testIsolationSuite) TestInc(c *C) {
 	store, err := tidb.NewStore("memory://test/test_isolation")
+	c.Assert(err, IsNil)
 	defer store.Close()
 
 	threadCnt := 4
@@ -36,7 +37,7 @@ func (t *testIsolationSuite) TestInc(c *C) {
 			defer wg.Done()
 			for j := 0; j < 2000; j++ {
 				var id int64
-				err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+				err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 					var err1 error
 					id, err1 = txn.Inc([]byte("key"), 1)
 					return err1
@@ -57,6 +58,7 @@ func (t *testIsolationSuite) TestInc(c *C) {
 
 func (t *testIsolationSuite) TestMultiInc(c *C) {
 	store, err := tidb.NewStore("memory://test/test_isolation")
+	c.Assert(err, IsNil)
 	defer store.Close()
 
 	threadCnt := 4
@@ -75,7 +77,7 @@ func (t *testIsolationSuite) TestMultiInc(c *C) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incCnt; j++ {
-				err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+				err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 					for _, key := range keys {
 						_, err1 := txn.Inc(key, 1)
 						if err1 != nil {
