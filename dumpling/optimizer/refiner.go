@@ -14,11 +14,11 @@
 package optimizer
 
 import (
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/parser/opcode"
 )
 
 func refine(ctx context.Context, p plan.Plan) {
@@ -29,9 +29,9 @@ func refine(ctx context.Context, p plan.Plan) {
 // refiner tries to build index range, bypass sort, set limit for source plan.
 // It prepares the plan for cost estimation.
 type refiner struct {
-	ctx context.Context
-	conditions []ast.ExprNode
-	newConditions []ast.ExprNode
+	ctx             context.Context
+	conditions      []ast.ExprNode
+	conditionPushed []bool
 	// store index scan plan for sort to use.
 	indexScan *plan.IndexScan
 }
@@ -52,7 +52,14 @@ func (r *refiner) Leave(in plan.Plan) (plan.Plan, bool) {
 	case *plan.IndexScan:
 		r.buildIndexRange(x)
 	case *plan.Filter:
-		x.Conditions = r.conditions
+		if len(r.conditionPushed) > 0 {
+			x.Conditions = make([]ast.ExprNode, 0, len(r.conditions))
+			for i, val := range r.conditionPushed {
+				if !val {
+					x.Conditions = append(x.Conditions, r.conditions[i])
+				}
+			}
+		}
 	case *plan.Sort:
 		r.sortBypass(x)
 	case *plan.Limit:
@@ -101,15 +108,18 @@ func (r *refiner) buildIndexRange(p *plan.IndexScan) {
 	for i := 0; i < len(p.Index.Columns); i++ {
 		checker := conditionChecker{idx: p.Index, columnOffset: i}
 		var rangePoints []rangePoint
-		var newConditions []ast.ExprNode
-		for _, cond := range r.conditions {
+		for j, cond := range r.conditions {
 			if checker.check(cond) {
 				rangePoints = rb.intersection(rangePoints, rb.build(cond))
-			} else {
-				newConditions = append(newConditions, cond)
+				if i == 0 {
+					// only push the condition for the first column in the index.
+					if r.conditionPushed == nil {
+						r.conditionPushed = make([]bool, len(r.conditions))
+					}
+					r.conditionPushed[j] = true
+				}
 			}
 		}
-		r.conditions = newConditions
 		if rangePoints == nil {
 			break
 		}
@@ -143,15 +153,44 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		if x.Sel != nil {
 			return false
 		}
-		if !c.check(x.Expr) {
+		if !c.checkColumnExpr(x.Expr) {
 			return false
 		}
 		for _, val := range x.List {
-			if !c.check(val) {
+			if !val.IsStatic() {
 				return false
 			}
 		}
 		return true
+	case *ast.PatternLikeExpr:
+		if !c.checkColumnExpr(x.Expr) {
+			return false
+		}
+		if !x.Pattern.IsStatic() {
+			return false
+		}
+	case *ast.PatternRegexpExpr:
+		if !c.checkColumnExpr(x.Expr) {
+			return false
+		}
+		if !x.Pattern.IsStatic() {
+			return false
+		}
+	case *ast.BetweenExpr:
+		if !c.checkColumnExpr(x.Expr) {
+			return false
+		}
+		if !x.Left.IsStatic() || !x.Right.IsStatic() {
+			return false
+		}
+	case *ast.IsNullExpr:
+		if !c.checkColumnExpr(x.Expr) {
+			return false
+		}
+	case *ast.IsTruthExpr:
+		if !c.checkColumnExpr(x.Expr) {
+			return false
+		}
 	}
 	return false
 }

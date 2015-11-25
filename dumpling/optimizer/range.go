@@ -2,9 +2,9 @@ package optimizer
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
 	"sort"
 )
@@ -17,7 +17,7 @@ type rangePoint struct {
 
 type rangePointSorter struct {
 	points []rangePoint
-	err error
+	err    error
 }
 
 func (r *rangePointSorter) Len() int {
@@ -84,11 +84,14 @@ type rangeBuilder struct {
 	err error
 }
 
-func (r *rangeBuilder) build (expr ast.ExprNode) []rangePoint {
+func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 	switch x := expr.(type) {
 	case *ast.BinaryOperationExpr:
 		return r.buildFromBinop(x)
 	case *ast.PatternInExpr:
+		return r.buildFromIn(x)
+	case *ast.BetweenExpr:
+		return r.buildFromBetween(x)
 	}
 	return nil
 }
@@ -125,33 +128,45 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.NE:
-		startPoint1 := rangePoint{value: plan.MinNotNullVal, start:true}
+		startPoint1 := rangePoint{value: plan.MinNotNullVal, start: true}
 		endPoint1 := rangePoint{value: value, excl: true}
-		startPoint2 := rangePoint{value: value, start: true, excl:true}
+		startPoint2 := rangePoint{value: value, start: true, excl: true}
 		endPoint2 := rangePoint{value: plan.MaxVal}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	case opcode.LT:
-		startPoint := rangePoint{value:plan.MinNotNullVal, start: true}
-		endPoint := rangePoint{value:value, excl: true}
+		startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
+		endPoint := rangePoint{value: value, excl: true}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.LE:
-		startPoint := rangePoint{value:plan.MinNotNullVal, start: true}
-		endPoint := rangePoint{value:value}
+		startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
+		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.GT:
-		startPoint := rangePoint{value:value, start: true, excl:true}
-		endPoint := rangePoint{value:plan.MaxVal}
+		startPoint := rangePoint{value: value, start: true, excl: true}
+		endPoint := rangePoint{value: plan.MaxVal}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.GE:
-		startPoint := rangePoint{value:value, start: true}
-		endPoint := rangePoint{value:plan.MaxVal}
+		startPoint := rangePoint{value: value, start: true}
+		endPoint := rangePoint{value: plan.MaxVal}
 		return []rangePoint{startPoint, endPoint}
 	}
 	return nil
 }
 
 func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
-	return nil
+	var rangePoints []rangePoint
+	for _, v := range x.List {
+		startPoint := rangePoint{value: v.GetValue(), start: true}
+		endPoint := rangePoint{value: v.GetValue()}
+		rangePoints = append(rangePoints, startPoint, endPoint)
+	}
+	return rangePoints
+}
+
+func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {
+	startPoint := rangePoint{value: x.Left.GetValue(), start: true}
+	endPoint := rangePoint{value: x.Right.GetValue()}
+	return []rangePoint{startPoint, endPoint}
 }
 
 func (r *rangeBuilder) intersection(a, b []rangePoint) []rangePoint {
@@ -170,8 +185,8 @@ func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
 		return nil
 	}
 	var (
-		merged []rangePoint
-		inRangeCount int
+		merged               []rangePoint
+		inRangeCount         int
 		requiredInRangeCount int
 	)
 	if union {
@@ -197,10 +212,62 @@ func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
 	return merged
 }
 
-func (r *rangeBuilder) buildIndexRanges(ranges []rangePoint) []*plan.IndexRange {
-	return nil
+// buildIndexRanges build index ranges from range points.
+// Only the first column in the index is built, extra column ranges will be appended by
+// appendIndexRanges.
+func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint) []*plan.IndexRange {
+	var indexRanges []*plan.IndexRange
+	for i := 0; i < len(rangePoints); i += 2 {
+		startPoint := rangePoints[i]
+		endPoint := rangePoints[i+1]
+		ir := &plan.IndexRange{
+			LowVal:      []interface{}{startPoint.value},
+			LowExclude:  startPoint.excl,
+			HighVal:     []interface{}{endPoint.value},
+			HighExclude: endPoint.excl,
+		}
+		indexRanges = append(indexRanges, ir)
+	}
+	return indexRanges
 }
 
-func (r *rangeBuilder) appendIndexRanges(origin []*plan.IndexRange, ranges []rangePoint) []*plan.IndexRange {
-	return nil
+// appendIndexRanges appends additional column ranges for multi-column index.
+// The additional column ranges can only be appended to point ranges.
+// for example we have an index (a, b), if the condition is (a > 1 and b = 2)
+// then we can not build a conjunctive ranges for this index.
+func (r *rangeBuilder) appendIndexRanges(origin []*plan.IndexRange, rangePoints []rangePoint) []*plan.IndexRange {
+	var newIndexRanges []*plan.IndexRange
+	for i := 0; i < len(origin); i++ {
+		oRange := origin[i]
+		if !oRange.IsPoint() {
+			newIndexRanges = append(newIndexRanges, oRange)
+		} else {
+			newIndexRanges = append(newIndexRanges, r.appendIndexRange(oRange, rangePoints)...)
+		}
+	}
+	return newIndexRanges
+}
+
+func (r *rangeBuilder) appendIndexRange(origin *plan.IndexRange, rangePoints []rangePoint) []*plan.IndexRange {
+	var newRanges []*plan.IndexRange
+	for i := 0; i < len(rangePoints); i += 2 {
+		startPoint := rangePoints[i]
+		lowVal := make([]interface{}, len(origin.LowVal)+1)
+		copy(lowVal, origin.LowVal)
+		lowVal[len(origin.LowVal)] = startPoint.value
+
+		endPoint := rangePoints[i+1]
+		highVal := make([]interface{}, len(origin.HighVal)+1)
+		copy(highVal, origin.HighVal)
+		highVal[len(origin.HighVal)] = endPoint.value
+
+		ir := &plan.IndexRange{
+			LowVal:      lowVal,
+			LowExclude:  startPoint.excl,
+			HighVal:     highVal,
+			HighExclude: endPoint.excl,
+		}
+		newRanges = append(newRanges, ir)
+	}
+	return newRanges
 }

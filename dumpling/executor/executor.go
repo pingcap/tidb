@@ -17,17 +17,17 @@ import (
 	"sort"
 	"strings"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
-	"fmt"
-	"github.com/pingcap/tidb/optimizer/evaluator"
 )
 
 var (
@@ -152,41 +152,40 @@ const (
 
 // IndexRangeExec represents an index range scan executor.
 type IndexRangeExec struct {
-	ctx    context.Context
-	tbl    table.Table
-	fields []*ast.ResultField
-	idx    kv.Index
+	scan *IndexScanExec
+
 	// seekVal is different from lowVal, it is casted from lowVal and
 	// must be less than or equal to lowVal, used to seek the index.
-	seekVal     interface{}
 	lowVal      interface{}
 	lowExclude  bool
 	highVal     interface{}
 	highExclude bool
-	Desc        bool
 
-	iter kv.IndexIterator
-	skipLowCmp  bool
-	finished    bool
+	iter       kv.IndexIterator
+	skipLowCmp bool
+	finished   bool
 }
 
 // Fields implements Executor Fields interface.
 func (e *IndexRangeExec) Fields() []*ast.ResultField {
-	return e.fields
+	return e.scan.fields
 }
 
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		seekVal := e.seekVal
-		if e.lowVal == minNotNullVal {
-			seekVal = []byte{}
-		}
-		txn, err := e.ctx.GetTxn(false)
+		seekVal, err := types.Convert(e.lowVal, &e.scan.valueType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, _, err = e.idx.Seek(txn, []interface{}{seekVal})
+		if e.lowVal == minNotNullVal {
+			seekVal = []byte{}
+		}
+		txn, err := e.scan.ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.iter, _, err = e.scan.idx.Seek(txn, []interface{}{seekVal})
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
@@ -260,16 +259,16 @@ func indexCompare(a interface{}, b interface{}) int {
 	return n
 }
 
-func (r *IndexRangeExec) lookupRow(h int64) (*Row, error) {
+func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
 	var err error
-	row.Data, err = r.tbl.Row(r.ctx, h)
+	row.Data, err = e.scan.tbl.Row(e.scan.ctx, h)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	rowKey := &RowKeyEntry{
-		Tbl: r.tbl,
-		Key: string(r.tbl.RecordKey(h, nil)),
+		Tbl: e.scan.tbl,
+		Key: string(e.scan.tbl.RecordKey(h, nil)),
 	}
 	row.RowKeys = append(row.RowKeys, rowKey)
 	return row, nil
@@ -288,12 +287,14 @@ func (e *IndexRangeExec) Close() error {
 
 // IndexScanExec represents an index scan executor.
 type IndexScanExec struct {
-	Table    table.Table
-	fields   []*ast.ResultField
-	Ranges   []*IndexRangeExec
-	Desc     bool
-	rangeIdx int
-	ctx      context.Context
+	tbl       table.Table
+	idx       kv.Index
+	fields    []*ast.ResultField
+	Ranges    []*IndexRangeExec
+	Desc      bool
+	rangeIdx  int
+	ctx       context.Context
+	valueType types.FieldType
 }
 
 // Fields implements Executor Fields interface.
