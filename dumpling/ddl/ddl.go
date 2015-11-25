@@ -676,12 +676,12 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	// update InfoSchema
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
+		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 
-		err = t.UpdateTable(schema.ID, tbInfo)
+		err1 = t.UpdateTable(schema.ID, tbInfo)
 		return errors.Trace(err)
 	})
 	if d.onDDLChange != nil {
