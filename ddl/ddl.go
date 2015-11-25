@@ -682,7 +682,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 		}
 
 		err1 = t.UpdateTable(schema.ID, tbInfo)
-		return errors.Trace(err)
+		return errors.Trace(err1)
 	})
 	if d.onDDLChange != nil {
 		err = d.onDDLChange(err)
