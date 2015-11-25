@@ -61,4 +61,6 @@ type Batch interface {
 	Put(key []byte, value []byte)
 	// Delete appends 'delete operation' of the key/value to the batch.
 	Delete(key []byte)
+	// Len return length of the batch
+	Len() int
 }
