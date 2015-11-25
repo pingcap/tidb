@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
@@ -66,25 +67,45 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
-	table, _ := b.is.TableByID(v.Table.ID)
+	tbl, _ := b.is.TableByID(v.Table.ID)
+	var idx *column.IndexedCol
+	indices := tbl.Indices()
+	for _, v := range indices {
+		if v.IndexInfo.Name.L == v.IndexInfo.Name.L {
+			idx = v
+			break
+		}
+	}
 	e := &IndexScanExec{
-		Table:  table,
+		tbl:    tbl,
+		idx:    idx.X,
 		fields: v.Fields(),
 		ctx:    b.ctx,
+		Desc:   v.Desc,
 	}
+
+	for _, col := range tbl.Cols() {
+		if col.Name.L == idx.Columns[0].Name.L {
+			e.valueType = col.FieldType
+		}
+	}
+
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
 	for i, val := range v.Ranges {
-		e.Ranges[i] = b.buildIndexRange(val)
+		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
 	return e
 }
 
-func (b *executorBuilder) buildIndexRange(v *plan.IndexRange) *IndexRangeExec {
-	// TODO implement
-	e := &IndexRangeExec{
-
+func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
+	rang := &IndexRangeExec{
+		scan:        scan,
+		lowVal:      v.LowVal[0],
+		lowExclude:  v.LowExclude,
+		highVal:     v.HighVal[0],
+		highExclude: v.HighExclude,
 	}
-	return e
+	return rang
 }
 
 func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode {

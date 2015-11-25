@@ -58,6 +58,19 @@ type IndexRange struct {
 	HighExclude bool
 }
 
+// IsPoint returns if the index range is a point.
+func (ir *IndexRange) IsPoint() bool {
+	if len(ir.LowVal) != len(ir.HighVal) {
+		return false
+	}
+	for i := range ir.LowVal {
+		if ir.LowVal[i] != ir.HighVal[i] {
+			return false
+		}
+	}
+	return !ir.LowExclude && !ir.HighExclude
+}
+
 // IndexScan represents an index scan plan.
 type IndexScan struct {
 	basePlan
@@ -72,7 +85,7 @@ type IndexScan struct {
 	Ranges []*IndexRange
 
 	// Desc indicates whether the index should be scanned in descending order.
-	Desc   bool
+	Desc bool
 }
 
 // Accept implements Plan Accept interface.
@@ -111,7 +124,7 @@ func (p *Filter) SetLimit(limit float64) {
 	p.limit = limit
 	if len(p.Conditions) == 0 {
 		// We assume 50% of the src row is filtered out.
-		p.src.SetLimit(limit*2)
+		p.src.SetLimit(limit * 2)
 	}
 }
 

@@ -40,7 +40,8 @@ type Plan interface {
 	SetLimit(limit float64)
 }
 
-type PlanWithSrc interface {
+// WithSrcPlan is a Plan has a source Plan.
+type WithSrcPlan interface {
 	Plan
 	Src() Plan
 	SetSrc(src Plan)
