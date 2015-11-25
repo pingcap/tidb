@@ -306,14 +306,14 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			}
 
 			// Update row
-			handle, err2 := util.DecodeHandleFromRowKey(k)
-			if err2 != nil {
-				return nil, errors.Trace(err2)
+			handle, err1 := util.DecodeHandleFromRowKey(k)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
 
-			err2 = updateRecord(ctx, handle, data, tbl, columns, evalMap, lastOffset, false)
-			if err2 != nil {
-				return nil, errors.Trace(err2)
+			err1 = updateRecord(ctx, handle, data, tbl, columns, evalMap, lastOffset, false)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
 
 			updatedRowKeys[k] = true
