@@ -507,6 +507,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 	var err error
 	if s.txn == nil {
+		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, err
