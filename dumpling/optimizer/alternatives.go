@@ -32,6 +32,7 @@ func tableScanAlternatives(p *plan.TableScan) []plan.Plan {
 			Table:  p.Table,
 			Ranges: []*plan.IndexRange{fullRange},
 		}
+		ip.SetFields(p.Fields())
 		alts = append(alts, ip)
 	}
 	return alts

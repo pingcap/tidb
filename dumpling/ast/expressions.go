@@ -646,7 +646,7 @@ type PositionExpr struct {
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *PositionExpr) IsStatic() bool {
-	return true
+	return false
 }
 
 // Accept implements Node Accept interface.

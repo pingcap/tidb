@@ -1,12 +1,26 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package optimizer
 
 import (
+	"sort"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-	"sort"
 )
 
 type rangePoint struct {
@@ -90,8 +104,20 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 		return r.buildFromBinop(x)
 	case *ast.PatternInExpr:
 		return r.buildFromIn(x)
+	case *ast.ParenthesesExpr:
+		return r.build(x.Expr)
 	case *ast.BetweenExpr:
 		return r.buildFromBetween(x)
+	case *ast.IsNullExpr:
+		return r.buildFromIsNull(x)
+	case *ast.IsTruthExpr:
+		return r.buildFromIsTruth(x)
+	case *ast.PatternLikeExpr:
+		return r.buildFromPatternLike(x)
+	case *ast.UnaryOperationExpr:
+		return r.buildFromUnary(x)
+	case *ast.ColumnNameExpr:
+		return r.buildFromColumnName(x)
 	}
 	return nil
 }
@@ -160,12 +186,112 @@ func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
 		endPoint := rangePoint{value: v.GetValue()}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
+	sorter := rangePointSorter{points: rangePoints}
+	sort.Sort(&sorter)
+	if sorter.err != nil {
+		r.err = sorter.err
+	}
 	return rangePoints
 }
 
 func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {
 	startPoint := rangePoint{value: x.Left.GetValue(), start: true}
 	endPoint := rangePoint{value: x.Right.GetValue()}
+	return []rangePoint{startPoint, endPoint}
+}
+
+func (r *rangeBuilder) buildFromIsNull(x *ast.IsNullExpr) []rangePoint {
+	if x.Not {
+		startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
+		endPoint := rangePoint{value: plan.MaxVal}
+		return []rangePoint{startPoint, endPoint}
+	}
+	startPoint := rangePoint{start: true}
+	endPoint := rangePoint{}
+	return []rangePoint{startPoint, endPoint}
+}
+
+func (r *rangeBuilder) buildFromIsTruth(x *ast.IsTruthExpr) []rangePoint {
+	if x.Not {
+		startPoint1 := rangePoint{start: true}
+		endPoint1 := rangePoint{}
+		startPoint2 := rangePoint{value: int64(0), start: true}
+		endPoint2 := rangePoint{value: int64(0)}
+		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	}
+	startPoint1 := rangePoint{value: plan.MinNotNullVal, start: true}
+	endPoint1 := rangePoint{value: int64(0), excl: true}
+	startPoint2 := rangePoint{value: int64(0), excl: true, start: true}
+	endPoint2 := rangePoint{value: plan.MaxVal}
+	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+}
+
+func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint {
+	pattern := x.Pattern.GetValue().(string)
+	lowValue := make([]byte, 0, len(pattern))
+	// unscape the pattern
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == '\\' {
+			i++
+			if i < len(pattern) {
+				lowValue = append(lowValue, pattern[i])
+			}
+			continue
+		}
+		if pattern[i] == '%' || pattern[i] == '.' {
+			break
+		}
+		lowValue = append(lowValue, pattern[i])
+	}
+	startPoint := rangePoint{value: lowValue, start: true}
+
+	highValue := make([]byte, len(pattern))
+	copy(highValue, lowValue)
+
+	endPoint := rangePoint{value: highValue}
+	for i := len(highValue) - 1; i >= 0; i-- {
+		highValue[i]++
+		if highValue[i] != 0 {
+			break
+		}
+		if i == 0 {
+			endPoint.value = plan.MaxVal
+			break
+		}
+	}
+	return []rangePoint{startPoint, endPoint}
+}
+
+func (r *rangeBuilder) buildFromUnary(x *ast.UnaryOperationExpr) []rangePoint {
+	if x.Op != opcode.Not {
+		// validated before.
+		panic("should not happen")
+	}
+	rangs := r.build(x.V)
+	var revs []rangePoint
+	for i := 0; i <= len(rangs); i++ {
+		rp := rangs[i]
+		if rp.value == nil {
+			if rp.start {
+				continue
+			}
+			revs = append(revs, rangePoint{value: plan.MinNotNullVal, start: true})
+		} else if rp.value != plan.MaxVal {
+			if len(revs) == 0 {
+				revs = append(revs, rangePoint{value: nil, start: true})
+			}
+			revs = append(revs, rangePoint{value: rp.value, excl: !rp.excl, start: !rp.start})
+			if i == len(rangs)-1 {
+				revs = append(revs, rangePoint{value: plan.MaxVal})
+			}
+		}
+	}
+	return revs
+}
+
+func (r *rangeBuilder) buildFromColumnName(x *ast.ColumnNameExpr) []rangePoint {
+	startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
+	endPoint := rangePoint{value: plan.MaxVal}
 	return []rangePoint{startPoint, endPoint}
 }
 

@@ -42,7 +42,11 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 		c.indexScan(v)
 	case *TableScan:
 		v.startupCost = 0
-		v.rowCount = math.Min(DefaultRowCount, v.limit)
+		if v.limit == 0 {
+			v.rowCount = DefaultRowCount
+		} else {
+			v.rowCount = math.Min(DefaultRowCount, v.limit)
+		}
 		v.totalCost = v.rowCount * RowCost
 	case *SelectFields:
 		if v.Src() != nil {
@@ -59,9 +63,19 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 		v.rowCount = v.Src().RowCount() * FilterRate
 		v.totalCost = v.Src().TotalCost()
 	case *Sort:
-		v.startupCost = v.Src().TotalCost() + v.Src().RowCount()*SortCost
-		v.rowCount = math.Min(v.Src().RowCount(), v.limit)
-		v.totalCost = v.startupCost + v.rowCount*RowCost
+		if v.Bypass {
+			v.startupCost = v.Src().StartupCost()
+			v.rowCount = v.Src().RowCount()
+			v.totalCost = v.Src().TotalCost()
+		} else {
+			v.startupCost = v.Src().TotalCost() + v.Src().RowCount()*SortCost
+			if v.limit == 0 {
+				v.rowCount = v.Src().RowCount()
+			} else {
+				v.rowCount = math.Min(v.Src().RowCount(), v.limit)
+			}
+			v.totalCost = v.startupCost + v.rowCount*RowCost
+		}
 	case *Limit:
 		v.rowCount = v.Src().RowCount()
 		v.startupCost = v.Src().StartupCost()
@@ -69,7 +83,6 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	}
 	return p, true
 }
-
 func (c *costEstimator) indexScan(v *IndexScan) {
 	var rowCount float64
 	for _, v := range v.Ranges {
@@ -83,13 +96,17 @@ func (c *costEstimator) indexScan(v *IndexScan) {
 		if v.HighVal[0] == MaxVal {
 			rowCount += 4000
 		}
-		rowCount += 1000
+		rowCount += 100
 	}
-	if rowCount > DefaultRowCount {
-		rowCount = DefaultRowCount
+	if rowCount >= DefaultRowCount {
+		rowCount = DefaultRowCount - 1
 	}
 	v.startupCost = 0
-	v.rowCount = math.Min(rowCount, v.limit)
+	if v.limit == 0 {
+		v.rowCount = rowCount
+	} else {
+		v.rowCount = math.Min(rowCount, v.limit)
+	}
 	v.totalCost = v.rowCount * RowCost
 }
 

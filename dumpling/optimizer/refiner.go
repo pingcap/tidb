@@ -29,9 +29,8 @@ func refine(ctx context.Context, p plan.Plan) {
 // refiner tries to build index range, bypass sort, set limit for source plan.
 // It prepares the plan for cost estimation.
 type refiner struct {
-	ctx             context.Context
-	conditions      []ast.ExprNode
-	conditionPushed []bool
+	ctx        context.Context
+	conditions []ast.ExprNode
 	// store index scan plan for sort to use.
 	indexScan *plan.IndexScan
 }
@@ -42,7 +41,6 @@ func (r *refiner) Enter(in plan.Plan) (plan.Plan, bool) {
 		r.conditions = x.Conditions
 	case *plan.IndexScan:
 		r.indexScan = x
-		r.buildIndexRange(x)
 	}
 	return in, false
 }
@@ -51,15 +49,6 @@ func (r *refiner) Leave(in plan.Plan) (plan.Plan, bool) {
 	switch x := in.(type) {
 	case *plan.IndexScan:
 		r.buildIndexRange(x)
-	case *plan.Filter:
-		if len(r.conditionPushed) > 0 {
-			x.Conditions = make([]ast.ExprNode, 0, len(r.conditions))
-			for i, val := range r.conditionPushed {
-				if !val {
-					x.Conditions = append(x.Conditions, r.conditions[i])
-				}
-			}
-		}
 	case *plan.Sort:
 		r.sortBypass(x)
 	case *plan.Limit:
@@ -85,7 +74,7 @@ func (r *refiner) sortBypass(p *plan.Sort) {
 			if !ok {
 				return
 			}
-			if idx.Table.L != cn.Refer.Table.Name.L {
+			if r.indexScan.Table.Name.L != cn.Refer.Table.Name.L {
 				return
 			}
 			indexColumn := idx.Columns[i]
@@ -103,24 +92,24 @@ func (r *refiner) sortBypass(p *plan.Sort) {
 	}
 }
 
+var fullRange = []rangePoint{
+	{start: true},
+	{value: plan.MaxVal},
+}
+
 func (r *refiner) buildIndexRange(p *plan.IndexScan) {
 	rb := rangeBuilder{ctx: r.ctx}
 	for i := 0; i < len(p.Index.Columns); i++ {
-		checker := conditionChecker{idx: p.Index, columnOffset: i}
-		var rangePoints []rangePoint
-		for j, cond := range r.conditions {
+		checker := conditionChecker{idx: p.Index, tableName: p.Table.Name, columnOffset: i}
+		rangePoints := fullRange
+		var changed bool
+		for _, cond := range r.conditions {
 			if checker.check(cond) {
 				rangePoints = rb.intersection(rangePoints, rb.build(cond))
-				if i == 0 {
-					// only push the condition for the first column in the index.
-					if r.conditionPushed == nil {
-						r.conditionPushed = make([]bool, len(r.conditions))
-					}
-					r.conditionPushed[j] = true
-				}
+				changed = true
 			}
 		}
-		if rangePoints == nil {
+		if !changed {
 			break
 		}
 		if i == 0 {
@@ -133,7 +122,8 @@ func (r *refiner) buildIndexRange(p *plan.IndexScan) {
 
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
-	idx *model.IndexInfo
+	tableName model.CIStr
+	idx       *model.IndexInfo
 	// the offset of the indexed column to be checked.
 	columnOffset int
 }
@@ -169,13 +159,9 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		if !x.Pattern.IsStatic() {
 			return false
 		}
-	case *ast.PatternRegexpExpr:
-		if !c.checkColumnExpr(x.Expr) {
-			return false
-		}
-		if !x.Pattern.IsStatic() {
-			return false
-		}
+		patternStr := x.Pattern.GetValue().(string)
+		firstChar := patternStr[0]
+		return firstChar != '%' && firstChar != '.'
 	case *ast.BetweenExpr:
 		if !c.checkColumnExpr(x.Expr) {
 			return false
@@ -191,6 +177,8 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		if !c.checkColumnExpr(x.Expr) {
 			return false
 		}
+	case *ast.ColumnNameExpr:
+		return true
 	}
 	return false
 }
@@ -214,7 +202,7 @@ func (c *conditionChecker) checkColumnExpr(expr ast.ExprNode) bool {
 	if !ok {
 		return false
 	}
-	if cn.Refer.Table.Name.L != c.idx.Table.L {
+	if cn.Refer.Table.Name.L != c.tableName.L {
 		return false
 	}
 	if cn.Refer.Column.Name.L != c.idx.Columns[c.columnOffset].Name.L {

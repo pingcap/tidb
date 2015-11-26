@@ -215,7 +215,14 @@ func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *FuncSubstringExpr) IsStatic() bool {
-	return n.StrExpr.IsStatic() && n.Pos.IsStatic() && n.Len.IsStatic()
+	static := n.StrExpr.IsStatic() && n.Pos.IsStatic()
+	if !static {
+		return false
+	}
+	if n.Len != nil {
+		return n.Len.IsStatic()
+	}
+	return true
 }
 
 // FuncSubstringIndexExpr returns the substring as specified.
