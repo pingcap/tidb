@@ -160,7 +160,7 @@ func (s *SelectStmt) Plan(ctx context.Context) (plan.Plan, error) {
 	}
 	r = &plans.SelectLockPlan{Src: r, Lock: lock}
 
-	if err := s.checkOneColumn(ctx); err != nil {
+	if err = s.checkOneColumn(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 
