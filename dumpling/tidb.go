@@ -216,10 +216,12 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		stmt.ClearExecArgs(ctx)
 	}
 	se := ctx.(*session)
-	if isPreparedStmt(s) {
-		ps := s.(*stmts.PreparedStmt)
-		se.history.add(ps.ID, s)
-	} else {
+	switch ts := s.(type) {
+	case *stmts.PreparedStmt:
+		se.history.add(ts.ID, s)
+	case *stmts.ExecuteStmt:
+		se.history.add(ts.ID, s, args...)
+	default:
 		se.history.add(0, s)
 	}
 	// MySQL DDL should be auto-commit

@@ -200,15 +200,6 @@ func needRetry(st stmt.Statement) bool {
 	}
 }
 
-func isPreparedStmt(st stmt.Statement) bool {
-	switch st.(type) {
-	case *stmts.PreparedStmt:
-		return true
-	default:
-		return false
-	}
-}
-
 func (s *session) Retry() error {
 	s.retrying = true
 	nh := s.history.clone()
@@ -239,7 +230,12 @@ func (s *session) Retry() error {
 				continue
 			}
 			log.Warnf("Retry %s", st.OriginText())
-			_, err = runStmt(s, st)
+			switch st.(type) {
+			case *stmts.ExecuteStmt:
+				_, err = runStmt(s, st, sr.params...)
+			default:
+				_, err = runStmt(s, st)
+			}
 			if err != nil {
 				if kv.IsRetryableError(err) {
 					success = false
@@ -485,15 +481,7 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 		return nil, err
 	}
 	st := &stmts.ExecuteStmt{ID: stmtID}
-	inHistory := false
-	if s.ShouldAutocommit(s) {
-		inHistory = true
-		s.history.add(stmtID, st, args...)
-	}
 	r, err := runStmt(s, st, args...)
-	if !inHistory {
-		s.history.add(stmtID, st, args...)
-	}
 	return r, errors.Trace(err)
 }
 
@@ -515,7 +503,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
-		log.Infof("New txn:%s in session:S%d", s.txn, s.sid)
+		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
 	if forceNew {
@@ -537,7 +525,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
-		log.Warnf("Force new txn:%s in session:S%d", s.txn, s.sid)
+		log.Warnf("Force new txn:%s in session:%d", s.txn, s.sid)
 	}
 	return s.txn, nil
 }
