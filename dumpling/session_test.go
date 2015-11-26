@@ -1176,3 +1176,45 @@ func (s *testSessionSuite) TestSession(c *C) {
 	err := se.Close()
 	c.Assert(err, IsNil)
 }
+
+func (s *testSessionSuite) TestErrorRollback(c *C) {
+	store := newStore(c, s.dbName)
+	s1 := newSession(c, store, s.dbName)
+
+	defer s1.Close()
+
+	mustExecSQL(c, s1, "drop table if exists t_rollback")
+	mustExecSQL(c, s1, "create table t_rollback (c1 int, c2 int, primary key(c1))")
+
+	_, err := s1.Execute("insert into t_rollback values (0, 0)")
+	c.Assert(err, IsNil)
+
+	var wg sync.WaitGroup
+	cnt := 10
+	wg.Add(cnt)
+	num := 1000
+
+	for i := 0; i < cnt; i++ {
+		go func() {
+			defer wg.Done()
+			se := newSession(c, store, s.dbName)
+			// retry forever
+			se.(*session).maxRetryCnt = unlimitedRetryCnt
+			defer se.Close()
+
+			for j := 0; j < num; j++ {
+				// force generate a txn in session for later insert use.
+				se.(*session).GetTxn(false)
+
+				se.Execute("insert into t_rollback values (1, 1, 1)")
+
+				_, err = se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
+				c.Assert(err, IsNil)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
+}
