@@ -95,7 +95,6 @@ func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{
 }
 
 func (h *stmtHistory) reset() {
-
 	if len(h.history) > 0 {
 		h.history = h.history[:0]
 	}

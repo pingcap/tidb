@@ -225,8 +225,12 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		se.history.add(0, s)
 	}
 	// MySQL DDL should be auto-commit
-	if err == nil && (s.IsDDL() || autocommit.ShouldAutocommit(ctx)) {
-		err = ctx.FinishTxn(false)
+	if s.IsDDL() || autocommit.ShouldAutocommit(ctx) {
+		if err != nil {
+			ctx.FinishTxn(true)
+		} else {
+			err = ctx.FinishTxn(false)
+		}
 	}
 	return rs, errors.Trace(err)
 }
