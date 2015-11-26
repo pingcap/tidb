@@ -194,16 +194,11 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 	var rs rset.Recordset
 	// before every execution, we must clear affectedrows.
 	variable.GetSessionVars(ctx).SetAffectedRows(0)
-	switch s.(type) {
+	switch ts := s.(type) {
 	case *stmts.PreparedStmt:
-		ps := s.(*stmts.PreparedStmt)
-		return runPreparedStmt(ctx, ps)
+		rs, err = runPreparedStmt(ctx, ts)
 	case *stmts.ExecuteStmt:
-		es := s.(*stmts.ExecuteStmt)
-		rs, err = runExecute(ctx, es, args...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		rs, err = runExecute(ctx, ts, args...)
 	default:
 		if s.IsDDL() {
 			err = ctx.FinishTxn(false)
@@ -215,6 +210,7 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		rs, err = s.Exec(ctx)
 		stmt.ClearExecArgs(ctx)
 	}
+	// All the history should be added here.
 	se := ctx.(*session)
 	switch ts := s.(type) {
 	case *stmts.PreparedStmt:

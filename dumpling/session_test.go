@@ -1168,6 +1168,33 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	wg.Wait()
 }
 
+func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	se2 := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	c.Assert(se.(*session).txn, IsNil)
+	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
+	mustExecSQL(c, se, "insert t values (11, 2, 3)")
+
+	mustExecSQL(c, se1, "begin")
+	mustExecSQL(c, se1, "update t set c2=? where c1=11;", 21)
+
+	mustExecSQL(c, se2, "begin")
+	mustExecSQL(c, se2, "update t set c2=? where c1=11", 22)
+	mustExecSQL(c, se2, "commit")
+
+	mustExecSQL(c, se1, "commit")
+
+	se3 := newSession(c, store, s.dbName)
+	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 21)
+}
+
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
 	store := newStore(c, s.dbName)
