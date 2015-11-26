@@ -92,11 +92,6 @@ const (
 	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
-	// CreateGloablStatusTable is the SQL statement creates global status variable table in system db.
-	// TODO: MySQL puts GLOBAL_STATUS table in INFORMATION_SCHEMA db.
-	CreateGloablStatusTable = `CREATE TABLE if not exists mysql.GLOBAL_STATUS(
-		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
@@ -184,8 +179,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateColumnPrivTable)
 	// Create global systemt variable table.
 	mustExecute(s, CreateGloablVariablesTable)
-	// Create global status variable table.
-	mustExecute(s, CreateGloablStatusTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
 }
@@ -210,23 +203,6 @@ func doDMLWorks(s Session) {
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
-
-	// Init global status variables table.
-	statusVars, err := variable.GetDefaultStatusVars()
-	if err != nil {
-		debug.PrintStack()
-		log.Fatal(err)
-	}
-	if len(statusVars) > 0 {
-		values = make([]string, 0, len(statusVars))
-		for k, v := range statusVars {
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
-			values = append(values, value)
-		}
-		sql = fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalStatusTable,
-			strings.Join(values, ", "))
-		mustExecute(s, sql)
-	}
 
 	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
