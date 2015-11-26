@@ -58,20 +58,5 @@ func GetStatusVars() (map[string]*StatusVal, error) {
 		}
 	}
 
-	defaultStatusVars, err := GetDefaultStatusVars()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for status := range defaultStatusVars {
-		// To get more accurate value from the global status variables table.
-		statusVars[status] = &StatusVal{Scope: DefaultScopeFlag}
-	}
-
 	return statusVars, nil
-}
-
-// GetDefaultStatusVars gets status variables from the global status variables table.
-// TODO: Fill default status variables.
-func GetDefaultStatusVars() (map[string]*StatusVal, error) {
-	return nil, nil
 }
