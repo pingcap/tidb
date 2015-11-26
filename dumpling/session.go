@@ -95,7 +95,6 @@ func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{
 }
 
 func (h *stmtHistory) reset() {
-
 	if len(h.history) > 0 {
 		h.history = h.history[:0]
 	}
@@ -484,17 +483,10 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		return s.txn, nil
 	}
 	if forceNew {
-		err = s.txn.Commit()
-		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
+		err = s.FinishTxn(false)
 		if err != nil {
-			if !s.retrying && kv.IsRetryableError(err) {
-				err = s.Retry()
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			return nil, errors.Trace(err)
 		}
-		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, err
