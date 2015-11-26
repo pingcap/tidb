@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -159,6 +160,10 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	src := b.build(v.Src())
+	if v.Bypass && !v.ByItems[0].Desc {
+		log.Debugf("by pass sort")
+		return src
+	}
 	e := &SortExec{
 		Src:     src,
 		ByItems: v.ByItems,

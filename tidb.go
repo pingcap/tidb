@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/converter"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
@@ -168,12 +169,12 @@ func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*express
 		return nil, nil, nil
 	}
 	sm := sms[0]
-	compiler := &executor.Compiler{}
-	statement, err := compiler.Compile(ctx, sm)
+	conv := &converter.Converter{}
+	s, err := conv.Convert(sm)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	return statement, compiler.ParamMarkers(), nil
+	return s, conv.ParamMarkers(), nil
 }
 
 func prepareStmt(ctx context.Context, sqlText string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {

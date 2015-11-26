@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/optimizer/evaluator"
+	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
@@ -143,13 +144,6 @@ func (e *TableScanExec) Close() error {
 	return nil
 }
 
-type bound int
-
-const (
-	minNotNullVal bound = 0
-	maxVal        bound = 1
-)
-
 // IndexRangeExec represents an index range scan executor.
 type IndexRangeExec struct {
 	scan *IndexScanExec
@@ -174,12 +168,15 @@ func (e *IndexRangeExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		seekVal, err := types.Convert(e.lowVal, &e.scan.valueType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if e.lowVal == minNotNullVal {
+		var seekVal interface{}
+		var err error
+		if e.lowVal == plan.MinNotNullVal {
 			seekVal = []byte{}
+		} else {
+			seekVal, err = types.Convert(e.lowVal, &e.scan.valueType)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		txn, err := e.scan.ctx.GetTxn(false)
 		if err != nil {
@@ -233,20 +230,20 @@ func indexCompare(a interface{}, b interface{}) int {
 	}
 
 	// a and b both not nil
-	if a == minNotNullVal && b == minNotNullVal {
+	if a == plan.MinNotNullVal && b == plan.MinNotNullVal {
 		return 0
-	} else if b == minNotNullVal {
+	} else if b == plan.MinNotNullVal {
 		return 1
-	} else if a == minNotNullVal {
+	} else if a == plan.MinNotNullVal {
 		return -1
 	}
 
 	// a and b both not min value
-	if a == maxVal && b == maxVal {
+	if a == plan.MaxVal && b == plan.MaxVal {
 		return 0
-	} else if a == maxVal {
+	} else if a == plan.MaxVal {
 		return 1
-	} else if b == maxVal {
+	} else if b == plan.MaxVal {
 		return -1
 	}
 

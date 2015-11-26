@@ -14,12 +14,13 @@
 package optimizer
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
-	"strings"
 )
 
 // Optimize do optimization and create a Plan.

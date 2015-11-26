@@ -616,13 +616,8 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 		v.SetValue(d)
 		return true
 	}
-	var err error
-	d.Data, err = types.Cast(value, v.Tp)
-	if err != nil {
-		e.err = err
-		return false
-	}
-	v.SetValue(d)
+	d.Data, _ = types.Cast(value, v.Tp)
+	v.SetValue(d.Data)
 	return true
 }
 

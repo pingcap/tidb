@@ -159,7 +159,7 @@ func convertToInt(val interface{}, target *FieldType) (int64, error) {
 
 func convertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
 	if val < 0 {
-		return 0, overflow(val, tp)
+		return uint64(val), overflow(val, tp)
 	}
 
 	if uint64(val) > upperBound {
@@ -180,7 +180,7 @@ func convertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 func convertFloatToUint(val float64, upperBound uint64, tp byte) (uint64, error) {
 	val = RoundFloat(val)
 	if val < 0 {
-		return 0, overflow(val, tp)
+		return uint64(val), overflow(val, tp)
 	}
 
 	if val > float64(upperBound) {
