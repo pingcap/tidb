@@ -85,21 +85,25 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 }
 func (c *costEstimator) indexScan(v *IndexScan) {
 	var rowCount float64
-	for _, v := range v.Ranges {
-		if v.IsPoint() {
-			rowCount++
-			continue
+	if len(v.Ranges) == 1 && v.Ranges[0].LowVal[0] == nil && v.Ranges[0].HighVal[0] == MaxVal {
+		rowCount = DefaultRowCount
+	} else {
+		for _, v := range v.Ranges {
+			if v.IsPoint() {
+				rowCount++
+				continue
+			}
+			if v.LowVal[0] == nil || v.LowVal[0] == MinNotNullVal {
+				rowCount += 4000
+			}
+			if v.HighVal[0] == MaxVal {
+				rowCount += 4000
+			}
+			rowCount += 100
 		}
-		if v.LowVal[0] == nil || v.LowVal[0] == MinNotNullVal {
-			rowCount += 4000
+		if rowCount >= DefaultRowCount {
+			rowCount = DefaultRowCount - 1
 		}
-		if v.HighVal[0] == MaxVal {
-			rowCount += 4000
-		}
-		rowCount += 100
-	}
-	if rowCount >= DefaultRowCount {
-		rowCount = DefaultRowCount - 1
 	}
 	v.startupCost = 0
 	if v.limit == 0 {
