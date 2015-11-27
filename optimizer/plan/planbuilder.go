@@ -11,17 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-func buildPlan(node ast.Node) plan.Plan {
+// BuildPlan builds a plan from a node.
+func BuildPlan(node ast.Node) Plan {
 	var builder planBuilder
-	return builder.build(node)
+	p := builder.build(node)
+	refine(p)
+	return p
 }
 
 // planBuilder builds Plan from an ast.Node.
@@ -29,7 +31,7 @@ func buildPlan(node ast.Node) plan.Plan {
 type planBuilder struct {
 }
 
-func (b *planBuilder) build(node ast.Node) plan.Plan {
+func (b *planBuilder) build(node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
@@ -37,8 +39,8 @@ func (b *planBuilder) build(node ast.Node) plan.Plan {
 	panic("not supported")
 }
 
-func (b *planBuilder) buildSelect(sel *ast.SelectStmt) plan.Plan {
-	var p plan.Plan
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
+	var p Plan
 	if sel.From != nil {
 		p = b.buildJoin(sel.From.TableRefs)
 		if sel.Where != nil {
@@ -47,8 +49,13 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) plan.Plan {
 		if sel.LockTp != ast.SelectLockNone {
 			p = b.buildSelectLock(p, sel.LockTp)
 		}
+		p = b.buildSelectFields(p, sel.GetResultFields())
+	} else {
+		p = b.buildSelectFields(p, sel.GetResultFields())
+		if sel.Where != nil {
+			p = b.buildFilter(p, sel.Where)
+		}
 	}
-	p = b.buildSelectFields(p, sel.GetResultFields())
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items)
 	}
@@ -58,7 +65,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) plan.Plan {
 	return p
 }
 
-func (b *planBuilder) buildJoin(from *ast.Join) plan.Plan {
+func (b *planBuilder) buildJoin(from *ast.Join) Plan {
 	// Only support single table for now.
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
@@ -68,7 +75,7 @@ func (b *planBuilder) buildJoin(from *ast.Join) plan.Plan {
 	if !ok {
 		panic("not supported")
 	}
-	p := &plan.TableScan{
+	p := &TableScan{
 		Table: tn.TableInfo,
 	}
 	p.SetFields(tn.GetResultFields())
@@ -92,8 +99,8 @@ func (b *planBuilder) splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
-func (b *planBuilder) buildFilter(src plan.Plan, where ast.ExprNode) *plan.Filter {
-	filter := &plan.Filter{
+func (b *planBuilder) buildFilter(src Plan, where ast.ExprNode) *Filter {
+	filter := &Filter{
 		Conditions: b.splitWhere(where),
 	}
 	filter.SetSrc(src)
@@ -101,8 +108,8 @@ func (b *planBuilder) buildFilter(src plan.Plan, where ast.ExprNode) *plan.Filte
 	return filter
 }
 
-func (b *planBuilder) buildSelectLock(src plan.Plan, lock ast.SelectLockType) *plan.SelectLock {
-	selectLock := &plan.SelectLock{
+func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
+	selectLock := &SelectLock{
 		Lock: lock,
 	}
 	selectLock.SetSrc(src)
@@ -110,15 +117,15 @@ func (b *planBuilder) buildSelectLock(src plan.Plan, lock ast.SelectLockType) *p
 	return selectLock
 }
 
-func (b *planBuilder) buildSelectFields(src plan.Plan, fields []*ast.ResultField) plan.Plan {
-	selectFields := &plan.SelectFields{}
+func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Plan {
+	selectFields := &SelectFields{}
 	selectFields.SetSrc(src)
 	selectFields.SetFields(fields)
 	return selectFields
 }
 
-func (b *planBuilder) buildSort(src plan.Plan, byItems []*ast.ByItem) plan.Plan {
-	sort := &plan.Sort{
+func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
+	sort := &Sort{
 		ByItems: byItems,
 	}
 	sort.SetSrc(src)
@@ -126,8 +133,8 @@ func (b *planBuilder) buildSort(src plan.Plan, byItems []*ast.ByItem) plan.Plan 
 	return sort
 }
 
-func (b *planBuilder) buildLimit(src plan.Plan, limit *ast.Limit) plan.Plan {
-	li := &plan.Limit{
+func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
+	li := &Limit{
 		Offset: limit.Offset,
 		Count:  limit.Count,
 	}

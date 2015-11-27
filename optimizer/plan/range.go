@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package plan
 
 import (
 	"sort"
 
+	"fmt"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -27,6 +26,21 @@ type rangePoint struct {
 	value interface{}
 	excl  bool
 	start bool
+}
+
+func (rp rangePoint) String() string {
+	if rp.start {
+		symbol := "["
+		if rp.excl {
+			symbol = "("
+		}
+		return fmt.Sprintf("%s%v", symbol, rp.value)
+	}
+	symbol := "]"
+	if rp.excl {
+		symbol = ")"
+	}
+	return fmt.Sprintf("%v%s", rp.value, symbol)
 }
 
 type rangePointSorter struct {
@@ -50,20 +64,20 @@ func (r *rangePointSorter) Less(i, j int) bool {
 	}
 
 	// a and b both not nil
-	if a.value == plan.MinNotNullVal && b.value == plan.MinNotNullVal {
+	if a.value == MinNotNullVal && b.value == MinNotNullVal {
 		return r.equalValueLess(a, b)
-	} else if b.value == plan.MinNotNullVal {
+	} else if b.value == MinNotNullVal {
 		return false
-	} else if a.value == plan.MinNotNullVal {
+	} else if a.value == MinNotNullVal {
 		return true
 	}
 
 	// a and b both not min value
-	if a.value == plan.MaxVal && b.value == plan.MaxVal {
+	if a.value == MaxVal && b.value == MaxVal {
 		return r.equalValueLess(a, b)
-	} else if a.value == plan.MaxVal {
+	} else if a.value == MaxVal {
 		return false
-	} else if b.value == plan.MaxVal {
+	} else if b.value == MaxVal {
 		return true
 	}
 
@@ -94,7 +108,6 @@ func (r *rangePointSorter) Swap(i, j int) {
 }
 
 type rangeBuilder struct {
-	ctx context.Context
 	err error
 }
 
@@ -119,14 +132,14 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 	case *ast.ColumnNameExpr:
 		return r.buildFromColumnName(x)
 	}
-	return nil
+	return fullRange
 }
 
 func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 	if x.Op == opcode.OrOr {
-		return r.union(x.L, x.R)
+		return r.union(r.build(x.L), r.build(x.R))
 	} else if x.Op == opcode.AndAnd {
-		return r.intersection(x.L, x.R)
+		return r.intersection(r.build(x.L), r.build(x.R))
 	}
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
@@ -156,26 +169,26 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.NE:
-		startPoint1 := rangePoint{value: plan.MinNotNullVal, start: true}
+		startPoint1 := rangePoint{value: MinNotNullVal, start: true}
 		endPoint1 := rangePoint{value: value, excl: true}
 		startPoint2 := rangePoint{value: value, start: true, excl: true}
-		endPoint2 := rangePoint{value: plan.MaxVal}
+		endPoint2 := rangePoint{value: MaxVal}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	case opcode.LT:
-		startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
+		startPoint := rangePoint{value: MinNotNullVal, start: true}
 		endPoint := rangePoint{value: value, excl: true}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.LE:
-		startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
+		startPoint := rangePoint{value: MinNotNullVal, start: true}
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.GT:
 		startPoint := rangePoint{value: value, start: true, excl: true}
-		endPoint := rangePoint{value: plan.MaxVal}
+		endPoint := rangePoint{value: MaxVal}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.GE:
 		startPoint := rangePoint{value: value, start: true}
-		endPoint := rangePoint{value: plan.MaxVal}
+		endPoint := rangePoint{value: MaxVal}
 		return []rangePoint{startPoint, endPoint}
 	}
 	return nil
@@ -204,8 +217,8 @@ func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {
 
 func (r *rangeBuilder) buildFromIsNull(x *ast.IsNullExpr) []rangePoint {
 	if x.Not {
-		startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
-		endPoint := rangePoint{value: plan.MaxVal}
+		startPoint := rangePoint{value: MinNotNullVal, start: true}
+		endPoint := rangePoint{value: MaxVal}
 		return []rangePoint{startPoint, endPoint}
 	}
 	startPoint := rangePoint{start: true}
@@ -214,50 +227,71 @@ func (r *rangeBuilder) buildFromIsNull(x *ast.IsNullExpr) []rangePoint {
 }
 
 func (r *rangeBuilder) buildFromIsTruth(x *ast.IsTruthExpr) []rangePoint {
-	if x.Not {
-		startPoint1 := rangePoint{start: true}
-		endPoint1 := rangePoint{}
-		startPoint2 := rangePoint{value: int64(0), start: true}
-		endPoint2 := rangePoint{value: int64(0)}
+	if x.True != 0 {
+		if x.Not {
+			startPoint1 := rangePoint{start: true}
+			endPoint1 := rangePoint{}
+			startPoint2 := rangePoint{value: int64(0), start: true}
+			endPoint2 := rangePoint{value: int64(0)}
+			return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+		}
+		startPoint1 := rangePoint{value: MinNotNullVal, start: true}
+		endPoint1 := rangePoint{value: int64(0), excl: true}
+		startPoint2 := rangePoint{value: int64(0), excl: true, start: true}
+		endPoint2 := rangePoint{value: MaxVal}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
-	startPoint1 := rangePoint{value: plan.MinNotNullVal, start: true}
-	endPoint1 := rangePoint{value: int64(0), excl: true}
-	startPoint2 := rangePoint{value: int64(0), excl: true, start: true}
-	endPoint2 := rangePoint{value: plan.MaxVal}
-	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	if x.Not {
+		startPoint1 := rangePoint{start: true}
+		endPoint1 := rangePoint{value: int64(0), excl: true}
+		startPoint2 := rangePoint{value: int64(0), start: true, excl: true}
+		endPoint2 := rangePoint{value: MaxVal}
+		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	}
+	startPoint := rangePoint{value: int64(0), start: true}
+	endPoint := rangePoint{value: int64(0)}
+	return []rangePoint{startPoint, endPoint}
 }
 
 func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint {
 	pattern := x.Pattern.GetValue().(string)
 	lowValue := make([]byte, 0, len(pattern))
 	// unscape the pattern
+	var exclude bool
 	for i := 0; i < len(pattern); i++ {
 		if pattern[i] == '\\' {
 			i++
 			if i < len(pattern) {
 				lowValue = append(lowValue, pattern[i])
+			} else {
+				lowValue = append(lowValue, '\\')
 			}
 			continue
 		}
-		if pattern[i] == '%' || pattern[i] == '.' {
+		if pattern[i] == '%' {
+			break
+		} else if pattern[i] == '.' {
+			exclude = true
 			break
 		}
 		lowValue = append(lowValue, pattern[i])
 	}
-	startPoint := rangePoint{value: lowValue, start: true}
-
-	highValue := make([]byte, len(pattern))
+	if len(lowValue) == 0 {
+		return []rangePoint{{value: MinNotNullVal, start: true}, {value: MaxVal}}
+	}
+	startPoint := rangePoint{value: string(lowValue), start: true, excl: exclude}
+	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 
-	endPoint := rangePoint{value: highValue}
+	endPoint := rangePoint{excl: true}
 	for i := len(highValue) - 1; i >= 0; i-- {
 		highValue[i]++
 		if highValue[i] != 0 {
+			endPoint.value = string(highValue)
 			break
 		}
 		if i == 0 {
-			endPoint.value = plan.MaxVal
+			endPoint.value = MaxVal
 			break
 		}
 	}
@@ -277,14 +311,14 @@ func (r *rangeBuilder) buildFromUnary(x *ast.UnaryOperationExpr) []rangePoint {
 			if rp.start {
 				continue
 			}
-			revs = append(revs, rangePoint{value: plan.MinNotNullVal, start: true})
-		} else if rp.value != plan.MaxVal {
+			revs = append(revs, rangePoint{value: MinNotNullVal, start: true})
+		} else if rp.value != MaxVal {
 			if len(revs) == 0 {
 				revs = append(revs, rangePoint{value: nil, start: true})
 			}
 			revs = append(revs, rangePoint{value: rp.value, excl: !rp.excl, start: !rp.start})
 			if i == len(rangs)-1 {
-				revs = append(revs, rangePoint{value: plan.MaxVal})
+				revs = append(revs, rangePoint{value: MaxVal})
 			}
 		}
 	}
@@ -292,8 +326,8 @@ func (r *rangeBuilder) buildFromUnary(x *ast.UnaryOperationExpr) []rangePoint {
 }
 
 func (r *rangeBuilder) buildFromColumnName(x *ast.ColumnNameExpr) []rangePoint {
-	startPoint := rangePoint{value: plan.MinNotNullVal, start: true}
-	endPoint := rangePoint{value: plan.MaxVal}
+	startPoint := rangePoint{value: MinNotNullVal, start: true}
+	endPoint := rangePoint{value: MaxVal}
 	return []rangePoint{startPoint, endPoint}
 }
 
@@ -343,12 +377,12 @@ func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
 // buildIndexRanges build index ranges from range points.
 // Only the first column in the index is built, extra column ranges will be appended by
 // appendIndexRanges.
-func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint) []*plan.IndexRange {
-	var indexRanges []*plan.IndexRange
+func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint) []*IndexRange {
+	var indexRanges []*IndexRange
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		endPoint := rangePoints[i+1]
-		ir := &plan.IndexRange{
+		ir := &IndexRange{
 			LowVal:      []interface{}{startPoint.value},
 			LowExclude:  startPoint.excl,
 			HighVal:     []interface{}{endPoint.value},
@@ -363,8 +397,8 @@ func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint) []*plan.IndexR
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func (r *rangeBuilder) appendIndexRanges(origin []*plan.IndexRange, rangePoints []rangePoint) []*plan.IndexRange {
-	var newIndexRanges []*plan.IndexRange
+func (r *rangeBuilder) appendIndexRanges(origin []*IndexRange, rangePoints []rangePoint) []*IndexRange {
+	var newIndexRanges []*IndexRange
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint() {
@@ -376,8 +410,8 @@ func (r *rangeBuilder) appendIndexRanges(origin []*plan.IndexRange, rangePoints 
 	return newIndexRanges
 }
 
-func (r *rangeBuilder) appendIndexRange(origin *plan.IndexRange, rangePoints []rangePoint) []*plan.IndexRange {
-	var newRanges []*plan.IndexRange
+func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangePoint) []*IndexRange {
+	var newRanges []*IndexRange
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		lowVal := make([]interface{}, len(origin.LowVal)+1)
@@ -389,7 +423,7 @@ func (r *rangeBuilder) appendIndexRange(origin *plan.IndexRange, rangePoints []r
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
-		ir := &plan.IndexRange{
+		ir := &IndexRange{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,

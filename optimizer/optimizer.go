@@ -39,15 +39,12 @@ func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (pla
 	if err := rewriteStatic(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := buildPlan(node)
-	alts := alternatives(p)
-
-	refine(ctx, p)
+	p := plan.BuildPlan(node)
 	bestCost := plan.EstimateCost(p)
 	bestPlan := p
 
+	alts := plan.Alternatives(p)
 	for _, alt := range alts {
-		refine(ctx, alt)
 		cost := plan.EstimateCost(alt)
 		if cost < bestCost {
 			bestCost = cost

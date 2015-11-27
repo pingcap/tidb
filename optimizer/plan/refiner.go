@@ -11,64 +11,59 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-func refine(ctx context.Context, p plan.Plan) {
-	r := refiner{ctx: ctx}
+func refine(p Plan) {
+	r := refiner{}
 	p.Accept(&r)
 }
 
 // refiner tries to build index range, bypass sort, set limit for source plan.
 // It prepares the plan for cost estimation.
 type refiner struct {
-	ctx        context.Context
 	conditions []ast.ExprNode
 	// store index scan plan for sort to use.
-	indexScan *plan.IndexScan
+	indexScan *IndexScan
 }
 
-func (r *refiner) Enter(in plan.Plan) (plan.Plan, bool) {
+func (r *refiner) Enter(in Plan) (Plan, bool) {
 	switch x := in.(type) {
-	case *plan.Filter:
+	case *Filter:
 		r.conditions = x.Conditions
-	case *plan.IndexScan:
+	case *IndexScan:
 		r.indexScan = x
 	}
 	return in, false
 }
 
-func (r *refiner) Leave(in plan.Plan) (plan.Plan, bool) {
+func (r *refiner) Leave(in Plan) (Plan, bool) {
 	switch x := in.(type) {
-	case *plan.IndexScan:
+	case *IndexScan:
 		r.buildIndexRange(x)
-	case *plan.Sort:
+	case *Sort:
 		r.sortBypass(x)
-	case *plan.Limit:
+	case *Limit:
 		x.SetLimit(0)
 	}
 	return in, true
 }
 
-func (r *refiner) sortBypass(p *plan.Sort) {
+func (r *refiner) sortBypass(p *Sort) {
 	if r.indexScan != nil {
 		idx := r.indexScan.Index
 		if len(p.ByItems) > len(idx.Columns) {
 			return
 		}
-		var desc, asc bool
+		var desc bool
 		for i, val := range p.ByItems {
 			if val.Desc {
 				desc = true
-			} else {
-				asc = true
 			}
 			cn, ok := val.Expr.(*ast.ColumnNameExpr)
 			if !ok {
@@ -82,11 +77,10 @@ func (r *refiner) sortBypass(p *plan.Sort) {
 				return
 			}
 		}
-		if desc && asc {
-			// mixed descend and ascend order can not bypass.
-			return
-		} else if desc {
+		if desc {
+			// TODO: support desc when index reverse iterator is supported.
 			r.indexScan.Desc = true
+			return
 		}
 		p.Bypass = true
 	}
@@ -94,11 +88,11 @@ func (r *refiner) sortBypass(p *plan.Sort) {
 
 var fullRange = []rangePoint{
 	{start: true},
-	{value: plan.MaxVal},
+	{value: MaxVal},
 }
 
-func (r *refiner) buildIndexRange(p *plan.IndexScan) {
-	rb := rangeBuilder{ctx: r.ctx}
+func (r *refiner) buildIndexRange(p *IndexScan) {
+	rb := rangeBuilder{}
 	for i := 0; i < len(p.Index.Columns); i++ {
 		checker := conditionChecker{idx: p.Index, tableName: p.Table.Name, columnOffset: i}
 		rangePoints := fullRange
