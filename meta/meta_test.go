@@ -146,6 +146,17 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbs, HasLen, 0)
 
+	bootstrapped, err := t.IsBootstrapped()
+	c.Assert(err, IsNil)
+	c.Assert(bootstrapped, IsFalse)
+
+	err = t.FinishBootstrap()
+	c.Assert(err, IsNil)
+
+	bootstrapped, err = t.IsBootstrapped()
+	c.Assert(err, IsNil)
+	c.Assert(bootstrapped, IsTrue)
+
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
@@ -187,6 +198,16 @@ func (s *testSuite) TestDDL(c *C) {
 
 	job.ID = 2
 	err = t.UpdateDDLJob(0, job)
+	c.Assert(err, IsNil)
+
+	err = t.UpdateDDLReorgHandle(job, 1)
+	c.Assert(err, IsNil)
+
+	h, err := t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(1))
+
+	err = t.RemoveDDLReorgHandle(job)
 	c.Assert(err, IsNil)
 
 	v, err = t.DeQueueDDLJob()
