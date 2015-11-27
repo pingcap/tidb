@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -34,6 +35,15 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+func trySkipDBTest(c *C) {
+	// skip_ddl flag is defined in ddl package, we can't use it directly, so using flag Lookup to help us.
+	if f := flag.Lookup("skip_ddl"); f == nil || strings.ToLower(f.Value.String()) == "false" {
+		return
+	}
+
+	c.Skip("skip DB test")
+}
+
 var _ = Suite(&testDBSuite{})
 
 type testDBSuite struct {
@@ -47,6 +57,8 @@ type testDBSuite struct {
 }
 
 func (s *testDBSuite) SetUpSuite(c *C) {
+	trySkipDBTest(c)
+
 	var err error
 
 	s.schemaName = "test_db"
@@ -71,6 +83,8 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDBSuite) TearDownSuite(c *C) {
+	trySkipDBTest(c)
+
 	s.db.Close()
 
 	s.s.Close()

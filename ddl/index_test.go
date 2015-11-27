@@ -37,6 +37,8 @@ type testIndexSuite struct {
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
+	trySkipTest(c)
+
 	s.store = testCreateStore(c, "test_index")
 	lease := 50 * time.Millisecond
 	s.d = newDDL(s.store, nil, nil, lease)
@@ -46,6 +48,8 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
+	trySkipTest(c)
+
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
 
