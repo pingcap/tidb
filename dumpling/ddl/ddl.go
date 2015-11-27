@@ -659,12 +659,16 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	if err != nil {
 		return errors.Trace(ErrNotExists)
 	}
+	indexID, err := d.genGlobalID()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, indexName, idxColNames},
+		Args:     []interface{}{unique, indexName, indexID, idxColNames},
 	}
 
 	err = d.startJob(ctx, job)
