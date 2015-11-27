@@ -155,13 +155,11 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 }
 
 func (d *ddl) delKeysWithPrefix(prefix string) error {
-	keys := make([]string, maxBatchSize)
-
 	for {
-		keys := keys[0:0]
+		keys := make([]string, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn); err != nil {
-				return errors.Trace(err)
+			if err1 := d.isReorgRunnable(txn); err1 != nil {
+				return errors.Trace(err1)
 			}
 
 			iter, err := txn.Seek([]byte(prefix))
