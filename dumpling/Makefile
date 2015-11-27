@@ -113,6 +113,12 @@ gotest:
 race:
 	$(GO) test --race -cover ./...
 
+ddl_test:
+	$(GO) test ./ddl/... -skip_ddl=false
+
+ddl_race_test:
+	$(GO) test --race ./ddl/... -skip_ddl=false 
+
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 

@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var (
@@ -468,50 +468,21 @@ func (s *ShowPlan) fetchShowVariables(ctx context.Context) error {
 	return nil
 }
 
-func getSessionStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
-	globalVars variable.GlobalVarAccessor, name string) (string, error) {
-	sv, ok := sessionVars.StatusVars[name]
-	if ok {
-		return sv, nil
-	}
-
-	value, err := globalVars.GetGlobalStatusVar(ctx, name)
-	if err != nil && terror.UnknownStatusVar.Equal(err) {
-		return "", errors.Trace(err)
-	}
-
-	return value, nil
-}
-
-func getGlobalStatusVar(ctx context.Context, sessionVars *variable.SessionVars,
-	globalVars variable.GlobalVarAccessor, name string) (string, error) {
-
-	value, err := globalVars.GetGlobalStatusVar(ctx, name)
-	if err == nil {
-		return value, nil
-	}
-
-	if terror.UnknownStatusVar.Equal(err) {
-		return "", errors.Trace(err)
-	}
-
-	sv, _ := sessionVars.StatusVars[name]
-
-	return sv, nil
-}
-
 func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
-	sessionVars := variable.GetSessionVars(ctx)
-	globalVars := variable.GetGlobalVarAccessor(ctx)
 	m := map[interface{}]interface{}{}
 
-	for _, v := range variable.StatusVars {
+	statusVars, err := variable.GetStatusVars()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for status, v := range statusVars {
 		if s.Pattern != nil {
-			s.Pattern.Expr = expression.Value{Val: v.Name}
+			s.Pattern.Expr = expression.Value{Val: status}
 		} else if s.Where != nil {
 			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
 				if strings.EqualFold(name, "Variable_name") {
-					return v.Name, nil
+					return status, nil
 				}
 
 				return nil, errors.Errorf("unknown field %s", name)
@@ -526,22 +497,15 @@ func (s *ShowPlan) fetchShowStatus(ctx context.Context) error {
 			continue
 		}
 
-		var value string
-		if !s.GlobalScope {
-			value, err = getSessionStatusVar(ctx, sessionVars, globalVars, v.Name)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else if v.Scope != variable.ScopeSession {
-			value, err = getGlobalStatusVar(ctx, sessionVars, globalVars, v.Name)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
+		if s.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
 		}
 
-		row := &plan.Row{Data: []interface{}{v.Name, value}}
+		value, err := types.ToString(v.Value)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		row := &plan.Row{Data: []interface{}{status, value}}
 		s.rows = append(s.rows, row)
 	}
 
