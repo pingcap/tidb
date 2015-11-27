@@ -538,7 +538,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	snap, err := store.GetSnapshot(kv.MaxVersion)
 	c.Assert(err, IsNil)
 
-	_, err = snap.MvccGet(kv.EncodeKey([]byte("a")), kv.MaxVersion)
+	_, err = snap.MvccGet([]byte("a"), kv.MaxVersion)
 	c.Assert(err, IsNil)
 
 	txn, err = store.Begin()

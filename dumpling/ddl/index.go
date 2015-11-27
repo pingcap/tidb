@@ -373,13 +373,13 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	firstKey := t.RecordKey(seekHandle, nil)
 	prefix := []byte(t.KeyPrefix())
 
-	it := snap.NewMvccIterator(kv.EncodeKey([]byte(firstKey)), ver)
+	it := snap.NewMvccIterator([]byte(firstKey), ver)
 	defer it.Close()
 
 	handles := make([]int64, 0, maxBatchSize)
 
 	for it.Valid() {
-		key := kv.DecodeKey([]byte(it.Key()))
+		key := []byte(it.Key())
 		if !bytes.HasPrefix(key, prefix) {
 			break
 		}
@@ -390,7 +390,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 			return nil, errors.Trace(err)
 		}
 
-		rk := kv.EncodeKey(t.RecordKey(handle, nil))
+		rk := t.RecordKey(handle, nil)
 
 		handles = append(handles, handle)
 		if len(handles) == maxBatchSize {

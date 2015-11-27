@@ -52,16 +52,6 @@ type encoder struct {
 	dec func([]byte) ([]interface{}, error)
 }
 
-// EncodeKey appends the k behind keyPrefix.
-func EncodeKey(k []byte) []byte {
-	return append(keyPrefix, k...)
-}
-
-// DecodeKey removes the prefixed keyPrefix.
-func DecodeKey(k []byte) []byte {
-	return k[len(keyPrefix):]
-}
-
 // EncodeValue encodes values before it is stored to the KV store.
 func EncodeValue(values ...interface{}) ([]byte, error) {
 	return defaultEncoder.enc(values...)
@@ -105,7 +95,7 @@ func (iter *decodeKeyIter) Value() []byte {
 }
 
 func (iter *decodeKeyIter) Key() string {
-	return string(DecodeKey([]byte(iter.iter.Key())))
+	return string([]byte(iter.iter.Key()))
 }
 
 func (iter *decodeKeyIter) Valid() bool {
