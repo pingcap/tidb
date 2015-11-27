@@ -44,7 +44,7 @@ func main() {
 
 	flag.Parse()
 
-	if *lease <= 0 {
+	if *lease < 0 {
 		log.Fatalf("invalid lease seconds %d", *lease)
 	}
 
