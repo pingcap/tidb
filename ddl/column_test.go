@@ -38,6 +38,8 @@ type testColumnSuite struct {
 }
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
+	trySkipTest(c)
+
 	s.store = testCreateStore(c, "test_column")
 	lease := 50 * time.Millisecond
 	s.d = newDDL(s.store, nil, nil, lease)
@@ -47,6 +49,8 @@ func (s *testColumnSuite) SetUpSuite(c *C) {
 }
 
 func (s *testColumnSuite) TearDownSuite(c *C) {
+	trySkipTest(c)
+
 	testDropSchema(c, mock.NewContext(), s.d, s.dbInfo)
 	s.d.close()
 

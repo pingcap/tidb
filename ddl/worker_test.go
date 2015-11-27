@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"flag"
 	"fmt"
 	"time"
 
@@ -28,6 +29,14 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
+
+var skipDDL = flag.Bool("skip_ddl", true, "only run simple DDL test")
+
+func trySkipTest(c *C) {
+	if *skipDDL {
+		c.Skip("skip, only run simple tests")
+	}
+}
 
 var _ = Suite(&testDDLSuite{})
 
