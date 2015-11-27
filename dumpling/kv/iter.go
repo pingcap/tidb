@@ -37,8 +37,6 @@ var (
 )
 
 var (
-	// keyPrefix is used to avoid key conflict with some database metadata keys.
-	keyPrefix    = []byte("z")
 	codecEncoder = &encoder{
 		codec.EncodeKey,
 		codec.DecodeKey,
