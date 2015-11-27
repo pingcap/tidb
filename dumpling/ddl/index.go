@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 )
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
+func (d *ddl) buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
 	for _, col := range tblInfo.Columns {
 		if col.Name.L == indexName.L {
 			return nil, errors.Errorf("CREATE INDEX: index name collision with existing column: %s", indexName)
@@ -50,14 +50,18 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 			Length: ic.Length,
 		})
 	}
+	id, err := d.genGlobalID()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// create index info
 	idxInfo := &model.IndexInfo{
+		ID:      id,
 		Name:    indexName,
 		Columns: idxColumns,
 		Unique:  unique,
 		State:   model.StateNone,
 	}
-
 	return idxInfo, nil
 }
 
@@ -128,7 +132,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 
 	if indexInfo == nil {
-		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, idxColNames)
+		indexInfo, err = d.buildIndexInfo(tblInfo, unique, indexName, idxColNames)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
