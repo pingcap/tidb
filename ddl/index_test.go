@@ -97,7 +97,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err = t.AddRecord(ctx, []interface{}{i, i, i})
+		_, err = t.AddRecord(ctx, []interface{}{i, i, i}, 0)
 		c.Assert(err, IsNil)
 	}
 
@@ -118,14 +118,14 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	index := t.FindIndexByColName("c1")
 	c.Assert(index, NotNil)
 
-	h, err := t.AddRecord(ctx, []interface{}{num + 1, 1, 1})
+	h, err := t.AddRecord(ctx, []interface{}{num + 1, 1, 1}, 0)
 	c.Assert(err, IsNil)
 
-	h1, err := t.AddRecord(ctx, []interface{}{num + 1, 1, 1})
+	h1, err := t.AddRecord(ctx, []interface{}{num + 1, 1, 1}, 0)
 	c.Assert(err, NotNil)
 	c.Assert(h, Equals, h1)
 
-	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1}, 0)
 	c.Assert(err, NotNil)
 
 	txn, err = ctx.GetTxn(true)
@@ -149,7 +149,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1})
+	h, err = t.AddRecord(ctx, []interface{}{1, 1, 1}, 0)
 	c.Assert(err, IsNil)
 }
 
@@ -226,7 +226,7 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -313,7 +313,7 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -393,7 +393,7 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -480,7 +480,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -570,7 +570,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	row := []interface{}{int64(1), int64(2), int64(3)}
-	handle, err := t.AddRecord(ctx, row)
+	handle, err := t.AddRecord(ctx, row, 0)
 	c.Assert(err, IsNil)
 
 	err = ctx.FinishTxn(false)
@@ -634,7 +634,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	row := []interface{}{int64(1), int64(2), int64(3)}
-	handle, err := t.AddRecord(ctx, row)
+	handle, err := t.AddRecord(ctx, row, 0)
 	c.Assert(err, IsNil)
 
 	err = ctx.FinishTxn(false)

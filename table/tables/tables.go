@@ -391,11 +391,10 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched map[int]boo
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
-	id := variable.GetSessionVars(ctx).LastInsertID
-	// Already have auto increment ID
-	if id != 0 {
-		recordID = int64(id)
+func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error) {
+	// Already have recordID
+	if h != 0 {
+		recordID = int64(h)
 	} else {
 		recordID, err = t.alloc.Alloc(t.ID)
 		if err != nil {

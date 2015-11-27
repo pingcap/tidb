@@ -78,7 +78,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	tb, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent.Schema, tbIdent.Name)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
-	_, err = tb.AddRecord(ctx, []interface{}{1, "b", 2, 4})
+	_, err = tb.AddRecord(ctx, []interface{}{1, "b", 2, 4}, 0)
 	c.Assert(err, IsNil)
 
 	alterStmt := statement("alter table t add column aa int first").(*stmts.AlterTableStmt)
@@ -119,9 +119,9 @@ func (ts *testSuite) TestDDL(c *C) {
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
-	rid0, err := tb.AddRecord(ctx, []interface{}{1})
+	rid0, err := tb.AddRecord(ctx, []interface{}{1}, 0)
 	c.Assert(err, IsNil)
-	rid1, err := tb.AddRecord(ctx, []interface{}{2})
+	rid1, err := tb.AddRecord(ctx, []interface{}{2}, 0)
 	c.Assert(err, IsNil)
 
 	alterStmt = statement(`alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
@@ -148,7 +148,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(cols[0], Equals, nil)
 	c.Assert(cols[1], Equals, "abc")
 	c.Assert(cols[2], Equals, int64(2))
-	rid3, err := tb.AddRecord(ctx, []interface{}{mysql.Enum{Name: "bb", Value: 1}, "c", 3})
+	rid3, err := tb.AddRecord(ctx, []interface{}{mysql.Enum{Name: "bb", Value: 1}, "c", 3}, 0)
 	c.Assert(err, IsNil)
 	cols, err = tb.Row(ctx, rid3)
 	c.Assert(err, IsNil)
@@ -176,6 +176,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
+
 	cols, err = tb.Row(ctx, rid0)
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)

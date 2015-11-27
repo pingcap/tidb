@@ -96,7 +96,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 	p.tbl.AddIndex(idxCol)
 	var i int64
 	for i = 0; i < 10; i++ {
-		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"})
+		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"}, 0)
 	}
 }
 
