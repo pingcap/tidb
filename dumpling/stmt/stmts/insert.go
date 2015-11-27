@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/table/tables"
 )
 
 var _ stmt.Statement = (*InsertIntoStmt)(nil)
