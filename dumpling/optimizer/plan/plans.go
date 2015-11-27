@@ -122,10 +122,8 @@ func (p *Filter) Accept(v Visitor) (Plan, bool) {
 // SetLimit implements Plan SetLimit interface.
 func (p *Filter) SetLimit(limit float64) {
 	p.limit = limit
-	if len(p.Conditions) == 0 {
-		// We assume 50% of the src row is filtered out.
-		p.src.SetLimit(limit * 2)
-	}
+	// We assume 50% of the src row is filtered out.
+	p.src.SetLimit(limit * 2)
 }
 
 // SelectLock represents a select lock plan.
