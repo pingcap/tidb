@@ -74,10 +74,6 @@ func (s *testStmtSuite) TestDropIndex(c *C) {
 	c.Assert(testStmt.IsDDL(), IsTrue)
 	c.Assert(len(testStmt.OriginText()), Greater, 0)
 
-	rs, err := testStmt.Exec(nil)
-	c.Assert(rs, IsNil)
-	c.Assert(err, IsNil)
-
 	mf := newMockFormatter()
 	testStmt.Explain(nil, mf)
 	c.Assert(mf.Len(), Greater, 0)

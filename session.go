@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
+	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -89,7 +91,6 @@ func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{
 		st:     st,
 		params: append(([]interface{})(nil), params...),
 	}
-
 	h.history = append(h.history, s)
 }
 
@@ -106,14 +107,20 @@ func (h *stmtHistory) clone() *stmtHistory {
 	return &nh
 }
 
+const unlimitedRetryCnt = -1
+
 type session struct {
-	txn     kv.Transaction // Current transaction
-	args    []interface{}  // Statment execution args, this should be cleaned up after exec
-	values  map[fmt.Stringer]interface{}
-	store   kv.Storage
-	sid     int64
-	history stmtHistory
-	initing bool // Running bootstrap using this session.
+	txn         kv.Transaction // Current transaction
+	args        []interface{}  // Statment execution args, this should be cleaned up after exec
+	values      map[fmt.Stringer]interface{}
+	store       kv.Storage
+	sid         int64
+	history     stmtHistory
+	initing     bool // Running bootstrap using this session.
+	retrying    bool
+	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+
+	debugInfos map[string]interface{} // Vars for debug and unit tests.
 }
 
 func (s *session) Status() uint16 {
@@ -148,12 +155,13 @@ func (s *session) FinishTxn(rollback bool) error {
 	}()
 
 	if rollback {
+		s.resetHistory()
 		return s.txn.Rollback()
 	}
 
 	err := s.txn.Commit()
 	if err != nil {
-		if kv.IsRetryableError(err) {
+		if !s.retrying && kv.IsRetryableError(err) {
 			err = s.Retry()
 		}
 		if err != nil {
@@ -184,33 +192,32 @@ func (s *session) String() string {
 
 func needRetry(st stmt.Statement) bool {
 	switch st.(type) {
-	case *stmts.PreparedStmt, *stmts.ShowStmt, *stmts.DoStmt:
+	case *stmts.PreparedStmt, *stmts.ShowStmt, *stmts.DoStmt, *stmts.CommitStmt:
 		return false
 	default:
 		return true
-	}
-}
-
-func isPreparedStmt(st stmt.Statement) bool {
-	switch st.(type) {
-	case *stmts.PreparedStmt:
-		return true
-	default:
-		return false
 	}
 }
 
 func (s *session) Retry() error {
+	s.retrying = true
 	nh := s.history.clone()
+	// Debug infos.
+	if len(nh.history) == 0 {
+		s.debugInfos[retryEmptyHistoryList] = true
+	} else {
+		s.debugInfos[retryEmptyHistoryList] = false
+	}
 	defer func() {
 		s.history.history = nh.history
+		s.retrying = false
 	}()
 
 	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
 		return errors.Errorf("can not retry select for update statement")
 	}
-
 	var err error
+	retryCnt := 0
 	for {
 		s.resetHistory()
 		s.FinishTxn(true)
@@ -222,9 +229,14 @@ func (s *session) Retry() error {
 				continue
 			}
 			log.Warnf("Retry %s", st.OriginText())
-			_, err = runStmt(s, st)
+			switch st.(type) {
+			case *stmts.ExecuteStmt:
+				_, err = runStmt(s, st, sr.params...)
+			default:
+				_, err = runStmt(s, st)
+			}
 			if err != nil {
-				if terror.ErrorEqual(err, kv.ErrConditionNotMatch) {
+				if kv.IsRetryableError(err) {
 					success = false
 					break
 				}
@@ -238,8 +250,11 @@ func (s *session) Retry() error {
 				break
 			}
 		}
+		retryCnt++
+		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
+			return errors.Trace(err)
+		}
 	}
-
 	return err
 }
 
@@ -274,6 +289,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 // getExecRet executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
+	cleanTxn := s.txn == nil
 	rs, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return "", errors.Trace(err)
@@ -290,30 +306,12 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	return value, nil
-}
-
-// GetGlobalStatusVar implements GlobalVarAccessor.GetGlobalStatusVar interface.
-func (s *session) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalStatusTable, name)
-	statusVar, err := s.getExecRet(ctx, sql)
-	if err != nil {
-		if terror.ExecResultIsEmpty.Equal(err) {
-			return "", terror.ExecResultIsEmpty.Gen("unknown status variable:%s", name)
-		}
-		return "", errors.Trace(err)
+	if cleanTxn {
+		// This function has some side effect. Run select may create new txn.
+		// We should make environment unchanged.
+		s.txn = nil
 	}
-
-	return statusVar, nil
-}
-
-// SetGlobalStatusVar implements GlobalVarAccessor.SetGlobalStatusVar interface.
-func (s *session) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
-	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalStatusTable, value, strings.ToLower(name))
-	_, err := s.ExecRestrictedSQL(ctx, sql)
-	return errors.Trace(err)
+	return value, nil
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
@@ -394,20 +392,10 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
 		}
-
-		// Record executed query
-		if isPreparedStmt(st) {
-			ps := st.(*stmts.PreparedStmt)
-			s.history.add(ps.ID, st)
-		} else {
-			s.history.add(0, st)
-		}
-
 		if r != nil {
 			rs = append(rs, r)
 		}
 	}
-
 	return rs, nil
 }
 
@@ -468,10 +456,9 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 	if err != nil {
 		return nil, err
 	}
-
 	st := &stmts.ExecuteStmt{ID: stmtID}
-	s.history.add(stmtID, st, args...)
-	return runStmt(s, st, args...)
+	r, err := runStmt(s, st, args...)
+	return r, errors.Trace(err)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -496,17 +483,10 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		return s.txn, nil
 	}
 	if forceNew {
-		err = s.txn.Commit()
-		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
+		err = s.FinishTxn(false)
 		if err != nil {
-			if kv.IsRetryableError(err) {
-				err = s.Retry()
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			return nil, errors.Trace(err)
 		}
-		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
 			return nil, err
@@ -580,12 +560,20 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	return true
 }
 
+// Some vars name for debug.
+const (
+	retryEmptyHistoryList = "RetryEmptyHistoryList"
+)
+
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
 	s := &session{
-		values: make(map[fmt.Stringer]interface{}),
-		store:  store,
-		sid:    atomic.AddInt64(&sessionID, 1),
+		values:      make(map[fmt.Stringer]interface{}),
+		store:       store,
+		sid:         atomic.AddInt64(&sessionID, 1),
+		debugInfos:  make(map[string]interface{}),
+		retrying:    false,
+		maxRetryCnt: 10,
 	}
 	domain, err := domap.Get(store)
 	if err != nil {
@@ -604,15 +592,68 @@ func CreateSession(store kv.Storage) (Session, error) {
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
-	_, ok := storeBootstrapped[store.UUID()]
+	ok := isBoostrapped(store)
 	if !ok {
+		// if no bootstrap and storage is remote, we must use a little lease time to
+		// bootstrap quickly, after bootstrapped, we will reset the lease time.
+		// TODO: Using a bootstap tool for doing this may be better later.
+		if !localstore.IsLocalStore(store) {
+			sessionctx.GetDomain(s).SetLease(100 * time.Millisecond)
+		}
+
 		s.initing = true
 		bootstrap(s)
 		s.initing = false
-		storeBootstrapped[store.UUID()] = true
+
+		if !localstore.IsLocalStore(store) {
+			sessionctx.GetDomain(s).SetLease(schemaLease)
+		}
+
+		finishBoostrap(store)
 	}
+
 	// TODO: Add auth here
 	privChecker := &privileges.UserPrivileges{}
 	privilege.BindPrivilegeChecker(s, privChecker)
 	return s, nil
+}
+
+func isBoostrapped(store kv.Storage) bool {
+	// check in memory
+	_, ok := storeBootstrapped[store.UUID()]
+	if ok {
+		return true
+	}
+
+	// check in kv store
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		var err error
+		t := meta.NewMeta(txn)
+		ok, err = t.IsBootstrapped()
+		return errors.Trace(err)
+	})
+
+	if err != nil {
+		log.Fatalf("check bootstrapped err %v", err)
+	}
+
+	if ok {
+		// here mean memory is not ok, but other server has already finished it
+		storeBootstrapped[store.UUID()] = true
+	}
+
+	return ok
+}
+
+func finishBoostrap(store kv.Storage) {
+	storeBootstrapped[store.UUID()] = true
+
+	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := t.FinishBootstrap()
+		return errors.Trace(err)
+	})
+	if err != nil {
+		log.Fatalf("finish bootstrap err %v", err)
+	}
 }

@@ -61,6 +61,7 @@ type hbaseTxn struct {
 
 func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
 	opts := make(map[kv.Option]interface{})
+
 	return &hbaseTxn{
 		txn:        t,
 		valid:      true,

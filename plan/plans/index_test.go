@@ -60,6 +60,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 				Offset:       0,
 				DefaultValue: 0,
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+				State:        model.StatePublic,
 			},
 		},
 		{
@@ -69,6 +70,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 				Offset:       1,
 				DefaultValue: nil,
 				FieldType:    *types.NewFieldType(mysql.TypeVarchar),
+				State:        model.StatePublic,
 			},
 		},
 	}
@@ -87,13 +89,14 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 			},
 			Unique:  false,
 			Primary: false,
+			State:   model.StatePublic,
 		},
 		X: kv.NewKVIndex("i", "id", false),
 	}
 	p.tbl.AddIndex(idxCol)
 	var i int64
 	for i = 0; i < 10; i++ {
-		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"})
+		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"}, 0)
 	}
 }
 

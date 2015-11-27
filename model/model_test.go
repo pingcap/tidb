@@ -78,3 +78,72 @@ func (*testSuite) TestClone(c *C) {
 	n := dbInfo.Clone()
 	c.Assert(n, DeepEquals, dbInfo)
 }
+
+func (*testSuite) TestJobCodec(c *C) {
+	type A struct {
+		Name string
+	}
+	job := &Job{
+		ID:   1,
+		Args: []interface{}{NewCIStr("a"), A{Name: "abc"}},
+	}
+
+	b, err := job.Encode()
+	c.Assert(err, IsNil)
+
+	newJob := &Job{}
+	err = newJob.Decode(b)
+	c.Assert(err, IsNil)
+
+	name := CIStr{}
+	a := A{}
+	err = newJob.DecodeArgs(&name, &a)
+	c.Assert(err, IsNil)
+	c.Assert(name, DeepEquals, NewCIStr("a"))
+	c.Assert(a, DeepEquals, A{Name: "abc"})
+
+	c.Assert(len(newJob.String()), Greater, 0)
+
+	job.State = JobDone
+	c.Assert(job.IsFinished(), IsTrue)
+	c.Assert(job.IsRunning(), IsFalse)
+}
+
+func (testSuite) TestState(c *C) {
+	schemaTbl := []SchemaState{
+		StateDeleteOnly,
+		StateWriteOnly,
+		StateWriteReorganization,
+		StateDeleteReorganization,
+		StatePublic,
+	}
+
+	for _, state := range schemaTbl {
+		c.Assert(len(state.String()), Greater, 0)
+	}
+
+	jobTbl := []JobState{
+		JobRunning,
+		JobDone,
+		JobCancelled,
+	}
+
+	for _, state := range jobTbl {
+		c.Assert(len(state.String()), Greater, 0)
+	}
+
+	actionTbl := []ActionType{
+		ActionCreateSchema,
+		ActionDropSchema,
+		ActionCreateTable,
+		ActionDropTable,
+		ActionAddColumn,
+		ActionDropColumn,
+		ActionAddIndex,
+		ActionDropIndex,
+	}
+
+	for _, action := range actionTbl {
+		c.Assert(len(action.String()), Greater, 0)
+	}
+}

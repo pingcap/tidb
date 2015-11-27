@@ -23,8 +23,6 @@ type SessionVars struct {
 	Users map[string]string
 	// system variables
 	Systems map[string]string
-	// status variables
-	StatusVars map[string]string
 	// prepared statement
 	PreparedStmts map[string]interface{}
 	// prepared statement auto increment id
@@ -60,7 +58,6 @@ func BindSessionVars(ctx context.Context) {
 	v := &SessionVars{
 		Users:         make(map[string]string),
 		Systems:       make(map[string]string),
-		StatusVars:    make(map[string]string),
 		PreparedStmts: make(map[string]interface{}),
 	}
 

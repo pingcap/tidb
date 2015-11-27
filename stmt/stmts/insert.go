@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ stmt.Statement = (*InsertIntoStmt)(nil)
@@ -85,65 +85,6 @@ func (s *InsertIntoStmt) SetText(text string) {
 	s.Text = text
 }
 
-// execExecSelect implements `insert table select ... from ...`.
-func (s *InsertValues) execSelect(t table.Table, cols []*column.Col, ctx context.Context) (rset.Recordset, error) {
-	r, err := s.Sel.Plan(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer r.Close()
-	if len(r.GetFields()) != len(cols) {
-		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(r.GetFields()))
-	}
-
-	var bufRecords [][]interface{}
-	var lastInsertIds []uint64
-	for {
-		var row *plan.Row
-		row, err = r.Next(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		data0 := make([]interface{}, len(t.Cols()))
-		marked := make(map[int]struct{}, len(cols))
-		for i, d := range row.Data {
-			data0[cols[i].Offset] = d
-			marked[cols[i].Offset] = struct{}{}
-		}
-
-		if err = s.initDefaultValues(ctx, t, data0, marked); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		if err = column.CastValues(ctx, data0, cols); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		if err = column.CheckNotNull(t.Cols(), data0); err != nil {
-			return nil, errors.Trace(err)
-		}
-		var v interface{}
-		v, err = types.Clone(data0)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		bufRecords = append(bufRecords, v.([]interface{}))
-		lastInsertIds = append(lastInsertIds, variable.GetSessionVars(ctx).LastInsertID)
-	}
-
-	for i, r := range bufRecords {
-		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
-		if _, err = t.AddRecord(ctx, r); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return nil, nil
-}
-
 // There are three types of insert statements:
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
@@ -190,19 +131,19 @@ func (s *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 	return cols, nil
 }
 
-func (s *InsertValues) getDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
-	m := map[interface{}]interface{}{}
-	for _, v := range cols {
-		if value, ok, err := getDefaultValue(ctx, v); ok {
+func (s *InsertValues) getColumnDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
+	defaultValMap := map[interface{}]interface{}{}
+	for _, col := range cols {
+		if value, ok, err := tables.GetColDefaultValue(ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 
-			m[v.Name.L] = value
+			defaultValMap[col.Name.L] = value
 		}
 	}
 
-	return m, nil
+	return defaultValMap, nil
 }
 
 func (s *InsertValues) fillValueList() error {
@@ -231,41 +172,24 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	// Process `insert ... (select ..) `
-	// TODO: handles the duplicate-key in a primary key or a unique index.
-	if s.Sel != nil {
-		return s.execSelect(t, cols, ctx)
-	}
-
-	// Process `insert ... set x=y...`
-	if err = s.fillValueList(); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	m, err := s.getDefaultValues(ctx, t.Cols())
+	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	insertValueCount := len(s.Lists[0])
 	toUpdateColumns, err := getOnDuplicateUpdateColumns(s.OnDuplicate, t)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rows := make([][]interface{}, len(s.Lists))
-	lastInsertIds := make([]uint64, len(s.Lists))
-	for i, list := range s.Lists {
-		if err = s.checkValueCount(insertValueCount, len(list), i, cols); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		rows[i], err = s.getRow(ctx, t, cols, list, m)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		lastInsertIds[i] = variable.GetSessionVars(ctx).LastInsertID
+	var rows [][]interface{}
+	var recordIDs []int64
+	if s.Sel != nil {
+		rows, recordIDs, err = s.getRowsSelect(ctx, t, cols)
+	} else {
+		rows, recordIDs, err = s.getRows(ctx, t, cols)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if len(s.OnDuplicate) > 0 {
@@ -275,24 +199,19 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		}
 	}
 
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	for i, row := range rows {
-		// Notes: incompatible with mysql
-		// MySQL will set last insert id to the first row, as follows:
-		// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-		// `insert t (c1) values(1),(2),(3);`
-		// Last insert id will be 1, not 3.
-		variable.GetSessionVars(ctx).SetLastInsertID(lastInsertIds[i])
 		if len(s.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := t.AddRecord(ctx, row)
+		h, err := t.AddRecord(ctx, row, recordIDs[i])
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
+			// Notes: incompatible with mysql
+			// MySQL will set last insert id to the first row, as follows:
+			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
+			// `insert t (c1) values(1),(2),(3);`
+			// Last insert id will be 1, not 3.
+			variable.GetSessionVars(ctx).SetLastInsertID(uint64(recordIDs[i]))
 			continue
 		}
 
@@ -365,36 +284,96 @@ func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, list []expression.Expression, m map[interface{}]interface{}) ([]interface{}, error) {
-	r := make([]interface{}, len(t.Cols()))
-	marked := make(map[int]struct{}, len(list))
-	for i, expr := range list {
-		// For "insert into t values (default)" Default Eval.
-		m[expression.ExprEvalDefaultName] = cols[i].Name.O
-
-		val, err := expr.Eval(ctx, m)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		r[cols[i].Offset] = val
-		marked[cols[i].Offset] = struct{}{}
+func (s *InsertValues) getRows(ctx context.Context, t table.Table, cols []*column.Col) (rows [][]interface{}, recordIDs []int64, err error) {
+	// process `insert|replace ... set x=y...`
+	if err = s.fillValueList(); err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 
-	// Clear last insert id.
-	variable.GetSessionVars(ctx).SetLastInsertID(0)
-
-	err := s.initDefaultValues(ctx, t, r, marked)
+	evalMap, err := s.getColumnDefaultValues(ctx, t.Cols())
 	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = column.CastValues(ctx, r, cols); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err = column.CheckNotNull(t.Cols(), r); err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
-	return r, nil
+	rows = make([][]interface{}, len(s.Lists))
+	recordIDs = make([]int64, len(s.Lists))
+	for i, list := range s.Lists {
+		if err = s.checkValueCount(len(s.Lists[0]), len(list), i, cols); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+
+		vals := make([]interface{}, len(list))
+		for j, expr := range list {
+			// For "insert into t values (default)" Default Eval.
+			evalMap[expression.ExprEvalDefaultName] = cols[j].Name.O
+
+			vals[j], err = expr.Eval(ctx, evalMap)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+
+		rows[i], recordIDs[i], err = s.fillRowData(ctx, t, cols, vals)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
+	return
+}
+
+func (s *InsertValues) getRowsSelect(ctx context.Context, t table.Table, cols []*column.Col) (rows [][]interface{}, recordIDs []int64, err error) {
+	// process `insert|replace into ... select ... from ...`
+	r, err := s.Sel.Plan(ctx)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer r.Close()
+	if len(r.GetFields()) != len(cols) {
+		return nil, nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(r.GetFields()))
+	}
+
+	for {
+		var planRow *plan.Row
+		planRow, err = r.Next(ctx)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if planRow == nil {
+			break
+		}
+
+		var row []interface{}
+		var recordID int64
+		row, recordID, err = s.fillRowData(ctx, t, cols, planRow.Data)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		rows = append(rows, row)
+		recordIDs = append(recordIDs, recordID)
+	}
+	return
+}
+
+func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*column.Col, vals []interface{}) ([]interface{}, int64, error) {
+	row := make([]interface{}, len(t.Cols()))
+	marked := make(map[int]struct{}, len(vals))
+	for i, v := range vals {
+		offset := cols[i].Offset
+		row[offset] = v
+		marked[offset] = struct{}{}
+	}
+	recordID, err := s.initDefaultValues(ctx, t, row, marked)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	if err = column.CastValues(ctx, row, cols); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	if err = column.CheckNotNull(t.Cols(), row); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+
+	return row, recordID, nil
 }
 
 func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]*expression.Assignment) error {
@@ -435,8 +414,7 @@ func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Ta
 	return m, nil
 }
 
-func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
-	var err error
+func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) (recordID int64, err error) {
 	var defaultValueCols []*column.Col
 	for i, c := range t.Cols() {
 		if row[i] != nil {
@@ -450,17 +428,15 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 		}
 
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			var id int64
-			if id, err = t.AllocAutoID(); err != nil {
-				return errors.Trace(err)
+			if recordID, err = t.AllocAutoID(); err != nil {
+				return 0, errors.Trace(err)
 			}
-			row[i] = id
-			variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
+			row[i] = recordID
 		} else {
 			var value interface{}
-			value, _, err = getDefaultValue(ctx, c)
+			value, _, err = tables.GetColDefaultValue(ctx, &c.ColumnInfo)
 			if err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			row[i] = value
@@ -470,8 +446,8 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 	}
 
 	if err = column.CastValues(ctx, row, defaultValueCols); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
-	return nil
+	return
 }
