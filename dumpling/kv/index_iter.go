@@ -102,7 +102,8 @@ type kvIndex struct {
 	prefix    string
 }
 
-func genIndexPrefix(indexPrefix string, indexID int64) string {
+// GenIndexPrefix generates the index prefix.
+func GenIndexPrefix(indexPrefix string, indexID int64) string {
 	// Use EncodeBytes to guarantee generating different index prefix.
 	// e.g, two indices c1 and c with index prefix p, if no EncodeBytes,
 	// the index format looks p_c and p_c1, if c has an index value which the first encoded byte is '1',
@@ -118,7 +119,7 @@ func NewKVIndex(indexPrefix, indexName string, indexID int64, unique bool) Index
 		indexName: indexName,
 		indexID:   indexID,
 		unique:    unique,
-		prefix:    genIndexPrefix(indexPrefix, indexID),
+		prefix:    GenIndexPrefix(indexPrefix, indexID),
 	}
 }
 

@@ -92,11 +92,6 @@ const (
 	CreateGloablVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
-	// CreateGloablStatusTable is the SQL statement creates global status variable table in system db.
-	// TODO: MySQL puts GLOBAL_STATUS table in INFORMATION_SCHEMA db.
-	CreateGloablStatusTable = `CREATE TABLE if not exists mysql.GLOBAL_STATUS(
-		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
@@ -184,8 +179,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateColumnPrivTable)
 	// Create global systemt variable table.
 	mustExecute(s, CreateGloablVariablesTable)
-	// Create global status variable table.
-	mustExecute(s, CreateGloablStatusTable)
 	// Create TiDB table.
 	mustExecute(s, CreateTiDBTable)
 }
@@ -194,12 +187,14 @@ func doDDLWorks(s Session) {
 // All the statements run in a single transaction.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
+
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT INTO mysql.user VALUES
 		("localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"),
 		("127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y"), 
 		("::1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y");`)
-	// Init global system variable table.
+
+	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
 	for k, v := range variable.SysVars {
 		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
@@ -208,15 +203,7 @@ func doDMLWorks(s Session) {
 	sql := fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
-	// Init global status variable table.
-	values = make([]string, 0, len(variable.StatusVars))
-	for k, v := range variable.StatusVars {
-		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), v.Value)
-		values = append(values, value)
-	}
-	sql = fmt.Sprintf("INSERT INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalStatusTable,
-		strings.Join(values, ", "))
-	mustExecute(s, sql)
+
 	sql = fmt.Sprintf(`INSERT INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)

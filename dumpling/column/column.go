@@ -56,9 +56,9 @@ func (c *Col) String() string {
 
 // FindCol finds column in cols by name.
 func FindCol(cols []*Col, name string) *Col {
-	for _, c := range cols {
-		if strings.EqualFold(c.Name.O, name) {
-			return c
+	for _, col := range cols {
+		if strings.EqualFold(col.Name.O, name) {
+			return col
 		}
 	}
 	return nil
@@ -82,9 +82,9 @@ func FindCols(cols []*Col, names []string) ([]*Col, error) {
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
 func FindOnUpdateCols(cols []*Col) []*Col {
 	var rcols []*Col
-	for _, c := range cols {
-		if mysql.HasOnUpdateNowFlag(c.Flag) {
-			rcols = append(rcols, c)
+	for _, col := range cols {
+		if mysql.HasOnUpdateNowFlag(col.Flag) {
+			rcols = append(rcols, col)
 		}
 	}
 
@@ -181,8 +181,8 @@ func ColDescFieldNames(full bool) []string {
 // CheckOnce checks if there are duplicated column names in cols.
 func CheckOnce(cols []*Col) error {
 	m := map[string]struct{}{}
-	for _, v := range cols {
-		name := v.Name
+	for _, col := range cols {
+		name := col.Name
 		_, ok := m[name.L]
 		if ok {
 			return errors.Errorf("column specified twice - %s", name)
