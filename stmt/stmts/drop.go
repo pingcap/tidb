@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
@@ -139,7 +138,9 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		}
 
 		err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, fullti)
-		if err != nil {
+		if terror.ErrorEqual(err, ddl.ErrNotExists) || terror.DatabaseNotExists.Equal(err) {
+			notExistTables = append(notExistTables, ti.String())
+		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -152,10 +153,10 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 // DropIndexStmt is a statement to drop the index.
 // See: https://dev.mysql.com/doc/refman/5.7/en/drop-index.html
 type DropIndexStmt struct {
-	IfExists  bool
-	IndexName string
-
-	Text string
+	IfExists   bool
+	IndexName  string
+	TableIdent table.Ident
+	Text       string
 }
 
 // Explain implements the stmt.Statement Explain interface.
@@ -180,6 +181,10 @@ func (s *DropIndexStmt) SetText(text string) {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *DropIndexStmt) Exec(ctx context.Context) (rset.Recordset, error) {
-	log.Info("drop index", s.IndexName)
-	return nil, nil
+	err := sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, s.TableIdent.Full(ctx), model.NewCIStr(s.IndexName))
+	if (terror.ErrorEqual(err, ddl.ErrNotExists) || terror.DatabaseNotExists.Equal(err)) && s.IfExists {
+		err = nil
+	}
+
+	return nil, errors.Trace(err)
 }

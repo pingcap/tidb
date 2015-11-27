@@ -34,6 +34,7 @@ func (s *testColumnSuite) TestString(c *C) {
 	col := &Col{
 		model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeTiny),
+			State:     model.StatePublic,
 		},
 	}
 	col.Flen = 2
@@ -109,7 +110,8 @@ func (s *testColumnSuite) TestDesc(c *C) {
 func newCol(name string) *Col {
 	return &Col{
 		model.ColumnInfo{
-			Name: model.NewCIStr(name),
+			Name:  model.NewCIStr(name),
+			State: model.StatePublic,
 		},
 	}
 }
