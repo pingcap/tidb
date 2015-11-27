@@ -76,7 +76,6 @@ func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
 
 func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
-	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
@@ -110,7 +109,6 @@ func (txn *hbaseTxn) String() string {
 
 func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("get key:%q, txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) || len(val) == 0 {
 		return nil, errors.Trace(kv.ErrNotExist)
@@ -122,22 +120,17 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
-	encodedKeys := make([]kv.Key, len(keys))
-	for i, k := range keys {
-		encodedKeys[i] = kv.EncodeKey(k)
-	}
-	_, err := txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	_, err := txn.UnionStore.Snapshot.BatchGet(keys)
 	return err
 }
 
 func (txn *hbaseTxn) RangePrefetch(start, end kv.Key, limit int) error {
-	_, err := txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+	_, err := txn.UnionStore.Snapshot.RangeGet(start, end, limit)
 	return err
 }
 
 // GetInt64 get int64 which created by Inc method.
 func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
-	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		return 0, nil
@@ -159,13 +152,11 @@ func (txn *hbaseTxn) Set(k kv.Key, data []byte) error {
 	}
 
 	log.Debugf("set key:%q, txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	return txn.UnionStore.Set(k, data)
 }
 
 func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek %q txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	iter, err := txn.UnionStore.Seek(k, txn)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -175,7 +166,6 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
 	log.Debugf("delete %q txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	err := txn.UnionStore.Delete(k)
 	if err != nil {
 		return errors.Trace(err)
@@ -272,7 +262,6 @@ func (txn *hbaseTxn) Rollback() error {
 
 func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
-		key = kv.EncodeKey(key)
 		if err := txn.txn.LockRow(txn.storeName, key); err != nil {
 			return errors.Trace(err)
 		}

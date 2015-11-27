@@ -58,7 +58,6 @@ func (txn *dbTxn) markOrigin(k []byte) {
 
 func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
-	k = kv.EncodeKey(k)
 
 	txn.markOrigin(k)
 	val, err := txn.UnionStore.Get(k)
@@ -89,7 +88,6 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 }
 
 func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
-	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		return 0, nil
@@ -107,7 +105,6 @@ func (txn *dbTxn) String() string {
 
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("get key:%q, txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	val, err := txn.UnionStore.Get(k)
 	if kv.IsErrNotFound(err) {
 		return nil, errors.Trace(kv.ErrNotExist)
@@ -123,16 +120,12 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *dbTxn) BatchPrefetch(keys []kv.Key) error {
-	encodedKeys := make([]kv.Key, len(keys))
-	for i, k := range keys {
-		encodedKeys[i] = kv.EncodeKey(k)
-	}
-	_, err := txn.UnionStore.Snapshot.BatchGet(encodedKeys)
+	_, err := txn.UnionStore.Snapshot.BatchGet(keys)
 	return err
 }
 
 func (txn *dbTxn) RangePrefetch(start, end kv.Key, limit int) error {
-	_, err := txn.UnionStore.Snapshot.RangeGet(kv.EncodeKey(start), kv.EncodeKey(end), limit)
+	_, err := txn.UnionStore.Snapshot.RangeGet(start, end, limit)
 	return err
 }
 
@@ -144,7 +137,6 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	}
 
 	log.Debugf("set key:%q, txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	err := txn.UnionStore.Set(k, data)
 	if err != nil {
 		return errors.Trace(err)
@@ -156,7 +148,6 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 
 func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek key:%q, txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 
 	iter, err := txn.UnionStore.Seek(k, txn)
 	if err != nil {
@@ -171,7 +162,6 @@ func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 
 func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("delete key:%q, txn:%d", k, txn.tid)
-	k = kv.EncodeKey(k)
 	err := txn.UnionStore.Delete(k)
 	if err != nil {
 		return errors.Trace(err)
@@ -282,7 +272,6 @@ func (txn *dbTxn) Rollback() error {
 
 func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
-		key = kv.EncodeKey(key)
 		txn.markOrigin(key)
 	}
 	return nil
