@@ -580,10 +580,6 @@ type GlobalVarAccessor interface {
 	GetGlobalSysVar(ctx context.Context, name string) (string, error)
 	// SetGlobalSysVar sets the global system variable name to value.
 	SetGlobalSysVar(ctx context.Context, name string, value string) error
-	// GetGlobalStatusVar gets the global status variable value for name.
-	GetGlobalStatusVar(ctx context.Context, name string) (string, error)
-	// SetGlobalStatusVar sets the global status variable name to value.
-	SetGlobalStatusVar(ctx context.Context, name string, value string) error
 }
 
 // globalSysVarAccessorKeyType is a dummy type to avoid naming collision in context.

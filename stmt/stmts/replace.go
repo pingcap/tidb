@@ -61,6 +61,7 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	cols, err := s.getColumns(t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -105,7 +106,7 @@ func replaceRow(ctx context.Context, t table.Table, handle int64, replaceRow []i
 	}
 
 	isReplace := false
-	touched := make([]bool, len(row))
+	touched := make(map[int]bool, len(row))
 	for i, val := range row {
 		v, err1 := types.Compare(val, replaceRow[i])
 		if err1 != nil {

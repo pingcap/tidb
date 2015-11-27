@@ -719,6 +719,7 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
+	c.Assert(r, NotNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
@@ -734,9 +735,31 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
+	c.Assert(r, NotNil)
 	v, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+
+	// Check a storage operations are default autocommit after the second start.
+	mustExecSQL(c, se, "USE test;")
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (id int)")
+	delete(storeBootstrapped, store.UUID())
+	se.Close()
+	se, err = CreateSession(store)
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se, "USE test;")
+	mustExecSQL(c, se, "insert t values (?)", 3)
+	se, err = CreateSession(store)
+	c.Assert(err, IsNil)
+	mustExecSQL(c, se, "USE test;")
+	r = mustExecSQL(c, se, "select * from t")
+	c.Assert(r, NotNil)
+	v, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, v, 3)
+	mustExecSQL(c, se, "drop table if exists t")
+	se.Close()
 }
 
 // Create a new session on store but only do ddl works.
@@ -786,11 +809,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	v, err := r.FirstRow()
 	c.Assert(err, IsNil)
 	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
-	// Check global status.
-	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_status;")
-	v, err = r.FirstRow()
-	c.Assert(err, IsNil)
-	c.Assert(v[0], Equals, int64(len(variable.StatusVars)))
+
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	row, err = r.Next()
 	c.Assert(err, IsNil)
@@ -1138,10 +1157,13 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	mustExecSQL(c, se, "commit")
 
 	se1 := newSession(c, store, s.dbName)
+	se1.(*session).maxRetryCnt = unlimitedRetryCnt
 	mustExecSQL(c, se1, "SET SESSION autocommit=1;")
 	se2 := newSession(c, store, s.dbName)
+	se2.(*session).maxRetryCnt = unlimitedRetryCnt
 	mustExecSQL(c, se2, "SET SESSION autocommit=1;")
 	se3 := newSession(c, store, s.dbName)
+	se3.(*session).maxRetryCnt = unlimitedRetryCnt
 	mustExecSQL(c, se3, "SET SESSION autocommit=0;")
 
 	var wg sync.WaitGroup
@@ -1155,7 +1177,7 @@ func (s *testSessionSuite) TestIssue571(c *C) {
 	f2 := func() {
 		defer wg.Done()
 		for i := 0; i < 30; i++ {
-			mustExecSQL(c, se2, "update t set c = 1;")
+			mustExecSQL(c, se2, "update t set c = ?;", 1)
 		}
 	}
 	f3 := func() {
@@ -1186,6 +1208,33 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1, 1}, {2, 2}})
 }
 
+func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	se1 := newSession(c, store, s.dbName)
+	se2 := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	c.Assert(se.(*session).txn, IsNil)
+	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 int)")
+	mustExecSQL(c, se, "insert t values (11, 2, 3)")
+
+	mustExecSQL(c, se1, "begin")
+	mustExecSQL(c, se1, "update t set c2=? where c1=11;", 21)
+
+	mustExecSQL(c, se2, "begin")
+	mustExecSQL(c, se2, "update t set c2=? where c1=11", 22)
+	mustExecSQL(c, se2, "commit")
+
+	mustExecSQL(c, se1, "commit")
+
+	se3 := newSession(c, store, s.dbName)
+	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
+	row, err := r.FirstRow()
+	c.Assert(err, IsNil)
+	match(c, row, 21)
+}
+
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
 	store := newStore(c, s.dbName)
@@ -1193,4 +1242,46 @@ func (s *testSessionSuite) TestSession(c *C) {
 	mustExecSQL(c, se, "ROLLBACK;")
 	err := se.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestErrorRollback(c *C) {
+	store := newStore(c, s.dbName)
+	s1 := newSession(c, store, s.dbName)
+
+	defer s1.Close()
+
+	mustExecSQL(c, s1, "drop table if exists t_rollback")
+	mustExecSQL(c, s1, "create table t_rollback (c1 int, c2 int, primary key(c1))")
+
+	_, err := s1.Execute("insert into t_rollback values (0, 0)")
+	c.Assert(err, IsNil)
+
+	var wg sync.WaitGroup
+	cnt := 10
+	wg.Add(cnt)
+	num := 1000
+
+	for i := 0; i < cnt; i++ {
+		go func() {
+			defer wg.Done()
+			se := newSession(c, store, s.dbName)
+			// retry forever
+			se.(*session).maxRetryCnt = unlimitedRetryCnt
+			defer se.Close()
+
+			for j := 0; j < num; j++ {
+				// force generate a txn in session for later insert use.
+				se.(*session).GetTxn(false)
+
+				se.Execute("insert into t_rollback values (1, 1, 1)")
+
+				_, err = se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
+				c.Assert(err, IsNil)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
 }

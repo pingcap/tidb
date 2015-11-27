@@ -31,15 +31,28 @@ var (
 
 // dbSnapshot implements MvccSnapshot interface.
 type dbSnapshot struct {
-	store   *dbStore
-	db      engine.DB
-	rawIt   engine.Iterator
-	version kv.Version // transaction begin version
+	store    *dbStore
+	db       engine.DB
+	rawIt    engine.Iterator
+	version  kv.Version // transaction begin version
+	released bool
+}
+
+var minKey = []byte{0}
+
+func newSnapshot(store *dbStore, db engine.DB, ver kv.Version) *dbSnapshot {
+	ss := &dbSnapshot{
+		store:   store,
+		db:      db,
+		version: ver,
+	}
+
+	return ss
 }
 
 func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
-	s.store.snapLock.RLock()
-	defer s.store.snapLock.RUnlock()
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
 
 	if s.store.closed {
 		return nil, errors.Trace(ErrDBClosed)
@@ -47,7 +60,7 @@ func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
 
 	if s.rawIt == nil {
 		var err error
-		s.rawIt, err = s.db.Seek([]byte{0})
+		s.rawIt, err = s.db.Seek(minKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -157,13 +170,17 @@ func (s *dbSnapshot) MvccRelease() {
 }
 
 func (s *dbSnapshot) Release() {
-	if s.rawIt == nil {
+	if s.released {
 		return
 	}
 
-	// TODO: check whether Release will panic if store is closed.
-	s.rawIt.Release()
-	s.rawIt = nil
+	s.released = true
+	if s.rawIt != nil {
+		// TODO: check whether Release will panic if store is closed.
+		s.rawIt.Release()
+		s.rawIt = nil
+	}
+
 }
 
 type dbIter struct {

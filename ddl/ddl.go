@@ -20,6 +20,8 @@ package ddl
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -31,10 +33,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/twinj/uuid"
 )
@@ -54,38 +55,163 @@ type DDL interface {
 	CreateTable(ctx context.Context, ident table.Ident, cols []*coldef.ColumnDef, constrs []*coldef.TableConstraint) error
 	DropTable(ctx context.Context, tableIdent table.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent table.Ident, unique bool, indexName model.CIStr, columnNames []*coldef.IndexColName) error
-	DropIndex(ctx context.Context, schema, tableName, indexName model.CIStr) error
+	DropIndex(ctx context.Context, tableIdent table.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent table.Ident, spec []*AlterSpecification) error
+	// SetLease will reset the lease time for online DDL change, it is a very dangerous function and you must guarantee that
+	// all servers have the same lease time.
+	SetLease(lease time.Duration)
+	// GetLease returns current schema lease time.
+	GetLease() time.Duration
+	// Stats returns the DDL statistics.
+	Stats() (map[string]interface{}, error)
+	// GetScope gets the status variables scope.
+	GetScope(status string) variable.ScopeFlag
+	// Stop stops DDL worker.
+	Stop() error
+	// Start starts DDL worker.
+	Start() error
 }
 
 type ddl struct {
-	infoHandle  *infoschema.Handle
-	onDDLChange OnDDLChange
-	store       kv.Storage
+	m sync.RWMutex
+
+	infoHandle *infoschema.Handle
+	hook       Callback
+	store      kv.Storage
 	// schema lease seconds.
-	lease     int
+	lease     time.Duration
 	uuid      string
 	jobCh     chan struct{}
 	jobDoneCh chan struct{}
+	// reorgDoneCh is for reorganization, if the reorganization job is done,
+	// we will use this channel to notify outer.
+	// TODO: now we use goroutine to simulate reorganization jobs, later we may
+	// use a persistent job list.
+	reorgDoneCh chan error
+
+	quitCh chan struct{}
+	wait   sync.WaitGroup
 }
 
-// OnDDLChange is used as hook function when schema changed.
-type OnDDLChange func(err error) error
-
 // NewDDL creates a new DDL.
-func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook OnDDLChange, lease int) DDL {
-	d := &ddl{
-		infoHandle:  infoHandle,
-		onDDLChange: hook,
-		store:       store,
-		lease:       lease,
-		uuid:        uuid.NewV4().String(),
-		jobCh:       make(chan struct{}, 1),
-		jobDoneCh:   make(chan struct{}, 1),
+func NewDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) DDL {
+	return newDDL(store, infoHandle, hook, lease)
+}
+
+func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, lease time.Duration) *ddl {
+	if hook == nil {
+		hook = &BaseCallback{}
 	}
-	go d.onWorker()
+
+	d := &ddl{
+		infoHandle: infoHandle,
+		hook:       hook,
+		store:      store,
+		lease:      lease,
+		uuid:       uuid.NewV4().String(),
+		jobCh:      make(chan struct{}, 1),
+		jobDoneCh:  make(chan struct{}, 1),
+	}
+
+	d.start()
+
+	variable.RegisterStatistics(d)
+
 	return d
+}
+
+func (d *ddl) Stop() error {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	d.close()
+
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		owner, err := t.GetDDLOwner()
+		if err != nil || owner == nil {
+			return errors.Trace(err)
+		}
+
+		if owner.OwnerID != d.uuid {
+			return nil
+		}
+
+		// owner is mine, clean it so other servers can compete for it quickly.
+		return errors.Trace(t.SetDDLOwner(&model.Owner{}))
+	})
+	return errors.Trace(err)
+}
+
+func (d *ddl) Start() error {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	if !d.isClosed() {
+		return nil
+	}
+
+	d.start()
+
+	return nil
+}
+
+func (d *ddl) start() {
+	d.quitCh = make(chan struct{})
+	d.wait.Add(1)
+	go d.onWorker()
+	// for every start, we will send a fake job to let worker
+	// check owner first and try to find whether a job exists and run.
+	asyncNotify(d.jobCh)
+}
+
+func (d *ddl) close() {
+	if d.isClosed() {
+		return
+	}
+
+	close(d.quitCh)
+
+	d.wait.Wait()
+}
+
+func (d *ddl) isClosed() bool {
+	select {
+	case <-d.quitCh:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *ddl) SetLease(lease time.Duration) {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	if lease == d.lease {
+		return
+	}
+
+	log.Warnf("change schema lease %s -> %s", d.lease, lease)
+
+	if d.isClosed() {
+		// if already closed, just set lease and return
+		d.lease = lease
+		return
+	}
+
+	// close the running worker and start again
+	d.close()
+	d.lease = lease
+	d.start()
+}
+
+func (d *ddl) GetLease() time.Duration {
+	d.m.RLock()
+	lease := d.lease
+	d.m.RUnlock()
+	return lease
 }
 
 func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
@@ -109,41 +235,20 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	if ok {
 		return errors.Trace(ErrExists)
 	}
-	info := &model.DBInfo{Name: schema}
-	info.ID, err = d.genGlobalID()
+
+	schemaID, err := d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err1 != nil {
-			return errors.Trace(err)
-		}
-
-		err1 = t.CreateDatabase(info)
-
-		log.Warnf("save schema %v", info)
-		return errors.Trace(err1)
-	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
-	return errors.Trace(err)
-}
-
-func (d *ddl) verifySchemaMetaVersion(t *meta.Meta, schemaMetaVersion int64) error {
-	curVer, err := t.GetSchemaVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if curVer != schemaMetaVersion {
-		return errors.Errorf("Schema changed, our version %d, but got %d", schemaMetaVersion, curVer)
+	job := &model.Job{
+		SchemaID: schemaID,
+		Type:     model.ActionCreateSchema,
+		Args:     []interface{}{schema},
 	}
 
-	// Increment version.
-	_, err = t.GenSchemaVersion()
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -154,49 +259,13 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		return errors.Trace(ErrNotExists)
 	}
 
-	// Update InfoSchema
-	oldInfo := is.Clone()
-	var newInfo []*model.DBInfo
-	for _, v := range oldInfo {
-		if v.Name.L != schema.L {
-			newInfo = append(newInfo, v)
-		}
+	job := &model.Job{
+		SchemaID: old.ID,
+		Type:     model.ActionDropSchema,
 	}
 
-	// Remove data.
-	txn, err := ctx.GetTxn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tables := is.SchemaTables(schema)
-	for _, t := range tables {
-		err = t.Truncate(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Remove indices.
-		for _, v := range t.Indices() {
-			if v != nil && v.X != nil {
-				if err = v.X.Drop(txn); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-	}
-
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-
-		err1 = t.DropDatabase(old.ID)
-		return errors.Trace(err1)
-	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
@@ -262,6 +331,7 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		col.State = model.StatePublic
 		constraints = append(constraints, cts...)
 		cols = append(cols, col)
 		colMap[strings.ToLower(colDef.Name)] = col
@@ -274,7 +344,7 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 }
 
 func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
-	// set charset
+	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -284,15 +354,17 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 			colDef.Tp.Collate = charset.CharsetBin
 		}
 	}
-	// convert colDef into col
+
 	col, cts, err := coldef.ColumnDefToCol(offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	col.ID, err = d.genGlobalID()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	return col, cts, nil
 }
 
@@ -369,6 +441,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		idxInfo := &model.IndexInfo{
 			Name:    model.NewCIStr(constr.ConstrName),
 			Columns: indexColumns,
+			State:   model.StatePublic,
 		}
 		switch constr.Tp {
 		case coldef.ConstrPrimaryKey:
@@ -410,158 +483,141 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("New table: %+v", tbInfo)
 
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-
-		err = t.CreateTable(schema.ID, tbInfo)
-		return errors.Trace(err1)
-	})
-
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tbInfo.ID,
+		Type:     model.ActionCreateTable,
+		Args:     []interface{}{tbInfo},
 	}
+
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident table.Ident, specs []*AlterSpecification) (err error) {
-	// Get database and table.
-	is := d.GetInformationSchema()
-
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return terror.DatabaseNotExists.Gen("database %s not exists", ident.Schema)
+	// now we only allow one schema changes at the same time.
+	if len(specs) != 1 {
+		return errors.New("can't run multi schema changes in one DDL")
 	}
 
-	tbl, err := is.TableByName(ident.Schema, ident.Name)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	for _, spec := range specs {
 		switch spec.Action {
 		case AlterAddColumn:
-			if err := d.addColumn(ctx, schema, tbl, spec, is.SchemaMetaVersion()); err != nil {
-				return errors.Trace(err)
+			err = d.AddColumn(ctx, ident, spec)
+		case AlterDropColumn:
+			err = d.DropColumn(ctx, ident, model.NewCIStr(spec.Name))
+		case AlterDropIndex:
+			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
+		case AlterAddConstr:
+			constr := spec.Constraint
+			switch spec.Constraint.Tp {
+			case coldef.ConstrKey, coldef.ConstrIndex:
+				err = d.CreateIndex(ctx, ident, false, model.NewCIStr(constr.ConstrName), spec.Constraint.Keys)
+			case coldef.ConstrUniq, coldef.ConstrUniqIndex, coldef.ConstrUniqKey:
+				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.ConstrName), spec.Constraint.Keys)
+			default:
+				// nothing to do now.
 			}
 		default:
-			// TODO: process more actions
-			continue
+			// nothing to do now.
+		}
+
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	return nil
 }
 
-// Add a column into table
-func (d *ddl) addColumn(ctx context.Context, schema *model.DBInfo, tbl table.Table, spec *AlterSpecification, schemaMetaVersion int64) error {
-	// Find position
-	cols := tbl.Cols()
-	position := len(cols)
-	name := spec.Column.Name
-	// Check column name duplicate.
-	dc := column.FindCol(cols, name)
-	if dc != nil {
-		return errors.Errorf("Try to add a column with the same name of an already exists column.")
-	}
-	if spec.Position.Type == ColumnPositionFirst {
-		position = 0
-	} else if spec.Position.Type == ColumnPositionAfter {
-		// Find the mentioned column.
-		c := column.FindCol(cols, spec.Position.RelativeColumn)
-		if c == nil {
-			return errors.Errorf("No such column: %v", name)
+func checkColumnConstraint(constraints []*coldef.ConstraintOpt) error {
+	for _, constraint := range constraints {
+		switch constraint.Tp {
+		case coldef.ConstrAutoIncrement, coldef.ConstrForeignKey, coldef.ConstrPrimaryKey, coldef.ConstrUniq, coldef.ConstrUniqKey:
+			return errors.Errorf("unsupported add column constraint - %s", constraint)
 		}
-		// Insert position is after the mentioned column.
-		position = c.Offset + 1
 	}
-	// TODO: set constraint
-	col, _, err := d.buildColumnAndConstraint(position, spec.Column)
+
+	return nil
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecification) error {
+	// Check whether the added column constraints are supported.
+	err := checkColumnConstraint(spec.Column.Constraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// insert col into the right place of the column list
-	newCols := make([]*column.Col, 0, len(cols)+1)
-	newCols = append(newCols, cols[:position]...)
-	newCols = append(newCols, col)
-	newCols = append(newCols, cols[position:]...)
-	// adjust position
-	if position != len(cols) {
-		offsetChange := make(map[int]int)
-		for i := position + 1; i < len(newCols); i++ {
-			offsetChange[newCols[i].Offset] = i
-			newCols[i].Offset = i
-		}
-		// Update index offset info
-		for _, idx := range tbl.Indices() {
-			for _, c := range idx.Columns {
-				newOffset, ok := offsetChange[c.Offset]
-				if ok {
-					c.Offset = newOffset
-				}
-			}
-		}
-	}
-	tb := tbl.(*tables.Table)
-	tb.Columns = newCols
 
-	// TODO: update index
-	if err = updateOldRows(ctx, tb, col); err != nil {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(terror.DatabaseNotExists)
+	}
+
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(ErrNotExists)
+	}
+
+	// Check whether added column has existed.
+	colName := spec.Column.Name
+	col := column.FindCol(t.Cols(), colName)
+	if col != nil {
+		return errors.Errorf("column %s already exists", colName)
+	}
+
+	// ingore table constraints now, maybe return error later
+	// we use length(t.Cols()) as the default offset first, later we will change the
+	// column's offset later.
+	col, _, err = d.buildColumnAndConstraint(len(t.Cols()), spec.Column)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// update infomation schema
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err1 := d.verifySchemaMetaVersion(t, schemaMetaVersion)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-
-		err = t.UpdateTable(schema.ID, tb.Meta())
-		return errors.Trace(err1)
-	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionAddColumn,
+		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
 	}
+
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
-func updateOldRows(ctx context.Context, t *tables.Table, col *column.Col) error {
-	txn, err := ctx.GetTxn(false)
+// DropColumn will drop a column from the table, now we don't support drop the column with index covered.
+func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CIStr) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(terror.DatabaseNotExists)
+	}
+
+	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	it, err := txn.Seek([]byte(t.FirstKey()))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-
-	prefix := t.KeyPrefix()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		handle, err0 := util.DecodeHandleFromRowKey(it.Key())
-		if err0 != nil {
-			return errors.Trace(err0)
-		}
-		k := t.RecordKey(handle, col)
-
-		// TODO: check and get timestamp/datetime default value.
-		// refer to getDefaultValue in stmt/stmts/stmt_helper.go.
-		if err0 = t.SetColValue(txn, k, col.DefaultValue); err0 != nil {
-			return errors.Trace(err0)
-		}
-
-		rk := t.RecordKey(handle, nil)
-		if err0 = kv.NextUntil(it, util.RowKeyPrefixFilter(rk)); err0 != nil {
-			return errors.Trace(err0)
-		}
+		return errors.Trace(ErrNotExists)
 	}
 
-	return nil
+	// Check whether dropped column has existed.
+	col := column.FindCol(t.Cols(), colName.L)
+	if col == nil {
+		return errors.Errorf("column %s doesn’t exist", colName.L)
+	}
+
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionDropColumn,
+		Args:     []interface{}{colName},
+	}
+
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
+	return errors.Trace(err)
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -574,48 +630,18 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(ErrNotExists)
 	}
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err1 := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err1 != nil {
-			return errors.Trace(err)
-		}
 
-		err1 = t.DropTable(schema.ID, tb.Meta().ID)
-		return errors.Trace(err1)
-	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  tb.Meta().ID,
+		Type:     model.ActionDropTable,
 	}
-	err = d.deleteTableData(ctx, tb)
+
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
-}
-
-func (d *ddl) deleteTableData(ctx context.Context, t table.Table) error {
-	// Remove data.
-	err := t.Truncate(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Remove indices.
-	for _, v := range t.Indices() {
-		if v != nil && v.X != nil {
-			if err = v.X.Drop(txn); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	return nil
 }
 
 func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) error {
@@ -627,127 +653,53 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	if _, ok := is.IndexByName(ti.Schema, ti.Name, indexName); ok {
-		return errors.Errorf("CREATE INDEX: index already exist %s", indexName)
-	}
-	if is.ColumnExists(ti.Schema, ti.Name, indexName) {
-		return errors.Errorf("CREATE INDEX: index name collision with existing column: %s", indexName)
+		return errors.Trace(ErrNotExists)
 	}
 
-	tbInfo := t.Meta()
-
-	// build offsets
-	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
-	for i, ic := range idxColNames {
-		col := column.FindCol(t.Cols(), ic.ColumnName)
-		if col == nil {
-			return errors.Errorf("CREATE INDEX: column does not exist: %s", ic.ColumnName)
-		}
-		idxColumns = append(idxColumns, &model.IndexColumn{
-			Name:   col.Name,
-			Offset: col.Offset,
-			Length: ic.Length,
-		})
-		// Set ColumnInfo flag
-		if i == 0 {
-			if unique && len(idxColNames) == 1 {
-				tbInfo.Columns[col.Offset].Flag |= mysql.UniqueKeyFlag
-			} else {
-				tbInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
-			}
-		}
-	}
-	// create index info
-	idxInfo := &model.IndexInfo{
-		Name:    indexName,
-		Columns: idxColumns,
-		Unique:  unique,
-	}
-	tbInfo.Indices = append(tbInfo.Indices, idxInfo)
-
-	// build index
-	err = d.buildIndex(ctx, t, idxInfo, unique)
-	if err != nil {
-		return errors.Trace(err)
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionAddIndex,
+		Args:     []interface{}{unique, indexName, idxColNames},
 	}
 
-	// update InfoSchema
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		err := d.verifySchemaMetaVersion(t, is.SchemaMetaVersion())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = t.UpdateTable(schema.ID, tbInfo)
-		return errors.Trace(err)
-	})
-	if d.onDDLChange != nil {
-		err = d.onDDLChange(err)
-	}
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) buildIndex(ctx context.Context, t table.Table, idxInfo *model.IndexInfo, unique bool) error {
-	firstKey := t.FirstKey()
-	prefix := t.KeyPrefix()
+func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIStr) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(terror.DatabaseNotExists)
+	}
 
-	txn, err := ctx.GetTxn(false)
+	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(ErrNotExists)
 	}
-	it, err := txn.Seek([]byte(firstKey))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
-		var err error
-		handle, err := util.DecodeHandleFromRowKey(it.Key())
-		log.Info("building index...", handle)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// TODO: v is timestamp ?
-		// fetch datas
-		cols := t.Cols()
-		var vals []interface{}
-		for _, v := range idxInfo.Columns {
-			var (
-				data []byte
-				val  interface{}
-			)
-			col := cols[v.Offset]
-			k := t.RecordKey(handle, col)
-			data, err = txn.Get([]byte(k))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			val, err = t.DecodeValue(data, col)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			vals = append(vals, val)
-		}
-		// build index
-		kvX := kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, unique)
-		err = kvX.Create(txn, vals, handle)
-		if err != nil {
-			return errors.Trace(err)
-		}
 
-		rk := []byte(t.RecordKey(handle, nil))
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
-			return errors.Trace(err)
-		}
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionDropIndex,
+		Args:     []interface{}{indexName},
 	}
-	return nil
+
+	err = d.startJob(ctx, job)
+	err = d.hook.OnChanged(err)
+	return errors.Trace(err)
 }
 
-func (d *ddl) DropIndex(ctx context.Context, schema, tableName, indexNmae model.CIStr) error {
-	// TODO: implement
+// findCol finds column in cols by name.
+func findCol(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
+	name = strings.ToLower(name)
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+
 	return nil
 }
