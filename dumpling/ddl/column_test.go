@@ -113,7 +113,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, []interface{}{i, 10 * i, 100 * i})
+		_, err := t.AddRecord(ctx, []interface{}{i, 10 * i, 100 * i}, 0)
 		c.Assert(err, IsNil)
 	}
 
@@ -151,7 +151,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	})
 	c.Assert(i, Equals, int64(num))
 
-	h, err := t.AddRecord(ctx, []interface{}{11, 12, 13, 14})
+	h, err := t.AddRecord(ctx, []interface{}{11, 12, 13, 14}, 0)
 	c.Assert(err, IsNil)
 	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
@@ -304,7 +304,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -365,7 +365,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -424,7 +424,7 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -483,7 +483,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	c.Assert(err, IsNil)
 
 	newRow := []interface{}{int64(11), int64(22), int64(33), int64(44)}
-	handle, err = t.AddRecord(ctx, newRow)
+	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
 	_, err = ctx.GetTxn(true)
@@ -571,7 +571,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	row := []interface{}{int64(1), int64(2), int64(3)}
-	handle, err := t.AddRecord(ctx, row)
+	handle, err := t.AddRecord(ctx, row, 0)
 	c.Assert(err, IsNil)
 
 	err = ctx.FinishTxn(false)
@@ -639,7 +639,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := []interface{}{int64(1), int64(2), int64(3)}
-	handle, err := t.AddRecord(ctx, append(row, defaultColValue))
+	handle, err := t.AddRecord(ctx, append(row, defaultColValue), 0)
 	c.Assert(err, IsNil)
 
 	err = ctx.FinishTxn(false)

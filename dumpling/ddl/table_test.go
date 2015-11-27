@@ -173,10 +173,10 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err = tbl.AddRecord(ctx, []interface{}{1, 1, 1})
+	_, err = tbl.AddRecord(ctx, []interface{}{1, 1, 1}, 0)
 	c.Assert(err, IsNil)
 
-	_, err = tbl.AddRecord(ctx, []interface{}{2, 2, 2})
+	_, err = tbl.AddRecord(ctx, []interface{}{2, 2, 2}, 0)
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)

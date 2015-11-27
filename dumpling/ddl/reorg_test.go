@@ -136,7 +136,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, []interface{}{i, i, i})
+		_, err := t.AddRecord(ctx, []interface{}{i, i, i}, 0)
 		c.Assert(err, IsNil)
 	}
 
