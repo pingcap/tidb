@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/table/tables"
 )
 
 var _ stmt.Statement = (*InsertIntoStmt)(nil)
@@ -130,19 +131,19 @@ func (s *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 	return cols, nil
 }
 
-func (s *InsertValues) getDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
-	m := map[interface{}]interface{}{}
-	for _, v := range cols {
-		if value, ok, err := getDefaultValue(ctx, v); ok {
+func (s *InsertValues) getColumnDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
+	defaultValMap := map[interface{}]interface{}{}
+	for _, col := range cols {
+		if value, ok, err := tables.GetColDefaultValue(ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 
-			m[v.Name.L] = value
+			defaultValMap[col.Name.L] = value
 		}
 	}
 
-	return m, nil
+	return defaultValMap, nil
 }
 
 func (s *InsertValues) fillValueList() error {
@@ -289,7 +290,7 @@ func (s *InsertValues) getRows(ctx context.Context, t table.Table, cols []*colum
 		return nil, nil, errors.Trace(err)
 	}
 
-	m, err := s.getDefaultValues(ctx, t.Cols())
+	evalMap, err := s.getColumnDefaultValues(ctx, t.Cols())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -304,15 +305,15 @@ func (s *InsertValues) getRows(ctx context.Context, t table.Table, cols []*colum
 		vals := make([]interface{}, len(list))
 		for j, expr := range list {
 			// For "insert into t values (default)" Default Eval.
-			m[expression.ExprEvalDefaultName] = cols[j].Name.O
+			evalMap[expression.ExprEvalDefaultName] = cols[j].Name.O
 
-			vals[j], err = expr.Eval(ctx, m)
+			vals[j], err = expr.Eval(ctx, evalMap)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
 		}
 
-		rows[i], recordIDs[i], err = s.getRow(ctx, t, cols, vals)
+		rows[i], recordIDs[i], err = s.fillRowData(ctx, t, cols, vals)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -343,7 +344,7 @@ func (s *InsertValues) getRowsSelect(ctx context.Context, t table.Table, cols []
 
 		var row []interface{}
 		var recordID int64
-		row, recordID, err = s.getRow(ctx, t, cols, planRow.Data)
+		row, recordID, err = s.fillRowData(ctx, t, cols, planRow.Data)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -353,25 +354,26 @@ func (s *InsertValues) getRowsSelect(ctx context.Context, t table.Table, cols []
 	return
 }
 
-func (s *InsertValues) getRow(ctx context.Context, t table.Table, cols []*column.Col, vals []interface{}) ([]interface{}, int64, error) {
-	r := make([]interface{}, len(t.Cols()))
+func (s *InsertValues) fillRowData(ctx context.Context, t table.Table, cols []*column.Col, vals []interface{}) ([]interface{}, int64, error) {
+	row := make([]interface{}, len(t.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
-		r[cols[i].Offset] = v
-		marked[cols[i].Offset] = struct{}{}
+		offset := cols[i].Offset
+		row[offset] = v
+		marked[offset] = struct{}{}
 	}
-	recordID, err := s.initDefaultValues(ctx, t, r, marked)
+	recordID, err := s.initDefaultValues(ctx, t, row, marked)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	if err = column.CastValues(ctx, r, cols); err != nil {
+	if err = column.CastValues(ctx, row, cols); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	if err = column.CheckNotNull(t.Cols(), r); err != nil {
+	if err = column.CheckNotNull(t.Cols(), row); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 
-	return r, recordID, nil
+	return row, recordID, nil
 }
 
 func execOnDuplicateUpdate(ctx context.Context, t table.Table, row []interface{}, h int64, cols map[int]*expression.Assignment) error {
@@ -432,7 +434,7 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 			row[i] = recordID
 		} else {
 			var value interface{}
-			value, _, err = getDefaultValue(ctx, c)
+			value, _, err = tables.GetColDefaultValue(ctx, &c.ColumnInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

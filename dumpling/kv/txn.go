@@ -25,7 +25,9 @@ func IsRetryableError(err error) bool {
 		return false
 	}
 
-	if terror.ErrorEqual(err, ErrLockConflict) || terror.ErrorEqual(err, ErrConditionNotMatch) {
+	if terror.ErrorEqual(err, ErrRetryable) ||
+		terror.ErrorEqual(err, ErrLockConflict) ||
+		terror.ErrorEqual(err, ErrConditionNotMatch) {
 		return true
 	}
 

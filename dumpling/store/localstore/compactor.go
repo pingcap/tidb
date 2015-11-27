@@ -41,7 +41,7 @@ type localstoreCompactor struct {
 	recentKeys      map[string]struct{}
 	stopCh          chan struct{}
 	delCh           chan kv.EncodedKey
-	workerWaitGroup sync.WaitGroup
+	workerWaitGroup *sync.WaitGroup
 	ticker          *time.Ticker
 	db              engine.DB
 	policy          kv.CompactPolicy
@@ -137,6 +137,7 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.EncodedKey {
 	var ret []kv.EncodedKey
 	first := true
+	currentTS := time.Now().UnixNano() / int64(time.Millisecond)
 	// keys are always in descending order.
 	for _, k := range keys {
 		_, ver, err := MvccDecode(k)
@@ -145,7 +146,6 @@ func (gc *localstoreCompactor) filterExpiredKeys(keys []kv.EncodedKey) []kv.Enco
 			panic(err)
 		}
 		ts := localVersionToTimestamp(ver)
-		currentTS := time.Now().UnixNano() / int64(time.Millisecond)
 		// Check timeout keys.
 		if currentTS-int64(ts) >= int64(gc.policy.SafePoint) {
 			// Skip first version.
@@ -191,11 +191,12 @@ func (gc *localstoreCompactor) Stop() {
 
 func newLocalCompactor(policy kv.CompactPolicy, db engine.DB) *localstoreCompactor {
 	return &localstoreCompactor{
-		recentKeys: make(map[string]struct{}),
-		stopCh:     make(chan struct{}),
-		delCh:      make(chan kv.EncodedKey, 100),
-		ticker:     time.NewTicker(policy.TriggerInterval),
-		policy:     policy,
-		db:         db,
+		recentKeys:      make(map[string]struct{}),
+		stopCh:          make(chan struct{}),
+		delCh:           make(chan kv.EncodedKey, 100),
+		ticker:          time.NewTicker(policy.TriggerInterval),
+		policy:          policy,
+		db:              db,
+		workerWaitGroup: &sync.WaitGroup{},
 	}
 }

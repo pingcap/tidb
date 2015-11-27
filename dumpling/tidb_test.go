@@ -348,10 +348,6 @@ func exec(c *C, se Session, sql string, args ...interface{}) (rset.Recordset, er
 	if err != nil {
 		return nil, err
 	}
-	err = se.DropPreparedStmt(stmtID)
-	if err != nil {
-		return nil, err
-	}
 	return rs, nil
 }
 

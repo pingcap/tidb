@@ -67,7 +67,7 @@ func (r *WhereRset) planBinOp(ctx context.Context, x *expression.BinaryOperation
 		}
 		f(x)
 		out := []expression.Expression{}
-		p := r.Src
+		p = r.Src
 		isNewPlan := false
 		for _, e := range in {
 			p2, filtered, err = p.Filter(ctx, e)
