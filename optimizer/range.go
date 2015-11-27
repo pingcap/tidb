@@ -124,7 +124,9 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 
 func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 	if x.Op == opcode.OrOr {
-		return r.merge(r.build(x.L), r.build(x.R), true)
+		return r.union(x.L, x.R)
+	} else if x.Op == opcode.AndAnd {
+		return r.intersection(x.L, x.R)
 	}
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.

@@ -187,6 +187,8 @@ func (c *conditionChecker) checkBinaryOperation(b *ast.BinaryOperationExpr) bool
 	switch b.Op {
 	case opcode.OrOr:
 		return c.check(b.L) && c.check(b.R)
+	case opcode.AndAnd:
+		return c.check(b.L) && c.check(b.R)
 	case opcode.EQ, opcode.NE, opcode.GE, opcode.GT, opcode.LE, opcode.LT:
 		if b.L.IsStatic() {
 			return c.checkColumnExpr(b.R)
