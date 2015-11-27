@@ -105,10 +105,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	var (
 		unique      bool
 		indexName   model.CIStr
+		indexID     int64
 		idxColNames []*coldef.IndexColName
 	)
 
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames)
+	err = job.DecodeArgs(&unique, &indexName, &indexID, &idxColNames)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
@@ -128,10 +129,6 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 
 	if indexInfo == nil {
-		indexID, err1 := d.genGlobalID()
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
 		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, indexID, idxColNames)
 		if err != nil {
 			job.State = model.JobCancelled
