@@ -57,25 +57,6 @@ func (c *Context) FinishTxn(rollback bool) error {
 	return nil
 }
 
-// GetGlobalStatusVar implements GlobalVarAccessor GetGlobalStatusVar interface.
-func (c *Context) GetGlobalStatusVar(ctx context.Context, name string) (string, error) {
-	v := variable.GetStatusVar(name)
-	if v == nil {
-		return "", terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
-	}
-	return v.Value, nil
-}
-
-// SetGlobalStatusVar implements GlobalVarAccessor SetGlobalStatusVar interface.
-func (c *Context) SetGlobalStatusVar(ctx context.Context, name string, value string) error {
-	v := variable.GetStatusVar(name)
-	if v == nil {
-		return terror.UnknownStatusVar.Gen("unknown status variable: %s", name)
-	}
-	v.Value = value
-	return nil
-}
-
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)

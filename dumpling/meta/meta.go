@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -53,6 +54,7 @@ var (
 	mDBPrefix         = "mDB"
 	mTablePrefix      = "mTable"
 	mTableIDPrefix    = "mTID"
+	mBootstrapKey     = []byte("mBootstrapKey")
 )
 
 var (
@@ -124,13 +126,13 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 
 // GenAutoTableID adds step to the auto id of the table and returns the sum.
 func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, error) {
-	// check db exists
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	// check table exists
+	// Check if table exists.
 	tableKey := m.tableKey(tableID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return 0, errors.Trace(err)
@@ -238,14 +240,14 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 
 // CreateTable creates a table with tableInfo in database.
 func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
-	// then check table exists or not
 	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -260,9 +262,8 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
-
 	if err := m.txn.HClear(dbKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -276,15 +277,14 @@ func (m *Meta) DropDatabase(dbID int64) error {
 
 // DropTable drops table in database.
 func (m *Meta) DropTable(dbID int64, tableID int64) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Check if table exists.
 	tableKey := m.tableKey(tableID)
-
-	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -302,15 +302,14 @@ func (m *Meta) DropTable(dbID int64, tableID int64) error {
 
 // UpdateTable updates the table with table info.
 func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
+	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
-
-	// then check table exists or not
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
@@ -321,7 +320,6 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	}
 
 	err = m.txn.HSet(dbKey, tableKey, data)
-
 	return errors.Trace(err)
 }
 
@@ -391,14 +389,13 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 
 // GetTable gets the table value in database with tableID.
 func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
-	// first check db exists or not.
+	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tableKey := m.tableKey(tableID)
-
 	value, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -413,6 +410,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 //	mDDLOnwer: []byte
 //	mDDLJobList: list jobs
 //	mDDLJobHistory: hash
+//	mDDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
@@ -421,6 +419,7 @@ var (
 	mDDLOwnerKey      = []byte("mDDLOwner")
 	mDDLJobListKey    = []byte("mDDLJobList")
 	mDDLJobHistoryKey = []byte("mDDLJobHistory")
+	mDDLJobReorgKey   = []byte("mDDLJobReorg")
 )
 
 // GetDDLOwner gets the current owner for DDL.
@@ -446,7 +445,7 @@ func (m *Meta) SetDDLOwner(o *model.Owner) error {
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job) error {
-	b, err := json.Marshal(job)
+	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -461,7 +460,7 @@ func (m *Meta) DeQueueDDLJob() (*model.Job, error) {
 	}
 
 	job := &model.Job{}
-	err = json.Unmarshal(value, job)
+	err = job.Decode(value)
 	return job, errors.Trace(err)
 }
 
@@ -473,13 +472,15 @@ func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 	}
 
 	job := &model.Job{}
-	err = json.Unmarshal(value, job)
+	err = job.Decode(value)
 	return job, errors.Trace(err)
 }
 
 // UpdateDDLJob updates the DDL job with index.
 func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
-	b, err := json.Marshal(job)
+	// TODO: use timestamp allocated by TSO
+	job.LastUpdateTS = time.Now().UnixNano()
+	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -499,7 +500,7 @@ func (m *Meta) jobIDKey(id int64) []byte {
 
 // AddHistoryDDLJob adds DDL job to history.
 func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
-	b, err := json.Marshal(job)
+	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -514,6 +515,40 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	}
 
 	job := &model.Job{}
-	err = json.Unmarshal(value, job)
+	err = job.Decode(value)
 	return job, errors.Trace(err)
+}
+
+// IsBootstrapped returns whether we have already run bootstrap or not.
+// return true means we don't need doing any other bootstrap.
+func (m *Meta) IsBootstrapped() (bool, error) {
+	value, err := m.txn.GetInt64(mBootstrapKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return value == 1, nil
+}
+
+// FinishBootstrap finishes bootstrap.
+func (m *Meta) FinishBootstrap() error {
+	err := m.txn.Set(mBootstrapKey, []byte("1"))
+	return errors.Trace(err)
+}
+
+// UpdateDDLReorgHandle saves the job reorganization latest processed handle for later resuming.
+func (m *Meta) UpdateDDLReorgHandle(job *model.Job, handle int64) error {
+	err := m.txn.HSet(mDDLJobReorgKey, m.jobIDKey(job.ID), []byte(strconv.FormatInt(handle, 10)))
+	return errors.Trace(err)
+}
+
+// RemoveDDLReorgHandle removes the job reorganization handle.
+func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
+	err := m.txn.HDel(mDDLJobReorgKey, m.jobIDKey(job.ID))
+	return errors.Trace(err)
+}
+
+// GetDDLReorgHandle gets the latest processed handle.
+func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
+	value, err := m.txn.HGetInt64(mDDLJobReorgKey, m.jobIDKey(job.ID))
+	return value, errors.Trace(err)
 }

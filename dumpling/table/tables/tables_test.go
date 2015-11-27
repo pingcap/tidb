@@ -82,7 +82,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
 	c.Assert(err, NotNil)
 
-	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, []bool{false, true}), IsNil)
+	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, map[int]bool{0: false, 1: true}), IsNil)
 
 	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		return true, nil

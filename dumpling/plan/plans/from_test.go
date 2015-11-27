@@ -83,6 +83,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 				Offset:       0,
 				DefaultValue: 0,
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
+				State:        model.StatePublic,
 			},
 		},
 		{
@@ -92,6 +93,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 				Offset:       1,
 				DefaultValue: nil,
 				FieldType:    *types.NewFieldType(mysql.TypeVarchar),
+				State:        model.StatePublic,
 			},
 		},
 	}
@@ -100,7 +102,8 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 
 	var i int64
 	for i = 0; i < 10; i++ {
-		p.tbl.AddRecord(p, []interface{}{i * 10, "hello"})
+		_, err = p.tbl.AddRecord(p, []interface{}{i * 10, "hello"})
+		c.Assert(err, IsNil)
 	}
 }
 
@@ -171,6 +174,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 			},
 			Unique:  false,
 			Primary: false,
+			State:   model.StatePublic,
 		},
 		X: kv.NewKVIndex("i", "id", false),
 	}

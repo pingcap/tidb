@@ -52,6 +52,7 @@ func (*testSuite) TestT(c *C) {
 		Name:      colName,
 		Offset:    0,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
 	}
 
 	idxInfo := &model.IndexInfo{
@@ -66,6 +67,7 @@ func (*testSuite) TestT(c *C) {
 		},
 		Unique:  true,
 		Primary: true,
+		State:   model.StatePublic,
 	}
 
 	tblInfo := &model.TableInfo{
@@ -73,12 +75,14 @@ func (*testSuite) TestT(c *C) {
 		Name:    tbName,
 		Columns: []*model.ColumnInfo{colInfo},
 		Indices: []*model.IndexInfo{idxInfo},
+		State:   model.StatePublic,
 	}
 
 	dbInfo := &model.DBInfo{
 		ID:     1,
 		Name:   dbName,
 		Tables: []*model.TableInfo{tblInfo},
+		State:  model.StatePublic,
 	}
 
 	dbInfos := []*model.DBInfo{dbInfo}
