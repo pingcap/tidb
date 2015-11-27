@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
@@ -65,7 +65,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
 	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
-	tbStmt := statement("create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
+	tbStmt := statement(ctx, "create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, table.Ident{Schema: noExist, Name: tbIdent.Name}, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(terror.DatabaseNotExists.Equal(err), IsTrue)
 
@@ -81,7 +81,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	_, err = tb.AddRecord(ctx, []interface{}{1, "b", 2, 4}, 0)
 	c.Assert(err, IsNil)
 
-	alterStmt := statement("alter table t add column aa int first").(*stmts.AlterTableStmt)
+	alterStmt := statement(ctx, "alter table t add column aa int first").(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 
@@ -100,20 +100,20 @@ func (ts *testSuite) TestDDL(c *C) {
 		}
 	}
 
-	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 
 	// Test add a duplicated column to table, get an error.
-	alterStmt = statement("alter table t add column bb int after b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column bb int after b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	// Test column schema change in t2.
 	tbIdent2 := tbIdent
 	tbIdent2.Name = model.NewCIStr("t2")
-	tbStmt = statement("create table t2 (a int unique not null)").(*stmts.CreateTableStmt)
+	tbStmt = statement(ctx, "create table t2 (a int unique not null)").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
@@ -124,7 +124,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	rid1, err := tb.AddRecord(ctx, []interface{}{2}, 0)
 	c.Assert(err, IsNil)
 
-	alterStmt = statement(`alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, `alter table t2 add b enum("bb") first`).(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
@@ -136,7 +136,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(cols[0], Equals, nil)
 	c.Assert(cols[1], Equals, int64(1))
 
-	alterStmt = statement(`alter table t2 add c varchar(255) default "abc" after b`).(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, `alter table t2 add c varchar(255) default "abc" after b`).(*stmts.AlterTableStmt)
 	sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(alterStmt.Specs[0].String(), Not(Equals), "")
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
@@ -158,19 +158,19 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(cols[2], Equals, int64(3))
 
 	// Test add column after a not exist column, get an error.
-	alterStmt = statement(`alter table t2 add b int after xxxx`).(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, `alter table t2 add b int after xxxx`).(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	// Test add column to a not exist table, get an error.
 	tbIdent3 := tbIdent
 	tbIdent3.Name = model.NewCIStr("t3")
-	alterStmt = statement(`alter table t3 add b int first`).(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, `alter table t3 add b int first`).(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent3, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	// Test drop column.
-	alterStmt = statement("alter table t2 drop column b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t2 drop column b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(err, IsNil)
 	tb, err = sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent2.Schema, tbIdent2.Name)
@@ -184,17 +184,17 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(cols[1], Equals, int64(1))
 
 	// Test drop a not exist column from table, get an error.
-	alterStmt = statement(`alter table t2 drop column xxx`).(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, `alter table t2 drop column xxx`).(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	// Test drop column from a not exist table, get an error.
-	alterStmt = statement(`alter table t3 drop column a`).(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, `alter table t3 drop column a`).(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent3, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	// Test index schema change.
-	idxStmt := statement("CREATE INDEX idx_c ON t (c)").(*stmts.CreateIndexStmt)
+	idxStmt := statement(ctx, "CREATE INDEX idx_c ON t (c)").(*stmts.CreateIndexStmt)
 	idxName := model.NewCIStr(idxStmt.IndexName)
 	err = sessionctx.GetDomain(ctx).DDL().CreateIndex(ctx, tbIdent, idxStmt.Unique, idxName, idxStmt.IndexColNames)
 	c.Assert(err, IsNil)
@@ -203,19 +203,19 @@ func (ts *testSuite) TestDDL(c *C) {
 	err = sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, tbIdent, idxName)
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t add index idx_c (c)").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add index idx_c (c)").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t drop index idx_c").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t drop index idx_c").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t add unique index idx_c (c)").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add unique index idx_c (c)").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t drop index idx_c").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t drop index idx_c").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, IsNil)
 
@@ -245,11 +245,11 @@ func (ts *testSuite) TestConstraintNames(c *C) {
 	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
 	c.Assert(err, IsNil)
 
-	tbStmt := statement("create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
+	tbStmt := statement(ctx, "create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, NotNil)
 
-	tbStmt = statement("create table t (a int, b int, index A (a, b), index (a))").(*stmts.CreateTableStmt)
+	tbStmt = statement(ctx, "create table t (a int, b int, index A (a, b), index (a))").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 	tbl, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(schemaName, tblName)
@@ -274,32 +274,32 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
 	c.Assert(err, IsNil)
 
-	tbStmt := statement("create table t (a int, b int)").(*stmts.CreateTableStmt)
+	tbStmt := statement(ctx, "create table t (a int, b int)").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 
-	alterStmt := statement("alter table t add column c int PRIMARY KEY").(*stmts.AlterTableStmt)
+	alterStmt := statement(ctx, "alter table t add column c int PRIMARY KEY").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	alterStmt = statement("alter table t add column c int AUTO_INCREMENT PRIMARY KEY").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column c int AUTO_INCREMENT PRIMARY KEY").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	alterStmt = statement("alter table t add column c int UNIQUE").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column c int UNIQUE").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	alterStmt = statement("alter table t add column c int UNIQUE KEY").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column c int UNIQUE KEY").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	alterStmt = statement("alter table t add column c int, add column d int").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t add column c int, add column d int").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
 	// Notice: Now we have not supported.
-	// alterStmt = statement("alter table t add column c int KEY").(*stmts.AlterTableStmt)
+	// alterStmt = statement(ctx, "alter table t add column c int KEY").(*stmts.AlterTableStmt)
 	// err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	// c.Assert(err, NotNil)
 
@@ -308,19 +308,19 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 		Name:   model.NewCIStr("t1"),
 	}
 
-	tbStmt = statement("create table t1 (a int, b int, c int, d int, index A (a, b))").(*stmts.CreateTableStmt)
+	tbStmt = statement(ctx, "create table t1 (a int, b int, c int, d int, index A (a, b))").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent2, tbStmt.Cols, tbStmt.Constraints)
 	c.Assert(err, IsNil)
 
-	alterStmt = statement("alter table t1 drop column a").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t1 drop column a").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	alterStmt = statement("alter table t1 drop column b").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t1 drop column b").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent2, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
-	alterStmt = statement("alter table t1 drop column c, drop column d").(*stmts.AlterTableStmt)
+	alterStmt = statement(ctx, "alter table t1 drop column c, drop column d").(*stmts.AlterTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().AlterTable(ctx, tbIdent, alterStmt.Specs)
 	c.Assert(err, NotNil)
 
@@ -328,12 +328,12 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func statement(sql string) stmt.Statement {
+func statement(ctx context.Context, sql string) stmt.Statement {
 	log.Debug("Compile", sql)
 	lexer := parser.NewLexer(sql)
 	parser.YYParse(lexer)
-	compiler := &optimizer.Compiler{}
-	stm, _ := compiler.Compile(lexer.Stmts()[0])
+	compiler := &executor.Compiler{}
+	stm, _ := compiler.Compile(ctx, lexer.Stmts()[0])
 	return stm
 }
 
