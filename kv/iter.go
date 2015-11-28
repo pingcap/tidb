@@ -72,34 +72,3 @@ func NextUntil(it Iterator, fn FnKeyCmp) error {
 	}
 	return nil
 }
-
-type decodeKeyIter struct {
-	iter Iterator
-}
-
-// NewDecodeKeyIter returns an iterator with Key() auto decoded.
-func NewDecodeKeyIter(iter Iterator) Iterator {
-	return &decodeKeyIter{
-		iter: iter,
-	}
-}
-
-func (iter *decodeKeyIter) Next() error {
-	return iter.iter.Next()
-}
-
-func (iter *decodeKeyIter) Value() []byte {
-	return iter.iter.Value()
-}
-
-func (iter *decodeKeyIter) Key() string {
-	return string([]byte(iter.iter.Key()))
-}
-
-func (iter *decodeKeyIter) Valid() bool {
-	return iter.iter.Valid()
-}
-
-func (iter *decodeKeyIter) Close() {
-	iter.iter.Close()
-}
