@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,7 @@ type Domain struct {
 	leaseCh    chan time.Duration
 	// nano seconds
 	lastLeaseTS int64
+	m           sync.Mutex
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
@@ -50,7 +52,9 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	}
 
 	info := do.infoHandle.Get()
-	if info != nil && schemaMetaVersion > 0 && schemaMetaVersion == info.SchemaMetaVersion() {
+	if info != nil && schemaMetaVersion <= info.SchemaMetaVersion() {
+		// info may be changed by other txn, so here its version may be bigger than schema version,
+		// so we don't need to reload.
 		log.Debugf("schema version is still %d, no need reload", schemaMetaVersion)
 		return nil
 	}
@@ -139,6 +143,10 @@ func (do *Domain) tryReload() {
 }
 
 func (do *Domain) reload() error {
+	// lock here for only once at same time.
+	do.m.Lock()
+	defer do.m.Unlock()
+
 	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
 	if err != nil {
 		return errors.Trace(err)
