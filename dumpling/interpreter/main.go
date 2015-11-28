@@ -233,8 +233,11 @@ func main() {
 			if err != nil {
 				log.Error(errors.ErrorStack(err))
 				tx.Rollback()
-			} else {
-				tx.Commit()
+				continue
+			}
+			err = tx.Commit()
+			if err != nil {
+				log.Error(errors.ErrorStack(err))
 			}
 		}
 	}
