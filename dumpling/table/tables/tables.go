@@ -429,7 +429,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 		}
 	}
 
-	if err := t.LockRow(ctx, recordID); err != nil {
+	if err = t.LockRow(ctx, recordID); err != nil {
 		return 0, errors.Trace(err)
 	}
 

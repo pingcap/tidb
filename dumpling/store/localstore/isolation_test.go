@@ -77,17 +77,17 @@ func (t *testIsolationSuite) TestMultiInc(c *C) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < incCnt; j++ {
-				err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+				err1 := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 					for _, key := range keys {
-						_, err1 := txn.Inc(key, 1)
-						if err1 != nil {
-							return err1
+						_, err2 := txn.Inc(key, 1)
+						if err2 != nil {
+							return err2
 						}
 					}
 
 					return nil
 				})
-				c.Assert(err, IsNil)
+				c.Assert(err1, IsNil)
 			}
 		}()
 	}

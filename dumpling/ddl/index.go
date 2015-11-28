@@ -478,10 +478,8 @@ func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.Name.L)
 	prefixBytes := []byte(prefix)
 
-	keys := make([]string, maxBatchSize)
-
 	for {
-		keys := keys[0:0]
+		keys := make([]string, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			iter, err := txn.Seek(prefixBytes)
 			if err != nil {
@@ -512,8 +510,8 @@ func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 		// delete index key one by one
 		for _, key := range keys {
 			err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-				if err := d.isReorgRunnable(txn); err != nil {
-					return errors.Trace(err)
+				if err1 := d.isReorgRunnable(txn); err1 != nil {
+					return errors.Trace(err1)
 				}
 
 				err1 := txn.Delete([]byte(key))

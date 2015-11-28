@@ -409,16 +409,16 @@ func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInf
 		seekHandle = handles[len(handles)-1] + 1
 
 		err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-			if err := d.isReorgRunnable(txn); err != nil {
-				return errors.Trace(err)
+			if err1 := d.isReorgRunnable(txn); err1 != nil {
+				return errors.Trace(err1)
 			}
 
 			var h int64
 			for _, h = range handles {
 				key := t.RecordKey(h, col)
-				err := txn.Delete(key)
-				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
-					return errors.Trace(err)
+				err1 := txn.Delete(key)
+				if err1 != nil && !terror.ErrorEqual(err1, kv.ErrNotExist) {
+					return errors.Trace(err1)
 				}
 			}
 			return errors.Trace(reorgInfo.UpdateHandle(txn, h))
