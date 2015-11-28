@@ -149,7 +149,7 @@ func (t *testMvccSuite) TestMvccNext(c *C) {
 }
 
 func encodeTestDataKey(i int) []byte {
-	return kv.EncodeKey(encodeInt(i))
+	return encodeInt(i)
 }
 
 func (t *testMvccSuite) TestSnapshotGet(c *C) {
