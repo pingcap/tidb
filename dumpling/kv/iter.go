@@ -37,8 +37,6 @@ var (
 )
 
 var (
-	// keyPrefix is used to avoid key conflict with some database metadata keys.
-	keyPrefix    = []byte("z")
 	codecEncoder = &encoder{
 		codec.EncodeKey,
 		codec.DecodeKey,
@@ -50,16 +48,6 @@ var (
 type encoder struct {
 	enc func(...interface{}) ([]byte, error)
 	dec func([]byte) ([]interface{}, error)
-}
-
-// EncodeKey appends the k behind keyPrefix.
-func EncodeKey(k []byte) []byte {
-	return append(keyPrefix, k...)
-}
-
-// DecodeKey removes the prefixed keyPrefix.
-func DecodeKey(k []byte) []byte {
-	return k[len(keyPrefix):]
 }
 
 // EncodeValue encodes values before it is stored to the KV store.
@@ -83,35 +71,4 @@ func NextUntil(it Iterator, fn FnKeyCmp) error {
 		}
 	}
 	return nil
-}
-
-type decodeKeyIter struct {
-	iter Iterator
-}
-
-// NewDecodeKeyIter returns an iterator with Key() auto decoded.
-func NewDecodeKeyIter(iter Iterator) Iterator {
-	return &decodeKeyIter{
-		iter: iter,
-	}
-}
-
-func (iter *decodeKeyIter) Next() error {
-	return iter.iter.Next()
-}
-
-func (iter *decodeKeyIter) Value() []byte {
-	return iter.iter.Value()
-}
-
-func (iter *decodeKeyIter) Key() string {
-	return string(DecodeKey([]byte(iter.iter.Key())))
-}
-
-func (iter *decodeKeyIter) Valid() bool {
-	return iter.iter.Valid()
-}
-
-func (iter *decodeKeyIter) Close() {
-	iter.iter.Close()
 }

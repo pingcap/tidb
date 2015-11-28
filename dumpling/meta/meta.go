@@ -33,28 +33,28 @@ var (
 )
 
 // Meta structure:
-//	mNextGlobalID -> int64
-//	mSchemaVersion -> int64
-//	mDBs -> {
-//		mDB:1 -> db meta data []byte
-//		mDB:2 -> db meta data []byte
+//	NextGlobalID -> int64
+//	SchemaVersion -> int64
+//	DBs -> {
+//		DB:1 -> db meta data []byte
+//		DB:2 -> db meta data []byte
 //	}
-//	mDB:1 -> {
-//		mTable:1 -> table meta data []byte
-//		mTable:2 -> table meta data []byte
-//		mTID:1 -> int64
-//		mTID:2 -> int64
+//	DB:1 -> {
+//		Table:1 -> table meta data []byte
+//		Table:2 -> table meta data []byte
+//		TID:1 -> int64
+//		TID:2 -> int64
 //	}
 //
 
 var (
-	mNextGlobalIDKey  = []byte("mNextGlobalID")
-	mSchemaVersionKey = []byte("mSchemaVersionKey")
-	mDBs              = []byte("mDBs")
-	mDBPrefix         = "mDB"
-	mTablePrefix      = "mTable"
-	mTableIDPrefix    = "mTID"
-	mBootstrapKey     = []byte("mBootstrapKey")
+	mNextGlobalIDKey  = []byte("NextGlobalID")
+	mSchemaVersionKey = []byte("SchemaVersionKey")
+	mDBs              = []byte("DBs")
+	mDBPrefix         = "DB"
+	mTablePrefix      = "Table"
+	mTableIDPrefix    = "TID"
+	mBootstrapKey     = []byte("BootstrapKey")
 )
 
 var (
@@ -75,7 +75,7 @@ type Meta struct {
 
 // NewMeta creates a Meta in transaction txn.
 func NewMeta(txn kv.Transaction) *Meta {
-	t := structure.NewStructure(txn, []byte{0x00})
+	t := structure.NewStructure(txn, []byte{'m'})
 	return &Meta{txn: t}
 }
 
@@ -407,19 +407,19 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 }
 
 // DDL structure
-//	mDDLOnwer: []byte
-//	mDDLJobList: list jobs
-//	mDDLJobHistory: hash
-//	mDDLJobReorg: hash
+//	DDLOnwer: []byte
+//	DDLJobList: list jobs
+//	DDLJobHistory: hash
+//	DDLJobReorg: hash
 //
 // for multi DDL workers, only one can become the owner
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLOwnerKey      = []byte("mDDLOwner")
-	mDDLJobListKey    = []byte("mDDLJobList")
-	mDDLJobHistoryKey = []byte("mDDLJobHistory")
-	mDDLJobReorgKey   = []byte("mDDLJobReorg")
+	mDDLOwnerKey      = []byte("DDLOwner")
+	mDDLJobListKey    = []byte("DDLJobList")
+	mDDLJobHistoryKey = []byte("DDLJobHistory")
+	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
 // GetDDLOwner gets the current owner for DDL.

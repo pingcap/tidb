@@ -94,8 +94,8 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	t := &Table{
 		ID:           tableID,
 		Name:         name,
-		recordPrefix: fmt.Sprintf("%d_r", tableID),
-		indexPrefix:  fmt.Sprintf("%d_i", tableID),
+		recordPrefix: fmt.Sprintf("t%d_r", tableID),
+		indexPrefix:  fmt.Sprintf("t%d_i", tableID),
 		alloc:        alloc,
 		Columns:      cols,
 		state:        model.StatePublic,
