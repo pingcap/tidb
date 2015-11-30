@@ -35,7 +35,7 @@ var (
 	logLevel = flag.String("L", "error", "log level")
 	store    = flag.String("store", "goleveldb", "the name for the registered storage, e.g. memory, goleveldb, boltdb")
 	dbPath   = flag.String("dbpath", "test/test", "db path")
-	lease    = flag.Int("lease", 300, "schema lease seconds, very dangerous to change only if you know what you do")
+	lease    = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 
 	line        *liner.State
 	historyPath = "/tmp/tidb_interpreter"
