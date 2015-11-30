@@ -15,6 +15,9 @@ package kv
 
 import (
 	"bytes"
+	"runtime/debug"
+
+	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
@@ -38,19 +41,22 @@ func IsErrNotFound(err error) bool {
 
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
-type UnionStore struct {
-	WBuffer            MemBuffer // updates are buffered in memory
-	Snapshot           Snapshot  // for read
+type unionStore struct {
+	wbuffer            MemBuffer // updates are buffered in memory
+	snapshot           Snapshot  // for read
 	lazyConditionPairs MemBuffer // for delay check
+	opts               options
 }
 
 // NewUnionStore builds a new UnionStore.
-func NewUnionStore(snapshot Snapshot, opts Options) UnionStore {
+func NewUnionStore(snapshot Snapshot) UnionStore {
 	lazy := &lazyMemBuffer{}
-	return UnionStore{
-		WBuffer:            &lazyMemBuffer{},
-		Snapshot:           NewCacheSnapshot(snapshot, lazy, opts),
+	opts := make(map[Option]interface{})
+	return &unionStore{
+		wbuffer:            &lazyMemBuffer{},
+		snapshot:           NewCacheSnapshot(snapshot, lazy, options(opts)),
 		lazyConditionPairs: lazy,
+		opts:               opts,
 	}
 }
 
@@ -93,13 +99,13 @@ func (lmb *lazyMemBuffer) Release() {
 	lmb.mb = nil
 }
 
-// Get implements the Store Get interface.
-func (us *UnionStore) Get(key []byte) (value []byte, err error) {
+// Get implements the MemStore interface.
+func (us *unionStore) Get(key Key) (value []byte, err error) {
 	// Get from update records frist
-	value, err = us.WBuffer.Get(key)
+	value, err = us.wbuffer.Get(key)
 	if IsErrNotFound(err) {
 		// Try get from snapshot
-		return us.Snapshot.Get(key)
+		value, err = us.snapshot.Get(key)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -112,29 +118,74 @@ func (us *UnionStore) Get(key []byte) (value []byte, err error) {
 	return value, nil
 }
 
-// Set implements the Store Set interface.
-func (us *UnionStore) Set(key []byte, value []byte) error {
-	return us.WBuffer.Set(key, value)
+// Set implements the MemStore interface.
+func (us *unionStore) Set(key Key, value []byte) error {
+	if len(value) == 0 {
+		// Incase someone use it in the wrong way, we can figure it out immediately.
+		debug.PrintStack()
+		return errors.Trace(ErrCannotSetNilValue)
+	}
+	return us.wbuffer.Set(key, value)
 }
 
-// Seek implements the Snapshot Seek interface.
-func (us *UnionStore) Seek(key []byte, txn Transaction) (Iterator, error) {
-	bufferIt := us.WBuffer.NewIterator(key)
-	cacheIt := us.Snapshot.NewIterator(key)
+// Inc implements MemStore interface.
+func (us *unionStore) Inc(k Key, step int64) (int64, error) {
+	val, err := us.Get(k)
+	if IsErrNotFound(err) {
+		err = us.Set(k, []byte(strconv.FormatInt(step, 10)))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return step, nil
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	intVal, err := strconv.ParseInt(string(val), 10, 0)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	intVal += step
+	err = us.Set(k, []byte(strconv.FormatInt(intVal, 10)))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return intVal, nil
+}
+
+// GetInt64 implements MemStore GetInt64 interface.
+func (us *unionStore) GetInt64(k Key) (int64, error) {
+	val, err := us.Get(k)
+	if IsErrNotFound(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	intVal, err := strconv.ParseInt(string(val), 10, 0)
+	return intVal, errors.Trace(err)
+}
+
+// Seek implements the MemStore Seek interface.
+func (us *unionStore) Seek(key Key) (Iterator, error) {
+	bufferIt := us.wbuffer.NewIterator([]byte(key))
+	cacheIt := us.snapshot.NewIterator([]byte(key))
 	return newUnionIter(bufferIt, cacheIt), nil
 }
 
-// Delete implements the Store Delete interface.
-func (us *UnionStore) Delete(k []byte) error {
+// Delete implements the MemStore Delete interface.
+func (us *unionStore) Delete(k Key) error {
 	// Mark as deleted
-	val, err := us.WBuffer.Get(k)
+	val, err := us.wbuffer.Get(k)
 	if err != nil {
 		if !IsErrNotFound(err) { // something wrong
 			return errors.Trace(err)
 		}
 
 		// missed in buffer
-		val, err = us.Snapshot.Get(k)
+		val, err = us.snapshot.Get(k)
 		if err != nil {
 			if IsErrNotFound(err) {
 				return errors.Trace(ErrNotExist)
@@ -146,11 +197,36 @@ func (us *UnionStore) Delete(k []byte) error {
 		return errors.Trace(ErrNotExist)
 	}
 
-	return us.WBuffer.Set(k, nil)
+	err = us.wbuffer.Set(k, nil)
+	return errors.Trace(err)
 }
 
-// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
-func (us *UnionStore) CheckLazyConditionPairs() error {
+// WalkWriteBuffer implements the UnionStore interface.
+func (us *unionStore) WalkWriteBuffer(f func(Iterator) error) error {
+	iter := us.wbuffer.NewIterator(nil)
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		if err := f(iter); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// BatchPrefetch implements the UnionStore interface.
+func (us *unionStore) BatchPrefetch(keys []Key) error {
+	_, err := us.snapshot.BatchGet(keys)
+	return errors.Trace(err)
+}
+
+// RangePrefetch implements the UnionStore interface.
+func (us *unionStore) RangePrefetch(start, end Key, limit int) error {
+	_, err := us.snapshot.RangeGet(start, end, limit)
+	return errors.Trace(err)
+}
+
+// CheckLazyConditionPairs implements the UnionStore interface.
+func (us *unionStore) CheckLazyConditionPairs() error {
 	var keys []Key
 	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
 		keys = append(keys, []byte(it.Key()))
@@ -158,7 +234,7 @@ func (us *UnionStore) CheckLazyConditionPairs() error {
 	if len(keys) == 0 {
 		return nil
 	}
-	values, err := us.Snapshot.BatchGet(keys)
+	values, err := us.snapshot.BatchGet(keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -176,10 +252,31 @@ func (us *UnionStore) CheckLazyConditionPairs() error {
 	return nil
 }
 
+// SetOption implements the UnionStore SetOption interface.
+func (us *unionStore) SetOption(opt Option, val interface{}) {
+	us.opts[opt] = val
+}
+
+// DelOption implements the UnionStore DelOption interface.
+func (us *unionStore) DelOption(opt Option) {
+	delete(us.opts, opt)
+}
+
+// ReleaseSnapshot implements the UnionStore ReleaseSnapshot interface.
+func (us *unionStore) ReleaseSnapshot() {
+	us.snapshot.Release()
+}
+
 // Close implements the Store Close interface.
-func (us *UnionStore) Close() error {
-	us.Snapshot.Release()
-	us.WBuffer.Release()
+func (us *unionStore) Close() {
+	us.snapshot.Release()
+	us.wbuffer.Release()
 	us.lazyConditionPairs.Release()
-	return nil
+}
+
+type options map[Option]interface{}
+
+func (opts options) Get(opt Option) (interface{}, bool) {
+	v, ok := opts[opt]
+	return v, ok
 }
