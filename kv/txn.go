@@ -61,7 +61,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		if retryable && IsRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()
-			ExpoBackOffFullJitter(i)
+			BackOff(i)
 			continue
 		}
 		if err != nil {
@@ -82,9 +82,9 @@ var (
 	retryBackOffCap = 100
 )
 
-// ExpoBackOffFullJitter Implements exponential backoff with full jitter
+// BackOff Implements exponential backoff with full jitter
 // See: http://www.awsarchitectureblog.com/2015/03/backoff.html
-func ExpoBackOffFullJitter(attempts int) {
+func BackOff(attempts int) {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
 	sleep := time.Duration(rand.Intn(upper))
 	time.Sleep(time.Microsecond * sleep)
