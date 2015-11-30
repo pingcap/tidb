@@ -22,16 +22,16 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 )
 
-func bindInfo(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
+// BindInfo binds schema information for table name and column name.
+// It generates ResultFields for ResetSetNode and resolve ColumnNameExpr to a ResultField.
+func BindInfo(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
 	defaultSchema := db.GetCurrentSchema(ctx)
-	binder := InfoBinder{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
+	binder := infoBinder{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&binder)
 	return binder.Err
 }
 
-// InfoBinder binds schema information for table name and column name.
-// It generates ResultFields for ResetSetNode and resolve ColumnNameExpr to a ResultField.
-//
+// infoBinder is the visitor to bind schema information.
 // In general, a reference can only refer to information that are available for it.
 // So children elements are visited in the order that previous elements make information
 // available for following elements.
@@ -40,7 +40,7 @@ func bindInfo(node ast.Node, info infoschema.InfoSchema, ctx context.Context) er
 // When we enter a sub query, a new binderContext is pushed to the contextStack, so sub query
 // information can overwrite outer query information. When we look up for a column reference,
 // we look up from top to bottom in the contextStack.
-type InfoBinder struct {
+type infoBinder struct {
 	Info          infoschema.InfoSchema
 	Ctx           context.Context
 	DefaultSchema model.CIStr
@@ -85,7 +85,7 @@ type binderContext struct {
 }
 
 // currentContext gets the current binder context.
-func (sb *InfoBinder) currentContext() *binderContext {
+func (sb *infoBinder) currentContext() *binderContext {
 	stackLen := len(sb.contextStack)
 	if stackLen == 0 {
 		return nil
@@ -94,31 +94,31 @@ func (sb *InfoBinder) currentContext() *binderContext {
 }
 
 // pushContext is called when we enter a statement.
-func (sb *InfoBinder) pushContext() {
+func (sb *infoBinder) pushContext() {
 	sb.contextStack = append(sb.contextStack, &binderContext{
 		tableMap: map[string]int{},
 	})
 }
 
 // popContext is called when we leave a statement.
-func (sb *InfoBinder) popContext() {
+func (sb *infoBinder) popContext() {
 	sb.contextStack = sb.contextStack[:len(sb.contextStack)-1]
 }
 
 // pushJoin is called when we enter a join node.
-func (sb *InfoBinder) pushJoin(j *ast.Join) {
+func (sb *infoBinder) pushJoin(j *ast.Join) {
 	ctx := sb.currentContext()
 	ctx.joinNodeStack = append(ctx.joinNodeStack, j)
 }
 
 // popJoin is called when we leave a join node.
-func (sb *InfoBinder) popJoin() {
+func (sb *infoBinder) popJoin() {
 	ctx := sb.currentContext()
 	ctx.joinNodeStack = ctx.joinNodeStack[:len(ctx.joinNodeStack)-1]
 }
 
 // Enter implements ast.Visitor interface.
-func (sb *InfoBinder) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+func (sb *infoBinder) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
 	case *ast.SelectStmt:
 		sb.pushContext()
@@ -153,7 +153,7 @@ func (sb *InfoBinder) Enter(inNode ast.Node) (outNode ast.Node, skipChildren boo
 }
 
 // Leave implements ast.Visitor interface.
-func (sb *InfoBinder) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+func (sb *infoBinder) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
 	case *ast.TableName:
 		sb.handleTableName(v)
@@ -195,7 +195,7 @@ func (sb *InfoBinder) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 
 // handleTableName looks up and bind the schema information for table name
 // and set result fields for table name.
-func (sb *InfoBinder) handleTableName(tn *ast.TableName) {
+func (sb *infoBinder) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		tn.Schema = sb.DefaultSchema
 	}
@@ -225,7 +225,7 @@ func (sb *InfoBinder) handleTableName(tn *ast.TableName) {
 
 // handleTableSources checks name duplication
 // and puts the table source in current binderContext.
-func (sb *InfoBinder) handleTableSource(ts *ast.TableSource) {
+func (sb *infoBinder) handleTableSource(ts *ast.TableSource) {
 	for _, v := range ts.GetResultFields() {
 		v.TableAsName = ts.AsName
 	}
@@ -247,7 +247,7 @@ func (sb *InfoBinder) handleTableSource(ts *ast.TableSource) {
 }
 
 // handleJoin sets result fields for join.
-func (sb *InfoBinder) handleJoin(j *ast.Join) {
+func (sb *infoBinder) handleJoin(j *ast.Join) {
 	if j.Right == nil {
 		j.SetResultFields(j.Left.GetResultFields())
 		return
@@ -262,7 +262,7 @@ func (sb *InfoBinder) handleJoin(j *ast.Join) {
 
 // handleColumnName looks up and binds schema information to
 // the column name.
-func (sb *InfoBinder) handleColumnName(cn *ast.ColumnNameExpr) {
+func (sb *infoBinder) handleColumnName(cn *ast.ColumnNameExpr) {
 	ctx := sb.currentContext()
 	if ctx.inOnCondition {
 		// In on condition, only tables within current join is available.
@@ -281,7 +281,7 @@ func (sb *InfoBinder) handleColumnName(cn *ast.ColumnNameExpr) {
 }
 
 // bindColumnNameInContext looks up and binds schema information for a column with the ctx.
-func (sb *InfoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.ColumnNameExpr) (done bool) {
+func (sb *infoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.ColumnNameExpr) (done bool) {
 	if cn.Name.Table.L == "" {
 		// If qualified table name is not specified in column name, the column name may be ambiguous,
 		// We need to iterate over all tables and
@@ -349,7 +349,7 @@ func (sb *InfoBinder) bindColumnNameInContext(ctx *binderContext, cn *ast.Column
 
 // bindColumnNameInOnCondition looks up for column name in current join, and
 // binds the schema information.
-func (sb *InfoBinder) bindColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
+func (sb *infoBinder) bindColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	ctx := sb.currentContext()
 	join := ctx.joinNodeStack[len(ctx.joinNodeStack)-1]
 	tableSources := appendTableSources(nil, join)
@@ -358,7 +358,7 @@ func (sb *InfoBinder) bindColumnNameInOnCondition(cn *ast.ColumnNameExpr) {
 	}
 }
 
-func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnNameExpr, tableSources []*ast.TableSource) (done bool) {
+func (sb *infoBinder) bindColumnInTableSources(cn *ast.ColumnNameExpr, tableSources []*ast.TableSource) (done bool) {
 	var matchedResultField *ast.ResultField
 	tableNameL := cn.Name.Table.L
 	columnNameL := cn.Name.Name.L
@@ -410,7 +410,7 @@ func (sb *InfoBinder) bindColumnInTableSources(cn *ast.ColumnNameExpr, tableSour
 	return false
 }
 
-func (sb *InfoBinder) bindColumnInResultFields(cn *ast.ColumnNameExpr, rfs []*ast.ResultField) bool {
+func (sb *infoBinder) bindColumnInResultFields(cn *ast.ColumnNameExpr, rfs []*ast.ResultField) bool {
 	if cn.Name.Table.L != "" {
 		// Skip result fields, bind the column in table source.
 		return false
@@ -445,7 +445,7 @@ func (sb *InfoBinder) bindColumnInResultFields(cn *ast.ColumnNameExpr, rfs []*as
 }
 
 // handleFieldList expands wild card field and set fieldList in current context.
-func (sb *InfoBinder) handleFieldList(fieldList *ast.FieldList) {
+func (sb *infoBinder) handleFieldList(fieldList *ast.FieldList) {
 	var resultFields []*ast.ResultField
 	for _, v := range fieldList.Fields {
 		resultFields = append(resultFields, sb.createResultFields(v)...)
@@ -461,7 +461,7 @@ func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
 }
 
 // createResultFields creates result field list for a single select field.
-func (sb *InfoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.ResultField) {
+func (sb *infoBinder) createResultFields(field *ast.SelectField) (rfs []*ast.ResultField) {
 	ctx := sb.currentContext()
 	if field.WildCard != nil {
 		if len(ctx.tables) == 0 {
@@ -534,14 +534,14 @@ func appendTableSources(in []*ast.TableSource, resultSetNode ast.ResultSetNode) 
 	return
 }
 
-func (sb *InfoBinder) tableUniqueName(schema, table model.CIStr) string {
+func (sb *infoBinder) tableUniqueName(schema, table model.CIStr) string {
 	if schema.L != "" && schema.L != sb.DefaultSchema.L {
 		return schema.L + "." + table.L
 	}
 	return table.L
 }
 
-func (sb *InfoBinder) handlePositionByItem(by *ast.ByItem) {
+func (sb *infoBinder) handlePositionByItem(by *ast.ByItem) {
 	v, ok := by.Expr.(*ast.ValueExpr)
 	if !ok {
 		return

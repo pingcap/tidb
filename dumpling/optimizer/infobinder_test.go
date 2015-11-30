@@ -20,10 +20,10 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -91,25 +91,22 @@ func (ts *testInfoBinderSuite) TestInfoBinder(c *C) {
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("create table t3 (c1 int, c2 int)")
-	domain := sessionctx.GetDomain(testKit.Se.(context.Context))
-
+	ctx := testKit.Se.(context.Context)
+	domain := sessionctx.GetDomain(ctx)
+	db.BindCurrentSchema(ctx, "test")
 	for _, tc := range binderTestCases {
 		l := parser.NewLexer(tc.src)
 		c.Assert(parser.YYParse(l), Equals, 0)
 		stmts := l.Stmts()
 		c.Assert(len(stmts), Equals, 1)
-		binder := &optimizer.InfoBinder{
-			Info:          domain.InfoSchema(),
-			DefaultSchema: model.NewCIStr("test"),
-		}
 		node := stmts[0]
-		node.Accept(binder)
+		bindErr := optimizer.BindInfo(node, domain.InfoSchema(), ctx)
 		if tc.valid {
-			c.Assert(binder.Err, IsNil)
+			c.Assert(bindErr, IsNil)
 			verifier := &binderVerifier{c: c, src: tc.src}
 			node.Accept(verifier)
 		} else {
-			c.Assert(binder.Err, NotNil, Commentf("%s", tc.src))
+			c.Assert(bindErr, NotNil, Commentf("%s", tc.src))
 		}
 	}
 }

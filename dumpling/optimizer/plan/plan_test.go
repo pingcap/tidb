@@ -90,7 +90,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		},
 		{
 			exprStr:   "(a)",
-			resultStr: "[[-inf +inf]]",
+			resultStr: "[[-inf 0) (0 +inf]]",
 		},
 		{
 			exprStr:   "a in (1, 3, NULL, 2)",
@@ -99,6 +99,10 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		{
 			exprStr:   "a between 1 and 2",
 			resultStr: "[[1 2]]",
+		},
+		{
+			exprStr:   "a not between 1 and 2",
+			resultStr: "[[-inf 1) (2 +inf]]",
 		},
 		{
 			exprStr:   "a IS NULL",

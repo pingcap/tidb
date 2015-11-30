@@ -127,9 +127,8 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 		return r.buildFromIsTruth(x)
 	case *ast.PatternLikeExpr:
 		return r.buildFromPatternLike(x)
-	case *ast.UnaryOperationExpr:
-		return r.buildFromUnary(x)
 	case *ast.ColumnNameExpr:
+		fmt.Println("build column name")
 		return r.buildFromColumnName(x)
 	}
 	return fullRange
@@ -195,6 +194,10 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 }
 
 func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
+	if x.Not {
+		// NOT in is not supported.
+		panic("Should not happen")
+	}
 	var rangePoints []rangePoint
 	for _, v := range x.List {
 		startPoint := rangePoint{value: v.GetValue(), start: true}
@@ -210,6 +213,13 @@ func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
 }
 
 func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {
+	if x.Not {
+		startPoint1 := rangePoint{value: MinNotNullVal, start: true}
+		endPoint1 := rangePoint{value: x.Left.GetValue(), excl: true}
+		startPoint2 := rangePoint{value: x.Right.GetValue(), excl: true, start: true}
+		endPoint2 := rangePoint{value: MaxVal}
+		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+	}
 	startPoint := rangePoint{value: x.Left.GetValue(), start: true}
 	endPoint := rangePoint{value: x.Right.GetValue()}
 	return []rangePoint{startPoint, endPoint}
@@ -254,6 +264,10 @@ func (r *rangeBuilder) buildFromIsTruth(x *ast.IsTruthExpr) []rangePoint {
 }
 
 func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint {
+	if x.Not {
+		// Pattern not like is not supported.
+		panic("Should not happen")
+	}
 	pattern := x.Pattern.GetValue().(string)
 	lowValue := make([]byte, 0, len(pattern))
 	// unscape the pattern
@@ -298,37 +312,13 @@ func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint
 	return []rangePoint{startPoint, endPoint}
 }
 
-func (r *rangeBuilder) buildFromUnary(x *ast.UnaryOperationExpr) []rangePoint {
-	if x.Op != opcode.Not {
-		// validated before.
-		panic("should not happen")
-	}
-	rangs := r.build(x.V)
-	var revs []rangePoint
-	for i := 0; i <= len(rangs); i++ {
-		rp := rangs[i]
-		if rp.value == nil {
-			if rp.start {
-				continue
-			}
-			revs = append(revs, rangePoint{value: MinNotNullVal, start: true})
-		} else if rp.value != MaxVal {
-			if len(revs) == 0 {
-				revs = append(revs, rangePoint{value: nil, start: true})
-			}
-			revs = append(revs, rangePoint{value: rp.value, excl: !rp.excl, start: !rp.start})
-			if i == len(rangs)-1 {
-				revs = append(revs, rangePoint{value: MaxVal})
-			}
-		}
-	}
-	return revs
-}
-
 func (r *rangeBuilder) buildFromColumnName(x *ast.ColumnNameExpr) []rangePoint {
-	startPoint := rangePoint{value: MinNotNullVal, start: true}
-	endPoint := rangePoint{value: MaxVal}
-	return []rangePoint{startPoint, endPoint}
+	// column name expression is equivalent to column name is true.
+	startPoint1 := rangePoint{value: MinNotNullVal, start: true}
+	endPoint1 := rangePoint{value: int64(0), excl: true}
+	startPoint2 := rangePoint{value: int64(0), excl: true, start: true}
+	endPoint2 := rangePoint{value: MaxVal}
+	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
 func (r *rangeBuilder) intersection(a, b []rangePoint) []rangePoint {

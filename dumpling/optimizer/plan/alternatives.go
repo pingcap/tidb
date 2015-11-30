@@ -36,6 +36,7 @@ func Alternatives(p Plan) []Plan {
 	return plans
 }
 
+// tableScanAlternatives returns all index plan from the same table.
 func tableScanAlternatives(p *TableScan) []Plan {
 	var alts []Plan
 	for _, v := range p.Table.Indices {
@@ -54,6 +55,8 @@ func tableScanAlternatives(p *TableScan) []Plan {
 	return alts
 }
 
+// planWithSrcAlternatives shallow copies the WithSrcPlan,
+// and set its src to src alternatives.
 func planWithSrcAlternatives(p WithSrcPlan) []Plan {
 	srcs := Alternatives(p.Src())
 	for i, val := range srcs {
