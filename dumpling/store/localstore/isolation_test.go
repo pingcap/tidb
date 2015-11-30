@@ -27,7 +27,7 @@ func (t *testIsolationSuite) TestInc(c *C) {
 
 	threadCnt := 4
 
-	ids := make(map[int64]struct{}, threadCnt*2000)
+	ids := make(map[int64]struct{}, threadCnt*100)
 	var m sync.Mutex
 	var wg sync.WaitGroup
 
@@ -35,7 +35,7 @@ func (t *testIsolationSuite) TestInc(c *C) {
 	for i := 0; i < threadCnt; i++ {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 2000; j++ {
+			for j := 0; j < 100; j++ {
 				var id int64
 				err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 					var err1 error
@@ -62,7 +62,7 @@ func (t *testIsolationSuite) TestMultiInc(c *C) {
 	defer store.Close()
 
 	threadCnt := 4
-	incCnt := 2000
+	incCnt := 100
 	keyCnt := 4
 
 	keys := make([][]byte, 0, keyCnt)
