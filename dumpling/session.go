@@ -254,7 +254,7 @@ func (s *session) Retry() error {
 		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
-		kv.ExpoBackOffFullJitter(retryCnt)
+		kv.BackOff(retryCnt)
 	}
 	return err
 }
