@@ -61,27 +61,14 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 
 	switch dbInfo.State {
 	case model.StateNone:
-		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
-		dbInfo.State = model.StateDeleteOnly
-		err = t.CreateDatabase(dbInfo)
-		return errors.Trace(err)
-	case model.StateDeleteOnly:
-		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
-		dbInfo.State = model.StateWriteOnly
-		err = t.UpdateDatabase(dbInfo)
-		return errors.Trace(err)
-	case model.StateWriteOnly:
-		// write only -> public
+		// none -> public
 		job.SchemaState = model.StatePublic
 		dbInfo.State = model.StatePublic
-		err = t.UpdateDatabase(dbInfo)
+		err = t.CreateDatabase(dbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// finish this job.
+		// finish this job
 		job.State = model.JobDone
 		return nil
 	default:
