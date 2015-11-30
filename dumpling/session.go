@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -254,8 +256,24 @@ func (s *session) Retry() error {
 		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
+		expoBackOffFullJitter(retryCnt)
 	}
 	return err
+}
+
+var (
+	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
+	retryBackOffBase = 1
+	// retryBackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
+	retryBackOffCap = 100
+)
+
+// Implements exponential backoff with full jitter
+// See: http://www.awsarchitectureblog.com/2015/03/backoff.html
+func expoBackOffFullJitter(attempts int) {
+	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
+	sleep := time.Duration(rand.Intn(upper))
+	time.Sleep(time.Microsecond * sleep)
 }
 
 // ExecRestrictedSQL implements SQLHelper interface.
