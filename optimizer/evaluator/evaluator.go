@@ -131,6 +131,8 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.funcLocate(v)
 	case *ast.FuncTrimExpr:
 		ok = e.funcTrim(v)
+	case *ast.FuncDateArithExpr:
+		ok = e.funcDateArith(v)
 	case *ast.AggregateFuncExpr:
 		ok = e.aggregateFunc(v)
 	}
@@ -834,6 +836,10 @@ func trimRight(str, remstr string) string {
 		}
 		str = x
 	}
+}
+
+func (e *Evaluator) funcDateArith(v *ast.FuncDateArithExpr) bool {
+	return true
 }
 
 func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {

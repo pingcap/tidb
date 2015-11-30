@@ -403,6 +403,11 @@ func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// IsStatic implements the ExprNode IsStatic interface.
+func (n *FuncDateArithExpr) IsStatic() bool {
+	return n.Date.IsStatic() && n.Interval.IsStatic()
+}
+
 // AggregateFuncExpr represents aggregate function expression.
 type AggregateFuncExpr struct {
 	funcNode

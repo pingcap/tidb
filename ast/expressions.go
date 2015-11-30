@@ -59,10 +59,10 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	ve := &ValueExpr{}
 	ve.Data = types.RawData(value)
 	// TODO: make it more precise.
-	switch value.(type) {
+	switch x := value.(type) {
 	case nil:
 		ve.Type = types.NewFieldType(mysql.TypeNull)
-	case bool, int64:
+	case bool, int64, int:
 		ve.Type = types.NewFieldType(mysql.TypeLonglong)
 	case uint64:
 		ve.Type = types.NewFieldType(mysql.TypeLonglong)
@@ -83,6 +83,16 @@ func NewValueExpr(value interface{}) *ValueExpr {
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
 		ve.Type.Charset = "binary"
 		ve.Type.Collate = "binary"
+	case mysql.Time:
+		ve.Type = types.NewFieldType(x.Type)
+	case mysql.Duration:
+		ve.Type = types.NewFieldType(mysql.TypeDuration)
+	case mysql.Decimal:
+		ve.Type = types.NewFieldType(mysql.TypeNewDecimal)
+	case mysql.Enum:
+		ve.Type = types.NewFieldType(mysql.TypeEnum)
+	case mysql.Set:
+		ve.Type = types.NewFieldType(mysql.TypeSet)
 	case *types.DataItem:
 		ve.Type = value.(*types.DataItem).Type
 	default:
