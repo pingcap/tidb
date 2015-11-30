@@ -119,26 +119,51 @@ const (
 	PresumeKeyNotExists
 )
 
-// Transaction defines the interface for operations inside a Transaction.
-// This is not thread safe.
-type Transaction interface {
-	// Get gets the value for key k from KV store.
+// MemStore is an abstract KV storage.
+type MemStore interface {
+	// Get gets the value for key k from KV storage.
 	Get(k Key) ([]byte, error)
+	// Set sets the value for key k as v into KV storage.
+	Set(k Key, v []byte) error
+	// Inc increases the value for key k in KV storage by step.
+	Inc(k Key, step int64) (int64, error)
+	// GetInt64 get int64 which created by Inc method.
+	GetInt64(k Key) (int64, error)
+	// Seek searches for the entry with key k in KV storage.
+	Seek(k Key) (Iterator, error)
+	// Delete removes the entry for key k from KV storage.
+	Delete(k Key) error
+}
+
+// UnionStore is an in-memory Store which contains a buffer for write and a
+// snapshot for read.
+type UnionStore interface {
+	MemStore
+	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
+	// Lazy condition pairs should be checked before transaction commit.
+	CheckLazyConditionPairs() error
+	// WalkWriteBuffer iterates all buffered write kv pairs.
+	WalkWriteBuffer(f func(Iterator) error) error
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
 	// RangePrefetch fetches values in the range [start, end] from KV storage
 	// to cache for later use. Maximum number of values is up to limit.
 	RangePrefetch(start, end Key, limit int) error
-	// Set sets the value for key k as v into KV store.
-	Set(k Key, v []byte) error
-	// Seek searches for the entry with key k in KV store.
-	Seek(k Key) (Iterator, error)
-	// Inc increases the value for key k in KV store by step.
-	Inc(k Key, step int64) (int64, error)
-	// GetInt64 get int64 which created by Inc method.
-	GetInt64(k Key) (int64, error)
-	// Delete removes the entry for key k from KV store.
-	Delete(k Key) error
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
+	// ReleaseSnapshot releases underlying snapshot.
+	ReleaseSnapshot()
+	// Close releases all resources.
+	Close()
+}
+
+// Transaction defines the interface for operations inside a Transaction.
+// This is not thread safe.
+type Transaction interface {
+	UnionStore
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// CommittedVersion returns the version of this committed transaction. If this
@@ -150,11 +175,6 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
-	// SetOption sets an option with a value, when val is nil, uses the default
-	// value of this option.
-	SetOption(opt Option, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt Option)
 }
 
 // MvccSnapshot is used to get/seek a specific version in a snapshot.
