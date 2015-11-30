@@ -37,7 +37,7 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 		ts = uint64((time.Now().UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
 
 		if l.lastTimestamp > ts {
-			log.Warn("invalid physical time stamp")
+			log.Error("invalid physical time stamp")
 			continue
 		}
 
