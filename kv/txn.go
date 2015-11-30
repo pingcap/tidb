@@ -14,6 +14,10 @@
 package kv
 
 import (
+	"math"
+	"math/rand"
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/terror"
@@ -36,7 +40,7 @@ func IsRetryableError(err error) bool {
 
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
-	for {
+	for i := 0; i < maxRetryCnt; i++ {
 		txn, err := store.Begin()
 		if err != nil {
 			log.Errorf("RunInNewTxn error - %v", err)
@@ -57,14 +61,31 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		if retryable && IsRetryableError(err) {
 			log.Warnf("Retry txn %v", txn)
 			txn.Rollback()
+			ExpoBackOffFullJitter(i)
 			continue
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		break
 	}
 
 	return nil
+}
+
+var (
+	// Max retry count in RunInNewTxn
+	maxRetryCnt = 100
+	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
+	retryBackOffBase = 1
+	// retryBackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
+	retryBackOffCap = 100
+)
+
+// ExpoBackOffFullJitter Implements exponential backoff with full jitter
+// See: http://www.awsarchitectureblog.com/2015/03/backoff.html
+func ExpoBackOffFullJitter(attempts int) {
+	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
+	sleep := time.Duration(rand.Intn(upper))
+	time.Sleep(time.Microsecond * sleep)
 }
