@@ -128,13 +128,8 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		return c.checkBinaryOperation(x)
 	case *ast.ParenthesesExpr:
 		return c.check(x.Expr)
-	case *ast.UnaryOperationExpr:
-		if x.Op != opcode.Not {
-			return false
-		}
-		return c.check(x.V)
 	case *ast.PatternInExpr:
-		if x.Sel != nil {
+		if x.Sel != nil || x.Not {
 			return false
 		}
 		if !c.checkColumnExpr(x.Expr) {
@@ -147,6 +142,9 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		}
 		return true
 	case *ast.PatternLikeExpr:
+		if x.Not {
+			return false
+		}
 		if !c.checkColumnExpr(x.Expr) {
 			return false
 		}
