@@ -9,7 +9,7 @@ To install docker on your system, you can read the document on https://docs.dock
 
 ```
 docker pull pingcap/tidb:latest
-docker run --name tidb-server --detach --publish 4000:4000 pingcap/tidb:latest
+docker run --name tidb-server -d -p 4000:4000 pingcap/tidb:latest
 ```
 
 `docker pull` may take a while to download images ~560M.
