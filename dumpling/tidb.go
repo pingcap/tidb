@@ -313,7 +313,7 @@ func newStoreWithRetry(uri string, maxRetries int) (kv.Storage, error) {
 			break
 		}
 		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
-		log.Errorf("Waiting store to get ready, sleep %v and try again...", sleepTime)
+		log.Warnf("Waiting store to get ready, sleep %v and try again...", sleepTime)
 		time.Sleep(sleepTime)
 	}
 	return s, errors.Trace(err)
