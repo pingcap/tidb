@@ -82,10 +82,12 @@ var (
 	retryBackOffCap = 100
 )
 
-// BackOff Implements exponential backoff with full jitter
-// See: http://www.awsarchitectureblog.com/2015/03/backoff.html
-func BackOff(attempts int) {
+// BackOff Implements exponential backoff with full jitter.
+// Returns real back off time in microsecond.
+// See: http://www.awsarchitectureblog.com/2015/03/backoff.html.
+func BackOff(attempts int) int {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
-	sleep := time.Duration(rand.Intn(upper))
-	time.Sleep(time.Microsecond * sleep)
+	sleep := time.Duration(rand.Intn(upper)) * time.Microsecond
+	time.Sleep(sleep)
+	return int(sleep)
 }
