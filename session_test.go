@@ -1257,9 +1257,9 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
-	cnt := 10
+	cnt := 4
 	wg.Add(cnt)
-	num := 1000
+	num := 100
 
 	for i := 0; i < cnt; i++ {
 		go func() {

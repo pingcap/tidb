@@ -94,12 +94,13 @@ var (
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
 
-	// SchemaLease is the time(seconds) for re-updating remote schema.
+	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee
 	// all servers get the neweset schema.
-	// Default schema lease time is 300 seconds, you can change it with a proper time,
+	// Default schema lease time is 1 second, you can change it with a proper time,
 	// but you must know that too little may cause badly performance degradation.
-	schemaLease = 300 * time.Second
+	// For production, you should set a big schema lease, like 300s+.
+	schemaLease = 1 * time.Second
 )
 
 // SetSchemaLease changes the default schema lease time for DDL.

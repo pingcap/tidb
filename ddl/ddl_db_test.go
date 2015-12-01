@@ -182,7 +182,17 @@ LOOP:
 	c.Assert(err, IsNil)
 
 	// check in index
-	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", false)
+	var nidx *column.IndexedCol
+	for _, tidx := range t.Indices() {
+		if tidx.Name.L == "c3_index" {
+			nidx = tidx
+			break
+		}
+	}
+	// Make sure there is index with name c3_index
+	c.Assert(nidx, NotNil)
+	c.Assert(nidx.ID, Greater, int64(0))
+	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.FinishTxn(true)
@@ -216,6 +226,15 @@ func (s *testDBSuite) testDropIndex(c *C) {
 	for i := 0; i < num; i++ {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
+	t := s.testGetTable(c, "t1")
+	var c3idx *column.IndexedCol
+	for _, tidx := range t.Indices() {
+		if tidx.Name.L == "c3_index" {
+			c3idx = tidx
+			break
+		}
+	}
+	c.Assert(c3idx, NotNil)
 
 	go func() {
 		s.mustExec(c, "drop index c3_index on t1")
@@ -251,8 +270,17 @@ LOOP:
 
 	handles := make(map[int64]struct{})
 
-	t := s.testGetTable(c, "t1")
-	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", false)
+	t = s.testGetTable(c, "t1")
+	var nidx *column.IndexedCol
+	for _, tidx := range t.Indices() {
+		if tidx.Name.L == "c3_index" {
+			nidx = tidx
+			break
+		}
+	}
+	// Make sure there is no index with name c3_index
+	c.Assert(nidx, IsNil)
+	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.FinishTxn(true)

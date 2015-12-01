@@ -60,26 +60,13 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 
 	switch tbInfo.State {
 	case model.StateNone:
-		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
-		tbInfo.State = model.StateDeleteOnly
-		err = t.CreateTable(schemaID, tbInfo)
-		return errors.Trace(err)
-	case model.StateDeleteOnly:
-		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
-		tbInfo.State = model.StateWriteOnly
-		err = t.UpdateTable(schemaID, tbInfo)
-		return errors.Trace(err)
-	case model.StateWriteOnly:
-		// write only -> public
+		// none -> public
 		job.SchemaState = model.StatePublic
 		tbInfo.State = model.StatePublic
-		err = t.UpdateTable(schemaID, tbInfo)
+		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		// finish this job
 		job.State = model.JobDone
 		return nil
