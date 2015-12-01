@@ -518,6 +518,21 @@ func (s *session) Close() error {
 	return s.FinishTxn(true)
 }
 
+func (s *session) getPassword(name, host string) (string, error) {
+	// Get password for name and host.
+	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%s\";", mysql.SystemDB, mysql.UserTable, name, host)
+	pwd, err := s.getExecRet(s, authSQL)
+	if err == nil {
+		return pwd, nil
+	} else if !terror.ExecResultIsEmpty.Equal(err) {
+		return "", errors.Trace(err)
+	}
+	//Try to get user password for name with any host(%).
+	authSQL = fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%%\";", mysql.SystemDB, mysql.UserTable, name)
+	pwd, err = s.getExecRet(s, authSQL)
+	return pwd, errors.Trace(err)
+}
+
 func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	strs := strings.Split(user, "@")
 	if len(strs) != 2 {
@@ -527,27 +542,7 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 	// Get user password.
 	name := strs[0]
 	host := strs[1]
-	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%s\";", mysql.SystemDB, mysql.UserTable, name, host)
-	rs, err := s.Execute(authSQL)
-	if err != nil {
-		log.Warnf("Encounter error when auth user %s. Error: %v", user, err)
-		return false
-	}
-	if len(rs) == 0 {
-		return false
-	}
-	row, err := rs[0].Next()
-	if err != nil {
-		log.Warnf("Encounter error when auth user %s. Error: %v", user, err)
-		return false
-	}
-	if row == nil || len(row.Data) == 0 {
-		return false
-	}
-	pwd, ok := row.Data[0].(string)
-	if !ok {
-		return false
-	}
+	pwd, err := s.getPassword(name, host)
 	hpwd, err := util.DecodePassword(pwd)
 	if err != nil {
 		log.Errorf("Decode password string error %v", err)
