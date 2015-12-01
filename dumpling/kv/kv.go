@@ -127,24 +127,24 @@ type Retriever interface {
 	Seek(k Key) (Iterator, error)
 }
 
-// Updater is the interface wraps the basic Set and Delete methods.
-type Updater interface {
+// Mutator is the interface wraps the basic Set and Delete methods.
+type Mutator interface {
 	// Set sets the value for key k as v into KV storage.
 	Set(k Key, v []byte) error
 	// Delete removes the entry for key k from KV storage.
 	Delete(k Key) error
 }
 
-// RetrieverUpdater is the interface that groups Retriever and Updater interface.
-type RetrieverUpdater interface {
+// RetrieverMutator is the interface that groups Retriever and Mutator interface.
+type RetrieverMutator interface {
 	Retriever
-	Updater
+	Mutator
 }
 
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type UnionStore interface {
-	RetrieverUpdater
+	RetrieverMutator
 	// Inc increases the value for key k in KV storage by step.
 	Inc(k Key, step int64) (int64, error)
 	// GetInt64 get int64 which created by Inc method.
