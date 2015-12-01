@@ -52,8 +52,14 @@ func (s *testStmtSuite) TestCreateUserStmt(c *C) {
 }
 
 func (s *testStmtSuite) TestSetPwdStmt(c *C) {
+	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
 	tx := mustBegin(c, s.testDB)
-	rows, err := tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
+	_, err := tx.Query(createUserSQL)
+	c.Assert(err, NotNil)
+	mustCommit(c, tx)
+
+	tx = mustBegin(c, s.testDB)
+	rows, err := tx.Query(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	c.Assert(err, IsNil)
 	rows.Next()
 	var pwd string
@@ -64,11 +70,11 @@ func (s *testStmtSuite) TestSetPwdStmt(c *C) {
 	mustCommit(c, tx)
 
 	tx = mustBegin(c, s.testDB)
-	tx.Query(`SET PASSWORD FOR 'root'@'localhost' = 'password';`)
+	tx.Query(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
 	mustCommit(c, tx)
 
 	tx = mustBegin(c, s.testDB)
-	rows, err = tx.Query(`SELECT Password FROM mysql.User WHERE User="root" and Host="localhost"`)
+	rows, err = tx.Query(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	c.Assert(err, IsNil)
 	rows.Next()
 	rows.Scan(&pwd)
