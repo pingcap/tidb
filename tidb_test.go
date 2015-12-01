@@ -319,7 +319,7 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	_, err := newStoreWithRetry("dummy://dummy-store", 3)
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), Greater, uint64(2*time.Second))
+	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
