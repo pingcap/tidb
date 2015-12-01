@@ -117,7 +117,7 @@ func (us *unionStore) Get(key Key) (value []byte, err error) {
 	return value, nil
 }
 
-// Set implements the Updater interface.
+// Set implements the Mutator interface.
 func (us *unionStore) Set(key Key, value []byte) error {
 	if len(value) == 0 {
 		return errors.Trace(ErrCannotSetNilValue)
@@ -172,7 +172,7 @@ func (us *unionStore) Seek(key Key) (Iterator, error) {
 	return newUnionIter(bufferIt, cacheIt), nil
 }
 
-// Delete implements the Updater interface.
+// Delete implements the Mutator interface.
 func (us *unionStore) Delete(k Key) error {
 	// Mark as deleted
 	val, err := us.wbuffer.Get(k)
