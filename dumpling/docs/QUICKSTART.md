@@ -8,18 +8,19 @@ You can build TiDB docker image and then run TiDB in a docker container.
 To install docker on your system, you can read the document on https://docs.docker.com/
 
 ```
-git clone https://github.com/pingcap/tidb.git
-cd tidb
-docker build --rm -t tidb-server .
-docker images
-docker run -d --net=host --name tidb-server tidb-server
+docker pull pingcap/tidb
+docker run --name tidb-server --detach --publish 4000:4000 tidb-server
 ```
+
+`docker pull` may take a while to download images ~560M.
 
 Then you can use official mysql client to connect to TiDB.
 
- ```
- mysql -h 127.0.0.1 -P 4000 -u root -D test
- ```
+```
+mysql -h 127.0.0.1 -P 4000 -u root -D test
+```
+
+Notice: OSX user may use `docker-machine ip` to connect it.
 
 #### __Pre-requirement__
 
