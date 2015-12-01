@@ -16,6 +16,7 @@ package kv
 import (
 	"math"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -31,7 +32,9 @@ func IsRetryableError(err error) bool {
 
 	if terror.ErrorEqual(err, ErrRetryable) ||
 		terror.ErrorEqual(err, ErrLockConflict) ||
-		terror.ErrorEqual(err, ErrConditionNotMatch) {
+		terror.ErrorEqual(err, ErrConditionNotMatch) ||
+		// HBase exception message will tell you if you should retry or not
+		strings.Contains(err.Error(), "try again later") {
 		return true
 	}
 
