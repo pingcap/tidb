@@ -15,7 +15,6 @@ package kv
 
 import (
 	"bytes"
-	"runtime/debug"
 
 	"strconv"
 
@@ -99,7 +98,7 @@ func (lmb *lazyMemBuffer) Release() {
 	lmb.mb = nil
 }
 
-// Get implements the MemStore interface.
+// Get implements the Retriever interface.
 func (us *unionStore) Get(key Key) (value []byte, err error) {
 	// Get from update records frist
 	value, err = us.wbuffer.Get(key)
@@ -118,17 +117,15 @@ func (us *unionStore) Get(key Key) (value []byte, err error) {
 	return value, nil
 }
 
-// Set implements the MemStore interface.
+// Set implements the Updater interface.
 func (us *unionStore) Set(key Key, value []byte) error {
 	if len(value) == 0 {
-		// Incase someone use it in the wrong way, we can figure it out immediately.
-		debug.PrintStack()
 		return errors.Trace(ErrCannotSetNilValue)
 	}
 	return us.wbuffer.Set(key, value)
 }
 
-// Inc implements MemStore interface.
+// Inc implements the UnionStore interface.
 func (us *unionStore) Inc(k Key, step int64) (int64, error) {
 	val, err := us.Get(k)
 	if IsErrNotFound(err) {
@@ -155,7 +152,7 @@ func (us *unionStore) Inc(k Key, step int64) (int64, error) {
 	return intVal, nil
 }
 
-// GetInt64 implements MemStore GetInt64 interface.
+// GetInt64 implements UnionStore interface.
 func (us *unionStore) GetInt64(k Key) (int64, error) {
 	val, err := us.Get(k)
 	if IsErrNotFound(err) {
@@ -168,14 +165,14 @@ func (us *unionStore) GetInt64(k Key) (int64, error) {
 	return intVal, errors.Trace(err)
 }
 
-// Seek implements the MemStore Seek interface.
+// Seek implements the Retriever interface.
 func (us *unionStore) Seek(key Key) (Iterator, error) {
 	bufferIt := us.wbuffer.NewIterator([]byte(key))
 	cacheIt := us.snapshot.NewIterator([]byte(key))
 	return newUnionIter(bufferIt, cacheIt), nil
 }
 
-// Delete implements the MemStore Delete interface.
+// Delete implements the Updater interface.
 func (us *unionStore) Delete(k Key) error {
 	// Mark as deleted
 	val, err := us.wbuffer.Get(k)

@@ -119,26 +119,36 @@ const (
 	PresumeKeyNotExists
 )
 
-// MemStore is an abstract KV storage.
-type MemStore interface {
+// Retriever is the interface wraps the basic Get and Seek methods.
+type Retriever interface {
 	// Get gets the value for key k from KV storage.
 	Get(k Key) ([]byte, error)
-	// Set sets the value for key k as v into KV storage.
-	Set(k Key, v []byte) error
-	// Inc increases the value for key k in KV storage by step.
-	Inc(k Key, step int64) (int64, error)
-	// GetInt64 get int64 which created by Inc method.
-	GetInt64(k Key) (int64, error)
 	// Seek searches for the entry with key k in KV storage.
 	Seek(k Key) (Iterator, error)
+}
+
+// Updater is the interface wraps the basic Set and Delete methods.
+type Updater interface {
+	// Set sets the value for key k as v into KV storage.
+	Set(k Key, v []byte) error
 	// Delete removes the entry for key k from KV storage.
 	Delete(k Key) error
+}
+
+// RetrieverUpdater is the interface that groups Retriever and Updater interface.
+type RetrieverUpdater interface {
+	Retriever
+	Updater
 }
 
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type UnionStore interface {
-	MemStore
+	RetrieverUpdater
+	// Inc increases the value for key k in KV storage by step.
+	Inc(k Key, step int64) (int64, error)
+	// GetInt64 get int64 which created by Inc method.
+	GetInt64(k Key) (int64, error)
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
