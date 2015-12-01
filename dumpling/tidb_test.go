@@ -15,6 +15,7 @@ package tidb
 
 import (
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -46,6 +47,12 @@ type testMainSuite struct {
 	createTableSQL string
 	insertSQL      string
 	selectSQL      string
+}
+
+type brokenStore struct{}
+
+func (s *brokenStore) Open(schema string) (kv.Storage, error) {
+	return nil, errors.New("try again later")
 }
 
 func (s *testMainSuite) SetUpSuite(c *C) {
@@ -304,6 +311,15 @@ func (s *testMainSuite) TestitrimSQL(c *C) {
 	for _, t := range tbl {
 		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
 	}
+}
+
+func (s *testMainSuite) TestRetryOpenStore(c *C) {
+	begin := time.Now()
+	RegisterStore("dummy", &brokenStore{})
+	_, err := newStoreWithRetry("dummy://dummy-store", 3)
+	c.Assert(err, NotNil)
+	elapse := time.Since(begin)
+	c.Assert(uint64(elapse), Greater, uint64(2*time.Second))
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
