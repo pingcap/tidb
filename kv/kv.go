@@ -201,27 +201,19 @@ type MvccSnapshot interface {
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
 type Snapshot interface {
-	// Get gets the value for key k from snapshot.
-	Get(k Key) ([]byte, error)
+	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	// RangeGet gets values in the range [start, end] from snapshot. Maximum
 	// number of values is up to limit.
 	RangeGet(start, end Key, limit int) (map[string][]byte, error)
-	// NewIterator gets a new iterator on the snapshot.
-	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
 	Release()
 }
 
 // MemBuffer is the interface for transaction buffer of update in a transaction
 type MemBuffer interface {
-	// Get gets the value for key k from buffer. If not found, it returns ErrNotExist.
-	Get(k Key) ([]byte, error)
-	// Set associates key with value
-	Set([]byte, []byte) error
-	// NewIterator gets a new iterator on the buffer.
-	NewIterator(param interface{}) Iterator
+	RetrieverMutator
 	// Release releases the buffer.
 	Release()
 }
