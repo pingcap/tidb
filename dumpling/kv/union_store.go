@@ -15,7 +15,6 @@ package kv
 
 import (
 	"bytes"
-
 	"strconv"
 
 	"github.com/juju/errors"
