@@ -8,8 +8,8 @@ You can build TiDB docker image and then run TiDB in a docker container.
 To install docker on your system, you can read the document on https://docs.docker.com/
 
 ```
-docker pull pingcap/tidb
-docker run --name tidb-server --detach --publish 4000:4000 tidb-server
+docker pull pingcap/tidb:latest
+docker run --name tidb-server --detach --publish 4000:4000 pingcap/tidb:latest
 ```
 
 `docker pull` may take a while to download images ~560M.
