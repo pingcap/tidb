@@ -127,9 +127,17 @@ func (c *cacheSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, 
 	return values, nil
 }
 
-// NewIterator creates an iterator of snapshot.
-func (c *cacheSnapshot) NewIterator(param interface{}) Iterator {
-	return newUnionIter(c.cache.NewIterator(param), c.snapshot.NewIterator(param))
+// Seek creates an iterator of snapshot.
+func (c *cacheSnapshot) Seek(k Key) (Iterator, error) {
+	cacheIter, err := c.cache.Seek(k)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	snapshotIter, err := c.snapshot.Seek(k)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newUnionIter(cacheIter, snapshotIter), nil
 }
 
 // Release reset membuffer and release snapshot.

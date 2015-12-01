@@ -16,6 +16,7 @@
 package kv
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/comparer"
@@ -37,16 +38,16 @@ func NewMemDbBuffer() MemBuffer {
 	return &memDbBuffer{db: memdb.New(comparer.DefaultComparer, 4*1024)}
 }
 
-// NewIterator creates an Iterator.
-func (m *memDbBuffer) NewIterator(param interface{}) Iterator {
+// Seek creates an Iterator.
+func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
 	var i Iterator
-	if param == nil {
+	if k == nil {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{})}
 	} else {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: param.([]byte)})}
+		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: []byte(k)})}
 	}
 	i.Next()
-	return i
+	return i, nil
 }
 
 // Get returns the value associated with key.
@@ -59,8 +60,14 @@ func (m *memDbBuffer) Get(k Key) ([]byte, error) {
 }
 
 // Set associates key with value.
-func (m *memDbBuffer) Set(k []byte, v []byte) error {
+func (m *memDbBuffer) Set(k Key, v []byte) error {
 	return m.db.Put(k, v)
+}
+
+// Delete removes the entry from buffer with provided key.
+func (m *memDbBuffer) Delete(k Key) error {
+	err := m.Set(k, nil)
+	return errors.Trace(err)
 }
 
 // Release reset the buffer.

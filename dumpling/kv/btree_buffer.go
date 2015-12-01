@@ -16,8 +16,9 @@
 package kv
 
 import (
+	"io"
+
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -43,9 +44,15 @@ func (b *btreeBuffer) Get(k Key) ([]byte, error) {
 }
 
 // Set associates the key with the value.
-func (b *btreeBuffer) Set(k []byte, v []byte) error {
+func (b *btreeBuffer) Set(k Key, v []byte) error {
 	b.tree.Set(toIfaces(k), toIfaces(v))
 	return nil
+}
+
+// Delete removes the entry from buffer with provided key.
+func (b *btreeBuffer) Delete(k Key) error {
+	err := b.Set(k, nil)
+	return errors.Trace(err)
 }
 
 // Release clear the whole buffer.
@@ -60,27 +67,29 @@ type btreeIter struct {
 	ok bool
 }
 
-// NewIterator creates a new Iterator based on the provided param
-func (b *btreeBuffer) NewIterator(param interface{}) Iterator {
+// Seek creates a new Iterator based on the provided key.
+func (b *btreeBuffer) Seek(k Key) (Iterator, error) {
 	var e *memkv.Enumerator
 	var err error
-	if param == nil {
+	if k == nil {
 		e, err = b.tree.SeekFirst()
 		if err != nil {
-			return &btreeIter{ok: false}
+			if err == io.EOF {
+				return &btreeIter{ok: false}, nil
+			}
+			return &btreeIter{ok: false}, errors.Trace(err)
 		}
 	} else {
-		key := toIfaces(param.([]byte))
+		key := toIfaces([]byte(k))
 		e, _ = b.tree.Seek(key)
 	}
 	iter := &btreeIter{e: e}
 	// the initial push...
 	err = iter.Next()
 	if err != nil {
-		log.Error(err)
-		return &btreeIter{ok: false}
+		return &btreeIter{ok: false}, errors.Trace(err)
 	}
-	return iter
+	return iter, nil
 }
 
 // Close implements Iterator Close.
@@ -103,6 +112,9 @@ func (i *btreeIter) Next() error {
 	k, v, err := i.e.Next()
 	if err != nil {
 		i.ok = false
+		if err == io.EOF {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), true
