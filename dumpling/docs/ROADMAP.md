@@ -15,7 +15,7 @@ this document defines the roadmap for TiDB development.
     - [x] Distinct clause
 - [x] Join (LEFT JOIN / RIGHT JOIN / CROSS JOIN)
 - [x] Simple Subquery
-- [ ] Asynchronous schema change [WIP]
+- [x] Asynchronous schema change
 
 
 ##### __API__  
@@ -40,9 +40,9 @@ this document defines the roadmap for TiDB development.
 - [x] BoltDB
 - [x] GoLevelDB
 - [ ] LevelDB [WIP]
-- [ ] RocksDB [WIP]
-- [ ] LMDB [WIP]
-- [ ] HBase [WIP]
+- [x] RocksDB
+- [x] LMDB
+- [x] HBase
 - [ ] Homemade distributed KV:
     - [ ] Transactions
     - [ ] Replicate log using Paxos/Raft
