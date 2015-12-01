@@ -520,7 +520,7 @@ func (s *session) Close() error {
 
 func (s *session) getPassword(name, host string) (string, error) {
 	// Get password for name and host.
-	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%s\";", mysql.SystemDB, mysql.UserTable, name, host)
+	authSQL := fmt.Sprintf("SELECT Password FROM %s.%s WHERE User='%s' and Host='%s';", mysql.SystemDB, mysql.UserTable, name, host)
 	pwd, err := s.getExecRet(s, authSQL)
 	if err == nil {
 		return pwd, nil
@@ -528,7 +528,7 @@ func (s *session) getPassword(name, host string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	//Try to get user password for name with any host(%).
-	authSQL = fmt.Sprintf("SELECT Password FROM %s.%s WHERE User=\"%s\" and Host=\"%%\";", mysql.SystemDB, mysql.UserTable, name)
+	authSQL = fmt.Sprintf("SELECT Password FROM %s.%s WHERE User='%s' and Host='%%';", mysql.SystemDB, mysql.UserTable, name)
 	pwd, err = s.getExecRet(s, authSQL)
 	return pwd, errors.Trace(err)
 }
