@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -31,18 +32,26 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	var ts uint64
-	ts = uint64((time.Now().UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
-	if l.lastTimestamp == uint64(ts) {
-		l.logical++
-		if l.logical >= 1<<timePrecisionOffset {
-			return kv.Version{}, ErrOverflow
+	for {
+		var ts uint64
+		ts = uint64((time.Now().UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
+
+		if l.lastTimestamp > ts {
+			log.Error("invalid physical time stamp")
+			continue
 		}
-		return kv.Version{Ver: ts + l.logical}, nil
+
+		if l.lastTimestamp == uint64(ts) {
+			l.logical++
+			if l.logical >= 1<<timePrecisionOffset {
+				return kv.Version{}, ErrOverflow
+			}
+			return kv.Version{Ver: ts + l.logical}, nil
+		}
+		l.lastTimestamp = ts
+		l.logical = 0
+		return kv.Version{Ver: ts}, nil
 	}
-	l.lastTimestamp = ts
-	l.logical = 0
-	return kv.Version{Ver: ts}, nil
 }
 
 func localVersionToTimestamp(ver kv.Version) uint64 {

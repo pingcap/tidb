@@ -34,7 +34,7 @@ var (
 	storePath = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel  = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
 	port      = flag.String("P", "4000", "mp server port")
-	lease     = flag.Int("lease", 300, "schema lease seconds, very dangerous to change only if you know what you do")
+	lease     = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 )
 
 func main() {

@@ -58,14 +58,16 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 }
 
 func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+	id, err := d.genGlobalID()
+	c.Assert(err, IsNil)
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, model.NewCIStr(indexName), []*coldef.IndexColName{{ColumnName: colName, Length: 256}}},
+		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*coldef.IndexColName{{ColumnName: colName, Length: 256}}},
 	}
 
-	err := d.startJob(ctx, job)
+	err = d.startJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }

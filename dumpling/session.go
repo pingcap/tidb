@@ -254,6 +254,7 @@ func (s *session) Retry() error {
 		if (s.maxRetryCnt != unlimitedRetryCnt) && (retryCnt >= s.maxRetryCnt) {
 			return errors.Trace(err)
 		}
+		kv.BackOff(retryCnt)
 	}
 	return err
 }
