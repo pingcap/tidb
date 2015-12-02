@@ -55,6 +55,13 @@ func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 	return i != 0, nil
 }
 
+func boolToInt64(v bool) int64 {
+	if v {
+		return int64(1)
+	}
+	return int64(0)
+}
+
 // Evaluator is a ast Visitor that evaluates an expression.
 type Evaluator struct {
 	ctx context.Context
@@ -254,7 +261,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 			return false
 		}
 		if r == 0 {
-			n.SetValue(!n.Not)
+			n.SetValue(boolToInt64(!n.Not))
 			return true
 		}
 	}
@@ -264,7 +271,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		n.SetValue(nil)
 		return true
 	}
-	n.SetValue(n.Not)
+	n.SetValue(boolToInt64(n.Not))
 	return true
 }
 
@@ -276,7 +283,7 @@ func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 	if v.Not {
 		boolVal = !boolVal
 	}
-	v.SetValue(boolVal)
+	v.SetValue(boolToInt64(boolVal))
 	return true
 }
 
@@ -296,7 +303,7 @@ func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	if v.Not {
 		boolVal = !boolVal
 	}
-	v.SetValue(boolVal)
+	v.SetValue(boolToInt64(boolVal))
 	return true
 }
 
@@ -356,11 +363,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		switch x := a.(type) {
 		case nil:
 		case bool:
-			if x {
-				u.SetValue(int64(1))
-			} else {
-				u.SetValue(int64(0))
-			}
+			u.SetValue(boolToInt64(x))
 		case float32:
 			u.SetValue(+x)
 		case float64:

@@ -128,7 +128,6 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 	case *ast.PatternLikeExpr:
 		return r.buildFromPatternLike(x)
 	case *ast.ColumnNameExpr:
-		fmt.Println("build column name")
 		return r.buildFromColumnName(x)
 	}
 	return fullRange
@@ -273,18 +272,18 @@ func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint
 	// unscape the pattern
 	var exclude bool
 	for i := 0; i < len(pattern); i++ {
-		if pattern[i] == '\\' {
+		if pattern[i] == x.Escape {
 			i++
 			if i < len(pattern) {
 				lowValue = append(lowValue, pattern[i])
 			} else {
-				lowValue = append(lowValue, '\\')
+				lowValue = append(lowValue, x.Escape)
 			}
 			continue
 		}
 		if pattern[i] == '%' {
 			break
-		} else if pattern[i] == '.' {
+		} else if pattern[i] == '_' {
 			exclude = true
 			break
 		}

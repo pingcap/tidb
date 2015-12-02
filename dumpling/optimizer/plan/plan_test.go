@@ -133,7 +133,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			resultStr: "[[abc abd)]",
 		},
 		{
-			exprStr:   "a LIKE 'abc.'",
+			exprStr:   "a LIKE 'abc_'",
 			resultStr: "[(abc abd)]",
 		},
 		{

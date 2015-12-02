@@ -331,17 +331,22 @@ func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Str = node.(ExprNode)
-	node, ok = n.RemStr.Accept(v)
-	if !ok {
-		return n, false
+	if n.RemStr != nil {
+		node, ok = n.RemStr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.RemStr = node.(ExprNode)
 	}
-	n.RemStr = node.(ExprNode)
 	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *FuncTrimExpr) IsStatic() bool {
-	return n.Str.IsStatic() && n.RemStr.IsStatic()
+	if n.RemStr != nil {
+		return n.Str.IsStatic() && n.RemStr.IsStatic()
+	}
+	return n.Str.IsStatic()
 }
 
 // DateArithType is type for DateArith type.
