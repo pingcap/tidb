@@ -141,10 +141,26 @@ type RetrieverMutator interface {
 	Mutator
 }
 
+// MemBuffer is the interface for transaction buffer of update in a transaction
+type MemBuffer interface {
+	RetrieverMutator
+	// Release releases the buffer.
+	Release()
+}
+
+// BufferStore is the interface that wraps a Retriever for read and contains a MemBuffer for buffered write.
+type BufferStore interface {
+	MemBuffer
+	// WalkBuffer iterates all buffered kv pairs.
+	WalkBuffer(f func(k Key, v []byte) error) error
+	// Save saves buffered kv pairs into Mutator.
+	Save(m Mutator) error
+}
+
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type UnionStore interface {
-	RetrieverMutator
+	BufferStore
 	// Inc increases the value for key k in KV storage by step.
 	Inc(k Key, step int64) (int64, error)
 	// GetInt64 get int64 which created by Inc method.
@@ -152,8 +168,6 @@ type UnionStore interface {
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
-	// WalkWriteBuffer iterates all buffered write kv pairs.
-	WalkWriteBuffer(f func(Iterator) error) error
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
 	// RangePrefetch fetches values in the range [start, end] from KV storage
@@ -166,8 +180,6 @@ type UnionStore interface {
 	DelOption(opt Option)
 	// ReleaseSnapshot releases underlying snapshot.
 	ReleaseSnapshot()
-	// Close releases all resources.
-	Close()
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -208,13 +220,6 @@ type Snapshot interface {
 	// number of values is up to limit.
 	RangeGet(start, end Key, limit int) (map[string][]byte, error)
 	// Release releases the snapshot to store.
-	Release()
-}
-
-// MemBuffer is the interface for transaction buffer of update in a transaction
-type MemBuffer interface {
-	RetrieverMutator
-	// Release releases the buffer.
 	Release()
 }
 
