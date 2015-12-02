@@ -15,8 +15,6 @@ package localstore
 
 import (
 	"fmt"
-	"runtime/debug"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -26,10 +24,6 @@ import (
 
 var (
 	_ kv.Transaction = (*dbTxn)(nil)
-	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
-	ErrInvalidTxn = errors.New("invalid transaction")
-	// ErrCannotSetNilValue is the error when sets an empty value.
-	ErrCannotSetNilValue = errors.New("can not set nil value")
 )
 
 // dbTxn is not thread safe
@@ -40,7 +34,6 @@ type dbTxn struct {
 	valid        bool
 	version      kv.Version          // commit version
 	snapshotVals map[string]struct{} // origin version in snapshot
-	opts         map[kv.Option]interface{}
 }
 
 func (txn *dbTxn) markOrigin(k []byte) {
@@ -56,86 +49,17 @@ func (txn *dbTxn) markOrigin(k []byte) {
 
 // Implement transaction interface
 
-func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
-	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
-
-	txn.markOrigin(k)
-	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) {
-		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-
-		return step, nil
-	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	if err != nil {
-		return intVal, errors.Trace(err)
-	}
-
-	intVal += step
-	err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(intVal, 10)))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	txn.store.compactor.OnSet(k)
-	return intVal, nil
-}
-
-func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
-	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	return intVal, errors.Trace(err)
-}
-
-func (txn *dbTxn) String() string {
-	return fmt.Sprintf("%d", txn.tid)
-}
-
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("get key:%q, txn:%d", k, txn.tid)
 	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) {
-		return nil, errors.Trace(kv.ErrNotExist)
-	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(val) == 0 {
-		return nil, errors.Trace(kv.ErrNotExist)
 	}
 	txn.store.compactor.OnGet(k)
 	return val, nil
 }
 
-func (txn *dbTxn) BatchPrefetch(keys []kv.Key) error {
-	_, err := txn.UnionStore.Snapshot.BatchGet(keys)
-	return err
-}
-
-func (txn *dbTxn) RangePrefetch(start, end kv.Key, limit int) error {
-	_, err := txn.UnionStore.Snapshot.RangeGet(start, end, limit)
-	return err
-}
-
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
-	if len(data) == 0 {
-		// Incase someone use it in the wrong way, we can figure it out immediately.
-		debug.PrintStack()
-		return errors.Trace(ErrCannotSetNilValue)
-	}
-
 	log.Debugf("set key:%q, txn:%d", k, txn.tid)
 	err := txn.UnionStore.Set(k, data)
 	if err != nil {
@@ -146,10 +70,35 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	return nil
 }
 
+func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
+	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
+
+	txn.markOrigin(k)
+	val, err := txn.UnionStore.Inc(k, step)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	txn.store.compactor.OnSet(k)
+	return val, nil
+}
+
+func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
+	log.Debugf("GetInt64 %q, txn:%d", k, txn.tid)
+	val, err := txn.UnionStore.GetInt64(k)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	txn.store.compactor.OnGet(k)
+	return val, nil
+}
+
+func (txn *dbTxn) String() string {
+	return fmt.Sprintf("%d", txn.tid)
+}
+
 func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek key:%q, txn:%d", k, txn.tid)
-
-	iter, err := txn.UnionStore.Seek(k, txn)
+	iter, err := txn.UnionStore.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -171,17 +120,6 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 	return nil
 }
 
-func (txn *dbTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.WBuffer.NewIterator(nil)
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		if err := f(iter); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func (txn *dbTxn) doCommit() error {
 	b := txn.store.newBatch()
 	keysLocked := make([]string, 0, len(txn.snapshotVals))
@@ -192,11 +130,11 @@ func (txn *dbTxn) doCommit() error {
 	}()
 
 	// check lazy condition pairs
-	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
+	if err := txn.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
 	}
 
-	txn.Snapshot.Release()
+	txn.ReleaseSnapshot()
 
 	// Check locked keys
 	for k := range txn.snapshotVals {
@@ -215,7 +153,7 @@ func (txn *dbTxn) doCommit() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.each(func(iter kv.Iterator) error {
+	err = txn.WalkWriteBuffer(func(iter kv.Iterator) error {
 		metaKey := codec.EncodeBytes(nil, []byte(iter.Key()))
 		// put dummy meta key, write current version
 		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
@@ -237,7 +175,7 @@ func (txn *dbTxn) doCommit() error {
 
 func (txn *dbTxn) Commit() error {
 	if !txn.valid {
-		return errors.Trace(ErrInvalidTxn)
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	log.Infof("commit txn %d", txn.tid)
 	defer func() {
@@ -264,7 +202,7 @@ func (txn *dbTxn) close() error {
 
 func (txn *dbTxn) Rollback() error {
 	if !txn.valid {
-		return errors.Trace(ErrInvalidTxn)
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	log.Warnf("Rollback txn %d", txn.tid)
 	return txn.close()
@@ -275,19 +213,4 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 		txn.markOrigin(key)
 	}
 	return nil
-}
-
-func (txn *dbTxn) SetOption(opt kv.Option, val interface{}) {
-	txn.opts[opt] = val
-}
-
-func (txn *dbTxn) DelOption(opt kv.Option) {
-	delete(txn.opts, opt)
-}
-
-type options map[kv.Option]interface{}
-
-func (opts options) Get(opt kv.Option) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
 }
