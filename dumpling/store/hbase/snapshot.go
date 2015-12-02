@@ -15,7 +15,6 @@ package hbasekv
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/go-hbase"
 	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/kv"
@@ -123,15 +122,9 @@ func internalGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 	return r.Columns[hbaseFmlAndQual].Value, nil
 }
 
-func (s *hbaseSnapshot) NewIterator(param interface{}) kv.Iterator {
-	k, ok := param.([]byte)
-	if !ok {
-		log.Errorf("hbase iterator parameter error, %+v", param)
-		return nil
-	}
-
-	scanner := s.txn.GetScanner([]byte(s.storeName), k, nil, hbaseBatchSize)
-	return newInnerScanner(scanner)
+func (s *hbaseSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
+	scanner := s.txn.GetScanner([]byte(s.storeName), []byte(k), nil, hbaseBatchSize)
+	return newInnerScanner(scanner), nil
 }
 
 // MvccIterator seeks to the key in the specific version's snapshot, if the

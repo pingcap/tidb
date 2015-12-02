@@ -70,7 +70,7 @@ func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	return lmb.mb.Get(k)
 }
 
-func (lmb *lazyMemBuffer) Set(key []byte, value []byte) error {
+func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
 		lmb.mb = p.Get().(MemBuffer)
 	}
@@ -78,12 +78,20 @@ func (lmb *lazyMemBuffer) Set(key []byte, value []byte) error {
 	return lmb.mb.Set(key, value)
 }
 
-func (lmb *lazyMemBuffer) NewIterator(param interface{}) Iterator {
+func (lmb *lazyMemBuffer) Delete(k Key) error {
 	if lmb.mb == nil {
 		lmb.mb = p.Get().(MemBuffer)
 	}
 
-	return lmb.mb.NewIterator(param)
+	return lmb.mb.Delete(k)
+}
+
+func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
+	if lmb.mb == nil {
+		lmb.mb = p.Get().(MemBuffer)
+	}
+
+	return lmb.mb.Seek(k)
 }
 
 func (lmb *lazyMemBuffer) Release() {
@@ -166,8 +174,14 @@ func (us *unionStore) GetInt64(k Key) (int64, error) {
 
 // Seek implements the Retriever interface.
 func (us *unionStore) Seek(key Key) (Iterator, error) {
-	bufferIt := us.wbuffer.NewIterator([]byte(key))
-	cacheIt := us.snapshot.NewIterator([]byte(key))
+	bufferIt, err := us.wbuffer.Seek([]byte(key))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cacheIt, err := us.snapshot.Seek([]byte(key))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return newUnionIter(bufferIt, cacheIt), nil
 }
 
@@ -199,7 +213,10 @@ func (us *unionStore) Delete(k Key) error {
 
 // WalkWriteBuffer implements the UnionStore interface.
 func (us *unionStore) WalkWriteBuffer(f func(Iterator) error) error {
-	iter := us.wbuffer.NewIterator(nil)
+	iter, err := us.wbuffer.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		if err := f(iter); err != nil {
@@ -224,9 +241,15 @@ func (us *unionStore) RangePrefetch(start, end Key, limit int) error {
 // CheckLazyConditionPairs implements the UnionStore interface.
 func (us *unionStore) CheckLazyConditionPairs() error {
 	var keys []Key
-	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
+	it, err := us.lazyConditionPairs.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for ; it.Valid(); it.Next() {
 		keys = append(keys, []byte(it.Key()))
 	}
+	it.Close()
+
 	if len(keys) == 0 {
 		return nil
 	}
@@ -234,7 +257,12 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for it := us.lazyConditionPairs.NewIterator(nil); it.Valid(); it.Next() {
+	it, err = us.lazyConditionPairs.Seek(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+	for ; it.Valid(); it.Next() {
 		if len(it.Value()) == 0 {
 			if _, exist := values[it.Key()]; exist {
 				return errors.Trace(ErrKeyExists)
