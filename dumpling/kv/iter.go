@@ -34,6 +34,10 @@ var (
 	// ErrRetryable is used when KV store occurs RPC error or some other
 	// errors which SQL layer can safely retry.
 	ErrRetryable = errors.New("Error: KV error safe to retry")
+	// ErrCannotSetNilValue is the error when sets an empty value.
+	ErrCannotSetNilValue = errors.New("can not set nil value")
+	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
+	ErrInvalidTxn = errors.New("invalid transaction")
 )
 
 var (
