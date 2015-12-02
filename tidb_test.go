@@ -398,7 +398,7 @@ func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
 
 func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
 	r, err := exec(c, se, sql, args...)
-	if err == nil {
+	if err == nil && r != nil {
 		// sometimes we may meet error after executing first row.
 		_, err = r.FirstRow()
 	}
