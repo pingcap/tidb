@@ -15,7 +15,6 @@ package localstore
 
 import (
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/terror"
@@ -137,7 +136,10 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
 	m := make(map[string][]byte)
-	it := s.NewIterator([]byte(start))
+	it, err := s.Seek(start)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	defer it.Close()
 	endKey := string(end)
 	for i := 0; i < limit; i++ {
@@ -156,13 +158,8 @@ func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, 
 	return m, nil
 }
 
-func (s *dbSnapshot) NewIterator(param interface{}) kv.Iterator {
-	k, ok := param.([]byte)
-	if !ok {
-		log.Errorf("leveldb iterator parameter error, %+v", param)
-		return nil
-	}
-	return newDBIter(s, k, s.version)
+func (s *dbSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
+	return newDBIter(s, []byte(k), s.version), nil
 }
 
 func (s *dbSnapshot) MvccRelease() {
