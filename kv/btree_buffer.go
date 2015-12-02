@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv/memkv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -74,7 +75,7 @@ func (b *btreeBuffer) Seek(k Key) (Iterator, error) {
 	if k == nil {
 		e, err = b.tree.SeekFirst()
 		if err != nil {
-			if err == io.EOF {
+			if terror.ErrorEqual(err, io.EOF) {
 				return &btreeIter{ok: false}, nil
 			}
 			return &btreeIter{ok: false}, errors.Trace(err)
@@ -112,7 +113,7 @@ func (i *btreeIter) Next() error {
 	k, v, err := i.e.Next()
 	if err != nil {
 		i.ok = false
-		if err == io.EOF {
+		if terror.ErrorEqual(err, io.EOF) {
 			return nil
 		}
 		return errors.Trace(err)
