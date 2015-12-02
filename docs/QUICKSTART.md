@@ -2,24 +2,27 @@
 
 #### Run tidb with docker
 
-You can quickly test tidb with docker, the source repository contains the Dockerfile,
-You can build TiDB docker image and then run TiDB in a docker container.
+You can quickly test tidb with docker, the source repository contains the Dockerfile which
+contains local tidb-server.
+
+Or you can pull TiDB docker image contains HBase standalone and then run TiDB as distributed database in a docker container.
 
 To install docker on your system, you can read the document on https://docs.docker.com/
 
 ```
-git clone https://github.com/pingcap/tidb.git
-cd tidb
-docker build --rm -t tidb-server .
-docker images
-docker run -d --net=host --name tidb-server tidb-server
+docker pull pingcap/tidb:latest
+docker run --name tidb-server -d -p 4000:4000 pingcap/tidb:latest
 ```
+
+`docker pull` may take a while to download images ~560M.
 
 Then you can use official mysql client to connect to TiDB.
 
- ```
- mysql -h 127.0.0.1 -P 4000 -u root -D test
- ```
+```
+mysql -h 127.0.0.1 -P 4000 -u root -D test
+```
+
+Notice: OSX user may use `docker-machine ip` to connect it.
 
 #### __Pre-requirement__
 
@@ -66,7 +69,3 @@ After you started tidb-server, you can use official mysql client to connect to T
 ```
 mysql -h 127.0.0.1 -P 4000 -u root -D test
 ```
-
-#### __Run as MySQL protocol server with distributed transactional KV storage engine__
-
-Comming soon.

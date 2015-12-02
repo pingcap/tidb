@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 )
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
+func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
 	for _, col := range tblInfo.Columns {
 		if col.Name.L == indexName.L {
 			return nil, errors.Errorf("CREATE INDEX: index name collision with existing column: %s", indexName)
@@ -52,12 +52,12 @@ func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr
 	}
 	// create index info
 	idxInfo := &model.IndexInfo{
+		ID:      indexID,
 		Name:    indexName,
 		Columns: idxColumns,
 		Unique:  unique,
 		State:   model.StateNone,
 	}
-
 	return idxInfo, nil
 }
 
@@ -105,10 +105,11 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	var (
 		unique      bool
 		indexName   model.CIStr
+		indexID     int64
 		idxColNames []*coldef.IndexColName
 	)
 
-	err = job.DecodeArgs(&unique, &indexName, &idxColNames)
+	err = job.DecodeArgs(&unique, &indexName, &indexID, &idxColNames)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
@@ -128,7 +129,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 	}
 
 	if indexInfo == nil {
-		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, idxColNames)
+		indexInfo, err = buildIndexInfo(tblInfo, unique, indexName, indexID, idxColNames)
 		if err != nil {
 			job.State = model.JobCancelled
 			return errors.Trace(err)
@@ -418,7 +419,7 @@ func lockRow(txn kv.Transaction, t table.Table, h int64) error {
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.Unique)
+	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
 
 	for _, handle := range handles {
 		log.Debug("building index...", handle)
@@ -475,7 +476,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.Name.L)
+	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
 	prefixBytes := []byte(prefix)
 
 	for {

@@ -20,12 +20,16 @@ Use TiDB as MySQL. You can replace MySQL with TiDB to power your application wit
 - __Written in Go__  
 Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes it easy to dive into the codebase.
 
+
+- __NewSQL over HBase__  
+Turns HBase into NewSQL database
+
 - __Multiple storage engine support__  
-Power TiDB with your most favorite engines. TiDB supports most of the popular storage engines in single-machine mode. You can choose from goleveldb, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
+Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from goleveldb, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
 
 ## Status
 
-TiDB is at its early age and under heavy development, some of the features mentioned above have not been fully implemented.
+TiDB is at its early age and under heavy development, all of the features mentioned above are fully implemented.
 
 __Please do not use it in production.__
 
@@ -54,4 +58,5 @@ TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSES/LICENSE) file
 
 ## Acknowledgments
 - Thanks [cznic](https://github.com/cznic) for providing some great open source tools.
-- Thanks [GolevelDB](https://github.com/syndtr/goleveldb), [LMDB](https://github.com/LMDB/lmdb), [BoltDB](https://github.com/boltdb/bolt) and [RocksDB](https://github.com/facebook/rocksdb) for their powerful storage engines.
+- Thanks [Xiaomi](https://github.com/XiaoMi/themis) for providing the great open source project.
+- Thanks [HBase](https://hbase.apache.org), [GolevelDB](https://github.com/syndtr/goleveldb), [LMDB](https://github.com/LMDB/lmdb), [BoltDB](https://github.com/boltdb/bolt) and [RocksDB](https://github.com/facebook/rocksdb) for their powerful storage engines.

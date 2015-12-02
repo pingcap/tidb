@@ -52,6 +52,8 @@ const (
 	EngineGoLevelDBPersistent = "goleveldb://"
 	EngineBoltDB              = "boltdb://"
 	EngineHBase               = "hbase://"
+	defaultMaxRetries         = 30
+	retrySleepInterval        = 500 * time.Millisecond
 )
 
 type domainMap struct {
@@ -286,6 +288,10 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 // Engine is the storage name registered with RegisterStore.
 // Schema is the storage specific format.
 func NewStore(uri string) (kv.Storage, error) {
+	return newStoreWithRetry(uri, defaultMaxRetries)
+}
+
+func newStoreWithRetry(uri string, maxRetries int) (kv.Storage, error) {
 	pos := strings.Index(uri, "://")
 	if pos == -1 {
 		return nil, errors.Errorf("invalid uri format, must engine://schema")
@@ -299,7 +305,17 @@ func NewStore(uri string) (kv.Storage, error) {
 		return nil, errors.Errorf("invalid uri foramt, storage %s is not registered", name)
 	}
 
-	s, err := d.Open(schema)
+	var err error
+	var s kv.Storage
+	for i := 1; i <= maxRetries; i++ {
+		s, err = d.Open(schema)
+		if err == nil || !kv.IsRetryableError(err) {
+			break
+		}
+		sleepTime := time.Duration(uint64(retrySleepInterval) * uint64(i))
+		log.Warnf("Waiting store to get ready, sleep %v and try again...", sleepTime)
+		time.Sleep(sleepTime)
+	}
 	return s, errors.Trace(err)
 }
 

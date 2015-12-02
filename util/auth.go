@@ -55,6 +55,9 @@ func Sha1Hash(bs []byte) []byte {
 
 // EncodePassword converts plaintext password to hashed hex string.
 func EncodePassword(pwd string) string {
+	if len(pwd) == 0 {
+		return ""
+	}
 	hash := Sha1Hash([]byte(pwd))
 	return hex.EncodeToString(hash)
 }
