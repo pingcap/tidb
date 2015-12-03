@@ -61,12 +61,16 @@ func (m *memDbBuffer) Get(k Key) ([]byte, error) {
 
 // Set associates key with value.
 func (m *memDbBuffer) Set(k Key, v []byte) error {
-	return m.db.Put(k, v)
+	if len(v) == 0 {
+		return errors.Trace(ErrCannotSetNilValue)
+	}
+	err := m.db.Put(k, v)
+	return errors.Trace(err)
 }
 
 // Delete removes the entry from buffer with provided key.
 func (m *memDbBuffer) Delete(k Key) error {
-	err := m.Set(k, nil)
+	err := m.db.Put(k, nil)
 	return errors.Trace(err)
 }
 

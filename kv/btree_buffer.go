@@ -46,14 +46,17 @@ func (b *btreeBuffer) Get(k Key) ([]byte, error) {
 
 // Set associates the key with the value.
 func (b *btreeBuffer) Set(k Key, v []byte) error {
+	if len(v) == 0 {
+		return errors.Trace(ErrCannotSetNilValue)
+	}
 	b.tree.Set(toIfaces(k), toIfaces(v))
 	return nil
 }
 
 // Delete removes the entry from buffer with provided key.
 func (b *btreeBuffer) Delete(k Key) error {
-	err := b.Set(k, nil)
-	return errors.Trace(err)
+	b.tree.Set(toIfaces(k), nil)
+	return nil
 }
 
 // Release clear the whole buffer.

@@ -215,7 +215,7 @@ func (us *unionStore) ReleaseSnapshot() {
 // Release implements the UnionStore Release interface.
 func (us *unionStore) Release() {
 	us.snapshot.Release()
-	us.wbuffer.Release()
+	us.bufferStore.Release()
 	us.lazyConditionPairs.Release()
 }
 
