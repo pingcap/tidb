@@ -121,34 +121,38 @@ const (
 
 // Retriever is the interface wraps the basic Get and Seek methods.
 type Retriever interface {
-	// Get gets the value for key k from KV storage.
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(k Key) ([]byte, error)
-	// Seek searches for the entry with key k in KV storage.
+	// Seek creates an Iterator positioned on the first entry that k <= entry's key.
+	// If such entry is not found, it returns a invalid Iterator with no error.
+	// The Iterator must be Closed after use.
 	Seek(k Key) (Iterator, error)
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.
 type Mutator interface {
-	// Set sets the value for key k as v into KV storage.
+	// Set sets the value for key k as v into kv store.
+	// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
 	Set(k Key, v []byte) error
-	// Delete removes the entry for key k from KV storage.
+	// Delete removes the entry for key k from kv store.
 	Delete(k Key) error
 }
 
-// RetrieverMutator is the interface that groups Retriever and Mutator interface.
+// RetrieverMutator is the interface that groups Retriever and Mutator interfaces.
 type RetrieverMutator interface {
 	Retriever
 	Mutator
 }
 
-// MemBuffer is the interface for transaction buffer of update in a transaction
+// MemBuffer is an in-memory kv collection. It should be released after use.
 type MemBuffer interface {
 	RetrieverMutator
 	// Release releases the buffer.
 	Release()
 }
 
-// BufferStore is the interface that wraps a Retriever for read and contains a MemBuffer for buffered write.
+// BufferStore is the interface that wraps a Retriever for read and a MemBuffer for buffered write.
 type BufferStore interface {
 	MemBuffer
 	// WalkBuffer iterates all buffered kv pairs.
@@ -157,8 +161,8 @@ type BufferStore interface {
 	Save(m Mutator) error
 }
 
-// UnionStore is an in-memory Store which contains a buffer for write and a
-// snapshot for read.
+// UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
+// Also, it provides some transaction related utilities.
 type UnionStore interface {
 	BufferStore
 	// Inc increases the value for key k in KV storage by step.
