@@ -261,11 +261,18 @@ type IndexIterator interface {
 
 // Index is the interface for index data on KV store.
 type Index interface {
-	Create(txn Transaction, indexedValues []interface{}, h int64) error                          // supports insert into statement
-	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
-	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
-	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist
-	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)     // supports index check
-	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
-	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
+	// Create supports insert into statement.
+	Create(txn Transaction, indexedValues []interface{}, h int64) error
+	// Delete supports delete from statement.
+	Delete(txn Transaction, indexedValues []interface{}, h int64) error
+	// Drop supports drop table, drop index statements.
+	Drop(txn Transaction) error
+	// Exist supports check index exists or not.
+	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)
+	// GenIndexKey generates an index key.
+	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)
+	// Seek supports where clause.
+	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error)
+	// SeekFirst supports aggregate min and ascend order by.
+	SeekFirst(txn Transaction) (iter IndexIterator, err error)
 }
