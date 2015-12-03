@@ -18,8 +18,8 @@ import (
 )
 
 type bufferStore struct {
-	r       Retriever
-	wbuffer MemBuffer
+	MemBuffer
+	r Retriever
 }
 
 // NewBufferStore creates a BufferStore using r for read.
@@ -29,13 +29,13 @@ func NewBufferStore(r Retriever) BufferStore {
 
 func newBufferStore(r Retriever) *bufferStore {
 	return &bufferStore{
-		r:       r,
-		wbuffer: &lazyMemBuffer{},
+		r:         r,
+		MemBuffer: &lazyMemBuffer{},
 	}
 }
 
 func (s *bufferStore) Get(k Key) ([]byte, error) {
-	val, err := s.wbuffer.Get(k)
+	val, err := s.MemBuffer.Get(k)
 	if IsErrNotFound(err) {
 		val, err = s.r.Get(k)
 	}
@@ -49,7 +49,7 @@ func (s *bufferStore) Get(k Key) ([]byte, error) {
 }
 
 func (s *bufferStore) Seek(k Key) (Iterator, error) {
-	bufferIt, err := s.wbuffer.Seek(k)
+	bufferIt, err := s.MemBuffer.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -60,33 +60,8 @@ func (s *bufferStore) Seek(k Key) (Iterator, error) {
 	return newUnionIter(bufferIt, readerIt), nil
 }
 
-func (s *bufferStore) Set(k Key, v []byte) error {
-	if len(v) == 0 {
-		return errors.Trace(ErrCannotSetNilValue)
-	}
-	err := s.wbuffer.Set(k, v)
-	return errors.Trace(err)
-}
-
-func (s *bufferStore) Delete(k Key) error {
-	val, err := s.wbuffer.Get(k)
-	if IsErrNotFound(err) {
-		val, err = s.r.Get(k)
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if len(val) == 0 {
-		return errors.Trace(ErrNotExist)
-	}
-
-	err = s.wbuffer.Set(k, nil)
-	return errors.Trace(err)
-}
-
 func (s *bufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
-	iter, err := s.wbuffer.Seek(nil)
+	iter, err := s.MemBuffer.Seek(nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -107,8 +82,4 @@ func (s *bufferStore) Save(m Mutator) error {
 		return errors.Trace(m.Set(k, v))
 	})
 	return errors.Trace(err)
-}
-
-func (s *bufferStore) Release() {
-	s.wbuffer.Release()
 }
