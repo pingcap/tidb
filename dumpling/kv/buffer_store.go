@@ -17,24 +17,29 @@ import (
 	"github.com/juju/errors"
 )
 
-type bufferStore struct {
+// BufferStore wraps a Retriever for read and a MemBuffer for buffered write.
+// Common usage pattern:
+//	bs := NewBufferStore(r) // use BufferStore to wrap a Retriever
+//	defer bs.Release()      // make sure it will be released
+//	// ...
+//	// read/write on bs
+//	// ...
+//	bs.SaveTo(m)	        // save above operations to a Mutator
+type BufferStore struct {
 	MemBuffer
 	r Retriever
 }
 
 // NewBufferStore creates a BufferStore using r for read.
-func NewBufferStore(r Retriever) BufferStore {
-	return newBufferStore(r)
-}
-
-func newBufferStore(r Retriever) *bufferStore {
-	return &bufferStore{
+func NewBufferStore(r Retriever) *BufferStore {
+	return &BufferStore{
 		r:         r,
 		MemBuffer: &lazyMemBuffer{},
 	}
 }
 
-func (s *bufferStore) Get(k Key) ([]byte, error) {
+// Get implements the Retriever interface.
+func (s *BufferStore) Get(k Key) ([]byte, error) {
 	val, err := s.MemBuffer.Get(k)
 	if IsErrNotFound(err) {
 		val, err = s.r.Get(k)
@@ -48,19 +53,21 @@ func (s *bufferStore) Get(k Key) ([]byte, error) {
 	return val, nil
 }
 
-func (s *bufferStore) Seek(k Key) (Iterator, error) {
+// Seek implements the Retriever interface.
+func (s *BufferStore) Seek(k Key) (Iterator, error) {
 	bufferIt, err := s.MemBuffer.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	readerIt, err := s.r.Seek(k)
+	retrieverIt, err := s.r.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newUnionIter(bufferIt, readerIt), nil
+	return newUnionIter(bufferIt, retrieverIt), nil
 }
 
-func (s *bufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
+// WalkBuffer iterates all buffered kv pairs.
+func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
 	iter, err := s.MemBuffer.Seek(nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -74,7 +81,8 @@ func (s *bufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
 	return nil
 }
 
-func (s *bufferStore) Save(m Mutator) error {
+// SaveTo saves all buffered kv pairs into a Mutator.
+func (s *BufferStore) SaveTo(m Mutator) error {
 	err := s.WalkBuffer(func(k Key, v []byte) error {
 		if len(v) == 0 {
 			return errors.Trace(m.Delete(k))

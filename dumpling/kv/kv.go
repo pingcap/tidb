@@ -125,7 +125,7 @@ type Retriever interface {
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(k Key) ([]byte, error)
 	// Seek creates an Iterator positioned on the first entry that k <= entry's key.
-	// If such entry is not found, it returns a invalid Iterator with no error.
+	// If such entry is not found, it returns an invalid Iterator with no error.
 	// The Iterator must be Closed after use.
 	Seek(k Key) (Iterator, error)
 }
@@ -152,19 +152,10 @@ type MemBuffer interface {
 	Release()
 }
 
-// BufferStore is the interface that wraps a Retriever for read and a MemBuffer for buffered write.
-type BufferStore interface {
-	MemBuffer
-	// WalkBuffer iterates all buffered kv pairs.
-	WalkBuffer(f func(k Key, v []byte) error) error
-	// Save saves buffered kv pairs into Mutator.
-	Save(m Mutator) error
-}
-
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
-	BufferStore
+	MemBuffer
 	// Inc increases the value for key k in KV storage by step.
 	Inc(k Key, step int64) (int64, error)
 	// GetInt64 get int64 which created by Inc method.
@@ -177,6 +168,8 @@ type UnionStore interface {
 	// RangePrefetch fetches values in the range [start, end] from KV storage
 	// to cache for later use. Maximum number of values is up to limit.
 	RangePrefetch(start, end Key, limit int) error
+	// WalkBuffer iterates all buffered kv pairs.
+	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -209,7 +202,7 @@ type MvccSnapshot interface {
 	// exist, returns the nearest(lower) version's data.
 	MvccGet(k Key, ver Version) ([]byte, error)
 	// MvccIterator seeks to the key in the specific version's snapshot, if the
-	// version doesn't exist, returns the nearest(lower) version's snaphot.
+	// version doesn't exist, returns the nearest(lower) version's snapshot.
 	NewMvccIterator(k Key, ver Version) Iterator
 	// Release releases this snapshot.
 	MvccRelease()
@@ -239,7 +232,7 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// GetSnapshot gets a snaphot that is able to read any data which data is <= ver.
+	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (MvccSnapshot, error)
 	// Close store
@@ -253,7 +246,7 @@ type Storage interface {
 // FnKeyCmp is the function for iterator the keys
 type FnKeyCmp func(key Key) bool
 
-// Iterator is the interface for a interator on KV store.
+// Iterator is the interface for a iterator on KV store.
 type Iterator interface {
 	Next() error
 	Value() []byte
