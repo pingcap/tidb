@@ -196,18 +196,6 @@ type Transaction interface {
 	LockKeys(keys ...Key) error
 }
 
-// MvccSnapshot is used to get/seek a specific version in a snapshot.
-type MvccSnapshot interface {
-	// MvccGet returns the specific version of given key, if the version doesn't
-	// exist, returns the nearest(lower) version's data.
-	MvccGet(k Key, ver Version) ([]byte, error)
-	// MvccIterator seeks to the key in the specific version's snapshot, if the
-	// version doesn't exist, returns the nearest(lower) version's snapshot.
-	NewMvccIterator(k Key, ver Version) Iterator
-	// Release releases this snapshot.
-	MvccRelease()
-}
-
 // Snapshot defines the interface for the snapshot fetched from KV store.
 type Snapshot interface {
 	Retriever
@@ -234,7 +222,7 @@ type Storage interface {
 	Begin() (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (MvccSnapshot, error)
+	GetSnapshot(ver Version) (Snapshot, error)
 	// Close store
 	Close() error
 	// Storage's unique ID
