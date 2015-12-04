@@ -366,9 +366,6 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Delete([]byte("4"))
 	c.Assert(err, IsNil)
-	// Test delete a key which not exist
-	err = txn.Delete([]byte("5"))
-	c.Assert(err, NotNil)
 }
 
 func (s *testKVSuite) TestRollback(c *C) {
