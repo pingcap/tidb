@@ -40,7 +40,7 @@ func IsErrNotFound(err error) bool {
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
-	*bufferStore
+	*BufferStore
 	snapshot           Snapshot  // for read
 	lazyConditionPairs MemBuffer // for delay check
 	opts               options
@@ -51,9 +51,9 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	lazy := &lazyMemBuffer{}
 	opts := make(map[Option]interface{})
 	cacheSnapshot := NewCacheSnapshot(snapshot, lazy, options(opts))
-	bufferStore := newBufferStore(cacheSnapshot)
+	bufferStore := NewBufferStore(cacheSnapshot)
 	return &unionStore{
-		bufferStore:        bufferStore,
+		BufferStore:        bufferStore,
 		snapshot:           cacheSnapshot,
 		lazyConditionPairs: lazy,
 		opts:               opts,
@@ -215,7 +215,7 @@ func (us *unionStore) ReleaseSnapshot() {
 // Release implements the UnionStore Release interface.
 func (us *unionStore) Release() {
 	us.snapshot.Release()
-	us.bufferStore.Release()
+	us.BufferStore.Release()
 	us.lazyConditionPairs.Release()
 }
 

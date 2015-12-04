@@ -313,7 +313,7 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}
 		return errors.Trace(err)
 	}
 
-	err = bs.Save(txn)
+	err = bs.SaveTo(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -469,7 +469,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 		}
 	}
 
-	if err = bs.Save(txn); err != nil {
+	if err = bs.SaveTo(txn); err != nil {
 		return 0, errors.Trace(err)
 	}
 
