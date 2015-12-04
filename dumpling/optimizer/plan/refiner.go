@@ -96,19 +96,23 @@ func (r *refiner) buildIndexRange(p *IndexScan) {
 	for i := 0; i < len(p.Index.Columns); i++ {
 		checker := conditionChecker{idx: p.Index, tableName: p.Table.Name, columnOffset: i}
 		rangePoints := fullRange
-		var changed bool
+		var columnUsed bool
 		for _, cond := range r.conditions {
 			if checker.check(cond) {
 				rangePoints = rb.intersection(rangePoints, rb.build(cond))
-				changed = true
+				columnUsed = true
 			}
 		}
-		if !changed {
+		if !columnUsed {
+			// For multi-column index, if the prefix column is not used, following columns
+			// can not be used.
 			break
 		}
 		if i == 0 {
+			// Build index range from the first column.
 			p.Ranges = rb.buildIndexRanges(rangePoints)
 		} else {
+			// range built from following columns should be appended to previous ranges.
 			p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 		}
 	}
@@ -170,7 +174,7 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 			return false
 		}
 	case *ast.ColumnNameExpr:
-		return true
+		return c.checkColumnExpr(x)
 	}
 	return false
 }

@@ -272,6 +272,10 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			sql:  "select * from t where a like 'abc%'",
 			best: "Index(t.a)->Filter->Fields",
 		},
+		{
+			sql:  "select * from t where d",
+			best: "Table(t)->Filter->Fields",
+		},
 	}
 	for _, ca := range cases {
 		lexer := parser.NewLexer(ca.sql)
