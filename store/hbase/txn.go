@@ -15,8 +15,6 @@ package hbasekv
 
 import (
 	"fmt"
-	"runtime/debug"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -27,10 +25,6 @@ import (
 
 var (
 	_ kv.Transaction = (*hbaseTxn)(nil)
-	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
-	ErrInvalidTxn = errors.New("invalid transaction")
-	// ErrCannotSetNilValue is the error when sets an empty value
-	ErrCannotSetNilValue = errors.New("can not set nil value")
 )
 
 var (
@@ -56,108 +50,47 @@ type hbaseTxn struct {
 	tid       uint64
 	valid     bool
 	version   kv.Version // commit version
-	opts      map[kv.Option]interface{}
 }
 
 func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
-	opts := make(map[kv.Option]interface{})
-
 	return &hbaseTxn{
 		txn:        t,
 		valid:      true,
 		storeName:  storeName,
 		tid:        t.GetStartTS(),
-		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName), options(opts)),
-		opts:       opts,
+		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
 	}
 }
 
 // Implement transaction interface
 
+func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
+	log.Debugf("get key:%q, txn:%d", k, txn.tid)
+	return txn.UnionStore.Get(k)
+}
+
+func (txn *hbaseTxn) Set(k kv.Key, v []byte) error {
+	log.Debugf("seek %q txn:%d", k, txn.tid)
+	return txn.UnionStore.Set(k, v)
+}
+
 func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
-	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) {
-		err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(step, 10)))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+	return txn.UnionStore.Inc(k, step)
+}
 
-		return step, nil
-	}
-
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal, err := strconv.ParseInt(string(val), 10, 64)
-	if err != nil {
-		return intVal, errors.Trace(err)
-	}
-
-	intVal += step
-	err = txn.UnionStore.Set(k, []byte(strconv.FormatInt(intVal, 10)))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return intVal, nil
+func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
+	log.Debugf("GetInt64 %q, txn:%d", k, txn.tid)
+	return txn.UnionStore.GetInt64(k)
 }
 
 func (txn *hbaseTxn) String() string {
 	return fmt.Sprintf("%d", txn.tid)
 }
 
-func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
-	log.Debugf("get key:%q, txn:%d", k, txn.tid)
-	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) || len(val) == 0 {
-		return nil, errors.Trace(kv.ErrNotExist)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return val, nil
-}
-
-func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
-	_, err := txn.UnionStore.Snapshot.BatchGet(keys)
-	return err
-}
-
-func (txn *hbaseTxn) RangePrefetch(start, end kv.Key, limit int) error {
-	_, err := txn.UnionStore.Snapshot.RangeGet(start, end, limit)
-	return err
-}
-
-// GetInt64 get int64 which created by Inc method.
-func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
-	val, err := txn.UnionStore.Get(k)
-	if kv.IsErrNotFound(err) {
-		return 0, nil
-	}
-
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal, err := strconv.ParseInt(string(val), 10, 64)
-	return intVal, errors.Trace(err)
-}
-
-func (txn *hbaseTxn) Set(k kv.Key, data []byte) error {
-	if len(data) == 0 {
-		// Incase someone use it in the wrong way, we can figure it out immediately
-		debug.PrintStack()
-		return errors.Trace(ErrCannotSetNilValue)
-	}
-
-	log.Debugf("set key:%q, txn:%d", k, txn.tid)
-	return txn.UnionStore.Set(k, data)
-}
-
 func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("seek %q txn:%d", k, txn.tid)
-	iter, err := txn.UnionStore.Seek(k, txn)
+	iter, err := txn.UnionStore.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -173,27 +106,14 @@ func (txn *hbaseTxn) Delete(k kv.Key) error {
 	return nil
 }
 
-func (txn *hbaseTxn) each(f func(kv.Iterator) error) error {
-	iter := txn.UnionStore.WBuffer.NewIterator(nil)
-	defer iter.Close()
-	for ; iter.Valid(); iter.Next() {
-		if err := f(iter); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func (txn *hbaseTxn) doCommit() error {
 	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := txn.each(func(iter kv.Iterator) error {
-		var row, val []byte
-		row = make([]byte, len(iter.Key()))
-		if len(iter.Value()) == 0 { // Deleted marker
-			copy(row, iter.Key())
+	err := txn.WalkBuffer(func(k kv.Key, v []byte) error {
+		row := append([]byte(nil), k...)
+		if len(v) == 0 { // Deleted marker
 			d := hbase.NewDelete(row)
 			d.AddStringColumn(hbaseColFamily, hbaseQualifier)
 			err := txn.txn.Delete(txn.storeName, d)
@@ -201,9 +121,7 @@ func (txn *hbaseTxn) doCommit() error {
 				return errors.Trace(err)
 			}
 		} else {
-			val = make([]byte, len(iter.Value()))
-			copy(row, iter.Key())
-			copy(val, iter.Value())
+			val := append([]byte(nil), v...)
 			p := hbase.NewPut(row)
 			p.AddValue(hbaseColFamilyBytes, hbaseQualifierBytes, val)
 			txn.txn.Put(txn.storeName, p)
@@ -228,7 +146,7 @@ func (txn *hbaseTxn) doCommit() error {
 
 func (txn *hbaseTxn) Commit() error {
 	if !txn.valid {
-		return ErrInvalidTxn
+		return kv.ErrInvalidTxn
 	}
 	log.Debugf("start to commit txn %d", txn.tid)
 	defer func() {
@@ -246,7 +164,7 @@ func (txn *hbaseTxn) CommittedVersion() (kv.Version, error) {
 }
 
 func (txn *hbaseTxn) close() error {
-	txn.UnionStore.Close()
+	txn.UnionStore.Release()
 	txn.valid = false
 	return nil
 }
@@ -254,7 +172,7 @@ func (txn *hbaseTxn) close() error {
 //if fail, themis auto rollback
 func (txn *hbaseTxn) Rollback() error {
 	if !txn.valid {
-		return ErrInvalidTxn
+		return kv.ErrInvalidTxn
 	}
 	log.Warnf("Rollback txn %d", txn.tid)
 	return txn.close()
@@ -267,23 +185,4 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 		}
 	}
 	return nil
-}
-
-func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
-	if val == nil {
-		txn.opts[opt] = getOptionDefaultVal(opt)
-	} else {
-		txn.opts[opt] = val
-	}
-}
-
-func (txn *hbaseTxn) DelOption(opt kv.Option) {
-	delete(txn.opts, opt)
-}
-
-type options map[kv.Option]interface{}
-
-func (opts options) Get(opt kv.Option) (interface{}, bool) {
-	v, ok := opts[opt]
-	return v, ok
 }

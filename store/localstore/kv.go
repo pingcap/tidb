@@ -163,10 +163,9 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		store:        s,
 		version:      kv.MinVersion,
 		snapshotVals: make(map[string]struct{}),
-		opts:         make(map[kv.Option]interface{}),
 	}
 	log.Debugf("Begin txn:%d", txn.tid)
-	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, s.db, beginVer), options(txn.opts))
+	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, s.db, beginVer))
 	return txn, nil
 }
 

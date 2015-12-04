@@ -124,7 +124,10 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 
 func (s *mockSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, error) {
 	m := make(map[string][]byte)
-	it := s.NewIterator([]byte(start))
+	it, err := s.Seek(start)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	defer it.Close()
 	endKey := string(end)
 	for i := 0; i < limit; i++ {
@@ -143,8 +146,8 @@ func (s *mockSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, e
 	return m, nil
 }
 
-func (s *mockSnapshot) NewIterator(param interface{}) Iterator {
-	return s.store.NewIterator(param)
+func (s *mockSnapshot) Seek(k Key) (Iterator, error) {
+	return s.store.Seek(k)
 }
 
 func (s *mockSnapshot) Release() {

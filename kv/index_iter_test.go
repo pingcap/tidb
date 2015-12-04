@@ -48,7 +48,7 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
-	index := kv.NewKVIndex("i", "test", false)
+	index := kv.NewKVIndex("i", "test", 0, false)
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
@@ -118,7 +118,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	index = kv.NewKVIndex("j", "test", true)
+	index = kv.NewKVIndex("j", "test", 1, true)
 
 	// Test uniq index.
 	txn, err = s.s.Begin()

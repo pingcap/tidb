@@ -97,27 +97,29 @@ func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 // kvIndex is the data structure for index data in the KV store.
 type kvIndex struct {
 	indexName string
+	indexID   int64
 	unique    bool
 	prefix    string
 }
 
 // GenIndexPrefix generates the index prefix.
-func GenIndexPrefix(indexPrefix, indexName string) string {
+func GenIndexPrefix(indexPrefix string, indexID int64) string {
 	// Use EncodeBytes to guarantee generating different index prefix.
 	// e.g, two indices c1 and c with index prefix p, if no EncodeBytes,
 	// the index format looks p_c and p_c1, if c has an index value which the first encoded byte is '1',
 	// we will meet an error, because p_c1 is for index c1.
 	// If EncodeBytes, c1 -> c1\x00\x01 and c -> c\x00\x01, the prefixs are different.
-	key := fmt.Sprintf("%s_%s", indexPrefix, indexName)
+	key := fmt.Sprintf("%s_%d", indexPrefix, indexID)
 	return string(codec.EncodeBytes(nil, []byte(key)))
 }
 
 // NewKVIndex builds a new kvIndex object.
-func NewKVIndex(indexPrefix, indexName string, unique bool) Index {
+func NewKVIndex(indexPrefix, indexName string, indexID int64, unique bool) Index {
 	return &kvIndex{
 		indexName: indexName,
+		indexID:   indexID,
 		unique:    unique,
-		prefix:    GenIndexPrefix(indexPrefix, indexName),
+		prefix:    GenIndexPrefix(indexPrefix, indexID),
 	}
 }
 
@@ -153,20 +155,20 @@ func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte,
 
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there already exists an entry with the same key, Create will return ErrKeyExists
-func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) error {
+func (c *kvIndex) Create(rm RetrieverMutator, indexedValues []interface{}, h int64) error {
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !distinct {
 		// TODO: reconsider value
-		err = txn.Set(key, []byte("timestamp?"))
+		err = rm.Set(key, []byte("timestamp?"))
 		return errors.Trace(err)
 	}
 
-	_, err = txn.Get(key)
+	_, err = rm.Get(key)
 	if IsErrNotFound(err) {
-		err = txn.Set(key, encodeHandle(h))
+		err = rm.Set(key, encodeHandle(h))
 		return errors.Trace(err)
 	}
 
@@ -174,19 +176,19 @@ func (c *kvIndex) Create(txn Transaction, indexedValues []interface{}, h int64) 
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
-func (c *kvIndex) Delete(txn Transaction, indexedValues []interface{}, h int64) error {
+func (c *kvIndex) Delete(rm RetrieverMutator, indexedValues []interface{}, h int64) error {
 	key, _, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.Delete(key)
+	err = rm.Delete(key)
 	return errors.Trace(err)
 }
 
 // Drop removes the KV index from store.
-func (c *kvIndex) Drop(txn Transaction) error {
+func (c *kvIndex) Drop(rm RetrieverMutator) error {
 	prefix := []byte(c.prefix)
-	it, err := txn.Seek(Key(prefix))
+	it, err := rm.Seek(Key(prefix))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -197,7 +199,7 @@ func (c *kvIndex) Drop(txn Transaction) error {
 		if !strings.HasPrefix(it.Key(), c.prefix) {
 			break
 		}
-		err := txn.Delete([]byte(it.Key()))
+		err := rm.Delete([]byte(it.Key()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -210,12 +212,12 @@ func (c *kvIndex) Drop(txn Transaction) error {
 }
 
 // Seek searches KV index for the entry with indexedValues.
-func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
+func (c *kvIndex) Seek(rm RetrieverMutator, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
 	key, _, err := c.GenIndexKey(indexedValues, 0)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	it, err := txn.Seek(key)
+	it, err := rm.Seek(key)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -228,22 +230,22 @@ func (c *kvIndex) Seek(txn Transaction, indexedValues []interface{}) (iter Index
 }
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
-func (c *kvIndex) SeekFirst(txn Transaction) (iter IndexIterator, err error) {
+func (c *kvIndex) SeekFirst(rm RetrieverMutator) (iter IndexIterator, err error) {
 	prefix := []byte(c.prefix)
-	it, err := txn.Seek(prefix)
+	it, err := rm.Seek(prefix)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
 }
 
-func (c *kvIndex) Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error) {
+func (c *kvIndex) Exist(rm RetrieverMutator, indexedValues []interface{}, h int64) (bool, int64, error) {
 	key, distinct, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
 
-	value, err := txn.Get(key)
+	value, err := rm.Get(key)
 	if IsErrNotFound(err) {
 		return false, 0, nil
 	}

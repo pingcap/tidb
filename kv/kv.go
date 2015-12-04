@@ -119,26 +119,70 @@ const (
 	PresumeKeyNotExists
 )
 
-// Transaction defines the interface for operations inside a Transaction.
-// This is not thread safe.
-type Transaction interface {
-	// Get gets the value for key k from KV store.
+// Retriever is the interface wraps the basic Get and Seek methods.
+type Retriever interface {
+	// Get gets the value for key k from kv store.
+	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(k Key) ([]byte, error)
+	// Seek creates an Iterator positioned on the first entry that k <= entry's key.
+	// If such entry is not found, it returns an invalid Iterator with no error.
+	// The Iterator must be Closed after use.
+	Seek(k Key) (Iterator, error)
+}
+
+// Mutator is the interface wraps the basic Set and Delete methods.
+type Mutator interface {
+	// Set sets the value for key k as v into kv store.
+	// v must NOT be nil or empty, otherwise it returns ErrCannotSetNilValue.
+	Set(k Key, v []byte) error
+	// Delete removes the entry for key k from kv store.
+	Delete(k Key) error
+}
+
+// RetrieverMutator is the interface that groups Retriever and Mutator interfaces.
+type RetrieverMutator interface {
+	Retriever
+	Mutator
+}
+
+// MemBuffer is an in-memory kv collection. It should be released after use.
+type MemBuffer interface {
+	RetrieverMutator
+	// Release releases the buffer.
+	Release()
+}
+
+// UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
+// Also, it provides some transaction related utilities.
+type UnionStore interface {
+	MemBuffer
+	// Inc increases the value for key k in KV storage by step.
+	Inc(k Key, step int64) (int64, error)
+	// GetInt64 get int64 which created by Inc method.
+	GetInt64(k Key) (int64, error)
+	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
+	// Lazy condition pairs should be checked before transaction commit.
+	CheckLazyConditionPairs() error
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
 	// RangePrefetch fetches values in the range [start, end] from KV storage
 	// to cache for later use. Maximum number of values is up to limit.
 	RangePrefetch(start, end Key, limit int) error
-	// Set sets the value for key k as v into KV store.
-	Set(k Key, v []byte) error
-	// Seek searches for the entry with key k in KV store.
-	Seek(k Key) (Iterator, error)
-	// Inc increases the value for key k in KV store by step.
-	Inc(k Key, step int64) (int64, error)
-	// GetInt64 get int64 which created by Inc method.
-	GetInt64(k Key) (int64, error)
-	// Delete removes the entry for key k from KV store.
-	Delete(k Key) error
+	// WalkBuffer iterates all buffered kv pairs.
+	WalkBuffer(f func(k Key, v []byte) error) error
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
+	// ReleaseSnapshot releases underlying snapshot.
+	ReleaseSnapshot()
+}
+
+// Transaction defines the interface for operations inside a Transaction.
+// This is not thread safe.
+type Transaction interface {
+	UnionStore
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// CommittedVersion returns the version of this committed transaction. If this
@@ -150,11 +194,6 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
-	// SetOption sets an option with a value, when val is nil, uses the default
-	// value of this option.
-	SetOption(opt Option, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt Option)
 }
 
 // MvccSnapshot is used to get/seek a specific version in a snapshot.
@@ -163,7 +202,7 @@ type MvccSnapshot interface {
 	// exist, returns the nearest(lower) version's data.
 	MvccGet(k Key, ver Version) ([]byte, error)
 	// MvccIterator seeks to the key in the specific version's snapshot, if the
-	// version doesn't exist, returns the nearest(lower) version's snaphot.
+	// version doesn't exist, returns the nearest(lower) version's snapshot.
 	NewMvccIterator(k Key, ver Version) Iterator
 	// Release releases this snapshot.
 	MvccRelease()
@@ -171,28 +210,13 @@ type MvccSnapshot interface {
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
 type Snapshot interface {
-	// Get gets the value for key k from snapshot.
-	Get(k Key) ([]byte, error)
+	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	// RangeGet gets values in the range [start, end] from snapshot. Maximum
 	// number of values is up to limit.
 	RangeGet(start, end Key, limit int) (map[string][]byte, error)
-	// NewIterator gets a new iterator on the snapshot.
-	NewIterator(param interface{}) Iterator
 	// Release releases the snapshot to store.
-	Release()
-}
-
-// MemBuffer is the interface for transaction buffer of update in a transaction
-type MemBuffer interface {
-	// Get gets the value for key k from buffer. If not found, it returns ErrNotExist.
-	Get(k Key) ([]byte, error)
-	// Set associates key with value
-	Set([]byte, []byte) error
-	// NewIterator gets a new iterator on the buffer.
-	NewIterator(param interface{}) Iterator
-	// Release releases the buffer.
 	Release()
 }
 
@@ -208,7 +232,7 @@ type Driver interface {
 type Storage interface {
 	// Begin transaction
 	Begin() (Transaction, error)
-	// GetSnapshot gets a snaphot that is able to read any data which data is <= ver.
+	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) (MvccSnapshot, error)
 	// Close store
@@ -222,7 +246,7 @@ type Storage interface {
 // FnKeyCmp is the function for iterator the keys
 type FnKeyCmp func(key Key) bool
 
-// Iterator is the interface for a interator on KV store.
+// Iterator is the interface for a iterator on KV store.
 type Iterator interface {
 	Next() error
 	Value() []byte
@@ -239,11 +263,11 @@ type IndexIterator interface {
 
 // Index is the interface for index data on KV store.
 type Index interface {
-	Create(txn Transaction, indexedValues []interface{}, h int64) error                          // supports insert into statement
-	Delete(txn Transaction, indexedValues []interface{}, h int64) error                          // supports delete from statement
-	Drop(txn Transaction) error                                                                  // supports drop table, drop index statements
-	Exist(txn Transaction, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist
-	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)     // supports index check
-	Seek(txn Transaction, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
-	SeekFirst(txn Transaction) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
+	Create(rw RetrieverMutator, indexedValues []interface{}, h int64) error                          // supports insert into statement
+	Delete(rw RetrieverMutator, indexedValues []interface{}, h int64) error                          // supports delete from statement
+	Drop(rw RetrieverMutator) error                                                                  // supports drop table, drop index statements
+	Exist(rw RetrieverMutator, indexedValues []interface{}, h int64) (bool, int64, error)            // supports check index exist
+	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)         // supports index check
+	Seek(rw RetrieverMutator, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) // supports where clause
+	SeekFirst(rw RetrieverMutator) (iter IndexIterator, err error)                                   // supports aggregate min / ascending order by
 }

@@ -723,11 +723,9 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, "%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+
+	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -794,11 +792,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "localhost", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
-	row, err = r.Next()
-	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	match(c, row.Data, "127.0.0.1", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, "%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -1056,6 +1050,50 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	mustExecSQL(c, se, "drop table test;")
 }
 
+func (s *testSessionSuite) TestIssue463(c *C) {
+	// Testcase for https://github.com/pingcap/tidb/issues/463
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se,
+		`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	mustExecSQL(c, se, "insert into test(id, val) values(1, 1);")
+	mustExecFailed(c, se, "insert into test(id, val) values(2, 1);")
+	mustExecSQL(c, se, "insert into test(id, val) values(2, 2);")
+
+	mustExecSQL(c, se, "begin;")
+	mustExecSQL(c, se, "insert into test(id, val) values(3, 3);")
+	mustExecFailed(c, se, "insert into test(id, val) values(4, 3);")
+	mustExecSQL(c, se, "insert into test(id, val) values(4, 4);")
+	mustExecSQL(c, se, "commit;")
+	se1 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se1, "begin;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(5, 6);")
+	mustExecSQL(c, se, "begin;")
+	mustExecSQL(c, se, "insert into test(id, val) values(20, 6);")
+	mustExecSQL(c, se, "commit;")
+	mustExecFailed(c, se1, "commit;")
+	mustExecSQL(c, se1, "insert into test(id, val) values(5, 5);")
+
+	mustExecSQL(c, se, "drop table test;")
+
+	mustExecSQL(c, se,
+		`CREATE TABLE test (
+			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+			val1 int UNIQUE,
+			val2 int UNIQUE,
+			PRIMARY KEY (id)
+		);`)
+	mustExecSQL(c, se, "insert into test(id, val1, val2) values(1, 1, 1);")
+	mustExecSQL(c, se, "insert into test(id, val1, val2) values(2, 2, 2);")
+	mustExecFailed(c, se, "update test set val1 = 3, val2 = 2 where id = 1;")
+	mustExecSQL(c, se, "insert into test(id, val1, val2) values(3, 3, 3);")
+	mustExecSQL(c, se, "drop table test;")
+}
+
 func (s *testSessionSuite) TestIssue177(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -1257,9 +1295,9 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
-	cnt := 10
+	cnt := 4
 	wg.Add(cnt)
-	num := 1000
+	num := 100
 
 	for i := 0; i < cnt; i++ {
 		go func() {
@@ -1275,7 +1313,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 
 				se.Execute("insert into t_rollback values (1, 1, 1)")
 
-				_, err = se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
+				_, err := se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
 				c.Assert(err, IsNil)
 			}
 		}()
