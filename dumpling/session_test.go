@@ -1313,7 +1313,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 
 				se.Execute("insert into t_rollback values (1, 1, 1)")
 
-				_, err = se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
+				_, err := se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
 				c.Assert(err, IsNil)
 			}
 		}()
