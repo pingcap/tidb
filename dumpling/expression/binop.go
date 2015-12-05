@@ -153,7 +153,6 @@ func (o *BinaryOperation) Eval(ctx context.Context, args map[interface{}]interfa
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 		return o.evalComparisonOp(ctx, args)
 	case opcode.RightShift, opcode.LeftShift, opcode.And, opcode.Or, opcode.Xor:
-		// TODO: MySQL doesn't support and not, we should remove it later.
 		return o.evalBitOp(ctx, args)
 	case opcode.Plus, opcode.Minus, opcode.Mod, opcode.Div, opcode.Mul, opcode.IntDiv:
 		return o.evalArithmeticOp(ctx, args)
@@ -379,7 +378,6 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 // operator: >=, >, <=, <, !=, <>, = <=>, etc.
 // see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html
 func (o *BinaryOperation) evalComparisonOp(ctx context.Context, args map[interface{}]interface{}) (interface{}, error) {
-	//TODO: support <=> later
 	a, b, err := o.get2(ctx, args)
 	if err != nil {
 		return nil, err
@@ -521,7 +519,6 @@ func (o *BinaryOperation) evalDiv(a interface{}, b interface{}) (interface{}, er
 		// the scale of the result is the scale of the first operand plus
 		// the value of the div_precision_increment system variable (which is 4 by default)
 		// we will use 4 here
-
 		xa, err := types.ToDecimal(a)
 		if err != nil {
 			return nil, o.traceErr(err)
@@ -716,7 +713,6 @@ func (o *BinaryOperation) evalArithmeticOp(ctx context.Context, args map[interfa
 	b = types.RawData(b)
 
 	if a == nil || b == nil {
-		// TODO: for <=>, if a and b are both nil, return true
 		return nil, nil
 	}
 
@@ -724,7 +720,6 @@ func (o *BinaryOperation) evalArithmeticOp(ctx context.Context, args map[interfa
 		return nil, o.traceErr(err)
 	}
 
-	// TODO: support logic division DIV
 	switch o.Op {
 	case opcode.Plus:
 		return o.evalPlus(a, b)
