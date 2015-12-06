@@ -142,43 +142,58 @@ func (do *Domain) tryReload() {
 	}
 }
 
+const minReloadTimeout = 20 * time.Second
+
 func (do *Domain) reload() error {
 	// lock here for only once at same time.
 	do.m.Lock()
 	defer do.m.Unlock()
 
-	err := kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
-	if err != nil {
-		return errors.Trace(err)
+	timeout := do.ddl.GetLease() / 2
+	if timeout < minReloadTimeout {
+		timeout = minReloadTimeout
 	}
 
-	atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
-	return nil
+	done := make(chan error, 1)
+	go func() {
+		var err error
+
+		for {
+			err = kv.RunInNewTxn(do.store, false, do.loadInfoSchema)
+			// if err is db closed, we will return it directly, otherwise, we will
+			// check reloading again.
+			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
+				break
+			}
+
+			if err != nil {
+				log.Errorf("load schema err %v, retry again", errors.ErrorStack(err))
+				// TODO: use a backoff algorithm.
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+
+			atomic.StoreInt64(&do.lastLeaseTS, time.Now().UnixNano())
+			break
+		}
+
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		return errors.Trace(err)
+	case <-time.After(timeout):
+		return errors.New("reload schema timeout")
+	}
 }
 
 func (do *Domain) mustReload() {
 	// if reload error, we will terminate whole program to guarantee data safe.
-	// TODO: retry some times if reload error.
 	err := do.reload()
 	if err != nil {
-		log.Fatalf("reload schema err %v", err)
+		log.Fatalf("reload schema err %v", errors.ErrorStack(err))
 	}
-}
-
-const maxReloadTimeout = 60 * time.Second
-const minReloadTimeout = 20 * time.Second
-
-func getReloadTimeout(lease time.Duration) time.Duration {
-	timeout := lease / 4
-
-	if timeout >= maxReloadTimeout {
-		return maxReloadTimeout
-	}
-	if timeout <= minReloadTimeout {
-		return minReloadTimeout
-	}
-
-	return timeout
 }
 
 // check schema every 300 seconds default.
@@ -192,26 +207,16 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
-	reloadTimeout := getReloadTimeout(lease)
-	reloadErrCh := make(chan error, 1)
-
 	for {
 		select {
 		case <-ticker.C:
-			go func() {
-				reloadErrCh <- do.reload()
-			}()
-			select {
-			case err := <-reloadErrCh:
-				// we may close store in test, but the domain load schema loop is still checking,
-				// so we can't panic for ErrDBClosed and just return here.
-				if terror.ErrorEqual(err, localstore.ErrDBClosed) {
-					return
-				} else if err != nil {
-					log.Fatalf("reload schema err %v", errors.ErrorStack(err))
-				}
-			case <-time.After(reloadTimeout):
-				log.Fatalf("reload schema timeout:%d", reloadTimeout)
+			err := do.reload()
+			// we may close store in test, but the domain load schema loop is still checking,
+			// so we can't panic for ErrDBClosed and just return here.
+			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
+				return
+			} else if err != nil {
+				log.Fatalf("reload schema err %v", errors.ErrorStack(err))
 			}
 		case newLease := <-do.leaseCh:
 			if newLease <= 0 {
@@ -224,7 +229,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 
 			lease = newLease
-			reloadTimeout = getReloadTimeout(lease)
 			// reset ticker too.
 			ticker.Stop()
 			ticker = time.NewTicker(lease)
