@@ -167,6 +167,7 @@ func (do *Domain) reload() error {
 			}
 
 			if err != nil {
+				log.Errorf("load schema err %v, retry again", err)
 				// TODO: use a backoff algorithm.
 				time.Sleep(500 * time.Millisecond)
 				continue
@@ -183,7 +184,7 @@ func (do *Domain) reload() error {
 	case err := <-done:
 		return errors.Trace(err)
 	case <-time.After(timeout):
-		return errors.Errorf("reload schema timeout")
+		return errors.New("reload schema timeout")
 	}
 }
 
