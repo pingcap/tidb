@@ -13,6 +13,11 @@
 
 package engine
 
+import "errors"
+
+// ErrNotFound indicates no key is found when trying Get or Seek an entry from DB.
+var ErrNotFound = errors.New("local engine: key not found")
+
 // Driver is the interface that must be implemented by a local storage db engine.
 type Driver interface {
 	// Open opens or creates a local storage DB.
@@ -22,37 +27,21 @@ type Driver interface {
 
 // DB is the interface for local storage.
 type DB interface {
-	// Get the associated value with key
-	// return nil, nil if no value found.
+	// Get gets the associated value with key, returns (nil, ErrNotFound) if no value found.
+	// The caller should not modify the contents of the returned slice, and its contents may change on the next call
+	// to any read method.
 	Get(key []byte) ([]byte, error)
-	// Seek seeks the iterator to the first key in the engine which
-	// is >= startKey in byte-order.
-	Seek(startKey []byte) (Iterator, error)
+	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
+	// if no such key is found.
+	// The caller should not modify the contents of the returned slice, and its contents may change on the next call
+	// to any read method.
+	Seek(key []byte) ([]byte, []byte, error)
 	// NewBatch creates a Batch for writing.
 	NewBatch() Batch
 	// Commit writes the changed data in Batch.
 	Commit(b Batch) error
 	// Close closes database.
 	Close() error
-}
-
-// Iterator is the interface for local storage.
-type Iterator interface {
-	// Next moves the iterator to the next key/value pair,
-	// returns true/false if the iterator is exhausted.
-	Next() bool
-	// Key returns the current key of the key/value pair or nil
-	// if the iterator is done.
-	Key() []byte
-	// Value returns the current value of the key/value pair or nil
-	// if the iterator is done.
-	Value() []byte
-	// Seek moves the iterator to the first key/value pair whose key is greater
-	// or equal to the given key.
-	// It returns whether such pair exists or not.
-	Seek(startKey []byte) bool
-	// Release releases current iterator.
-	Release()
 }
 
 // Batch is the interface for local storage.
