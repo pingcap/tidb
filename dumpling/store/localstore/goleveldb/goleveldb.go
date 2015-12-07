@@ -44,9 +44,8 @@ type db struct {
 func (d *db) Get(key []byte) ([]byte, error) {
 	v, err := d.DB.Get(key, nil)
 	if err == leveldb.ErrNotFound {
-		return nil, nil
+		return nil, errors.Wrap(err, engine.ErrNotFound)
 	}
-
 	return v, err
 }
 
@@ -55,8 +54,13 @@ func (d *db) NewBatch() engine.Batch {
 	return b
 }
 
-func (d *db) Seek(startKey []byte) (engine.Iterator, error) {
-	return d.DB.NewIterator(&util.Range{Start: startKey}, nil), nil
+func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
+	iter := d.DB.NewIterator(&util.Range{Start: startKey}, nil)
+	defer iter.Release()
+	if ok := iter.First(); !ok {
+		return nil, nil, errors.Trace(engine.ErrNotFound)
+	}
+	return iter.Key(), iter.Value(), nil
 }
 
 func (d *db) Commit(b engine.Batch) error {
