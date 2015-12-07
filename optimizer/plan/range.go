@@ -25,7 +25,7 @@ import (
 
 type rangePoint struct {
 	value interface{}
-	excl  bool
+	excl  bool // exclude
 	start bool
 }
 

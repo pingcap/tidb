@@ -18,7 +18,7 @@ import (
 )
 
 // Alternatives returns multiple alternative plans that
-// can be picked base on its cost.
+// can be picked base on their cost.
 func Alternatives(p Plan) []Plan {
 	var plans []Plan
 	switch x := p.(type) {
