@@ -25,7 +25,6 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // ScanMetaWithPrefix scans metadata with the prefix.
@@ -128,10 +127,6 @@ func DecodeHandleFromRowKey(rk string) (int64, error) {
 func RowKeyPrefixFilter(rowKeyPrefix []byte) kv.FnKeyCmp {
 	return func(currentKey kv.Key) bool {
 		// Next until key without prefix of this record.
-		raw, err := codec.StripEnd(rowKeyPrefix)
-		if err != nil {
-			return false
-		}
-		return !bytes.HasPrefix(currentKey, raw)
+		return !bytes.HasPrefix(currentKey, rowKeyPrefix)
 	}
 }
