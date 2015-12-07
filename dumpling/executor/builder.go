@@ -71,9 +71,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	tbl, _ := b.is.TableByID(v.Table.ID)
 	var idx *column.IndexedCol
 	indices := tbl.Indices()
-	for _, v := range indices {
-		if v.IndexInfo.Name.L == v.IndexInfo.Name.L {
-			idx = v
+	for _, val := range indices {
+		if val.IndexInfo.Name.L == v.Index.Name.L {
+			idx = val
 			break
 		}
 	}

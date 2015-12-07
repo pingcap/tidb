@@ -159,19 +159,16 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		firstChar := patternStr[0]
 		return firstChar != '%' && firstChar != '.'
 	case *ast.BetweenExpr:
-		if !c.checkColumnExpr(x.Expr) {
-			return false
-		}
-		if !x.Left.IsStatic() || !x.Right.IsStatic() {
-			return false
+		if x.Left.IsStatic() && x.Right.IsStatic() && c.checkColumnExpr(x.Expr) {
+			return true
 		}
 	case *ast.IsNullExpr:
-		if !c.checkColumnExpr(x.Expr) {
-			return false
+		if c.checkColumnExpr(x.Expr) {
+			return true
 		}
 	case *ast.IsTruthExpr:
-		if !c.checkColumnExpr(x.Expr) {
-			return false
+		if c.checkColumnExpr(x.Expr) {
+			return true
 		}
 	case *ast.ColumnNameExpr:
 		return c.checkColumnExpr(x)

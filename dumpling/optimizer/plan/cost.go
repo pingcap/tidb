@@ -105,7 +105,7 @@ func (c *costEstimator) indexScan(v *IndexScan) {
 			if v.HighVal[0] == MaxVal {
 				rowCount += 4000
 			}
-			// For condtion lie 'a > 0 and a < 1'.
+			// For condition like 'a > 0 and a < 1'.
 			rowCount += 100
 		}
 		// If the index has too many ranges, the row count may exceed the default row count.
