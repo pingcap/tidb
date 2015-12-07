@@ -105,6 +105,18 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			resultStr: "[[-inf 1) (2 +inf]]",
 		},
 		{
+			exprStr:   "a not between null and 0",
+			resultStr: "[(0 +inf]]",
+		},
+		{
+			exprStr:   "a between 2 and 1",
+			resultStr: "[]",
+		},
+		{
+			exprStr:   "a not between 2 and 1",
+			resultStr: "[[-inf +inf]]",
+		},
+		{
 			exprStr:   "a IS NULL",
 			resultStr: "[[<nil> <nil>]]",
 		},
@@ -228,7 +240,7 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 			c.Fatal(lexer.Errors()[0], ca.sqlStr)
 		}
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
-		mockBind(stmt)
+		mockResolve(stmt)
 		p := BuildPlan(stmt)
 		c.Assert(ca.planStr, Equals, Explain(p))
 	}
@@ -276,6 +288,10 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			sql:  "select * from t where d",
 			best: "Table(t)->Filter->Fields",
 		},
+		{
+			sql:  "select * from t where a is null",
+			best: "Index(t.a)->Filter->Fields",
+		},
 	}
 	for _, ca := range cases {
 		lexer := parser.NewLexer(ca.sql)
@@ -283,7 +299,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			c.Fatal(lexer.Errors()[0], ca.sql)
 		}
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
-		mockBind(stmt)
+		mockResolve(stmt)
 		p := BuildPlan(stmt)
 		bestCost := EstimateCost(p)
 		bestPlan := p
@@ -299,7 +315,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 	}
 }
 
-func mockBind(node ast.Node) {
+func mockResolve(node ast.Node) {
 	indices := []*model.IndexInfo{
 		{
 			Name: model.NewCIStr("a"),

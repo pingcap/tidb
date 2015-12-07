@@ -213,15 +213,17 @@ func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
 
 func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {
 	if x.Not {
-		startPoint1 := rangePoint{value: MinNotNullVal, start: true}
-		endPoint1 := rangePoint{value: x.Left.GetValue(), excl: true}
-		startPoint2 := rangePoint{value: x.Right.GetValue(), excl: true, start: true}
-		endPoint2 := rangePoint{value: MaxVal}
-		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
+		binop1 := &ast.BinaryOperationExpr{Op: opcode.LT, L: x.Expr, R: x.Left}
+		binop2 := &ast.BinaryOperationExpr{Op: opcode.GT, L: x.Expr, R: x.Right}
+		range1 := r.buildFromBinop(binop1)
+		range2 := r.buildFromBinop(binop2)
+		return r.union(range1, range2)
 	}
-	startPoint := rangePoint{value: x.Left.GetValue(), start: true}
-	endPoint := rangePoint{value: x.Right.GetValue()}
-	return []rangePoint{startPoint, endPoint}
+	binop1 := &ast.BinaryOperationExpr{Op: opcode.GE, L: x.Expr, R: x.Left}
+	binop2 := &ast.BinaryOperationExpr{Op: opcode.LE, L: x.Expr, R: x.Right}
+	range1 := r.buildFromBinop(binop1)
+	range2 := r.buildFromBinop(binop2)
+	return r.intersection(range1, range2)
 }
 
 func (r *rangeBuilder) buildFromIsNull(x *ast.IsNullExpr) []rangePoint {
