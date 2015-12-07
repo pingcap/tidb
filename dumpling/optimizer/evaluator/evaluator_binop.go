@@ -29,8 +29,6 @@ const (
 	oneI64  int64 = 1
 )
 
-var _ = log.LOG_DEBUG
-
 func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 	switch o.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:

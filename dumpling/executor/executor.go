@@ -205,7 +205,6 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		if cmp > 0 || (cmp == 0 && e.highExclude) {
 			// This span has finished iteration.
 			e.finished = true
-			e.skipLowCmp = false
 			continue
 		}
 		var row *Row

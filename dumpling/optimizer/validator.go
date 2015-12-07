@@ -77,9 +77,9 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, v.err == nil
 }
 
-// checkAllOneColumn checks all expression has one column,
-// expression may has more than one column when it is rowExpr or
-// Subquery with more than one result fields.
+// checkAllOneColumn checks that all expressions have one column.
+// Expression may has more than one column when it is a rowExpr or
+// a Subquery with more than one result fields.
 func (v *validator) checkAllOneColumn(exprs ...ast.ExprNode) {
 	for _, expr := range exprs {
 		switch x := expr.(type) {
