@@ -290,7 +290,7 @@ func (n *CaseExpr) IsStatic() bool {
 	return true
 }
 
-// SubqueryExpr represents a sub query.
+// SubqueryExpr represents a subquery.
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
@@ -332,7 +332,7 @@ type CompareSubqueryExpr struct {
 	L ExprNode
 	// Op is the comparison opcode.
 	Op opcode.Op
-	// R is the sub query for right expression.
+	// R is the subquery for right expression, may be rewritten to other type of expression.
 	R ExprNode
 	// All is true, we should compare all records in subquery.
 	All bool
@@ -431,7 +431,7 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 // https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
 type ExistsSubqueryExpr struct {
 	exprNode
-	// Sel is the sub query.
+	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
 }
 
@@ -459,7 +459,7 @@ type PatternInExpr struct {
 	List []ExprNode
 	// Not is true, the expression is "not in".
 	Not bool
-	// Sel is the sub query.
+	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
 }
 
