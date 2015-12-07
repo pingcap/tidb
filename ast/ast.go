@@ -82,10 +82,11 @@ type DMLNode interface {
 
 // ResultField represents a result field which can be a column from a table,
 // or an expression in select field. It is a generated property during
-// binding process. ResultField is the key element to evaluate an ColumnNameExpr.
-// After binding process, every ColumnNameExpr will be resolved to a ResultField.
+// binding process. ResultField is the key element to evaluate a ColumnNameExpr.
+// After resolving process, every ColumnNameExpr will be resolved to a ResultField.
 // During execution, every row retrieved from table will set the row value to
-// ResultField, so ColumnNameExpr resolved to that ResultField can be easily evaluated.
+// ResultFields of that table, so ColumnNameExpr resolved to that ResultField can be
+// easily evaluated.
 type ResultField struct {
 	Column       *model.ColumnInfo
 	ColumnAsName model.CIStr

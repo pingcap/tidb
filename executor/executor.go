@@ -17,8 +17,8 @@ import (
 	"sort"
 	"strings"
 
-	"fmt"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -249,7 +249,7 @@ func indexCompare(a interface{}, b interface{}) int {
 	if err != nil {
 		// Old compare panics if err, so here we do the same thing now.
 		// TODO: return err instead of panic.
-		panic(fmt.Sprintf("should never happend %v", err))
+		log.Fatalf("should never happend %v", err)
 	}
 	return n
 }

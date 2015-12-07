@@ -16,6 +16,8 @@ package plan
 import (
 	"fmt"
 	"strings"
+
+	"github.com/ngaut/log"
 )
 
 // Explain explains a Plan, returns description string.
@@ -54,7 +56,7 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 	case *Limit:
 		str = "Limit"
 	default:
-		panic("should not happen")
+		log.Fatalf("Unknown plan type %T", in)
 	}
 	e.strs = append(e.strs, str)
 	return in, true

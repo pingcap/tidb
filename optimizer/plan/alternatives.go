@@ -14,7 +14,7 @@
 package plan
 
 import (
-	"fmt"
+	"github.com/ngaut/log"
 )
 
 // Alternatives returns multiple alternative plans that
@@ -28,7 +28,7 @@ func Alternatives(p Plan) []Plan {
 	case WithSrcPlan:
 		plans = planWithSrcAlternatives(x)
 	default:
-		panic(fmt.Sprintf("unknown plan %T", p))
+		log.Fatalf("unknown plan %T", p)
 	}
 	for _, val := range plans {
 		refine(val)

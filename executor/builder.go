@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -24,7 +25,7 @@ import (
 )
 
 // executorBuilder builds an Executor from a Plan.
-// the InfoSchema must be the same one used in InfoBinder.
+// The InfoSchema must be the same one used in InfoBinder.
 type executorBuilder struct {
 	ctx context.Context
 	is  infoschema.InfoSchema
@@ -54,6 +55,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.Limit:
 		return b.buildLimit(v)
 	}
+	log.Fatalf("Unknown Plan %T", p)
 	return nil
 }
 
