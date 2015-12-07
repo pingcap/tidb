@@ -14,13 +14,16 @@
 package codec
 
 import (
+	"bytes"
+
 	"github.com/juju/errors"
 )
 
 const (
 	encGroupSize     = 8
 	avgEncGroupCount = 20
-	defaultEncMarker = 0xFF
+	encMarker        = byte(0xFF)
+	encPad           = byte(0x0)
 )
 
 // Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
@@ -34,7 +37,7 @@ const (
 //   [1, 2, 3] -> [1 1 2 3 0 0 0 0 0 250]
 //   [1, 2, 3, 0] -> [1 1 2 3 0 0 0 0 0 251]
 //   [1, 2, 3, 4, 5, 6, 7, 8] -> [1 1 2 3 4 5 6 7 8 255 0 0 0 0 0 0 0 0 247]
-func EncodeBytes2(b []byte, data []byte) []byte {
+func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing.
 	// Assume that the byte slice size is about 20*8 = 160 bytes.
 	dl := len(data)
@@ -50,32 +53,44 @@ func EncodeBytes2(b []byte, data []byte) []byte {
 			bs = append(bs, make([]byte, padCount)...)
 		}
 
-		marker := byte(defaultEncMarker - padCount)
+		marker := encMarker - byte(padCount)
 		bs = append(bs, marker)
 	}
 
 	return bs
 }
 
-// DecodeBytes decodes bytes which is encoded by EncodeBytes before,
-// returns the leftover bytes and decoded value if no error.
-func DecodeBytes2(b []byte) ([]byte, []byte, error) {
+func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 	if len(b) < encGroupSize+1 {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value")
 	}
 
-	var data []byte
+	data := []byte{}
 	for {
-		group := b[:encGroupSize]
-		marker := b[encGroupSize]
-		b = b[encGroupSize+1:]
-		padCount := byte(defaultEncMarker - marker)
-		realSize := encGroupSize - padCount
-		if realSize < 0 {
-			return nil, nil, errors.Errorf("invalid marker byte, 0x%x", marker)
+		groupBytes := b[:encGroupSize+1]
+		if reverse {
+			reverseBytes(groupBytes)
 		}
-		data = append(data, group[:realSize]...)
-		if marker != defaultEncMarker {
+
+		group := groupBytes[:encGroupSize]
+		marker := groupBytes[encGroupSize]
+
+		// Check validity of marker.
+		padCount := encMarker - marker
+		realGroupSize := encGroupSize - padCount
+		if realGroupSize < 0 {
+			return nil, nil, errors.Errorf("invalid marker byte, group %v", group)
+		}
+
+		data = append(data, group[:realGroupSize]...)
+		b = b[encGroupSize+1:]
+
+		if marker != encMarker {
+			// Check validity of padding bytes.
+			if bytes.Count(group[realGroupSize:], []byte{encPad}) != int(padCount) {
+				return nil, nil, errors.Errorf("invalid padding byte, group %v", group)
+			}
+
 			break
 		}
 	}
@@ -83,24 +98,24 @@ func DecodeBytes2(b []byte) ([]byte, []byte, error) {
 	return b, data, nil
 }
 
+// DecodeBytes decodes bytes which is encoded by EncodeBytes before,
+// returns the leftover bytes and decoded value if no error.
+func DecodeBytes(b []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, false)
+}
+
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
 // encoded value to guarentee the encoded value is in descending order for comparison,
 // The encoded value is >= SmallestNoneNilValue and < InfiniteValue.
-func EncodeBytesDesc2(b []byte, data []byte) []byte {
+func EncodeBytesDesc(b []byte, data []byte) []byte {
 	n := len(b)
-	b = EncodeBytes2(b, data)
+	b = EncodeBytes(b, data)
 	reverseBytes(b[n:])
 	return b
 }
 
 // DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytesDesc2(b []byte) ([]byte, []byte, error) {
-	remain, data, err := DecodeBytes2(b)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	reverseBytes(data)
-	return remain, data, nil
+func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, true)
 }
