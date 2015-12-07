@@ -35,7 +35,7 @@ var (
 	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
 )
 
-// validate checkes if the node is valid.
+// validate checkes whether the node is valid.
 func validate(node ast.Node) error {
 	var v validator
 	node.Accept(&v)

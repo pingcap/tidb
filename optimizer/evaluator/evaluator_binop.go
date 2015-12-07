@@ -43,7 +43,8 @@ func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.Plus, opcode.Minus, opcode.Mod, opcode.Div, opcode.Mul, opcode.IntDiv:
 		return e.handleArithmeticOp(o)
 	default:
-		panic("should never happen")
+		e.err = errors.New("invalid operation")
+		return false
 	}
 }
 
@@ -66,7 +67,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 	if !types.IsNil(leftVal) {
 		x, err := types.ToBool(leftVal)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		} else if x == 0 {
 			// false && any other types is false
@@ -77,7 +78,7 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 	if !types.IsNil(righVal) {
 		y, err := types.ToBool(righVal)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		} else if y == 0 {
 			o.SetValue(y)
@@ -109,7 +110,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	if !types.IsNil(righVal) {
 		y, err := types.ToBool(righVal)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		} else if y == 1 {
 			o.SetValue(y)
@@ -133,7 +134,7 @@ func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 	}
 	x, err := types.ToBool(leftVal)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 
@@ -249,13 +250,13 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	a, err := coerceArithmetic(types.RawData(o.L.GetValue()))
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 
 	b, err := coerceArithmetic(types.RawData(o.R.GetValue()))
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	a, b = types.Coerce(a, b)

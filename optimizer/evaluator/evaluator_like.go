@@ -164,10 +164,9 @@ func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 
 func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 	var sexpr string
-	switch {
-	case p.Sexpr != nil:
+	if p.Sexpr != nil {
 		sexpr = *p.Sexpr
-	default:
+	} else {
 		expr := p.Expr.GetValue()
 		if types.IsNil(expr) {
 			p.SetValue(nil)

@@ -19,10 +19,10 @@ import (
 	"github.com/pingcap/tidb/optimizer/evaluator"
 )
 
-func computeType(node ast.Node) error {
-	var computer typeComputer
-	node.Accept(&computer)
-	return computer.err
+func inferType(node ast.Node) error {
+	var inferrer typeInferrer
+	node.Accept(&inferrer)
+	return inferrer.err
 }
 
 func rewriteStatic(ctx context.Context, node ast.Node) error {
@@ -31,17 +31,17 @@ func rewriteStatic(ctx context.Context, node ast.Node) error {
 	return rewriter.err
 }
 
-// typeComputer is an ast Visitor that
-// computes result type for ast.ExprNode.
-type typeComputer struct {
+// typeInferrer is an ast Visitor that
+// infers result type for ast.ExprNode.
+type typeInferrer struct {
 	err error
 }
 
-func (v *typeComputer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	return in, false
 }
 
-func (v *typeComputer) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)

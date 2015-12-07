@@ -273,7 +273,7 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	// Try to resolve the column name form top to bottom in the context stack.
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
 		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
-			// Column is already bound or encountered an error.
+			// Column is already resolved or encountered an error.
 			return
 		}
 	}
@@ -282,11 +282,6 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 
 // resolveColumnNameInContext looks up and sets ResultField for a column with the ctx.
 func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) (done bool) {
-	if cn.Name.Table.L == "" {
-		// If qualified table name is not specified in column name, the column name may be ambiguous,
-		// We need to iterate over all tables and
-	}
-
 	if ctx.inTableRefs {
 		// In TableRefsClause, column reference only in join on condition which is handled before.
 		return false
@@ -481,7 +476,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		}
 		return
 	}
-	// The column is visited before so it must has been bound already.
+	// The column is visited before so it must has been resolved already.
 	rf := &ast.ResultField{ColumnAsName: field.AsName}
 	innerExpr := getInnerFromParentheses(field.Expr)
 	switch v := innerExpr.(type) {

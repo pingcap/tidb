@@ -33,7 +33,7 @@ func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (pla
 	if err := ResolveName(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := computeType(node); err != nil {
+	if err := inferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := rewriteStatic(ctx, node); err != nil {
@@ -92,15 +92,14 @@ func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, !c.unsupported
 }
 
-// Supported checks if the node is supported to use new plan.
+// IsSupported checks if the node is supported to use new plan.
 // We first support single table select statement without group by clause or aggregate functions.
 // TODO: 1. insert/update/delete. 2. join tables. 3. subquery. 4. group by and aggregate function.
-func Supported(node ast.Node) bool {
+func IsSupported(node ast.Node) bool {
 	if _, ok := node.(*ast.SelectStmt); !ok {
 		return false
 	}
 	var checker supportChecker
 	node.Accept(&checker)
 	return !checker.unsupported
-	//		return false
 }

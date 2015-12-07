@@ -138,7 +138,7 @@ func (a *statementAdapter) IsDDL() bool {
 func (a *statementAdapter) Exec(ctx context.Context) (rset.Recordset, error) {
 	b := newExecutorBuilder(ctx, a.is)
 	e := b.build(a.plan)
-	var fields []*field.ResultField
+	fields := make([]*field.ResultField, 0, len(e.Fields()))
 	for _, v := range e.Fields() {
 		f := &field.ResultField{
 			Col:       column.Col{ColumnInfo: *v.Column},
