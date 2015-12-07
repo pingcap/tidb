@@ -91,7 +91,7 @@ func (s *hbaseStore) Begin() (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (s *hbaseStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
+func (s *hbaseStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	hbaseCli := s.getHBaseClient()
 	t, err := themis.NewTxn(hbaseCli, s.oracle)
 	if err != nil {

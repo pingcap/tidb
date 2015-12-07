@@ -169,18 +169,22 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	testKey := encodeTestDataKey(1)
 
 	snapshot, err := t.s.GetSnapshot(kv.MaxVersion)
-	defer snapshot.MvccRelease()
-	b, err = snapshot.MvccGet(testKey, kv.MaxVersion)
+	defer snapshot.Release()
+	b, err = snapshot.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "new")
 
 	// Get last version
-	b, err = snapshot.MvccGet(testKey, kv.NewVersion(v.Ver-1))
+	lastVerSnapshot, err := t.s.GetSnapshot(kv.NewVersion(v.Ver - 1))
+	c.Assert(err, IsNil)
+	b, err = lastVerSnapshot.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, string(encodeInt(1)))
 
 	// Get version not exists
-	b, err = snapshot.MvccGet(testKey, kv.MinVersion)
+	minVerSnapshot, err := t.s.GetSnapshot(kv.MinVersion)
+	c.Assert(err, IsNil)
+	b, err = minVerSnapshot.Get(testKey)
 	c.Assert(err, NotNil)
 }
 
@@ -221,42 +225,6 @@ func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
 	// Test isolation in transaction.
 	c.Assert(string(r), Equals, "0")
 	txn1.Commit()
-}
-
-func (t *testMvccSuite) TestMvccSnapshotScan(c *C) {
-	tx, _ := t.s.Begin()
-	err := tx.Set(encodeInt(1), []byte("new"))
-	c.Assert(err, IsNil)
-	err = tx.Commit()
-	c.Assert(err, IsNil)
-	v, err := tx.CommittedVersion()
-	c.Assert(err, IsNil)
-
-	snapshot, err := t.s.GetSnapshot(kv.MaxVersion)
-	defer snapshot.MvccRelease()
-	c.Assert(err, IsNil)
-
-	testKey := encodeTestDataKey(1)
-	// iter helper function
-	iterFunc := func(it kv.Iterator) bool {
-		found := false
-		for it.Valid() {
-			if string(it.Value()) == "new" {
-				found = true
-			}
-			err = it.Next()
-			c.Assert(err, IsNil)
-		}
-		return found
-	}
-
-	it := snapshot.NewMvccIterator(testKey, kv.MaxVersion)
-	found := iterFunc(it)
-	c.Assert(found, IsTrue)
-
-	it = snapshot.NewMvccIterator(testKey, kv.NewVersion(v.Ver-1))
-	found = iterFunc(it)
-	c.Assert(found, IsFalse)
 }
 
 func (t *testMvccSuite) TestBufferedIterator(c *C) {
