@@ -54,6 +54,14 @@ build:
 install:
 	$(GO) install ./...
 
+update:
+	go get -u github.com/tools/godep
+	go get -u github.com/pingcap/go-hbase
+	go get -u github.com/pingcap/go-themis
+	go get -u github.com/ngaut/tso/client
+	go get -u github.com/qiuyesuifeng/goyacc
+	go get -u github.com/qiuyesuifeng/golex
+
 TEMP_FILE = temp_parser_file
 
 parser:
@@ -117,7 +125,7 @@ ddl_test:
 	$(GO) test ./ddl/... -skip_ddl=false
 
 ddl_race_test:
-	$(GO) test --race ./ddl/... -skip_ddl=false 
+	$(GO) test --race ./ddl/... -skip_ddl=false
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
