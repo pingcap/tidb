@@ -193,7 +193,7 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 		b2, err := EncodeKey(t.Right...)
 		c.Assert(err, IsNil)
 
-		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect)
+		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
 	}
 }
 
@@ -393,12 +393,12 @@ func (s *testCodecSuite) TestBytes(c *C) {
 		b := EncodeBytes(nil, t)
 		_, v, err := DecodeBytes(b)
 		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v)
+		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 
 		b = EncodeBytesDesc(nil, t)
 		_, v, err = DecodeBytesDesc(b)
 		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v)
+		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 	}
 
 	tblCmp := []struct {
