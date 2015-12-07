@@ -37,7 +37,7 @@ type UnquoteString string
 // FuncCallExpr is for function expression.
 type FuncCallExpr struct {
 	funcNode
-	// F is the function name.
+	// FnName is the function name.
 	FnName model.CIStr
 	// Args is the function args.
 	Args []ExprNode

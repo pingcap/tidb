@@ -36,7 +36,7 @@ func Alternatives(p Plan) []Plan {
 	return plans
 }
 
-// tableScanAlternatives returns all index plan from the same table.
+// tableScanAlternatives returns all index plans from the same table.
 func tableScanAlternatives(p *TableScan) []Plan {
 	var alts []Plan
 	for _, v := range p.Table.Indices {

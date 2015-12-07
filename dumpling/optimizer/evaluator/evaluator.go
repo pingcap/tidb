@@ -322,7 +322,7 @@ func (e *Evaluator) position(v *ast.PositionExpr) bool {
 }
 
 func (e *Evaluator) row(v *ast.RowExpr) bool {
-	var row []interface{}
+	row := make([]interface{}, 0, len(v.Values))
 	for _, val := range v.Values {
 		row = append(row, val.GetValue())
 	}
@@ -407,7 +407,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		case mysql.Set:
 			u.SetValue(x)
 		default:
-			e.err = errors.Errorf("invalid operation")
+			e.err = errors.New("invalid operation")
 			return false
 		}
 	case opcode.Minus:
@@ -469,9 +469,11 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 			u.SetValue(-x.ToNumber())
 		default:
 			e.err = errors.Errorf("invalid operation")
+			return false
 		}
 	default:
-		panic("should never happen")
+		e.err = errors.Errorf("invalid operation")
+		return false
 	}
 
 	return true
@@ -536,7 +538,7 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 	}
 	val, err := f.F(a, argMap)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	v.SetValue(val)
@@ -733,7 +735,7 @@ func (e *Evaluator) funcLocate(v *ast.FuncLocateExpr) bool {
 	}
 	str, err := types.ToString(fs)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	// eval substr
@@ -744,7 +746,7 @@ func (e *Evaluator) funcLocate(v *ast.FuncLocateExpr) bool {
 	}
 	substr, err := types.ToString(fs)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	// eval pos

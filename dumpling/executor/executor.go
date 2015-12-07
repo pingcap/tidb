@@ -19,7 +19,6 @@ import (
 
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -54,7 +53,7 @@ type Row struct {
 type RowKeyEntry struct {
 	// The table which this row come from.
 	Tbl table.Table
-	// Row handle.
+	// Row key.
 	Key string
 }
 
@@ -79,10 +78,9 @@ func (e *TableScanExec) Fields() []*ast.ResultField {
 }
 
 // Next implements Execution Next interface.
-func (e *TableScanExec) Next() (row *Row, err error) {
+func (e *TableScanExec) Next() (*Row, error) {
 	if e.iter == nil {
-		var txn kv.Transaction
-		txn, err = e.ctx.GetTxn(false)
+		txn, err := e.ctx.GetTxn(false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -92,7 +90,7 @@ func (e *TableScanExec) Next() (row *Row, err error) {
 		}
 	}
 	if !e.iter.Valid() || !strings.HasPrefix(e.iter.Key(), e.t.KeyPrefix()) {
-		return
+		return nil, nil
 	}
 	// TODO: check if lock valid
 	// the record layout in storage (key -> value):
@@ -110,7 +108,7 @@ func (e *TableScanExec) Next() (row *Row, err error) {
 	}
 
 	// TODO: we could just fetch mentioned columns' values
-	row = &Row{}
+	row := &Row{}
 	row.Data, err = e.t.Row(e.ctx, handle)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -132,7 +130,7 @@ func (e *TableScanExec) Next() (row *Row, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return
+	return row, nil
 }
 
 // Close implements plan.Plan Close interface.
@@ -225,7 +223,7 @@ func indexCompare(a interface{}, b interface{}) int {
 		return 0
 	} else if b == nil {
 		return 1
-	} else if b == nil {
+	} else if a == nil {
 		return -1
 	}
 
@@ -383,7 +381,7 @@ func (e *SelectFieldsExec) Close() error {
 	return nil
 }
 
-// FilterExec represents an filter executor.
+// FilterExec represents a filter executor.
 type FilterExec struct {
 	Src       Executor
 	Condition ast.ExprNode
@@ -405,11 +403,11 @@ func (e *FilterExec) Next() (*Row, error) {
 		if srcRow == nil {
 			return nil, nil
 		}
-		truth, err := evaluator.EvalBool(e.ctx, e.Condition)
+		match, err := evaluator.EvalBool(e.ctx, e.Condition)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if truth {
+		if match {
 			return srcRow, nil
 		}
 	}
@@ -521,6 +519,7 @@ type SortExec struct {
 	ctx     context.Context
 	Idx     int
 	fetched bool
+	err     error
 }
 
 // Fields implements Executor Fields interface.
@@ -546,9 +545,8 @@ func (e *SortExec) Less(i, j int) bool {
 
 		ret, err := types.Compare(v1, v2)
 		if err != nil {
-			// we just have to log this error and skip it.
-			// TODO: record this error and handle it out later.
-			log.Errorf("compare %v %v err %v", v1, v2, err)
+			e.err = err
+			return true
 		}
 
 		if by.Desc {
@@ -567,6 +565,9 @@ func (e *SortExec) Less(i, j int) bool {
 
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
+	if e.err != nil {
+		return nil, errors.Trace(e.err)
+	}
 	if !e.fetched {
 		for {
 			srcRow, err := e.Src.Next()
@@ -582,6 +583,9 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			for i, byItem := range e.ByItems {
 				orderRow.key[i], err = evaluator.Eval(e.ctx, byItem.Expr)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			e.Rows = append(e.Rows, orderRow)
 		}

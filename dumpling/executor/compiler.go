@@ -30,11 +30,11 @@ type Compiler struct {
 }
 
 // Compile compiles an ast.StmtNode to a stmt.Statement.
-// If it is supported to use new plan and executer, it optimize the node to
+// If it is supported to use new plan and executer, it optimizes the node to
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
-	if optimizer.Supported(node) {
+	if optimizer.IsSupported(node) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		p, err := optimizer.Optimize(is, ctx, node)
 		if err != nil {

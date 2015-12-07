@@ -25,10 +25,10 @@ type Converter struct {
 	converter *expressionConverter
 }
 
-// Convert converts a ast.Node into an old stmt.Statement.
-func (com *Converter) Convert(node ast.Node) (stmt.Statement, error) {
+// Convert converts an ast.Node into an old stmt.Statement.
+func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 	c := newExpressionConverter()
-	com.converter = c
+	con.converter = c
 	switch v := node.(type) {
 	case *ast.InsertStmt:
 		return convertInsert(c, v)
@@ -105,8 +105,8 @@ func (p paramMarkers) Swap(i, j int) {
 }
 
 // ParamMarkers returns parameter markers for prepared statement.
-func (com *Converter) ParamMarkers() []*expression.ParamMarker {
-	c := com.converter
+func (con *Converter) ParamMarkers() []*expression.ParamMarker {
+	c := con.converter
 	sort.Sort(c.paramMarkers)
 	oldMarkers := make([]*expression.ParamMarker, len(c.paramMarkers))
 	for i, val := range c.paramMarkers {
