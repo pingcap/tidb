@@ -31,36 +31,36 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testInfoBinderSuite{})
+var _ = Suite(&testNameResolverSuite{})
 
-type testInfoBinderSuite struct {
+type testNameResolverSuite struct {
 }
 
-type binderVerifier struct {
+type resolverVerifier struct {
 	src string
 	c   *C
 }
 
-func (bv *binderVerifier) Enter(node ast.Node) (ast.Node, bool) {
+func (rv *resolverVerifier) Enter(node ast.Node) (ast.Node, bool) {
 	return node, false
 }
 
-func (bv *binderVerifier) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (rv *resolverVerifier) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch v := in.(type) {
 	case *ast.ColumnNameExpr:
-		bv.c.Assert(v.Refer, NotNil, Commentf("%s", bv.src))
+		rv.c.Assert(v.Refer, NotNil, Commentf("%s", rv.src))
 	case *ast.TableName:
-		bv.c.Assert(v.TableInfo, NotNil, Commentf("%s", bv.src))
+		rv.c.Assert(v.TableInfo, NotNil, Commentf("%s", rv.src))
 	}
 	return in, true
 }
 
-type binderTestCase struct {
+type resolverTestCase struct {
 	src   string
 	valid bool
 }
 
-var binderTestCases = []binderTestCase{
+var resolverTestCases = []resolverTestCase{
 	{"select c1 from t1", true},
 	{"select c3 from t1", false},
 	{"select c1 from t4", false},
@@ -82,7 +82,7 @@ var binderTestCases = []binderTestCase{
 	{"select c1 from t1 where exists (select c2)", true},
 }
 
-func (ts *testInfoBinderSuite) TestInfoBinder(c *C) {
+func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	defer store.Close()
@@ -94,19 +94,19 @@ func (ts *testInfoBinderSuite) TestInfoBinder(c *C) {
 	ctx := testKit.Se.(context.Context)
 	domain := sessionctx.GetDomain(ctx)
 	db.BindCurrentSchema(ctx, "test")
-	for _, tc := range binderTestCases {
+	for _, tc := range resolverTestCases {
 		l := parser.NewLexer(tc.src)
 		c.Assert(parser.YYParse(l), Equals, 0)
 		stmts := l.Stmts()
 		c.Assert(len(stmts), Equals, 1)
 		node := stmts[0]
-		bindErr := optimizer.BindInfo(node, domain.InfoSchema(), ctx)
+		resolveErr := optimizer.ResolveName(node, domain.InfoSchema(), ctx)
 		if tc.valid {
-			c.Assert(bindErr, IsNil)
-			verifier := &binderVerifier{c: c, src: tc.src}
+			c.Assert(resolveErr, IsNil)
+			verifier := &resolverVerifier{c: c, src: tc.src}
 			node.Accept(verifier)
 		} else {
-			c.Assert(bindErr, NotNil, Commentf("%s", tc.src))
+			c.Assert(resolveErr, NotNil, Commentf("%s", tc.src))
 		}
 	}
 }

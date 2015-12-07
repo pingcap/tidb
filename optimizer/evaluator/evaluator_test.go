@@ -360,7 +360,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
 		s, ok := r.(string)
-		c.Assert(ok, Equals, true)
+		c.Assert(ok, IsTrue)
 		c.Assert(s, Equals, v.result)
 	}
 
@@ -855,13 +855,13 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
 		s, ok := r.(string)
-		c.Assert(ok, Equals, true)
+		c.Assert(ok, IsTrue)
 		c.Assert(s, Equals, v.result)
 
 		r1, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
 		s1, ok := r1.(string)
-		c.Assert(ok, Equals, true)
+		c.Assert(ok, IsTrue)
 		c.Assert(s, Equals, s1)
 	}
 	errTbl := []struct {

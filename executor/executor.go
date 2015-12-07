@@ -366,9 +366,6 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		Data:    make([]interface{}, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
-		if cn, ok := field.Expr.(*ast.ColumnNameExpr); ok {
-			log.Errorf("refer %v", cn.Refer.Column)
-		}
 		val, err := evaluator.Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)

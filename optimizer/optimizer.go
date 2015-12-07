@@ -25,12 +25,12 @@ import (
 
 // Optimize do optimization and create a Plan.
 // InfoSchema has to be passed in as parameter because
-// it can not be changed after binding.
+// it can not be changed after resolving name.
 func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (plan.Plan, error) {
 	if err := validate(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := BindInfo(node, is, ctx); err != nil {
+	if err := ResolveName(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := computeType(node); err != nil {
