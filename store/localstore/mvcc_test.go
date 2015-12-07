@@ -66,9 +66,16 @@ func (t *testMvccSuite) TestMvccEncode(c *C) {
 
 func (t *testMvccSuite) scanRawEngine(c *C, f func([]byte, []byte)) {
 	// scan raw db
-	it, _ := t.s.(*dbStore).db.Seek(nil)
-	for it.Next() {
-		f(it.Key(), it.Value())
+	var k kv.Key
+	var v []byte
+	for {
+		var err error
+		k, v, err = t.s.(*dbStore).db.Seek(k)
+		if err != nil {
+			break
+		}
+		f(k, v)
+		k = k.Next()
 	}
 }
 
