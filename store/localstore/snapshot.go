@@ -23,9 +23,8 @@ import (
 )
 
 var (
-	_ kv.Snapshot     = (*dbSnapshot)(nil)
-	_ kv.MvccSnapshot = (*dbSnapshot)(nil)
-	_ kv.Iterator     = (*dbIter)(nil)
+	_ kv.Snapshot = (*dbSnapshot)(nil)
+	_ kv.Iterator = (*dbIter)(nil)
 )
 
 // dbSnapshot implements MvccSnapshot interface.
@@ -73,7 +72,7 @@ func (s *dbSnapshot) internalSeek(startKey []byte) (engine.Iterator, error) {
 	return s.rawIt, nil
 }
 
-func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
+func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
 	// engine Snapshot return nil, nil for value not found,
 	// so here we will check nil and return kv.ErrNotExist.
 	// get newest version, (0, MaxUint64)
@@ -88,7 +87,7 @@ func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 	// Key_0
 	// NextKey -> META
 	// NextKey_xxx
-	startKey := MvccEncodeVersionKey(k, ver)
+	startKey := MvccEncodeVersionKey(k, s.version)
 	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
 
 	it, err := s.internalSeek(startKey)
@@ -109,15 +108,6 @@ func (s *dbSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
 		return nil, kv.ErrNotExist
 	}
 	return bytes.CloneBytes(v), nil
-}
-
-func (s *dbSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
-	return newDBIter(s, k, ver)
-}
-
-func (s *dbSnapshot) Get(k kv.Key) ([]byte, error) {
-	// Get latest version.
-	return s.MvccGet(k, s.version)
 }
 
 func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
@@ -159,11 +149,7 @@ func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, 
 }
 
 func (s *dbSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	return newDBIter(s, []byte(k), s.version), nil
-}
-
-func (s *dbSnapshot) MvccRelease() {
-	s.Release()
+	return newDBIter(s, k), nil
 }
 
 func (s *dbSnapshot) Release() {
@@ -181,20 +167,18 @@ func (s *dbSnapshot) Release() {
 }
 
 type dbIter struct {
-	s               *dbSnapshot
-	startKey        kv.Key
-	valid           bool
-	exceptedVersion kv.Version
-	k               kv.Key
-	v               []byte
+	s        *dbSnapshot
+	startKey kv.Key
+	valid    bool
+	k        kv.Key
+	v        []byte
 }
 
-func newDBIter(s *dbSnapshot, startKey kv.Key, exceptedVer kv.Version) *dbIter {
+func newDBIter(s *dbSnapshot, startKey kv.Key) *dbIter {
 	it := &dbIter{
-		s:               s,
-		startKey:        startKey,
-		valid:           true,
-		exceptedVersion: exceptedVer,
+		s:        s,
+		startKey: startKey,
+		valid:    true,
 	}
 	it.Next()
 	return it
@@ -222,7 +206,7 @@ func (it *dbIter) Next() error {
 			break
 		}
 		// Get kv pair.
-		val, err := it.s.MvccGet(key, it.exceptedVersion)
+		val, err := it.s.Get(key)
 		if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 			// Get this version error
 			it.valid = false

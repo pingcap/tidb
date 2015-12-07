@@ -369,12 +369,15 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		return nil, errors.Trace(err)
 	}
 
-	defer snap.MvccRelease()
+	defer snap.Release()
 
 	firstKey := t.RecordKey(seekHandle, nil)
 	prefix := []byte(t.KeyPrefix())
 
-	it := snap.NewMvccIterator([]byte(firstKey), ver)
+	it, err := snap.Seek(firstKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	defer it.Close()
 
 	handles := make([]int64, 0, maxBatchSize)

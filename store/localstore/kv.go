@@ -110,7 +110,7 @@ func (s *dbStore) UUID() string {
 	return s.uuid
 }
 
-func (s *dbStore) GetSnapshot(ver kv.Version) (kv.MvccSnapshot, error) {
+func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 	s.mu.RLock()
 	closed := s.closed
 	s.mu.RUnlock()

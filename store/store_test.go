@@ -535,7 +535,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	snap, err := store.GetSnapshot(kv.MaxVersion)
 	c.Assert(err, IsNil)
 
-	_, err = snap.MvccGet([]byte("a"), kv.MaxVersion)
+	_, err = snap.Get([]byte("a"))
 	c.Assert(err, IsNil)
 
 	txn, err = store.Begin()
@@ -556,7 +556,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Commit()
 	c.Assert(err, NotNil)
 
-	snap.MvccRelease()
+	snap.Release()
 }
 
 func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
