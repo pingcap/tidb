@@ -27,10 +27,15 @@ type localstoreCompactorTestSuite struct {
 }
 
 func count(db engine.DB) int {
-	it, _ := db.Seek([]byte{0})
-	defer it.Release()
+	var k kv.Key
 	totalCnt := 0
-	for it.Next() {
+	for {
+		var err error
+		k, _, err = db.Seek(k)
+		if err != nil {
+			break
+		}
+		k = k.Next()
 		totalCnt++
 	}
 	return totalCnt

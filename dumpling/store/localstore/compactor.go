@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/bytes"
 )
 
@@ -63,25 +64,24 @@ func (gc *localstoreCompactor) OnDelete(k kv.Key) {
 	gc.recentKeys[string(k)] = struct{}{}
 }
 
-func (gc *localstoreCompactor) getAllVersions(k kv.Key) ([]kv.EncodedKey, error) {
-	startKey := MvccEncodeVersionKey(k, kv.MaxVersion)
-	endKey := MvccEncodeVersionKey(k, kv.MinVersion)
-
-	it, err := gc.db.Seek(startKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer it.Release()
-
-	var ret []kv.EncodedKey
-	for it.Next() {
-		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
-			ret = append(ret, bytes.CloneBytes(kv.EncodedKey(it.Key())))
-			continue
+func (gc *localstoreCompactor) getAllVersions(key kv.Key) ([]kv.EncodedKey, error) {
+	var keys []kv.EncodedKey
+	k := key
+	for ver := kv.MaxVersion; k.Cmp(key) == 0 && ver.Ver > 0; ver.Ver-- {
+		mvccK, _, err := gc.db.Seek(MvccEncodeVersionKey(key, ver))
+		if terror.ErrorEqual(err, engine.ErrNotFound) {
+			break
 		}
-		break
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		k, ver, err = MvccDecode(mvccK)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		keys = append(keys, bytes.CloneBytes(mvccK))
 	}
-	return ret, nil
+	return keys, nil
 }
 
 func (gc *localstoreCompactor) deleteWorker() {
