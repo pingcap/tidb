@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -75,14 +76,14 @@ func NewValueExpr(value interface{}) *ValueExpr {
 		ve.Type = types.NewFieldType(mysql.TypeDouble)
 	case []byte:
 		ve.Type = types.NewFieldType(mysql.TypeBlob)
-		ve.Type.Charset = "binary"
-		ve.Type.Collate = "binary"
+		ve.Type.Charset = charset.CharsetBin
+		ve.Type.Collate = charset.CharsetBin
 	case mysql.Bit:
 		ve.Type = types.NewFieldType(mysql.TypeBit)
 	case mysql.Hex:
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
-		ve.Type.Charset = "binary"
-		ve.Type.Collate = "binary"
+		ve.Type.Charset = charset.CharsetBin
+		ve.Type.Collate = charset.CharsetBin
 	case mysql.Time:
 		ve.Type = types.NewFieldType(x.Type)
 	case mysql.Duration:

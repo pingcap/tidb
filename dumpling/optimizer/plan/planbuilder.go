@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 )
@@ -36,7 +37,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
 	}
-	panic("not supported")
+	log.Fatalf("Unsupported type %T", node)
+	return nil
 }
 
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
@@ -69,11 +71,11 @@ func (b *planBuilder) buildJoin(from *ast.Join) Plan {
 	// Only support single table for now.
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
-		panic("not supported")
+		log.Fatalf("Unsupported type %T", from.Left)
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		panic("not supported")
+		log.Fatalf("Unsupported type %T", ts.Source)
 	}
 	p := &TableScan{
 		Table: tn.TableInfo,

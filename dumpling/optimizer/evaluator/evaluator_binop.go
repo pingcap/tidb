@@ -57,7 +57,8 @@ func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.LogicXor:
 		return e.handleXor(o)
 	default:
-		panic("should never happen")
+		log.Fatalf("unkown operator %v", o.Op)
+		return false
 	}
 }
 

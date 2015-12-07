@@ -83,7 +83,8 @@ func (a *recordsetAdapter) Next() (*oplan.Row, error) {
 		return nil, errors.Trace(err)
 	}
 	oRow := &oplan.Row{
-		Data: make([]interface{}, len(row.Data)),
+		Data:    make([]interface{}, len(row.Data)),
+		RowKeys: make([]*oplan.RowKeyEntry, 0, len(row.RowKeys)),
 	}
 	for i, v := range row.Data {
 		d := types.RawData(v)
@@ -99,7 +100,6 @@ func (a *recordsetAdapter) Next() (*oplan.Row, error) {
 			oRow.Data[i] = d
 		}
 	}
-
 	for _, v := range row.RowKeys {
 		oldRowKey := &oplan.RowKeyEntry{
 			Key: v.Key,
