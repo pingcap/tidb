@@ -40,6 +40,8 @@ func newExecutorBuilder(ctx context.Context, is infoschema.InfoSchema) *executor
 
 func (b *executorBuilder) build(p plan.Plan) Executor {
 	switch v := p.(type) {
+	case nil:
+		return nil
 	case *plan.TableScan:
 		return b.buildTableScan(v)
 	case *plan.IndexScan:
