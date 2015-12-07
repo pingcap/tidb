@@ -333,19 +333,19 @@ func mockBind(node ast.Node) {
 		Indices: indices,
 		Name:    model.NewCIStr("t"),
 	}
-	binder := mockBinder{table: table}
-	node.Accept(&binder)
+	resolver := mockResolver{table: table}
+	node.Accept(&resolver)
 }
 
-type mockBinder struct {
+type mockResolver struct {
 	table *model.TableInfo
 }
 
-func (b *mockBinder) Enter(in ast.Node) (ast.Node, bool) {
+func (b *mockResolver) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (b *mockBinder) Leave(in ast.Node) (ast.Node, bool) {
+func (b *mockResolver) Leave(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
 	case *ast.ColumnNameExpr:
 		x.Refer = &ast.ResultField{

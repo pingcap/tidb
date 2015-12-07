@@ -118,7 +118,7 @@ type Visitor interface {
 	// this is useful when work is done in Enter and there is no need to visit children.
 	Enter(n Node) (node Node, skipChildren bool)
 	// Leave is called after children nodes have been visited.
-	// The returned node can be different type as the input node if it is ExprNode,
+	// The returned node's type can be different from the input node if it is a ExprNode,
 	// Non-expression node must be the same type as the input node n.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
