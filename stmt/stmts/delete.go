@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -175,7 +175,7 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 
 	for k, t := range rowKeyMap {
-		handle, err := util.DecodeHandleFromRowKey(k)
+		handle, err := tables.DecodeRecordKeyHandle(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
