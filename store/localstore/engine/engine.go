@@ -28,13 +28,9 @@ type Driver interface {
 // DB is the interface for local storage.
 type DB interface {
 	// Get gets the associated value with key, returns (nil, ErrNotFound) if no value found.
-	// The caller should not modify the contents of the returned slice, and its contents may change on the next call
-	// to any read method.
 	Get(key []byte) ([]byte, error)
 	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 	// if no such key is found.
-	// The caller should not modify the contents of the returned slice, and its contents may change on the next call
-	// to any read method.
 	Seek(key []byte) ([]byte, []byte, error)
 	// NewBatch creates a Batch for writing.
 	NewBatch() Batch

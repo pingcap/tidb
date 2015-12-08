@@ -44,9 +44,9 @@ func newSnapshot(store *dbStore, db engine.DB, ver kv.Version) *dbSnapshot {
 }
 
 // mvccSeek seeks for the first key in db which has a k >= key and a version <=
-// snapshot's version. If strict is true, only k == key can be returned.
-// The returned slices should be cloned before modify.
-func (s *dbSnapshot) mvccSeek(key kv.Key, strict bool) (kv.Key, []byte, error) {
+// snapshot's version, returns kv.ErrNotExist if no such key is found. If exact
+// is true, only k == key can be returned.
+func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
 
@@ -81,7 +81,7 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, strict bool) (kv.Key, []byte, error) {
 			return nil, nil, errors.Trace(err)
 		}
 		if key.Cmp(k) != 0 { // currently on [7]
-			if strict {
+			if exact {
 				return nil, nil, errors.Trace(kv.ErrNotExist)
 			}
 			// search for NextKey
@@ -89,7 +89,7 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, strict bool) (kv.Key, []byte, error) {
 			continue
 		}
 		if isTombstone(v) { // current key is deleted
-			if strict {
+			if exact {
 				return nil, nil, errors.Trace(kv.ErrNotExist)
 			}
 			// search for NextKey's meta
@@ -105,7 +105,7 @@ func (s *dbSnapshot) Get(key kv.Key) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return bytes.CloneBytes(v), nil
+	return v, nil
 }
 
 func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
@@ -173,8 +173,8 @@ func newDBIter(s *dbSnapshot, startKey kv.Key) (*dbIter, error) {
 	return &dbIter{
 		s:     s,
 		valid: true,
-		k:     bytes.CloneBytes(k),
-		v:     bytes.CloneBytes(v),
+		k:     k,
+		v:     v,
 	}, nil
 }
 
