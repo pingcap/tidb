@@ -64,7 +64,7 @@ func EncodeBytes(b []byte, data []byte) []byte {
 
 func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 	if len(b) < encGroupSize+1 {
-		return nil, nil, errors.Errorf("insufficient bytes to decode value")
+		return nil, nil, errors.New("insufficient bytes to decode value")
 	}
 
 	data := []byte{}
