@@ -20,6 +20,7 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/bytes"
 )
 
 var (
@@ -39,11 +40,11 @@ func (d *db) Get(key []byte) ([]byte, error) {
 
 	err := d.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketName)
-		value = b.Get(key)
-		if value == nil {
+		v := b.Get(key)
+		if v == nil {
 			return errors.Trace(engine.ErrNotFound)
 		}
-
+		value = bytes.CloneBytes(v)
 		return nil
 	})
 
@@ -51,14 +52,18 @@ func (d *db) Get(key []byte) ([]byte, error) {
 }
 
 func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
-	var k, v []byte
+	var key, value []byte
 	err := d.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketName)
 		c := b.Cursor()
+		var k, v []byte
 		if startKey == nil {
 			k, v = c.First()
 		} else {
 			k, v = c.Seek(startKey)
+		}
+		if k != nil {
+			key, value = bytes.CloneBytes(k), bytes.CloneBytes(v)
 		}
 		return nil
 	})
@@ -66,10 +71,10 @@ func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if k == nil {
+	if key == nil {
 		return nil, nil, errors.Trace(engine.ErrNotFound)
 	}
-	return k, v, nil
+	return key, value, nil
 }
 
 func (d *db) NewBatch() engine.Batch {
