@@ -77,9 +77,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 		columns = append(columns, col)
 	}
 
-	t := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
+	t, err := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
+	if err != nil {
+		log.Fatalf("create new table failed - %s - %v", tblInfo.Name.O, errors.ErrorStack(err))
+	}
 
-	var err error
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
 			log.Fatalf("index %s can't be in none state", idxInfo.Name)
@@ -91,7 +93,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 
 		idx.X, err = kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
 		if err != nil {
-			log.Fatalf("create new index failed - %s - %v", idxInfo.Name.L, errors.ErrorStack(err))
+			log.Fatalf("create new index failed - %s - %v", idxInfo.Name.O, errors.ErrorStack(err))
 		}
 
 		t.AddIndex(idx)
@@ -102,7 +104,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 }
 
 // NewTable constructs a Table instance.
-func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
+func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) (*Table, error) {
 	name := model.NewCIStr(tableName)
 	t := &Table{
 		ID:           tableID,
@@ -115,14 +117,22 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 		state:        model.StatePublic,
 	}
 
-	t.encRecordPrefix, _ = kv.EncodeValue(t.recordPrefix)
+	var err error
+	t.encRecordPrefix, err = kv.EncodeValue(t.recordPrefix)
+	if err != nil {
+		return t, errors.Trace(err)
+	}
 	t.encRecordPrefix = append(t.prefix, []byte(t.encRecordPrefix)...)
-	t.encIndexPrefix, _ = kv.EncodeValue(t.indexPrefix)
+
+	t.encIndexPrefix, err = kv.EncodeValue(t.indexPrefix)
+	if err != nil {
+		return t, errors.Trace(err)
+	}
 	t.encIndexPrefix = append(t.prefix, []byte(t.encIndexPrefix)...)
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.writableCols()
-	return t
+	return t, nil
 }
 
 // TableID implements table.Table TableID interface.
