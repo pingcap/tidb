@@ -15,78 +15,73 @@ package codec
 
 import (
 	"encoding/binary"
-	"math"
 
 	"github.com/juju/errors"
 )
 
-const (
-	negNum    byte = 0
-	nonNegNum byte = 1
-)
-
-func encodeNumSign(v int64) byte {
-	if v < 0 {
-		return negNum
+func encodeIntToUint(v int64) uint64 {
+	u := uint64(v)
+	if u&0x8000000000000000 > 0 {
+		u &= ^uint64(0x8000000000000000)
+	} else {
+		u |= uint64(0x8000000000000000)
 	}
 
-	return nonNegNum
+	return u
+}
+
+func decodeUintToInt(u uint64) int64 {
+	if u&0x8000000000000000 > 0 {
+		u &= ^uint64(0x8000000000000000)
+	} else {
+		u |= uint64(0x8000000000000000)
+	}
+
+	return int64(u)
 }
 
 // EncodeInt appends the encoded value to slice b and returns the appended slice.
 // EncodeInt guarantees that the encoded value is in ascending order for comparison.
 func EncodeInt(b []byte, v int64) []byte {
-	var data [9]byte
-	data[0] = encodeNumSign(v)
-	binary.BigEndian.PutUint64(data[1:], uint64(v))
+	var data [8]byte
+	u := encodeIntToUint(v)
+	binary.BigEndian.PutUint64(data[:], u)
 	return append(b, data[:]...)
 }
 
 // EncodeIntDesc appends the encoded value to slice b and returns the appended slice.
 // EncodeIntDesc guarantees that the encoded value is in descending order for comparison.
 func EncodeIntDesc(b []byte, v int64) []byte {
-	var data [9]byte
-	data[0] = ^encodeNumSign(v)
-	binary.BigEndian.PutUint64(data[1:], uint64(^v))
+	var data [8]byte
+	u := encodeIntToUint(v)
+	binary.BigEndian.PutUint64(data[:], ^u)
 	return append(b, data[:]...)
 }
 
 // DecodeInt decodes value encoded by EncodeInt before.
 // It returns the leftover un-decoded slice, decoded value if no error.
 func DecodeInt(b []byte) ([]byte, int64, error) {
-	if len(b) < 9 {
+	if len(b) < 8 {
 		return nil, 0, errors.New("insufficient bytes to decode value")
 	}
 
-	numSign := b[0]
-	v := binary.BigEndian.Uint64(b[1:9])
-
-	if numSign == nonNegNum && v > math.MaxInt64 {
-		return nil, 0, errors.Errorf("decoded value %d - %d overflow int64", v, int64(v))
-	}
-
-	b = b[9:]
-	return b, int64(v), nil
+	u := binary.BigEndian.Uint64(b[:8])
+	v := decodeUintToInt(u)
+	b = b[8:]
+	return b, v, nil
 }
 
 // DecodeIntDesc decodes value encoded by EncodeInt before.
 // It returns the leftover un-decoded slice, decoded value if no error.
 func DecodeIntDesc(b []byte) ([]byte, int64, error) {
-	if len(b) < 9 {
+	if len(b) < 8 {
 		return nil, 0, errors.New("insufficient bytes to decode value")
 	}
 
-	data := b[:9]
-	numSign := ^data[0]
-	v := binary.BigEndian.Uint64(data[1:9])
-
-	v = ^v
-	if numSign == nonNegNum && v > math.MaxInt64 {
-		return nil, 0, errors.Errorf("decoded value %d - %d overflow int64", v, int64(v))
-	}
-
-	b = b[9:]
-	return b, int64(v), nil
+	u := binary.BigEndian.Uint64(b[:8])
+	v := decodeUintToInt(^u)
+	b = b[8:]
+	return b, v, nil
 }
 
 // EncodeUint appends the encoded value to slice b and returns the appended slice.
