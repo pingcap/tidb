@@ -107,8 +107,7 @@ func DecodeBytes(b []byte) ([]byte, []byte, error) {
 }
 
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
-// encoded value to guarentee the encoded value is in descending order for comparison,
-// The encoded value is >= SmallestNoneNilValue and < InfiniteValue.
+// encoded value to guarentee the encoded value is in descending order for comparison。
 func EncodeBytesDesc(b []byte, data []byte) []byte {
 	n := len(b)
 	b = EncodeBytes(b, data)

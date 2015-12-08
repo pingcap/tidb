@@ -102,12 +102,12 @@ type kvIndex struct {
 
 // GenIndexPrefix generates the index prefix.
 func GenIndexPrefix(indexPrefix string, indexID int64) (string, error) {
-	key, err := EncodeValue(indexID)
+	indexKey, err := EncodeValue(indexID)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 
-	return string(indexPrefix + string(key)), nil
+	return indexPrefix + string(indexKey), nil
 }
 
 // NewKVIndex builds a new kvIndex object.
