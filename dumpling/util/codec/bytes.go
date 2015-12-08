@@ -28,7 +28,6 @@ const (
 	encPad           = byte(0x0)
 )
 
-// Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
 // encoding with the following rule:
 //  [group1][marker1]...[groupN][markerN]
@@ -39,6 +38,7 @@ const (
 //   [1, 2, 3] -> [1 1 2 3 0 0 0 0 0 250]
 //   [1, 2, 3, 0] -> [1 1 2 3 0 0 0 0 0 251]
 //   [1, 2, 3, 4, 5, 6, 7, 8] -> [1 1 2 3 4 5 6 7 8 255 0 0 0 0 0 0 0 0 247]
+// Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
 func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing.
 	// Assume that the byte slice size is about 20*8 = 160 bytes.

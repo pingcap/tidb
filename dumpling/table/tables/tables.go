@@ -49,7 +49,9 @@ type Table struct {
 	writableColumns []*column.Col
 	indices         []*column.IndexedCol
 	recordPrefix    string
+	encRecordPrefix []byte
 	indexPrefix     string
+	encIndexPrefix  []byte
 	alloc           autoid.Allocator
 	state           model.SchemaState
 }
@@ -100,6 +102,9 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 		Columns:      cols,
 		state:        model.StatePublic,
 	}
+
+	t.encRecordPrefix, _ = kv.EncodeValue(t.recordPrefix)
+	t.encIndexPrefix, _ = kv.EncodeValue(t.indexPrefix)
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.writableCols()
@@ -237,20 +242,20 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 
 // KeyPrefix implements table.Table KeyPrefix interface.
 func (t *Table) KeyPrefix() string {
-	return t.recordPrefix
+	return string(t.encRecordPrefix)
 }
 
 // IndexPrefix implements table.Table IndexPrefix interface.
 func (t *Table) IndexPrefix() string {
-	return t.indexPrefix
+	return string(t.encRecordPrefix)
 }
 
 // RecordKey implements table.Table RecordKey interface.
 func (t *Table) RecordKey(h int64, col *column.Col) []byte {
 	if col != nil {
-		return util.EncodeRecordKey(t.KeyPrefix(), h, col.ID)
+		return util.EncodeRecordKey(t.recordPrefix, h, col.ID)
 	}
-	return util.EncodeRecordKey(t.KeyPrefix(), h, 0)
+	return util.EncodeRecordKey(t.recordPrefix, h, 0)
 }
 
 // FirstKey implements table.Table FirstKey interface.
