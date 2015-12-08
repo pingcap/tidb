@@ -97,7 +97,10 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 			},
 		},
 	}
-	p.tbl = tables.NewTable(1, "t", p.cols, &simpleAllocator{})
+
+	p.tbl, err = tables.NewTable(1, "t", p.cols, &simpleAllocator{})
+	c.Assert(err, IsNil)
+
 	variable.BindSessionVars(p)
 
 	var i int64
