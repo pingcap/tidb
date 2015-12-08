@@ -44,7 +44,7 @@ func newSnapshot(store *dbStore, db engine.DB, ver kv.Version) *dbSnapshot {
 }
 
 // mvccSeek seeks for the first key in db which has a k >= key and a version <=
-// snapshot's version, returns kv.ErrNotExist if no such key is found. If exact
+// snapshot's version, returns kv.ErrNotExist if such key is not found. If exact
 // is true, only k == key can be returned.
 func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 	s.store.mu.RLock()
