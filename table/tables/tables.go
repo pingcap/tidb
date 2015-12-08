@@ -52,7 +52,6 @@ type Table struct {
 	publicColumns   []*column.Col
 	writableColumns []*column.Col
 	indices         []*column.IndexedCol
-	prefix          []byte
 	recordPrefix    string
 	encRecordPrefix []byte
 	indexPrefix     string
@@ -109,7 +108,6 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	t := &Table{
 		ID:           tableID,
 		Name:         name,
-		prefix:       TablePrefix,
 		recordPrefix: fmt.Sprintf("%d_r", tableID),
 		indexPrefix:  fmt.Sprintf("%d_i", tableID),
 		alloc:        alloc,
@@ -122,13 +120,13 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	if err != nil {
 		return t, errors.Trace(err)
 	}
-	t.encRecordPrefix = append(t.prefix, []byte(t.encRecordPrefix)...)
+	t.encRecordPrefix = append(TablePrefix, []byte(t.encRecordPrefix)...)
 
 	t.encIndexPrefix, err = kv.EncodeValue(t.indexPrefix)
 	if err != nil {
 		return t, errors.Trace(err)
 	}
-	t.encIndexPrefix = append(t.prefix, []byte(t.encIndexPrefix)...)
+	t.encIndexPrefix = append(TablePrefix, []byte(t.encIndexPrefix)...)
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.writableCols()
@@ -264,11 +262,6 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 	}
 }
 
-// Prefix implements table.Table Prefix interface.
-func (t *Table) Prefix() string {
-	return string(t.prefix)
-}
-
 // KeyPrefix implements table.Table KeyPrefix interface.
 func (t *Table) KeyPrefix() string {
 	return string(t.encRecordPrefix)
@@ -288,7 +281,7 @@ func (t *Table) RecordKey(h int64, col *column.Col) []byte {
 		key = EncodeRecordKey(t.recordPrefix, h, 0)
 	}
 
-	return append(t.prefix, key...)
+	return append(TablePrefix, key...)
 }
 
 // FirstKey implements table.Table FirstKey interface.
@@ -778,7 +771,7 @@ func EncodeRecordKey(tablePrefix string, h int64, columnID int64) []byte {
 	return buf
 }
 
-// DecodeRecordKey decodes the key and get the values.
+// DecodeRecordKey decodes the key and gets the values.
 func DecodeRecordKey(key []byte) ([]interface{}, error) {
 	if !bytes.HasPrefix(key, TablePrefix) {
 		return nil, errors.Errorf("invalid record key - %v", key)
@@ -793,7 +786,7 @@ func DecodeRecordKey(key []byte) ([]interface{}, error) {
 	return vals, nil
 }
 
-// DecodeRecordKeyHandle decodes the key and get the record handle.
+// DecodeRecordKeyHandle decodes the key and gets the record handle.
 func DecodeRecordKeyHandle(key string) (int64, error) {
 	vals, err := DecodeRecordKey([]byte(key))
 	if err != nil {

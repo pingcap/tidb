@@ -70,7 +70,7 @@ func codecValue(value []byte, valSign int64) {
 // Decimal encoding:
 // Byte -> value sign
 // Byte -> exp sign
-// Byte -> exp value
+// EncodeInt -> exp value
 // EncodeBytes -> abs value bytes
 func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	if d.Equals(mysql.ZeroDecimal) {
@@ -122,7 +122,7 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 // Decimal decoding:
 // Byte -> value sign
 // Byte -> exp sign
-// Byte -> exp value
+// DecodeInt -> exp value
 // DecodeBytes -> abs value bytes
 func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 	var (

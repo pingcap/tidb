@@ -63,9 +63,6 @@ type Table interface {
 	// FindIndexByColName finds the index by column name.
 	FindIndexByColName(name string) *column.IndexedCol
 
-	// Prefix returns the table prefix string.
-	Prefix() string
-
 	// KeyPrefix returns the key prefix string.
 	KeyPrefix() string
 
