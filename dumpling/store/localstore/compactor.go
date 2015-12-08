@@ -77,7 +77,9 @@ func (gc *localstoreCompactor) getAllVersions(k kv.Key) ([]kv.EncodedKey, error)
 	for it.Next() {
 		if kv.EncodedKey(it.Key()).Cmp(endKey) < 0 {
 			ret = append(ret, bytes.CloneBytes(kv.EncodedKey(it.Key())))
+			continue
 		}
+		break
 	}
 	return ret, nil
 }
