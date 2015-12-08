@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 const (
@@ -157,12 +156,6 @@ func (s *testPrefixSuite) TestCode(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(handle, Equals, t.h)
 	}
-
-	b1 := EncodeRecordKey("aa", 1, 0)
-	b2 := EncodeRecordKey("aa", 1, 1)
-	c.Logf("%#v, %#v", b2, b1)
-	_, err := codec.StripEnd(b1)
-	c.Assert(err, IsNil)
 }
 
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
