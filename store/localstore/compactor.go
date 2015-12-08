@@ -67,7 +67,7 @@ func (gc *localstoreCompactor) OnDelete(k kv.Key) {
 func (gc *localstoreCompactor) getAllVersions(key kv.Key) ([]kv.EncodedKey, error) {
 	var keys []kv.EncodedKey
 	k := key
-	for ver := kv.MaxVersion; k.Cmp(key) == 0 && ver.Ver > 0; ver.Ver-- {
+	for ver := kv.MaxVersion; ver.Ver > 0; ver.Ver-- {
 		mvccK, _, err := gc.db.Seek(MvccEncodeVersionKey(key, ver))
 		if terror.ErrorEqual(err, engine.ErrNotFound) {
 			break
@@ -76,6 +76,9 @@ func (gc *localstoreCompactor) getAllVersions(key kv.Key) ([]kv.EncodedKey, erro
 			return nil, errors.Trace(err)
 		}
 		k, ver, err = MvccDecode(mvccK)
+		if k.Cmp(key) != 0 {
+			break
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
