@@ -14,6 +14,8 @@
 package codec
 
 import (
+	"time"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 )
@@ -21,10 +23,12 @@ import (
 const (
 	nilFlag byte = iota
 	bytesFlag
-	negativeNumFlag
-	nonNegativeNumFlag
+	stringFlag
+	intFlag
+	uintFlag
 	floatFlag
 	decimalFlag
+	durationFlag
 )
 
 // EncodeKey encodes args to a slice which can be sorted lexicographically later.
@@ -34,61 +38,41 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 	for _, arg := range args {
 		switch v := arg.(type) {
 		case bool:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, intFlag)
 			if v {
 				b = EncodeInt(b, int64(1))
 			} else {
 				b = EncodeInt(b, int64(0))
 			}
 		case int:
-			if v >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
 		case int8:
-			if v >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
 		case int16:
-			if v >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
 		case int32:
-			if v >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
 		case int64:
-			if v >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
 		case uint:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
 		case uint8:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
 		case uint16:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
 		case uint32:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
 		case uint64:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
 		case float32:
 			b = append(b, floatFlag)
@@ -97,42 +81,32 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(v))
 		case string:
-			b = append(b, bytesFlag)
+			b = append(b, stringFlag)
 			b = EncodeBytes(b, []byte(v))
 		case []byte:
 			b = append(b, bytesFlag)
 			b = EncodeBytes(b, v)
 		case mysql.Time:
-			b = append(b, bytesFlag)
+			b = append(b, stringFlag)
 			b = EncodeBytes(b, []byte(v.String()))
 		case mysql.Duration:
 			// duration may have negative value, so we cannot use String to encode directly.
-			val := int64(v.Duration)
-			if val >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
-			b = EncodeInt(b, val)
+			b = append(b, durationFlag)
+			b = EncodeInt(b, int64(v.Duration))
 		case mysql.Decimal:
 			b = append(b, decimalFlag)
 			b = EncodeDecimal(b, v)
 		case mysql.Hex:
-			val := int64(v.ToNumber())
-			if val >= 0 {
-				b = append(b, nonNegativeNumFlag)
-			} else {
-				b = append(b, negativeNumFlag)
-			}
-			b = EncodeInt(b, val)
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v.ToNumber()))
 		case mysql.Bit:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v.ToNumber()))
 		case mysql.Enum:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v.ToNumber()))
 		case mysql.Set:
-			b = append(b, nonNegativeNumFlag)
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v.ToNumber()))
 		case nil:
 			b = append(b, nilFlag)
@@ -161,16 +135,29 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 		flag = b[0]
 		b = b[1:]
 		switch flag {
-		case negativeNumFlag:
+		case intFlag:
 			b, v, err = DecodeInt(b)
-		case nonNegativeNumFlag:
+		case uintFlag:
 			b, v, err = DecodeUint(b)
 		case floatFlag:
 			b, v, err = DecodeFloat(b)
 		case bytesFlag:
 			b, v, err = DecodeBytes(b)
+		case stringFlag:
+			var r []byte
+			b, r, err = DecodeBytes(b)
+			if err == nil {
+				v = string(r)
+			}
 		case decimalFlag:
 			b, v, err = DecodeDecimal(b)
+		case durationFlag:
+			var r int64
+			b, r, err = DecodeInt(b)
+			if err == nil {
+				// use max fsp, let outer to do round manually.
+				v = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+			}
 		case nilFlag:
 			v = nil
 		default:
