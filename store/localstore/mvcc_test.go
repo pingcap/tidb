@@ -195,6 +195,66 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (t *testMvccSuite) getSnapshot(c *C, ver kv.Version) *dbSnapshot {
+	snapshot, err := t.s.GetSnapshot(ver)
+	c.Assert(err, IsNil)
+	dbs, ok := snapshot.(*dbSnapshot)
+	c.Assert(ok, IsTrue)
+	return dbs
+}
+
+func (t *testMvccSuite) TestMvccSeek(c *C) {
+	s := t.getSnapshot(c, kv.MaxVersion)
+	k, v, err := s.mvccSeek(encodeInt(1), false)
+	c.Assert(err, IsNil)
+	c.Assert([]byte(k), BytesEquals, encodeInt(1))
+	c.Assert(v, BytesEquals, encodeInt(1))
+
+	k, v, err = s.mvccSeek(encodeInt(1024), false)
+	c.Assert(err, NotNil)
+
+	k, v, err = s.mvccSeek(append(encodeInt(1), byte(0)), false)
+	c.Assert(err, IsNil)
+	c.Assert([]byte(k), BytesEquals, encodeInt(2))
+
+	k, v, err = s.mvccSeek(append(encodeInt(1), byte(0)), true)
+	c.Assert(err, NotNil)
+
+	s = t.getSnapshot(c, kv.Version{Ver: 1})
+	k, v, err = s.mvccSeek(encodeInt(1), false)
+	c.Assert(err, NotNil)
+
+	txn, err := t.s.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set(encodeInt(3), encodeInt(1003))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+	v1, err := txn.CommittedVersion()
+	c.Assert(err, IsNil)
+
+	txn, err = t.s.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Delete(encodeInt(2))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+	v2, err := txn.CommittedVersion()
+	c.Assert(err, IsNil)
+
+	s = t.getSnapshot(c, v2)
+	k, v, err = s.mvccSeek(encodeInt(2), false)
+	c.Assert(err, IsNil)
+	c.Assert([]byte(k), BytesEquals, encodeInt(3))
+	c.Assert(v, BytesEquals, encodeInt(1003))
+
+	s = t.getSnapshot(c, v1)
+	k, v, err = s.mvccSeek(encodeInt(2), false)
+	c.Assert(err, IsNil)
+	c.Assert([]byte(k), BytesEquals, encodeInt(2))
+	c.Assert(v, BytesEquals, encodeInt(2))
+}
+
 func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
 	// update some new data
 	for i := 0; i < 10; i++ {
