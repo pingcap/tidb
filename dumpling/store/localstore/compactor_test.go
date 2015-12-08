@@ -90,3 +90,24 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 
 	compactor.Stop()
 }
+
+func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
+	store := createMemStore()
+	compactor := store.(*dbStore).compactor
+	txn, _ := store.Begin()
+	txn.Set([]byte("a"), []byte("1"))
+	txn.Commit()
+	txn, _ = store.Begin()
+	txn.Set([]byte("a"), []byte("2"))
+	txn.Commit()
+	txn, _ = store.Begin()
+	txn.Set([]byte("b"), []byte("1"))
+	txn.Commit()
+	txn, _ = store.Begin()
+	txn.Set([]byte("b"), []byte("2"))
+	txn.Commit()
+
+	keys, err := compactor.getAllVersions([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(keys, HasLen, 2)
+}
