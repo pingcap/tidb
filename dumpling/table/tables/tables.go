@@ -56,6 +56,7 @@ type Table struct {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
+	log.Warnf("TableFromMeta")
 	if tblInfo.State == model.StateNone {
 		log.Fatalf("table %s can't be in none state", tblInfo.Name)
 	}
@@ -482,12 +483,7 @@ func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+func (t *Table) RowCols(txn kv.Transaction, h int64, cols []*column.Col) ([]interface{}, error) {
 	// use the length of t.Cols() for alignment
 	v := make([]interface{}, len(t.Cols()))
 	for _, col := range cols {
@@ -513,8 +509,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 // Row implements table.Table Row interface.
 func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 	// TODO: we only interested in mentioned cols
-	cols := t.Cols()
-	r, err := t.RowWithCols(ctx, h, cols)
+	r, err := t.RowWithCols(ctx, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -635,17 +630,16 @@ func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column.Col, fn table.RecordIterFunc) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
+func (t *Table) Iter(txn kv.Transaction, it kv.Iterator, startKey string, cols []*column.Col,
+	fn table.RecordIterFunc) error {
+	var err error
+	if it == nil {
+		it, err = txn.Seek([]byte(startKey))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer it.Close()
 	}
-
-	it, err := txn.Seek([]byte(startKey))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
 
 	if !it.Valid() {
 		return nil
@@ -658,13 +652,12 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
-		var err error
 		handle, err := util.DecodeHandleFromRowKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		data, err := t.RowWithCols(ctx, handle, cols)
+		data, err := t.RowCols(txn, handle, cols)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -675,7 +668,9 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 
 		rk := t.RecordKey(handle, nil)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
-		if err != nil {
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			break
+		} else if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -719,4 +714,83 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}
 
 func init() {
 	table.TableFromMeta = TableFromMeta
+}
+
+// RowWithCols implements table.Table RowWithCols interface.
+func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// use the length of t.Cols() for alignment
+	v := make([]interface{}, len(t.Cols()))
+	for _, col := range cols {
+		if col.State != model.StatePublic {
+			return nil, errors.Errorf("Cannot use none public column - %v", cols)
+		}
+
+		k := t.RecordKey(h, col)
+		data, err := txn.Get([]byte(k))
+		if err != nil {
+
+			return nil, errors.Trace(err)
+		}
+
+		val, err := t.DecodeValue(data, col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		v[col.Offset] = val
+	}
+	return v, nil
+}
+
+// IterRecords implements table.Table IterRecords interface.
+func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column.Col,
+	fn table.RecordIterFunc) error {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	it, err := txn.Seek([]byte(startKey))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	if !it.Valid() {
+		return nil
+	}
+
+	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
+
+	prefix := t.KeyPrefix()
+	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+		// first kv pair is row lock information.
+		// TODO: check valid lock
+		// get row handle
+		var err error
+		handle, err := util.DecodeHandleFromRowKey(it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		data, err := t.RowCols(txn, handle, cols)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		more, err := fn(handle, data, cols)
+		if !more || err != nil {
+			return errors.Trace(err)
+		}
+
+		rk := t.RecordKey(handle, nil)
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
