@@ -16,12 +16,10 @@ package kv
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
@@ -103,24 +101,30 @@ type kvIndex struct {
 }
 
 // GenIndexPrefix generates the index prefix.
-func GenIndexPrefix(indexPrefix string, indexID int64) string {
-	// Use EncodeBytes to guarantee generating different index prefix.
-	// e.g, two indices c1 and c with index prefix p, if no EncodeBytes,
-	// the index format looks p_c and p_c1, if c has an index value which the first encoded byte is '1',
-	// we will meet an error, because p_c1 is for index c1.
-	// If EncodeBytes, c1 -> c1\x00\x01 and c -> c\x00\x01, the prefixs are different.
-	key := fmt.Sprintf("%s_%d", indexPrefix, indexID)
-	return string(codec.EncodeBytes(nil, []byte(key)))
+func GenIndexPrefix(indexPrefix string, indexID int64) (string, error) {
+	key, err := EncodeValue(indexID)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	return string(indexPrefix + string(key)), nil
 }
 
 // NewKVIndex builds a new kvIndex object.
-func NewKVIndex(indexPrefix, indexName string, indexID int64, unique bool) Index {
-	return &kvIndex{
+func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool) (Index, error) {
+	index := &kvIndex{
 		indexName: indexName,
 		indexID:   indexID,
 		unique:    unique,
-		prefix:    GenIndexPrefix(indexPrefix, indexID),
 	}
+
+	var err error
+	index.prefix, err = GenIndexPrefix(indexPrefix, indexID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return index, nil
 }
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the

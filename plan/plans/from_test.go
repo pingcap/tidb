@@ -176,8 +176,11 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 			Primary: false,
 			State:   model.StatePublic,
 		},
-		X: kv.NewKVIndex("i", "id", 0, false),
 	}
+
+	idxCol.X, err = kv.NewKVIndex("i", "id", 0, false)
+	c.Assert(err, IsNil)
+
 	p.tbl.AddIndex(idxCol)
 
 	expr4 := &expression.Ident{

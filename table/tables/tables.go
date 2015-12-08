@@ -48,6 +48,7 @@ type Table struct {
 	publicColumns   []*column.Col
 	writableColumns []*column.Col
 	indices         []*column.IndexedCol
+	prefix          []byte
 	recordPrefix    string
 	encRecordPrefix []byte
 	indexPrefix     string
@@ -74,6 +75,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 
 	t := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 
+	var err error
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
 			log.Fatalf("index %s can't be in none state", idxInfo.Name)
@@ -81,8 +83,13 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 
 		idx := &column.IndexedCol{
 			IndexInfo: *idxInfo,
-			X:         kv.NewKVIndex(t.indexPrefix, idxInfo.Name.L, idxInfo.ID, idxInfo.Unique),
 		}
+
+		idx.X, err = kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
+		if err != nil {
+			log.Fatalf("create new index failed - %s - %v", idxInfo.Name.L, errors.ErrorStack(err))
+		}
+
 		t.AddIndex(idx)
 	}
 
@@ -96,15 +103,18 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	t := &Table{
 		ID:           tableID,
 		Name:         name,
-		recordPrefix: fmt.Sprintf("t%d_r", tableID),
-		indexPrefix:  fmt.Sprintf("t%d_i", tableID),
+		prefix:       []byte{'t'},
+		recordPrefix: fmt.Sprintf("%d_r", tableID),
+		indexPrefix:  fmt.Sprintf("%d_i", tableID),
 		alloc:        alloc,
 		Columns:      cols,
 		state:        model.StatePublic,
 	}
 
 	t.encRecordPrefix, _ = kv.EncodeValue(t.recordPrefix)
+	t.encRecordPrefix = append(t.prefix, []byte(t.encRecordPrefix)...)
 	t.encIndexPrefix, _ = kv.EncodeValue(t.indexPrefix)
+	t.encIndexPrefix = append(t.prefix, []byte(t.encIndexPrefix)...)
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.writableCols()
@@ -240,6 +250,11 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 	}
 }
 
+// Prefix implements table.Table Prefix interface.
+func (t *Table) Prefix() string {
+	return string(t.prefix)
+}
+
 // KeyPrefix implements table.Table KeyPrefix interface.
 func (t *Table) KeyPrefix() string {
 	return string(t.encRecordPrefix)
@@ -252,10 +267,14 @@ func (t *Table) IndexPrefix() string {
 
 // RecordKey implements table.Table RecordKey interface.
 func (t *Table) RecordKey(h int64, col *column.Col) []byte {
+	var key []byte
 	if col != nil {
-		return util.EncodeRecordKey(t.recordPrefix, h, col.ID)
+		key = util.EncodeRecordKey(t.recordPrefix, h, col.ID)
+	} else {
+		key = util.EncodeRecordKey(t.recordPrefix, h, 0)
 	}
-	return util.EncodeRecordKey(t.recordPrefix, h, 0)
+
+	return append(t.prefix, key...)
 }
 
 // FirstKey implements table.Table FirstKey interface.
@@ -452,8 +471,6 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 	// Set public and write only column value.
 	for _, col := range t.writableCols() {
 		var value interface{}
-		key := t.RecordKey(recordID, col)
-
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
 			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
@@ -468,6 +485,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 			value = r[col.Offset]
 		}
 
+		key := t.RecordKey(recordID, col)
 		err = t.SetColValue(txn, key, value)
 		if err != nil {
 			return 0, errors.Trace(err)

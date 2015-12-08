@@ -389,7 +389,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 
 		var handle int64
-		handle, err = util.DecodeHandleFromRowKey(string(key))
+		handle, err = util.DecodeHandleFromRowKey(t.Prefix(), key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -422,7 +422,10 @@ func lockRow(txn kv.Transaction, t table.Table, h int64) error {
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
+	kvX, err := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for _, handle := range handles {
 		log.Debug("building index...", handle)
@@ -479,7 +482,11 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
+	prefix, err := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	prefixBytes := []byte(prefix)
 
 	for {
