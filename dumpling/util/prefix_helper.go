@@ -115,8 +115,14 @@ func EncodeRecordKey(tablePrefix string, h int64, columnID int64) []byte {
 }
 
 // DecodeHandleFromRowKey decodes the string form a row key and returns an int64.
-func DecodeHandleFromRowKey(rk string) (int64, error) {
-	vals, err := kv.DecodeValue([]byte(rk))
+func DecodeHandleFromRowKey(prefix []byte, rk string) (int64, error) {
+	key := []byte(rk)
+	if !bytes.HasPrefix(key, prefix) {
+		return 0, errors.New("invalid key - %v - %s", prefix, rk)
+	}
+
+	key = key[len(prefix):]
+	vals, err := kv.DecodeValue(key)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

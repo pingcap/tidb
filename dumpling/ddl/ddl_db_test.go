@@ -192,7 +192,8 @@ LOOP:
 	// Make sure there is index with name c3_index
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.ID, Greater, int64(0))
-	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
+	idx, err := kv.NewKVIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
+	c.Assert(err, IsNil)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.FinishTxn(true)
@@ -280,7 +281,8 @@ LOOP:
 	}
 	// Make sure there is no index with name c3_index
 	c.Assert(nidx, IsNil)
-	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
+	idx, err := kv.NewKVIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
+	c.Assert(err, IsNil)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.FinishTxn(true)

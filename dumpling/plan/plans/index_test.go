@@ -91,8 +91,11 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 			Primary: false,
 			State:   model.StatePublic,
 		},
-		X: kv.NewKVIndex("i", "id", 0, false),
 	}
+
+	idxCol.X, err = kv.NewKVIndex("i", "id", 0, false)
+	c.Assert(err, IsNil)
+
 	p.tbl.AddIndex(idxCol)
 	var i int64
 	for i = 0; i < 10; i++ {
