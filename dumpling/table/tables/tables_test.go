@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -193,4 +194,25 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+}
+
+func (ts *testSuite) TestRowKeyCodec(c *C) {
+	table := []struct {
+		prefix string
+		h      int64
+		ID     int64
+	}{
+		{"123abc##!@#((_)((**&&^^%$", 1234567890, 0},
+		{"", 1, 0},
+		{"", -1, 0},
+		{"", -1, 1},
+	}
+
+	for _, t := range table {
+		b := tables.EncodeRecordKey(t.prefix, t.h, t.ID)
+		key := append(tables.TablePrefix, b...)
+		handle, err := tables.DecodeRecordKeyHandle(string(key))
+		c.Assert(err, IsNil)
+		c.Assert(handle, Equals, t.h)
+	}
 }

@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -38,6 +39,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
+
+// TablePrefix is the prefix for table record and index key.
+var TablePrefix = []byte{'t'}
 
 // Table implements table.Table interface.
 type Table struct {
@@ -103,7 +107,7 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	t := &Table{
 		ID:           tableID,
 		Name:         name,
-		prefix:       []byte{'t'},
+		prefix:       TablePrefix,
 		recordPrefix: fmt.Sprintf("%d_r", tableID),
 		indexPrefix:  fmt.Sprintf("%d_i", tableID),
 		alloc:        alloc,
@@ -262,16 +266,16 @@ func (t *Table) KeyPrefix() string {
 
 // IndexPrefix implements table.Table IndexPrefix interface.
 func (t *Table) IndexPrefix() string {
-	return string(t.encRecordPrefix)
+	return string(t.encIndexPrefix)
 }
 
 // RecordKey implements table.Table RecordKey interface.
 func (t *Table) RecordKey(h int64, col *column.Col) []byte {
 	var key []byte
 	if col != nil {
-		key = util.EncodeRecordKey(t.recordPrefix, h, col.ID)
+		key = EncodeRecordKey(t.recordPrefix, h, col.ID)
 	} else {
-		key = util.EncodeRecordKey(t.recordPrefix, h, 0)
+		key = EncodeRecordKey(t.recordPrefix, h, 0)
 	}
 
 	return append(t.prefix, key...)
@@ -688,7 +692,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		// TODO: check valid lock
 		// get row handle
 		var err error
-		handle, err := util.DecodeHandleFromRowKey(it.Key())
+		handle, err := DecodeRecordKeyHandle(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -744,6 +748,49 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}
 	}
 
 	return col.DefaultValue, true, nil
+}
+
+// EncodeRecordKey encodes the string value to a byte slice.
+func EncodeRecordKey(tablePrefix string, h int64, columnID int64) []byte {
+	var (
+		buf []byte
+		err error
+	)
+
+	if columnID == 0 { // Ignore columnID.
+		buf, err = kv.EncodeValue(tablePrefix, h)
+	} else {
+		buf, err = kv.EncodeValue(tablePrefix, h, columnID)
+	}
+	if err != nil {
+		log.Fatal("should never happend")
+	}
+	return buf
+}
+
+// DecodeRecordKey decodes the key and get the values.
+func DecodeRecordKey(key []byte) ([]interface{}, error) {
+	if !bytes.HasPrefix(key, TablePrefix) {
+		return nil, errors.Errorf("invalid record key - %v", key)
+	}
+
+	key = key[len(TablePrefix):]
+	vals, err := kv.DecodeValue(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return vals, nil
+}
+
+// DecodeRecordKeyHandle decodes the key and get the record handle.
+func DecodeRecordKeyHandle(key string) (int64, error) {
+	vals, err := DecodeRecordKey([]byte(key))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return vals[1].(int64), nil
 }
 
 func init() {
