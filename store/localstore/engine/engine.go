@@ -30,7 +30,7 @@ type DB interface {
 	// Get gets the associated value with key, returns (nil, ErrNotFound) if no value found.
 	Get(key []byte) ([]byte, error)
 	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
-	// if no such key is found.
+	// if such key is not found.
 	Seek(key []byte) ([]byte, []byte, error)
 	// NewBatch creates a Batch for writing.
 	NewBatch() Batch
