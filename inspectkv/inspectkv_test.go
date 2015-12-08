@@ -1,0 +1,183 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package inspectkv
+
+import (
+	"fmt"
+	"testing"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/localstore"
+	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/types"
+)
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testInspectSuite{})
+
+type testInspectSuite struct {
+}
+
+func (s *testInspectSuite) TestInspect(c *C) {
+	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	store, err := driver.Open("memory:test_inspect")
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+
+	t := meta.NewMeta(txn)
+
+	fmt.Println("----------------------------------------")
+	dbInfo := &model.DBInfo{
+		ID:   1,
+		Name: model.NewCIStr("a"),
+	}
+	err = t.CreateDatabase(dbInfo)
+	c.Assert(err, IsNil)
+
+	owner := &model.Owner{OwnerID: "owner"}
+	err = t.SetDDLOwner(owner)
+	c.Assert(err, IsNil)
+	dbInfo2 := &model.DBInfo{
+		ID:    2,
+		Name:  model.NewCIStr("b"),
+		State: model.StateNone,
+	}
+	job := &model.Job{
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionCreateSchema,
+	}
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+
+	dbs, err := ListDatabases(txn)
+	c.Assert(err, IsNil)
+	fmt.Printf("1:%v, 2:%v \n", dbInfo, dbs[0])
+	c.Assert(dbs, DeepEquals, []*model.DBInfo{dbInfo})
+	fmt.Println("----------------------------------------")
+
+	col := &model.ColumnInfo{
+		Name:         model.NewCIStr("c"),
+		ID:           0,
+		Offset:       0,
+		DefaultValue: 1,
+		State:        model.StatePublic,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+	}
+	tbInfo := &model.TableInfo{
+		ID:      1,
+		Name:    model.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: []*model.ColumnInfo{col},
+	}
+	err = t.CreateTable(dbInfo.ID, tbInfo)
+	c.Assert(err, IsNil)
+	tbs, err := ListTables(txn, dbInfo.ID)
+	c.Assert(err, IsNil)
+	fmt.Printf("1:%v, 2:%v \n", *tbInfo, *tbs[0])
+	//c.Assert(tbs, DeepEquals, []*model.TableInfo{tbInfo})
+
+	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
+	info, err := GetDDLInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(info.Owner, DeepEquals, owner)
+	c.Assert(info.Job, DeepEquals, job)
+	c.Assert(info.ReorgHandle, Equals, int64(0))
+	txn.Commit()
+
+	ctx := newmockContext(store)
+	c.Assert(err, IsNil)
+	alloc := autoid.NewAllocator(store, dbInfo.ID)
+	tb := tables.TableFromMeta(alloc, tbInfo)
+	_, err = tb.AddRecord(ctx, []interface{}{10}, 0)
+	c.Assert(err, IsNil)
+	ctx.FinishTxn(false)
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	c.Assert(err, IsNil)
+	data, err := GetTableSnapshot(store, ver, tb, txn)
+	c.Assert(err, IsNil)
+	for _, d := range data[0].([]interface{}) {
+		c.Assert(d.(int64), Equals, int64(10))
+	}
+}
+
+// mockContext represents mocked context.Context.
+type mockContext struct {
+	values map[fmt.Stringer]interface{}
+	txn    kv.Transaction
+	store  kv.Storage
+}
+
+func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
+	c.values[key] = value
+}
+
+func (c *mockContext) Value(key fmt.Stringer) interface{} {
+	value := c.values[key]
+	return value
+}
+
+func (c *mockContext) ClearValue(key fmt.Stringer) {
+	delete(c.values, key)
+}
+
+func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
+	if c.txn != nil {
+		return c.txn, nil
+	}
+
+	var err error
+	c.txn, err = c.store.Begin()
+	return c.txn, err
+}
+
+func (c *mockContext) FinishTxn(rollback bool) error {
+	if c.txn == nil {
+		return nil
+	}
+
+	return c.txn.Commit()
+}
+
+func newmockContext(store kv.Storage) *mockContext {
+	ctx := &mockContext{
+		values: make(map[fmt.Stringer]interface{}),
+		txn:    nil,
+		store:  store,
+	}
+
+	v := &variable.SessionVars{
+		Users:         make(map[string]string),
+		Systems:       make(map[string]string),
+		PreparedStmts: make(map[string]interface{}),
+	}
+	ctx.SetValue(variable.SessionVarsKey, v)
+
+	return ctx
+}
