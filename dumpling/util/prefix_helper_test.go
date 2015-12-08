@@ -138,26 +138,6 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testPrefixSuite) TestCode(c *C) {
-	table := []struct {
-		prefix string
-		h      int64
-		ID     int64
-	}{
-		{"123abc##!@#((_)((**&&^^%$", 1234567890, 0},
-		{"", 1, 0},
-		{"", -1, 0},
-		{"", -1, 1},
-	}
-
-	for _, t := range table {
-		b := EncodeRecordKey(t.prefix, t.h, t.ID)
-		handle, err := DecodeHandleFromRowKey(string(b))
-		c.Assert(err, IsNil)
-		c.Assert(handle, Equals, t.h)
-	}
-}
-
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
 	rowKey := []byte("test@#$%l(le[0]..prefix) 2uio")
 	rowKey[8] = 0x00
