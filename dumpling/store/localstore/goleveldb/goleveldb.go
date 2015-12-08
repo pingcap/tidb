@@ -44,7 +44,7 @@ type db struct {
 func (d *db) Get(key []byte) ([]byte, error) {
 	v, err := d.DB.Get(key, nil)
 	if err == leveldb.ErrNotFound {
-		return nil, errors.Wrap(err, engine.ErrNotFound)
+		return nil, errors.Trace(engine.ErrNotFound)
 	}
 	return v, err
 }
