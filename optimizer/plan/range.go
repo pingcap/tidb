@@ -370,7 +370,7 @@ func (r *rangeBuilder) merge(a, b []rangePoint, union bool) []rangePoint {
 // Only the first column in the index is built, extra column ranges will be appended by
 // appendIndexRanges.
 func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint) []*IndexRange {
-	var indexRanges []*IndexRange
+	indexRanges := make([]*IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		endPoint := rangePoints[i+1]
@@ -403,7 +403,7 @@ func (r *rangeBuilder) appendIndexRanges(origin []*IndexRange, rangePoints []ran
 }
 
 func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangePoint) []*IndexRange {
-	var newRanges []*IndexRange
+	newRanges := make([]*IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		lowVal := make([]interface{}, len(origin.LowVal)+1)
