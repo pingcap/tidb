@@ -304,12 +304,12 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}
 	defer bs.Release()
 
 	// set new value
-	if err := t.setNewData(bs, h, touched, currentData); err != nil {
+	if err = t.setNewData(bs, h, touched, currentData); err != nil {
 		return errors.Trace(err)
 	}
 
 	// rebuild index
-	if err := t.rebuildIndices(bs, h, touched, oldData, currentData); err != nil {
+	if err = t.rebuildIndices(bs, h, touched, oldData, currentData); err != nil {
 		return errors.Trace(err)
 	}
 
