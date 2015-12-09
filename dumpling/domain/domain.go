@@ -86,8 +86,8 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	}
 
 	log.Infof("loadInfoSchema %d", schemaMetaVersion)
-	do.infoHandle.Set(schemas, schemaMetaVersion)
-	return
+	err = do.infoHandle.Set(schemas, schemaMetaVersion)
+	return errors.Trace(err)
 }
 
 // InfoSchema gets information schema from domain.
