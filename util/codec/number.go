@@ -19,7 +19,7 @@ import (
 	"github.com/juju/errors"
 )
 
-func encodeIntToUint(v int64) uint64 {
+func encodeIntToCmpUint(v int64) uint64 {
 	u := uint64(v)
 	if u&0x8000000000000000 > 0 {
 		u &= ^uint64(0x8000000000000000)
@@ -30,7 +30,7 @@ func encodeIntToUint(v int64) uint64 {
 	return u
 }
 
-func decodeUintToInt(u uint64) int64 {
+func decodeCmpUintToInt(u uint64) int64 {
 	if u&0x8000000000000000 > 0 {
 		u &= ^uint64(0x8000000000000000)
 	} else {
@@ -44,7 +44,7 @@ func decodeUintToInt(u uint64) int64 {
 // EncodeInt guarantees that the encoded value is in ascending order for comparison.
 func EncodeInt(b []byte, v int64) []byte {
 	var data [8]byte
-	u := encodeIntToUint(v)
+	u := encodeIntToCmpUint(v)
 	binary.BigEndian.PutUint64(data[:], u)
 	return append(b, data[:]...)
 }
@@ -53,7 +53,7 @@ func EncodeInt(b []byte, v int64) []byte {
 // EncodeIntDesc guarantees that the encoded value is in descending order for comparison.
 func EncodeIntDesc(b []byte, v int64) []byte {
 	var data [8]byte
-	u := encodeIntToUint(v)
+	u := encodeIntToCmpUint(v)
 	binary.BigEndian.PutUint64(data[:], ^u)
 	return append(b, data[:]...)
 }
@@ -66,7 +66,7 @@ func DecodeInt(b []byte) ([]byte, int64, error) {
 	}
 
 	u := binary.BigEndian.Uint64(b[:8])
-	v := decodeUintToInt(u)
+	v := decodeCmpUintToInt(u)
 	b = b[8:]
 	return b, v, nil
 }
@@ -79,7 +79,7 @@ func DecodeIntDesc(b []byte) ([]byte, int64, error) {
 	}
 
 	u := binary.BigEndian.Uint64(b[:8])
-	v := decodeUintToInt(^u)
+	v := decodeCmpUintToInt(^u)
 	b = b[8:]
 	return b, v, nil
 }
