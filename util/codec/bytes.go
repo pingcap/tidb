@@ -22,10 +22,9 @@ import (
 )
 
 const (
-	encGroupSize     = 8
-	avgEncGroupCount = 20
-	encMarker        = byte(0xFF)
-	encPad           = byte(0x0)
+	encGroupSize = 8
+	encMarker    = byte(0xFF)
+	encPad       = byte(0x0)
 )
 
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
