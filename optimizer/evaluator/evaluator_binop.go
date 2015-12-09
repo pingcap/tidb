@@ -35,7 +35,6 @@ func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 		return e.handleComparisonOp(o)
 	case opcode.RightShift, opcode.LeftShift, opcode.And, opcode.Or, opcode.Xor:
-		// TODO: MySQL doesn't support and not, we should remove it later.
 		return e.handleBitOp(o)
 	case opcode.Plus, opcode.Minus, opcode.Mod, opcode.Div, opcode.Mul, opcode.IntDiv:
 		return e.handleArithmeticOp(o)
@@ -260,12 +259,10 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	a, b = types.Coerce(a, b)
 
 	if a == nil || b == nil {
-		// TODO: for <=>, if a and b are both nil, return true
 		o.SetValue(nil)
 		return true
 	}
 
-	// TODO: support logic division DIV
 	var result interface{}
 	switch o.Op {
 	case opcode.Plus:
@@ -400,7 +397,6 @@ func computeDiv(a, b interface{}) (interface{}, error) {
 		// the scale of the result is the scale of the first operand plus
 		// the value of the div_precision_increment system variable (which is 4 by default)
 		// we will use 4 here
-
 		xa, err := types.ToDecimal(a)
 		if err != nil {
 			return nil, err
