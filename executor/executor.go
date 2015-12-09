@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
@@ -112,7 +113,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 	// r2_col2 -> r2 col2 value
 	// ...
 	rowKey := e.iter.Key()
-	handle, err := util.DecodeHandleFromRowKey(rowKey)
+	handle, err := tables.DecodeRecordKeyHandle(rowKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
