@@ -22,6 +22,7 @@ import (
 	"time"
 	// For pprof
 	_ "net/http/pprof"
+	"os"
 	"strings"
 	"sync"
 
@@ -87,8 +88,8 @@ var (
 		domains: map[string]*domain.Domain{},
 	}
 	stores = make(map[string]kv.Driver)
-	// Debug is the switch for pprof. If Debug is true, tidb will start with pprof on.
-	Debug = true
+	// EnablePprof indicates whether to enable HTTP Pprof or not.
+	EnablePprof = os.Getenv("TIDB_PPROF") != "0"
 	// PprofAddr is the pprof url.
 	PprofAddr = "localhost:8888"
 	// store.UUID()-> IfBootstrapped
@@ -359,7 +360,7 @@ func init() {
 	RegisterStore("hbase", hbasekv.Driver{})
 
 	// start pprof handlers
-	if Debug {
+	if EnablePprof {
 		go http.ListenAndServe(PprofAddr, nil)
 	}
 }
