@@ -191,7 +191,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		lexer := parser.NewLexer(sql)
 
 		rc := parser.YYParse(lexer)
-		c.Assert(rc, Equals, 0, Commentf("error %v, for expr %", lexer.Errors(), ca.exprStr))
+		c.Assert(rc, Equals, 0, Commentf("error %v, for expr %s", lexer.Errors(), ca.exprStr))
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
 		result := rb.build(stmt.Where)
 		c.Assert(rb.err, IsNil)
