@@ -13,7 +13,7 @@
 
 package engine
 
-import "errors"
+import "github.com/juju/errors"
 
 // ErrNotFound indicates no key is found when trying Get or Seek an entry from DB.
 var ErrNotFound = errors.New("local engine: key not found")
