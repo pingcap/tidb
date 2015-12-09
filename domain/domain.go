@@ -70,9 +70,9 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 			continue
 		}
 
-		tables, err := m.ListTables(di.ID)
-		if err != nil {
-			return errors.Trace(err)
+		tables, err1 := m.ListTables(di.ID)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
