@@ -115,9 +115,8 @@ func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool
 		indexName: indexName,
 		indexID:   indexID,
 		unique:    unique,
+		prefix:    GenIndexPrefix(indexPrefix, indexID),
 	}
-
-	index.prefix = GenIndexPrefix(indexPrefix, indexID)
 
 	return index, nil
 }
