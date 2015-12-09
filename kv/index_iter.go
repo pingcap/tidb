@@ -61,7 +61,7 @@ func (c *indexIter) Close() {
 }
 
 // Next returns current key and moves iterator to the next step.
-func (c *indexIter) Next() (k []interface{}, h int64, err error) {
+func (c *indexIter) Next() (val []interface{}, h int64, err error) {
 	if !c.it.Valid() {
 		return nil, 0, errors.Trace(io.EOF)
 	}
@@ -77,14 +77,14 @@ func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 	// if index is *not* unique, the handle is in keybuf
 	if !c.idx.unique {
 		h = vv[len(vv)-1].(int64)
-		k = vv[0 : len(vv)-1]
+		val = vv[0 : len(vv)-1]
 	} else {
 		// otherwise handle is value
 		h, err = decodeHandle(c.it.Value())
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
-		k = vv
+		val = vv
 	}
 	// update new iter to next
 	err = c.it.Next()
