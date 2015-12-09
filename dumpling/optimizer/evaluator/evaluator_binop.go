@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -41,7 +40,7 @@ func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.Plus, opcode.Minus, opcode.Mod, opcode.Div, opcode.Mul, opcode.IntDiv:
 		return e.handleArithmeticOp(o)
 	default:
-		e.err = errors.New("invalid operation")
+		e.err = ErrInvalidOperation
 		return false
 	}
 }
@@ -55,7 +54,7 @@ func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
 	case opcode.LogicXor:
 		return e.handleXor(o)
 	default:
-		log.Fatalf("unkown operator %v", o.Op)
+		e.err = ErrInvalidOperation.Gen("unkown operator %s", o.Op)
 		return false
 	}
 }
@@ -203,7 +202,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 	case opcode.NullEQ:
 		return value == 0, nil
 	default:
-		return false, errors.Errorf("invalid op %v in comparision operation", op)
+		return false, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
 	}
 }
 
@@ -240,7 +239,7 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 	case opcode.LeftShift:
 		o.SetValue(uint64(x) << uint64(y))
 	default:
-		e.err = errors.Errorf("invalid op %v in bit operation", o.Op)
+		e.err = ErrInvalidOperation.Gen("invalid op %v in bit operation", o.Op)
 		return false
 	}
 	return true
@@ -282,7 +281,7 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	case opcode.IntDiv:
 		result, e.err = computeIntDiv(a, b)
 	default:
-		e.err = errors.Errorf("invalid op %v in arithmetic operation", o.Op)
+		e.err = ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", o.Op)
 		return false
 	}
 	o.SetValue(result)

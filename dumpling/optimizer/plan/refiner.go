@@ -19,9 +19,10 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-func refine(p Plan) {
+func refine(p Plan) error {
 	r := refiner{}
 	p.Accept(&r)
+	return r.err
 }
 
 // refiner tries to build index range, bypass sort, set limit for source plan.
@@ -30,6 +31,7 @@ type refiner struct {
 	conditions []ast.ExprNode
 	// store index scan plan for sort to use.
 	indexScan *IndexScan
+	err       error
 }
 
 func (r *refiner) Enter(in Plan) (Plan, bool) {
@@ -51,7 +53,7 @@ func (r *refiner) Leave(in Plan) (Plan, bool) {
 	case *Limit:
 		x.SetLimit(0)
 	}
-	return in, true
+	return in, r.err == nil
 }
 
 func (r *refiner) sortBypass(p *Sort) {
@@ -116,6 +118,8 @@ func (r *refiner) buildIndexRange(p *IndexScan) {
 			p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 		}
 	}
+	r.err = rb.err
+	return
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.

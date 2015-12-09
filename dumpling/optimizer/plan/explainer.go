@@ -16,19 +16,18 @@ package plan
 import (
 	"fmt"
 	"strings"
-
-	"github.com/ngaut/log"
 )
 
 // Explain explains a Plan, returns description string.
-func Explain(p Plan) string {
+func Explain(p Plan) (string, error) {
 	var e explainer
 	p.Accept(&e)
-	return strings.Join(e.strs, "->")
+	return strings.Join(e.strs, "->"), e.err
 }
 
 type explainer struct {
 	strs []string
+	err  error
 }
 
 func (e *explainer) Enter(in Plan) (Plan, bool) {
@@ -56,7 +55,8 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 	case *Limit:
 		str = "Limit"
 	default:
-		log.Fatalf("Unknown plan type %T", in)
+		e.err = ErrUnsupportedType.Gen("Unknown plan type %T", in)
+		return in, false
 	}
 	e.strs = append(e.strs, str)
 	return in, true

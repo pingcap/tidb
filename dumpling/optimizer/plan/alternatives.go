@@ -13,27 +13,32 @@
 
 package plan
 
-import (
-	"github.com/ngaut/log"
-)
+import "github.com/juju/errors"
 
 // Alternatives returns multiple alternative plans that
 // can be picked base on their cost.
-func Alternatives(p Plan) []Plan {
+func Alternatives(p Plan) ([]Plan, error) {
 	var plans []Plan
 	switch x := p.(type) {
 	case nil:
 	case *TableScan:
 		plans = tableScanAlternatives(x)
 	case WithSrcPlan:
-		plans = planWithSrcAlternatives(x)
+		var err error
+		plans, err = planWithSrcAlternatives(x)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	default:
-		log.Fatalf("unknown plan %T", p)
+		return nil, ErrUnsupportedType.Gen("Unknown plan %T", p)
 	}
 	for _, val := range plans {
-		refine(val)
+		err := refine(val)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	return plans
+	return plans, nil
 }
 
 // tableScanAlternatives returns all index plans from the same table.
@@ -57,14 +62,17 @@ func tableScanAlternatives(p *TableScan) []Plan {
 
 // planWithSrcAlternatives shallow copies the WithSrcPlan,
 // and set its src to src alternatives.
-func planWithSrcAlternatives(p WithSrcPlan) []Plan {
-	srcs := Alternatives(p.Src())
+func planWithSrcAlternatives(p WithSrcPlan) ([]Plan, error) {
+	srcs, err := Alternatives(p.Src())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for i, val := range srcs {
 		alt := shallowCopy(p)
 		alt.SetSrc(val)
 		srcs[i] = alt
 	}
-	return srcs
+	return srcs, nil
 }
 
 func shallowCopy(p WithSrcPlan) WithSrcPlan {

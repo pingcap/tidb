@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -29,6 +28,7 @@ import (
 type executorBuilder struct {
 	ctx context.Context
 	is  infoschema.InfoSchema
+	err error
 }
 
 func newExecutorBuilder(ctx context.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -56,9 +56,10 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSort(v)
 	case *plan.Limit:
 		return b.buildLimit(v)
+	default:
+		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
+		return nil
 	}
-	log.Fatalf("Unknown Plan %T", p)
-	return nil
 }
 
 func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {

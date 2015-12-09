@@ -14,22 +14,37 @@
 package plan
 
 import (
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/terror"
+)
+
+// Error instances.
+var (
+	ErrUnsupportedType = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+)
+
+// Error codes.
+const (
+	CodeUnsupportedType = iota + 1
 )
 
 // BuildPlan builds a plan from a node.
-func BuildPlan(node ast.Node) Plan {
+// returns ErrUnsupportedType if ast.Node type is not supported yet.
+func BuildPlan(node ast.Node) (Plan, error) {
 	var builder planBuilder
 	p := builder.build(node)
-	refine(p)
-	return p
+	if builder.err != nil {
+		return nil, builder.err
+	}
+	err := refine(p)
+	return p, err
 }
 
 // planBuilder builds Plan from an ast.Node.
 // It just build the ast node straightforwardly.
 type planBuilder struct {
+	err error
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -37,7 +52,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
 	}
-	log.Fatalf("Unsupported type %T", node)
+	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
 }
 
@@ -45,24 +60,48 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var p Plan
 	if sel.From != nil {
 		p = b.buildJoin(sel.From.TableRefs)
+		if b.err != nil {
+			return nil
+		}
 		if sel.Where != nil {
 			p = b.buildFilter(p, sel.Where)
+			if b.err != nil {
+				return nil
+			}
 		}
 		if sel.LockTp != ast.SelectLockNone {
 			p = b.buildSelectLock(p, sel.LockTp)
+			if b.err != nil {
+				return nil
+			}
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
+		if b.err != nil {
+			return nil
+		}
 	} else {
 		p = b.buildSelectFields(p, sel.GetResultFields())
+		if b.err != nil {
+			return nil
+		}
 		if sel.Where != nil {
 			p = b.buildFilter(p, sel.Where)
+			if b.err != nil {
+				return nil
+			}
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items)
+		if b.err != nil {
+			return nil
+		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
 	}
 	return p
 }
@@ -71,11 +110,13 @@ func (b *planBuilder) buildJoin(from *ast.Join) Plan {
 	// Only support single table for now.
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
-		log.Fatalf("Unsupported type %T", from.Left)
+		b.err = ErrUnsupportedType.Gen("Unsupported type %T", from.Left)
+		return nil
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		log.Fatalf("Unsupported type %T", ts.Source)
+		b.err = ErrUnsupportedType.Gen("Unsupported type %T", ts.Source)
+		return nil
 	}
 	p := &TableScan{
 		Table: tn.TableInfo,

@@ -25,6 +25,7 @@ const (
 	CodeRowColumns
 	CodeSameColumns
 	CodeMultiWildCard
+	CodeUnsupported
 )
 
 // Optimizer base errors.
@@ -33,6 +34,7 @@ var (
 	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
 	ErrSameColumns   = terror.ClassOptimizer.New(CodeRowColumns, "Operands should contain same columns")
 	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
 )
 
 // validate checkes whether the node is valid.
