@@ -117,14 +117,11 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	ctx.FinishTxn(false)
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
-	txn, err = store.Begin()
-	c.Assert(err, IsNil)
-	data, err := GetTableSnapshot(store, ver, tb, txn)
+	data, err := GetTableSnapshot(store, ver, tb)
 	c.Assert(err, IsNil)
 	for _, d := range data[0].([]interface{}) {
 		c.Assert(d.(int64), Equals, int64(10))
 	}
-	txn.Commit()
 
 	_, err = tb.AddRecord(ctx, []interface{}{20}, 0)
 	c.Assert(err, IsNil)
@@ -132,10 +129,13 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 
-	handles, data, err := GetTableData(tb, txn, nil)
+	handles, data, err := GetTableData(tb, txn)
 	c.Assert(err, IsNil)
 	c.Assert(handles, HasLen, 2)
 	c.Assert(data, HasLen, 2)
+	for _, d := range data[1].([]interface{}) {
+		c.Assert(d.(int64), Equals, int64(20))
+	}
 
 	handles, err = GetIndexHandles(tb, txn, indices[0])
 	c.Assert(err, IsNil)
@@ -144,6 +144,7 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	vals, err := GetIndexVals(tb, txn, indices[0].IndexInfo, handles[0])
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
+	c.Assert(vals[0], Equals, int64(10))
 }
 
 // mockContext represents mocked context.Context.
@@ -167,7 +168,6 @@ func (c *mockContext) ClearValue(key fmt.Stringer) {
 }
 
 func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
-	fmt.Println("ctx txn:", c.txn)
 	if c.txn != nil {
 		return c.txn, nil
 	}
@@ -178,7 +178,6 @@ func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 }
 
 func (c *mockContext) FinishTxn(rollback bool) error {
-	fmt.Println("ctx finish txn:", c.txn)
 	if c.txn == nil {
 		return nil
 	}

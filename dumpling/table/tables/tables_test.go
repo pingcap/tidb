@@ -86,7 +86,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
-	tb.IterRecords(txn, nil, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	tb.IterRecords(txn, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		return true, nil
 	})
 
