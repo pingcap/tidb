@@ -14,6 +14,8 @@
 package kv
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 )
 
@@ -36,5 +38,5 @@ func (s *testTxnSuite) TestBackOff(c *C) {
 }
 
 func mustBackOff(c *C, cnt, sleep int) {
-	c.Assert(BackOff(cnt), LessEqual, sleep*1000)
+	c.Assert(BackOff(cnt), LessEqual, sleep*int(time.Millisecond))
 }

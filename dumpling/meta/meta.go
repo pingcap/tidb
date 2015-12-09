@@ -129,7 +129,6 @@ func (m *Meta) GenAutoTableID(dbID int64, tableID int64, step int64) (int64, err
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		fmt.Println("err:", err)
 		return 0, errors.Trace(err)
 	}
 

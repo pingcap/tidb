@@ -14,11 +14,13 @@
 package domain
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/mock"
@@ -59,16 +61,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(m[ddlLastReloadSchemaTS], GreaterEqual, int64(0))
 
-	dom.SetLease(50 * time.Millisecond)
+	c.Assert(dom.GetScope("dummy_status"), Equals, variable.DefaultScopeFlag)
+
+	dom.SetLease(10 * time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
+	atomic.StoreInt64(&dom.lastLeaseTS, 0)
+	dom.tryReload()
+
 	store.Close()
 	time.Sleep(1 * time.Second)
-}
-
-func (*testSuite) TestGetReloadTimeout(c *C) {
-	timeout := getReloadTimeout(241 * time.Second)
-	c.Assert(timeout, Equals, maxReloadTimeout)
-	timeout = getReloadTimeout(76 * time.Second)
-	c.Assert(timeout, Equals, minReloadTimeout)
-	timeout = getReloadTimeout(120 * time.Second)
-	c.Assert(timeout, Equals, 30*time.Second)
 }

@@ -153,15 +153,15 @@ func (txn *dbTxn) doCommit() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.WalkWriteBuffer(func(iter kv.Iterator) error {
-		metaKey := codec.EncodeBytes(nil, []byte(iter.Key()))
+	err = txn.WalkBuffer(func(k kv.Key, v []byte) error {
+		metaKey := codec.EncodeBytes(nil, k)
 		// put dummy meta key, write current version
 		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
-		mvccKey := MvccEncodeVersionKey(kv.Key(iter.Key()), curVer)
-		if len(iter.Value()) == 0 { // Deleted marker
+		mvccKey := MvccEncodeVersionKey(k, curVer)
+		if len(v) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
 		} else {
-			b.Put(mvccKey, iter.Value())
+			b.Put(mvccKey, v)
 		}
 		return nil
 	})
@@ -194,7 +194,7 @@ func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
 }
 
 func (txn *dbTxn) close() error {
-	txn.UnionStore.Close()
+	txn.UnionStore.Release()
 	txn.snapshotVals = nil
 	txn.valid = false
 	return nil

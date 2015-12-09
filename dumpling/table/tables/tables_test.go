@@ -88,18 +88,24 @@ func (ts *testSuite) TestBasic(c *C) {
 		return true, nil
 	})
 
-	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
+	indexCnt := func() int {
+		cnt, err2 := countEntriesWithPrefix(ctx, tb.IndexPrefix())
+		c.Assert(err2, IsNil)
+		return cnt
+	}
 
 	// Make sure there is index data in the storage.
-	prefix := tb.IndexPrefix()
-	cnt, err := countEntriesWithPrefix(ctx, prefix)
+	c.Assert(indexCnt(), Greater, 0)
+	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
+	// Make sure index data is also removed after tb.RemoveRecord().
+	c.Assert(indexCnt(), Equals, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"}, 0)
 	c.Assert(err, IsNil)
-	c.Assert(cnt, Greater, 0)
-	c.Assert(tb.Truncate(ctx), IsNil)
+	c.Assert(indexCnt(), Greater, 0)
 	// Make sure index data is also removed after tb.Truncate().
-	cnt, err = countEntriesWithPrefix(ctx, prefix)
-	c.Assert(err, IsNil)
-	c.Assert(cnt, Equals, 0)
+	c.Assert(tb.Truncate(ctx), IsNil)
+	c.Assert(indexCnt(), Equals, 0)
+
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 }
