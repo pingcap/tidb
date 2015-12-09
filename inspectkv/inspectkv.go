@@ -64,14 +64,15 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 }
 
 // GetIndexData returns index handles and index values.
-func GetIndexData(table table.Table, txn kv.Transaction, idx *column.IndexedCol) ([]int64, []interface{}, error) {
+func GetIndexData(table table.Table, txn kv.Transaction, idx *column.IndexedCol) ([]int64, [][]interface{}, error) {
 	var handles []int64
-	var vals []interface{}
+	var vals [][]interface{}
 	kvIndex := kv.NewKVIndex(table.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	it, err := kvIndex.SeekFirst(txn)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	defer it.Close()
 
 	for {
 		val, h, err := it.Next()
@@ -89,9 +90,9 @@ func GetIndexData(table table.Table, txn kv.Transaction, idx *column.IndexedCol)
 }
 
 // GetTableData gets table row handles and column values.
-func GetTableData(table table.Table, retriever kv.Retriever) ([]int64, []interface{}, error) {
+func GetTableData(table table.Table, retriever kv.Retriever) ([]int64, [][]interface{}, error) {
 	var handles []int64
-	var data []interface{}
+	var data [][]interface{}
 
 	err := table.IterRecords(retriever, table.FirstKey(), table.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
@@ -107,7 +108,7 @@ func GetTableData(table table.Table, retriever kv.Retriever) ([]int64, []interfa
 }
 
 // GetTableSnapshot gets the ver version of the table data.
-func GetTableSnapshot(store kv.Storage, ver kv.Version, table table.Table) ([]interface{}, error) {
+func GetTableSnapshot(store kv.Storage, ver kv.Version, table table.Table) ([][]interface{}, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return nil, errors.Trace(err)
