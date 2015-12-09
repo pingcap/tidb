@@ -119,9 +119,7 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(err, IsNil)
 	data, err := GetTableSnapshot(store, ver, tb)
 	c.Assert(err, IsNil)
-	for _, d := range data[0].([]interface{}) {
-		c.Assert(d.(int64), Equals, int64(10))
-	}
+	c.Assert(data[0][0].(int64), Equals, int64(10))
 
 	_, err = tb.AddRecord(ctx, []interface{}{20}, 0)
 	c.Assert(err, IsNil)
@@ -129,26 +127,20 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 
-	handles, data, err := GetTableData(tb, txn)
+	handles, vals, err := GetTableData(tb, txn)
 	c.Assert(err, IsNil)
 	c.Assert(handles, HasLen, 2)
-	c.Assert(data, HasLen, 2)
-	for _, d := range data[1].([]interface{}) {
-		c.Assert(d.(int64), Equals, int64(20))
-	}
+	c.Assert(vals, HasLen, 2)
+	c.Assert(vals[1][0].(int64), Equals, int64(20))
 
-	handles, vals, err := GetIndexData(tb, txn, indices[0])
+	handles, vals, err = GetIndexData(tb, txn, indices[0])
 	c.Assert(err, IsNil)
 	c.Assert(handles, HasLen, 2)
 	c.Assert(handles[0], Equals, int64(1))
 	c.Assert(handles[1], Equals, int64(2))
 	c.Assert(vals, HasLen, 2)
-	for _, d := range data[0].([]interface{}) {
-		c.Assert(d.(int64), Equals, int64(10))
-	}
-	for _, d := range data[1].([]interface{}) {
-		c.Assert(d.(int64), Equals, int64(20))
-	}
+	c.Assert(vals[0][0].(int64), Equals, int64(10))
+	c.Assert(vals[1][0].(int64), Equals, int64(20))
 }
 
 // mockContext represents mocked context.Context.
