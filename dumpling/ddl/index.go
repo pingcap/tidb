@@ -483,10 +483,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	prefix, err := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
 
 	prefixBytes := []byte(prefix)
 
