@@ -28,12 +28,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/converter"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
@@ -126,20 +128,28 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 	return charset, collation
 }
 
-// Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
-	log.Debug("compiling", src)
+// Parse parses a query string to raw ast.StmtNode.
+func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 	l := parser.NewLexer(src)
 	l.SetCharsetInfo(getCtxCharsetInfo(ctx))
 	if parser.YYParse(l) != 0 {
 		log.Warnf("compiling %s, error: %v", src, l.Errors()[0])
 		return nil, errors.Trace(l.Errors()[0])
 	}
-	rawStmt := l.Stmts()
+	return l.Stmts(), nil
+}
+
+// Compile is safe for concurrent use by multiple goroutines.
+func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
+	log.Debug("compiling", src)
+	rawStmt, err := Parse(ctx, src)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	stmts := make([]stmt.Statement, len(rawStmt))
 	for i, v := range rawStmt {
-		compiler := &optimizer.Compiler{}
-		stm, err := compiler.Compile(v)
+		compiler := &executor.Compiler{}
+		stm, err := compiler.Compile(ctx, v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -165,12 +175,12 @@ func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*express
 		return nil, nil, nil
 	}
 	sm := sms[0]
-	compiler := &optimizer.Compiler{}
-	statement, err := compiler.Compile(sm)
+	conv := &converter.Converter{}
+	s, err := conv.Convert(sm)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	return statement, compiler.ParamMarkers(), nil
+	return s, conv.ParamMarkers(), nil
 }
 
 func prepareStmt(ctx context.Context, sqlText string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {
