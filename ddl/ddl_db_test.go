@@ -175,7 +175,9 @@ LOOP:
 	ctx := s.s.(context.Context)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	txn, err := ctx.GetTxn(false)
+	c.Assert(err, IsNil)
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		handles[h] = struct{}{}
 		return true, nil
 	})
@@ -193,7 +195,7 @@ LOOP:
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.ID, Greater, int64(0))
 	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
-	txn, err := ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 	defer ctx.FinishTxn(true)
 
@@ -377,11 +379,14 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	txn, err := ctx.GetTxn(false)
+	c.Assert(err, IsNil)
+	defer ctx.FinishTxn(true)
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		// c4 must be -1 or > 0
-		v, err := types.ToInt64(data[3])
-		c.Assert(err, IsNil)
+		v, err1 := types.ToInt64(data[3])
+		c.Assert(err1, IsNil)
 		if v == -1 {
 			j++
 		} else {
@@ -458,7 +463,7 @@ LOOP:
 	i := 0
 	t = s.testGetTable(c, "t2")
 	// check c4 does not exist
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		k := t.RecordKey(h, col)
 		_, err1 := txn.Get([]byte(k))

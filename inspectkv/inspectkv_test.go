@@ -69,7 +69,7 @@ func (s *testInspectSuite) TestInspect(c *C) {
 		Name:   model.NewCIStr("c"),
 		ID:     1,
 		Unique: true,
-		Columns: []*model.IndexColumn{&model.IndexColumn{
+		Columns: []*model.IndexColumn{{
 			Name:   model.NewCIStr("c"),
 			Offset: 0,
 			Length: 255,

@@ -108,7 +108,7 @@ func GetTableData(table table.Table, txn kv.Transaction, it kv.Iterator) ([]int6
 	var handles []int64
 	var data []interface{}
 
-	err := table.Iter(txn, it, table.FirstKey(), table.Cols(),
+	err := table.IterRecords(txn, it, table.FirstKey(), table.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
 			data = append(data, d)
 			handles = append(handles, h)

@@ -107,7 +107,9 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	txn, err = ctx.GetTxn(false)
+	c.Assert(err, IsNil)
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data[0], Equals, i)
 		i++
 		return true, nil
@@ -204,11 +206,11 @@ func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblIn
 func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
+	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -231,13 +233,13 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -274,11 +276,11 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -291,11 +293,11 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
+	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -318,13 +320,13 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -361,11 +363,11 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -378,11 +380,11 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
+	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -398,13 +400,13 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -442,11 +444,11 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -458,11 +460,11 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []interface{}) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err := ctx.GetTxn(true)
+	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -485,13 +487,13 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -528,11 +530,11 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	err = t.RemoveRecord(ctx, handle, newUpdateRow)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
