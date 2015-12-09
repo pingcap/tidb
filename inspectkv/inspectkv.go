@@ -38,6 +38,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	var err error
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
+
 	info.Owner, err = t.GetDDLOwner()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -126,9 +127,12 @@ func GetTableSnapshot(store kv.Storage, ver kv.Version, table table.Table, txn k
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer snap.MvccRelease()
+	defer snap.Release()
 
-	it := snap.NewMvccIterator([]byte(table.FirstKey()), ver)
+	it, err := snap.Seek([]byte(table.FirstKey()))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	defer it.Close()
 
 	_, data, err := GetTableData(table, txn, it)

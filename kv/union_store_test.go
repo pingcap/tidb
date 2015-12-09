@@ -31,7 +31,7 @@ func (s *testUnionStoreSuite) SetUpTest(c *C) {
 }
 
 func (s *testUnionStoreSuite) TearDownTest(c *C) {
-	s.us.Close()
+	s.us.Release()
 }
 
 func (s *testUnionStoreSuite) TestGetSet(c *C) {

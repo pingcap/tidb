@@ -111,11 +111,9 @@ func (txn *hbaseTxn) doCommit() error {
 		return errors.Trace(err)
 	}
 
-	err := txn.WalkWriteBuffer(func(iter kv.Iterator) error {
-		var row, val []byte
-		row = make([]byte, len(iter.Key()))
-		if len(iter.Value()) == 0 { // Deleted marker
-			copy(row, iter.Key())
+	err := txn.WalkBuffer(func(k kv.Key, v []byte) error {
+		row := append([]byte(nil), k...)
+		if len(v) == 0 { // Deleted marker
 			d := hbase.NewDelete(row)
 			d.AddStringColumn(hbaseColFamily, hbaseQualifier)
 			err := txn.txn.Delete(txn.storeName, d)
@@ -123,9 +121,7 @@ func (txn *hbaseTxn) doCommit() error {
 				return errors.Trace(err)
 			}
 		} else {
-			val = make([]byte, len(iter.Value()))
-			copy(row, iter.Key())
-			copy(val, iter.Value())
+			val := append([]byte(nil), v...)
 			p := hbase.NewPut(row)
 			p.AddValue(hbaseColFamilyBytes, hbaseQualifierBytes, val)
 			txn.txn.Put(txn.storeName, p)
@@ -168,7 +164,7 @@ func (txn *hbaseTxn) CommittedVersion() (kv.Version, error) {
 }
 
 func (txn *hbaseTxn) close() error {
-	txn.UnionStore.Close()
+	txn.UnionStore.Release()
 	txn.valid = false
 	return nil
 }

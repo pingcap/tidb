@@ -56,7 +56,6 @@ type Table struct {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
-	log.Warnf("TableFromMeta")
 	if tblInfo.State == model.StateNone {
 		log.Fatalf("table %s can't be in none state", tblInfo.Name)
 	}
@@ -296,13 +295,26 @@ func (t *Table) UpdateRecord(ctx context.Context, h int64, oldData []interface{}
 		return errors.Trace(err)
 	}
 
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	bs := kv.NewBufferStore(txn)
+	defer bs.Release()
+
 	// set new value
-	if err := t.setNewData(ctx, h, touched, currentData); err != nil {
+	if err := t.setNewData(bs, h, touched, currentData); err != nil {
 		return errors.Trace(err)
 	}
 
 	// rebuild index
-	if err := t.rebuildIndices(ctx, h, touched, oldData, currentData); err != nil {
+	if err := t.rebuildIndices(bs, h, touched, oldData, currentData); err != nil {
+		return errors.Trace(err)
+	}
+
+	err = bs.SaveTo(txn)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -326,30 +338,25 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 }
 
 // SetColValue implements table.Table SetColValue interface.
-func (t *Table) SetColValue(txn kv.Transaction, key []byte, data interface{}) error {
+func (t *Table) SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error {
 	v, err := t.EncodeValue(data)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := txn.Set(key, v); err != nil {
+	if err := rm.Set(key, v); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (t *Table) setNewData(ctx context.Context, h int64, touched map[int]bool, data []interface{}) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+func (t *Table) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool, data []interface{}) error {
 	for _, col := range t.Cols() {
 		if !touched[col.Offset] {
 			continue
 		}
 
 		k := t.RecordKey(h, col)
-		if err := t.SetColValue(txn, k, data[col.Offset]); err != nil {
+		if err := t.SetColValue(rm, k, data[col.Offset]); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -357,7 +364,7 @@ func (t *Table) setNewData(ctx context.Context, h int64, touched map[int]bool, d
 	return nil
 }
 
-func (t *Table) rebuildIndices(ctx context.Context, h int64, touched map[int]bool, oldData []interface{}, newData []interface{}) error {
+func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]bool, oldData []interface{}, newData []interface{}) error {
 	for _, idx := range t.Indices() {
 		idxTouched := false
 		for _, ic := range idx.Columns {
@@ -375,7 +382,7 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched map[int]boo
 			return errors.Trace(err)
 		}
 
-		if t.RemoveRowIndex(ctx, h, oldVs, idx); err != nil {
+		if t.RemoveRowIndex(rm, h, oldVs, idx); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -384,7 +391,7 @@ func (t *Table) rebuildIndices(ctx context.Context, h int64, touched map[int]boo
 			return errors.Trace(err)
 		}
 
-		if err := t.BuildIndexForRow(ctx, h, newVs, idx); err != nil {
+		if err := t.BuildIndexForRow(rm, h, newVs, idx); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -406,17 +413,20 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	bs := kv.NewBufferStore(txn)
+	defer bs.Release()
+
 	for _, v := range t.indices {
 		if v == nil || v.State == model.StateDeleteOnly || v.State == model.StateDeleteReorganization {
 			// if index is in delete only or delete reorganization state, we can't add it.
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
-		if err = v.X.Create(txn, colVals, recordID); err != nil {
+		if err = v.X.Create(bs, colVals, recordID); err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
-				iter, _, err1 := v.X.Seek(txn, colVals)
+				iter, _, err1 := v.X.Seek(bs, colVals)
 				if err1 != nil {
 					return 0, errors.Trace(err1)
 				}
@@ -457,6 +467,10 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+
+	if err = bs.SaveTo(txn); err != nil {
+		return 0, errors.Trace(err)
 	}
 
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
@@ -600,30 +614,21 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []interface{}
 }
 
 // RemoveRowIndex implements table.Table RemoveRowIndex interface.
-func (t *Table) RemoveRowIndex(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = idx.X.Delete(txn, vals, h); err != nil {
+func (t *Table) RemoveRowIndex(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
+	if err := idx.X.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // BuildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *Table) BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error {
+func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
 		// If the index is in delete only or write reorganization state, we can not add index.
 		return nil
 	}
 
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = idx.X.Create(txn, vals, h); err != nil {
+	if err := idx.X.Create(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

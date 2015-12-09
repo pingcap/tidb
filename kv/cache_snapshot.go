@@ -40,7 +40,7 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 	v, err := c.cache.Get(k)
 	if IsErrNotFound(err) {
 		if _, ok := c.opts.Get(PresumeKeyNotExists); ok {
-			err = c.lazyConditionPairs.Set(k, nil)
+			err = cachePut(c.lazyConditionPairs, k, nil)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -63,7 +63,7 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 	if IsErrNotFound(err) {
 		v, err = c.snapshot.Get(k)
 		if err == nil {
-			err = c.cache.Set([]byte(k), v)
+			err = cachePut(c.cache, k, v)
 		}
 		return v, errors.Trace(err)
 	}
@@ -98,12 +98,11 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	}
 	for _, k := range missedKeys {
 		ks := string(k)
-		if v, ok := values[ks]; ok && len(v) > 0 {
-			err = c.cache.Set(k, v)
+		v, ok := values[ks]
+		if ok && len(v) > 0 {
 			m[ks] = v
-		} else {
-			err = c.cache.Set(k, nil)
 		}
+		err = cachePut(c.cache, k, v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -119,7 +118,7 @@ func (c *cacheSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, 
 		return nil, errors.Trace(err)
 	}
 	for k, v := range values {
-		err = c.cache.Set([]byte(k), v)
+		err = cachePut(c.cache, []byte(k), v)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -150,4 +149,11 @@ func (c *cacheSnapshot) Release() {
 	if c.snapshot != nil {
 		c.snapshot.Release()
 	}
+}
+
+func cachePut(m Mutator, k Key, v []byte) error {
+	if len(v) == 0 {
+		return m.Delete(k)
+	}
+	return m.Set(k, v)
 }

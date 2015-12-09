@@ -21,9 +21,8 @@ import (
 )
 
 var (
-	_ kv.Snapshot     = (*hbaseSnapshot)(nil)
-	_ kv.MvccSnapshot = (*hbaseSnapshot)(nil)
-	_ kv.Iterator     = (*hbaseIter)(nil)
+	_ kv.Snapshot = (*hbaseSnapshot)(nil)
+	_ kv.Iterator = (*hbaseIter)(nil)
 )
 
 // hbaseBatchSize is used for go-themis Scanner.
@@ -97,20 +96,6 @@ func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byt
 	return m, nil
 }
 
-// MvccGet returns the specific version of given key, if the version doesn't
-// exist, returns the nearest(lower) version's data.
-func (s *hbaseSnapshot) MvccGet(k kv.Key, ver kv.Version) ([]byte, error) {
-	g := hbase.NewGet([]byte(k))
-	g.AddColumn(hbaseColFamilyBytes, hbaseQualifierBytes)
-	g.TsRangeFrom = 0
-	g.TsRangeTo = ver.Ver + 1
-	v, err := internalGet(s, g)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return v, nil
-}
-
 func internalGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 	r, err := s.txn.Get(s.storeName, g)
 	if err != nil {
@@ -127,14 +112,6 @@ func (s *hbaseSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 	return newInnerScanner(scanner), nil
 }
 
-// MvccIterator seeks to the key in the specific version's snapshot, if the
-// version doesn't exist, returns the nearest(lower) version's snaphot.
-func (s *hbaseSnapshot) NewMvccIterator(k kv.Key, ver kv.Version) kv.Iterator {
-	scanner := s.txn.GetScanner([]byte(s.storeName), k, nil, hbaseBatchSize)
-	scanner.SetTimeRange(0, ver.Ver+1)
-	return newInnerScanner(scanner)
-}
-
 func newInnerScanner(scanner *themis.ThemisScanner) kv.Iterator {
 	it := &hbaseIter{
 		ThemisScanner: scanner,
@@ -148,11 +125,6 @@ func (s *hbaseSnapshot) Release() {
 		s.txn.Release()
 		s.txn = nil
 	}
-}
-
-// Release releases this snapshot.
-func (s *hbaseSnapshot) MvccRelease() {
-	s.Release()
 }
 
 type hbaseIter struct {

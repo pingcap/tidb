@@ -45,10 +45,10 @@ type Table interface {
 	Row(ctx context.Context, h int64) ([]interface{}, error)
 
 	// RemoveRowIndex removes an index of a row.
-	RemoveRowIndex(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error
+	RemoveRowIndex(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error
 
 	// BuildIndexForRow builds an index for a row.
-	BuildIndexForRow(ctx context.Context, h int64, vals []interface{}, idx *column.IndexedCol) error
+	BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error
 
 	// TableName returns table name.
 	TableName() model.CIStr
@@ -106,7 +106,7 @@ type Table interface {
 
 	// SetColValue sets the column value.
 	// If the column is untouched, we don't need to do this.
-	SetColValue(txn kv.Transaction, key []byte, data interface{}) error
+	SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error
 
 	// LockRow locks a row.
 	LockRow(ctx context.Context, h int64) error
