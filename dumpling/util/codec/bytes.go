@@ -33,10 +33,10 @@ const (
 //  group is 8 bytes slice which is padding with 0.
 //  marker is `0xFF - padding 0 count`
 // For example:
-//   [] -> [1 0 0 0 0 0 0 0 0 247]
-//   [1, 2, 3] -> [1 1 2 3 0 0 0 0 0 250]
-//   [1, 2, 3, 0] -> [1 1 2 3 0 0 0 0 0 251]
-//   [1, 2, 3, 4, 5, 6, 7, 8] -> [1 1 2 3 4 5 6 7 8 255 0 0 0 0 0 0 0 0 247]
+//   [] -> [0, 0, 0, 0, 0, 0, 0, 0, 247]
+//   [1, 2, 3] -> [1, 2, 3, 0, 0, 0, 0, 0, 250]
+//   [1, 2, 3, 0] -> [1, 2, 3, 0, 0, 0, 0, 0, 251]
+//   [1, 2, 3, 4, 5, 6, 7, 8] -> [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247]
 // Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
 func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing.
@@ -81,7 +81,7 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		// Check validity of marker.
 		padCount := encMarker - marker
 		realGroupSize := encGroupSize - padCount
-		if realGroupSize < 0 {
+		if padCount > encGroupSize {
 			return nil, nil, errors.Errorf("invalid marker byte, group %v", group)
 		}
 
