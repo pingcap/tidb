@@ -70,7 +70,12 @@ func GetIndexVals(table table.Table, txn kv.Transaction, indexInfo model.IndexIn
 
 	for i, col := range indexInfo.Columns {
 		key := table.RecordKey(handle, cols[col.Offset])
-		val, err := txn.Get(key)
+		data, err := txn.Get(key)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		val, err := table.DecodeValue(data, cols[col.Offset])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -104,11 +109,11 @@ func GetIndexHandles(table table.Table, txn kv.Transaction, idx *column.IndexedC
 
 // GetTableData gets table row handles and column values.
 // If there is no special iterator, it will be nil.
-func GetTableData(table table.Table, txn kv.Transaction, it kv.Iterator) ([]int64, []interface{}, error) {
+func GetTableData(table table.Table, retriever kv.Retriever) ([]int64, []interface{}, error) {
 	var handles []int64
 	var data []interface{}
 
-	err := table.IterRecords(txn, it, table.FirstKey(), table.Cols(),
+	err := table.IterRecords(retriever, table.FirstKey(), table.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
 			data = append(data, d)
 			handles = append(handles, h)
@@ -122,20 +127,14 @@ func GetTableData(table table.Table, txn kv.Transaction, it kv.Iterator) ([]int6
 }
 
 // GetTableSnapshot gets the ver version of the table data.
-func GetTableSnapshot(store kv.Storage, ver kv.Version, table table.Table, txn kv.Transaction) ([]interface{}, error) {
+func GetTableSnapshot(store kv.Storage, ver kv.Version, table table.Table) ([]interface{}, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer snap.Release()
 
-	it, err := snap.Seek([]byte(table.FirstKey()))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer it.Close()
-
-	_, data, err := GetTableData(table, txn, it)
+	_, data, err := GetTableData(table, snap)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

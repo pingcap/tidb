@@ -177,7 +177,7 @@ LOOP:
 	handles := make(map[int64]struct{})
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		handles[h] = struct{}{}
 		return true, nil
 	})
@@ -382,7 +382,7 @@ LOOP:
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
 	defer ctx.FinishTxn(true)
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		// c4 must be -1 or > 0
 		v, err1 := types.ToInt64(data[3])
@@ -463,7 +463,7 @@ LOOP:
 	i := 0
 	t = s.testGetTable(c, "t2")
 	// check c4 does not exist
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		k := t.RecordKey(h, col)
 		_, err1 := txn.Get([]byte(k))

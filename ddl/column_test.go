@@ -123,7 +123,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	i := int64(0)
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, HasLen, 3)
 		c.Assert(data[0], Equals, i)
 		c.Assert(data[1], Equals, 10*i)
@@ -144,7 +144,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	i = int64(0)
 	txn, err = ctx.GetTxn(false)
 	c.Assert(err, IsNil)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, HasLen, 4)
 		c.Assert(data[0], Equals, i)
 		c.Assert(data[1], Equals, 10*i)
@@ -305,7 +305,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -329,7 +329,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -349,7 +349,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -366,7 +366,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -390,7 +390,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -410,7 +410,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -427,7 +427,7 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -449,7 +449,7 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	rows := [][]interface{}{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -469,7 +469,7 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -486,7 +486,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 
 	i := int64(0)
 	oldRow := append(row, columnValue)
-	err = t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, oldRow)
 		i++
 		return true, nil
@@ -508,7 +508,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	rows := [][]interface{}{oldRow, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -526,7 +526,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, nil, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, oldRow)
 		i++
 		return true, nil

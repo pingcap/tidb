@@ -50,11 +50,8 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		var err1 error
 		info, err1 = inspectkv.GetDDLInfo(txn)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
 
-		return nil
+		return errors.Trace(err1)
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
