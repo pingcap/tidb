@@ -71,7 +71,9 @@ const (
 	ClassParser ErrClass = iota + 1
 	ClassSchema
 	ClassOptimizer
+	ClassOptimizerPlan
 	ClassExecutor
+	ClassEvaluator
 	ClassKV
 	ClassServer
 	ClassVariable

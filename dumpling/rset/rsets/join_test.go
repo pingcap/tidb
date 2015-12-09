@@ -77,7 +77,7 @@ func (s *testJoinRsetSuite) TestJoinRsetPlan(c *C) {
 	c.Assert(ok, IsTrue)
 
 	// check join right is statement.
-	querySql := fmt.Sprintf("select 1")
+	querySql := fmt.Sprintf("select 1 from (select 1) as t")
 	stmtList, err := tidb.Compile(s.ctx, querySql)
 	c.Assert(err, IsNil)
 	c.Assert(len(stmtList), Greater, 0)
