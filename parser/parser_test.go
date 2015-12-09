@@ -40,6 +40,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
+		"delay_key_write",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -566,6 +567,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) min_rows 1000", true},
 		{"create table t (c int) password = 'abc'", true},
 		{"create table t (c int) password 'abc'", true},
+		{"create table t (c int) DELAY_KEY_WRITE=1", true},
+		{"create table t (c int) DELAY_KEY_WRITE 1", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
