@@ -72,6 +72,7 @@ const (
 	ClassSchema
 	ClassOptimizer
 	ClassExecutor
+	ClassEvaluator
 	ClassKV
 	ClassServer
 	ClassVariable
