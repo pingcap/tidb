@@ -227,7 +227,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 	}
 
 	currValue, err := s.db.Get(metaKey)
-	if terror.ErrorEqual(err, kv.ErrNotExist) {
+	if terror.ErrorEqual(err, engine.ErrNotFound) {
 		s.keysLocked[key] = tid
 		return nil
 	}

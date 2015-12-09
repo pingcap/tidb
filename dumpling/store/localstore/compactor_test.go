@@ -27,10 +27,15 @@ type localstoreCompactorTestSuite struct {
 }
 
 func count(db engine.DB) int {
-	it, _ := db.Seek([]byte{0})
-	defer it.Release()
+	var k kv.Key
 	totalCnt := 0
-	for it.Next() {
+	for {
+		var err error
+		k, _, err = db.Seek(k)
+		if err != nil {
+			break
+		}
+		k = k.Next()
 		totalCnt++
 	}
 	return totalCnt
@@ -84,4 +89,25 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	c.Assert(t, Equals, 3)
 
 	compactor.Stop()
+}
+
+func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
+	store := createMemStore()
+	compactor := store.(*dbStore).compactor
+	txn, _ := store.Begin()
+	txn.Set([]byte("a"), []byte("1"))
+	txn.Commit()
+	txn, _ = store.Begin()
+	txn.Set([]byte("a"), []byte("2"))
+	txn.Commit()
+	txn, _ = store.Begin()
+	txn.Set([]byte("b"), []byte("1"))
+	txn.Commit()
+	txn, _ = store.Begin()
+	txn.Set([]byte("b"), []byte("2"))
+	txn.Commit()
+
+	keys, err := compactor.getAllVersions([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(keys, HasLen, 2)
 }
