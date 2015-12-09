@@ -1,6 +1,6 @@
 # Quick Start
 
-#### Run tidb with docker
+#### Run TiDB with docker
 
 You can quickly test tidb with docker, the source repository contains the Dockerfile which
 contains local tidb-server.
@@ -23,6 +23,10 @@ mysql -h 127.0.0.1 -P 4000 -u root -D test
 ```
 
 Notice: OSX user may use `docker-machine ip` to connect it.
+
+#### __Run TiDB on HBase__
+
+Read this [doc](https://github.com/pingcap/tidb/blob/master/docs/HBASE_QUICKSTART.md).
 
 #### __Pre-requirement__
 
