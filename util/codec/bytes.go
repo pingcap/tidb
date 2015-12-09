@@ -31,8 +31,8 @@ const (
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
 // encoding with the following rule:
 //  [group1][marker1]...[groupN][markerN]
-//  group is 8 bytes sclice which maybe padding with 0.
-//  marker is 0xFF - appending 0 number
+//  group is 8 bytes slice which is padding with 0.
+//  marker is `0xFF - padding 0 count`
 // For example:
 //   [] -> [1 0 0 0 0 0 0 0 0 247]
 //   [1, 2, 3] -> [1 1 2 3 0 0 0 0 0 250]
@@ -107,7 +107,7 @@ func DecodeBytes(b []byte) ([]byte, []byte, error) {
 }
 
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
-// encoded value to guarentee the encoded value is in descending order for comparison。
+// encoded value to guarentee the encoded value is in descending order for comparison.
 func EncodeBytesDesc(b []byte, data []byte) []byte {
 	n := len(b)
 	b = EncodeBytes(b, data)
