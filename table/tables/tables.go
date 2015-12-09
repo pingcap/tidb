@@ -74,10 +74,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
-	t, err := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	t := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
@@ -98,7 +95,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 }
 
 // NewTable constructs a Table instance.
-func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) (*Table, error) {
+func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
 	name := model.NewCIStr(tableName)
 	t := &Table{
 		ID:           tableID,
@@ -112,7 +109,7 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.writableCols()
-	return t, nil
+	return t
 }
 
 // TableID implements table.Table TableID interface.
