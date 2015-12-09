@@ -42,25 +42,25 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing.
 	// Assume that the byte slice size is about `(len(data) / encGroupSize + 1) * (encGroupSize + 1)` bytes,
 	// that is `(len(data) / 8 + 1) * 9` in our implement.
-	dl := len(data)
-	reallocSize := (dl/encGroupSize + 1) * (encGroupSize + 1)
-	bs := reallocBytes(b, reallocSize)
-	for idx := 0; idx <= dl; idx += encGroupSize {
-		remain := dl - idx
+	dLen := len(data)
+	reallocSize := (dLen/encGroupSize + 1) * (encGroupSize + 1)
+	result := reallocBytes(b, reallocSize)
+	for idx := 0; idx <= dLen; idx += encGroupSize {
+		remain := dLen - idx
 		padCount := 0
 		if remain >= encGroupSize {
-			bs = append(bs, data[idx:idx+encGroupSize]...)
+			result = append(result, data[idx:idx+encGroupSize]...)
 		} else {
 			padCount = encGroupSize - remain
-			bs = append(bs, data[idx:]...)
-			bs = append(bs, make([]byte, padCount)...)
+			result = append(result, data[idx:]...)
+			result = append(result, make([]byte, padCount)...)
 		}
 
 		marker := encMarker - byte(padCount)
-		bs = append(bs, marker)
+		result = append(result, marker)
 	}
 
-	return bs
+	return result
 }
 
 func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
