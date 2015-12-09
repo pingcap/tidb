@@ -51,6 +51,7 @@ func (k sessionVarsKeyType) String() string {
 	return "session_vars"
 }
 
+// SessionVarsKey is the session variable key.
 const SessionVarsKey sessionVarsKeyType = 0
 
 // BindSessionVars creates a session vars object and binds it to context.
