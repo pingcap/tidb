@@ -82,7 +82,7 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		padCount := encMarker - marker
 		realGroupSize := encGroupSize - padCount
 		if padCount > encGroupSize {
-			return nil, nil, errors.Errorf("invalid marker byte, group %v", group)
+			return nil, nil, errors.Errorf("invalid marker byte, group bytes %q", groupBytes)
 		}
 
 		data = append(data, group[:realGroupSize]...)
@@ -91,7 +91,7 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		if marker != encMarker {
 			// Check validity of padding bytes.
 			if bytes.Count(group[realGroupSize:], []byte{encPad}) != int(padCount) {
-				return nil, nil, errors.Errorf("invalid padding byte, group %v", group)
+				return nil, nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
 			}
 
 			break

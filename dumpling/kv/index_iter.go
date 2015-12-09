@@ -110,7 +110,7 @@ func GenIndexPrefix(indexPrefix string, indexID int64) string {
 }
 
 // NewKVIndex builds a new kvIndex object.
-func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool) (Index, error) {
+func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool) Index {
 	index := &kvIndex{
 		indexName: indexName,
 		indexID:   indexID,
@@ -118,7 +118,7 @@ func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool
 		prefix:    GenIndexPrefix(indexPrefix, indexID),
 	}
 
-	return index, nil
+	return index
 }
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the

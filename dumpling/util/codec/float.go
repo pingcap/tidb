@@ -22,7 +22,7 @@ import (
 func encodeFloatToCmpUint64(f float64) uint64 {
 	u := math.Float64bits(f)
 	if f >= 0 {
-		u |= 0x8000000000000000
+		u |= signMask
 	} else {
 		u = ^u
 	}
@@ -30,8 +30,8 @@ func encodeFloatToCmpUint64(f float64) uint64 {
 }
 
 func decodeCmpUintToFloat(u uint64) float64 {
-	if u&0x8000000000000000 > 0 {
-		u &= ^uint64(0x8000000000000000)
+	if u&signMask > 0 {
+		u &= ^signMask
 	} else {
 		u = ^u
 	}

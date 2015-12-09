@@ -88,10 +88,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			IndexInfo: *idxInfo,
 		}
 
-		idx.X, err = kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		idx.X = kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
 
 		t.AddIndex(idx)
 	}

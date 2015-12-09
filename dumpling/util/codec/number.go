@@ -19,22 +19,24 @@ import (
 	"github.com/juju/errors"
 )
 
+const signMask uint64 = 0x8000000000000000
+
 func encodeIntToCmpUint(v int64) uint64 {
 	u := uint64(v)
-	if u&0x8000000000000000 > 0 {
-		u &= ^uint64(0x8000000000000000)
+	if u&signMask > 0 {
+		u &= ^signMask
 	} else {
-		u |= uint64(0x8000000000000000)
+		u |= signMask
 	}
 
 	return u
 }
 
 func decodeCmpUintToInt(u uint64) int64 {
-	if u&0x8000000000000000 > 0 {
-		u &= ^uint64(0x8000000000000000)
+	if u&signMask > 0 {
+		u &= ^signMask
 	} else {
-		u |= uint64(0x8000000000000000)
+		u |= signMask
 	}
 
 	return int64(u)

@@ -181,8 +181,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 		},
 	}
 
-	idxCol.X, err = kv.NewKVIndex("i", "id", 0, false)
-	c.Assert(err, IsNil)
+	idxCol.X = kv.NewKVIndex("i", "id", 0, false)
 
 	p.tbl.AddIndex(idxCol)
 
