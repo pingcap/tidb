@@ -50,12 +50,40 @@ func (s *testInspectSuite) TestInspect(c *C) {
 
 	t := meta.NewMeta(txn)
 
-	fmt.Println("----------------------------------------")
 	dbInfo := &model.DBInfo{
 		ID:   1,
 		Name: model.NewCIStr("a"),
 	}
 	err = t.CreateDatabase(dbInfo)
+	c.Assert(err, IsNil)
+
+	col := &model.ColumnInfo{
+		Name:         model.NewCIStr("c"),
+		ID:           0,
+		Offset:       0,
+		DefaultValue: 1,
+		State:        model.StatePublic,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+	}
+	idx := &model.IndexInfo{
+		Name:   model.NewCIStr("c"),
+		ID:     1,
+		Unique: true,
+		Columns: []*model.IndexColumn{&model.IndexColumn{
+			Name:   model.NewCIStr("c"),
+			Offset: 0,
+			Length: 255,
+		}},
+		State: model.StatePublic,
+	}
+	tbInfo := &model.TableInfo{
+		ID:      1,
+		Name:    model.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: []*model.ColumnInfo{col},
+		Indices: []*model.IndexInfo{idx},
+	}
+	err = t.CreateTable(dbInfo.ID, tbInfo)
 	c.Assert(err, IsNil)
 
 	owner := &model.Owner{OwnerID: "owner"}
@@ -72,36 +100,6 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
-
-	dbs, err := ListDatabases(txn)
-	c.Assert(err, IsNil)
-	fmt.Printf("1:%v, 2:%v \n", dbInfo, dbs[0])
-	c.Assert(dbs, DeepEquals, []*model.DBInfo{dbInfo})
-	fmt.Println("----------------------------------------")
-
-	col := &model.ColumnInfo{
-		Name:         model.NewCIStr("c"),
-		ID:           0,
-		Offset:       0,
-		DefaultValue: 1,
-		State:        model.StatePublic,
-		FieldType:    *types.NewFieldType(mysql.TypeLong),
-	}
-	tbInfo := &model.TableInfo{
-		ID:      1,
-		Name:    model.NewCIStr("t"),
-		State:   model.StatePublic,
-		Columns: []*model.ColumnInfo{col},
-	}
-	err = t.CreateTable(dbInfo.ID, tbInfo)
-	c.Assert(err, IsNil)
-	tbs, err := ListTables(txn, dbInfo.ID)
-	c.Assert(err, IsNil)
-	fmt.Printf("1:%v, 2:%v \n", *tbInfo, *tbs[0])
-	//c.Assert(tbs, DeepEquals, []*model.TableInfo{tbInfo})
-
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(info.Owner, DeepEquals, owner)
@@ -113,6 +111,7 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(err, IsNil)
 	alloc := autoid.NewAllocator(store, dbInfo.ID)
 	tb := tables.TableFromMeta(alloc, tbInfo)
+	indices := tb.Indices()
 	_, err = tb.AddRecord(ctx, []interface{}{10}, 0)
 	c.Assert(err, IsNil)
 	ctx.FinishTxn(false)
@@ -125,6 +124,26 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	for _, d := range data[0].([]interface{}) {
 		c.Assert(d.(int64), Equals, int64(10))
 	}
+	txn.Commit()
+
+	_, err = tb.AddRecord(ctx, []interface{}{20}, 0)
+	c.Assert(err, IsNil)
+	ctx.FinishTxn(false)
+	txn, err = store.Begin()
+	c.Assert(err, IsNil)
+
+	handles, data, err := GetTableData(tb, txn, nil)
+	c.Assert(err, IsNil)
+	c.Assert(handles, HasLen, 2)
+	c.Assert(data, HasLen, 2)
+
+	handles, err = GetIndexHandles(tb, txn, indices[0])
+	c.Assert(err, IsNil)
+	c.Assert(handles, HasLen, 2)
+
+	vals, err := GetIndexVals(tb, txn, indices[0].IndexInfo, handles[0])
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 1)
 }
 
 // mockContext represents mocked context.Context.
@@ -148,6 +167,7 @@ func (c *mockContext) ClearValue(key fmt.Stringer) {
 }
 
 func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
+	fmt.Println("ctx txn:", c.txn)
 	if c.txn != nil {
 		return c.txn, nil
 	}
@@ -158,11 +178,14 @@ func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 }
 
 func (c *mockContext) FinishTxn(rollback bool) error {
+	fmt.Println("ctx finish txn:", c.txn)
 	if c.txn == nil {
 		return nil
 	}
 
-	return c.txn.Commit()
+	err := c.txn.Commit()
+	c.txn = nil
+	return err
 }
 
 func newmockContext(store kv.Storage) *mockContext {
