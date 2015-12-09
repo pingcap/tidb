@@ -61,15 +61,15 @@ type Table struct {
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table {
+func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
-		log.Fatalf("table %s can't be in none state", tblInfo.Name)
+		return nil, errors.Errorf("table %s can't be in none state", tblInfo.Name)
 	}
 
 	columns := make([]*column.Col, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
-			log.Fatalf("column %s can't be in none state", colInfo.Name)
+			return nil, errors.Errorf("column %s can't be in none state", colInfo.Name)
 		}
 
 		col := &column.Col{ColumnInfo: *colInfo}
@@ -78,12 +78,12 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 
 	t, err := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 	if err != nil {
-		log.Fatalf("create new table failed - %s - %v", tblInfo.Name.O, errors.ErrorStack(err))
+		return nil, errors.Trace(err)
 	}
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
-			log.Fatalf("index %s can't be in none state", idxInfo.Name)
+			return nil, errors.Errorf("index %s can't be in none state", idxInfo.Name)
 		}
 
 		idx := &column.IndexedCol{
@@ -92,14 +92,14 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) table.Table
 
 		idx.X, err = kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
 		if err != nil {
-			log.Fatalf("create new index failed - %s - %v", idxInfo.Name.O, errors.ErrorStack(err))
+			return nil, errors.Trace(err)
 		}
 
 		t.AddIndex(idx)
 	}
 
 	t.state = tblInfo.State
-	return t
+	return t, nil
 }
 
 // NewTable constructs a Table instance.

@@ -122,7 +122,8 @@ func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
 		return nil
 	})
 	alloc := autoid.NewAllocator(d.store, schemaID)
-	tbl := table.TableFromMeta(alloc, tblInfo)
+	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	c.Assert(err, IsNil)
 	return tbl
 }
 

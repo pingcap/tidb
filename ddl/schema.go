@@ -149,8 +149,12 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 func (d *ddl) dropSchemaData(dbInfo *model.DBInfo, tables []*model.TableInfo) error {
 	for _, tblInfo := range tables {
 		alloc := autoid.NewAllocator(d.store, dbInfo.ID)
-		t := table.TableFromMeta(alloc, tblInfo)
-		err := d.dropTableData(t)
+		t, err := table.TableFromMeta(alloc, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		err = d.dropTableData(t)
 		if err != nil {
 			return errors.Trace(err)
 		}
