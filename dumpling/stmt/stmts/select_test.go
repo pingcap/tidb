@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 )
 
 func (s *testStmtSuite) TestSelectWithoutFrom(c *C) {
@@ -109,14 +108,6 @@ func (s *testStmtSuite) TestSelectDistinct(c *C) {
 
 func (s *testStmtSuite) TestSelectHaving(c *C) {
 	s.fillData(s.testDB, c)
-
-	// Test compile
-	stmtList, err := tidb.Compile(s.ctx, "select * from test where id = 2;")
-	c.Assert(err, IsNil)
-
-	str := stmtList[0].OriginText()
-	c.Assert(0, Less, len(str))
-
 	tx := mustBegin(c, s.testDB)
 	rows, err := tx.Query("select id, name from test where id in (1,3) having name like 'he%';")
 	c.Assert(err, IsNil)

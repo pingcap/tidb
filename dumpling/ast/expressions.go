@@ -15,9 +15,12 @@ package ast
 
 import (
 	"fmt"
+	"regexp"
+
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -32,7 +35,6 @@ var (
 	_ Node     = &ColumnName{}
 	_ ExprNode = &ColumnNameExpr{}
 	_ ExprNode = &DefaultExpr{}
-	_ ExprNode = &IdentifierExpr{}
 	_ ExprNode = &ExistsSubqueryExpr{}
 	_ ExprNode = &PatternInExpr{}
 	_ ExprNode = &IsNullExpr{}
@@ -58,10 +60,10 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	ve := &ValueExpr{}
 	ve.Data = types.RawData(value)
 	// TODO: make it more precise.
-	switch value.(type) {
+	switch x := value.(type) {
 	case nil:
 		ve.Type = types.NewFieldType(mysql.TypeNull)
-	case bool, int64:
+	case bool, int64, int:
 		ve.Type = types.NewFieldType(mysql.TypeLonglong)
 	case uint64:
 		ve.Type = types.NewFieldType(mysql.TypeLonglong)
@@ -74,14 +76,24 @@ func NewValueExpr(value interface{}) *ValueExpr {
 		ve.Type = types.NewFieldType(mysql.TypeDouble)
 	case []byte:
 		ve.Type = types.NewFieldType(mysql.TypeBlob)
-		ve.Type.Charset = "binary"
-		ve.Type.Collate = "binary"
+		ve.Type.Charset = charset.CharsetBin
+		ve.Type.Collate = charset.CharsetBin
 	case mysql.Bit:
 		ve.Type = types.NewFieldType(mysql.TypeBit)
 	case mysql.Hex:
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
-		ve.Type.Charset = "binary"
-		ve.Type.Collate = "binary"
+		ve.Type.Charset = charset.CharsetBin
+		ve.Type.Collate = charset.CharsetBin
+	case mysql.Time:
+		ve.Type = types.NewFieldType(x.Type)
+	case mysql.Duration:
+		ve.Type = types.NewFieldType(mysql.TypeDuration)
+	case mysql.Decimal:
+		ve.Type = types.NewFieldType(mysql.TypeNewDecimal)
+	case mysql.Enum:
+		ve.Type = types.NewFieldType(mysql.TypeEnum)
+	case mysql.Set:
+		ve.Type = types.NewFieldType(mysql.TypeSet)
 	case *types.DataItem:
 		ve.Type = value.(*types.DataItem).Type
 	default:
@@ -221,11 +233,6 @@ func (n *WhenClause) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *WhenClause) IsStatic() bool {
-	return n.Expr.IsStatic() && n.Result.IsStatic()
-}
-
 // CaseExpr is the case expression.
 type CaseExpr struct {
 	exprNode
@@ -274,7 +281,7 @@ func (n *CaseExpr) IsStatic() bool {
 		return false
 	}
 	for _, w := range n.WhenClauses {
-		if !w.IsStatic() {
+		if !w.Expr.IsStatic() || !w.Result.IsStatic() {
 			return false
 		}
 	}
@@ -284,7 +291,7 @@ func (n *CaseExpr) IsStatic() bool {
 	return true
 }
 
-// SubqueryExpr represents a sub query.
+// SubqueryExpr represents a subquery.
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
@@ -326,8 +333,8 @@ type CompareSubqueryExpr struct {
 	L ExprNode
 	// Op is the comparison opcode.
 	Op opcode.Op
-	// R is the sub query for right expression.
-	R *SubqueryExpr
+	// R is the subquery for right expression, may be rewritten to other type of expression.
+	R ExprNode
 	// All is true, we should compare all records in subquery.
 	All bool
 }
@@ -348,7 +355,7 @@ func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.R = node.(*SubqueryExpr)
+	n.R = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -358,10 +365,6 @@ type ColumnName struct {
 	Schema model.CIStr
 	Table  model.CIStr
 	Name   model.CIStr
-
-	DBInfo     *model.DBInfo
-	TableInfo  *model.TableInfo
-	ColumnInfo *model.ColumnInfo
 }
 
 // Accept implements Node Accept interface.
@@ -380,6 +383,10 @@ type ColumnNameExpr struct {
 
 	// Name is the referenced column name.
 	Name *ColumnName
+
+	// Refer is the result field the column name refers to.
+	// The value of Refer.Expr is used as the value of the expression.
+	Refer *ResultField
 }
 
 // Accept implements Node Accept interface.
@@ -421,29 +428,12 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IdentifierExpr represents an identifier expression.
-type IdentifierExpr struct {
-	exprNode
-	// Name is the identifier name.
-	Name model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *IdentifierExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNod)
-	}
-	n = newNod.(*IdentifierExpr)
-	return v.Leave(n)
-}
-
 // ExistsSubqueryExpr is the expression for "exists (select ...)".
 // https://dev.mysql.com/doc/refman/5.7/en/exists-and-not-exists-subqueries.html
 type ExistsSubqueryExpr struct {
 	exprNode
-	// Sel is the sub query.
-	Sel *SubqueryExpr
+	// Sel is the subquery, may be rewritten to other type of expression.
+	Sel ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -457,7 +447,7 @@ func (n *ExistsSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Sel = node.(*SubqueryExpr)
+	n.Sel = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -470,8 +460,8 @@ type PatternInExpr struct {
 	List []ExprNode
 	// Not is true, the expression is "not in".
 	Not bool
-	// Sel is the sub query.
-	Sel *SubqueryExpr
+	// Sel is the subquery, may be rewritten to other type of expression.
+	Sel ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -498,7 +488,7 @@ func (n *PatternInExpr) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Sel = node.(*SubqueryExpr)
+		n.Sel = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -574,6 +564,9 @@ type PatternLikeExpr struct {
 	Not bool
 
 	Escape byte
+
+	PatChars []byte
+	PatTypes []byte
 }
 
 // Accept implements Node Accept interface.
@@ -658,13 +651,13 @@ type PositionExpr struct {
 	exprNode
 	// N is the position, started from 1 now.
 	N int
-	// Name is the corresponding field name if we want better format and explain instead of position.
-	Name string
+	// Refer is the result field the position refers to.
+	Refer *ResultField
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *PositionExpr) IsStatic() bool {
-	return true
+	return false
 }
 
 // Accept implements Node Accept interface.
@@ -686,6 +679,11 @@ type PatternRegexpExpr struct {
 	Pattern ExprNode
 	// Not is true, the expression is "not rlike",
 	Not bool
+
+	// Re is the compiled regexp.
+	Re *regexp.Regexp
+	// Sexpr is the string for Expr expression.
+	Sexpr *string
 }
 
 // Accept implements Node Accept interface.
