@@ -137,14 +137,18 @@ func (s *testInspectSuite) TestInspect(c *C) {
 		c.Assert(d.(int64), Equals, int64(20))
 	}
 
-	handles, err = GetIndexHandles(tb, txn, indices[0])
+	handles, vals, err := GetIndexData(tb, txn, indices[0])
 	c.Assert(err, IsNil)
 	c.Assert(handles, HasLen, 2)
-
-	vals, err := GetIndexVals(tb, txn, indices[0].IndexInfo, handles[0])
-	c.Assert(err, IsNil)
-	c.Assert(vals, HasLen, 1)
-	c.Assert(vals[0], Equals, int64(10))
+	c.Assert(handles[0], Equals, int64(1))
+	c.Assert(handles[1], Equals, int64(2))
+	c.Assert(vals, HasLen, 2)
+	for _, d := range data[0].([]interface{}) {
+		c.Assert(d.(int64), Equals, int64(10))
+	}
+	for _, d := range data[1].([]interface{}) {
+		c.Assert(d.(int64), Equals, int64(20))
+	}
 }
 
 // mockContext represents mocked context.Context.

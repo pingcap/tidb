@@ -63,52 +63,32 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-// GetIndexVals returns index values.
-func GetIndexVals(table table.Table, txn kv.Transaction, indexInfo model.IndexInfo, handle int64) ([]interface{}, error) {
-	vals := make([]interface{}, len(indexInfo.Columns))
-	cols := table.Cols()
-
-	for i, col := range indexInfo.Columns {
-		key := table.RecordKey(handle, cols[col.Offset])
-		data, err := txn.Get(key)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		val, err := table.DecodeValue(data, cols[col.Offset])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		vals[i] = val
-	}
-
-	return vals, nil
-}
-
-// GetIndexHandles returns index handles.
-func GetIndexHandles(table table.Table, txn kv.Transaction, idx *column.IndexedCol) ([]int64, error) {
+// GetIndexData returns index handles and index values.
+func GetIndexData(table table.Table, txn kv.Transaction, idx *column.IndexedCol) ([]int64, []interface{}, error) {
 	var handles []int64
+	var vals []interface{}
 	kvIndex := kv.NewKVIndex(table.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	it, err := kvIndex.SeekFirst(txn)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	for {
-		_, h, err := it.Next()
+		val, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
 			break
 		} else if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
+
 		handles = append(handles, h)
+		vals = append(vals, val)
 	}
 
-	return handles, nil
+	return handles, vals, nil
 }
 
 // GetTableData gets table row handles and column values.
-// If there is no special iterator, it will be nil.
 func GetTableData(table table.Table, retriever kv.Retriever) ([]int64, []interface{}, error) {
 	var handles []int64
 	var data []interface{}
