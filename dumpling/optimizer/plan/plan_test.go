@@ -33,7 +33,6 @@ func TestT(t *testing.T) {
 type testPlanSuite struct{}
 
 func (s *testPlanSuite) TestRangeBuilder(c *C) {
-	log.SetLevel(log.LOG_LEVEL_ERROR)
 	rb := &rangeBuilder{}
 
 	cases := []struct {
@@ -201,7 +200,6 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 }
 
 func (s *testPlanSuite) TestBuilder(c *C) {
-	log.SetLevel(log.LOG_LEVEL_ERROR)
 	cases := []struct {
 		sqlStr  string
 		planStr string
@@ -250,7 +248,6 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 }
 
 func (s *testPlanSuite) TestBestPlan(c *C) {
-	log.SetLevel(log.LOG_LEVEL_ERROR)
 	cases := []struct {
 		sql  string
 		best string
