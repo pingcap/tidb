@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -38,6 +38,16 @@ var (
 	_ Executor = &FilterExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &SortExec{}
+)
+
+// Error instances.
+var (
+	ErrUnknownPlan = terror.ClassExecutor.New(CodeUnknownPlan, "Unknown plan")
+)
+
+// Error codes.
+const (
+	CodeUnknownPlan terror.ErrCode = iota + 1
 )
 
 // Row represents a record row.
@@ -195,13 +205,20 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		}
 		val := idxKey[0]
 		if !e.skipLowCmp {
-			cmp := indexCompare(val, e.lowVal)
+			var cmp int
+			cmp, err = indexCompare(val, e.lowVal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			if cmp < 0 || (cmp == 0 && e.lowExclude) {
 				continue
 			}
 			e.skipLowCmp = true
 		}
-		cmp := indexCompare(val, e.highVal)
+		cmp, err := indexCompare(val, e.highVal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if cmp > 0 || (cmp == 0 && e.highExclude) {
 			// This span has finished iteration.
 			e.finished = true
@@ -217,40 +234,38 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 }
 
 // comparison function that takes minNotNullVal and maxVal into account.
-func indexCompare(a interface{}, b interface{}) int {
+func indexCompare(a interface{}, b interface{}) (int, error) {
 	if a == nil && b == nil {
-		return 0
+		return 0, nil
 	} else if b == nil {
-		return 1
+		return 1, nil
 	} else if a == nil {
-		return -1
+		return -1, nil
 	}
 
 	// a and b both not nil
 	if a == plan.MinNotNullVal && b == plan.MinNotNullVal {
-		return 0
+		return 0, nil
 	} else if b == plan.MinNotNullVal {
-		return 1
+		return 1, nil
 	} else if a == plan.MinNotNullVal {
-		return -1
+		return -1, nil
 	}
 
 	// a and b both not min value
 	if a == plan.MaxVal && b == plan.MaxVal {
-		return 0
+		return 0, nil
 	} else if a == plan.MaxVal {
-		return 1
+		return 1, nil
 	} else if b == plan.MaxVal {
-		return -1
+		return -1, nil
 	}
 
 	n, err := types.Compare(a, b)
 	if err != nil {
-		// Old compare panics if err, so here we do the same thing now.
-		// TODO: return err instead of panic.
-		log.Fatalf("should never happend %v", err)
+		return 0, errors.Trace(err)
 	}
-	return n
+	return n, nil
 }
 
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {

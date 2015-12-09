@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
@@ -195,8 +194,8 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 
 func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
 	if x.Not {
-		// NOT in is not supported.
-		log.Fatal("NOT IN is not supported")
+		r.err = ErrUnsupportedType.Gen("NOT IN is not supported")
+		return fullRange
 	}
 	var rangePoints []rangePoint
 	for _, v := range x.List {
@@ -268,7 +267,8 @@ func (r *rangeBuilder) buildFromIsTruth(x *ast.IsTruthExpr) []rangePoint {
 func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint {
 	if x.Not {
 		// Pattern not like is not supported.
-		log.Fatal("NOT LIKE is not supported.")
+		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		return fullRange
 	}
 	pattern := x.Pattern.GetValue().(string)
 	lowValue := make([]byte, 0, len(pattern))

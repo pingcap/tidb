@@ -194,6 +194,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 		c.Assert(rc, Equals, 0, Commentf("error %v, for expr %", lexer.Errors(), ca.exprStr))
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
 		result := rb.build(stmt.Where)
+		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, ca.resultStr, Commentf("differen for expr %s", ca.exprStr))
 	}
@@ -240,8 +241,11 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 		c.Assert(rc, Equals, 0, Commentf("error %v for expr %s", lexer.Errors(), ca.sqlStr))
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
 		mockResolve(stmt)
-		p := BuildPlan(stmt)
-		c.Assert(ca.planStr, Equals, Explain(p))
+		p, err := BuildPlan(stmt)
+		c.Assert(err, IsNil)
+		explainStr, err := Explain(p)
+		c.Assert(err, IsNil)
+		c.Assert(ca.planStr, Equals, explainStr)
 	}
 }
 
@@ -298,10 +302,12 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		c.Assert(rc, Equals, 0, Commentf("error %v for sql %s", lexer.Errors(), ca.sql))
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
 		mockResolve(stmt)
-		p := BuildPlan(stmt)
+		p, err := BuildPlan(stmt)
+		c.Assert(err, IsNil)
 		bestCost := EstimateCost(p)
 		bestPlan := p
-		alts := Alternatives(p)
+		alts, err := Alternatives(p)
+		c.Assert(err, IsNil)
 		for _, alt := range alts {
 			cost := EstimateCost(alt)
 			if cost < bestCost {
@@ -309,7 +315,9 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 				bestPlan = alt
 			}
 		}
-		c.Assert(Explain(bestPlan), Equals, ca.best, Commentf("for %s cost %v", ca.sql, bestCost))
+		explainStr, err := Explain(bestPlan)
+		c.Assert(err, IsNil)
+		c.Assert(explainStr, Equals, ca.best, Commentf("for %s cost %v", ca.sql, bestCost))
 	}
 }
 
