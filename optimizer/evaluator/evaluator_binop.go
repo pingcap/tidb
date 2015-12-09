@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package evaluator
 
 import (
 	"math"
@@ -29,81 +29,121 @@ const (
 )
 
 func (e *Evaluator) binaryOperation(o *ast.BinaryOperationExpr) bool {
-	// all operands must have same column.
-	if e.err = hasSameColumnCount(o.L, o.R); e.err != nil {
-		return false
-	}
-
-	// row constructor only supports comparison operation.
-	switch o.Op {
-	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
-	default:
-		if !checkAllOneColumn(o.L) {
-			e.err = errors.Errorf("Operand should contain 1 column(s)")
-			return false
-		}
-	}
-
-	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	rightVal, err := types.Convert(o.R.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
-	}
-	if leftVal == nil || rightVal == nil {
-		o.SetValue(nil)
-		return true
-	}
-
 	switch o.Op {
 	case opcode.AndAnd, opcode.OrOr, opcode.LogicXor:
 		return e.handleLogicOperation(o)
 	case opcode.LT, opcode.LE, opcode.GE, opcode.GT, opcode.EQ, opcode.NE, opcode.NullEQ:
 		return e.handleComparisonOp(o)
 	case opcode.RightShift, opcode.LeftShift, opcode.And, opcode.Or, opcode.Xor:
-		// TODO: MySQL doesn't support and not, we should remove it later.
 		return e.handleBitOp(o)
 	case opcode.Plus, opcode.Minus, opcode.Mod, opcode.Div, opcode.Mul, opcode.IntDiv:
 		return e.handleArithmeticOp(o)
 	default:
-		panic("should never happen")
+		e.err = ErrInvalidOperation
+		return false
 	}
 }
 
 func (e *Evaluator) handleLogicOperation(o *ast.BinaryOperationExpr) bool {
-	leftVal, err := types.Convert(o.L.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
+	switch o.Op {
+	case opcode.AndAnd:
+		return e.handleAndAnd(o)
+	case opcode.OrOr:
+		return e.handleOrOr(o)
+	case opcode.LogicXor:
+		return e.handleXor(o)
+	default:
+		e.err = ErrInvalidOperation.Gen("unkown operator %s", o.Op)
 		return false
 	}
-	rightVal, err := types.Convert(o.R.GetValue(), o.GetType())
-	if err != nil {
-		e.err = err
-		return false
+}
+
+func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
+	leftVal := o.L.GetValue()
+	righVal := o.R.GetValue()
+	if !types.IsNil(leftVal) {
+		x, err := types.ToBool(leftVal)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return false
+		} else if x == 0 {
+			// false && any other types is false
+			o.SetValue(x)
+			return true
+		}
 	}
-	if leftVal == nil || rightVal == nil {
+	if !types.IsNil(righVal) {
+		y, err := types.ToBool(righVal)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return false
+		} else if y == 0 {
+			o.SetValue(y)
+			return true
+		}
+	}
+	if types.IsNil(leftVal) || types.IsNil(righVal) {
 		o.SetValue(nil)
 		return true
 	}
-	var boolVal bool
-	switch o.Op {
-	case opcode.AndAnd:
-		boolVal = leftVal != zeroI64 && rightVal != zeroI64
-	case opcode.OrOr:
-		boolVal = leftVal != zeroI64 || rightVal != zeroI64
-	case opcode.LogicXor:
-		boolVal = (leftVal == zeroI64 && rightVal != zeroI64) || (leftVal != zeroI64 && rightVal == zeroI64)
-	default:
-		panic("should never happen")
+	o.SetValue(int64(1))
+	return true
+}
+
+func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
+	leftVal := o.L.GetValue()
+	righVal := o.R.GetValue()
+	if !types.IsNil(leftVal) {
+		x, err := types.ToBool(leftVal)
+		if err != nil {
+			e.err = err
+			return false
+		} else if x == 1 {
+			// true || any other types is true.
+			o.SetValue(x)
+			return true
+		}
 	}
-	if boolVal {
-		o.SetValue(oneI64)
+	if !types.IsNil(righVal) {
+		y, err := types.ToBool(righVal)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return false
+		} else if y == 1 {
+			o.SetValue(y)
+			return true
+		}
+	}
+	if types.IsNil(leftVal) || types.IsNil(righVal) {
+		o.SetValue(nil)
+		return true
+	}
+	o.SetValue(int64(0))
+	return true
+}
+
+func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
+	leftVal := o.L.GetValue()
+	righVal := o.R.GetValue()
+	if types.IsNil(leftVal) || types.IsNil(righVal) {
+		o.SetValue(nil)
+		return true
+	}
+	x, err := types.ToBool(leftVal)
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
+
+	y, err := types.ToBool(righVal)
+	if err != nil {
+		e.err = err
+		return false
+	}
+	if x == y {
+		o.SetValue(int64(0))
 	} else {
-		o.SetValue(zeroI64)
+		o.SetValue(int64(1))
 	}
 	return true
 }
@@ -161,7 +201,7 @@ func getCompResult(op opcode.Op, value int) (bool, error) {
 	case opcode.NullEQ:
 		return value == 0, nil
 	default:
-		return false, errors.Errorf("invalid op %v in comparision operation", op)
+		return false, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
 	}
 }
 
@@ -198,33 +238,31 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 	case opcode.LeftShift:
 		o.SetValue(uint64(x) << uint64(y))
 	default:
-		e.err = errors.Errorf("invalid op %v in bit operation", o.Op)
+		e.err = ErrInvalidOperation.Gen("invalid op %v in bit operation", o.Op)
 		return false
 	}
 	return true
 }
 
 func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
-	a, err := coerceArithmetic(o.L.GetValue())
+	a, err := coerceArithmetic(types.RawData(o.L.GetValue()))
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 
-	b, err := coerceArithmetic(o.R.GetValue())
+	b, err := coerceArithmetic(types.RawData(o.R.GetValue()))
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	a, b = types.Coerce(a, b)
 
 	if a == nil || b == nil {
-		// TODO: for <=>, if a and b are both nil, return true
 		o.SetValue(nil)
 		return true
 	}
 
-	// TODO: support logic division DIV
 	var result interface{}
 	switch o.Op {
 	case opcode.Plus:
@@ -240,7 +278,7 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 	case opcode.IntDiv:
 		result, e.err = computeIntDiv(a, b)
 	default:
-		e.err = errors.Errorf("invalid op %v in arithmetic operation", o.Op)
+		e.err = ErrInvalidOperation.Gen("invalid op %v in arithmetic operation", o.Op)
 		return false
 	}
 	o.SetValue(result)
@@ -359,7 +397,6 @@ func computeDiv(a, b interface{}) (interface{}, error) {
 		// the scale of the result is the scale of the first operand plus
 		// the value of the div_precision_increment system variable (which is 4 by default)
 		// we will use 4 here
-
 		xa, err := types.ToDecimal(a)
 		if err != nil {
 			return nil, err

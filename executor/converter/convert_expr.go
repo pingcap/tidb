@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package converter
 
 import (
 	"github.com/juju/errors"
@@ -70,8 +70,6 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.columnNameExpr(v)
 	case *ast.DefaultExpr:
 		c.defaultExpr(v)
-	case *ast.IdentifierExpr:
-		c.identifier(v)
 	case *ast.ExistsSubqueryExpr:
 		c.existsSubquery(v)
 	case *ast.PatternInExpr:
@@ -219,12 +217,6 @@ func (c *expressionConverter) defaultExpr(v *ast.DefaultExpr) {
 	c.exprMap[v] = oldDefault
 }
 
-func (c *expressionConverter) identifier(v *ast.IdentifierExpr) {
-	oldIdent := &expression.Ident{}
-	oldIdent.CIStr = v.Name
-	c.exprMap[v] = oldIdent
-}
-
 func (c *expressionConverter) existsSubquery(v *ast.ExistsSubqueryExpr) {
 	subquery := c.exprMap[v.Sel].(expression.SubQuery)
 	c.exprMap[v] = &expression.ExistsSubQuery{Sel: subquery}
@@ -280,7 +272,7 @@ func (c *expressionConverter) parentheses(v *ast.ParenthesesExpr) {
 }
 
 func (c *expressionConverter) position(v *ast.PositionExpr) {
-	c.exprMap[v] = &expression.Position{N: v.N, Name: v.Name}
+	c.exprMap[v] = &expression.Position{N: v.N}
 }
 
 func (c *expressionConverter) patternRegexp(v *ast.PatternRegexpExpr) {
@@ -324,7 +316,7 @@ func (c *expressionConverter) variable(v *ast.VariableExpr) {
 
 func (c *expressionConverter) funcCall(v *ast.FuncCallExpr) {
 	oldCall := &expression.Call{
-		F: v.FnName,
+		F: v.FnName.O,
 	}
 	oldCall.Args = make([]expression.Expression, len(v.Args))
 	for i, val := range v.Args {

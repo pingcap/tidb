@@ -236,7 +236,7 @@ func (s *testHelperSuite) TestGetTimeValue(c *C) {
 		{Value{"2012-13-12 00:00:00"}},
 		{Value{0}},
 		{Value{int64(1)}},
-		{&Ident{CIStr: model.NewCIStr("xxx")}},
+		{&Call{F: "xxx"}},
 		{NewUnaryOperation(opcode.Minus, Value{int64(1)})},
 	}
 
