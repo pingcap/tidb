@@ -24,9 +24,20 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"golang.org/x/text/transform"
+)
+
+// Error instances.
+var (
+	ErrInvalidOperation = terror.ClassEvaluator.New(CodeInvalidOperation, "invalid operation")
+)
+
+// Error codes.
+const (
+	CodeInvalidOperation terror.ErrCode = iota + 1
 )
 
 // Eval evaluates an expression to a value.
@@ -407,7 +418,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		case mysql.Set:
 			u.SetValue(x)
 		default:
-			e.err = errors.New("invalid operation")
+			e.err = ErrInvalidOperation
 			return false
 		}
 	case opcode.Minus:
@@ -468,11 +479,11 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		case mysql.Set:
 			u.SetValue(-x.ToNumber())
 		default:
-			e.err = errors.Errorf("invalid operation")
+			e.err = ErrInvalidOperation
 			return false
 		}
 	default:
-		e.err = errors.Errorf("invalid operation")
+		e.err = ErrInvalidOperation
 		return false
 	}
 
@@ -501,7 +512,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	_, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
-		e.err = errors.Errorf("Unknown system variable '%s'", name)
+		e.err = terror.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
 		return false
 	}
 
@@ -523,7 +534,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 	f, ok := builtin.Funcs[v.FnName.L]
 	if !ok {
-		e.err = errors.Errorf("unknown function %s", v.FnName.O)
+		e.err = ErrInvalidOperation.Gen("unknown function %s", v.FnName.O)
 		return false
 	}
 	a := make([]interface{}, len(v.Args))
@@ -567,7 +578,7 @@ func (e *Evaluator) funcExtract(v *ast.FuncExtractExpr) bool {
 
 	t, ok := val.(mysql.Time)
 	if !ok {
-		e.err = errors.Errorf("need time type, but got %T", val)
+		e.err = ErrInvalidOperation.Gen("need time type, but got %T", val)
 		return false
 	}
 	n, err1 := mysql.ExtractTimeNum(v.Unit, t)
@@ -600,7 +611,7 @@ func (e *Evaluator) funcConvert(f *ast.FuncConvertExpr) bool {
 
 	encoding, _ := charset.Lookup(f.Charset)
 	if encoding == nil {
-		e.err = errors.Errorf("unknown encoding: %s", f.Charset)
+		e.err = ErrInvalidOperation.Gen("unknown encoding: %s", f.Charset)
 		return false
 	}
 
@@ -636,14 +647,14 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 func (e *Evaluator) funcSubstring(v *ast.FuncSubstringExpr) bool {
 	str, err := types.ToString(v.StrExpr.GetValue())
 	if err != nil {
-		e.err = errors.Errorf("Substring invalid args, need string but get %T", v.StrExpr.GetValue())
+		e.err = ErrInvalidOperation.Gen("Substring invalid args, need string but get %T", v.StrExpr.GetValue())
 		return false
 	}
 
 	t := v.Pos.GetValue()
 	p, ok := t.(int64)
 	if !ok {
-		e.err = errors.Errorf("Substring invalid pos args, need int but get %T", t)
+		e.err = ErrInvalidOperation.Gen("Substring invalid pos args, need int but get %T", t)
 		return false
 	}
 	pos := int(p)
@@ -653,7 +664,7 @@ func (e *Evaluator) funcSubstring(v *ast.FuncSubstringExpr) bool {
 		t = v.Len.GetValue()
 		p, ok = t.(int64)
 		if !ok {
-			e.err = errors.Errorf("Substring invalid pos args, need int but get %T", t)
+			e.err = ErrInvalidOperation.Gen("Substring invalid pos args, need int but get %T", t)
 			return false
 		}
 		length = int(p)
@@ -686,14 +697,14 @@ func (e *Evaluator) funcSubstringIndex(v *ast.FuncSubstringIndexExpr) bool {
 	fs := v.StrExpr.GetValue()
 	str, err := types.ToString(fs)
 	if err != nil {
-		e.err = errors.Errorf("Substring_Index invalid args, need string but get %T", fs)
+		e.err = ErrInvalidOperation.Gen("Substring_Index invalid args, need string but get %T", fs)
 		return false
 	}
 
 	t := v.Delim.GetValue()
 	delim, err := types.ToString(t)
 	if err != nil {
-		e.err = errors.Errorf("Substring_Index invalid delim, need string but get %T", t)
+		e.err = ErrInvalidOperation.Gen("Substring_Index invalid delim, need string but get %T", t)
 		return false
 	}
 
@@ -762,7 +773,7 @@ func (e *Evaluator) funcLocate(v *ast.FuncLocateExpr) bool {
 	}
 	// eval locate
 	if pos < 0 || pos > len(str) {
-		e.err = errors.Errorf("Locate invalid pos args: %d", pos)
+		e.err = ErrInvalidOperation.Gen("Locate invalid pos args: %d", pos)
 		return false
 	}
 	str = str[pos:]
