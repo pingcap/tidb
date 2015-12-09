@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
@@ -101,13 +102,11 @@ type kvIndex struct {
 }
 
 // GenIndexPrefix generates the index prefix.
-func GenIndexPrefix(indexPrefix string, indexID int64) (string, error) {
-	indexKey, err := EncodeValue(indexID)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-
-	return indexPrefix + string(indexKey), nil
+func GenIndexPrefix(indexPrefix string, indexID int64) string {
+	buf := make([]byte, 0, len(indexPrefix)+8)
+	buf = append(buf, indexPrefix...)
+	buf = codec.EncodeInt(buf, indexID)
+	return string(buf)
 }
 
 // NewKVIndex builds a new kvIndex object.
@@ -118,11 +117,7 @@ func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool
 		unique:    unique,
 	}
 
-	var err error
-	index.prefix, err = GenIndexPrefix(indexPrefix, indexID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	index.prefix = GenIndexPrefix(indexPrefix, indexID)
 
 	return index, nil
 }
