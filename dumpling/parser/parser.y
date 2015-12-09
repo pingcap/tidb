@@ -962,6 +962,10 @@ DefaultValueExpr:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
+|	NowSym '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
+	}
 |	SignedLiteral
 
 // TODO: Process other three keywords
