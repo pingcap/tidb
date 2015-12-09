@@ -51,6 +51,7 @@ var (
 	characterSetsFields  []*field.ResultField
 	collationsFields     []*field.ResultField
 	filesFields          []*field.ResultField
+	profilingFields      []*field.ResultField
 	characterSetsRecords [][]interface{}
 	collationsRecords    [][]interface{}
 	filesRecords         [][]interface{}
@@ -65,6 +66,7 @@ const (
 	tableCollations    = "COLLATIONS"
 	tableFiles         = "FILES"
 	catalogVal         = "def"
+	tableProfiling     = "PROFILING"
 )
 
 // NewInfoSchemaPlan returns new InfoSchemaPlan instance, and checks if the
@@ -78,6 +80,7 @@ func NewInfoSchemaPlan(tableName string) (isp *InfoSchemaPlan, err error) {
 	case tableCharacterSets:
 	case tableCollations:
 	case tableFiles:
+	case tableProfiling:
 	default:
 		return nil, errors.Errorf("table INFORMATION_SCHEMA.%s does not exist", tableName)
 	}
@@ -172,6 +175,32 @@ func buildResultFieldsForStatistics() (rfs []*field.ResultField) {
 	rfs = append(rfs, buildResultField(tbName, "INDEX_TYPE", mysql.TypeVarchar, 16))
 	rfs = append(rfs, buildResultField(tbName, "COMMENT", mysql.TypeVarchar, 16))
 	rfs = append(rfs, buildResultField(tbName, "INDEX_COMMENT", mysql.TypeVarchar, 1024))
+	for i, f := range rfs {
+		f.Offset = i
+	}
+	return
+}
+
+func buildResultFieldsForProfiling() (rfs []*field.ResultField) {
+	tbName := tableProfiling
+	rfs = append(rfs, buildResultField(tbName, "QUERY_ID", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "SEQ", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "STATE", mysql.TypeVarchar, 30))
+	rfs = append(rfs, buildResultField(tbName, "DURATION", mysql.TypeNewDecimal, 9))
+	rfs = append(rfs, buildResultField(tbName, "CPU_USER", mysql.TypeNewDecimal, 9))
+	rfs = append(rfs, buildResultField(tbName, "CPU_SYSTEM", mysql.TypeNewDecimal, 9))
+	rfs = append(rfs, buildResultField(tbName, "CONTEXT_VOLUNTARY", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "CONTEXT_INVOLUNTARY", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "BLOCK_OPS_IN", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "BLOCK_OPS_OUT", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "MESSAGES_SENT", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "MESSAGES_RECEIVED", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "PAGE_FAULTS_MAJOR", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "PAGE_FAULTS_MINOR", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "SWAPS", mysql.TypeLong, 20))
+	rfs = append(rfs, buildResultField(tbName, "SOURCE_FUNCTION", mysql.TypeVarchar, 30))
+	rfs = append(rfs, buildResultField(tbName, "SOURCE_FILE", mysql.TypeVarchar, 20))
+	rfs = append(rfs, buildResultField(tbName, "SOURCE_LINE", mysql.TypeLong, 20))
 	for i, f := range rfs {
 		f.Offset = i
 	}
@@ -289,6 +318,8 @@ func (isp *InfoSchemaPlan) GetFields() []*field.ResultField {
 		return collationsFields
 	case tableFiles:
 		return filesFields
+	case tableProfiling:
+		return profilingFields
 	}
 	return nil
 }
@@ -524,4 +555,5 @@ func init() {
 	characterSetsRecords = buildCharacterSetsRecords()
 	collationsRecords = buildColltionsRecords()
 	filesRecords = buildFilesRecords()
+	profilingFields = buildResultFieldsForProfiling()
 }
