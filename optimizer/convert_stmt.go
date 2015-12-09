@@ -724,6 +724,8 @@ func convertAlterTableSpec(converter *expressionConverter, v *ast.AlterTableSpec
 			oldOpt.Tp = coldef.TblOptMaxRows
 		case ast.TableOptionMinRows:
 			oldOpt.Tp = coldef.TblOptMinRows
+		case ast.TableOptionDelayKeyWrite:
+			oldOpt.Tp = coldef.TblOptDelayKeyWrite
 		}
 		oldAlterSpec.TableOpts = append(oldAlterSpec.TableOpts, oldOpt)
 	}

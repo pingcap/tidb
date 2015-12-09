@@ -333,6 +333,7 @@ dayofyear	{d}{a}{y}{o}{f}{y}{e}{a}{r}
 deallocate	{d}{e}{a}{l}{l}{o}{c}{a}{t}{e}
 default		{d}{e}{f}{a}{u}{l}{t}
 delayed		{d}{e}{l}{a}{y}{e}{d}
+delay_key_write	{d}{e}{l}{a}{y}_{k}{e}{y}_{w}{r}{i}{t}{e}
 delete		{d}{e}{l}{e}{t}{e}
 drop		{d}{r}{o}{p}
 desc		{d}{e}{s}{c}
@@ -705,6 +706,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return deallocate
 {default}		return defaultKwd
 {delayed}		return delayed
+{delay_key_write}	lval.item = string(l.val)
+			return delayKeyWrite
 {delete}		return deleteKwd
 {desc}			return desc
 {describe}		return describe

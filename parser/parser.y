@@ -114,6 +114,7 @@ import (
 	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
+	delayKeyWrite	"DELAY_KEY_WRITE"
 	deleteKwd	"DELETE"
 	desc		"DESC"
 	describe	"DESCRIBE"
@@ -1661,7 +1662,7 @@ UnReservedKeyword:
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH"
@@ -3633,6 +3634,10 @@ TableOption:
 |	"MIN_ROWS" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionMinRows, UintValue: $3.(uint64)} 
+	}
+|	"DELAY_KEY_WRITE" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionDelayKeyWrite, UintValue: $3.(uint64)} 
 	}
 
 
