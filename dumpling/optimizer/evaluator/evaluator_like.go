@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	patMatch = iota
+	patMatch = iota + 1
 	patOne
 	patAny
 )
