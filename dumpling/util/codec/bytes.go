@@ -41,9 +41,11 @@ const (
 // Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
 func EncodeBytes(b []byte, data []byte) []byte {
 	// Allocate more space to avoid unnecessary slice growing.
-	// Assume that the byte slice size is about 20*8 = 160 bytes.
+	// Assume that the byte slice size is about `(len(data) / encGroupSize + 1) * (encGroupSize + 1)` bytes,
+	// that is `(len(data) / 8 + 1) * 9` in our implement.
 	dl := len(data)
-	bs := reallocBytes(b, dl+avgEncGroupCount)
+	reallocSize := (dl/encGroupSize + 1) * (encGroupSize + 1)
+	bs := reallocBytes(b, reallocSize)
 	for idx := 0; idx <= dl; idx += encGroupSize {
 		remain := dl - idx
 		padCount := 0
@@ -63,12 +65,12 @@ func EncodeBytes(b []byte, data []byte) []byte {
 }
 
 func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
-	if len(b) < encGroupSize+1 {
-		return nil, nil, errors.New("insufficient bytes to decode value")
-	}
-
-	data := []byte{}
+	data := make([]byte, 0, len(b))
 	for {
+		if len(b) < encGroupSize+1 {
+			return nil, nil, errors.New("insufficient bytes to decode value")
+		}
+
 		groupBytes := b[:encGroupSize+1]
 		if reverse {
 			reverseBytes(groupBytes)
@@ -107,7 +109,7 @@ func DecodeBytes(b []byte) ([]byte, []byte, error) {
 }
 
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
-// encoded value to guarentee the encoded value is in descending order for comparison.
+// encoded value to guarantee the encoded value is in descending order for comparison.
 func EncodeBytesDesc(b []byte, data []byte) []byte {
 	n := len(b)
 	b = EncodeBytes(b, data)
