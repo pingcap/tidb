@@ -93,4 +93,6 @@ func (p *testInfoSchemaSuit) TestInfoSchema(c *C) {
 	c.Assert(cnt, Greater, 0)
 	cnt = mustQuery(c, testDB, "select * from information_schema.files")
 	c.Assert(cnt, Equals, 0)
+	cnt = mustQuery(c, testDB, "select * from information_schema.profiling")
+	c.Assert(cnt, Equals, 0)
 }
