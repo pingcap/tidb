@@ -423,10 +423,7 @@ func lockRow(txn kv.Transaction, t table.Table, h int64) error {
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	kvX, err := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
 
 	for _, handle := range handles {
 		log.Debug("building index...", handle)
