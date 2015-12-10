@@ -119,6 +119,11 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			-1,
 		},
 		{
+			[]interface{}{"abcdefgh"},
+			[]interface{}{"abcdefghi"},
+			-1,
+		},
+		{
 			[]interface{}{1, "abc"},
 			[]interface{}{1, "abcd"},
 			-1,
@@ -138,7 +143,6 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 			[]interface{}{[]byte{0x01, 0x00, 0xFF}},
 			-1,
 		},
-
 		{
 			[]interface{}{[]byte{0x01}, uint64(0xFFFFFFFFFFFFFFF)},
 			[]interface{}{[]byte{0x01, 0x10}, 0},
@@ -193,7 +197,7 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 		b2, err := EncodeKey(t.Right...)
 		c.Assert(err, IsNil)
 
-		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect)
+		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
 	}
 }
 
@@ -335,7 +339,10 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 		math.MaxFloat64,
 		math.MaxFloat32,
 		math.SmallestNonzeroFloat32,
-		math.SmallestNonzeroFloat64}
+		math.SmallestNonzeroFloat64,
+		math.Inf(-1),
+		math.Inf(1),
+	}
 
 	for _, t := range tblFloat {
 		b := EncodeFloat(nil, t)
@@ -362,6 +369,9 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 		{math.MaxFloat32, math.MaxFloat64, -1},
 		{math.MaxFloat64, 0, 1},
 		{math.MaxFloat64, math.SmallestNonzeroFloat64, 1},
+		{math.Inf(-1), 0, -1},
+		{math.Inf(1), 0, 1},
+		{math.Inf(-1), math.Inf(1), -1},
 	}
 
 	for _, t := range tblCmp {
@@ -393,12 +403,12 @@ func (s *testCodecSuite) TestBytes(c *C) {
 		b := EncodeBytes(nil, t)
 		_, v, err := DecodeBytes(b)
 		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v)
+		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 
 		b = EncodeBytesDesc(nil, t)
 		_, v, err = DecodeBytesDesc(b)
 		c.Assert(err, IsNil)
-		c.Assert(t, DeepEquals, v)
+		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 	}
 
 	tblCmp := []struct {
@@ -412,6 +422,16 @@ func (s *testCodecSuite) TestBytes(c *C) {
 		{[]byte{0xFF}, []byte{0xFF, 0x00}, -1},
 		{[]byte("a"), []byte("b"), -1},
 		{[]byte("a"), []byte{0x00}, 1},
+		{[]byte{0x00}, []byte{0x01}, -1},
+		{[]byte{0x00, 0x01}, []byte{0x00, 0x00}, 1},
+		{[]byte{0x00, 0x00, 0x00}, []byte{0x00, 0x00}, 1},
+		{[]byte{0x00, 0x00, 0x00}, []byte{0x00, 0x00}, 1},
+		{[]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, -1},
+		{[]byte{0x01, 0x02, 0x03, 0x00}, []byte{0x01, 0x02, 0x03}, 1},
+		{[]byte{0x01, 0x03, 0x03, 0x04}, []byte{0x01, 0x03, 0x03, 0x05}, -1},
+		{[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}, []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}, -1},
+		{[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09}, []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}, 1},
+		{[]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00}, []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}, 1},
 	}
 
 	for _, t := range tblCmp {

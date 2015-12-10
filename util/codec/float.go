@@ -19,21 +19,19 @@ import (
 	"github.com/juju/errors"
 )
 
-// Float64ToUint64 converts float to a uint for lexicographical comparation.
-func Float64ToUint64(f float64) uint64 {
+func encodeFloatToCmpUint64(f float64) uint64 {
 	u := math.Float64bits(f)
 	if f >= 0 {
-		u |= 0x8000000000000000
+		u |= signMask
 	} else {
 		u = ^u
 	}
 	return u
 }
 
-// Uint64ToFloat64 converts the uint generated with Float64ToUint64 before to a float.
-func Uint64ToFloat64(u uint64) float64 {
-	if u&0x8000000000000000 > 0 {
-		u &= ^uint64(0x8000000000000000)
+func decodeCmpUintToFloat(u uint64) float64 {
+	if u&signMask > 0 {
+		u &= ^signMask
 	} else {
 		u = ^u
 	}
@@ -43,25 +41,25 @@ func Uint64ToFloat64(u uint64) float64 {
 // EncodeFloat encodes a float v into a byte slice which can be sorted lexicographically later.
 // EncodeFloat guarantees that the encoded value is in ascending order for comparison.
 func EncodeFloat(b []byte, v float64) []byte {
-	u := Float64ToUint64(v)
+	u := encodeFloatToCmpUint64(v)
 	return EncodeUint(b, u)
 }
 
 // DecodeFloat decodes a float from a byte slice generated with EncodeFloat before.
 func DecodeFloat(b []byte) ([]byte, float64, error) {
 	b, u, err := DecodeUint(b)
-	return b, Uint64ToFloat64(u), errors.Trace(err)
+	return b, decodeCmpUintToFloat(u), errors.Trace(err)
 }
 
 // EncodeFloatDesc encodes a float v into a byte slice which can be sorted lexicographically later.
 // EncodeFloatDesc guarantees that the encoded value is in descending order for comparison.
 func EncodeFloatDesc(b []byte, v float64) []byte {
-	u := Float64ToUint64(v)
+	u := encodeFloatToCmpUint64(v)
 	return EncodeUintDesc(b, u)
 }
 
 // DecodeFloatDesc decodes a float from a byte slice generated with EncodeFloatDesc before.
 func DecodeFloatDesc(b []byte) ([]byte, float64, error) {
 	b, u, err := DecodeUintDesc(b)
-	return b, Uint64ToFloat64(u), errors.Trace(err)
+	return b, decodeCmpUintToFloat(u), errors.Trace(err)
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
@@ -76,7 +77,7 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
 		return
 	}
-	handle, err := util.DecodeHandleFromRowKey(r.iter.Key())
+	handle, err := tables.DecodeRecordKeyHandle(r.iter.Key())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -295,7 +296,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	// r2_col2 -> r2 col2 value
 	// ...
 	rowKey := r.iter.Key()
-	handle, err := util.DecodeHandleFromRowKey(rowKey)
+	handle, err := tables.DecodeRecordKeyHandle(rowKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

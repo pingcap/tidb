@@ -14,198 +14,161 @@
 package codec
 
 import (
-	"bytes"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 )
 
-var (
-	// InfiniteValue is the greatest than any other encoded value.
-	InfiniteValue = []byte{0xFF, 0xFF}
-	// NilValue is the smallest than any other encoded value.
-	NilValue = []byte{0x00, 0x00}
-	// SmallestNoneNilValue is smaller than any other encoded value except nil value.
-	SmallestNoneNilValue = []byte{0x00, 0x01}
-)
-
-// TODO: use iota + 1 instead?
 const (
-	formatNilFlag      = 'n'
-	formatIntFlag      = 'd'
-	formatUintFlag     = 'u'
-	formatFloatFlag    = 'f'
-	formatStringFlag   = 's'
-	formatBytesFlag    = 'b'
-	formatDurationFlag = 't'
-	formatDecimalFlag  = 'c'
+	nilFlag byte = iota
+	bytesFlag
+	stringFlag
+	intFlag
+	uintFlag
+	floatFlag
+	decimalFlag
+	durationFlag
 )
-
-var sepKey = []byte{0x00, 0x00}
 
 // EncodeKey encodes args to a slice which can be sorted lexicographically later.
 // EncodeKey guarantees the encoded slice is in ascending order for comparison.
-// TODO: we may add more test to check its valiadation, especially for null type and multi indices.
 func EncodeKey(args ...interface{}) ([]byte, error) {
 	var b []byte
-	format := make([]byte, 0, len(args))
 	for _, arg := range args {
 		switch v := arg.(type) {
 		case bool:
+			b = append(b, intFlag)
 			if v {
 				b = EncodeInt(b, int64(1))
 			} else {
 				b = EncodeInt(b, int64(0))
 			}
-			format = append(format, formatIntFlag)
 		case int:
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
-			format = append(format, formatIntFlag)
 		case int8:
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
-			format = append(format, formatIntFlag)
 		case int16:
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
-			format = append(format, formatIntFlag)
 		case int32:
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
-			format = append(format, formatIntFlag)
 		case int64:
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v))
-			format = append(format, formatIntFlag)
 		case uint:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
-			format = append(format, formatUintFlag)
 		case uint8:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
-			format = append(format, formatUintFlag)
 		case uint16:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
-			format = append(format, formatUintFlag)
 		case uint32:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
-			format = append(format, formatUintFlag)
 		case uint64:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v))
-			format = append(format, formatUintFlag)
 		case float32:
+			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(v))
-			format = append(format, formatFloatFlag)
 		case float64:
+			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(v))
-			format = append(format, formatFloatFlag)
 		case string:
+			b = append(b, stringFlag)
 			b = EncodeBytes(b, []byte(v))
-			format = append(format, formatStringFlag)
 		case []byte:
+			b = append(b, bytesFlag)
 			b = EncodeBytes(b, v)
-			format = append(format, formatBytesFlag)
 		case mysql.Time:
+			b = append(b, stringFlag)
 			b = EncodeBytes(b, []byte(v.String()))
-			format = append(format, formatStringFlag)
 		case mysql.Duration:
 			// duration may have negative value, so we cannot use String to encode directly.
+			b = append(b, durationFlag)
 			b = EncodeInt(b, int64(v.Duration))
-			format = append(format, formatDurationFlag)
 		case mysql.Decimal:
+			b = append(b, decimalFlag)
 			b = EncodeDecimal(b, v)
-			format = append(format, formatDecimalFlag)
 		case mysql.Hex:
+			b = append(b, intFlag)
 			b = EncodeInt(b, int64(v.ToNumber()))
-			format = append(format, formatIntFlag)
 		case mysql.Bit:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v.ToNumber()))
-			format = append(format, formatUintFlag)
 		case mysql.Enum:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v.ToNumber()))
-			format = append(format, formatUintFlag)
 		case mysql.Set:
+			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(v.ToNumber()))
-			format = append(format, formatUintFlag)
 		case nil:
-			// We will 0x00, 0x00 for nil.
-			// The []byte{} will be encoded as 0x00, 0x01.
-			// The []byte{0x00} will be encode as 0x00, 0xFF, 0x00, 0x01.
-			// And any integer and float encoded values are greater than 0x00, 0x01.
-			// So maybe the smallest none null value is []byte{} and we can use it to skip null values.
-			b = append(b, sepKey...)
-			format = append(format, formatNilFlag)
+			b = append(b, nilFlag)
 		default:
 			return nil, errors.Errorf("unsupport encode type %T", arg)
 		}
 	}
 
-	// The comma is the seperator,
-	// e.g:		0x00, 0x00
-	// We need more tests to check its validation.
-	b = append(b, sepKey...)
-	b = append(b, format...)
 	return b, nil
-}
-
-// StripEnd splits a slice b into two substrings separated by sepKey
-// and returns a slice byte of the previous substrings.
-func StripEnd(b []byte) ([]byte, error) {
-	n := bytes.LastIndex(b, sepKey)
-	if n == -1 || n+2 >= len(b) {
-		// No seperator or no proper format.
-		return nil, errors.Errorf("invalid encoded key")
-	}
-
-	return b[:n], nil
 }
 
 // DecodeKey decodes values from a byte slice generated with EncodeKey before.
 func DecodeKey(b []byte) ([]interface{}, error) {
-	// At first read the format.
-	n := bytes.LastIndex(b, sepKey)
-	if n == -1 || n+2 >= len(b) {
-		// No seperator or no proper format.
-		return nil, errors.Errorf("invalid encoded key")
+	if len(b) < 1 {
+		return nil, errors.New("invalid encoded key")
 	}
 
-	format := b[n+2:]
-	b = b[0:n]
+	var (
+		flag   byte
+		err    error
+		v      interface{}
+		values = make([]interface{}, 0)
+	)
 
-	v := make([]interface{}, len(format))
-	var err error
-	for i, flag := range format {
+	for len(b) > 0 {
+		flag = b[0]
+		b = b[1:]
 		switch flag {
-		case formatIntFlag:
-			b, v[i], err = DecodeInt(b)
-		case formatUintFlag:
-			b, v[i], err = DecodeUint(b)
-		case formatFloatFlag:
-			b, v[i], err = DecodeFloat(b)
-		case formatStringFlag:
+		case intFlag:
+			b, v, err = DecodeInt(b)
+		case uintFlag:
+			b, v, err = DecodeUint(b)
+		case floatFlag:
+			b, v, err = DecodeFloat(b)
+		case bytesFlag:
+			b, v, err = DecodeBytes(b)
+		case stringFlag:
 			var r []byte
 			b, r, err = DecodeBytes(b)
 			if err == nil {
-				v[i] = string(r)
+				v = string(r)
 			}
-		case formatBytesFlag:
-			b, v[i], err = DecodeBytes(b)
-		case formatDurationFlag:
+		case decimalFlag:
+			b, v, err = DecodeDecimal(b)
+		case durationFlag:
 			var r int64
 			b, r, err = DecodeInt(b)
 			if err == nil {
 				// use max fsp, let outer to do round manually.
-				v[i] = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+				v = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
 			}
-		case formatDecimalFlag:
-			b, v[i], err = DecodeDecimal(b)
-		case formatNilFlag:
-			if len(b) < 2 || (b[0] != 0x00 && b[1] != 0x00) {
-				return nil, errors.Errorf("malformed encoded nil")
-			}
-			b, v[i] = b[2:], nil
+		case nilFlag:
+			v = nil
 		default:
-			return nil, errors.Errorf("invalid encoded key format %v in %s", flag, format)
+			return nil, errors.Errorf("invalid encoded key flag %v", flag)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		values = append(values, v)
 	}
-	return v, nil
+
+	return values, nil
 }
