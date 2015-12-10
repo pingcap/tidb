@@ -63,62 +63,83 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-// GetIndexData returns index handles and index values.
-func GetIndexData(table table.Table, txn kv.Transaction, idx *column.IndexedCol) ([]int64, [][]interface{}, error) {
-	var handles []int64
-	var vals [][]interface{}
-	kvIndex := kv.NewKVIndex(table.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
-	it, err := kvIndex.SeekFirst(txn)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer it.Close()
-
-	for {
-		val, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-
-		handles = append(handles, h)
-		vals = append(vals, val)
-	}
-
-	return handles, vals, nil
+func next(data []interface{}) []interface{} {
+	// Add 0x0 to the end of data.
+	return append(data, []byte{})
 }
 
-// GetTableData gets table row handles and column values.
-func GetTableData(table table.Table, retriever kv.Retriever) ([]int64, [][]interface{}, error) {
+// ScanIndexData scans the index handles and values in a limited number.
+// It returns data and the next startVals.
+func ScanIndexData(tableIndexPrefix string, idx *column.IndexedCol, txn kv.Transaction,
+	startVals []interface{}, limit int) ([]int64, [][]interface{}, []interface{}, error) {
+	kvIndex := kv.NewKVIndex(tableIndexPrefix, idx.Name.L, idx.ID, idx.Unique)
+	it, _, err := kvIndex.Seek(txn, startVals)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
+	var (
+		count   int
+		handles []int64
+		vals    [][]interface{}
+		curVals []interface{}
+	)
+	for !table.IsLimit(count, limit) {
+		val, h, err1 := it.Next()
+		if terror.ErrorEqual(err1, io.EOF) {
+			return handles, vals, next(curVals), nil
+		} else if err1 != nil {
+			return nil, nil, nil, errors.Trace(err1)
+		}
+		handles = append(handles, h)
+		vals = append(vals, val)
+		count++
+		curVals = val
+	}
+	nextVals, _, err := it.Next()
+	if terror.ErrorEqual(err, io.EOF) {
+		return handles, vals, next(curVals), nil
+	} else if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
+	return handles, vals, nextVals, nil
+}
+
+// ScanTableData scans table row handles and column values in a limited number.
+// It returns data and the next startKey.
+func ScanTableData(t table.Table, retriever kv.Retriever, startKey string, limit int) (
+	[]int64, [][]interface{}, string, error) {
 	var handles []int64
 	var data [][]interface{}
 
-	err := table.IterRecords(retriever, table.FirstKey(), table.Cols(),
+	nextKey, err := t.ScanRecords(retriever, startKey, limit, t.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
 			data = append(data, d)
 			handles = append(handles, h)
 			return true, nil
 		})
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, "", errors.Trace(err)
 	}
 
-	return handles, data, nil
+	return handles, data, nextKey, nil
 }
 
-// GetTableSnapshot gets the ver version of the table data.
-func GetTableSnapshot(store kv.Storage, ver kv.Version, table table.Table) ([][]interface{}, error) {
+// ScanSnapshotTableData scans the ver version of the table data in a limited number.
+// It returns data and the next startKey.
+func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, startKey string, limit int) (
+	[][]interface{}, string, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 	defer snap.Release()
 
-	_, data, err := GetTableData(table, snap)
+	_, data, key, err := ScanTableData(t, snap, startKey, limit)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
-	return data, nil
+	return data, key, nil
 }

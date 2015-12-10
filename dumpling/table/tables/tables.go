@@ -642,46 +642,63 @@ func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interfa
 // IterRecords implements table.Table IterRecords interface.
 func (t *Table) IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col,
 	fn table.RecordIterFunc) error {
+	_, err := t.ScanRecords(retriever, startKey, table.UnlimitedScanCnt, cols, fn)
+
+	return errors.Trace(err)
+}
+
+// ScanRecords implements table.Table ScanRecords interface.
+func (t *Table) ScanRecords(retriever kv.Retriever, startKey string, limit int, cols []*column.Col,
+	fn table.RecordIterFunc) (string, error) {
 	it, err := retriever.Seek([]byte(startKey))
 	if err != nil {
-		return errors.Trace(err)
+		return "", errors.Trace(err)
 	}
 	defer it.Close()
 
 	if !it.Valid() {
-		return nil
+		return "", nil
 	}
 
-	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
+	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
+	count := 0
+	nextKey := it.Key()
 	prefix := t.KeyPrefix()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+	for it.Valid() && strings.HasPrefix(nextKey, prefix) && !table.IsLimit(count, limit) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
-		handle, err := util.DecodeHandleFromRowKey(it.Key())
+		handle, err := util.DecodeHandleFromRowKey(nextKey)
 		if err != nil {
-			return errors.Trace(err)
+			return "", errors.Trace(err)
 		}
 
 		data, err := t.RowWithCols(retriever, handle, cols)
 		if err != nil {
-			return errors.Trace(err)
+			return "", errors.Trace(err)
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
-			return errors.Trace(err)
+			return "", errors.Trace(err)
 		}
 
 		rk := t.RecordKey(handle, nil)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			nextKey = string([]byte(kv.Key([]byte(nextKey)).Next()))
 			break
 		} else if err != nil {
-			return errors.Trace(err)
+			return "", errors.Trace(err)
+		}
+		count++
+		nextKey = it.Key()
+		if !it.Valid() {
+			nextKey = string([]byte(kv.Key([]byte(nextKey)).Next()))
 		}
 	}
-	return nil
+
+	return nextKey, nil
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
