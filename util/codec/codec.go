@@ -172,3 +172,14 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 
 	return values, nil
 }
+
+// EncodeValue encodes args to a byte slice which can be decoded by DecodeValue later.
+// It does not guarantee the order for comparison.
+func EncodeValue(args ...interface{}) ([]byte, error) {
+	return EncodeKey(args...)
+}
+
+// DecodeValue decodes values from a byte slice generated with EncodeValue before.
+func DecodeValue(b []byte) ([]interface{}, error) {
+	return DecodeKey(b)
+}
