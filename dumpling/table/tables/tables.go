@@ -495,7 +495,7 @@ func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
 
 // DecodeValue implements table.Table DecodeValue interface.
 func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	values, err := codec.DecodeValue(data)
+	values, err := codec.Decode(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

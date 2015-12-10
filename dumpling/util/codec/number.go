@@ -128,6 +128,7 @@ func DecodeUintDesc(b []byte) ([]byte, uint64, error) {
 }
 
 // EncodeVarint appends the encoded value to slice b and returns the appended slice.
+// Note that the encoded result is not memcomparable.
 func EncodeVarint(b []byte, v int64) []byte {
 	var data [binary.MaxVarintLen64]byte
 	n := binary.PutVarint(data[:], v)
@@ -148,6 +149,7 @@ func DecodeVarint(b []byte) ([]byte, int64, error) {
 }
 
 // EncodeUvarint appends the encoded value to slice b and returns the appended slice.
+// Note that the encoded result is not memcomparable.
 func EncodeUvarint(b []byte, v uint64) []byte {
 	var data [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(data[:], v)

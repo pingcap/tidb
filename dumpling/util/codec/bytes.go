@@ -15,6 +15,7 @@ package codec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"runtime"
 	"unsafe"
 
@@ -123,8 +124,10 @@ func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
 }
 
 // EncodeCompactBytes joins bytes with its length into a byte slice. It is more
-// efficient in both space and time compare to EncodeBytes.
+// efficient in both space and time compare to EncodeBytes. Note that the encoded
+// result is not memcomparable.
 func EncodeCompactBytes(b []byte, data []byte) []byte {
+	b = reallocBytes(b, binary.MaxVarintLen64+len(data))
 	b = EncodeVarint(b, int64(len(data)))
 	return append(b, data...)
 }
@@ -138,9 +141,7 @@ func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	if int64(len(b)) < n {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
-	data := make([]byte, int(n))
-	copy(data, b[:n])
-	return b[n:], data, nil
+	return b[n:], b[:n], nil
 }
 
 // See https://golang.org/src/crypto/cipher/xor.go
