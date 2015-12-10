@@ -350,6 +350,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 	a := u.V.GetValue()
 	a = types.RawData(a)
 	if a == nil {
+		u.SetValue(nil)
 		return true
 	}
 	switch op := u.Op; op {
@@ -372,7 +373,6 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		u.SetValue(uint64(^n))
 	case opcode.Plus:
 		switch x := a.(type) {
-		case nil:
 		case bool:
 			u.SetValue(boolToInt64(x))
 		case float32:
@@ -423,7 +423,6 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		}
 	case opcode.Minus:
 		switch x := a.(type) {
-		case nil:
 		case bool:
 			if x {
 				u.SetValue(int64(-1))
@@ -595,6 +594,7 @@ func (e *Evaluator) funcConvert(f *ast.FuncConvertExpr) bool {
 
 	// Casting nil to any type returns nil
 	if value == nil {
+		f.SetValue(nil)
 		return true
 	}
 	str, ok := value.(string)
