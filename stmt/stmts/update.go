@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -306,7 +306,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			}
 
 			// Update row
-			handle, err1 := util.DecodeHandleFromRowKey(k)
+			handle, err1 := tables.DecodeRecordKeyHandle(k)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

@@ -135,6 +135,7 @@ const (
 	TblOptKeyBlockSize
 	TblOptMaxRows
 	TblOptMinRows
+	TblOptDelayKeyWrite
 )
 
 // TableOpt is used for parsing table option from SQL.

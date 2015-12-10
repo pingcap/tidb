@@ -428,6 +428,7 @@ const (
 	TableOptionKeyBlockSize
 	TableOptionMaxRows
 	TableOptionMinRows
+	TableOptionDelayKeyWrite
 )
 
 // TableOption is used for parsing table option from SQL.

@@ -80,17 +80,29 @@ type DMLNode interface {
 	dmlStatement()
 }
 
-// ResultField is computed from a parsed select statement.
+// ResultField represents a result field which can be a column from a table,
+// or an expression in select field. It is a generated property during
+// binding process. ResultField is the key element to evaluate a ColumnNameExpr.
+// After resolving process, every ColumnNameExpr will be resolved to a ResultField.
+// During execution, every row retrieved from table will set the row value to
+// ResultFields of that table, so ColumnNameExpr resolved to that ResultField can be
+// easily evaluated.
 type ResultField struct {
 	Column       *model.ColumnInfo
 	ColumnAsName model.CIStr
 	Table        *model.TableInfo
 	TableAsName  model.CIStr
 	DBName       model.CIStr
+
+	// The expression for the result field. If it is generated from a select field, it would
+	// be the expression of that select field, otherwise the type would be ValueExpr and value
+	// will be set for every retrieved row.
+	Expr ExprNode
 }
 
-// ResultSetNode interface has ResultFields property which is computed and set by visitor.
-// Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
+// ResultSetNode interface has ResultFields property which is computed and set by
+// optimizer.InfoBinder during binding process. Implementations include SelectStmt,
+// SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
 	Node
 	// GetResultFields gets result fields of the result set node.
@@ -101,13 +113,14 @@ type ResultSetNode interface {
 
 // Visitor visits a Node.
 type Visitor interface {
-	// VisitEnter is called before children nodes is visited.
+	// Enter is called before children nodes are visited.
 	// The returned node must be the same type as the input node n.
 	// skipChildren returns true means children nodes should be skipped,
 	// this is useful when work is done in Enter and there is no need to visit children.
 	Enter(n Node) (node Node, skipChildren bool)
-	// VisitLeave is called after children nodes has been visited.
-	// The returned node must be the same type as the input node n.
+	// Leave is called after children nodes have been visited.
+	// The returned node's type can be different from the input node if it is a ExprNode,
+	// Non-expression node must be the same type as the input node n.
 	// ok returns false to stop visiting.
 	Leave(n Node) (node Node, ok bool)
 }
