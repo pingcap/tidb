@@ -66,11 +66,6 @@ type exprNode struct {
 	flag uint64
 }
 
-// IsStatic implements Expression interface.
-func (en *exprNode) IsStatic() bool {
-	return false
-}
-
 // SetType implements Expression interface.
 func (en *exprNode) SetType(tp *types.FieldType) {
 	en.Type = tp
