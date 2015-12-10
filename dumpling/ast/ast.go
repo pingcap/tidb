@@ -38,6 +38,13 @@ type Node interface {
 	SetText(text string)
 }
 
+const (
+	FlagHasParamMarker uint64 = 1 < iota
+	FlagHasColumnName
+	FlagHasAggregateFunc
+	FlagHasSubquery
+)
+
 // ExprNode is a node that can be evaluated.
 // Name of implementations should have 'Expr' suffix.
 type ExprNode interface {
@@ -53,6 +60,12 @@ type ExprNode interface {
 	SetValue(val interface{})
 	// GetValue gets value of the expression.
 	GetValue() interface{}
+	// SetFlag sets flag to the expression.
+	// Flag indicates whether the expression contains
+	// parameter marker, column name, aggregate function...
+	SetFlag(flag uint64)
+	// GetFlag returns the flag of the expression.
+	GetFlag() uint64
 }
 
 // FuncNode represents function call expression node.
