@@ -176,10 +176,141 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 // EncodeValue encodes args to a byte slice which can be decoded by DecodeValue later.
 // It does not guarantee the order for comparison.
 func EncodeValue(args ...interface{}) ([]byte, error) {
-	return EncodeKey(args...)
+	var b []byte
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case bool:
+			b = append(b, intFlag)
+			if v {
+				b = EncodeInt(b, int64(1))
+			} else {
+				b = EncodeInt(b, int64(0))
+			}
+		case int:
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v))
+		case int8:
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v))
+		case int16:
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v))
+		case int32:
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v))
+		case int64:
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v))
+		case uint:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v))
+		case uint8:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v))
+		case uint16:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v))
+		case uint32:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v))
+		case uint64:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v))
+		case float32:
+			b = append(b, floatFlag)
+			b = EncodeFloat(b, float64(v))
+		case float64:
+			b = append(b, floatFlag)
+			b = EncodeFloat(b, float64(v))
+		case string:
+			b = append(b, stringFlag)
+			b = EncodeCompactBytes(b, []byte(v))
+		case []byte:
+			b = append(b, bytesFlag)
+			b = EncodeCompactBytes(b, v)
+		case mysql.Time:
+			b = append(b, stringFlag)
+			b = EncodeCompactBytes(b, []byte(v.String()))
+		case mysql.Duration:
+			// duration may have negative value, so we cannot use String to encode directly.
+			b = append(b, durationFlag)
+			b = EncodeInt(b, int64(v.Duration))
+		case mysql.Decimal:
+			b = append(b, decimalFlag)
+			b = EncodeDecimal(b, v)
+		case mysql.Hex:
+			b = append(b, intFlag)
+			b = EncodeInt(b, int64(v.ToNumber()))
+		case mysql.Bit:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v.ToNumber()))
+		case mysql.Enum:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v.ToNumber()))
+		case mysql.Set:
+			b = append(b, uintFlag)
+			b = EncodeUint(b, uint64(v.ToNumber()))
+		case nil:
+			b = append(b, nilFlag)
+		default:
+			return nil, errors.Errorf("unsupport encode type %T", arg)
+		}
+	}
+
+	return b, nil
 }
 
 // DecodeValue decodes values from a byte slice generated with EncodeValue before.
 func DecodeValue(b []byte) ([]interface{}, error) {
-	return DecodeKey(b)
+	if len(b) < 1 {
+		return nil, errors.New("invalid encoded value")
+	}
+
+	var (
+		flag   byte
+		err    error
+		v      interface{}
+		values = make([]interface{}, 0)
+	)
+
+	for len(b) > 0 {
+		flag = b[0]
+		b = b[1:]
+		switch flag {
+		case intFlag:
+			b, v, err = DecodeInt(b)
+		case uintFlag:
+			b, v, err = DecodeUint(b)
+		case floatFlag:
+			b, v, err = DecodeFloat(b)
+		case bytesFlag:
+			b, v, err = DecodeCompactBytes(b)
+		case stringFlag:
+			var r []byte
+			b, r, err = DecodeCompactBytes(b)
+			if err == nil {
+				v = string(r)
+			}
+		case decimalFlag:
+			b, v, err = DecodeDecimal(b)
+		case durationFlag:
+			var r int64
+			b, r, err = DecodeInt(b)
+			if err == nil {
+				// use max fsp, let outer to do round manually.
+				v = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+			}
+		case nilFlag:
+			v = nil
+		default:
+			return nil, errors.Errorf("invalid encoded value flag %v", flag)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		values = append(values, v)
+	}
+
+	return values, nil
 }

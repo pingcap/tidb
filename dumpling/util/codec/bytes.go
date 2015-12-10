@@ -122,6 +122,27 @@ func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
 	return decodeBytes(b, true)
 }
 
+// EncodeCompactBytes joins bytes with its length into a byte slice. It is more
+// efficient in both space and time compare to EncodeBytes.
+func EncodeCompactBytes(b []byte, data []byte) []byte {
+	b = EncodeVarint(b, int64(len(data)))
+	return append(b, data...)
+}
+
+// DecodeCompactBytes decodes bytes which is encoded by EncodeCompactBytes before.
+func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
+	b, n, err := DecodeVarint(b)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if int64(len(b)) < n {
+		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	}
+	data := make([]byte, int(n))
+	copy(data, b[:n])
+	return b[n:], data, nil
+}
+
 // See https://golang.org/src/crypto/cipher/xor.go
 const wordSize = int(unsafe.Sizeof(uintptr(0)))
 const supportsUnaligned = runtime.GOARCH == "386" || runtime.GOARCH == "amd64"
