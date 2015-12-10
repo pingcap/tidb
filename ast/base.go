@@ -63,6 +63,7 @@ func (dn *dmlNode) dmlStatement() {}
 type exprNode struct {
 	node
 	types.DataItem
+	flag uint64
 }
 
 // IsStatic implements Expression interface.
@@ -88,6 +89,16 @@ func (en *exprNode) SetValue(val interface{}) {
 // GetValue implements Expression interface.
 func (en *exprNode) GetValue() interface{} {
 	return en.Data
+}
+
+// SetFlag implements Expression interface.
+func (en *exprNode) SetFlag(flag uint64) {
+	en.flag = flag
+}
+
+// GetFlag implements Expression interface.
+func (en *exprNode) GetFlag() uint64 {
+	return en.flag
 }
 
 type funcNode struct {
