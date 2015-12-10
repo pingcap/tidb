@@ -489,12 +489,13 @@ func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return kv.EncodeValue(v)
+	b, err := codec.EncodeValue(v)
+	return b, errors.Trace(err)
 }
 
 // DecodeValue implements table.Table DecodeValue interface.
 func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	values, err := kv.DecodeValue(data)
+	values, err := codec.DecodeValue(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
