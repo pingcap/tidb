@@ -969,8 +969,10 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
+	expr := &ast.UnaryOperationExpr{}
 	for _, t := range tbl {
-		expr := &ast.UnaryOperationExpr{Op: t.op, V: ast.NewValueExpr(t.arg)}
+		expr.Op = t.op
+		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
 		c.Assert(err, IsNil)
 		c.Assert(result, DeepEquals, t.result)
