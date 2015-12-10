@@ -87,7 +87,12 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		c.Assert(err, IsNil)
 		args, err := DecodeKey(b)
 		c.Assert(err, IsNil)
+		c.Assert(args, DeepEquals, t.Expect)
 
+		b, err = EncodeValue(t.Input...)
+		c.Assert(err, IsNil)
+		args, err = DecodeValue(b)
+		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
 }
@@ -232,6 +237,11 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		_, v, err = DecodeIntDesc(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+
+		b = EncodeVarint(nil, t)
+		_, v, err = DecodeVarint(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
 	}
 
 	tblUint64 := []uint64{
@@ -258,6 +268,11 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 
 		b = EncodeUintDesc(nil, t)
 		_, v, err = DecodeUintDesc(b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
+
+		b = EncodeUvarint(nil, t)
+		_, v, err = DecodeUvarint(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
 	}
@@ -407,6 +422,11 @@ func (s *testCodecSuite) TestBytes(c *C) {
 
 		b = EncodeBytesDesc(nil, t)
 		_, v, err = DecodeBytesDesc(b)
+		c.Assert(err, IsNil)
+		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+
+		b = EncodeCompactBytes(nil, t)
+		_, v, err = DecodeCompactBytes(b)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
 	}
