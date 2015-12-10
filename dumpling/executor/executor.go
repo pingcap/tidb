@@ -240,7 +240,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 // The length of boundVals may be less than idxKey.
 func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
 	for i := 0; i < len(boundVals); i++ {
-		cmp, err := indexSingleCompare(idxKey[i], boundVals[i])
+		cmp, err := indexColumnCompare(idxKey[i], boundVals[i])
 		if err != nil {
 			return -1, errors.Trace(err)
 		}
@@ -252,7 +252,7 @@ func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
 }
 
 // comparison function that takes minNotNullVal and maxVal into account.
-func indexSingleCompare(a interface{}, b interface{}) (int, error) {
+func indexColumnCompare(a interface{}, b interface{}) (int, error) {
 	if a == nil && b == nil {
 		return 0, nil
 	} else if b == nil {
