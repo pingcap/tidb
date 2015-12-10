@@ -29,7 +29,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression/builtin"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -53,7 +52,7 @@ var (
 	// CurrentTimestamp is the keyword getting default value for datetime and timestamp type.
 	CurrentTimestamp = "CURRENT_TIMESTAMP"
 	// CurrentTimeExpr is the expression retireving default value for datetime and timestamp type.
-	CurrentTimeExpr = &Ident{CIStr: model.NewCIStr(CurrentTimestamp)}
+	CurrentTimeExpr = &Call{F: CurrentTimestamp}
 	// ZeroTimestamp shows the zero datetime and timestamp.
 	ZeroTimestamp = "0000-00-00 00:00:00"
 )
@@ -226,12 +225,12 @@ func staticExpr(e Expression) (Expression, error) {
 
 // IsCurrentTimeExpr returns whether e is CurrentTimeExpr.
 func IsCurrentTimeExpr(e Expression) bool {
-	x, ok := e.(*Ident)
+	x, ok := e.(*Call)
 	if !ok {
 		return false
 	}
 
-	return x.Equal(CurrentTimeExpr)
+	return strings.EqualFold(x.F, CurrentTimestamp)
 }
 
 func getSystemTimestamp(ctx context.Context) (time.Time, error) {
@@ -307,11 +306,10 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 		default:
 			return nil, errors.Trace(errDefaultValue)
 		}
-	case *Ident:
-		if x.Equal(CurrentTimeExpr) {
+	case *Call:
+		if x.F == CurrentTimestamp {
 			return CurrentTimestamp, nil
 		}
-
 		return nil, errors.Trace(errDefaultValue)
 	case *UnaryOperation:
 		// support some expression, like `-1`

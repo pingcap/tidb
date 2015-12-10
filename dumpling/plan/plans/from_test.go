@@ -97,7 +97,9 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 			},
 		},
 	}
+
 	p.tbl = tables.NewTable(1, "t", p.cols, &simpleAllocator{})
+
 	variable.BindSessionVars(p)
 
 	var i int64
@@ -176,8 +178,10 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 			Primary: false,
 			State:   model.StatePublic,
 		},
-		X: kv.NewKVIndex("i", "id", 0, false),
 	}
+
+	idxCol.X = kv.NewKVIndex("i", "id", 0, false)
+
 	p.tbl.AddIndex(idxCol)
 
 	expr4 := &expression.Ident{

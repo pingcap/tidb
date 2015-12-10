@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 )
@@ -389,7 +390,7 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 		}
 
 		var handle int64
-		handle, err = util.DecodeHandleFromRowKey(string(key))
+		handle, err = tables.DecodeRecordKeyHandle(string(key))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -480,6 +481,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
+
 	prefixBytes := []byte(prefix)
 
 	for {

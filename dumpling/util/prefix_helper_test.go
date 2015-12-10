@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 const (
@@ -136,32 +135,6 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	})
 	c.Assert(err, IsNil)
 	err = txn.Commit()
-	c.Assert(err, IsNil)
-}
-
-func (s *testPrefixSuite) TestCode(c *C) {
-	table := []struct {
-		prefix string
-		h      int64
-		ID     int64
-	}{
-		{"123abc##!@#((_)((**&&^^%$", 1234567890, 0},
-		{"", 1, 0},
-		{"", -1, 0},
-		{"", -1, 1},
-	}
-
-	for _, t := range table {
-		b := EncodeRecordKey(t.prefix, t.h, t.ID)
-		handle, err := DecodeHandleFromRowKey(string(b))
-		c.Assert(err, IsNil)
-		c.Assert(handle, Equals, t.h)
-	}
-
-	b1 := EncodeRecordKey("aa", 1, 0)
-	b2 := EncodeRecordKey("aa", 1, 1)
-	c.Logf("%#v, %#v", b2, b1)
-	_, err := codec.StripEnd(b1)
 	c.Assert(err, IsNil)
 }
 

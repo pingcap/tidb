@@ -35,6 +35,7 @@ type Recordset interface {
 
 	// Rows gets rows data by using limit/offset.
 	// Negative limit means no limit.
+	// TODO: remove it.
 	Rows(limit, offset int) (rows [][]interface{}, err error)
 
 	// Next returns the next row, nil row means there is no more to return.

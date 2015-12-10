@@ -22,10 +22,8 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // ScanMetaWithPrefix scans metadata with the prefix.
@@ -97,41 +95,10 @@ func DelKeyWithPrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
-// EncodeRecordKey encodes the string value to a byte slice.
-func EncodeRecordKey(tablePrefix string, h int64, columnID int64) []byte {
-	var (
-		buf []byte
-		err error
-	)
-
-	if columnID == 0 { // Ignore columnID.
-		buf, err = kv.EncodeValue(tablePrefix, h)
-	} else {
-		buf, err = kv.EncodeValue(tablePrefix, h, columnID)
-	}
-	if err != nil {
-		log.Fatal("should never happend")
-	}
-	return buf
-}
-
-// DecodeHandleFromRowKey decodes the string form a row key and returns an int64.
-func DecodeHandleFromRowKey(rk string) (int64, error) {
-	vals, err := kv.DecodeValue([]byte(rk))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return vals[1].(int64), nil
-}
-
 // RowKeyPrefixFilter returns a function which checks whether currentKey has decoded rowKeyPrefix as prefix.
 func RowKeyPrefixFilter(rowKeyPrefix []byte) kv.FnKeyCmp {
 	return func(currentKey kv.Key) bool {
 		// Next until key without prefix of this record.
-		raw, err := codec.StripEnd(rowKeyPrefix)
-		if err != nil {
-			return false
-		}
-		return !bytes.HasPrefix(currentKey, raw)
+		return !bytes.HasPrefix(currentKey, rowKeyPrefix)
 	}
 }

@@ -65,9 +65,6 @@ func copyStruct(in Node) (out Node) {
 	case *DefaultExpr:
 		nv := *v
 		out = &nv
-	case *IdentifierExpr:
-		nv := *v
-		out = &nv
 	case *ExistsSubqueryExpr:
 		nv := *v
 		out = &nv

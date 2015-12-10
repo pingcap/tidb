@@ -14,9 +14,8 @@
 package ast
 
 import (
-	"strings"
-
 	"github.com/pingcap/tidb/expression/builtin"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -38,8 +37,8 @@ type UnquoteString string
 // FuncCallExpr is for function expression.
 type FuncCallExpr struct {
 	funcNode
-	// F is the function name.
-	FnName string
+	// FnName is the function name.
+	FnName model.CIStr
 	// Args is the function args.
 	Args []ExprNode
 }
@@ -63,7 +62,7 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *FuncCallExpr) IsStatic() bool {
-	v := builtin.Funcs[strings.ToLower(n.FnName)]
+	v := builtin.Funcs[n.FnName.L]
 	if v.F == nil || !v.IsStatic {
 		return false
 	}
@@ -216,7 +215,14 @@ func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *FuncSubstringExpr) IsStatic() bool {
-	return n.StrExpr.IsStatic() && n.Pos.IsStatic() && n.Len.IsStatic()
+	static := n.StrExpr.IsStatic() && n.Pos.IsStatic()
+	if !static {
+		return false
+	}
+	if n.Len != nil {
+		return n.Len.IsStatic()
+	}
+	return true
 }
 
 // FuncSubstringIndexExpr returns the substring as specified.
@@ -325,17 +331,22 @@ func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Str = node.(ExprNode)
-	node, ok = n.RemStr.Accept(v)
-	if !ok {
-		return n, false
+	if n.RemStr != nil {
+		node, ok = n.RemStr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.RemStr = node.(ExprNode)
 	}
-	n.RemStr = node.(ExprNode)
 	return v.Leave(n)
 }
 
 // IsStatic implements the ExprNode IsStatic interface.
 func (n *FuncTrimExpr) IsStatic() bool {
-	return n.Str.IsStatic() && n.RemStr.IsStatic()
+	if n.RemStr != nil {
+		return n.Str.IsStatic() && n.RemStr.IsStatic()
+	}
+	return n.Str.IsStatic()
 }
 
 // DateArithType is type for DateArith type.
@@ -395,6 +406,11 @@ func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
 		n.Interval = node.(ExprNode)
 	}
 	return v.Leave(n)
+}
+
+// IsStatic implements the ExprNode IsStatic interface.
+func (n *FuncDateArithExpr) IsStatic() bool {
+	return n.Date.IsStatic() && n.Interval.IsStatic()
 }
 
 // AggregateFuncExpr represents aggregate function expression.

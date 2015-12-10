@@ -152,8 +152,8 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) getTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	alloc := autoid.NewAllocator(d.store, schemaID)
-	tbl := table.TableFromMeta(alloc, tblInfo)
-	return tbl, nil
+	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	return tbl, errors.Trace(err)
 }
 
 func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
