@@ -1323,3 +1323,18 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 
 	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
 }
+
+func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int);")
+	mustExecSQL(c, se, "create index idx_c1_c2 on t (c1, c2)")
+	mustExecSQL(c, se, "insert into t values (1, 5)")
+	mustExecMatch(c, se, "select c1 from t where c1 in (1) and c2 < 10", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select c1 from t where c1 in (1) and c2 > 3", [][]interface{}{{1}})
+	mustExecMatch(c, se, "select c1 from t where c1 in (1.1) and c2 > 3", [][]interface{}{})
+	mustExecMatch(c, se, "select c1 from t where c1 in (1) and c2 < 5.1", [][]interface{}{{1}})
+	err := se.Close()
+	c.Assert(err, IsNil)
+}
