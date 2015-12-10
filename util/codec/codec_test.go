@@ -85,13 +85,13 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 	for _, t := range table {
 		b, err := EncodeKey(t.Input...)
 		c.Assert(err, IsNil)
-		args, err := DecodeKey(b)
+		args, err := Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 
 		b, err = EncodeValue(t.Input...)
 		c.Assert(err, IsNil)
-		args, err = DecodeValue(b)
+		args, err = Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
@@ -493,7 +493,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 
 		b, err := EncodeKey(m)
 		c.Assert(err, IsNil)
-		v, err := DecodeKey(b)
+		v, err := Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, []interface{}{t})
 	}
@@ -534,7 +534,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 
 		b, err := EncodeKey(m)
 		c.Assert(err, IsNil)
-		v, err := DecodeKey(b)
+		v, err := Decode(b)
 		c.Assert(err, IsNil)
 		m.Fsp = mysql.MaxFsp
 		c.Assert(v, DeepEquals, []interface{}{m})
@@ -586,7 +586,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		c.Assert(err, IsNil)
 		b, err := EncodeKey(m)
 		c.Assert(err, IsNil)
-		v, err := DecodeKey(b)
+		v, err := Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, HasLen, 1)
 		vv, ok := v[0].(mysql.Decimal)

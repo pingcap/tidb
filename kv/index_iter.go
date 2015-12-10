@@ -69,7 +69,7 @@ func (c *indexIter) Next() (k []interface{}, h int64, err error) {
 	}
 	// get indexedValues
 	buf := []byte(c.it.Key())[len(c.prefix):]
-	vv, err := codec.DecodeKey(buf)
+	vv, err := codec.Decode(buf)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
