@@ -138,16 +138,15 @@ func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte,
 		}
 	}
 
-	var encVal []byte
+	key = append(key, []byte(c.prefix)...)
 	if distinct {
-		encVal, err = codec.EncodeKey(indexedValues...)
+		key, err = codec.EncodeKey(key, indexedValues...)
 	} else {
-		encVal, err = codec.EncodeKey(append(indexedValues, h)...)
+		key, err = codec.EncodeKey(key, append(indexedValues, h)...)
 	}
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	key = append([]byte(c.prefix), encVal...)
 	return
 }
 

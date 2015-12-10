@@ -83,13 +83,13 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 	}
 
 	for _, t := range table {
-		b, err := EncodeKey(t.Input...)
+		b, err := EncodeKey([]byte(nil), t.Input...)
 		c.Assert(err, IsNil)
 		args, err := Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 
-		b, err = EncodeValue(t.Input...)
+		b, err = EncodeValue([]byte(nil), t.Input...)
 		c.Assert(err, IsNil)
 		args, err = Decode(b)
 		c.Assert(err, IsNil)
@@ -196,10 +196,10 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 	}
 
 	for _, t := range table {
-		b1, err := EncodeKey(t.Left...)
+		b1, err := EncodeKey([]byte(nil), t.Left...)
 		c.Assert(err, IsNil)
 
-		b2, err := EncodeKey(t.Right...)
+		b2, err := EncodeKey([]byte(nil), t.Right...)
 		c.Assert(err, IsNil)
 
 		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
@@ -491,7 +491,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 	for _, t := range tbl {
 		m := parseTime(c, t)
 
-		b, err := EncodeKey(m)
+		b, err := EncodeKey([]byte(nil), m)
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
@@ -512,9 +512,9 @@ func (s *testCodecSuite) TestTime(c *C) {
 		m1 := parseTime(c, t.Arg1)
 		m2 := parseTime(c, t.Arg2)
 
-		b1, err := EncodeKey(m1)
+		b1, err := EncodeKey([]byte(nil), m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(m2)
+		b2, err := EncodeKey([]byte(nil), m2)
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
@@ -532,7 +532,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 	for _, t := range tbl {
 		m := parseDuration(c, t)
 
-		b, err := EncodeKey(m)
+		b, err := EncodeKey([]byte(nil), m)
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
@@ -554,9 +554,9 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		m1 := parseDuration(c, t.Arg1)
 		m2 := parseDuration(c, t.Arg2)
 
-		b1, err := EncodeKey(m1)
+		b1, err := EncodeKey([]byte(nil), m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(m2)
+		b2, err := EncodeKey([]byte(nil), m2)
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
@@ -584,7 +584,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 	for _, t := range tbl {
 		m, err := mysql.ParseDecimal(t)
 		c.Assert(err, IsNil)
-		b, err := EncodeKey(m)
+		b, err := EncodeKey([]byte(nil), m)
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
@@ -662,9 +662,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		m2, err := mysql.ConvertToDecimal(t.Arg2)
 		c.Assert(err, IsNil)
 
-		b1, err := EncodeKey(m1)
+		b1, err := EncodeKey([]byte(nil), m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(m2)
+		b2, err := EncodeKey([]byte(nil), m2)
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
