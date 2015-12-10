@@ -33,10 +33,9 @@ const (
 	durationFlag
 )
 
-func encode(args []interface{}, comparable bool) ([]byte, error) {
-	var b []byte
-	for _, arg := range args {
-		switch v := arg.(type) {
+func encode(b []byte, vals []interface{}, comparable bool) ([]byte, error) {
+	for _, val := range vals {
+		switch v := val.(type) {
 		case bool:
 			b = append(b, intFlag)
 			if v {
@@ -129,23 +128,23 @@ func encode(args []interface{}, comparable bool) ([]byte, error) {
 		case nil:
 			b = append(b, nilFlag)
 		default:
-			return nil, errors.Errorf("unsupport encode type %T", arg)
+			return nil, errors.Errorf("unsupport encode type %T", val)
 		}
 	}
 
 	return b, nil
 }
 
-// EncodeKey encodes args to a slice which can be sorted lexicographically later.
-// EncodeKey guarantees the encoded slice is in ascending order for comparison.
-func EncodeKey(args ...interface{}) ([]byte, error) {
-	return encode(args, true)
+// EncodeKey appends the encoded values to byte slice b, returns the appended
+// slice. It guarantees the encoded value is in ascending order for comparison.
+func EncodeKey(b []byte, v ...interface{}) ([]byte, error) {
+	return encode(b, v, true)
 }
 
-// EncodeValue encodes args to a byte slice which can be decoded later.
-// It does not guarantee the order for comparison.
-func EncodeValue(args ...interface{}) ([]byte, error) {
-	return encode(args, false)
+// EncodeValue appends the encoded values to byte slice b, returning the appended
+// slice. It does not guarantee the order for comparison.
+func EncodeValue(b []byte, v ...interface{}) ([]byte, error) {
+	return encode(b, v, false)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue

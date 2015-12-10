@@ -489,7 +489,7 @@ func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b, err := codec.EncodeValue(v)
+	b, err := codec.EncodeValue([]byte(nil), v)
 	return b, errors.Trace(err)
 }
 
