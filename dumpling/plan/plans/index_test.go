@@ -74,6 +74,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 			},
 		},
 	}
+
 	p.tbl = tables.NewTable(2, "t2", p.cols, &simpleAllocator{})
 
 	idxCol := &column.IndexedCol{
@@ -91,8 +92,10 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 			Primary: false,
 			State:   model.StatePublic,
 		},
-		X: kv.NewKVIndex("i", "id", 0, false),
 	}
+
+	idxCol.X = kv.NewKVIndex("i", "id", 0, false)
+
 	p.tbl.AddIndex(idxCol)
 	var i int64
 	for i = 0; i < 10; i++ {

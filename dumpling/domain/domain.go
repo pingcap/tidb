@@ -70,9 +70,9 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 			continue
 		}
 
-		tables, err := m.ListTables(di.ID)
-		if err != nil {
-			return errors.Trace(err)
+		tables, err1 := m.ListTables(di.ID)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 
 		di.Tables = make([]*model.TableInfo, 0, len(tables))
@@ -86,8 +86,8 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	}
 
 	log.Infof("loadInfoSchema %d", schemaMetaVersion)
-	do.infoHandle.Set(schemas, schemaMetaVersion)
-	return
+	err = do.infoHandle.Set(schemas, schemaMetaVersion)
+	return errors.Trace(err)
 }
 
 // InfoSchema gets information schema from domain.

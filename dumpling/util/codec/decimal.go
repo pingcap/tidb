@@ -68,13 +68,13 @@ func codecValue(value []byte, valSign int64) {
 // EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.
 // EncodeDecimal guarantees that the encoded value is in ascending order for comparison.
 // Decimal encoding:
-// EncodeInt    -> value sign
-// EncodeInt    -> exp sign
-// EncodeInt    -> exp value
-// EncodeBytes  -> abs value bytes
+// Byte -> value sign
+// Byte -> exp sign
+// EncodeInt -> exp value
+// EncodeBytes -> abs value bytes
 func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	if d.Equals(mysql.ZeroDecimal) {
-		return EncodeInt(b, zeroSign)
+		return append(b, byte(zeroSign))
 	}
 
 	v := d.BigIntValue()
@@ -110,44 +110,38 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	expVal = encodeExp(expVal, expSign, valSign)
 	codecValue(value, valSign)
 
-	r := EncodeInt(b, valSign)
-	r = EncodeInt(r, expSign)
-	r = EncodeInt(r, expVal)
-	r = EncodeBytes(r, value)
-	return r
+	b = append(b, byte(valSign))
+	b = append(b, byte(expSign))
+	b = EncodeInt(b, expVal)
+	b = EncodeBytes(b, value)
+	return b
 }
 
 // DecodeDecimal decodes bytes to decimal.
 // DecodeFloat decodes a float from a byte slice
 // Decimal decoding:
-// DecodeInt    -> value sign
-// DecodeInt    -> exp sign
-// DecodeInt    -> exp value
-// DecodeBytes  -> abs value bytes
+// Byte -> value sign
+// Byte -> exp sign
+// DecodeInt -> exp value
+// DecodeBytes -> abs value bytes
 func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 	var (
-		r   []byte
+		r   = b
 		d   mysql.Decimal
 		err error
 	)
 
 	// Decode value sign.
-	valSign := zeroSign
-	r, valSign, err = DecodeInt(b)
-	if err != nil {
-		return r, d, errors.Trace(err)
-	}
+	valSign := int64(r[0])
+	r = r[1:]
 	if valSign == zeroSign {
 		d, err = mysql.ParseDecimal("0")
 		return r, d, errors.Trace(err)
 	}
 
 	// Decode exp sign.
-	expSign := zeroSign
-	r, expSign, err = DecodeInt(r)
-	if err != nil {
-		return r, d, errors.Trace(err)
-	}
+	expSign := int64(r[0])
+	r = r[1:]
 
 	// Decode exp value.
 	expVal := int64(0)

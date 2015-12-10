@@ -16,6 +16,7 @@ package infoschema
 import (
 	"sync/atomic"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -201,7 +202,7 @@ func NewHandle(store kv.Storage) *Handle {
 }
 
 // Set sets DBInfo to information schema.
-func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
+func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	info := &infoSchema{
 		schemaNameToID:    map[string]int64{},
 		tableNameToID:     map[tableName]int64{},
@@ -213,12 +214,16 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 		columnIndices:     map[int64][]*model.IndexInfo{},
 		schemaMetaVersion: schemaMetaVersion,
 	}
+	var err error
 	for _, di := range newInfo {
 		info.schemas[di.ID] = di
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
 			alloc := autoid.NewAllocator(h.store, di.ID)
-			info.tables[t.ID] = table.TableFromMeta(alloc, t)
+			info.tables[t.ID], err = table.TableFromMeta(alloc, t)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			tname := tableName{di.Name.L, t.Name.L}
 			info.tableNameToID[tname] = t.ID
 			for _, c := range t.Columns {
@@ -236,6 +241,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) {
 		}
 	}
 	h.value.Store(info)
+	return nil
 }
 
 // Get gets information schema from Handle.

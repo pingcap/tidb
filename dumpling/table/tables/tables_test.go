@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 )
 
@@ -193,4 +194,47 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
+}
+
+func (ts *testSuite) TestRowKeyCodec(c *C) {
+	table := []struct {
+		tableID int64
+		h       int64
+		ID      int64
+	}{
+		{1, 1234567890, 0},
+		{2, 1, 0},
+		{3, -1, 0},
+		{4, -1, 1},
+	}
+
+	for _, t := range table {
+		b := tables.EncodeRecordKey(t.tableID, t.h, t.ID)
+		tableID, handle, columnID, err := tables.DecodeRecordKey(b)
+		c.Assert(err, IsNil)
+		c.Assert(tableID, Equals, t.tableID)
+		c.Assert(handle, Equals, t.h)
+		c.Assert(columnID, Equals, t.ID)
+
+		handle, err = tables.DecodeRecordKeyHandle(string(b))
+		c.Assert(err, IsNil)
+		c.Assert(handle, Equals, t.h)
+	}
+
+	// test error
+	tbl := []string{
+		"",
+		"x",
+		"t1",
+		"t12345678",
+		"t12345678_i",
+		"t12345678_r1",
+		"t12345678_r1234567",
+		"t12345678_r123456781",
+	}
+
+	for _, t := range tbl {
+		_, err := tables.DecodeRecordKeyHandle(t)
+		c.Assert(err, NotNil)
+	}
 }
