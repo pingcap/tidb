@@ -43,7 +43,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 
 		{
 			[]interface{}{float32(1), float64(3.15), []byte("123"), "123"},
-			[]interface{}{float64(1), float64(3.15), []byte("123"), "123"},
+			[]interface{}{float64(1), float64(3.15), []byte("123"), []byte("123")},
 		},
 
 		{
@@ -495,7 +495,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, []interface{}{t})
+		c.Assert(v, DeepEquals, []interface{}{[]byte(t)})
 	}
 
 	tblCmp := []struct {

@@ -208,7 +208,7 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 	case mysql.TypeDuration:
 		return mysql.Duration{Duration: time.Duration(rec.(int64)), Fsp: col.Decimal}, nil
 	case mysql.TypeNewDecimal, mysql.TypeDecimal:
-		return mysql.ParseDecimal(rec.(string))
+		return mysql.ParseDecimal(string(rec.([]byte)))
 	case mysql.TypeEnum:
 		return mysql.ParseEnumValue(col.Elems, rec.(uint64))
 	case mysql.TypeSet:
