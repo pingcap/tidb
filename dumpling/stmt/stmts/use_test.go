@@ -59,11 +59,9 @@ func (s *testStmtSuite) TestCharsetDatabase(c *C) {
 	rows, err := tx.Query(`select @@character_set_database;`)
 	c.Assert(err, IsNil)
 	matchRows(c, rows, [][]interface{}{{"utf8"}})
-	rows.Close()
 	rows, err = tx.Query(`select @@collation_database;`)
 	c.Assert(err, IsNil)
 	matchRows(c, rows, [][]interface{}{{"utf8_bin"}})
-	rows.Close()
 	mustCommit(c, tx)
 
 	testSQL = `use cd_test_latin1;`
@@ -73,10 +71,8 @@ func (s *testStmtSuite) TestCharsetDatabase(c *C) {
 	rows, err = tx.Query(`select @@character_set_database;`)
 	c.Assert(err, IsNil)
 	matchRows(c, rows, [][]interface{}{{"latin1"}})
-	rows.Close()
 	rows, err = tx.Query(`select @@collation_database;`)
 	c.Assert(err, IsNil)
 	matchRows(c, rows, [][]interface{}{{"latin1_swedish_ci"}})
-	rows.Close()
 	mustCommit(c, tx)
 }
