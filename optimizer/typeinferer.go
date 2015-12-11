@@ -77,7 +77,7 @@ func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
 				r.err = err
 				return in, false
 			}
-			if expr.GetFlag() == ast.FlagConstant {
+			if ast.IsConstant(expr) {
 				// The expression is constant, rewrite the expression to value expression.
 				valExpr := &ast.ValueExpr{}
 				valExpr.SetText(expr.Text())
