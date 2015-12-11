@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -115,7 +114,7 @@ func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int
 	var handles []int64
 	var data [][]interface{}
 
-	startKey := tables.EncodeRecordKey(t.TableID(), startHandle, 0)
+	startKey := t.RecordKey(startHandle, nil)
 	err := t.IterRecords(retriever, string(startKey), t.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
 			for limit != 0 {
