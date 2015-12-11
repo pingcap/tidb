@@ -51,8 +51,7 @@ func (k sessionVarsKeyType) String() string {
 	return "session_vars"
 }
 
-// SessionVarsKey is the session variable key.
-const SessionVarsKey sessionVarsKeyType = 0
+const sessionVarsKey sessionVarsKeyType = 0
 
 // BindSessionVars creates a session vars object and binds it to context.
 func BindSessionVars(ctx context.Context) {
@@ -62,12 +61,12 @@ func BindSessionVars(ctx context.Context) {
 		PreparedStmts: make(map[string]interface{}),
 	}
 
-	ctx.SetValue(SessionVarsKey, v)
+	ctx.SetValue(sessionVarsKey, v)
 }
 
 // GetSessionVars gets the session vars from context.
 func GetSessionVars(ctx context.Context) *SessionVars {
-	v, ok := ctx.Value(SessionVarsKey).(*SessionVars)
+	v, ok := ctx.Value(sessionVarsKey).(*SessionVars)
 	if !ok {
 		return nil
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -65,7 +66,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 
 func end(data []interface{}) []interface{} {
 	// Add 0x0 to the end of data.
-	return append(data, []byte{})
+	return append(data, nil)
 }
 
 // IndexRow is the index information composed of handle and values.
@@ -76,19 +77,16 @@ type IndexRow struct {
 
 // ScanIndexData scans the index handles and values in a limited number.
 // It returns data and the next startVals.
-func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int) (
+func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int64) (
 	[]*IndexRow, []interface{}, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	var (
-		count   int
-		idxRows []*IndexRow
-		curVals []interface{}
-	)
-	for !table.IsLimit(count, limit) {
+	var idxRows []*IndexRow
+	var curVals []interface{}
+	for limit != 0 {
 		val, h, err1 := it.Next()
 		if terror.ErrorEqual(err1, io.EOF) {
 			return idxRows, end(curVals), nil
@@ -96,7 +94,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 			return nil, nil, errors.Trace(err1)
 		}
 		idxRows = append(idxRows, &IndexRow{Handle: h, Values: val})
-		count++
+		limit--
 		curVals = val
 	}
 
@@ -112,38 +110,48 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 
 // ScanTableData scans table row handles and column values in a limited number.
 // It returns data and the next startKey.
-func ScanTableData(t table.Table, retriever kv.Retriever, startKey string, limit int) (
-	[]int64, [][]interface{}, string, error) {
+func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int64) (
+	[]int64, [][]interface{}, int64, error) {
 	var handles []int64
 	var data [][]interface{}
 
-	nextKey, err := t.ScanRecords(retriever, startKey, limit, t.Cols(),
+	startKey := tables.EncodeRecordKey(t.TableID(), startHandle, 0)
+	err := t.IterRecords(retriever, string(startKey), t.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
-			data = append(data, d)
-			handles = append(handles, h)
-			return true, nil
+			for limit != 0 {
+				data = append(data, d)
+				handles = append(handles, h)
+				limit--
+				return true, nil
+			}
+
+			return false, nil
 		})
 	if err != nil {
-		return nil, nil, "", errors.Trace(err)
+		return nil, nil, 0, errors.Trace(err)
 	}
 
-	return handles, data, nextKey, nil
+	if len(handles) == 0 {
+		return handles, data, startHandle, nil
+	}
+
+	return handles, data, handles[len(handles)-1] + 1, nil
 }
 
 // ScanSnapshotTableData scans the ver version of the table data in a limited number.
 // It returns data and the next startKey.
-func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, startKey string, limit int) (
-	[][]interface{}, string, error) {
+func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
+	[][]interface{}, int64, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
-		return nil, "", errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	defer snap.Release()
 
-	_, data, key, err := ScanTableData(t, snap, startKey, limit)
+	_, data, nextHandle, err := ScanTableData(t, snap, startHandle, limit)
 	if err != nil {
-		return nil, "", errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 
-	return data, key, nil
+	return data, nextHandle, nil
 }

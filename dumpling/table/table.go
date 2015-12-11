@@ -36,9 +36,6 @@ type Table interface {
 	// IterRecords iterates records in the table and calls fn.
 	IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col, fn RecordIterFunc) error
 
-	// ScanRecords scans records in a limited number and calls fn.
-	ScanRecords(retriever kv.Retriever, startKey string, limit int, cols []*column.Col, fn RecordIterFunc) (string, error)
-
 	// RowWithCols returns a row that contains the given cols.
 	RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error)
 
@@ -111,18 +108,6 @@ type Table interface {
 
 	// LockRow locks a row.
 	LockRow(ctx context.Context, h int64) error
-}
-
-// UnlimitedScanCnt is used for unlimited scanning.
-const UnlimitedScanCnt = -1
-
-// IsLimit returns if count reachs limit.
-func IsLimit(count, limit int) bool {
-	if limit == UnlimitedScanCnt || count < limit {
-		return false
-	}
-
-	return true
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
