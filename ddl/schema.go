@@ -24,17 +24,23 @@ import (
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	var name model.CIStr
-	if err := job.DecodeArgs(&name); err != nil {
+	var (
+		name      model.CIStr
+		charset   string
+		collation string
+	)
+	if err := job.DecodeArgs(&name, &charset, &collation); err != nil {
 		// arg error, cancel this job.
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
 	dbInfo := &model.DBInfo{
-		ID:    schemaID,
-		Name:  name,
-		State: model.StateNone,
+		ID:      schemaID,
+		Name:    name,
+		Charset: charset,
+		Collate: collation,
+		State:   model.StateNone,
 	}
 
 	dbs, err := t.ListDatabases()
