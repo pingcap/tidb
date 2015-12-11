@@ -24,8 +24,6 @@ const (
 	nilFlag byte = iota
 	bytesFlag
 	compactBytesFlag
-	stringFlag
-	compactStringFlag
 	intFlag
 	uintFlag
 	floatFlag
@@ -80,32 +78,11 @@ func encode(b []byte, vals []interface{}, comparable bool) ([]byte, error) {
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(v))
 		case string:
-			if comparable {
-				b = append(b, stringFlag)
-				b = EncodeBytes(b, []byte(v))
-			} else {
-				b = append(b, compactStringFlag)
-				b = EncodeCompactBytes(b, []byte(v))
-			}
-
+			b = encodeBytes(b, []byte(v), comparable)
 		case []byte:
-			if comparable {
-				b = append(b, bytesFlag)
-				b = EncodeBytes(b, v)
-			} else {
-				b = append(b, compactBytesFlag)
-				b = EncodeCompactBytes(b, v)
-			}
-
+			b = encodeBytes(b, v, comparable)
 		case mysql.Time:
-			if comparable {
-				b = append(b, stringFlag)
-				b = EncodeBytes(b, []byte(v.String()))
-			} else {
-				b = append(b, compactStringFlag)
-				b = EncodeCompactBytes(b, []byte(v.String()))
-			}
-
+			b = encodeBytes(b, []byte(v.String()), comparable)
 		case mysql.Duration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
@@ -133,6 +110,17 @@ func encode(b []byte, vals []interface{}, comparable bool) ([]byte, error) {
 	}
 
 	return b, nil
+}
+
+func encodeBytes(b []byte, v []byte, comparable bool) []byte {
+	if comparable {
+		b = append(b, bytesFlag)
+		b = EncodeBytes(b, v)
+	} else {
+		b = append(b, compactBytesFlag)
+		b = EncodeCompactBytes(b, v)
+	}
+	return b
 }
 
 // EncodeKey appends the encoded values to byte slice b, returns the appended
@@ -175,18 +163,6 @@ func Decode(b []byte) ([]interface{}, error) {
 			b, v, err = DecodeBytes(b)
 		case compactBytesFlag:
 			b, v, err = DecodeCompactBytes(b)
-		case stringFlag:
-			var r []byte
-			b, r, err = DecodeBytes(b)
-			if err == nil {
-				v = string(r)
-			}
-		case compactStringFlag:
-			var r []byte
-			b, r, err = DecodeCompactBytes(b)
-			if err == nil {
-				v = string(r)
-			}
 		case decimalFlag:
 			b, v, err = DecodeDecimal(b)
 		case durationFlag:

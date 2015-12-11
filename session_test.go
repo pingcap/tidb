@@ -170,14 +170,14 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	c.Assert(rs, NotNil)
 	row, err := rs.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, id, "abc", nil)
+	match(c, row, id, []byte("abc"), nil)
 
 	mustExecSQL(c, se, "update t set name = 'abc', status = 1 where id = ?", id)
 	rs = mustExecSQL(c, se2, "select * from t")
 	c.Assert(rs, NotNil)
 	row, err = rs.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, id, "abc", 1)
+	match(c, row, id, []byte("abc"), 1)
 	// Check for pass bool param to tidb prepared statement
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (id tiny)")
@@ -549,7 +549,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	r = mustExecSQL(c, se, `select * from t where c like 'pingcap ''-->'' tidb'`)
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, `pingcap '-->' tidb`)
+	match(c, row, []byte(`pingcap '-->' tidb`))
 
 	mustExecSQL(c, se, "drop table if exists t1")
 	mustExecSQL(c, se, "drop table if exists t2")
@@ -723,7 +723,7 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -792,7 +792,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -809,7 +809,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0], Equals, "True")
+	c.Assert(row.Data[0], BytesEquals, []byte("True"))
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
