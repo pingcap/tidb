@@ -31,6 +31,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
@@ -161,8 +162,12 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 
 	DBName := model.NewCIStr(dbName)
 	domain := sessionctx.GetDomain(s)
+	cs := &coldef.CharsetOpt{
+		Chs: "utf8",
+		Col: "utf8_bin",
+	}
 	if !domain.InfoSchema().SchemaExists(DBName) {
-		err = domain.DDL().CreateSchema(s, DBName)
+		err = domain.DDL().CreateSchema(s, DBName, cs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -44,3 +44,39 @@ func (s *testStmtSuite) TestUse(c *C) {
 	c.Assert(err, NotNil)
 	tx.Rollback()
 }
+
+func (s *testStmtSuite) TestCharsetDatabase(c *C) {
+	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
+	mustExec(c, s.testDB, testSQL)
+
+	testSQL = `create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
+	mustExec(c, s.testDB, testSQL)
+
+	testSQL = `use cd_test_utf8;`
+	mustExec(c, s.testDB, testSQL)
+
+	tx := mustBegin(c, s.testDB)
+	rows, err := tx.Query(`select @@character_set_database;`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{"utf8"}})
+	rows.Close()
+	rows, err = tx.Query(`select @@collation_database;`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{"utf8_bin"}})
+	rows.Close()
+	mustCommit(c, tx)
+
+	testSQL = `use cd_test_latin1;`
+	mustExec(c, s.testDB, testSQL)
+
+	tx = mustBegin(c, s.testDB)
+	rows, err = tx.Query(`select @@character_set_database;`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{"latin1"}})
+	rows.Close()
+	rows, err = tx.Query(`select @@collation_database;`)
+	c.Assert(err, IsNil)
+	matchRows(c, rows, [][]interface{}{{"latin1_swedish_ci"}})
+	rows.Close()
+	mustCommit(c, tx)
+}
