@@ -14,7 +14,6 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )

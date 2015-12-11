@@ -353,8 +353,6 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 			Charset: v.cs,
 		}
 
-		c.Assert(f.IsStatic(), Equals, true)
-
 		fs := f.String()
 		c.Assert(len(fs), Greater, 0)
 
@@ -431,7 +429,7 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 			Unit:     "DAY",
 		},
 	}
-	c.Assert(e.IsStatic(), IsTrue)
+	c.Assert(e.GetFlag(), Equals, ast.FlagHasFunc)
 	_, err := Eval(ctx, e)
 	c.Assert(err, IsNil)
 
@@ -886,7 +884,6 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		if v.slen != -1 {
 			f.Len = ast.NewValueExpr(v.slen)
 		}
-		c.Assert(f.IsStatic(), Equals, true)
 
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
@@ -947,7 +944,6 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		if v.remstr != nil {
 			f.RemStr = ast.NewValueExpr(v.remstr)
 		}
-		c.Assert(f.IsStatic(), Equals, true)
 
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
