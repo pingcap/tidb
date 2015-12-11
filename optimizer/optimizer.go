@@ -37,7 +37,7 @@ func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (pla
 	if err := inferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := rewriteStatic(ctx, node); err != nil {
+	if err := preEvaluate(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	p, err := plan.BuildPlan(node)

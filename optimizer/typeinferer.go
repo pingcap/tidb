@@ -19,20 +19,20 @@ import (
 	"github.com/pingcap/tidb/optimizer/evaluator"
 )
 
+// inferType infers result type for ast.ExprNode.
 func inferType(node ast.Node) error {
 	var inferrer typeInferrer
 	node.Accept(&inferrer)
 	return inferrer.err
 }
 
-func rewriteStatic(ctx context.Context, node ast.Node) error {
-	rewriter := staticRewriter{ctx: ctx}
-	node.Accept(&rewriter)
-	return rewriter.err
+// preEvaluate evaluates preEvaluable expression and rewrites constant expression to value expression.
+func preEvaluate(ctx context.Context, node ast.Node) error {
+	pe := preEvaluator{ctx: ctx}
+	node.Accept(&pe)
+	return pe.err
 }
 
-// typeInferrer is an ast Visitor that
-// infers result type for ast.ExprNode.
 type typeInferrer struct {
 	err error
 }
@@ -58,31 +58,34 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-// staticRewriter rewrites static expression to value expression.
-type staticRewriter struct {
+type preEvaluator struct {
 	ctx context.Context
 	err error
 }
 
-func (r *staticRewriter) Enter(in ast.Node) (ast.Node, bool) {
+func (r *preEvaluator) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func (r *staticRewriter) Leave(in ast.Node) (ast.Node, bool) {
+func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
 	if expr, ok := in.(ast.ExprNode); ok {
 		if _, ok = expr.(*ast.ValueExpr); ok {
 			return in, true
-		} else if expr.IsStatic() {
+		} else if ast.IsPreEvaluable(expr) {
 			val, err := evaluator.Eval(r.ctx, expr)
 			if err != nil {
 				r.err = err
 				return in, false
 			}
-			valExpr := &ast.ValueExpr{}
-			valExpr.SetText(expr.Text())
-			valExpr.SetType(expr.GetType())
-			valExpr.SetValue(val)
-			return valExpr, true
+			if expr.GetFlag() == 0 {
+				// The expression is constant, rewrite the expression to value expression.
+				valExpr := &ast.ValueExpr{}
+				valExpr.SetText(expr.Text())
+				valExpr.SetType(expr.GetType())
+				valExpr.SetValue(val)
+				return valExpr, true
+			}
+			expr.SetValue(val)
 		}
 	}
 	return in, true

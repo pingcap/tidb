@@ -11,11 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package optimizer
+package ast
 
-import "github.com/pingcap/tidb/ast"
+const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable
 
-func setFlag(n ast.Node) {
+func IsPreEvaluable(expr ExprNode) bool {
+	return expr.GetFlag()|preEvaluable == preEvaluable
+}
+
+// SetFlag sets flag for expression.
+func SetFlag(n Node) {
 	var setter flagSetter
 	n.Accept(&setter)
 }
@@ -23,78 +28,78 @@ func setFlag(n ast.Node) {
 type flagSetter struct {
 }
 
-func (f *flagSetter) Enter(in ast.Node) (ast.Node, bool) {
+func (f *flagSetter) Enter(in Node) (Node, bool) {
 	return in, false
 }
 
-func (f *flagSetter) Leave(in ast.Node) (ast.Node, bool) {
+func (f *flagSetter) Leave(in Node) (Node, bool) {
 	switch x := in.(type) {
-	case *ast.ValueExpr:
-	case *ast.BetweenExpr:
+	case *ValueExpr:
+	case *BetweenExpr:
 		x.SetFlag(x.Expr.GetFlag() | x.Left.GetFlag() | x.Right.GetFlag())
-	case *ast.BinaryOperationExpr:
+	case *BinaryOperationExpr:
 		x.SetFlag(x.L.GetFlag() | x.R.GetFlag())
-	case *ast.CaseExpr:
+	case *CaseExpr:
 		f.caseExpr(x)
-	case *ast.SubqueryExpr:
-		x.SetFlag(ast.FlagHasSubquery)
-	case *ast.CompareSubqueryExpr:
+	case *SubqueryExpr:
+		x.SetFlag(FlagHasSubquery)
+	case *CompareSubqueryExpr:
 		x.SetFlag(x.L.GetFlag() | x.R.GetFlag())
-	case *ast.ColumnNameExpr:
-		x.SetFlag(ast.FlagHasReference)
-	case *ast.DefaultExpr:
-	case *ast.ExistsSubqueryExpr:
+	case *ColumnNameExpr:
+		x.SetFlag(FlagHasReference)
+	case *DefaultExpr:
+	case *ExistsSubqueryExpr:
 		x.SetFlag(x.Sel.GetFlag())
-	case *ast.PatternInExpr:
+	case *PatternInExpr:
 		f.patternIn(x)
-	case *ast.IsNullExpr:
+	case *IsNullExpr:
 		x.SetFlag(x.Expr.GetFlag())
-	case *ast.IsTruthExpr:
+	case *IsTruthExpr:
 		x.SetFlag(x.Expr.GetFlag())
-	case *ast.PatternLikeExpr:
+	case *PatternLikeExpr:
 		f.patternLike(x)
-	case *ast.ParamMarkerExpr:
-		x.SetFlag(ast.FlagHasParamMarker)
-	case *ast.ParenthesesExpr:
+	case *ParamMarkerExpr:
+		x.SetFlag(FlagHasParamMarker)
+	case *ParenthesesExpr:
 		x.SetFlag(x.Expr.GetFlag())
-	case *ast.PositionExpr:
-		x.SetFlag(ast.FlagHasReference)
-	case *ast.PatternRegexpExpr:
+	case *PositionExpr:
+		x.SetFlag(FlagHasReference)
+	case *PatternRegexpExpr:
 		f.patternRegexp(x)
-	case *ast.RowExpr:
+	case *RowExpr:
 		f.row(x)
-	case *ast.UnaryOperationExpr:
+	case *UnaryOperationExpr:
 		x.SetFlag(x.V.GetFlag())
-	case *ast.ValuesExpr:
-		x.SetFlag(ast.FlagHasReference)
-	case *ast.VariableExpr:
-		x.SetFlag(ast.FlagHasVariable)
-	case *ast.FuncCallExpr:
+	case *ValuesExpr:
+		x.SetFlag(FlagHasReference)
+	case *VariableExpr:
+		x.SetFlag(FlagHasVariable)
+	case *FuncCallExpr:
 		f.funcCall(x)
-	case *ast.FuncExtractExpr:
-		x.SetFlag(ast.FlagHasFunc | x.Date.GetFlag())
-	case *ast.FuncConvertExpr:
-		x.SetFlag(ast.FlagHasFunc | x.Expr.GetFlag())
-	case *ast.FuncCastExpr:
-		x.SetFlag(ast.FlagHasFunc | x.Expr.GetFlag())
-	case *ast.FuncSubstringExpr:
+	case *FuncExtractExpr:
+		x.SetFlag(FlagHasFunc | x.Date.GetFlag())
+	case *FuncConvertExpr:
+		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
+	case *FuncCastExpr:
+		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
+	case *FuncSubstringExpr:
 		f.funcSubstring(x)
-	case *ast.FuncSubstringIndexExpr:
+	case *FuncSubstringIndexExpr:
 		f.funcSubstringIndex(x)
-	case *ast.FuncLocateExpr:
+	case *FuncLocateExpr:
 		f.funcLocate(x)
-	case *ast.FuncTrimExpr:
+	case *FuncTrimExpr:
 		f.funcTrim(x)
-	case *ast.FuncDateArithExpr:
+	case *FuncDateArithExpr:
 		f.funcDateArith(x)
-	case *ast.AggregateFuncExpr:
+	case *AggregateFuncExpr:
 		f.aggregateFunc(x)
 	}
 
 	return in, true
 }
 
-func (f *flagSetter) caseExpr(x *ast.CaseExpr) {
+func (f *flagSetter) caseExpr(x *CaseExpr) {
 	var flag uint64
 	if x.Value != nil {
 		flag |= x.Value.GetFlag()
@@ -109,7 +114,7 @@ func (f *flagSetter) caseExpr(x *ast.CaseExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) patternIn(x *ast.PatternInExpr) {
+func (f *flagSetter) patternIn(x *PatternInExpr) {
 	flag := x.Expr.GetFlag()
 	for _, val := range x.List {
 		flag |= val.GetFlag()
@@ -120,7 +125,7 @@ func (f *flagSetter) patternIn(x *ast.PatternInExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) patternLike(x *ast.PatternLikeExpr) {
+func (f *flagSetter) patternLike(x *PatternLikeExpr) {
 	flag := x.Pattern.GetFlag()
 	if x.Expr != nil {
 		flag |= x.Expr.GetFlag()
@@ -128,7 +133,7 @@ func (f *flagSetter) patternLike(x *ast.PatternLikeExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) patternRegexp(x *ast.PatternRegexpExpr) {
+func (f *flagSetter) patternRegexp(x *PatternRegexpExpr) {
 	flag := x.Pattern.GetFlag()
 	if x.Expr != nil {
 		flag |= x.Expr.GetFlag()
@@ -136,7 +141,7 @@ func (f *flagSetter) patternRegexp(x *ast.PatternRegexpExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) row(x *ast.RowExpr) {
+func (f *flagSetter) row(x *RowExpr) {
 	var flag uint64
 	for _, val := range x.Values {
 		flag |= val.GetFlag()
@@ -144,24 +149,24 @@ func (f *flagSetter) row(x *ast.RowExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) funcCall(x *ast.FuncCallExpr) {
-	flag := ast.FlagHasFunc
+func (f *flagSetter) funcCall(x *FuncCallExpr) {
+	flag := FlagHasFunc
 	for _, val := range x.Args {
 		flag |= val.GetFlag()
 	}
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) funcSubstring(x *ast.FuncSubstringExpr) {
-	flag := ast.FlagHasFunc | x.StrExpr.GetFlag() | x.Pos.GetFlag()
+func (f *flagSetter) funcSubstring(x *FuncSubstringExpr) {
+	flag := FlagHasFunc | x.StrExpr.GetFlag() | x.Pos.GetFlag()
 	if x.Len != nil {
 		flag |= x.Len.GetFlag()
 	}
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) funcSubstringIndex(x *ast.FuncSubstringIndexExpr) {
-	flag := ast.FlagHasFunc | x.StrExpr.GetFlag()
+func (f *flagSetter) funcSubstringIndex(x *FuncSubstringIndexExpr) {
+	flag := FlagHasFunc | x.StrExpr.GetFlag()
 	if x.Delim != nil {
 		flag |= x.Delim.GetFlag()
 	}
@@ -171,8 +176,8 @@ func (f *flagSetter) funcSubstringIndex(x *ast.FuncSubstringIndexExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) funcLocate(x *ast.FuncLocateExpr) {
-	flag := ast.FlagHasFunc | x.Str.GetFlag()
+func (f *flagSetter) funcLocate(x *FuncLocateExpr) {
+	flag := FlagHasFunc | x.Str.GetFlag()
 	if x.SubStr != nil {
 		flag |= x.SubStr.GetFlag()
 	}
@@ -182,24 +187,24 @@ func (f *flagSetter) funcLocate(x *ast.FuncLocateExpr) {
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) funcTrim(x *ast.FuncTrimExpr) {
-	flag := ast.FlagHasFunc | x.Str.GetFlag()
+func (f *flagSetter) funcTrim(x *FuncTrimExpr) {
+	flag := FlagHasFunc | x.Str.GetFlag()
 	if x.RemStr != nil {
 		flag |= x.RemStr.GetFlag()
 	}
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) funcDateArith(x *ast.FuncDateArithExpr) {
-	flag := ast.FlagHasFunc | x.Date.GetFlag()
+func (f *flagSetter) funcDateArith(x *FuncDateArithExpr) {
+	flag := FlagHasFunc | x.Date.GetFlag()
 	if x.Interval != nil {
 		flag |= x.Interval.GetFlag()
 	}
 	x.SetFlag(flag)
 }
 
-func (f *flagSetter) aggregateFunc(x *ast.AggregateFuncExpr) {
-	flag := ast.FlagHasAggregateFunc
+func (f *flagSetter) aggregateFunc(x *AggregateFuncExpr) {
+	flag := FlagHasAggregateFunc
 	for _, val := range x.Args {
 		flag |= val.GetFlag()
 	}
