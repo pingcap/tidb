@@ -118,7 +118,7 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	ctx.FinishTxn(false)
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
-	data, _, err := ScanSnapshotTableData(store, ver, tb, tb.FirstKey(), 1)
+	data, _, err := ScanSnapshotTableData(store, ver, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(data, DeepEquals, [][]interface{}{{int64(10)}})
 
@@ -128,18 +128,19 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 
-	handles, vals, nextKey, err := ScanTableData(tb, txn, tb.FirstKey(), 1)
+	handles, vals, nextHandle, err := ScanTableData(tb, txn, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(handles, DeepEquals, []int64{int64(1)})
 	c.Assert(vals, DeepEquals, [][]interface{}{{int64(10)}})
-	handles, vals, nextKey, err = ScanTableData(tb, txn, nextKey, 1)
+	handles, vals, nextHandle, err = ScanTableData(tb, txn, nextHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(handles, DeepEquals, []int64{int64(2)})
 	c.Assert(vals, DeepEquals, [][]interface{}{{int64(20)}})
-	handles, vals, nextKey, err = ScanTableData(tb, txn, nextKey, 1)
+	startHandle := nextHandle
+	handles, vals, nextHandle, err = ScanTableData(tb, txn, startHandle, 1)
 	c.Assert(handles, IsNil)
 	c.Assert(vals, IsNil)
-	c.Assert(nextKey, Equals, "")
+	c.Assert(nextHandle, Equals, startHandle)
 	c.Assert(err, IsNil)
 
 	kvIndex := kv.NewKVIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
@@ -151,7 +152,7 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(idxRows, DeepEquals, []*IndexRow{{Handle: int64(2), Values: []interface{}{int64(20)}}})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
 	c.Assert(idxRows, IsNil)
-	c.Assert(nextVals, DeepEquals, []interface{}{[]byte{}})
+	c.Assert(nextVals, DeepEquals, []interface{}{nil})
 	c.Assert(err, IsNil)
 }
 
@@ -202,12 +203,7 @@ func newmockContext(store kv.Storage) *mockContext {
 		store:  store,
 	}
 
-	v := &variable.SessionVars{
-		Users:         make(map[string]string),
-		Systems:       make(map[string]string),
-		PreparedStmts: make(map[string]interface{}),
-	}
-	ctx.SetValue(variable.SessionVarsKey, v)
+	variable.BindSessionVars(ctx)
 
 	return ctx
 }
