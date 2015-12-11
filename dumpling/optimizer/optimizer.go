@@ -30,7 +30,7 @@ func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (pla
 	if err := validate(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	setFlag(node)
+	ast.SetFlag(node)
 	if err := ResolveName(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
