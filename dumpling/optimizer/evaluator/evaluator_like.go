@@ -140,7 +140,7 @@ func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	}
 
 	// We need to compile pattern if it has not been compiled or it is not static.
-	var needCompile = len(p.PatChars) == 0 || p.Pattern.GetFlag() != 0
+	var needCompile = len(p.PatChars) == 0 || p.Pattern.GetFlag() != ast.FlagConstant
 	if needCompile {
 		pattern := p.Pattern.GetValue()
 		if types.IsNil(pattern) {
@@ -179,7 +179,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 			return false
 		}
 
-		if p.Expr.GetFlag() == 0 {
+		if p.Expr.GetFlag() == ast.FlagConstant {
 			p.Sexpr = new(string)
 			*p.Sexpr = sexpr
 		}
@@ -203,7 +203,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 			return false
 		}
 
-		if p.Pattern.GetFlag() == 0 {
+		if p.Pattern.GetFlag() == ast.FlagConstant {
 			p.Re = re
 		}
 	}
