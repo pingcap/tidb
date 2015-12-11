@@ -63,47 +63,51 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func next(data []interface{}) []interface{} {
+func end(data []interface{}) []interface{} {
 	// Add 0x0 to the end of data.
 	return append(data, []byte{})
 }
 
+// IndexRow is the index information composed of handle and values.
+type IndexRow struct {
+	Handle int64
+	Values []interface{}
+}
+
 // ScanIndexData scans the index handles and values in a limited number.
 // It returns data and the next startVals.
-func ScanIndexData(tableIndexPrefix string, idx *column.IndexedCol, txn kv.Transaction,
-	startVals []interface{}, limit int) ([]int64, [][]interface{}, []interface{}, error) {
-	kvIndex := kv.NewKVIndex(tableIndexPrefix, idx.Name.L, idx.ID, idx.Unique)
+func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int) (
+	[]*IndexRow, []interface{}, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	var (
 		count   int
-		handles []int64
-		vals    [][]interface{}
+		idxRows []*IndexRow
 		curVals []interface{}
 	)
 	for !table.IsLimit(count, limit) {
 		val, h, err1 := it.Next()
 		if terror.ErrorEqual(err1, io.EOF) {
-			return handles, vals, next(curVals), nil
+			return idxRows, end(curVals), nil
 		} else if err1 != nil {
-			return nil, nil, nil, errors.Trace(err1)
+			return nil, nil, errors.Trace(err1)
 		}
-		handles = append(handles, h)
-		vals = append(vals, val)
+		idxRows = append(idxRows, &IndexRow{Handle: h, Values: val})
 		count++
 		curVals = val
 	}
+
 	nextVals, _, err := it.Next()
 	if terror.ErrorEqual(err, io.EOF) {
-		return handles, vals, next(curVals), nil
+		return idxRows, end(curVals), nil
 	} else if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
-	return handles, vals, nextVals, nil
+	return idxRows, nextVals, nil
 }
 
 // ScanTableData scans table row handles and column values in a limited number.
