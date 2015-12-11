@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -381,6 +382,41 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		_, err := Eval(ctx, f)
 		c.Assert(err, NotNil)
 	}
+}
+
+func (s *testEvaluatorSuite) TestCast(c *C) {
+	f := types.NewFieldType(mysql.TypeLonglong)
+
+	expr := &ast.FuncCastExpr{
+		Expr: ast.NewValueExpr(1),
+		Tp:   f,
+	}
+	ctx := mock.NewContext()
+	v, err := Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(1))
+
+	f.Flag |= mysql.UnsignedFlag
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(1))
+
+	f.Tp = mysql.TypeString
+	f.Charset = charset.CharsetBin
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("1"))
+
+	f.Tp = mysql.TypeString
+	f.Charset = "utf8"
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, "1")
+
+	expr.Expr = ast.NewValueExpr(nil)
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestDateArith(c *C) {

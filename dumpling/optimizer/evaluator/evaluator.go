@@ -627,20 +627,18 @@ func (e *Evaluator) funcConvert(f *ast.FuncConvertExpr) bool {
 
 func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 	value := v.Expr.GetValue()
-	d := &types.DataItem{Type: v.Tp}
 	// Casting nil to any type returns null
 	if value == nil {
-		d.Data = nil
-		v.SetValue(d)
+		v.SetValue(nil)
 		return true
 	}
 	var err error
-	d.Data, err = types.Cast(value, v.Tp)
+	value, err = types.Cast(value, v.Tp)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-	v.SetValue(d.Data)
+	v.SetValue(value)
 	return true
 }
 
