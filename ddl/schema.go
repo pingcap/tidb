@@ -24,24 +24,17 @@ import (
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	var (
-		name      model.CIStr
-		charset   string
-		collation string
-	)
-	if err := job.DecodeArgs(&name, &charset, &collation); err != nil {
+	dbInfo := &model.DBInfo{}
+	var name model.CIStr
+	if err := job.DecodeArgs(&name, dbInfo); err != nil {
 		// arg error, cancel this job.
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	dbInfo := &model.DBInfo{
-		ID:      schemaID,
-		Name:    name,
-		Charset: charset,
-		Collate: collation,
-		State:   model.StateNone,
-	}
+	dbInfo.ID = schemaID
+	dbInfo.Name = name
+	dbInfo.State = model.StateNone
 
 	dbs, err := t.ListDatabases()
 	if err != nil {
@@ -55,7 +48,6 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 				job.State = model.JobCancelled
 				return errors.Trace(ErrExists)
 			}
-
 			dbInfo = db
 		}
 	}
