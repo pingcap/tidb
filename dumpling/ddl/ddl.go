@@ -240,21 +240,20 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var (
-		charsetName string
-		collation   string
-	)
+	dbInfo := &model.DBInfo{
+		Name: schema,
+	}
 	if charsetInfo != nil {
-		charsetName = charsetInfo.Chs
-		collation = charsetInfo.Col
+		dbInfo.Charset = charsetInfo.Chs
+		dbInfo.Collate = charsetInfo.Col
 	} else {
-		charsetName, collation = getDefaultCharsetAndCollate()
+		dbInfo.Charset, dbInfo.Collate = getDefaultCharsetAndCollate()
 	}
 
 	job := &model.Job{
 		SchemaID: schemaID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema, charsetName, collation},
+		Args:     []interface{}{schema, dbInfo},
 	}
 
 	err = d.startJob(ctx, job)
