@@ -15,6 +15,7 @@ package ast
 
 const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable
 
+// IsPreEvaluable checks if the expression can be evaluated before execution.
 func IsPreEvaluable(expr ExprNode) bool {
 	return expr.GetFlag()|preEvaluable == preEvaluable
 }
