@@ -14,6 +14,8 @@
 package codec
 
 import (
+	"bytes"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 )
@@ -44,8 +46,20 @@ func (s *testDecimalSuite) TestDecimalCodec(c *C) {
 
 	for _, input := range inputs {
 		v := mysql.NewDecimalFromFloat(input.Input)
-		b := EncodeDecimal([]byte{}, v)
-		_, d, err := DecodeDecimal(b)
+		var b bytes.Buffer
+
+		AscEncoder.WriteDecimal(&b, v)
+		d, err := AscEncoder.ReadDecimal(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v.Equals(d), IsTrue)
+
+		DescEncoder.WriteDecimal(&b, v)
+		d, err = DescEncoder.ReadDecimal(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v.Equals(d), IsTrue)
+
+		CompactEncoder.WriteDecimal(&b, v)
+		d, err = CompactEncoder.ReadDecimal(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v.Equals(d), IsTrue)
 	}

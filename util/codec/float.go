@@ -14,6 +14,8 @@
 package codec
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 
 	"github.com/juju/errors"
@@ -38,28 +40,30 @@ func decodeCmpUintToFloat(u uint64) float64 {
 	return math.Float64frombits(u)
 }
 
-// EncodeFloat encodes a float v into a byte slice which can be sorted lexicographically later.
-// EncodeFloat guarantees that the encoded value is in ascending order for comparison.
-func EncodeFloat(b []byte, v float64) []byte {
-	u := encodeFloatToCmpUint64(v)
-	return EncodeUint(b, u)
+func (e ascEncoder) WriteFloat(b *bytes.Buffer, v float64) {
+	e.WriteUint(b, encodeFloatToCmpUint64(v))
 }
 
-// DecodeFloat decodes a float from a byte slice generated with EncodeFloat before.
-func DecodeFloat(b []byte) ([]byte, float64, error) {
-	b, u, err := DecodeUint(b)
-	return b, decodeCmpUintToFloat(u), errors.Trace(err)
+func (e ascEncoder) ReadFloat(b *bytes.Buffer) (float64, error) {
+	u, err := e.ReadUint(b)
+	return decodeCmpUintToFloat(u), errors.Trace(err)
 }
 
-// EncodeFloatDesc encodes a float v into a byte slice which can be sorted lexicographically later.
-// EncodeFloatDesc guarantees that the encoded value is in descending order for comparison.
-func EncodeFloatDesc(b []byte, v float64) []byte {
-	u := encodeFloatToCmpUint64(v)
-	return EncodeUintDesc(b, u)
+func (e descEncoder) WriteFloat(b *bytes.Buffer, v float64) {
+	e.WriteUint(b, encodeFloatToCmpUint64(v))
 }
 
-// DecodeFloatDesc decodes a float from a byte slice generated with EncodeFloatDesc before.
-func DecodeFloatDesc(b []byte) ([]byte, float64, error) {
-	b, u, err := DecodeUintDesc(b)
-	return b, decodeCmpUintToFloat(u), errors.Trace(err)
+func (e descEncoder) ReadFloat(b *bytes.Buffer) (float64, error) {
+	u, err := e.ReadUint(b)
+	return decodeCmpUintToFloat(u), errors.Trace(err)
+}
+
+func (compactEncoder) WriteFloat(b *bytes.Buffer, v float64) {
+	binary.Write(b, binary.BigEndian, v)
+}
+
+func (compactEncoder) ReadFloat(b *bytes.Buffer) (float64, error) {
+	var v float64
+	err := binary.Read(b, binary.BigEndian, &v)
+	return v, errors.Trace(err)
 }

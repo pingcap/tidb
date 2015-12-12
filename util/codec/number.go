@@ -16,6 +16,8 @@ package codec
 import (
 	"encoding/binary"
 
+	"bytes"
+
 	"github.com/juju/errors"
 )
 
@@ -42,129 +44,66 @@ func decodeCmpUintToInt(u uint64) int64 {
 	return int64(u)
 }
 
-// EncodeInt appends the encoded value to slice b and returns the appended slice.
-// EncodeInt guarantees that the encoded value is in ascending order for comparison.
-func EncodeInt(b []byte, v int64) []byte {
-	var data [8]byte
+func (ascEncoder) WriteInt(b *bytes.Buffer, v int64) {
 	u := encodeIntToCmpUint(v)
-	binary.BigEndian.PutUint64(data[:], u)
-	return append(b, data[:]...)
+	binary.Write(b, binary.BigEndian, u)
 }
 
-// EncodeIntDesc appends the encoded value to slice b and returns the appended slice.
-// EncodeIntDesc guarantees that the encoded value is in descending order for comparison.
-func EncodeIntDesc(b []byte, v int64) []byte {
-	var data [8]byte
+func (ascEncoder) ReadInt(b *bytes.Buffer) (int64, error) {
+	var u uint64
+	err := binary.Read(b, binary.BigEndian, &u)
+	return decodeCmpUintToInt(u), errors.Trace(err)
+}
+
+func (descEncoder) WriteInt(b *bytes.Buffer, v int64) {
 	u := encodeIntToCmpUint(v)
-	binary.BigEndian.PutUint64(data[:], ^u)
-	return append(b, data[:]...)
+	binary.Write(b, binary.BigEndian, ^u)
 }
 
-// DecodeInt decodes value encoded by EncodeInt before.
-// It returns the leftover un-decoded slice, decoded value if no error.
-func DecodeInt(b []byte) ([]byte, int64, error) {
-	if len(b) < 8 {
-		return nil, 0, errors.New("insufficient bytes to decode value")
-	}
-
-	u := binary.BigEndian.Uint64(b[:8])
-	v := decodeCmpUintToInt(u)
-	b = b[8:]
-	return b, v, nil
+func (descEncoder) ReadInt(b *bytes.Buffer) (int64, error) {
+	var u uint64
+	err := binary.Read(b, binary.BigEndian, &u)
+	return decodeCmpUintToInt(^u), errors.Trace(err)
 }
 
-// DecodeIntDesc decodes value encoded by EncodeInt before.
-// It returns the leftover un-decoded slice, decoded value if no error.
-func DecodeIntDesc(b []byte) ([]byte, int64, error) {
-	if len(b) < 8 {
-		return nil, 0, errors.New("insufficient bytes to decode value")
-	}
-
-	u := binary.BigEndian.Uint64(b[:8])
-	v := decodeCmpUintToInt(^u)
-	b = b[8:]
-	return b, v, nil
-}
-
-// EncodeUint appends the encoded value to slice b and returns the appended slice.
-// EncodeUint guarantees that the encoded value is in ascending order for comparison.
-func EncodeUint(b []byte, v uint64) []byte {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], v)
-	return append(b, data[:]...)
-}
-
-// EncodeUintDesc appends the encoded value to slice b and returns the appended slice.
-// EncodeUintDesc guarantees that the encoded value is in descending order for comparison.
-func EncodeUintDesc(b []byte, v uint64) []byte {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], ^v)
-	return append(b, data[:]...)
-}
-
-// DecodeUint decodes value encoded by EncodeUint before.
-// It returns the leftover un-decoded slice, decoded value if no error.
-func DecodeUint(b []byte) ([]byte, uint64, error) {
-	if len(b) < 8 {
-		return nil, 0, errors.New("insufficient bytes to decode value")
-	}
-
-	v := binary.BigEndian.Uint64(b[:8])
-	b = b[8:]
-	return b, v, nil
-}
-
-// DecodeUintDesc decodes value encoded by EncodeInt before.
-// It returns the leftover un-decoded slice, decoded value if no error.
-func DecodeUintDesc(b []byte) ([]byte, uint64, error) {
-	if len(b) < 8 {
-		return nil, 0, errors.New("insufficient bytes to decode value")
-	}
-
-	data := b[:8]
-	v := binary.BigEndian.Uint64(data)
-	b = b[8:]
-	return b, ^v, nil
-}
-
-// EncodeVarint appends the encoded value to slice b and returns the appended slice.
-// Note that the encoded result is not memcomparable.
-func EncodeVarint(b []byte, v int64) []byte {
+func (compactEncoder) WriteInt(b *bytes.Buffer, v int64) {
 	var data [binary.MaxVarintLen64]byte
 	n := binary.PutVarint(data[:], v)
-	return append(b, data[:n]...)
+	b.Write(data[:n])
 }
 
-// DecodeVarint decodes value encoded by EncodeVarint before.
-// It returns the leftover un-decoded slice, decoded value if no error.
-func DecodeVarint(b []byte) ([]byte, int64, error) {
-	v, n := binary.Varint(b)
-	if n > 0 {
-		return b[n:], v, nil
-	}
-	if n < 0 {
-		return nil, 0, errors.New("value larger than 64 bits")
-	}
-	return nil, 0, errors.New("insufficient bytes to decode value")
+func (compactEncoder) ReadInt(b *bytes.Buffer) (int64, error) {
+	n, err := binary.ReadVarint(b)
+	return n, errors.Trace(err)
 }
 
-// EncodeUvarint appends the encoded value to slice b and returns the appended slice.
-// Note that the encoded result is not memcomparable.
-func EncodeUvarint(b []byte, v uint64) []byte {
+func (ascEncoder) WriteUint(b *bytes.Buffer, v uint64) {
+	binary.Write(b, binary.BigEndian, v)
+}
+
+func (ascEncoder) ReadUint(b *bytes.Buffer) (uint64, error) {
+	var u uint64
+	err := binary.Read(b, binary.BigEndian, &u)
+	return u, errors.Trace(err)
+}
+
+func (descEncoder) WriteUint(b *bytes.Buffer, v uint64) {
+	binary.Write(b, binary.BigEndian, ^v)
+}
+
+func (descEncoder) ReadUint(b *bytes.Buffer) (uint64, error) {
+	var u uint64
+	err := binary.Read(b, binary.BigEndian, &u)
+	return ^u, errors.Trace(err)
+}
+
+func (compactEncoder) WriteUint(b *bytes.Buffer, v uint64) {
 	var data [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(data[:], v)
-	return append(b, data[:n]...)
+	b.Write(data[:n])
 }
 
-// DecodeUvarint decodes value encoded by EncodeUvarint before.
-// It returns the leftover un-decoded slice, decoded value if no error.
-func DecodeUvarint(b []byte) ([]byte, uint64, error) {
-	v, n := binary.Uvarint(b)
-	if n > 0 {
-		return b[n:], v, nil
-	}
-	if n < 0 {
-		return nil, 0, errors.New("value larger than 64 bits")
-	}
-	return nil, 0, errors.New("insufficient bytes to decode value")
+func (compactEncoder) ReadUint(b *bytes.Buffer) (uint64, error) {
+	n, err := binary.ReadUvarint(b)
+	return n, errors.Trace(err)
 }
