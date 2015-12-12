@@ -68,7 +68,7 @@ func end(data []interface{}) []interface{} {
 	return append(data, nil)
 }
 
-// IndexRow is the index information composed of handle and values.
+// IndexRow is the index information composed of a handle and values.
 type IndexRow struct {
 	Handle int64
 	Values []interface{}
@@ -107,19 +107,27 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	return idxRows, nextVals, nil
 }
 
+// RecordData is the record data composed of a handle and column values.
+type RecordData struct {
+	Handle int64
+	Values []interface{}
+}
+
 // ScanTableData scans table row handles and column values in a limited number.
 // It returns data and the next startKey.
 func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int64) (
-	[]int64, [][]interface{}, int64, error) {
-	var handles []int64
-	var data [][]interface{}
+	[]*RecordData, int64, error) {
+	var records []*RecordData
 
 	startKey := t.RecordKey(startHandle, nil)
 	err := t.IterRecords(retriever, string(startKey), t.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
 			for limit != 0 {
-				data = append(data, d)
-				handles = append(handles, h)
+				r := &RecordData{
+					Handle: h,
+					Values: d,
+				}
+				records = append(records, r)
 				limit--
 				return true, nil
 			}
@@ -127,30 +135,29 @@ func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int
 			return false, nil
 		})
 	if err != nil {
-		return nil, nil, 0, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 
-	if len(handles) == 0 {
-		return handles, data, startHandle, nil
+	if len(records) == 0 {
+		return records, startHandle, nil
 	}
 
-	return handles, data, handles[len(handles)-1] + 1, nil
+	nextHandle := records[len(records)-1].Handle + 1
+
+	return records, nextHandle, nil
 }
 
 // ScanSnapshotTableData scans the ver version of the table data in a limited number.
 // It returns data and the next startKey.
 func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
-	[][]interface{}, int64, error) {
+	[]*RecordData, int64, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	defer snap.Release()
 
-	_, data, nextHandle, err := ScanTableData(t, snap, startHandle, limit)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
+	records, nextHandle, err := ScanTableData(t, snap, startHandle, limit)
 
-	return data, nextHandle, nil
+	return records, nextHandle, errors.Trace(err)
 }

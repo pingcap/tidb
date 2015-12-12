@@ -29,6 +29,8 @@ var _ context.Context = (*Context)(nil)
 type Context struct {
 	values map[fmt.Stringer]interface{}
 	// mock global variable
+	txn   kv.Transaction
+	Store kv.Storage
 }
 
 // SetValue implements context.Context SetValue interface.
@@ -49,12 +51,30 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 
 // GetTxn implements context.Context GetTxn interface.
 func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
-	return nil, nil
+	if c.Store == nil {
+		return nil, nil
+	}
+
+	if c.txn != nil {
+		return c.txn, nil
+	}
+
+	var err error
+	c.txn, err = c.Store.Begin()
+
+	return c.txn, err
 }
 
 // FinishTxn implements context.Context FinishTxn interface.
 func (c *Context) FinishTxn(rollback bool) error {
-	return nil
+	if c.Store == nil || c.txn == nil {
+		return nil
+	}
+
+	err := c.txn.Commit()
+	c.txn = nil
+
+	return err
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.

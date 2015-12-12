@@ -14,7 +14,6 @@
 package inspectkv
 
 import (
-	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -107,8 +107,11 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	txn.Commit()
 
-	ctx := newmockContext(store)
+	ctx := mock.NewContext()
 	c.Assert(err, IsNil)
+	ctx.Store = store
+	variable.BindSessionVars(ctx)
+
 	alloc := autoid.NewAllocator(store, dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
@@ -116,11 +119,13 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	_, err = tb.AddRecord(ctx, []interface{}{10}, 0)
 	c.Assert(err, IsNil)
 	ctx.FinishTxn(false)
+
+	record := &RecordData{Handle: int64(1), Values: []interface{}{int64(10)}}
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
-	data, _, err := ScanSnapshotTableData(store, ver, tb, int64(1), 1)
+	records, _, err := ScanSnapshotTableData(store, ver, tb, int64(1), 1)
 	c.Assert(err, IsNil)
-	c.Assert(data, DeepEquals, [][]interface{}{{int64(10)}})
+	c.Assert(records, DeepEquals, []*RecordData{record})
 
 	_, err = tb.AddRecord(ctx, []interface{}{20}, 0)
 	c.Assert(err, IsNil)
@@ -128,18 +133,17 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 
-	handles, vals, nextHandle, err := ScanTableData(tb, txn, int64(1), 1)
+	records, nextHandle, err := ScanTableData(tb, txn, int64(1), 1)
 	c.Assert(err, IsNil)
-	c.Assert(handles, DeepEquals, []int64{int64(1)})
-	c.Assert(vals, DeepEquals, [][]interface{}{{int64(10)}})
-	handles, vals, nextHandle, err = ScanTableData(tb, txn, nextHandle, 1)
+	c.Assert(records, DeepEquals, []*RecordData{record})
+	records, nextHandle, err = ScanTableData(tb, txn, nextHandle, 1)
 	c.Assert(err, IsNil)
-	c.Assert(handles, DeepEquals, []int64{int64(2)})
-	c.Assert(vals, DeepEquals, [][]interface{}{{int64(20)}})
+	record.Handle = int64(2)
+	record.Values = []interface{}{int64(20)}
+	c.Assert(records, DeepEquals, []*RecordData{record})
 	startHandle := nextHandle
-	handles, vals, nextHandle, err = ScanTableData(tb, txn, startHandle, 1)
-	c.Assert(handles, IsNil)
-	c.Assert(vals, IsNil)
+	records, nextHandle, err = ScanTableData(tb, txn, startHandle, 1)
+	c.Assert(records, IsNil)
 	c.Assert(nextHandle, Equals, startHandle)
 	c.Assert(err, IsNil)
 
@@ -154,56 +158,4 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(idxRows, IsNil)
 	c.Assert(nextVals, DeepEquals, []interface{}{nil})
 	c.Assert(err, IsNil)
-}
-
-// mockContext represents mocked context.Context.
-type mockContext struct {
-	values map[fmt.Stringer]interface{}
-	txn    kv.Transaction
-	store  kv.Storage
-}
-
-func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
-	c.values[key] = value
-}
-
-func (c *mockContext) Value(key fmt.Stringer) interface{} {
-	value := c.values[key]
-	return value
-}
-
-func (c *mockContext) ClearValue(key fmt.Stringer) {
-	delete(c.values, key)
-}
-
-func (c *mockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
-	if c.txn != nil {
-		return c.txn, nil
-	}
-
-	var err error
-	c.txn, err = c.store.Begin()
-	return c.txn, err
-}
-
-func (c *mockContext) FinishTxn(rollback bool) error {
-	if c.txn == nil {
-		return nil
-	}
-
-	err := c.txn.Commit()
-	c.txn = nil
-	return err
-}
-
-func newmockContext(store kv.Storage) *mockContext {
-	ctx := &mockContext{
-		values: make(map[fmt.Stringer]interface{}),
-		txn:    nil,
-		store:  store,
-	}
-
-	variable.BindSessionVars(ctx)
-
-	return ctx
 }
