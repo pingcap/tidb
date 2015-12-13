@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -82,17 +83,17 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		}
 	}
 	e := &IndexScanExec{
-		tbl:    tbl,
-		idx:    idx.X,
-		fields: v.Fields(),
-		ctx:    b.ctx,
-		Desc:   v.Desc,
+		tbl:        tbl,
+		idx:        idx.X,
+		fields:     v.Fields(),
+		ctx:        b.ctx,
+		Desc:       v.Desc,
+		valueTypes: make([]*types.FieldType, len(idx.Columns)),
 	}
 
-	for _, col := range tbl.Cols() {
-		if col.Name.L == idx.Columns[0].Name.L {
-			e.valueType = col.FieldType
-		}
+	for i, ic := range idx.Columns {
+		col := tbl.Cols()[ic.Offset]
+		e.valueTypes[i] = &col.FieldType
 	}
 
 	e.Ranges = make([]*IndexRangeExec, len(v.Ranges))
@@ -105,9 +106,9 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
 	rang := &IndexRangeExec{
 		scan:        scan,
-		lowVal:      v.LowVal[0],
+		lowVals:     v.LowVal,
 		lowExclude:  v.LowExclude,
-		highVal:     v.HighVal[0],
+		highVals:    v.HighVal,
 		highExclude: v.HighExclude,
 	}
 	return rang
