@@ -253,7 +253,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	job := &model.Job{
 		SchemaID: schemaID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema, dbInfo},
+		Args:     []interface{}{dbInfo},
 	}
 
 	err = d.startJob(ctx, job)
