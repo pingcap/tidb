@@ -142,7 +142,7 @@ type DBInfo struct {
 	Name    CIStr        `json:"db_name"` // DB name.
 	Charset string       `json:"charset"`
 	Collate string       `json:"collate"`
-	Tables  []*TableInfo `json:"tables"` // Tables in the DB.
+	Tables  []*TableInfo `json:"-"` // Tables in the DB.
 	State   SchemaState  `json:"state"`
 }
 
