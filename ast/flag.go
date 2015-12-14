@@ -13,7 +13,7 @@
 
 package ast
 
-const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable
+const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault
 
 // IsPreEvaluable checks if the expression can be evaluated before execution.
 func IsPreEvaluable(expr ExprNode) bool {
@@ -55,6 +55,7 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 	case *ColumnNameExpr:
 		x.SetFlag(FlagHasReference)
 	case *DefaultExpr:
+		x.SetFlag(FlagHasDefault)
 	case *ExistsSubqueryExpr:
 		x.SetFlag(x.Sel.GetFlag())
 	case *PatternInExpr:
