@@ -14,7 +14,6 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -60,21 +59,6 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncCallExpr) IsStatic() bool {
-	v := builtin.Funcs[n.FnName.L]
-	if v.F == nil || !v.IsStatic {
-		return false
-	}
-
-	for _, v := range n.Args {
-		if !v.IsStatic() {
-			return false
-		}
-	}
-	return true
-}
-
 // FuncExtractExpr is for time extract function.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 type FuncExtractExpr struct {
@@ -99,11 +83,6 @@ func (n *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncExtractExpr) IsStatic() bool {
-	return n.Date.IsStatic()
-}
-
 // FuncConvertExpr provides a way to convert data between different character sets.
 // See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 type FuncConvertExpr struct {
@@ -112,11 +91,6 @@ type FuncConvertExpr struct {
 	Expr ExprNode
 	// Charset is the target character set to convert.
 	Charset string
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncConvertExpr) IsStatic() bool {
-	return n.Expr.IsStatic()
 }
 
 // Accept implements Node Accept interface.
@@ -154,11 +128,6 @@ type FuncCastExpr struct {
 	Tp *types.FieldType
 	// Cast, Convert and Binary share this struct.
 	FunctionType CastFunctionType
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncCastExpr) IsStatic() bool {
-	return n.Expr.IsStatic()
 }
 
 // Accept implements Node Accept interface.
@@ -211,18 +180,6 @@ func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
 		n.Len = node.(ExprNode)
 	}
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncSubstringExpr) IsStatic() bool {
-	static := n.StrExpr.IsStatic() && n.Pos.IsStatic()
-	if !static {
-		return false
-	}
-	if n.Len != nil {
-		return n.Len.IsStatic()
-	}
-	return true
 }
 
 // FuncSubstringIndexExpr returns the substring as specified.
@@ -341,14 +298,6 @@ func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncTrimExpr) IsStatic() bool {
-	if n.RemStr != nil {
-		return n.Str.IsStatic() && n.RemStr.IsStatic()
-	}
-	return n.Str.IsStatic()
-}
-
 // DateArithType is type for DateArith type.
 type DateArithType byte
 
@@ -406,11 +355,6 @@ func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
 		n.Interval = node.(ExprNode)
 	}
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *FuncDateArithExpr) IsStatic() bool {
-	return n.Date.IsStatic() && n.Interval.IsStatic()
 }
 
 // AggregateFuncExpr represents aggregate function expression.
