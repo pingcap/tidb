@@ -335,7 +335,7 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 		}
 		return "", errors.Trace(err)
 	}
-	sessionVars.Systems[name] = v
+	sessionVars.Systems[name] = sysVar
 	return sysVar, nil
 }
 
