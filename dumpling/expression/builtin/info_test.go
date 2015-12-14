@@ -81,3 +81,14 @@ func (s *testBuiltinSuite) TestCurrentUser(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "root@localhost")
 }
+
+func (s *testBuiltinSuite) TestConnectionID(c *C) {
+	ctx := mock.NewContext()
+	m := map[interface{}]interface{}{}
+	variable.BindSessionVars(ctx)
+	ctx.SetValue(ConnectionIDKey, int64(1))
+	m[ExprEvalArgCtx] = ctx
+	v, err := builtinConnectionID(nil, m)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(1))
+}

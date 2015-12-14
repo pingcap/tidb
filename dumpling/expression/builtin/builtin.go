@@ -104,10 +104,11 @@ var Funcs = map[string]Func{
 	"upper":     {builtinUpper, 1, 1, true, false},
 
 	// information functions
-	"current_user": {builtinCurrentUser, 0, 0, false, false},
-	"database":     {builtinDatabase, 0, 0, false, false},
-	"found_rows":   {builtinFoundRows, 0, 0, false, false},
-	"user":         {builtinUser, 0, 0, false, false},
+	"current_user":  {builtinCurrentUser, 0, 0, false, false},
+	"database":      {builtinDatabase, 0, 0, false, false},
+	"found_rows":    {builtinFoundRows, 0, 0, false, false},
+	"user":          {builtinUser, 0, 0, false, false},
+	"connection_id": {builtinConnectionID, 0, 0, true, false},
 }
 
 func invArg(arg interface{}, s string) error {

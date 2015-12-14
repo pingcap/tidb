@@ -339,10 +339,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{"SELECT CONVERT('111', SIGNED);", true},
 
+		// Information Functions
 		{"SELECT DATABASE();", true},
 		{"SELECT USER();", true},
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
+		{"SELECT CONNECTION_ID();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
