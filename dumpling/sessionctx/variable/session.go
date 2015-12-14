@@ -24,7 +24,9 @@ type SessionVars struct {
 	// system variables
 	Systems map[string]string
 	// prepared statement
-	PreparedStmts map[string]interface{}
+	PreparedStmts map[uint32]interface{}
+
+	PreparedStmtNameToID map[string]uint32
 	// prepared statement auto increment id
 	preparedStmtID uint32
 
@@ -56,9 +58,10 @@ const sessionVarsKey sessionVarsKeyType = 0
 // BindSessionVars creates a session vars object and binds it to context.
 func BindSessionVars(ctx context.Context) {
 	v := &SessionVars{
-		Users:         make(map[string]string),
-		Systems:       make(map[string]string),
-		PreparedStmts: make(map[string]interface{}),
+		Users:                make(map[string]string),
+		Systems:              make(map[string]string),
+		PreparedStmts:        make(map[uint32]interface{}),
+		PreparedStmtNameToID: make(map[string]uint32),
 	}
 
 	ctx.SetValue(sessionVarsKey, v)

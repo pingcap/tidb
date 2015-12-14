@@ -2693,7 +2693,6 @@ PreparedStmt:
 			sqlVar = $4.(*ast.VariableExpr)
 		}
 		$$ = &ast.PrepareStmt{
-			InPrepare:	true,
 			Name:		$2.(string), 
 			SQLText:	sqlText, 
 			SQLVar: 	sqlVar,

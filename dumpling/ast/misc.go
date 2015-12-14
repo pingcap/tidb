@@ -81,11 +81,9 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 type PrepareStmt struct {
 	stmtNode
 
-	InPrepare bool // true for prepare mode, false for use mode
-	Name      string
-	ID        uint32 // For binary protocol, there is no Name but only ID
-	SQLText   string
-	SQLVar    *VariableExpr
+	Name    string
+	SQLText string
+	SQLVar  *VariableExpr
 }
 
 // Accept implements Node Accept interface.
@@ -95,11 +93,13 @@ func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNod)
 	}
 	n = newNod.(*PrepareStmt)
-	node, ok := n.SQLVar.Accept(v)
-	if !ok {
-		return n, false
+	if n.SQLVar != nil {
+		node, ok := n.SQLVar.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SQLVar = node.(*VariableExpr)
 	}
-	n.SQLVar = node.(*VariableExpr)
 	return v.Leave(n)
 }
 
@@ -109,7 +109,6 @@ type DeallocateStmt struct {
 	stmtNode
 
 	Name string
-	ID   uint32 // For binary protocol, there is no Name but only ID.
 }
 
 // Accept implements Node Accept interface.
@@ -128,7 +127,6 @@ type ExecuteStmt struct {
 	stmtNode
 
 	Name      string
-	ID        uint32 // For binary protocol, there is no Name but only ID
 	UsingVars []ExprNode
 }
 
