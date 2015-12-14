@@ -503,12 +503,7 @@ func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error) {
 	// use the length of t.Cols() for alignment
 	v := make([]interface{}, len(t.Cols()))
 	for _, col := range cols {
@@ -517,7 +512,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 		}
 
 		k := t.RecordKey(h, col)
-		data, err := txn.Get([]byte(k))
+		data, err := retriever.Get([]byte(k))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -534,8 +529,12 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 // Row implements table.Table Row interface.
 func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 	// TODO: we only interested in mentioned cols
-	cols := t.Cols()
-	r, err := t.RowWithCols(ctx, h, cols)
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	r, err := t.RowWithCols(txn, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -647,13 +646,9 @@ func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interfa
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column.Col, fn table.RecordIterFunc) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	it, err := txn.Seek([]byte(startKey))
+func (t *Table) IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col,
+	fn table.RecordIterFunc) error {
+	it, err := retriever.Seek([]byte(startKey))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -663,20 +658,19 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 		return nil
 	}
 
-	log.Debugf("startKey %q, key:%q,value:%q", startKey, it.Key(), it.Value())
+	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
 	prefix := t.KeyPrefix()
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
-		var err error
 		handle, err := DecodeRecordKeyHandle(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		data, err := t.RowWithCols(ctx, handle, cols)
+		data, err := t.RowWithCols(retriever, handle, cols)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -691,6 +685,7 @@ func (t *Table) IterRecords(ctx context.Context, startKey string, cols []*column
 			return errors.Trace(err)
 		}
 	}
+
 	return nil
 }
 

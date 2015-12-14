@@ -162,7 +162,7 @@ func checkDefaultValue(c *column.Col, hasDefaultValue bool) error {
 	return nil
 }
 
-// ColumnDefToCol converts converts ColumnDef to Col and TableConstraints.
+// ColumnDefToCol converts ColumnDef to Col and TableConstraints.
 func ColumnDefToCol(offset int, colDef *ColumnDef) (*column.Col, []*TableConstraint, error) {
 	constraints := []*TableConstraint{}
 	col := &column.Col{
