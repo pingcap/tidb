@@ -20,8 +20,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/optimizer"
+	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1322,4 +1325,65 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 	wg.Wait()
 
 	mustExecMatch(c, s1, "select c2 from t_rollback where c1 = 0", [][]interface{}{{cnt * num}})
+}
+
+func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int);")
+	mustExecSQL(c, se, "create index idx_c1_c2 on t (c1, c2)")
+	mustExecSQL(c, se, "insert into t values (1, 5)")
+
+	sql := "select c1 from t where c1 in (1) and c2 < 10"
+	expectedExplain := "Index(t.idx_c1_c2)->Filter->Fields"
+	checkPlan(c, se, sql, expectedExplain)
+	mustExecMatch(c, se, sql, [][]interface{}{{1}})
+
+	sql = "select c1 from t where c1 in (1) and c2 > 3"
+	checkPlan(c, se, sql, expectedExplain)
+	mustExecMatch(c, se, sql, [][]interface{}{{1}})
+
+	sql = "select c1 from t where c1 in (1.1) and c2 > 3"
+	checkPlan(c, se, sql, expectedExplain)
+	mustExecMatch(c, se, sql, [][]interface{}{})
+
+	sql = "select c1 from t where c1 in (1) and c2 < 5.1"
+	checkPlan(c, se, sql, expectedExplain)
+	mustExecMatch(c, se, sql, [][]interface{}{{1}})
+
+	err := se.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName).(*session)
+
+	v, err := se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "4194304")
+	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "4194304")
+
+	err = se.SetGlobalSysVar(se, "max_allowed_packet", "4194305")
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "4194305")
+}
+
+func checkPlan(c *C, se Session, sql, explain string) {
+	ctx := se.(context.Context)
+	stmts, err := Parse(ctx, sql)
+	c.Assert(err, IsNil)
+	stmt := stmts[0]
+	c.Assert(optimizer.IsSupported(stmt), IsTrue)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	p, err := optimizer.Optimize(is, ctx, stmt)
+	c.Assert(err, IsNil)
+	planStr, err := plan.Explain(p)
+	c.Assert(err, IsNil)
+	c.Assert(planStr, Equals, explain)
 }

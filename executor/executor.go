@@ -159,9 +159,9 @@ type IndexRangeExec struct {
 
 	// seekVal is different from lowVal, it is casted from lowVal and
 	// must be less than or equal to lowVal, used to seek the index.
-	lowVal      interface{}
+	lowVals     []interface{}
 	lowExclude  bool
-	highVal     interface{}
+	highVals    []interface{}
 	highExclude bool
 
 	iter       kv.IndexIterator
@@ -177,21 +177,24 @@ func (e *IndexRangeExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		var seekVal interface{}
-		var err error
-		if e.lowVal == plan.MinNotNullVal {
-			seekVal = []byte{}
-		} else {
-			seekVal, err = types.Convert(e.lowVal, &e.scan.valueType)
-			if err != nil {
-				return nil, errors.Trace(err)
+		seekVals := make([]interface{}, len(e.lowVals))
+		for i := 0; i < len(seekVals); i++ {
+			var err error
+			if e.lowVals[i] == plan.MinNotNullVal {
+				seekVals[i] = []byte{}
+			} else {
+				seekVals[i], err = types.Convert(e.lowVals[i], e.scan.valueTypes[i])
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		}
+
 		txn, err := e.scan.ctx.GetTxn(false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, _, err = e.scan.idx.Seek(txn, []interface{}{seekVal})
+		e.iter, _, err = e.scan.idx.Seek(txn, seekVals)
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
@@ -204,10 +207,9 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
-		val := idxKey[0]
 		if !e.skipLowCmp {
 			var cmp int
-			cmp, err = indexCompare(val, e.lowVal)
+			cmp, err = indexCompare(idxKey, e.lowVals)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -216,7 +218,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			}
 			e.skipLowCmp = true
 		}
-		cmp, err := indexCompare(val, e.highVal)
+		cmp, err := indexCompare(idxKey, e.highVals)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -234,8 +236,23 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 	}
 }
 
+// indexCompare compares multi column index.
+// The length of boundVals may be less than idxKey.
+func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
+	for i := 0; i < len(boundVals); i++ {
+		cmp, err := indexColumnCompare(idxKey[i], boundVals[i])
+		if err != nil {
+			return -1, errors.Trace(err)
+		}
+		if cmp != 0 {
+			return cmp, nil
+		}
+	}
+	return 0, nil
+}
+
 // comparison function that takes minNotNullVal and maxVal into account.
-func indexCompare(a interface{}, b interface{}) (int, error) {
+func indexColumnCompare(a interface{}, b interface{}) (int, error) {
 	if a == nil && b == nil {
 		return 0, nil
 	} else if b == nil {
@@ -297,14 +314,14 @@ func (e *IndexRangeExec) Close() error {
 
 // IndexScanExec represents an index scan executor.
 type IndexScanExec struct {
-	tbl       table.Table
-	idx       kv.Index
-	fields    []*ast.ResultField
-	Ranges    []*IndexRangeExec
-	Desc      bool
-	rangeIdx  int
-	ctx       context.Context
-	valueType types.FieldType
+	tbl        table.Table
+	idx        kv.Index
+	fields     []*ast.ResultField
+	Ranges     []*IndexRangeExec
+	Desc       bool
+	rangeIdx   int
+	ctx        context.Context
+	valueTypes []*types.FieldType
 }
 
 // Fields implements Executor Fields interface.

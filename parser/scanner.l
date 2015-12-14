@@ -310,6 +310,7 @@ column		{c}{o}{l}{u}{m}{n}
 columns		{c}{o}{l}{u}{m}{n}{s}
 comment 	{c}{o}{m}{m}{e}{n}{t}
 commit		{c}{o}{m}{m}{i}{t}
+committed	{c}{o}{m}{m}{i}{t}{t}{e}{d}
 compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
@@ -379,12 +380,14 @@ insert		{i}{n}{s}{e}{r}{t}
 interval	{i}{n}{t}{e}{r}{v}{a}{l}
 into		{i}{n}{t}{o}
 is		{i}{s}
+isolation	{i}{s}{o}{l}{a}{t}{i}{o}{n}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
 key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
 leading		{l}{e}{a}{d}{i}{n}{g}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
+level		{l}{e}{v}{e}{l}
 like		{l}{i}{k}{e}
 limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
@@ -404,6 +407,7 @@ national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
 offset		{o}{f}{f}{s}{e}{t}
 on		{o}{n}
+only		{o}{n}{l}{y}
 option		{o}{p}{t}{i}{o}{n}
 or		{o}{r}
 order		{o}{r}{d}{e}{r}
@@ -416,6 +420,7 @@ quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
 read		{r}{e}{a}{d}
 repeat		{r}{e}{p}{e}{a}{t}
+repeatable	{r}{e}{p}{e}{a}{t}{a}{b}{l}{e}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
 replace		{r}{e}{p}{l}{a}{c}{e}
@@ -427,6 +432,7 @@ schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 second		{s}{e}{c}{o}{n}{d}
 select		{s}{e}{l}{e}{c}{t}
+serializable	{s}{e}{r}{i}{a}{l}{i}{z}{a}{b}{l}{e}
 session		{s}{e}{s}{s}{i}{o}{n}
 set		{s}{e}{t}
 share		{s}{h}{a}{r}{e}
@@ -450,6 +456,7 @@ trim		{t}{r}{i}{m}
 truncate	{t}{r}{u}{n}{c}{a}{t}{e}
 max		{m}{a}{x}
 min		{m}{i}{n}
+uncommitted	{u}{n}{c}{o}{m}{m}{i}{t}{t}{e}{d}
 unknown		{u}{n}{k}{n}{o}{w}{n}
 union		{u}{n}{i}{o}{n}
 unique		{u}{n}{i}{q}{u}{e}
@@ -661,6 +668,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return comment
 {commit}		lval.item = string(l.val)
 			return commit
+{committed}		lval.item = string(l.val)
+			return committed
 {compression}		lval.item = string(l.val)
 			return compression
 {concat}		lval.item = string(l.val)
@@ -777,6 +786,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {into}			return into
 {in}			return in
 {is}			return is
+{isolation}		lval.item = string(l.val)
+			return isolation
 {join}			return join
 {key}			return key
 {key_block_size}	lval.item = string(l.val)
@@ -786,6 +797,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return left
 {length}		lval.item = string(l.val)
 			return length
+{level}			lval.item = string(l.val)
+			return level
 {like}			return like
 {limit}			return limit
 {local}			lval.item = string(l.val)
@@ -825,6 +838,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {offset}		lval.item = string(l.val)
 			return offset
 {on}			return on
+{only}			lval.item = string(l.val)
+			return only
 {option}		return option
 {order}			return order
 {or}			return or
@@ -846,6 +861,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {schema}		lval.item = string(l.val)
 			return schema
 {schemas}		return schemas
+{serializable}		lval.item = string(l.val)
+			return serializable
 {session}		lval.item = string(l.val)
 			return session
 {some}			lval.item = string(l.val)
@@ -859,8 +876,9 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {rand}			lval.item = string(l.val)
 			return rand
 {read}			return read
-{repeat}		lval.item = string(l.val)
-			return repeat
+{repeat}		return repeat
+{repeatable}		lval.item = string(l.val)
+			return repeatable
 {regexp}		return regexp
 {replace}		lval.item = string(l.val)
 			return replace
@@ -904,6 +922,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return trim
 {truncate}		lval.item = string(l.val)
 			return truncate
+{uncommitted}		lval.item = string(l.val)
+			return uncommitted
 {union}			return union
 {unique}		return unique
 {unknown}		lval.item = string(l.val)

@@ -144,7 +144,7 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 			return false
 		}
 		for _, val := range x.List {
-			if !val.IsStatic() {
+			if !ast.IsPreEvaluable(val) {
 				return false
 			}
 		}
@@ -156,14 +156,14 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		if !c.checkColumnExpr(x.Expr) {
 			return false
 		}
-		if !x.Pattern.IsStatic() {
+		if !ast.IsPreEvaluable(x.Pattern) {
 			return false
 		}
 		patternStr := x.Pattern.GetValue().(string)
 		firstChar := patternStr[0]
 		return firstChar != '%' && firstChar != '.'
 	case *ast.BetweenExpr:
-		if x.Left.IsStatic() && x.Right.IsStatic() && c.checkColumnExpr(x.Expr) {
+		if ast.IsPreEvaluable(x.Left) && ast.IsPreEvaluable(x.Right) && c.checkColumnExpr(x.Expr) {
 			return true
 		}
 	case *ast.IsNullExpr:
@@ -187,9 +187,9 @@ func (c *conditionChecker) checkBinaryOperation(b *ast.BinaryOperationExpr) bool
 	case opcode.AndAnd:
 		return c.check(b.L) && c.check(b.R)
 	case opcode.EQ, opcode.NE, opcode.GE, opcode.GT, opcode.LE, opcode.LT:
-		if b.L.IsStatic() {
+		if ast.IsPreEvaluable(b.L) {
 			return c.checkColumnExpr(b.R)
-		} else if b.R.IsStatic() {
+		} else if ast.IsPreEvaluable(b.R) {
 			return c.checkColumnExpr(b.L)
 		}
 	}

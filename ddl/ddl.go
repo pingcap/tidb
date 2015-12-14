@@ -50,7 +50,7 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx context.Context, name model.CIStr) error
+	CreateSchema(ctx context.Context, name model.CIStr, charsetInfo *coldef.CharsetOpt) error
 	DropSchema(ctx context.Context, schema model.CIStr) error
 	CreateTable(ctx context.Context, ident table.Ident, cols []*coldef.ColumnDef, constrs []*coldef.TableConstraint) error
 	DropTable(ctx context.Context, tableIdent table.Ident) (err error)
@@ -229,7 +229,7 @@ func (d *ddl) genGlobalID() (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) {
+func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo *coldef.CharsetOpt) (err error) {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
@@ -240,11 +240,20 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr) (err error) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	dbInfo := &model.DBInfo{
+		Name: schema,
+	}
+	if charsetInfo != nil {
+		dbInfo.Charset = charsetInfo.Chs
+		dbInfo.Collate = charsetInfo.Col
+	} else {
+		dbInfo.Charset, dbInfo.Collate = getDefaultCharsetAndCollate()
+	}
 
 	job := &model.Job{
 		SchemaID: schemaID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{schema},
+		Args:     []interface{}{dbInfo},
 	}
 
 	err = d.startJob(ctx, job)
