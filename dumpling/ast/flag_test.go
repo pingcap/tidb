@@ -23,56 +23,60 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 		flag uint64
 	}{
 		{
-			expr: "1 between 0 and 2",
-			flag: ast.FlagConstant,
+			"1 between 0 and 2",
+			ast.FlagConstant,
 		},
 		{
-			expr: "case 1 when 1 then 1 else 0 end",
-			flag: ast.FlagConstant,
+			"case 1 when 1 then 1 else 0 end",
+			ast.FlagConstant,
 		},
 		{
-			expr: "case 1 when 1 then 1 else 0 end",
-			flag: ast.FlagConstant,
+			"case 1 when 1 then 1 else 0 end",
+			ast.FlagConstant,
 		},
 		{
-			expr: "1 = ANY (select 1) OR exists (select 1)",
-			flag: ast.FlagHasSubquery,
+			"1 = ANY (select 1) OR exists (select 1)",
+			ast.FlagHasSubquery,
 		},
 		{
-			expr: "1 in (1) or 1 is true or null is null or 'abc' like 'abc' or 'abc' rlike 'abc'",
-			flag: ast.FlagConstant,
+			"1 in (1) or 1 is true or null is null or 'abc' like 'abc' or 'abc' rlike 'abc'",
+			ast.FlagConstant,
 		},
 		{
-			expr: "row (1, 1) = row (1, 1)",
-			flag: ast.FlagConstant,
+			"row (1, 1) = row (1, 1)",
+			ast.FlagConstant,
 		},
 		{
-			expr: "(1 + a) > ?",
-			flag: ast.FlagHasReference | ast.FlagHasParamMarker,
+			"(1 + a) > ?",
+			ast.FlagHasReference | ast.FlagHasParamMarker,
 		},
 		{
-			expr: "trim('abc ')",
-			flag: ast.FlagHasFunc,
+			"trim('abc ')",
+			ast.FlagHasFunc,
 		},
 		{
-			expr: "now() + EXTRACT(YEAR FROM '2009-07-02') + CAST(1 AS UNSIGNED)",
-			flag: ast.FlagHasFunc,
+			"now() + EXTRACT(YEAR FROM '2009-07-02') + CAST(1 AS UNSIGNED)",
+			ast.FlagHasFunc,
 		},
 		{
-			expr: "substring('abc', 1)",
-			flag: ast.FlagHasFunc,
+			"substring('abc', 1)",
+			ast.FlagHasFunc,
 		},
 		{
-			expr: "sum(a)",
-			flag: ast.FlagHasAggregateFunc | ast.FlagHasReference,
+			"sum(a)",
+			ast.FlagHasAggregateFunc | ast.FlagHasReference,
 		},
 		{
-			expr: "(select 1) as a",
-			flag: ast.FlagHasSubquery,
+			"(select 1) as a",
+			ast.FlagHasSubquery,
 		},
 		{
-			expr: "@auto_commit",
-			flag: ast.FlagHasVariable,
+			"@auto_commit",
+			ast.FlagHasVariable,
+		},
+		{
+			"default(a)",
+			ast.FlagHasDefault,
 		},
 	}
 	for _, ca := range cases {

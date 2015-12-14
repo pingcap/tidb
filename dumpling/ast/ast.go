@@ -47,6 +47,7 @@ const (
 	FlagHasAggregateFunc
 	FlagHasSubquery
 	FlagHasVariable
+	FlagHasDefault
 )
 
 // ExprNode is a node that can be evaluated.
