@@ -282,12 +282,12 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 }
 
 // Truncate implements table.Table Truncate interface.
-func (t *Table) Truncate(ctx context.Context) error {
-	err := util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+func (t *Table) Truncate(rm kv.RetrieverMutator) error {
+	err := util.DelKeyWithPrefix(rm, t.KeyPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return util.DelKeyWithPrefix(ctx, t.IndexPrefix())
+	return util.DelKeyWithPrefix(rm, t.IndexPrefix())
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.

@@ -76,7 +76,7 @@ type Table interface {
 	RecordKey(h int64, col *column.Col) []byte
 
 	// Truncate truncates the table.
-	Truncate(ctx context.Context) (err error)
+	Truncate(rm kv.RetrieverMutator) (err error)
 
 	// AddRecord inserts a row into the table. Is h is 0, it will alloc an unique id inside.
 	AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error)

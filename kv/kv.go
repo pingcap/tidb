@@ -252,17 +252,17 @@ type IndexIterator interface {
 // Index is the interface for index data on KV store.
 type Index interface {
 	// Create supports insert into statement.
-	Create(rw RetrieverMutator, indexedValues []interface{}, h int64) error
+	Create(rm RetrieverMutator, indexedValues []interface{}, h int64) error
 	// Delete supports delete from statement.
-	Delete(rw RetrieverMutator, indexedValues []interface{}, h int64) error
+	Delete(m Mutator, indexedValues []interface{}, h int64) error
 	// Drop supports drop table, drop index statements.
-	Drop(rw RetrieverMutator) error
+	Drop(rm RetrieverMutator) error
 	// Exist supports check index exists or not.
-	Exist(rw RetrieverMutator, indexedValues []interface{}, h int64) (bool, int64, error)
+	Exist(rm RetrieverMutator, indexedValues []interface{}, h int64) (bool, int64, error)
 	// GenIndexKey generates an index key.
 	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)
 	// Seek supports where clause.
-	Seek(rw RetrieverMutator, indexedValues []interface{}) (iter IndexIterator, hit bool, err error)
+	Seek(r Retriever, indexedValues []interface{}) (iter IndexIterator, hit bool, err error)
 	// SeekFirst supports aggregate min and ascend order by.
-	SeekFirst(rw RetrieverMutator) (iter IndexIterator, err error)
+	SeekFirst(r Retriever) (iter IndexIterator, err error)
 }
