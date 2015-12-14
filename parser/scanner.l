@@ -315,6 +315,7 @@ compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
 connection	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}
+connection_id	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}_{i}{d}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
@@ -678,6 +679,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return concatWs
 {connection}		lval.item = string(l.val)
 			return connection
+{connection_id}		lval.item = string(l.val)
+			return connectionID
 {constraint}		return constraint
 {convert}		return convert
 {count}			lval.item = string(l.val)

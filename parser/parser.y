@@ -96,6 +96,7 @@ import (
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
 	connection 	"CONNECTION"
+	connectionID 	"CONNECTION_ID"
 	constraint	"CONSTRAINT"
 	convert		"CONVERT"
 	count		"COUNT"
@@ -1685,7 +1686,7 @@ NotKeywordToken:
 |	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
 |	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
 |	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
-|	"YEARWEEK"
+|	"YEARWEEK" | "CONNECTION_ID"
 
 /************************************************************************************
  *
@@ -2354,6 +2355,10 @@ FunctionCallNonKeyword:
 |	"YEARWEEK" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
+|	"CONNECTION_ID" '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
 
 DateArithOpt:
