@@ -71,7 +71,7 @@ func (s *CreateDatabaseStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *CreateDatabaseStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	log.Debug("create database")
-	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, model.NewCIStr(s.Name))
+	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, model.NewCIStr(s.Name), s.Opt)
 	if err != nil {
 		if terror.ErrorEqual(err, ddl.ErrExists) && s.IfNotExists {
 			err = nil

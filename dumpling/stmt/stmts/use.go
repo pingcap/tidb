@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
@@ -61,9 +62,21 @@ func (s *UseStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *UseStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	dbname := model.NewCIStr(s.DBName)
-	if !sessionctx.GetDomain(ctx).InfoSchema().SchemaExists(dbname) {
+	dbinfo, exists := sessionctx.GetDomain(ctx).InfoSchema().SchemaByName(dbname)
+	if !exists {
 		return nil, terror.DatabaseNotExists.Gen("database %s not exists", dbname)
 	}
 	db.BindCurrentSchema(ctx, dbname.O)
+	s.updateSysVars(ctx, dbinfo)
 	return nil, nil
+}
+
+// Update system variables
+func (s *UseStmt) updateSysVars(ctx context.Context, dbinfo *model.DBInfo) {
+	// character_set_database is the character set used by the default database.
+	// The server sets this variable whenever the default database changes.
+	// See: http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
+	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
+	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/stmt/stmts"
@@ -40,13 +41,19 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	store kv.Storage
+	store       kv.Storage
+	charsetInfo *coldef.CharsetOpt
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	ts.store = store
+	ts.charsetInfo = &coldef.CharsetOpt{
+		Chs: "utf8",
+		Col: "utf8_bin",
+	}
+
 }
 
 func (ts *testSuite) TestDDL(c *C) {
@@ -60,9 +67,9 @@ func (ts *testSuite) TestDDL(c *C) {
 	}
 	noExist := model.NewCIStr("noexist")
 
-	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
+	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema, ts.charsetInfo)
 	c.Assert(err, IsNil)
-	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
+	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema, ts.charsetInfo)
 	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
 
 	tbStmt := statement(ctx, "create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
@@ -242,7 +249,7 @@ func (ts *testSuite) TestConstraintNames(c *C) {
 		Name:   tblName,
 	}
 
-	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
+	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema, ts.charsetInfo)
 	c.Assert(err, IsNil)
 
 	tbStmt := statement(ctx, "create table t (a int, b int, index a (a, b), index a (a))").(*stmts.CreateTableStmt)
@@ -271,7 +278,7 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 		Name:   model.NewCIStr("t"),
 	}
 
-	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema)
+	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema, ts.charsetInfo)
 	c.Assert(err, IsNil)
 
 	tbStmt := statement(ctx, "create table t (a int, b int)").(*stmts.CreateTableStmt)
