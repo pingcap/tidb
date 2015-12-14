@@ -63,7 +63,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func nextIdxVals(data []interface{}) []interface{} {
+func nextIndexVals(data []interface{}) []interface{} {
 	// Add 0x0 to the end of data.
 	return append(data, nil)
 }
@@ -82,13 +82,14 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	defer it.Close()
 
 	var idxRows []*IndexRow
 	var curVals []interface{}
 	for limit != 0 {
 		val, h, err1 := it.Next()
 		if terror.ErrorEqual(err1, io.EOF) {
-			return idxRows, nextIdxVals(curVals), nil
+			return idxRows, nextIndexVals(curVals), nil
 		} else if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
@@ -99,7 +100,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 
 	nextVals, _, err := it.Next()
 	if terror.ErrorEqual(err, io.EOF) {
-		return idxRows, nextIdxVals(curVals), nil
+		return idxRows, nextIndexVals(curVals), nil
 	} else if err != nil {
 		return nil, nil, errors.Trace(err)
 	}

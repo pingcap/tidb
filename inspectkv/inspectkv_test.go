@@ -105,7 +105,8 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(info.Owner, DeepEquals, owner)
 	c.Assert(info.Job, DeepEquals, job)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
-	txn.Commit()
+	err = txn.Commit()
+	c.Assert(err, IsNil)
 
 	ctx := mock.NewContext()
 	c.Assert(err, IsNil)
