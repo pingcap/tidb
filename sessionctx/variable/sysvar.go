@@ -572,6 +572,10 @@ var SetNamesVariables = []string{
 const (
 	// CollationConnection is the name for collation_connection system variable.
 	CollationConnection = "collation_connection"
+	// CharsetDatabase is the name for charactor_set_database system variable.
+	CharsetDatabase = "character_set_database"
+	// CollationDatabase is the name for collation_database system variable.
+	CollationDatabase = "collation_database"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

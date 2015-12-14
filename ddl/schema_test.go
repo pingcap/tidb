@@ -44,7 +44,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo.Name},
+		Args:     []interface{}{dbInfo},
 	}
 
 	err := d.startJob(ctx, job)
@@ -168,7 +168,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	job = &model.Job{
 		SchemaID: schemaID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo.Name},
+		Args:     []interface{}{dbInfo},
 	}
 
 	err = d2.startJob(ctx, job)
@@ -218,7 +218,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{dbInfo.Name},
+		Args:     []interface{}{dbInfo},
 	}
 
 	testRunInterruptedJob(c, d1, job)
