@@ -63,7 +63,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func end(data []interface{}) []interface{} {
+func nextIdxVals(data []interface{}) []interface{} {
 	// Add 0x0 to the end of data.
 	return append(data, nil)
 }
@@ -88,7 +88,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	for limit != 0 {
 		val, h, err1 := it.Next()
 		if terror.ErrorEqual(err1, io.EOF) {
-			return idxRows, end(curVals), nil
+			return idxRows, nextIdxVals(curVals), nil
 		} else if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
@@ -99,7 +99,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 
 	nextVals, _, err := it.Next()
 	if terror.ErrorEqual(err, io.EOF) {
-		return idxRows, end(curVals), nil
+		return idxRows, nextIdxVals(curVals), nil
 	} else if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -122,7 +122,7 @@ func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int
 	startKey := t.RecordKey(startHandle, nil)
 	err := t.IterRecords(retriever, string(startKey), t.Cols(),
 		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
-			for limit != 0 {
+			if limit != 0 {
 				r := &RecordData{
 					Handle: h,
 					Values: d,
