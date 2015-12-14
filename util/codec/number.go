@@ -14,9 +14,8 @@
 package codec
 
 import (
-	"encoding/binary"
-
 	"bytes"
+	"encoding/binary"
 
 	"github.com/juju/errors"
 )

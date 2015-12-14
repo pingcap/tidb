@@ -489,13 +489,14 @@ func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b, err := codec.EncodeValue(nil, v)
-	return b, errors.Trace(err)
+	var b bytes.Buffer
+	err = codec.CompactEncoder.Write(&b, v)
+	return b.Bytes(), errors.Trace(err)
 }
 
 // DecodeValue implements table.Table DecodeValue interface.
 func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	values, err := codec.Decode(data)
+	values, err := codec.CompactEncoder.Read(bytes.NewBuffer(data))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -737,31 +738,30 @@ var (
 
 // record prefix is "t[tableID]_r"
 func genTableRecordPrefix(tableID int64) []byte {
-	buf := make([]byte, 0, len(TablePrefix)+8+len(recordPrefixSep))
-	buf = append(buf, TablePrefix...)
-	buf = codec.EncodeInt(buf, tableID)
-	buf = append(buf, recordPrefixSep...)
-	return buf
+	var b bytes.Buffer
+	b.Write(TablePrefix)
+	codec.AscEncoder.WriteInt(&b, tableID)
+	b.Write(recordPrefixSep)
+	return b.Bytes()
 }
 
 // index prefix is "t[tableID]_i"
 func genTableIndexPrefix(tableID int64) []byte {
-	buf := make([]byte, 0, len(TablePrefix)+8+len(indexPrefixSep))
-	buf = append(buf, TablePrefix...)
-	buf = codec.EncodeInt(buf, tableID)
-	buf = append(buf, indexPrefixSep...)
-	return buf
+	var b bytes.Buffer
+	b.Write(TablePrefix)
+	codec.AscEncoder.WriteInt(&b, tableID)
+	b.Write(indexPrefixSep)
+	return b.Bytes()
 }
 
 func encodeRecordKey(recordPrefix string, h int64, columnID int64) []byte {
-	buf := make([]byte, 0, len(recordPrefix)+16)
-	buf = append(buf, recordPrefix...)
-	buf = codec.EncodeInt(buf, h)
-
+	var b bytes.Buffer
+	b.WriteString(recordPrefix)
+	codec.AscEncoder.WriteInt(&b, h)
 	if columnID != 0 {
-		buf = codec.EncodeInt(buf, columnID)
+		codec.AscEncoder.WriteInt(&b, columnID)
 	}
-	return buf
+	return b.Bytes()
 }
 
 // EncodeRecordKey encodes the record key for a table column.
@@ -772,36 +772,36 @@ func EncodeRecordKey(tableID int64, h int64, columnID int64) []byte {
 
 // DecodeRecordKey decodes the key and gets the tableID, handle and columnID.
 func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, err error) {
-	k := key
-	if !bytes.HasPrefix(key, TablePrefix) {
-		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
+	b := bytes.NewBuffer(key)
+
+	prefix := b.Next(len(TablePrefix))
+	if !bytes.Equal(prefix, TablePrefix) {
+		return 0, 0, 0, errors.Errorf("invalid record key - %q", key)
 	}
 
-	key = key[len(TablePrefix):]
-	key, tableID, err = codec.DecodeInt(key)
+	tableID, err = codec.AscEncoder.ReadInt(b)
 	if err != nil {
 		return 0, 0, 0, errors.Trace(err)
 	}
 
-	if !bytes.HasPrefix(key, recordPrefixSep) {
-		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
+	sep := b.Next(len(recordPrefixSep))
+	if !bytes.Equal(sep, recordPrefixSep) {
+		return 0, 0, 0, errors.Errorf("invalid record key - %q", key)
 	}
 
-	key = key[len(recordPrefixSep):]
-
-	key, handle, err = codec.DecodeInt(key)
+	handle, err = codec.AscEncoder.ReadInt(b)
 	if err != nil {
 		return 0, 0, 0, errors.Trace(err)
 	}
-	if len(key) == 0 {
+
+	if b.Len() == 0 {
 		return
 	}
 
-	key, columnID, err = codec.DecodeInt(key)
+	columnID, err = codec.AscEncoder.ReadInt(b)
 	if err != nil {
 		return 0, 0, 0, errors.Trace(err)
 	}
-
 	return
 }
 
