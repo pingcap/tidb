@@ -106,7 +106,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	// Make sure index data is also removed after tb.Truncate().
-	c.Assert(tb.Truncate(ctx), IsNil)
+	c.Assert(tb.Truncate(txn), IsNil)
 	c.Assert(indexCnt(), Equals, 0)
 
 	_, err = ts.se.Execute("drop table test.t")

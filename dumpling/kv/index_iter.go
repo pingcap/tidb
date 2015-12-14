@@ -173,12 +173,12 @@ func (c *kvIndex) Create(rm RetrieverMutator, indexedValues []interface{}, h int
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
-func (c *kvIndex) Delete(rm RetrieverMutator, indexedValues []interface{}, h int64) error {
+func (c *kvIndex) Delete(m Mutator, indexedValues []interface{}, h int64) error {
 	key, _, err := c.GenIndexKey(indexedValues, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = rm.Delete(key)
+	err = m.Delete(key)
 	return errors.Trace(err)
 }
 
@@ -209,12 +209,12 @@ func (c *kvIndex) Drop(rm RetrieverMutator) error {
 }
 
 // Seek searches KV index for the entry with indexedValues.
-func (c *kvIndex) Seek(rm RetrieverMutator, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
+func (c *kvIndex) Seek(r Retriever, indexedValues []interface{}) (iter IndexIterator, hit bool, err error) {
 	key, _, err := c.GenIndexKey(indexedValues, 0)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	it, err := rm.Seek(key)
+	it, err := r.Seek(key)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -227,9 +227,9 @@ func (c *kvIndex) Seek(rm RetrieverMutator, indexedValues []interface{}) (iter I
 }
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
-func (c *kvIndex) SeekFirst(rm RetrieverMutator) (iter IndexIterator, err error) {
+func (c *kvIndex) SeekFirst(r Retriever) (iter IndexIterator, err error) {
 	prefix := []byte(c.prefix)
-	it, err := rm.Seek(prefix)
+	it, err := r.Seek(prefix)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
