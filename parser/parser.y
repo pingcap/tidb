@@ -91,6 +91,7 @@ import (
 	columns		"COLUMNS"
 	comment 	"COMMENT"
 	commit		"COMMIT"
+	committed	"COMMITTED"
 	compression	"COMPRESSION"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
@@ -164,6 +165,7 @@ import (
 	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
+	isolation	"ISOLATION"
 	join		"JOIN"
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
@@ -171,6 +173,7 @@ import (
 	leading		"LEADING"
 	left		"LEFT"
 	length		"LENGTH"
+	level		"LEVEL"
 	like		"LIKE"
 	limit		"LIMIT"
 	local		"LOCAL"
@@ -198,6 +201,7 @@ import (
 	nullIf		"NULLIF"
 	offset		"OFFSET"
 	on		"ON"
+	only		"ONLY"
 	option		"OPTION"
 	or		"OR"
 	order		"ORDER"
@@ -214,6 +218,7 @@ import (
 	references	"REFERENCES"
 	regexp		"REGEXP"
 	repeat		"REPEAT"
+	repeatable	"REPEATABLE"
 	replace		"REPLACE"
 	right		"RIGHT"
 	rlike		"RLIKE"
@@ -224,6 +229,7 @@ import (
 	schemas		"SCHEMAS"
 	second		"SECOND"
 	selectKwd	"SELECT"
+	serializable	"SERIALIZABLE"
 	session		"SESSION"
 	set		"SET"
 	share		"SHARE"
@@ -249,6 +255,7 @@ import (
 	trim		"TRIM"
 	trueKwd		"true"
 	truncate	"TRUNCATE"
+	uncommitted	"UNCOMMITTED"
 	underscoreCS	"UNDERSCORE_CHARSET"
 	unknown 	"UNKNOWN"
 	union		"UNION"
@@ -438,6 +445,7 @@ import (
 	InsertIntoStmt		"INSERT INTO statement"
 	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
+	IsolationLevel		"Isolation level"
 	JoinTable 		"join table"
 	JoinType		"join type"
 	KeyOrIndex		"{KEY|INDEX}"
@@ -519,6 +527,8 @@ import (
 	TableRef 		"table reference"
 	TableRefs 		"table references"
 	TimeUnit		"Time unit"
+	TransactionChar		"Transaction characteristic"
+	TransactionChars	"Transaction characteristic list"
 	TrimDirection		"Trim string direction"
 	TruncateTableStmt	"TRANSACTION TABLE statement"
 	UnionOpt		"Union Option(empty/ALL/DISTINCT)"
@@ -1667,7 +1677,8 @@ UnReservedKeyword:
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE"
+|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH"
@@ -3168,6 +3179,29 @@ SetStmt:
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(string), Password: $6.(string)}
 	}
+|	"SET" "GLOBAL" "TRANSACTION" TransactionChars 
+	{
+		// Parsed but ignored
+	}
+|	"SET" "SESSION" "TRANSACTION" TransactionChars
+	{
+		// Parsed but ignored
+	}
+
+TransactionChars:
+	TransactionChar
+|	TransactionChars ',' TransactionChar
+
+TransactionChar:
+	"ISOLATION" "LEVEL" IsolationLevel
+|	"READ" "WRITE"
+|	"READ" "ONLY"
+
+IsolationLevel:
+	"REPEATABLE" "READ"
+|	"READ"	"COMMITTED"
+|	"READ"	"UNCOMMITTED"
+|	"SERIALIZABLE"
 
 VariableAssignment:
 	Identifier eq Expression
