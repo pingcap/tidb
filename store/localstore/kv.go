@@ -174,21 +174,19 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 }
 
 func (s *dbStore) handleCommand(commands []*command) {
+	wg := &sync.WaitGroup{}
+	wg.Add(len(commands))
+	var getCmds []*command
+	var seekCmds []*command
 	for _, cmd := range commands {
-		var err error
 		txn := cmd.txn
 		switch cmd.op {
 		case opGet:
-			reply := &getReply{}
-			reply.value, err = s.db.Get(cmd.args.(*getArgs).key)
-			cmd.reply = reply
-			cmd.done <- err
+			getCmds = append(getCmds, cmd)
 		case opSeek:
-			reply := &seekReply{}
-			reply.key, reply.value, err = s.db.Seek(cmd.args.(*seekArgs).key)
-			cmd.reply = reply
-			cmd.done <- err
+			seekCmds = append(seekCmds, cmd)
 		case opCommit:
+			wg.Done()
 			// TODO: lock keys
 			curVer, err := globalVersionProvider.CurrentVersion()
 			if err != nil {
@@ -220,6 +218,65 @@ func (s *dbStore) handleCommand(commands []*command) {
 		default:
 			panic("should never happend")
 		}
+	}
+
+	// batch get command
+	go func() {
+		for _, cmd := range getCmds {
+			reply := &getReply{}
+			var err error
+			reply.value, err = s.db.Get(cmd.args.(*getArgs).key)
+			cmd.reply = reply
+			cmd.done <- err
+			wg.Done()
+		}
+	}()
+
+	// batch seek command
+	go s.doSeek(wg, seekCmds)
+	wg.Wait()
+}
+
+func (s *dbStore) doSeek(wg *sync.WaitGroup, seekCmds []*command) {
+	keys := make([][]byte, 0, len(seekCmds))
+
+	for _, cmd := range seekCmds {
+		keys = append(keys, cmd.args.(*seekArgs).key)
+	}
+
+	cnt := len(keys)
+	step := 5
+	jobs := cnt / step
+	if cnt%step != 0 {
+		jobs++
+	}
+	resCh := make([][]*engine.MSeekResult, jobs)
+	var wgTemp sync.WaitGroup
+	wgTemp.Add(jobs)
+	for i := 0; i < jobs; i++ {
+		go func(i int) {
+			defer wgTemp.Done()
+			if cnt >= i*step+step {
+				resCh[i] = s.db.MultiSeek(keys[i*step : i*step+step])
+			} else {
+				resCh[i] = s.db.MultiSeek(keys[i*step:])
+			}
+		}(i)
+	}
+	wgTemp.Wait()
+
+	results := make([]*engine.MSeekResult, 0, len(keys))
+	for _, res := range resCh {
+		results = append(results, res...)
+	}
+
+	for i, cmd := range seekCmds {
+		reply := &seekReply{}
+		var err error
+		reply.key, reply.value, err = results[i].Key, results[i].Value, results[i].Err
+		cmd.reply = reply
+		cmd.done <- err
+		wg.Done()
 	}
 }
 
