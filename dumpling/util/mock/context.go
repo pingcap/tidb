@@ -55,26 +55,35 @@ func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
 		return nil, nil
 	}
 
-	if c.txn != nil {
-		return c.txn, nil
+	var err error
+	if c.txn == nil {
+		c.txn, err = c.Store.Begin()
+		return c.txn, err
+	}
+	if forceNew {
+		err = c.FinishTxn(false)
+		if err != nil {
+			return nil, err
+		}
+		c.txn, err = c.Store.Begin()
+		return c.txn, err
 	}
 
-	var err error
-	c.txn, err = c.Store.Begin()
-
-	return c.txn, err
+	return c.txn, nil
 }
 
 // FinishTxn implements context.Context FinishTxn interface.
 func (c *Context) FinishTxn(rollback bool) error {
-	if c.Store == nil || c.txn == nil {
+	if c.txn == nil {
 		return nil
 	}
+	defer func() { c.txn = nil }()
 
-	err := c.txn.Commit()
-	c.txn = nil
+	if rollback {
+		return c.txn.Rollback()
+	}
 
-	return err
+	return c.txn.Commit()
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.

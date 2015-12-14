@@ -147,13 +147,18 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(nextHandle, Equals, startHandle)
 	c.Assert(err, IsNil)
 
+	idxRow1 := &IndexRow{Handle: int64(1), Values: []interface{}{int64(10)}}
+	idxRow2 := &IndexRow{Handle: int64(2), Values: []interface{}{int64(20)}}
 	kvIndex := kv.NewKVIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
-	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, []interface{}{int64(10)}, 1)
+	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, []interface{}{int64(10)}, 2)
 	c.Assert(err, IsNil)
-	c.Assert(idxRows, DeepEquals, []*IndexRow{{Handle: int64(1), Values: []interface{}{int64(10)}}})
+	c.Assert(idxRows, DeepEquals, []*IndexRow{idxRow1, idxRow2})
+	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, []interface{}{int64(10)}, 1)
+	c.Assert(err, IsNil)
+	c.Assert(idxRows, DeepEquals, []*IndexRow{idxRow1})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
 	c.Assert(err, IsNil)
-	c.Assert(idxRows, DeepEquals, []*IndexRow{{Handle: int64(2), Values: []interface{}{int64(20)}}})
+	c.Assert(idxRows, DeepEquals, []*IndexRow{idxRow2})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
 	c.Assert(idxRows, IsNil)
 	c.Assert(nextVals, DeepEquals, []interface{}{nil})
