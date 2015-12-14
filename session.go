@@ -475,7 +475,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		s.resetHistory()
 		s.txn, err = s.store.Begin()
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
@@ -490,7 +490,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		}
 		s.txn, err = s.store.Begin()
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
