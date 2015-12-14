@@ -5,7 +5,7 @@ this document defines the roadmap for TiDB development.
 ##### __SQL Layer__  
 - [x] Simple CRUD / DDL
 - [x] Index support
-- [ ] Index optimization
+- [x] Index optimization
 - [ ] Query plan optimization
 - [x] Transactions
 - [x] Functions support  (e.g. MAX / MIN / COUNT / CONCAT ... )
@@ -32,7 +32,7 @@ this document defines the roadmap for TiDB development.
 
 
 ##### __Admin Tool__  
-- [ ] PhpMyAdmin [WIP]
+- [x] PhpMyAdmin 
 - [ ] Homemade admin tool [WIP]
 
 

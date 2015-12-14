@@ -156,7 +156,8 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	// it's OK to redistribute to transactions.
 	conns := make([]hbase.HBaseClient, 0, hbaseConnPoolSize)
 	for i := 0; i < hbaseConnPoolSize; i++ {
-		c, err := hbase.NewClient(zks, "/hbase")
+		var c hbase.HBaseClient
+		c, err = hbase.NewClient(zks, "/hbase")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -164,7 +165,12 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	}
 
 	c := conns[0]
-	if !c.TableExists(tableName) {
+	var b bool
+	b, err = c.TableExists(tableName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !b {
 		// Create new hbase table for store.
 		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(tableName))
 		cf := hbase.NewColumnFamilyDescriptor(hbaseColFamily)
