@@ -51,6 +51,10 @@ func (d *db) Get(key []byte) ([]byte, error) {
 	return value, errors.Trace(err)
 }
 
+func (d *db) MultiSeek(keys [][]byte) []*engine.MSeekResult {
+	panic("TODO: implementation")
+}
+
 func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	var key, value []byte
 	err := d.DB.View(func(tx *bolt.Tx) error {
