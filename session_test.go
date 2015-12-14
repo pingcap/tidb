@@ -1356,6 +1356,24 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName).(*session)
+
+	v, err := se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "4194304")
+	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "4194304")
+
+	err = se.SetGlobalSysVar(se, "max_allowed_packet", "4194305")
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "4194305")
+}
+
 func checkPlan(c *C, se Session, sql, explain string) {
 	ctx := se.(context.Context)
 	stmts, err := Parse(ctx, sql)
