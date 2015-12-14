@@ -40,7 +40,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
-		"delay_key_write",
+		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -193,6 +193,14 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// Set password
 		{"SET PASSWORD = 'password';", true},
 		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
+		// SET TRANSACTION Syntax
+		{"SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
+		{"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
+		{"SET SESSION TRANSACTION READ WRITE", true},
+		{"SET SESSION TRANSACTION READ ONLY", true},
+		{"SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED", true},
+		{"SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED", true},
+		{"SET SESSION TRANSACTION ISOLATION LEVEL SERIALIZABLE", true},
 
 		// qualified select
 		{"SELECT a.b.c FROM t", true},
