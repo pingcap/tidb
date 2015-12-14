@@ -29,6 +29,9 @@ func Alternatives(p Plan) ([]Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	case *Prepare:
+	case *Execute:
+	case *Deallocate:
 	default:
 		return nil, ErrUnsupportedType.Gen("Unknown plan %T", p)
 	}

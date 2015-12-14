@@ -517,7 +517,7 @@ func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ParamMarkerExpr expresion holds a place for another expression.
+// ParamMarkerExpr expression holds a place for another expression.
 // Used in parsing prepare statement.
 type ParamMarkerExpr struct {
 	exprNode

@@ -250,3 +250,57 @@ func (p *Limit) SetLimit(limit float64) {
 	p.limit = float64(p.Offset + p.Count)
 	p.src.SetLimit(p.limit)
 }
+
+// Prepare represents prepare plan.
+type Prepare struct {
+	basePlan
+
+	Name    string
+	SQLText string
+}
+
+// Accept implements Plan Accept interface.
+func (p *Prepare) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Prepare)
+	return v.Leave(p)
+}
+
+// Execute represents prepare plan.
+type Execute struct {
+	basePlan
+
+	Name      string
+	UsingVars []ast.ExprNode
+	ID        uint32
+}
+
+// Accept implements Plan Accept interface.
+func (p *Execute) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Execute)
+	return v.Leave(p)
+}
+
+// Deallocate represents deallocate plan.
+type Deallocate struct {
+	basePlan
+
+	Name string
+}
+
+// Accept implements Plan Accept interface.
+func (p *Deallocate) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Deallocate)
+	return v.Leave(p)
+}

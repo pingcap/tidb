@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor/converter"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/stmt"
@@ -36,7 +35,11 @@ type Compiler struct {
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
 	if optimizer.IsSupported(node) {
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		p, err := optimizer.Optimize(is, ctx, node)
+		err := optimizer.Prepare(is, ctx, node)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		p, err := optimizer.Optimize(ctx, node)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -52,13 +55,4 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 		return nil, errors.Trace(err)
 	}
 	return s, nil
-}
-
-// ParamMarkers gets parameter markers collected during conversion.
-// Used by prepared statement.
-func (c *Compiler) ParamMarkers() []*expression.ParamMarker {
-	if c.converter != nil {
-		return c.converter.ParamMarkers()
-	}
-	return nil
 }
