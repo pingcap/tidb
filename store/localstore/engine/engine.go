@@ -25,6 +25,13 @@ type Driver interface {
 	Open(schema string) (DB, error)
 }
 
+// MSeekResult used to get multiple seek results
+type MSeekResult struct {
+	Key   []byte
+	Value []byte
+	Err   error
+}
+
 // DB is the interface for local storage.
 type DB interface {
 	// Get gets the associated value with key, returns (nil, ErrNotFound) if no value found.
@@ -32,6 +39,9 @@ type DB interface {
 	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 	// if such key is not found.
 	Seek(key []byte) ([]byte, []byte, error)
+
+	MultiSeek(keys [][]byte) []*MSeekResult
+
 	// NewBatch creates a Batch for writing.
 	NewBatch() Batch
 	// Commit writes the changed data in Batch.
