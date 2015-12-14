@@ -297,6 +297,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		rc := parser.YYParse(lexer)
 		c.Assert(rc, Equals, 0, Commentf("error %v for sql %s", lexer.Errors(), ca.sql))
 		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
+		ast.SetFlag(stmt)
 		mockResolve(stmt)
 		p, err := BuildPlan(stmt)
 		c.Assert(err, IsNil)

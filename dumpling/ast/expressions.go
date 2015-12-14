@@ -102,11 +102,6 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	return ve
 }
 
-// IsStatic implements ExprNode interface.
-func (n *ValueExpr) IsStatic() bool {
-	return true
-}
-
 // Accept implements Node interface.
 func (n *ValueExpr) Accept(v Visitor) (Node, bool) {
 	newNod, skipChildren := v.Enter(n)
@@ -159,11 +154,6 @@ func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *BetweenExpr) IsStatic() bool {
-	return n.Expr.IsStatic() && n.Left.IsStatic() && n.Right.IsStatic()
-}
-
 // BinaryOperationExpr is for binary operation like 1 + 1, 1 - 1, etc.
 type BinaryOperationExpr struct {
 	exprNode
@@ -196,11 +186,6 @@ func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	n.R = node.(ExprNode)
 
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *BinaryOperationExpr) IsStatic() bool {
-	return n.L.IsStatic() && n.R.IsStatic()
 }
 
 // WhenClause is the when clause in Case expression for "when condition then result".
@@ -273,22 +258,6 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 		n.ElseClause = node.(ExprNode)
 	}
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *CaseExpr) IsStatic() bool {
-	if n.Value != nil && !n.Value.IsStatic() {
-		return false
-	}
-	for _, w := range n.WhenClauses {
-		if !w.Expr.IsStatic() || !w.Result.IsStatic() {
-			return false
-		}
-	}
-	if n.ElseClause != nil && !n.ElseClause.IsStatic() {
-		return false
-	}
-	return true
 }
 
 // SubqueryExpr represents a subquery.
@@ -517,11 +486,6 @@ func (n *IsNullExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *IsNullExpr) IsStatic() bool {
-	return n.Expr.IsStatic()
-}
-
 // IsTruthExpr is the expression for true/false check.
 type IsTruthExpr struct {
 	exprNode
@@ -546,11 +510,6 @@ func (n *IsTruthExpr) Accept(v Visitor) (Node, bool) {
 	}
 	n.Expr = node.(ExprNode)
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *IsTruthExpr) IsStatic() bool {
-	return n.Expr.IsStatic()
 }
 
 // PatternLikeExpr is the expression for like operator, e.g, expr like "%123%"
@@ -591,11 +550,6 @@ func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 		n.Pattern = node.(ExprNode)
 	}
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *PatternLikeExpr) IsStatic() bool {
-	return n.Expr.IsStatic() && n.Pattern.IsStatic()
 }
 
 // ParamMarkerExpr expresion holds a place for another expression.
@@ -639,11 +593,6 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *ParenthesesExpr) IsStatic() bool {
-	return n.Expr.IsStatic()
-}
-
 // PositionExpr is the expression for order by and group by position.
 // MySQL use position expression started from 1, it looks a little confused inner.
 // maybe later we will use 0 at first.
@@ -653,11 +602,6 @@ type PositionExpr struct {
 	N int
 	// Refer is the result field the position refers to.
 	Refer *ResultField
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *PositionExpr) IsStatic() bool {
-	return false
 }
 
 // Accept implements Node Accept interface.
@@ -706,11 +650,6 @@ func (n *PatternRegexpExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *PatternRegexpExpr) IsStatic() bool {
-	return n.Expr.IsStatic() && n.Pattern.IsStatic()
-}
-
 // RowExpr is the expression for row constructor.
 // See https://dev.mysql.com/doc/refman/5.7/en/row-subqueries.html
 type RowExpr struct {
@@ -736,16 +675,6 @@ func (n *RowExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *RowExpr) IsStatic() bool {
-	for _, v := range n.Values {
-		if !v.IsStatic() {
-			return false
-		}
-	}
-	return true
-}
-
 // UnaryOperationExpr is the expression for unary operator.
 type UnaryOperationExpr struct {
 	exprNode
@@ -768,11 +697,6 @@ func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	}
 	n.V = node.(ExprNode)
 	return v.Leave(n)
-}
-
-// IsStatic implements the ExprNode IsStatic interface.
-func (n *UnaryOperationExpr) IsStatic() bool {
-	return n.V.IsStatic()
 }
 
 // ValuesExpr is the expression used in INSERT VALUES

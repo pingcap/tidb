@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -352,8 +353,6 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 			Charset: v.cs,
 		}
 
-		c.Assert(f.IsStatic(), Equals, true)
-
 		fs := f.String()
 		c.Assert(len(fs), Greater, 0)
 
@@ -383,6 +382,41 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestCast(c *C) {
+	f := types.NewFieldType(mysql.TypeLonglong)
+
+	expr := &ast.FuncCastExpr{
+		Expr: ast.NewValueExpr(1),
+		Tp:   f,
+	}
+	ctx := mock.NewContext()
+	v, err := Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, int64(1))
+
+	f.Flag |= mysql.UnsignedFlag
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, uint64(1))
+
+	f.Tp = mysql.TypeString
+	f.Charset = charset.CharsetBin
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("1"))
+
+	f.Tp = mysql.TypeString
+	f.Charset = "utf8"
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, "1")
+
+	expr.Expr = ast.NewValueExpr(nil)
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+}
+
 func (s *testEvaluatorSuite) TestDateArith(c *C) {
 	c.Skip("to be implement")
 	ctx := mock.NewContext()
@@ -395,7 +429,7 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 			Unit:     "DAY",
 		},
 	}
-	c.Assert(e.IsStatic(), IsTrue)
+	c.Assert(e.GetFlag(), Equals, ast.FlagHasFunc)
 	_, err := Eval(ctx, e)
 	c.Assert(err, IsNil)
 
@@ -850,7 +884,6 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		if v.slen != -1 {
 			f.Len = ast.NewValueExpr(v.slen)
 		}
-		c.Assert(f.IsStatic(), Equals, true)
 
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
@@ -911,7 +944,6 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		if v.remstr != nil {
 			f.RemStr = ast.NewValueExpr(v.remstr)
 		}
-		c.Assert(f.IsStatic(), Equals, true)
 
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
@@ -969,8 +1001,10 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
+	expr := &ast.UnaryOperationExpr{}
 	for _, t := range tbl {
-		expr := &ast.UnaryOperationExpr{Op: t.op, V: ast.NewValueExpr(t.arg)}
+		expr.Op = t.op
+		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
 		c.Assert(err, IsNil)
 		c.Assert(result, DeepEquals, t.result)
