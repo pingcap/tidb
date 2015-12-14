@@ -14,13 +14,13 @@
 package localstore
 
 import (
+	"runtime/debug"
 	"sync"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/twinj/uuid"
 )
@@ -29,16 +29,221 @@ var (
 	_ kv.Storage = (*dbStore)(nil)
 )
 
+type op int
+
+const (
+	opGet = iota + 1
+	opSeek
+	opCommit
+)
+
+type command struct {
+	op    op
+	txn   *dbTxn
+	ver   kv.Version
+	args  interface{}
+	reply interface{}
+	done  chan error
+}
+
+type getArgs struct {
+	key []byte
+}
+
+type getReply struct {
+	value []byte
+	err   error
+}
+
+type seekReply struct {
+	key   []byte
+	value []byte
+	err   error
+}
+
+type commitReply struct {
+	err error
+}
+
+type seekArgs struct {
+	key []byte
+}
+
+type commitArgs struct {
+}
+
+//scheduler
+
+// Get gets the associated value with key, returns (nil, ErrNotFound) if no value found.
+func (s *dbStore) Get(key []byte) ([]byte, error) {
+	c := &command{
+		op:   opGet,
+		args: &getArgs{key: key},
+		done: make(chan error, 1),
+	}
+
+	s.commandCh <- c
+	err := <-c.done
+	if err != nil {
+		return nil, err
+	}
+
+	reply := c.reply.(*getReply)
+	return reply.value, nil
+}
+
+// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
+// if such key is not found.
+func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
+	c := &command{
+		op:   opSeek,
+		args: &seekArgs{key: key},
+		done: make(chan error, 1),
+	}
+
+	s.commandCh <- c
+	err := <-c.done
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reply := c.reply.(*seekReply)
+	return reply.key, reply.value, nil
+}
+
+// Commit writes the changed data in Batch.
+func (s *dbStore) CommitTxn(txn *dbTxn) error {
+	c := &command{
+		op:   opCommit,
+		txn:  txn,
+		args: &commitArgs{},
+		done: make(chan error, 1),
+	}
+
+	s.commandCh <- c
+	err := <-c.done
+	return err
+}
+
+func (s *dbStore) scheduler() {
+	closed := false
+	for {
+		var pending []*command
+		select {
+		case cmd := <-s.commandCh:
+			if closed {
+				cmd.done <- ErrDBClosed
+				continue
+			}
+			pending = append(pending, cmd)
+			cnt := len(s.commandCh)
+			for i := 0; i < cnt; i++ {
+				pending = append(pending, <-s.commandCh)
+			}
+		case <-s.closeCh:
+			closed = true
+			s.wg.Done()
+		}
+		s.handleCommand(pending)
+	}
+}
+
+func (s *dbStore) tryLock(txn *dbTxn) (err error) {
+	// check conflict
+	for k := range txn.snapshotVals {
+		if _, ok := s.keysLocked[k]; ok {
+			return errors.Trace(kv.ErrLockConflict)
+		}
+
+		lastVer, ok := s.recentUpdates[k]
+		if !ok {
+			continue
+		}
+		// If there's newer version of this key, returns error.
+		if lastVer.Cmp(kv.Version{txn.tid}) > 0 {
+			return errors.Trace(kv.ErrConditionNotMatch)
+		}
+	}
+
+	// record
+	for k := range txn.snapshotVals {
+		s.keysLocked[k] = txn.tid
+	}
+
+	return nil
+}
+
+func (s *dbStore) handleCommand(commands []*command) {
+	for _, cmd := range commands {
+		var err error
+		txn := cmd.txn
+		switch cmd.op {
+		case opGet:
+			reply := &getReply{}
+			reply.value, err = s.db.Get(cmd.args.(*getArgs).key)
+			cmd.reply = reply
+			cmd.done <- err
+		case opSeek:
+			reply := &seekReply{}
+			reply.key, reply.value, err = s.db.Seek(cmd.args.(*seekArgs).key)
+			cmd.reply = reply
+			cmd.done <- err
+		case opCommit:
+			// TODO: lock keys
+			curVer, err := globalVersionProvider.CurrentVersion()
+			if err != nil {
+				log.Fatal(err)
+			}
+			err = s.tryLock(txn)
+			if err != nil {
+				cmd.done <- err
+				continue
+			}
+			// Update commit version.
+			txn.version = curVer
+			b := s.db.NewBatch()
+			txn.WalkBuffer(func(k kv.Key, value []byte) error {
+				metaKey := codec.EncodeBytes(nil, k)
+				// put dummy meta key, write current version
+				b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
+				mvccKey := MvccEncodeVersionKey(kv.Key(k), curVer)
+				if len(value) == 0 { // Deleted marker
+					b.Put(mvccKey, nil)
+				} else {
+					b.Put(mvccKey, value)
+				}
+				return nil
+			})
+			err = s.writeBatch(b)
+			s.unLockKeys(txn)
+			cmd.done <- err
+		default:
+			panic("should never happend")
+		}
+	}
+}
+
+func (s *dbStore) NewBatch() engine.Batch {
+	return s.db.NewBatch()
+}
+
+//end of scheduler
+
 type dbStore struct {
-	mu sync.RWMutex
 	db engine.DB
 
-	txns       map[uint64]*dbTxn
-	keysLocked map[string]uint64
-	uuid       string
-	path       string
-	compactor  *localstoreCompactor
+	txns          map[uint64]*dbTxn
+	keysLocked    map[string]uint64
+	recentUpdates map[string]kv.Version
+	uuid          string
+	path          string
+	compactor     *localstoreCompactor
+	wg            *sync.WaitGroup
 
+	commandCh chan *command
+	closeCh   chan struct{}
+
+	mu     sync.Mutex
 	closed bool
 }
 
@@ -50,7 +255,6 @@ type storeCache struct {
 var (
 	globalID int64
 
-	providerMu            sync.RWMutex
 	globalVersionProvider kv.VersionProvider
 	mc                    storeCache
 
@@ -93,16 +297,22 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 
 	log.Info("[kv] New store", schema)
 	s := &dbStore{
-		txns:       make(map[uint64]*dbTxn),
-		keysLocked: make(map[string]uint64),
-		uuid:       uuid.NewV4().String(),
-		path:       schema,
-		db:         db,
-		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
-		closed:     false,
+		txns:          make(map[uint64]*dbTxn),
+		keysLocked:    make(map[string]uint64),
+		uuid:          uuid.NewV4().String(),
+		path:          schema,
+		db:            db,
+		compactor:     newLocalCompactor(localCompactDefaultPolicy, db),
+		commandCh:     make(chan *command, 1000),
+		closed:        false,
+		closeCh:       make(chan struct{}),
+		recentUpdates: make(map[string]kv.Version),
+		wg:            &sync.WaitGroup{},
 	}
 	mc.cache[schema] = s
 	s.compactor.Start()
+	s.wg.Add(1)
+	go s.scheduler()
 	return s, nil
 }
 
@@ -111,17 +321,14 @@ func (s *dbStore) UUID() string {
 }
 
 func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
-	s.mu.RLock()
-	closed := s.closed
-	s.mu.RUnlock()
-
-	if closed {
-		return nil, errors.Trace(ErrDBClosed)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrDBClosed
 	}
+	s.mu.Unlock()
 
-	providerMu.RLock()
 	currentVer, err := globalVersionProvider.CurrentVersion()
-	providerMu.RUnlock()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -132,7 +339,6 @@ func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
 
 	return &dbSnapshot{
 		store:   s,
-		db:      s.db,
 		version: ver,
 	}, nil
 }
@@ -143,20 +349,19 @@ func (s *dbStore) CurrentVersion() (kv.Version, error) {
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
-	providerMu.RLock()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrDBClosed
+	}
+	s.mu.Unlock()
+
 	beginVer, err := globalVersionProvider.CurrentVersion()
-	providerMu.RUnlock()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	s.mu.RLock()
-	closed := s.closed
-	s.mu.RUnlock()
-	if closed {
-		return nil, errors.Trace(ErrDBClosed)
-	}
-
+	// todo: send to chan
 	txn := &dbTxn{
 		tid:          beginVer.Ver,
 		valid:        true,
@@ -165,23 +370,25 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		snapshotVals: make(map[string]struct{}),
 	}
 	log.Debugf("[kv] Begin txn:%d", txn.tid)
-	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, s.db, beginVer))
+	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, beginVer))
 	return txn, nil
 }
 
 func (s *dbStore) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.closed {
-		return nil
+		s.mu.Unlock()
+		return ErrDBClosed
 	}
 
 	s.closed = true
+	s.mu.Unlock()
 
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	s.compactor.Stop()
+	s.closeCh <- struct{}{}
+	s.wg.Wait()
 	delete(mc.cache, s.path)
 	return s.db.Close()
 }
@@ -190,9 +397,6 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 	if b.Len() == 0 {
 		return nil
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.closed {
 		return errors.Trace(ErrDBClosed)
@@ -210,65 +414,15 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
 }
-
-// Both lock and unlock are used for simulating scenario of percolator papers.
-func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
-	metaKey := codec.EncodeBytes(nil, []byte(key))
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return errors.Trace(ErrDBClosed)
-	}
-
-	if _, ok := s.keysLocked[key]; ok {
-		return errors.Trace(kv.ErrLockConflict)
-	}
-
-	currValue, err := s.db.Get(metaKey)
-	if terror.ErrorEqual(err, engine.ErrNotFound) {
-		s.keysLocked[key] = tid
-		return nil
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// key not exist.
-	if currValue == nil {
-		s.keysLocked[key] = tid
-		return nil
-	}
-	_, ver, err := codec.DecodeUint(currValue)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// If there's newer version of this key, returns error.
-	if ver > tid {
-		log.Warnf("[kv] txn:%d, tryLockKey condition not match for key %s, currValue:%q", tid, key, currValue)
-		return errors.Trace(kv.ErrConditionNotMatch)
-	}
-
-	s.keysLocked[key] = tid
-	return nil
-}
-
-func (s *dbStore) unLockKeys(keys ...string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return errors.Trace(ErrDBClosed)
-	}
-
-	for _, key := range keys {
-		if _, ok := s.keysLocked[key]; !ok {
-			return errors.Trace(kv.ErrNotExist)
+func (s *dbStore) unLockKeys(txn *dbTxn) error {
+	for k := range txn.snapshotVals {
+		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
+			debug.PrintStack()
+			log.Fatalf("should never happend:%v, %v", tid, txn.tid)
 		}
 
-		delete(s.keysLocked, key)
+		delete(s.keysLocked, k)
+		s.recentUpdates[k] = txn.version
 	}
 
 	return nil

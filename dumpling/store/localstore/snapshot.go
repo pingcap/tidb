@@ -29,14 +29,12 @@ var (
 // dbSnapshot implements MvccSnapshot interface.
 type dbSnapshot struct {
 	store   *dbStore
-	db      engine.DB
 	version kv.Version // transaction begin version
 }
 
-func newSnapshot(store *dbStore, db engine.DB, ver kv.Version) *dbSnapshot {
+func newSnapshot(store *dbStore, ver kv.Version) *dbSnapshot {
 	ss := &dbSnapshot{
 		store:   store,
-		db:      db,
 		version: ver,
 	}
 
@@ -47,13 +45,6 @@ func newSnapshot(store *dbStore, db engine.DB, ver kv.Version) *dbSnapshot {
 // snapshot's version, returns kv.ErrNotExist if such key is not found. If exact
 // is true, only k == key can be returned.
 func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
-	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
-
-	if s.store.closed {
-		return nil, nil, errors.Trace(ErrDBClosed)
-	}
-
 	// Key layout:
 	// ...
 	// Key (Meta)      -- (1)
@@ -69,7 +60,7 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 	// EOF
 	for {
 		mvccKey := MvccEncodeVersionKey(key, s.version)
-		mvccK, v, err := s.db.Seek(mvccKey) // search for [4...EOF)
+		mvccK, v, err := s.store.Seek([]byte(mvccKey)) // search for [4...EOF)
 		if err != nil {
 			if terror.ErrorEqual(err, engine.ErrNotFound) { // EOF
 				err = errors.Wrap(err, kv.ErrNotExist)
