@@ -24,18 +24,15 @@ import (
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
-	var name model.CIStr
-	if err := job.DecodeArgs(&name); err != nil {
+	dbInfo := &model.DBInfo{}
+	if err := job.DecodeArgs(dbInfo); err != nil {
 		// arg error, cancel this job.
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
 
-	dbInfo := &model.DBInfo{
-		ID:    schemaID,
-		Name:  name,
-		State: model.StateNone,
-	}
+	dbInfo.ID = schemaID
+	dbInfo.State = model.StateNone
 
 	dbs, err := t.ListDatabases()
 	if err != nil {
@@ -43,13 +40,12 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	}
 
 	for _, db := range dbs {
-		if db.Name.L == name.L {
+		if db.Name.L == dbInfo.Name.L {
 			if db.ID != schemaID {
 				// database exists, can't create, we should cancel this job now.
 				job.State = model.JobCancelled
 				return errors.Trace(ErrExists)
 			}
-
 			dbInfo = db
 		}
 	}

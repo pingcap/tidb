@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -48,7 +49,11 @@ func (*testSuite) TestT(c *C) {
 	store = dom.Store()
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
-	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"))
+	cs := &coldef.CharsetOpt{
+		Chs: "utf8",
+		Col: "utf8_bin",
+	}
+	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
 	c.Assert(err, IsNil)
 	is := dom.InfoSchema()
 	c.Assert(is, NotNil)
