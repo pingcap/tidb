@@ -15,9 +15,8 @@ package ddl
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -47,38 +46,12 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 
 // Stat returns the DDL statistics.
 func (d *ddl) Stats() (map[string]interface{}, error) {
-	var (
-		owner       *model.Owner
-		job         *model.Job
-		schemaVer   int64
-		reorgHandle int64
-	)
+	var info *inspectkv.DDLInfo
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err error
-		owner, err = t.GetDDLOwner()
-		if err != nil {
-			return errors.Trace(err)
-		}
+		var err1 error
+		info, err1 = inspectkv.GetDDLInfo(txn)
 
-		job, err = t.GetDDLJob(0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		schemaVer, err = t.GetSchemaVersion()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if job != nil {
-			reorgHandle, err = t.GetDDLReorgHandle(job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		return nil
+		return errors.Trace(err1)
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -87,26 +60,26 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[ddlServerID] = d.uuid
 
-	m[ddlSchemaVersion] = schemaVer
+	m[ddlSchemaVersion] = info.SchemaVer
 
-	if owner != nil {
-		m[ddlOwnerID] = owner.OwnerID
+	if info.Owner != nil {
+		m[ddlOwnerID] = info.Owner.OwnerID
 		// LastUpdateTS uses nanosecond.
-		m[ddlOwnerLastUpdateTS] = owner.LastUpdateTS / 1e9
+		m[ddlOwnerLastUpdateTS] = info.Owner.LastUpdateTS / 1e9
 	}
 
-	if job != nil {
-		m[ddlJobID] = job.ID
-		m[ddlJobAction] = job.Type.String()
-		m[ddlJobLastUpdateTS] = job.LastUpdateTS / 1e9
-		m[ddlJobState] = job.State.String()
-		m[ddlJobError] = job.Error
-		m[ddlJobSchemaState] = job.SchemaState.String()
-		m[ddlJobSchemaID] = job.SchemaID
-		m[ddlJobTableID] = job.TableID
-		m[ddlJobSnapshotVer] = job.SnapshotVer
-		m[ddlJobReorgHandle] = reorgHandle
-		m[ddlJobArgs] = job.Args
+	if info.Job != nil {
+		m[ddlJobID] = info.Job.ID
+		m[ddlJobAction] = info.Job.Type.String()
+		m[ddlJobLastUpdateTS] = info.Job.LastUpdateTS / 1e9
+		m[ddlJobState] = info.Job.State.String()
+		m[ddlJobError] = info.Job.Error
+		m[ddlJobSchemaState] = info.Job.SchemaState.String()
+		m[ddlJobSchemaID] = info.Job.SchemaID
+		m[ddlJobTableID] = info.Job.TableID
+		m[ddlJobSnapshotVer] = info.Job.SnapshotVer
+		m[ddlJobReorgHandle] = info.ReorgHandle
+		m[ddlJobArgs] = info.Job.Args
 	}
 
 	return m, nil

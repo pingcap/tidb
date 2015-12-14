@@ -33,11 +33,11 @@ type RecordIterFunc func(h int64, rec []interface{}, cols []*column.Col) (more b
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
-	// IterRecords iterates records in the table and call fn.
-	IterRecords(ctx context.Context, startKey string, cols []*column.Col, fn RecordIterFunc) error
+	// IterRecords iterates records in the table and calls fn.
+	IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error)
+	RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error)
 
 	// Row returns a row for all columns.
 	Row(ctx context.Context, h int64) ([]interface{}, error)
