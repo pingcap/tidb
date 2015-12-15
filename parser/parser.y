@@ -1955,7 +1955,15 @@ ByList:
 ByItem:
 	Expression Order 
 	{
-		$$ = &ast.ByItem{Expr: $1.(ast.ExprNode), Desc: $2.(bool)}
+		expr := $1
+		valueExpr, ok := expr.(*ast.ValueExpr)
+		if ok {
+			position, isPosition := valueExpr.GetValue().(int64)
+			if isPosition {
+				expr = &ast.PositionExpr{N: int(position)}
+			}
+		}
+		$$ = &ast.ByItem{Expr: expr.(ast.ExprNode), Desc: $2.(bool)}
 	}
 
 Order:
