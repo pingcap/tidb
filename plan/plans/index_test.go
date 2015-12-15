@@ -189,18 +189,18 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(np, NotNil)
 
-	ret := map[int64]string{}
+	ret := map[int64][]byte{}
 	rset := rsets.Recordset{
 		Plan: np,
 		Ctx:  p.ctx,
 	}
 	rset.Do(func(data []interface{}) (bool, error) {
-		ret[data[0].(int64)] = data[1].(string)
+		ret[data[0].(int64)] = data[1].([]byte)
 		return true, nil
 	})
-	excepted := map[int64]string{}
+	excepted := map[int64][]byte{}
 	for i := 6; i < 10; i++ {
-		excepted[int64(i*10)] = "hello"
+		excepted[int64(i*10)] = []byte("hello")
 	}
 
 	expr6 := &expression.UnaryOperation{

@@ -39,77 +39,77 @@ const (
 )
 
 func (t *TxStructure) encodeStringDataKey(key []byte) []byte {
-	// for codec Encode, we may add extra bytes data, so here and following encode
-	// we will use extra length like 4 for a little optimization.
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
-	ek = append(ek, t.prefix...)
-	ek = codec.EncodeBytes(ek, key)
-	return codec.EncodeUint(ek, uint64(StringData))
+	var b bytes.Buffer
+	b.Write(t.prefix)
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.AscEncoder.WriteSingleByte(&b, byte(StringData))
+	return b.Bytes()
 }
 
 func (t *TxStructure) encodeHashMetaKey(key []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
-	ek = append(ek, t.prefix...)
-	ek = codec.EncodeBytes(ek, key)
-	return codec.EncodeUint(ek, uint64(HashMeta))
+	var b bytes.Buffer
+	b.Write(t.prefix)
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.AscEncoder.WriteSingleByte(&b, byte(HashMeta))
+	return b.Bytes()
 }
 
 func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+len(field)+30)
-	ek = append(ek, t.prefix...)
-	ek = codec.EncodeBytes(ek, key)
-	ek = codec.EncodeUint(ek, uint64(HashData))
-	return codec.EncodeBytes(ek, field)
+	var b bytes.Buffer
+	b.Write(t.prefix)
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.AscEncoder.WriteSingleByte(&b, byte(HashData))
+	codec.AscEncoder.WriteBytes(&b, field)
+	return b.Bytes()
 }
 
 func (t *TxStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
-	var (
-		key   []byte
-		field []byte
-		err   error
-		tp    uint64
-	)
+	b := bytes.NewBuffer(ek)
 
-	if !bytes.HasPrefix(ek, t.prefix) {
+	prefix := b.Next(len(t.prefix))
+	if !bytes.Equal(prefix, t.prefix) {
 		return nil, nil, errors.New("invalid encoded hash data key prefix")
 	}
 
-	ek = ek[len(t.prefix):]
-
-	ek, key, err = codec.DecodeBytes(ek)
+	key, err := codec.AscEncoder.ReadBytes(b)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	ek, tp, err = codec.DecodeUint(ek)
+	tp, err := codec.AscEncoder.ReadSingleByte(b)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	} else if TypeFlag(tp) != HashData {
 		return nil, nil, errors.Errorf("invalid encoded hash data key flag %c", byte(tp))
 	}
 
-	_, field, err = codec.DecodeBytes(ek)
+	field, err := codec.AscEncoder.ReadBytes(b)
 	return key, field, errors.Trace(err)
 }
 
 func (t *TxStructure) hashDataKeyPrefix(key []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
-	ek = append(ek, t.prefix...)
-	ek = codec.EncodeBytes(ek, key)
-	return codec.EncodeUint(ek, uint64(HashData))
+	var b bytes.Buffer
+	b.Write(t.prefix)
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.AscEncoder.WriteSingleByte(&b, byte(HashData))
+	return b.Bytes()
+
 }
 
 func (t *TxStructure) encodeListMetaKey(key []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
-	ek = append(ek, t.prefix...)
-	ek = codec.EncodeBytes(ek, key)
-	return codec.EncodeUint(ek, uint64(ListMeta))
+	var b bytes.Buffer
+	b.Write(t.prefix)
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.AscEncoder.WriteSingleByte(&b, byte(ListMeta))
+	return b.Bytes()
 }
 
 func (t *TxStructure) encodeListDataKey(key []byte, index int64) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+36)
-	ek = append(ek, t.prefix...)
-	ek = codec.EncodeBytes(ek, key)
-	ek = codec.EncodeUint(ek, uint64(ListData))
-	return codec.EncodeInt(ek, index)
+	var b bytes.Buffer
+	b.Write(t.prefix)
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.AscEncoder.WriteSingleByte(&b, byte(ListData))
+	codec.AscEncoder.WriteInt(&b, index)
+	return b.Bytes()
+
 }

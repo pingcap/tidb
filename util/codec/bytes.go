@@ -15,6 +15,7 @@ package codec
 
 import (
 	"bytes"
+	"encoding/binary"
 	"runtime"
 	"unsafe"
 
@@ -27,7 +28,9 @@ const (
 	encPad       = byte(0x0)
 )
 
-// EncodeBytes guarantees the encoded value is in ascending order for comparison,
+var zeroBytes = []byte{0, 0, 0, 0, 0, 0, 0, 0}
+
+// writeAscendingBytes guarantees the encoded value is in ascending order for comparison,
 // encoding with the following rule:
 //  [group1][marker1]...[groupN][markerN]
 //  group is 8 bytes slice which is padding with 0.
@@ -38,39 +41,36 @@ const (
 //   [1, 2, 3, 0] -> [1, 2, 3, 0, 0, 0, 0, 0, 251]
 //   [1, 2, 3, 4, 5, 6, 7, 8] -> [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 247]
 // Refer: https://github.com/facebook/mysql-5.6/wiki/MyRocks-record-format#memcomparable-format
-func EncodeBytes(b []byte, data []byte) []byte {
+func writeAscendingBytes(b *bytes.Buffer, data []byte) {
 	// Allocate more space to avoid unnecessary slice growing.
 	// Assume that the byte slice size is about `(len(data) / encGroupSize + 1) * (encGroupSize + 1)` bytes,
 	// that is `(len(data) / 8 + 1) * 9` in our implement.
 	dLen := len(data)
-	reallocSize := (dLen/encGroupSize + 1) * (encGroupSize + 1)
-	result := reallocBytes(b, reallocSize)
+	growSize := (dLen/encGroupSize + 1) * (encGroupSize + 1)
+	b.Grow(growSize)
 	for idx := 0; idx <= dLen; idx += encGroupSize {
 		remain := dLen - idx
 		padCount := 0
 		if remain >= encGroupSize {
-			result = append(result, data[idx:idx+encGroupSize]...)
+			b.Write(data[idx : idx+encGroupSize])
 		} else {
 			padCount = encGroupSize - remain
-			result = append(result, data[idx:]...)
-			result = append(result, make([]byte, padCount)...)
+			b.Write(data[idx:])
+			b.Write(zeroBytes[:padCount])
 		}
 
-		marker := encMarker - byte(padCount)
-		result = append(result, marker)
+		b.WriteByte(encMarker - byte(padCount))
 	}
-
-	return result
 }
 
-func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
-	data := make([]byte, 0, len(b))
+func readComparableBytes(b *bytes.Buffer, reverse bool) ([]byte, error) {
+	data := make([]byte, 0, b.Len())
 	for {
-		if len(b) < encGroupSize+1 {
-			return nil, nil, errors.New("insufficient bytes to decode value")
+		if b.Len() < encGroupSize+1 {
+			return nil, errors.New("insufficient bytes to decode value")
 		}
 
-		groupBytes := b[:encGroupSize+1]
+		groupBytes := b.Next(encGroupSize + 1)
 		if reverse {
 			reverseBytes(groupBytes)
 		}
@@ -82,44 +82,82 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		padCount := encMarker - marker
 		realGroupSize := encGroupSize - padCount
 		if padCount > encGroupSize {
-			return nil, nil, errors.Errorf("invalid marker byte, group bytes %q", groupBytes)
+			return nil, errors.Errorf("invalid marker byte, group bytes %q", groupBytes)
 		}
 
 		data = append(data, group[:realGroupSize]...)
-		b = b[encGroupSize+1:]
 
 		if marker != encMarker {
 			// Check validity of padding bytes.
 			if bytes.Count(group[realGroupSize:], []byte{encPad}) != int(padCount) {
-				return nil, nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
+				return nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
 			}
 
 			break
 		}
 	}
 
-	return b, data, nil
+	return data, nil
 }
 
-// DecodeBytes decodes bytes which is encoded by EncodeBytes before,
-// returns the leftover bytes and decoded value if no error.
-func DecodeBytes(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, false)
+func (ascEncoder) WriteSingleByte(b *bytes.Buffer, v byte) {
+	b.WriteByte(v)
 }
 
-// EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
-// encoded value to guarantee the encoded value is in descending order for comparison.
-func EncodeBytesDesc(b []byte, data []byte) []byte {
-	n := len(b)
-	b = EncodeBytes(b, data)
-	reverseBytes(b[n:])
-	return b
+func (ascEncoder) ReadSingleByte(b *bytes.Buffer) (byte, error) {
+	return b.ReadByte()
 }
 
-// DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
-// returns the leftover bytes and decoded value if no error.
-func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, true)
+func (ascEncoder) WriteBytes(b *bytes.Buffer, v []byte) {
+	writeAscendingBytes(b, v)
+}
+
+func (ascEncoder) ReadBytes(b *bytes.Buffer) ([]byte, error) {
+	return readComparableBytes(b, false)
+}
+
+func (descEncoder) WriteSingleByte(b *bytes.Buffer, v byte) {
+	b.WriteByte(^v)
+}
+
+func (descEncoder) ReadSingleByte(b *bytes.Buffer) (byte, error) {
+	v, err := b.ReadByte()
+	return ^v, errors.Trace(err)
+}
+
+func (descEncoder) WriteBytes(b *bytes.Buffer, v []byte) {
+	n := b.Len()
+	writeAscendingBytes(b, v)
+	reverseBytes(b.Bytes()[n:])
+}
+
+func (descEncoder) ReadBytes(b *bytes.Buffer) ([]byte, error) {
+	return readComparableBytes(b, true)
+}
+
+func (compactEncoder) WriteSingleByte(b *bytes.Buffer, v byte) {
+	b.WriteByte(v)
+}
+
+func (compactEncoder) ReadSingleByte(b *bytes.Buffer) (byte, error) {
+	return b.ReadByte()
+}
+
+func (e compactEncoder) WriteBytes(b *bytes.Buffer, v []byte) {
+	b.Grow(binary.MaxVarintLen64 + len(v))
+	e.WriteInt(b, int64(len(v)))
+	b.Write(v)
+}
+
+func (e compactEncoder) ReadBytes(b *bytes.Buffer) ([]byte, error) {
+	n, err := e.ReadInt(b)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if b.Len() < int(n) {
+		return nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
+	}
+	return b.Next(int(n)), nil
 }
 
 // See https://golang.org/src/crypto/cipher/xor.go
@@ -154,16 +192,4 @@ func reverseBytes(b []byte) {
 	}
 
 	safeReverseBytes(b)
-}
-
-// like realloc.
-func reallocBytes(b []byte, n int) []byte {
-	if cap(b) < n {
-		bs := make([]byte, len(b), len(b)+n)
-		copy(bs, b)
-		return bs
-	}
-
-	// slice b has capability to store n bytes
-	return b
 }

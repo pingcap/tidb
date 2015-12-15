@@ -14,6 +14,7 @@
 package localstore
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/juju/errors"
@@ -213,7 +214,8 @@ func (s *dbStore) newBatch() engine.Batch {
 
 // Both lock and unlock are used for simulating scenario of percolator papers.
 func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
-	metaKey := codec.EncodeBytes(nil, []byte(key))
+	var metaKey bytes.Buffer
+	codec.AscEncoder.WriteBytes(&metaKey, []byte(key))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -226,7 +228,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 		return errors.Trace(kv.ErrLockConflict)
 	}
 
-	currValue, err := s.db.Get(metaKey)
+	currValue, err := s.db.Get(metaKey.Bytes())
 	if terror.ErrorEqual(err, engine.ErrNotFound) {
 		s.keysLocked[key] = tid
 		return nil
@@ -240,7 +242,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 		s.keysLocked[key] = tid
 		return nil
 	}
-	_, ver, err := codec.DecodeUint(currValue)
+	ver, err := codec.CompactEncoder.ReadUint(bytes.NewBuffer(currValue))
 	if err != nil {
 		return errors.Trace(err)
 	}

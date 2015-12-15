@@ -43,7 +43,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 
 		{
 			[]interface{}{float32(1), float64(3.15), []byte("123"), "123"},
-			[]interface{}{float64(1), float64(3.15), []byte("123"), "123"},
+			[]interface{}{float64(1), float64(3.15), []byte("123"), []byte("123")},
 		},
 
 		{
@@ -83,12 +83,27 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 	}
 
 	for _, t := range table {
-		b, err := EncodeKey(t.Input...)
+		var b bytes.Buffer
+		err := AscEncoder.Write(&b, t.Input...)
 		c.Assert(err, IsNil)
-		args, err := DecodeKey(b)
+		args, err := AscEncoder.Read(&b)
 		c.Assert(err, IsNil)
-
 		c.Assert(args, DeepEquals, t.Expect)
+		c.Assert(b.Len(), Equals, 0)
+
+		err = DescEncoder.Write(&b, t.Input...)
+		c.Assert(err, IsNil)
+		args, err = DescEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(args, DeepEquals, t.Expect)
+		c.Assert(b.Len(), Equals, 0)
+
+		err = CompactEncoder.Write(&b, t.Input...)
+		c.Assert(err, IsNil)
+		args, err = CompactEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(args, DeepEquals, t.Expect)
+		c.Assert(b.Len(), Equals, 0)
 	}
 }
 
@@ -191,13 +206,20 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 	}
 
 	for _, t := range table {
-		b1, err := EncodeKey(t.Left...)
+		var b1, b2 bytes.Buffer
+		err := AscEncoder.Write(&b1, t.Left...)
 		c.Assert(err, IsNil)
-
-		b2, err := EncodeKey(t.Right...)
+		err = AscEncoder.Write(&b2, t.Right...)
 		c.Assert(err, IsNil)
+		c.Assert(bytes.Compare(b1.Bytes(), b2.Bytes()), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
 
-		c.Assert(bytes.Compare(b1, b2), Equals, t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, t.Expect))
+		b1.Reset()
+		b2.Reset()
+		err = DescEncoder.Write(&b1, t.Left...)
+		c.Assert(err, IsNil)
+		err = DescEncoder.Write(&b2, t.Right...)
+		c.Assert(err, IsNil)
+		c.Assert(bytes.Compare(b1.Bytes(), b2.Bytes()), Equals, -t.Expect, Commentf("%v - %v - %v - %v - %v", t.Left, t.Right, b1, b2, -t.Expect))
 	}
 }
 
@@ -223,15 +245,24 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 	}
 
 	for _, t := range tblInt64 {
-		b := EncodeInt(nil, t)
-		_, v, err := DecodeInt(b)
+		var b bytes.Buffer
+		AscEncoder.WriteInt(&b, t)
+		v, err := AscEncoder.ReadInt(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
 
-		b = EncodeIntDesc(nil, t)
-		_, v, err = DecodeIntDesc(b)
+		DescEncoder.WriteInt(&b, t)
+		v, err = DescEncoder.ReadInt(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
+
+		CompactEncoder.WriteInt(&b, t)
+		v, err = CompactEncoder.ReadInt(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
 	}
 
 	tblUint64 := []uint64{
@@ -251,15 +282,24 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 	}
 
 	for _, t := range tblUint64 {
-		b := EncodeUint(nil, t)
-		_, v, err := DecodeUint(b)
+		var b bytes.Buffer
+		AscEncoder.WriteUint(&b, t)
+		v, err := AscEncoder.ReadUint(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
 
-		b = EncodeUintDesc(nil, t)
-		_, v, err = DecodeUintDesc(b)
+		DescEncoder.WriteUint(&b, t)
+		v, err = DescEncoder.ReadUint(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
+
+		CompactEncoder.WriteUint(&b, t)
+		v, err = CompactEncoder.ReadUint(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
 	}
 }
 
@@ -285,16 +325,17 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 	}
 
 	for _, t := range tblInt64 {
-		b1 := EncodeInt(nil, t.Arg1)
-		b2 := EncodeInt(nil, t.Arg2)
-
-		ret := bytes.Compare(b1, b2)
+		var b1, b2 bytes.Buffer
+		AscEncoder.WriteInt(&b1, t.Arg1)
+		AscEncoder.WriteInt(&b2, t.Arg2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
 
-		b1 = EncodeIntDesc(nil, t.Arg1)
-		b2 = EncodeIntDesc(nil, t.Arg2)
-
-		ret = bytes.Compare(b1, b2)
+		b1.Reset()
+		b2.Reset()
+		DescEncoder.WriteInt(&b1, t.Arg1)
+		DescEncoder.WriteInt(&b2, t.Arg2)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, -t.Ret)
 	}
 
@@ -317,16 +358,17 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 	}
 
 	for _, t := range tblUint64 {
-		b1 := EncodeUint(nil, t.Arg1)
-		b2 := EncodeUint(nil, t.Arg2)
-
-		ret := bytes.Compare(b1, b2)
+		var b1, b2 bytes.Buffer
+		AscEncoder.WriteUint(&b1, t.Arg1)
+		AscEncoder.WriteUint(&b2, t.Arg2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
 
-		b1 = EncodeUintDesc(nil, t.Arg1)
-		b2 = EncodeUintDesc(nil, t.Arg2)
-
-		ret = bytes.Compare(b1, b2)
+		b1.Reset()
+		b2.Reset()
+		DescEncoder.WriteUint(&b1, t.Arg1)
+		DescEncoder.WriteUint(&b2, t.Arg2)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, -t.Ret)
 	}
 }
@@ -345,15 +387,24 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 	}
 
 	for _, t := range tblFloat {
-		b := EncodeFloat(nil, t)
-		_, v, err := DecodeFloat(b)
+		var b bytes.Buffer
+		AscEncoder.WriteFloat(&b, t)
+		v, err := AscEncoder.ReadFloat(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
 
-		b = EncodeFloatDesc(nil, t)
-		_, v, err = DecodeFloatDesc(b)
+		DescEncoder.WriteFloat(&b, t)
+		v, err = DescEncoder.ReadFloat(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
+
+		CompactEncoder.WriteFloat(&b, t)
+		v, err = CompactEncoder.ReadFloat(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t)
+		c.Assert(b.Len(), Equals, 0)
 	}
 
 	tblCmp := []struct {
@@ -375,16 +426,17 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 	}
 
 	for _, t := range tblCmp {
-		b1 := EncodeFloat(nil, t.Arg1)
-		b2 := EncodeFloat(nil, t.Arg2)
-
-		ret := bytes.Compare(b1, b2)
+		var b1, b2 bytes.Buffer
+		AscEncoder.WriteFloat(&b1, t.Arg1)
+		AscEncoder.WriteFloat(&b2, t.Arg2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
 
-		b1 = EncodeFloatDesc(nil, t.Arg1)
-		b2 = EncodeFloatDesc(nil, t.Arg2)
-
-		ret = bytes.Compare(b1, b2)
+		b1.Reset()
+		b2.Reset()
+		DescEncoder.WriteFloat(&b1, t.Arg1)
+		DescEncoder.WriteFloat(&b2, t.Arg2)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, -t.Ret)
 	}
 }
@@ -400,15 +452,24 @@ func (s *testCodecSuite) TestBytes(c *C) {
 	}
 
 	for _, t := range tblBytes {
-		b := EncodeBytes(nil, t)
-		_, v, err := DecodeBytes(b)
+		var b bytes.Buffer
+		AscEncoder.WriteBytes(&b, t)
+		v, err := AscEncoder.ReadBytes(&b)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+		c.Assert(b.Len(), Equals, 0)
 
-		b = EncodeBytesDesc(nil, t)
-		_, v, err = DecodeBytesDesc(b)
+		DescEncoder.WriteBytes(&b, t)
+		v, err = DescEncoder.ReadBytes(&b)
 		c.Assert(err, IsNil)
 		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+		c.Assert(b.Len(), Equals, 0)
+
+		CompactEncoder.WriteBytes(&b, t)
+		v, err = CompactEncoder.ReadBytes(&b)
+		c.Assert(err, IsNil)
+		c.Assert(t, DeepEquals, v, Commentf("%v - %v - %v", t, b, v))
+		c.Assert(b.Len(), Equals, 0)
 	}
 
 	tblCmp := []struct {
@@ -435,16 +496,17 @@ func (s *testCodecSuite) TestBytes(c *C) {
 	}
 
 	for _, t := range tblCmp {
-		b1 := EncodeBytes(nil, t.Arg1)
-		b2 := EncodeBytes(nil, t.Arg2)
-
-		ret := bytes.Compare(b1, b2)
+		var b1, b2 bytes.Buffer
+		AscEncoder.WriteBytes(&b1, t.Arg1)
+		AscEncoder.WriteBytes(&b2, t.Arg2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
 
-		b1 = EncodeBytesDesc(nil, t.Arg1)
-		b2 = EncodeBytesDesc(nil, t.Arg2)
-
-		ret = bytes.Compare(b1, b2)
+		b1.Reset()
+		b2.Reset()
+		DescEncoder.WriteBytes(&b1, t.Arg1)
+		DescEncoder.WriteBytes(&b2, t.Arg2)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, -t.Ret)
 	}
 }
@@ -470,12 +532,28 @@ func (s *testCodecSuite) TestTime(c *C) {
 
 	for _, t := range tbl {
 		m := parseTime(c, t)
+		var b bytes.Buffer
 
-		b, err := EncodeKey(m)
+		err := AscEncoder.Write(&b, m)
 		c.Assert(err, IsNil)
-		v, err := DecodeKey(b)
+		v, err := AscEncoder.Read(&b)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, []interface{}{t})
+		c.Assert(v, DeepEquals, []interface{}{[]byte(t)})
+		c.Assert(b.Len(), Equals, 0)
+
+		err = DescEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err = DescEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, []interface{}{[]byte(t)})
+		c.Assert(b.Len(), Equals, 0)
+
+		err = CompactEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err = CompactEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, []interface{}{[]byte(t)})
+		c.Assert(b.Len(), Equals, 0)
 	}
 
 	tblCmp := []struct {
@@ -492,13 +570,22 @@ func (s *testCodecSuite) TestTime(c *C) {
 		m1 := parseTime(c, t.Arg1)
 		m2 := parseTime(c, t.Arg2)
 
-		b1, err := EncodeKey(m1)
+		var b1, b2 bytes.Buffer
+		err := AscEncoder.Write(&b1, m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(m2)
+		err = AscEncoder.Write(&b2, m2)
 		c.Assert(err, IsNil)
-
-		ret := bytes.Compare(b1, b2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
+
+		b1.Reset()
+		b2.Reset()
+		err = DescEncoder.Write(&b1, m1)
+		c.Assert(err, IsNil)
+		err = DescEncoder.Write(&b2, m2)
+		c.Assert(err, IsNil)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
+		c.Assert(ret, Equals, -t.Ret)
 	}
 }
 
@@ -511,13 +598,29 @@ func (s *testCodecSuite) TestDuration(c *C) {
 
 	for _, t := range tbl {
 		m := parseDuration(c, t)
-
-		b, err := EncodeKey(m)
-		c.Assert(err, IsNil)
-		v, err := DecodeKey(b)
-		c.Assert(err, IsNil)
 		m.Fsp = mysql.MaxFsp
+
+		var b bytes.Buffer
+		err := AscEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err := AscEncoder.Read(&b)
+		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, []interface{}{m})
+		c.Assert(b.Len(), Equals, 0)
+
+		err = DescEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err = DescEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, []interface{}{m})
+		c.Assert(b.Len(), Equals, 0)
+
+		err = CompactEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err = CompactEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, []interface{}{m})
+		c.Assert(b.Len(), Equals, 0)
 	}
 
 	tblCmp := []struct {
@@ -534,13 +637,22 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		m1 := parseDuration(c, t.Arg1)
 		m2 := parseDuration(c, t.Arg2)
 
-		b1, err := EncodeKey(m1)
+		var b1, b2 bytes.Buffer
+		err := AscEncoder.Write(&b1, m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(m2)
+		err = AscEncoder.Write(&b2, m2)
 		c.Assert(err, IsNil)
-
-		ret := bytes.Compare(b1, b2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
+
+		b1.Reset()
+		b2.Reset()
+		err = DescEncoder.Write(&b1, m1)
+		c.Assert(err, IsNil)
+		err = DescEncoder.Write(&b2, m2)
+		c.Assert(err, IsNil)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
+		c.Assert(ret, Equals, -t.Ret)
 	}
 }
 
@@ -564,14 +676,36 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 	for _, t := range tbl {
 		m, err := mysql.ParseDecimal(t)
 		c.Assert(err, IsNil)
-		b, err := EncodeKey(m)
+		var b bytes.Buffer
+		err = AscEncoder.Write(&b, m)
 		c.Assert(err, IsNil)
-		v, err := DecodeKey(b)
+		v, err := AscEncoder.Read(&b)
 		c.Assert(err, IsNil)
 		c.Assert(v, HasLen, 1)
 		vv, ok := v[0].(mysql.Decimal)
 		c.Assert(ok, IsTrue)
 		c.Assert(vv.Equals(m), IsTrue)
+		c.Assert(b.Len(), Equals, 0)
+
+		err = DescEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err = DescEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, HasLen, 1)
+		vv, ok = v[0].(mysql.Decimal)
+		c.Assert(ok, IsTrue)
+		c.Assert(vv.Equals(m), IsTrue)
+		c.Assert(b.Len(), Equals, 0)
+
+		err = CompactEncoder.Write(&b, m)
+		c.Assert(err, IsNil)
+		v, err = CompactEncoder.Read(&b)
+		c.Assert(err, IsNil)
+		c.Assert(v, HasLen, 1)
+		vv, ok = v[0].(mysql.Decimal)
+		c.Assert(ok, IsTrue)
+		c.Assert(vv.Equals(m), IsTrue)
+		c.Assert(b.Len(), Equals, 0)
 	}
 
 	tblCmp := []struct {
@@ -642,12 +776,21 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		m2, err := mysql.ConvertToDecimal(t.Arg2)
 		c.Assert(err, IsNil)
 
-		b1, err := EncodeKey(m1)
+		var b1, b2 bytes.Buffer
+		err = AscEncoder.Write(&b1, m1)
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(m2)
+		err = AscEncoder.Write(&b2, m2)
 		c.Assert(err, IsNil)
-
-		ret := bytes.Compare(b1, b2)
+		ret := bytes.Compare(b1.Bytes(), b2.Bytes())
 		c.Assert(ret, Equals, t.Ret)
+
+		b1.Reset()
+		b2.Reset()
+		err = DescEncoder.Write(&b1, m1)
+		c.Assert(err, IsNil)
+		err = DescEncoder.Write(&b2, m2)
+		c.Assert(err, IsNil)
+		ret = bytes.Compare(b1.Bytes(), b2.Bytes())
+		c.Assert(ret, Equals, -t.Ret)
 	}
 }

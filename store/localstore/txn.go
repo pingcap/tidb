@@ -14,6 +14,7 @@
 package localstore
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -154,9 +155,11 @@ func (txn *dbTxn) doCommit() error {
 		return errors.Trace(err)
 	}
 	err = txn.WalkBuffer(func(k kv.Key, v []byte) error {
-		metaKey := codec.EncodeBytes(nil, k)
+		var metaKey, metaVer bytes.Buffer
+		codec.AscEncoder.WriteBytes(&metaKey, k)
+		codec.CompactEncoder.WriteUint(&metaVer, curVer.Ver)
 		// put dummy meta key, write current version
-		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
+		b.Put(metaKey.Bytes(), metaVer.Bytes())
 		mvccKey := MvccEncodeVersionKey(k, curVer)
 		if len(v) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)

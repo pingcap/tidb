@@ -14,6 +14,8 @@
 package localstore
 
 import (
+	"bytes"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
@@ -28,31 +30,32 @@ func isTombstone(v []byte) bool {
 
 // MvccEncodeVersionKey returns the encoded key.
 func MvccEncodeVersionKey(key kv.Key, ver kv.Version) kv.EncodedKey {
-	b := codec.EncodeBytes(nil, key)
-	ret := codec.EncodeUintDesc(b, ver.Ver)
-	return ret
+	var b bytes.Buffer
+	codec.AscEncoder.WriteBytes(&b, key)
+	codec.DescEncoder.WriteUint(&b, ver.Ver)
+	return b.Bytes()
 }
 
 // MvccDecode parses the origin key and version of an encoded key, if the encoded key is a meta key,
 // just returns the origin key.
 func MvccDecode(encodedKey kv.EncodedKey) (kv.Key, kv.Version, error) {
-	// Skip DataPrefix
-	remainBytes, key, err := codec.DecodeBytes([]byte(encodedKey))
+	b := bytes.NewBuffer(encodedKey)
+	// read key
+	key, err := codec.AscEncoder.ReadBytes(b)
 	if err != nil {
 		// should never happen
 		return nil, kv.Version{}, errors.Trace(err)
 	}
 	// if it's meta key
-	if len(remainBytes) == 0 {
+	if b.Len() == 0 {
 		return key, kv.Version{}, nil
 	}
-	var ver uint64
-	remainBytes, ver, err = codec.DecodeUintDesc(remainBytes)
+	ver, err := codec.DescEncoder.ReadUint(b)
 	if err != nil {
 		// should never happen
 		return nil, kv.Version{}, errors.Trace(err)
 	}
-	if len(remainBytes) != 0 {
+	if b.Len() != 0 {
 		return nil, kv.Version{}, ErrInvalidEncodedKey
 	}
 	return key, kv.Version{Ver: ver}, nil

@@ -64,12 +64,13 @@ func (c *indexIter) Next() (val []interface{}, h int64, err error) {
 	if !c.it.Valid() {
 		return nil, 0, errors.Trace(io.EOF)
 	}
-	if !strings.HasPrefix(c.it.Key(), c.prefix) {
+	b := bytes.NewBufferString(c.it.Key())
+	prefix := b.Next(len(c.prefix))
+	if !bytes.Equal(prefix, []byte(c.prefix)) {
 		return nil, 0, errors.Trace(io.EOF)
 	}
 	// get indexedValues
-	buf := []byte(c.it.Key())[len(c.prefix):]
-	vv, err := DecodeValue(buf)
+	vv, err := codec.AscEncoder.Read(b)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -103,10 +104,9 @@ type kvIndex struct {
 
 // GenIndexPrefix generates the index prefix.
 func GenIndexPrefix(indexPrefix string, indexID int64) string {
-	buf := make([]byte, 0, len(indexPrefix)+8)
-	buf = append(buf, indexPrefix...)
-	buf = codec.EncodeInt(buf, indexID)
-	return string(buf)
+	b := bytes.NewBufferString(indexPrefix)
+	codec.AscEncoder.WriteInt(b, indexID)
+	return string(b.Bytes())
 }
 
 // NewKVIndex builds a new kvIndex object.
@@ -138,17 +138,17 @@ func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte,
 		}
 	}
 
-	var encVal []byte
+	var b bytes.Buffer
+	b.WriteString(c.prefix)
 	if distinct {
-		encVal, err = EncodeValue(indexedValues...)
+		err = codec.AscEncoder.Write(&b, indexedValues...)
 	} else {
-		encVal, err = EncodeValue(append(indexedValues, h)...)
+		err = codec.AscEncoder.Write(&b, append(indexedValues, h)...)
 	}
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	key = append([]byte(c.prefix), encVal...)
-	return
+	return b.Bytes(), distinct, nil
 }
 
 // Create creates a new entry in the kvIndex data.

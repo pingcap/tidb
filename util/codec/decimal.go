@@ -22,20 +22,19 @@ import (
 )
 
 const (
-	negativeSign int64 = 8
-	zeroSign     int64 = 16
-	positiveSign int64 = 24
+	negativeSign byte = 8
+	zeroSign     byte = 16
+	positiveSign byte = 24
 )
 
-func codecSign(value int64) int64 {
+func codecSign(value int64) byte {
 	if value < 0 {
 		return negativeSign
 	}
-
 	return positiveSign
 }
 
-func encodeExp(expValue int64, expSign int64, valSign int64) int64 {
+func encodeExp(expValue int64, expSign, valSign byte) int64 {
 	if expSign == negativeSign {
 		expValue = -expValue
 	}
@@ -47,7 +46,7 @@ func encodeExp(expValue int64, expSign int64, valSign int64) int64 {
 	return expValue
 }
 
-func decodeExp(expValue int64, expSign int64, valSign int64) int64 {
+func decodeExp(expValue int64, expSign, valSign byte) int64 {
 	if expSign != valSign {
 		expValue = ^expValue
 	}
@@ -59,22 +58,23 @@ func decodeExp(expValue int64, expSign int64, valSign int64) int64 {
 	return expValue
 }
 
-func codecValue(value []byte, valSign int64) {
+func codecValue(value []byte, valSign byte) {
 	if valSign == negativeSign {
 		reverseBytes(value)
 	}
 }
 
-// EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.
-// EncodeDecimal guarantees that the encoded value is in ascending order for comparison.
+// writeComparableDecimal encodes a decimal d into a byte slice which can be
+// sorted lexicographically later.
 // Decimal encoding:
 // Byte -> value sign
 // Byte -> exp sign
 // EncodeInt -> exp value
 // EncodeBytes -> abs value bytes
-func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
+func writeComparableDecimal(e Encoder, b *bytes.Buffer, d mysql.Decimal) {
 	if d.Equals(mysql.ZeroDecimal) {
-		return append(b, byte(zeroSign))
+		e.WriteSingleByte(b, zeroSign)
+		return
 	}
 
 	v := d.BigIntValue()
@@ -110,52 +110,51 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	expVal = encodeExp(expVal, expSign, valSign)
 	codecValue(value, valSign)
 
-	b = append(b, byte(valSign))
-	b = append(b, byte(expSign))
-	b = EncodeInt(b, expVal)
-	b = EncodeBytes(b, value)
-	return b
+	e.WriteSingleByte(b, byte(valSign))
+	e.WriteSingleByte(b, byte(expSign))
+	e.WriteInt(b, expVal)
+	e.WriteBytes(b, value)
 }
 
-// DecodeDecimal decodes bytes to decimal.
-// DecodeFloat decodes a float from a byte slice
+// readComparableDecimal decodes bytes to decimal.
 // Decimal decoding:
 // Byte -> value sign
 // Byte -> exp sign
 // DecodeInt -> exp value
 // DecodeBytes -> abs value bytes
-func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
+func readComparableDecimal(e Encoder, b *bytes.Buffer) (mysql.Decimal, error) {
 	var (
-		r   = b
 		d   mysql.Decimal
 		err error
 	)
 
 	// Decode value sign.
-	valSign := int64(r[0])
-	r = r[1:]
+	valSign, err := e.ReadSingleByte(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 	if valSign == zeroSign {
 		d, err = mysql.ParseDecimal("0")
-		return r, d, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	// Decode exp sign.
-	expSign := int64(r[0])
-	r = r[1:]
+	expSign, err := e.ReadSingleByte(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
 
 	// Decode exp value.
-	expVal := int64(0)
-	r, expVal, err = DecodeInt(r)
+	expVal, err := e.ReadInt(b)
 	if err != nil {
-		return r, d, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	expVal = decodeExp(expVal, expSign, valSign)
 
 	// Decode abs value bytes.
-	value := []byte{}
-	r, value, err = DecodeBytes(r)
+	value, err := e.ReadBytes(b)
 	if err != nil {
-		return r, d, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 	codecValue(value, valSign)
 
@@ -179,5 +178,35 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 	}
 
 	d, err = mysql.ParseDecimal(string(decimalStr))
-	return r, d, errors.Trace(err)
+	return d, errors.Trace(err)
+}
+
+func (e ascEncoder) WriteDecimal(b *bytes.Buffer, v mysql.Decimal) {
+	writeComparableDecimal(e, b, v)
+}
+
+func (e ascEncoder) ReadDecimal(b *bytes.Buffer) (mysql.Decimal, error) {
+	return readComparableDecimal(e, b)
+}
+
+func (e descEncoder) WriteDecimal(b *bytes.Buffer, v mysql.Decimal) {
+	writeComparableDecimal(e, b, v)
+}
+
+func (e descEncoder) ReadDecimal(b *bytes.Buffer) (mysql.Decimal, error) {
+	return readComparableDecimal(e, b)
+}
+
+func (e compactEncoder) WriteDecimal(b *bytes.Buffer, v mysql.Decimal) {
+	e.WriteBytes(b, []byte(v.String()))
+}
+
+func (e compactEncoder) ReadDecimal(b *bytes.Buffer) (mysql.Decimal, error) {
+	var d mysql.Decimal
+	v, err := e.ReadBytes(b)
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	err = d.UnmarshalText(v)
+	return d, errors.Trace(err)
 }
