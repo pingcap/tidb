@@ -126,6 +126,7 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	txn.ReleaseSnapshot()
+
 	return txn.store.CommitTxn(txn)
 }
 
