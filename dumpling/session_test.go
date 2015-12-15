@@ -985,6 +985,12 @@ func (s *testSessionSuite) TestOrderBy(c *C) {
 	mustExecMatch(c, se, "select sum(c1) from t order by sum(c1)", [][]interface{}{{3}})
 	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{2}, {1}})
 
+	// Order by position
+	mustExecMatch(c, se, "select * from t order by 1", [][]interface{}{{1, 2}, {2, 1}})
+	mustExecMatch(c, se, "select * from t order by 2", [][]interface{}{{2, 1}, {1, 2}})
+	mustExecFailed(c, se, "select * from t order by 0")
+	mustExecFailed(c, se, "select * from t order by 3")
+
 	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
 
 	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c2")
