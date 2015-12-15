@@ -1369,21 +1369,45 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 }
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
+
+	varName := "max_allowed_packet"
+	varValue := "4194304" // This is the default value for max_allowed_packet
+	varValue1 := "4194305"
+	varValue2 := "4194306"
+
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName).(*session)
+	// Get globalSysVar twice and get the same value
+	v, err := se.GetGlobalSysVar(se, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue)
+	v, err = se.GetGlobalSysVar(se, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue)
+	// Set global var to another value
+	err = se.SetGlobalSysVar(se, varName, varValue1)
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(se, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue1)
+	c.Assert(se.FinishTxn(false), IsNil)
 
-	v, err := se.GetGlobalSysVar(se, "max_allowed_packet")
+	// Change global variable value in another session
+	se1 := newSession(c, store, s.dbName).(*session)
+	v, err = se1.GetGlobalSysVar(se1, varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "4194304")
-	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(v, Equals, varValue1)
+	err = se1.SetGlobalSysVar(se1, varName, varValue2)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "4194304")
+	v, err = se1.GetGlobalSysVar(se1, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue2)
+	c.Assert(se1.FinishTxn(false), IsNil)
 
-	err = se.SetGlobalSysVar(se, "max_allowed_packet", "4194305")
+	// Make sure the change is visible to any client that accesses that global variable.
+	v, err = se.GetGlobalSysVar(se, varName)
 	c.Assert(err, IsNil)
-	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "4194305")
+	c.Assert(v, Equals, varValue2)
 }
 
 func checkPlan(c *C, se Session, sql, explain string) {
