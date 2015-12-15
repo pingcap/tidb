@@ -111,3 +111,22 @@ func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(keys, HasLen, 2)
 }
+
+// TestStartStop is to test `Panic: sync: WaitGroup is reused before previous Wait has returned`
+// in Stop function.
+func (s *localstoreCompactorTestSuite) TestStartStop(c *C) {
+	store := createMemStore()
+	db := store.(*dbStore).db
+
+	for i := 0; i < 10000; i++ {
+		policy := kv.CompactPolicy{
+			SafePoint:       500,
+			BatchDeleteCnt:  1,
+			TriggerInterval: 100 * time.Millisecond,
+		}
+		compactor := newLocalCompactor(policy, db)
+		compactor.Start()
+		compactor.Stop()
+		c.Logf("Test compactor stop and start %d times", i)
+	}
+}
