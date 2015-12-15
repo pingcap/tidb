@@ -879,7 +879,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {rand}			lval.item = string(l.val)
 			return rand
 {read}			return read
-{repeat}		return repeat
+{repeat}		lval.item = string(l.val)
+			return repeat
 {repeatable}		lval.item = string(l.val)
 			return repeatable
 {regexp}		return regexp
