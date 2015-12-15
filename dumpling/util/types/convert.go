@@ -336,6 +336,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return t.RoundFrac(fsp)
 		case string:
 			return mysql.ParseDuration(x, fsp)
+		case []byte:
+			return mysql.ParseDuration(string(x), fsp)
 		default:
 			return invConv(val, tp)
 		}
@@ -359,6 +361,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 			return t.RoundFrac(fsp)
 		case string:
 			return mysql.ParseTime(x, tp, fsp)
+		case []byte:
+			return mysql.ParseTime(string(x), tp, fsp)
 		case int64:
 			return mysql.ParseTimeFromNum(x, tp, fsp)
 		default:
@@ -407,6 +411,8 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 		switch x := val.(type) {
 		case string:
 			intVal, err = StrToInt(x)
+		case []byte:
+			intVal, err = StrToInt(string(x))
 		case mysql.Time:
 			return int64(x.Year()), nil
 		case mysql.Duration:
