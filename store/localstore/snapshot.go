@@ -63,7 +63,7 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 		mvccK, v, err := s.store.Seek([]byte(mvccKey)) // search for [4...EOF)
 		if err != nil {
 			if terror.ErrorEqual(err, engine.ErrNotFound) { // EOF
-				err = errors.Wrap(err, kv.ErrNotExist)
+				return nil, nil, errors.Trace(kv.ErrNotExist)
 			}
 			return nil, nil, errors.Trace(err)
 		}
