@@ -414,11 +414,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
-		// For trim
+		// For string functions
+		// Trim
 		{`SELECT TRIM('  bar   ');`, true},
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
+		// Repeat
+		{`SELECT REPEAT("a", 10);`, true},
 
 		// For date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
