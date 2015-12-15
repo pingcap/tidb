@@ -22,6 +22,7 @@ import (
 	"time"
 	// For pprof
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -294,32 +295,26 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 	return RegisterStore(name, d)
 }
 
-// NewStore creates a kv Storage with specific uri.
-// The uri format must be engine://schema, like goleveldb://testpath
-// Engine is the storage name registered with RegisterStore.
-// Schema is the storage specific format.
-func NewStore(uri string) (kv.Storage, error) {
-	return newStoreWithRetry(uri, defaultMaxRetries)
+// NewStore creates a kv Storage with data source name.
+func NewStore(dataSource string) (kv.Storage, error) {
+	return newStoreWithRetry(dataSource, defaultMaxRetries)
 }
 
-func newStoreWithRetry(uri string, maxRetries int) (kv.Storage, error) {
-	pos := strings.Index(uri, "://")
-	if pos == -1 {
-		return nil, errors.Errorf("invalid uri format, must engine://schema")
+func newStoreWithRetry(dataSource string, maxRetries int) (kv.Storage, error) {
+	url, err := url.Parse(dataSource)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	name := strings.ToLower(uri[0:pos])
-	schema := uri[pos+3:]
-
+	name := strings.ToLower(url.Scheme)
 	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
-	var err error
 	var s kv.Storage
 	for i := 1; i <= maxRetries; i++ {
-		s, err = d.Open(schema)
+		s, err = d.Open(dataSource)
 		if err == nil || !kv.IsRetryableError(err) {
 			break
 		}

@@ -23,6 +23,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,8 +124,16 @@ func (d *sqlDriver) unlock() {
 	d.mu.Unlock()
 }
 
-// Open returns a new connection to the database.  The name is a string in a
-// driver-specific format.
+// Open returns a new connection to the database.
+//
+// The dataSource must be formatted as an URL 'engine://path/dbname?params'.
+// Engine is the storage name registered with RegisterStore.
+// Path is the storage specific format.
+// Params is key-value pairs split by '&', optional params are storage specific.
+// Examples:
+//    goleveldb://relative/path/test
+//    boltdb:///absolute/path/test
+//    hbase://localhost,zkhost1,zkhost2/test?tso=127.0.0.1:1234&table=tidb
 //
 // Open may return a cached connection (one previously closed), but doing so is
 // unnecessary; the sql package maintains a pool of idle connections for
@@ -132,23 +141,22 @@ func (d *sqlDriver) unlock() {
 //
 // The returned connection is only used by one goroutine at a time.
 func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
-	// Split the dataSource to uri and dbName
-	i := strings.LastIndex(dataSource, "/")
-	if i == -1 {
-		return nil, errors.Errorf("Invalid dataSource: %q", dataSource)
-	}
-	uri := dataSource[:i]
-	dbName := dataSource[i+1:]
-
-	store, err := NewStore(uri)
+	url, err := url.Parse(dataSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	driver := &sqlDriver{}
-	dbName = filepath.Clean(dbName)
+	if len(url.Path) == 0 {
+		return nil, errors.Errorf("invalid dataSource: %q", dataSource)
+	}
+	dbName := filepath.Clean(filepath.Base(url.Path))
 	if dbName == "" || dbName == "." || dbName == string(os.PathSeparator) {
 		return nil, errors.Errorf("invalid DB name %q", dbName)
+	}
+
+	store, err := NewStore(dataSource)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	sess, err := CreateSession(store)
@@ -172,6 +180,7 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+	driver := &sqlDriver{}
 	return newDriverConn(s, driver, DBName.O)
 }
 
