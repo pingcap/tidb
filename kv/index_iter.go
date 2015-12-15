@@ -69,7 +69,7 @@ func (c *indexIter) Next() (val []interface{}, h int64, err error) {
 	}
 	// get indexedValues
 	buf := []byte(c.it.Key())[len(c.prefix):]
-	vv, err := DecodeValue(buf)
+	vv, err := codec.Decode(buf)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -138,16 +138,15 @@ func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte,
 		}
 	}
 
-	var encVal []byte
+	key = append(key, []byte(c.prefix)...)
 	if distinct {
-		encVal, err = EncodeValue(indexedValues...)
+		key, err = codec.EncodeKey(key, indexedValues...)
 	} else {
-		encVal, err = EncodeValue(append(indexedValues, h)...)
+		key, err = codec.EncodeKey(key, append(indexedValues, h)...)
 	}
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
-	key = append([]byte(c.prefix), encVal...)
 	return
 }
 
