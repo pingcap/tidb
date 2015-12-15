@@ -178,8 +178,9 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.OrderByClause:
 		nr.currentContext().inOrderBy = false
 	case *ast.ByItem:
-		nr.handlePositionByItem(v)
 		nr.currentContext().inByItemExpression = false
+	case *ast.PositionExpr:
+		nr.handlePosition(v)
 	case *ast.SelectStmt:
 		v.SetResultFields(nr.currentContext().fieldList)
 		nr.popContext()
@@ -535,29 +536,11 @@ func (nr *nameResolver) tableUniqueName(schema, table model.CIStr) string {
 	return table.L
 }
 
-func (nr *nameResolver) handlePositionByItem(by *ast.ByItem) {
-	v, ok := by.Expr.(*ast.ValueExpr)
-	if !ok {
-		return
-	}
-
-	var position int
-	switch u := v.Data.(type) {
-	case int64:
-		position = int(u)
-	case uint64:
-		position = int(u)
-	default:
-		return
-	}
+func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 	ctx := nr.currentContext()
-	if position < 1 || position > len(ctx.fieldList) {
-		nr.Err = errors.Errorf("Unknown column '%d'", position)
+	if pos.N < 1 || pos.N > len(ctx.fieldList) {
+		nr.Err = errors.Errorf("Unknown column '%d'", pos.N)
 		return
 	}
-	by.Expr = &ast.PositionExpr{
-		N:     position,
-		Refer: ctx.fieldList[position-1],
-	}
-	return
+	pos.Refer = ctx.fieldList[pos.N-1]
 }
