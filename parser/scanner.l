@@ -905,7 +905,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {share}			return share
 {show}			return show
 {subdate}		return subDate
-{substr}             lval.item = string(l.val)
+{substr}		lval.item = string(l.val)
                         return substring
 {substring}		lval.item = string(l.val)
 			return substring
