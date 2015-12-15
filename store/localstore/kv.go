@@ -129,8 +129,45 @@ func (s *dbStore) CommitTxn(txn *dbTxn) error {
 	return err
 }
 
+func (s *dbStore) seekWorker(seekCh chan *command) {
+	for {
+		var pending []*command
+		select {
+		case cmd, ok := <-seekCh:
+			if !ok {
+				return
+			}
+			pending = append(pending, cmd)
+		L:
+			for {
+				select {
+				case cmd, ok := <-seekCh:
+					if !ok {
+						break L
+					}
+					pending = append(pending, cmd)
+				default:
+					break L
+				}
+			}
+		}
+
+		s.doSeek(pending)
+	}
+
+}
+
 func (s *dbStore) scheduler() {
 	closed := false
+	seekCh := make(chan *command, 1000)
+	for i := 0; i < 3; i++ {
+		go s.seekWorker(seekCh)
+	}
+
+	seekCount := 0
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+
 	for {
 		var pending []*command
 		select {
@@ -139,14 +176,22 @@ func (s *dbStore) scheduler() {
 				cmd.done <- ErrDBClosed
 				continue
 			}
-			pending = append(pending, cmd)
-			cnt := len(s.commandCh)
-			for i := 0; i < cnt; i++ {
-				pending = append(pending, <-s.commandCh)
+
+			if cmd.op == opSeek {
+				//log.Errorf("%q", cmd.args.(*seekArgs).key)
+				seekCh <- cmd
+				seekCount++
+				continue
 			}
+
+			pending = append(pending, cmd)
+		case <-t.C:
+			log.Error(seekCount)
 		case <-s.closeCh:
 			closed = true
 			s.wg.Done()
+			// notify seek worker to exit
+			close(seekCh)
 		}
 		s.handleCommand(pending)
 	}
@@ -179,14 +224,11 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 
 func (s *dbStore) handleCommand(commands []*command) {
 	var getCmds []*command
-	var seekCmds []*command
 	for _, cmd := range commands {
 		txn := cmd.txn
 		switch cmd.op {
 		case opGet:
 			getCmds = append(getCmds, cmd)
-		case opSeek:
-			seekCmds = append(seekCmds, cmd)
 		case opCommit:
 			curVer, err := globalVersionProvider.CurrentVersion()
 			if err != nil {
@@ -213,13 +255,11 @@ func (s *dbStore) handleCommand(commands []*command) {
 				}
 				return nil
 			})
-			if b.Len() > 0 {
-				err = s.writeBatch(b)
-			}
+			err = s.writeBatch(b)
 			s.unLockKeys(txn)
 			cmd.done <- err
 		default:
-			panic("should never happend")
+			log.Fatalf("should never happend %v", cmd.op)
 		}
 	}
 
@@ -235,49 +275,15 @@ func (s *dbStore) handleCommand(commands []*command) {
 			}
 		}()
 	}
-
-	// batch seek command
-	// TODO: goroutine pool
-	go s.doSeek(seekCmds)
 }
 
 func (s *dbStore) doSeek(seekCmds []*command) {
 	keys := make([][]byte, 0, len(seekCmds))
-
 	for _, cmd := range seekCmds {
 		keys = append(keys, cmd.args.(*seekArgs).key)
 	}
 
-	cnt := len(keys)
-	step := 20
-	jobs := cnt / step
-	if cnt%step != 0 {
-		jobs++
-	}
-	resCh := make([][]*engine.MSeekResult, jobs)
-	var wgTemp sync.WaitGroup
-	wgTemp.Add(jobs)
-	start := time.Now()
-	for i := 0; i < jobs; i++ {
-		go func(i int) {
-			defer wgTemp.Done()
-			if cnt >= i*step+step {
-				resCh[i] = s.db.MultiSeek(keys[i*step : i*step+step])
-			} else {
-				resCh[i] = s.db.MultiSeek(keys[i*step:])
-			}
-		}(i)
-	}
-	wgTemp.Wait()
-
-	if time.Since(start).Seconds() > 1 {
-		log.Errorf("jobs %d, using %v", jobs, time.Since(start).Seconds())
-	}
-
-	results := make([]*engine.MSeekResult, 0, len(keys))
-	for _, res := range resCh {
-		results = append(results, res...)
-	}
+	results := s.db.MultiSeek(keys)
 
 	for i, cmd := range seekCmds {
 		reply := &seekReply{}
