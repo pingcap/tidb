@@ -136,17 +136,18 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 		},
 	}
 
-	ret := map[int64]string{}
+	ret := map[int64][]byte{}
 	rset := rsets.Recordset{Ctx: p, Plan: pln}
 	rset.Do(func(data []interface{}) (bool, error) {
-		ret[data[0].(int64)] = data[1].(string)
+		ret[data[0].(int64)] = data[1].([]byte)
 		return true, nil
 	})
-	excepted := map[int64]string{}
+	excepted := map[int64][]byte{}
 	for i := 0; i < 10; i++ {
-		excepted[int64(i*10)] = "hello"
+		excepted[int64(i*10)] = []byte("hello")
 	}
-	c.Assert(reflect.DeepEqual(ret, excepted), Equals, true)
+	//c.Assert(reflect.DeepEqual(ret, excepted), Equals, true)
+	c.Assert(ret, DeepEquals, excepted)
 
 	// expr: id > 0
 	expr := &expression.BinaryOperation{
