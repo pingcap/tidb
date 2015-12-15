@@ -501,6 +501,7 @@ import (
 	SelectStmtGroup		"SELECT statement optional GROUP BY clause"
 	SetStmt			"Set variable statement"
 	ShowStmt		"Show engines/databases/tables/columns/warnings/status statement"
+	ShowTargetFilterable    "Show target that can be filtered by WHERE or LIKE"
 	ShowDatabaseNameOpt	"Show tables/columns statement database name option"
 	ShowTableAliasOpt       "Show table alias option"
 	ShowLikeOrWhereOpt	"Show like or where clause option"
@@ -3314,111 +3315,15 @@ AuthString:
 
 /****************************Show Statement*******************************/
 ShowStmt:
-	"SHOW" "ENGINES"
+	"SHOW" ShowTargetFilterable ShowLikeOrWhereOpt
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowEngines}
-	}
-|	"SHOW" "DATABASES"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
-	}
-|	"SHOW" "SCHEMAS"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
-	}
-|	"SHOW" "CHARACTER" "SET"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
-	}
-|	"SHOW" OptFull "TABLES" ShowDatabaseNameOpt ShowLikeOrWhereOpt
-	{
-		stmt := &ast.ShowStmt{
-			Tp:	ast.ShowTables,
-			DBName:	$4.(string),
-			Full:	$2.(bool),
-		}
-		if $5 != nil {
-			if x, ok := $5.(*ast.PatternLikeExpr); ok {
+		stmt := $2.(*ast.ShowStmt)
+		if $3 != nil {
+			if x, ok := $3.(*ast.PatternLikeExpr); ok {
 				stmt.Pattern = x
 			} else {
-				stmt.Where = $5.(ast.ExprNode)
+				stmt.Where = $3.(ast.ExprNode)
 			}
-		}
-		$$ = stmt
-	}
-|	"SHOW" "TABLE" "STATUS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
-	{
-		stmt := &ast.ShowStmt{
-			Tp:	ast.ShowTableStatus,
-			DBName:	$4.(string),
-		}
-		if $5 != nil {
-			if x, ok := $5.(*ast.PatternLikeExpr); ok {
-				stmt.Pattern = x
-			} else {
-				stmt.Where = $5.(ast.ExprNode)
-			}
-		}
-		$$ = stmt
-	}
-|	"SHOW" OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
-	{
-		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowColumns,
-			Table:	$4.(*ast.TableName),
-			DBName:	$5.(string),
-			Full:	$2.(bool),
-		}
-	}
-|	"SHOW" OptFull "FIELDS" ShowTableAliasOpt ShowDatabaseNameOpt
-	{
-		// SHOW FIELDS is a synonym for SHOW COLUMNS.
-		$$ = &ast.ShowStmt{
-			Tp:     ast.ShowColumns,
-			Table:	$4.(*ast.TableName),
-			DBName:	$5.(string),
-			Full:	$2.(bool),
-		}
-	}
-|	"SHOW" "WARNINGS"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
-	}
-|	"SHOW" GlobalScope "VARIABLES" ShowLikeOrWhereOpt
-	{
-		stmt := &ast.ShowStmt{
-			Tp: ast.ShowVariables,
-			GlobalScope: $2.(bool),
-		}
-		if x, ok := $4.(*ast.PatternLikeExpr); ok {
-			stmt.Pattern = x
-		} else if $4 != nil {
-			stmt.Where = $4.(ast.ExprNode)
-		}
-		$$ = stmt
-	}
-|	"SHOW" GlobalScope "STATUS" ShowLikeOrWhereOpt
-	{
-		stmt := &ast.ShowStmt{
-			Tp: ast.ShowStatus,
-			GlobalScope: $2.(bool),
-		}
-		if x, ok := $4.(*ast.PatternLikeExpr); ok {
-			stmt.Pattern = x
-		} else if $4 != nil {
-			stmt.Where = $4.(ast.ExprNode)
-		}
-		$$ = stmt
-	}
-|	"SHOW" "COLLATION" ShowLikeOrWhereOpt
-	{
-		stmt := &ast.ShowStmt{
-			Tp: 	ast.ShowCollation,
-		}
-		if x, ok := $3.(*ast.PatternLikeExpr); ok {
-			stmt.Pattern = x
-		} else if $3 != nil {
-			stmt.Where = $3.(ast.ExprNode)
 		}
 		$$ = stmt
 	}
@@ -3442,20 +3347,88 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
-|	"SHOW" "TRIGGERS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+
+ShowTargetFilterable:
+	"ENGINES"
 	{
-		stmt := &ast.ShowStmt{
-			Tp:	ast.ShowTriggers,
+		$$ = &ast.ShowStmt{Tp: ast.ShowEngines}
+	}
+|	"DATABASES"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
+	}
+|	"SCHEMAS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
+	}
+|	"CHARACTER" "SET"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowCharset}
+	}
+|	OptFull "TABLES" ShowDatabaseNameOpt
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowTables,
+			DBName:	$3.(string),
+			Full:	$1.(bool),
+		}
+	}
+|	"TABLE" "STATUS" ShowDatabaseNameOpt
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowTableStatus,
 			DBName:	$3.(string),
 		}
-		if $4 != nil {
-			if x, ok := $4.(*ast.PatternLikeExpr); ok {
-				stmt.Pattern = x
-			} else {
-				stmt.Where = $4.(ast.ExprNode)
-			}
+	}
+|	OptFull "COLUMNS" ShowTableAliasOpt ShowDatabaseNameOpt
+	{
+		$$ = &ast.ShowStmt{
+			Tp:     ast.ShowColumns,
+			Table:	$3.(*ast.TableName),
+			DBName:	$4.(string),
+			Full:	$1.(bool),
 		}
-		$$ = stmt
+	}
+|	OptFull "FIELDS" ShowTableAliasOpt ShowDatabaseNameOpt
+	{
+		// SHOW FIELDS is a synonym for SHOW COLUMNS.
+		$$ = &ast.ShowStmt{
+			Tp:     ast.ShowColumns,
+			Table:	$3.(*ast.TableName),
+			DBName:	$4.(string),
+			Full:	$1.(bool),
+		}
+	}
+|	"WARNINGS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	GlobalScope "VARIABLES"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowVariables,
+			GlobalScope: $1.(bool),
+		}
+	}
+|	GlobalScope "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowStatus,
+			GlobalScope: $1.(bool),
+		}
+	}
+|	"COLLATION"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: 	ast.ShowCollation,
+		}
+	}
+|	"TRIGGERS" ShowDatabaseNameOpt
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowTriggers,
+			DBName:	$2.(string),
+		}
 	}
 
 ShowLikeOrWhereOpt:
