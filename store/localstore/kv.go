@@ -16,6 +16,7 @@ package localstore
 import (
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -113,6 +114,9 @@ func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
 
 // Commit writes the changed data in Batch.
 func (s *dbStore) CommitTxn(txn *dbTxn) error {
+	if len(txn.snapshotVals) == 0 {
+		return nil
+	}
 	c := &command{
 		op:   opCommit,
 		txn:  txn,
@@ -174,8 +178,6 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 }
 
 func (s *dbStore) handleCommand(commands []*command) {
-	wg := &sync.WaitGroup{}
-	wg.Add(len(commands))
 	var getCmds []*command
 	var seekCmds []*command
 	for _, cmd := range commands {
@@ -186,8 +188,6 @@ func (s *dbStore) handleCommand(commands []*command) {
 		case opSeek:
 			seekCmds = append(seekCmds, cmd)
 		case opCommit:
-			wg.Done()
-			// TODO: lock keys
 			curVer, err := globalVersionProvider.CurrentVersion()
 			if err != nil {
 				log.Fatal(err)
@@ -201,6 +201,7 @@ func (s *dbStore) handleCommand(commands []*command) {
 			txn.version = curVer
 			b := s.db.NewBatch()
 			txn.WalkBuffer(func(k kv.Key, value []byte) error {
+				log.Errorf("%q, %q", k, value)
 				metaKey := codec.EncodeBytes(nil, k)
 				// put dummy meta key, write current version
 				b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
@@ -212,7 +213,9 @@ func (s *dbStore) handleCommand(commands []*command) {
 				}
 				return nil
 			})
-			err = s.writeBatch(b)
+			if b.Len() > 0 {
+				err = s.writeBatch(b)
+			}
 			s.unLockKeys(txn)
 			cmd.done <- err
 		default:
@@ -221,23 +224,24 @@ func (s *dbStore) handleCommand(commands []*command) {
 	}
 
 	// batch get command
-	go func() {
-		for _, cmd := range getCmds {
-			reply := &getReply{}
-			var err error
-			reply.value, err = s.db.Get(cmd.args.(*getArgs).key)
-			cmd.reply = reply
-			cmd.done <- err
-			wg.Done()
-		}
-	}()
+	if len(getCmds) > 0 {
+		go func() {
+			for _, cmd := range getCmds {
+				reply := &getReply{}
+				var err error
+				reply.value, err = s.db.Get(cmd.args.(*getArgs).key)
+				cmd.reply = reply
+				cmd.done <- err
+			}
+		}()
+	}
 
 	// batch seek command
-	go s.doSeek(wg, seekCmds)
-	wg.Wait()
+	// TODO: goroutine pool
+	go s.doSeek(seekCmds)
 }
 
-func (s *dbStore) doSeek(wg *sync.WaitGroup, seekCmds []*command) {
+func (s *dbStore) doSeek(seekCmds []*command) {
 	keys := make([][]byte, 0, len(seekCmds))
 
 	for _, cmd := range seekCmds {
@@ -245,7 +249,7 @@ func (s *dbStore) doSeek(wg *sync.WaitGroup, seekCmds []*command) {
 	}
 
 	cnt := len(keys)
-	step := 5
+	step := 20
 	jobs := cnt / step
 	if cnt%step != 0 {
 		jobs++
@@ -253,6 +257,7 @@ func (s *dbStore) doSeek(wg *sync.WaitGroup, seekCmds []*command) {
 	resCh := make([][]*engine.MSeekResult, jobs)
 	var wgTemp sync.WaitGroup
 	wgTemp.Add(jobs)
+	start := time.Now()
 	for i := 0; i < jobs; i++ {
 		go func(i int) {
 			defer wgTemp.Done()
@@ -265,6 +270,10 @@ func (s *dbStore) doSeek(wg *sync.WaitGroup, seekCmds []*command) {
 	}
 	wgTemp.Wait()
 
+	if time.Since(start).Seconds() > 1 {
+		log.Errorf("jobs %d, using %v", jobs, time.Since(start).Seconds())
+	}
+
 	results := make([]*engine.MSeekResult, 0, len(keys))
 	for _, res := range resCh {
 		results = append(results, res...)
@@ -276,7 +285,6 @@ func (s *dbStore) doSeek(wg *sync.WaitGroup, seekCmds []*command) {
 		reply.key, reply.value, err = results[i].Key, results[i].Value, results[i].Err
 		cmd.reply = reply
 		cmd.done <- err
-		wg.Done()
 	}
 }
 
