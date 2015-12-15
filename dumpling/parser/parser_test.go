@@ -37,7 +37,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
+		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
@@ -332,6 +332,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
+
+		{"SELECT SUBSTR('Quadratically',5);", true},
+		{"SELECT SUBSTR('Quadratically',5, 3);", true},
+		{"SELECT SUBSTR('Quadratically' FROM 5);", true},
+		{"SELECT SUBSTR('Quadratically' FROM 5 FOR 3);", true},
 
 		{"SELECT SUBSTRING('Quadratically',5);", true},
 		{"SELECT SUBSTRING('Quadratically',5, 3);", true},
