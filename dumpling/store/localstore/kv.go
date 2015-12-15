@@ -14,6 +14,8 @@
 package localstore
 
 import (
+	"net/url"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 
@@ -283,27 +285,34 @@ func IsLocalStore(s kv.Storage) bool {
 }
 
 // Open opens or creates a storage with specific format for a local engine Driver.
-func (d Driver) Open(schema string) (kv.Storage, error) {
+// The dataSource should be formatted as an URL which is described in tidb package.
+func (d Driver) Open(dataSource string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if store, ok := mc.cache[schema]; ok {
-		// TODO: check the cache store has the same engine with this Driver.
-		log.Info("[kv] cache store", schema)
-		return store, nil
-	}
-
-	db, err := d.Driver.Open(schema)
+	u, err := url.Parse(dataSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	log.Info("[kv] New store", schema)
+	engineSchema := filepath.Join(u.Host, u.Path)
+	if store, ok := mc.cache[engineSchema]; ok {
+		// TODO: check the cache store has the same engine with this Driver.
+		log.Info("[kv] cache store", engineSchema)
+		return store, nil
+	}
+
+	db, err := d.Driver.Open(engineSchema)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	log.Info("[kv] New store", engineSchema)
 	s := &dbStore{
 		txns:          make(map[uint64]*dbTxn),
 		keysLocked:    make(map[string]uint64),
 		uuid:          uuid.NewV4().String(),
-		path:          schema,
+		path:          engineSchema,
 		db:            db,
 		compactor:     newLocalCompactor(localCompactDefaultPolicy, db),
 		commandCh:     make(chan *command, 1000),
@@ -312,7 +321,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		recentUpdates: make(map[string]kv.Version),
 		wg:            &sync.WaitGroup{},
 	}
-	mc.cache[schema] = s
+	mc.cache[engineSchema] = s
 	s.compactor.Start()
 	s.wg.Add(1)
 	go s.scheduler()

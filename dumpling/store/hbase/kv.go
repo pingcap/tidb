@@ -16,6 +16,7 @@ package hbasekv
 import (
 	"fmt"
 	"math/rand"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -136,20 +137,32 @@ func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
 type Driver struct {
 }
 
-// Open opens or creates an HBase storage with given dsn, format should be 'zk1,zk2,zk3|tsoaddr:port/tblName'.
-// If tsoAddr is not provided, it will use a local oracle instead.
-func (d Driver) Open(dsn string) (kv.Storage, error) {
+// Open opens or creates an HBase storage with given dataSource.
+//
+// The format of dsn should be 'hbase://zk1,zk2,zk3/dbname?param1=value1&...'
+// which is described in tidb package. Valid params:
+//     tso:   TSO server addr, should be formatted as 'host:port'.
+//     table: hbase table name. Default 'tidb'.
+// If tso is not provided, it will use a local oracle instead. (for test only)
+func (d Driver) Open(dataSource string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if store, ok := mc.cache[dsn]; ok {
+	if store, ok := mc.cache[dataSource]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
 		return store, nil
 	}
 
-	zks, oracleAddr, tableName, err := parseDSN(dsn)
-	if err != nil {
-		return nil, errors.Trace(err)
+	u, err := url.Parse(dataSource)
+	if strings.ToLower(u.Scheme) != "hbase" {
+		return nil, errors.Trace(ErrInvalidDSN)
+	}
+
+	zks := strings.Split(u.Host, ",")
+	params := u.Query()
+	tableName, oracleAddr := params.Get("table"), params.Get("tso")
+	if tableName == "" {
+		tableName = "tidb"
 	}
 
 	// create buffered HBase connections, HBaseClient is goroutine-safe, so
@@ -190,29 +203,11 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	}
 
 	s := &hbaseStore{
-		dsn:       dsn,
+		dsn:       dataSource,
 		storeName: tableName,
 		oracle:    ora,
 		conns:     conns,
 	}
-	mc.cache[dsn] = s
+	mc.cache[dataSource] = s
 	return s, nil
-}
-
-func parseDSN(dsn string) (zks []string, oracleAddr, tableName string, err error) {
-	pos := strings.LastIndex(dsn, "/")
-	if pos == -1 {
-		err = errors.Trace(ErrInvalidDSN)
-		return
-	}
-	tableName = dsn[pos+1:]
-	addrs := dsn[:pos]
-
-	pos = strings.LastIndex(addrs, "|")
-	if pos != -1 {
-		oracleAddr = addrs[pos+1:]
-		addrs = addrs[:pos]
-	}
-	zks = strings.Split(addrs, ",")
-	return
 }
