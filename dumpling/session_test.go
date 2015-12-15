@@ -675,6 +675,12 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, HasLen, 2)
 	c.Assert(row[0], Equals, "t")
+
+	r = mustExecSQL(c, se, "show databases like 'test'")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 1)
+	c.Assert(row[0], Equals, "test")
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
