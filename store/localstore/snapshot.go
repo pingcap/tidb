@@ -47,46 +47,50 @@ func newSnapshot(store *dbStore, ver kv.Version) *dbSnapshot {
 func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 	// Key layout:
 	// ...
-	// Key (Meta)      -- (1)
-	// Key_verMax      -- (2)
+	// Key_verMax      -- (1)
 	// ...
-	// Key_ver+1       -- (3)
-	// Key_ver         -- (4)
-	// Key_ver-1       -- (5)
+	// Key_ver+1       -- (2)
+	// Key_ver         -- (3)
+	// Key_ver-1       -- (4)
 	// ...
-	// Key_0           -- (6)
-	// NextKey (Meta)  -- (7)
+	// Key_0           -- (5)
+	// NextKey_verMax  -- (6)
+	// ...
+	// NextKey_ver+1   -- (7)
+	// NextKey_ver     -- (8)
+	// NextKey_ver-1   -- (9)
+	// ...
+	// NextKey_0       -- (10)
 	// ...
 	// EOF
 	for {
 		mvccKey := MvccEncodeVersionKey(key, s.version)
-		mvccK, v, err := s.store.Seek([]byte(mvccKey)) // search for [4...EOF)
+		mvccK, v, err := s.store.Seek([]byte(mvccKey)) // search for [3...EOF)
 		if err != nil {
 			if terror.ErrorEqual(err, engine.ErrNotFound) { // EOF
 				return nil, nil, errors.Trace(kv.ErrNotExist)
 			}
 			return nil, nil, errors.Trace(err)
 		}
-		k, _, err := MvccDecode(mvccK)
+		k, ver, err := MvccDecode(mvccK)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		if key.Cmp(k) != 0 { // currently on [7]
-			if exact {
-				return nil, nil, errors.Trace(kv.ErrNotExist)
-			}
-			// search for NextKey
-			key = k
+		// quick test for exact mode
+		if exact && (key.Cmp(k) != 0 || isTombstone(v)) {
+			return nil, nil, errors.Trace(kv.ErrNotExist)
+		}
+		if ver.Ver > s.version.Ver {
+			// currently on [6...7]
+			key = k // search for [8...EOF) next loop
 			continue
 		}
-		if isTombstone(v) { // current key is deleted
-			if exact {
-				return nil, nil, errors.Trace(kv.ErrNotExist)
-			}
-			// search for NextKey's meta
-			key = key.Next()
+		// currently on [3...5] or [8...10]
+		if isTombstone(v) {
+			key = k.Next() // search for (5...EOF) or (10..EOF) next loop
 			continue
 		}
+		// target found
 		return k, v, nil
 	}
 }
