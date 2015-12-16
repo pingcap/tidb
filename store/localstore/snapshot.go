@@ -77,8 +77,11 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 			return nil, nil, errors.Trace(err)
 		}
 		// quick test for exact mode
-		if exact && (key.Cmp(k) != 0 || isTombstone(v)) {
-			return nil, nil, errors.Trace(kv.ErrNotExist)
+		if exact {
+			if key.Cmp(k) != 0 || isTombstone(v) {
+				return nil, nil, errors.Trace(kv.ErrNotExist)
+			}
+			return k, v, nil
 		}
 		if ver.Ver > s.version.Ver {
 			// currently on [6...7]
