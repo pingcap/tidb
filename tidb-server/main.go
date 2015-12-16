@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
-	_ "github.com/pingcap/tidbrocks"
 )
 
 var (
