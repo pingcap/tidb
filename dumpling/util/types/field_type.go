@@ -142,3 +142,47 @@ func IsDataItem(d interface{}) bool {
 	_, ok := d.(*DataItem)
 	return ok
 }
+
+// DefaultTypeForValue returns the default FieldType for the value.
+func DefaultTypeForValue(value interface{}) *FieldType {
+	switch x := value.(type) {
+	case nil:
+		return NewFieldType(mysql.TypeNull)
+	case bool, int64, int:
+		return NewFieldType(mysql.TypeLonglong)
+	case uint64:
+		tp := NewFieldType(mysql.TypeLonglong)
+		tp.Flag |= mysql.UnsignedFlag
+		return tp
+	case string:
+		tp := NewFieldType(mysql.TypeVarchar)
+		tp.Charset = mysql.DefaultCharset
+		tp.Collate = mysql.DefaultCollationName
+		return tp
+	case float64:
+		return NewFieldType(mysql.TypeNewDecimal)
+	case []byte:
+		tp := NewFieldType(mysql.TypeBlob)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
+	case mysql.Bit:
+		return NewFieldType(mysql.TypeBit)
+	case mysql.Hex:
+		tp := NewFieldType(mysql.TypeVarchar)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
+	case mysql.Time:
+		return NewFieldType(x.Type)
+	case mysql.Duration:
+		return NewFieldType(mysql.TypeDuration)
+	case mysql.Decimal:
+		return NewFieldType(mysql.TypeNewDecimal)
+	case mysql.Enum:
+		return NewFieldType(mysql.TypeEnum)
+	case mysql.Set:
+		return NewFieldType(mysql.TypeSet)
+	case *DataItem:
+		return value.(*DataItem).Type
+	}
+	return NewFieldType(mysql.TypeNull)
+}
