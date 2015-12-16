@@ -10,8 +10,8 @@ Or you can pull TiDB docker image contains HBase standalone and then run TiDB as
 To install docker on your system, you can read the document on https://docs.docker.com/
 
 ```
-docker pull pingcap/tidb:latest
-docker run --name tidb-server -d -p 4000:4000 pingcap/tidb:latest
+docker pull pingcap/dockerfile:latest
+docker run --name tidb-server -d -p 4000:4000 pingcap/dockerfile:latest
 ```
 
 `docker pull` may take a while to download images ~560M.
