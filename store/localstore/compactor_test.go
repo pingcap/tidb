@@ -75,7 +75,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	txn.Set([]byte("a"), []byte("5"))
 	txn.Commit()
 	t := count(db)
-	c.Assert(t, Equals, 7)
+	c.Assert(t, Equals, 6)
 
 	// Simulating timeout
 	time.Sleep(1 * time.Second)
@@ -86,7 +86,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	time.Sleep(1 * time.Second)
 	// Do background GC
 	t = count(db)
-	c.Assert(t, Equals, 3)
+	c.Assert(t, Equals, 2)
 
 	compactor.Stop()
 }
