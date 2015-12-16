@@ -402,14 +402,14 @@ func (r *indexPlan) Next(ctx context.Context) (*plan.Row, error) {
 }
 
 func (r *indexPlan) isPointLookup(span *indexSpan) bool {
-	equalOp := span.lowVal == span.highVal && !span.lowExclude && !span.highExclude
-	if !equalOp || !r.unique || span.lowVal == nil {
+	if span.lowExclude || span.highExclude || span.lowVal == nil || !r.unique {
 		return false
 	}
-	n, err := types.Compare(span.seekVal, span.lowVal)
+	n, err := types.Compare(span.seekVal, span.highVal)
 	if err != nil {
 		return false
 	}
+	// 'seekVal==highVal' means that 'seekVal==lowVal && lowVal==highVal'
 	return n == 0
 }
 
