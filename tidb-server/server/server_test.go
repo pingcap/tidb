@@ -222,9 +222,7 @@ func runTestConcurrentUpdate(c *C) {
 
 func runTestAuth(c *C) {
 	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'test'@'127.0.0.1' IDENTIFIED BY '123';`)
-		dbt.mustExec(`CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`)
-		dbt.mustExec(`CREATE USER 'test'@'::1' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE USER 'test'@'%' IDENTIFIED BY '123';`)
 	})
 	newDsn := "test:123@tcp(localhost:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
