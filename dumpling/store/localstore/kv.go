@@ -209,7 +209,7 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 			continue
 		}
 		// If there's newer version of this key, returns error.
-		if lastVer.Cmp(kv.Version{txn.tid}) > 0 {
+		if lastVer.Cmp(kv.Version{Ver: txn.tid}) > 0 {
 			return errors.Trace(kv.ErrConditionNotMatch)
 		}
 	}
@@ -324,8 +324,6 @@ type storeCache struct {
 }
 
 var (
-	globalID int64
-
 	globalVersionProvider kv.VersionProvider
 	mc                    storeCache
 
