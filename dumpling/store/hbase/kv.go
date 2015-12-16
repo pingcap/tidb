@@ -174,7 +174,7 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 		// Create new hbase table for store.
 		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(tableName))
 		cf := hbase.NewColumnFamilyDescriptor(hbaseColFamily)
-		cf.AddStrAddr("THEMIS_ENABLE", "true")
+		cf.AddAttr("THEMIS_ENABLE", "true")
 		t.AddColumnDesc(cf)
 		//TODO: specify split?
 		if err := c.CreateTable(t, nil); err != nil {
