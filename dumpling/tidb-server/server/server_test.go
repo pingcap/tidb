@@ -225,6 +225,7 @@ func runTestAuth(c *C) {
 		dbt.mustExec(`CREATE USER 'test'@'127.0.0.1' IDENTIFIED BY '123';`)
 		dbt.mustExec(`CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`)
 		dbt.mustExec(`CREATE USER 'test'@'::1' IDENTIFIED BY '123';`)
+		dbt.mustExec(`CREATE USER 'test'@'fe80::1%lo0' IDENTIFIED BY '123';`)
 	})
 	newDsn := "test:123@tcp(localhost:4001)/test?strict=true"
 	runTests(c, newDsn, func(dbt *DBTest) {
