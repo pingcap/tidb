@@ -233,8 +233,9 @@ func (s *dbStore) NewBatch() engine.Batch {
 type dbStore struct {
 	db engine.DB
 
-	txns          map[uint64]*dbTxn
-	keysLocked    map[string]uint64
+	txns       map[uint64]*dbTxn
+	keysLocked map[string]uint64
+	// TODO: clean up recentUpdates
 	recentUpdates map[string]kv.Version
 	uuid          string
 	path          string
