@@ -555,18 +555,8 @@ func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d 
 	}
 }
 
-func getColumn(name string, cols []*column.Col) *column.Col {
-	for _, col := range cols {
-		if name == col.Name.L {
-			return col
-		}
-	}
-
-	return nil
-}
-
 func (s *testColumnSuite) testGetColumn(c *C, t table.Table, name string, isExist bool) {
-	col := getColumn(name, t.Cols())
+	col := column.FindCol(t.Cols(), name)
 	if isExist {
 		c.Assert(col, NotNil)
 	} else {
@@ -604,7 +594,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 		}
 
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
-		col := getColumn(colName, t.Columns)
+		col := column.FindCol(t.Columns, colName)
 		if col == nil {
 			return
 		}
@@ -671,7 +661,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 		}
 
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID).(*tables.Table)
-		col := getColumn(colName, t.Columns)
+		col := column.FindCol(t.Columns, colName)
 		if col == nil {
 			s.checkAddOrDropColumn(c, model.StateNone, d, tblInfo, handle, oldCol, row, defaultColValue, true)
 			checkOK = true
