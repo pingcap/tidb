@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 )
@@ -182,7 +183,8 @@ func DefaultTypeForValue(value interface{}) *FieldType {
 	case mysql.Set:
 		return NewFieldType(mysql.TypeSet)
 	case *DataItem:
-		return value.(*DataItem).Type
+		return x.Type
 	}
-	return NewFieldType(mysql.TypeNull)
+	log.Errorf("Unknown value type %T for default field type.", value)
+	return nil
 }
