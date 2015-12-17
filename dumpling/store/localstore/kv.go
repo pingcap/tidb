@@ -74,7 +74,7 @@ func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
 	s.commandCh <- c
 	err := <-c.done
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Trace(err)
 	}
 
 	reply := c.reply.(*seekReply)
@@ -95,7 +95,7 @@ func (s *dbStore) CommitTxn(txn *dbTxn) error {
 
 	s.commandCh <- c
 	err := <-c.done
-	return err
+	return errors.Trace(err)
 }
 
 func (s *dbStore) seekWorker(seekCh chan *command) {
@@ -187,7 +187,7 @@ func (s *dbStore) doCommit(cmd *command) {
 	}
 	err = s.tryLock(txn)
 	if err != nil {
-		cmd.done <- err
+		cmd.done <- errors.Trace(err)
 		return
 	}
 	// Update commit version.
@@ -204,7 +204,7 @@ func (s *dbStore) doCommit(cmd *command) {
 	})
 	err = s.writeBatch(b)
 	s.unLockKeys(txn)
-	cmd.done <- err
+	cmd.done <- errors.Trace(err)
 }
 
 func (s *dbStore) doSeek(seekCmds []*command) {
@@ -220,7 +220,7 @@ func (s *dbStore) doSeek(seekCmds []*command) {
 		var err error
 		reply.key, reply.value, err = results[i].Key, results[i].Value, results[i].Err
 		cmd.reply = reply
-		cmd.done <- err
+		cmd.done <- errors.Trace(err)
 	}
 }
 
