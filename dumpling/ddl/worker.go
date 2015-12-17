@@ -51,7 +51,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	// notice worker that we push a new job and wait the job done.
 	asyncNotify(d.jobCh)
 
-	log.Warnf("start DDL job %v", job)
+	log.Warnf("[ddl] start DDL job %v", job)
 
 	jobID := job.ID
 
@@ -69,10 +69,10 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 
 		historyJob, err = d.getHistoryJob(jobID)
 		if err != nil {
-			log.Errorf("get history job err %v, check again", err)
+			log.Errorf("[ddl] get history job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Warnf("job %d is not in history, maybe not run", jobID)
+			log.Warnf("[ddl] job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
@@ -129,11 +129,11 @@ func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
 		if err = t.SetDDLOwner(owner); err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("become owner %s", owner.OwnerID)
+		log.Debugf("[ddl] become owner %s", owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("not owner, owner is %s", owner.OwnerID)
+		log.Debugf("[ddl] not owner, owner is %s", owner.OwnerID)
 		return nil, errors.Trace(ErrNotOwner)
 	}
 
@@ -152,7 +152,7 @@ func (d *ddl) updateJob(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
-	log.Warnf("finish DDL job %v", job)
+	log.Warnf("[ddl] finish DDL job %v", job)
 	// done, notice and run next job.
 	_, err := t.DeQueueDDLJob()
 	if err != nil {
@@ -203,13 +203,13 @@ func (d *ddl) handleJobQueue() error {
 				// wait again.
 				elapsed := time.Duration(time.Now().UnixNano() - job.LastUpdateTS)
 				if elapsed > 0 && elapsed < waitTime {
-					log.Warnf("the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
+					log.Warnf("[ddl] the elapsed time from last update is %s < %s, wait again", elapsed, waitTime)
 					waitTime -= elapsed
 					return nil
 				}
 			}
 
-			log.Warnf("run DDL job %v", job)
+			log.Warnf("[ddl] run DDL job %v", job)
 
 			d.hook.OnJobRunBefore(job)
 
@@ -281,7 +281,7 @@ func (d *ddl) onWorker() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("wait %s to check DDL status again", checkTime)
+			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
 		case <-d.jobCh:
 		case <-d.quitCh:
 			return
@@ -289,7 +289,7 @@ func (d *ddl) onWorker() {
 
 		err := d.handleJobQueue()
 		if err != nil {
-			log.Errorf("handle job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] handle job err %v", errors.ErrorStack(err))
 		}
 	}
 }
