@@ -215,7 +215,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 			continue
 		}
 
-		if len(s.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
+		if len(s.OnDuplicate) == 0 || !terror.ErrorEqual(err, terror.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
 		if err = execOnDuplicateUpdate(ctx, t, row, h, toUpdateColumns); err != nil {
