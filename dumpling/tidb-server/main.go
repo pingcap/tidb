@@ -34,7 +34,7 @@ var (
 	store     = flag.String("store", "goleveldb", "registered store name, [hbase, memory, goleveldb, boltdb]")
 	storePath = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel  = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
-	logTxn    = flag.String("LTxn", "true", "log transaction: true/false")
+	logTxn    = flag.Bool("log_txn", true, "log transaction: true/false")
 	port      = flag.String("P", "4000", "mp server port")
 	lease     = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 )
@@ -56,9 +56,7 @@ func main() {
 		Addr:     fmt.Sprintf(":%s", *port),
 		LogLevel: *logLevel,
 	}
-	if *logTxn != "true" {
-		kv.LogTxn = false
-	}
+	kv.LogTxn = *logTxn
 
 	log.SetLevelByString(cfg.LogLevel)
 	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
