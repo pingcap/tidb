@@ -173,14 +173,14 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	c.Assert(rs, NotNil)
 	row, err := rs.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, id, "abc", nil)
+	match(c, row, id, []byte("abc"), nil)
 
 	mustExecSQL(c, se, "update t set name = 'abc', status = 1 where id = ?", id)
 	rs = mustExecSQL(c, se2, "select * from t")
 	c.Assert(rs, NotNil)
 	row, err = rs.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, id, "abc", 1)
+	match(c, row, id, []byte("abc"), 1)
 	// Check for pass bool param to tidb prepared statement
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (id tiny)")
@@ -552,7 +552,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	r = mustExecSQL(c, se, `select * from t where c like 'pingcap ''-->'' tidb'`)
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, `pingcap '-->' tidb`)
+	match(c, row, []byte(`pingcap '-->' tidb`))
 
 	mustExecSQL(c, se, "drop table if exists t1")
 	mustExecSQL(c, se, "drop table if exists t2")
@@ -675,6 +675,12 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, HasLen, 2)
 	c.Assert(row[0], Equals, "t")
+
+	r = mustExecSQL(c, se, "show databases like 'test'")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 1)
+	c.Assert(row[0], Equals, "test")
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
@@ -726,7 +732,7 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth("root@anyhost", []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
@@ -795,7 +801,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
-	match(c, row.Data, "%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, row.Data, []byte("%"), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -812,7 +818,7 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0], Equals, "True")
+	c.Assert(row.Data[0], BytesEquals, []byte("True"))
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
@@ -978,6 +984,12 @@ func (s *testSessionSuite) TestOrderBy(c *C) {
 	mustExecMatch(c, se, "select c1 as c2 from t order by c2", [][]interface{}{{1}, {2}})
 	mustExecMatch(c, se, "select sum(c1) from t order by sum(c1)", [][]interface{}{{3}})
 	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{2}, {1}})
+
+	// Order by position
+	mustExecMatch(c, se, "select * from t order by 1", [][]interface{}{{1, 2}, {2, 1}})
+	mustExecMatch(c, se, "select * from t order by 2", [][]interface{}{{2, 1}, {1, 2}})
+	mustExecFailed(c, se, "select * from t order by 0")
+	mustExecFailed(c, se, "select * from t order by 3")
 
 	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
 
@@ -1357,21 +1369,45 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 }
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
+
+	varName := "max_allowed_packet"
+	varValue := "4194304" // This is the default value for max_allowed_packet
+	varValue1 := "4194305"
+	varValue2 := "4194306"
+
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName).(*session)
+	// Get globalSysVar twice and get the same value
+	v, err := se.GetGlobalSysVar(se, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue)
+	v, err = se.GetGlobalSysVar(se, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue)
+	// Set global var to another value
+	err = se.SetGlobalSysVar(se, varName, varValue1)
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(se, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue1)
+	c.Assert(se.FinishTxn(false), IsNil)
 
-	v, err := se.GetGlobalSysVar(se, "max_allowed_packet")
+	// Change global variable value in another session
+	se1 := newSession(c, store, s.dbName).(*session)
+	v, err = se1.GetGlobalSysVar(se1, varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "4194304")
-	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
+	c.Assert(v, Equals, varValue1)
+	err = se1.SetGlobalSysVar(se1, varName, varValue2)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "4194304")
+	v, err = se1.GetGlobalSysVar(se1, varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, varValue2)
+	c.Assert(se1.FinishTxn(false), IsNil)
 
-	err = se.SetGlobalSysVar(se, "max_allowed_packet", "4194305")
+	// Make sure the change is visible to any client that accesses that global variable.
+	v, err = se.GetGlobalSysVar(se, varName)
 	c.Assert(err, IsNil)
-	v, err = se.GetGlobalSysVar(se, "max_allowed_packet")
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "4194305")
+	c.Assert(v, Equals, varValue2)
 }
 
 func checkPlan(c *C, se Session, sql, explain string) {

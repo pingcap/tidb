@@ -315,6 +315,7 @@ compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
 connection	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}
+connection_id	{c}{o}{n}{n}{e}{c}{t}{i}{o}{n}_{i}{d}
 constraint	{c}{o}{n}{s}{t}{r}{a}{i}{n}{t}
 convert		{c}{o}{n}{v}{e}{r}{t}
 count		{c}{o}{u}{n}{t}
@@ -441,6 +442,7 @@ some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
+substr		{s}{u}{b}{s}{t}{r}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
 sum		{s}{u}{m}
@@ -678,6 +680,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return concatWs
 {connection}		lval.item = string(l.val)
 			return connection
+{connection_id}		lval.item = string(l.val)
+			return connectionID
 {constraint}		return constraint
 {convert}		return convert
 {count}			lval.item = string(l.val)
@@ -876,7 +880,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {rand}			lval.item = string(l.val)
 			return rand
 {read}			return read
-{repeat}		return repeat
+{repeat}		lval.item = string(l.val)
+			return repeat
 {repeatable}		lval.item = string(l.val)
 			return repeatable
 {regexp}		return regexp
@@ -900,6 +905,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {share}			return share
 {show}			return show
 {subdate}		return subDate
+{substr}		lval.item = string(l.val)
+			return substring
 {substring}		lval.item = string(l.val)
 			return substring
 {substring_index}	lval.item = string(l.val)

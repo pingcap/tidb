@@ -23,7 +23,7 @@ import (
 const (
 	nilFlag byte = iota
 	bytesFlag
-	stringFlag
+	compactBytesFlag
 	intFlag
 	uintFlag
 	floatFlag
@@ -31,12 +31,9 @@ const (
 	durationFlag
 )
 
-// EncodeKey encodes args to a slice which can be sorted lexicographically later.
-// EncodeKey guarantees the encoded slice is in ascending order for comparison.
-func EncodeKey(args ...interface{}) ([]byte, error) {
-	var b []byte
-	for _, arg := range args {
-		switch v := arg.(type) {
+func encode(b []byte, vals []interface{}, comparable bool) ([]byte, error) {
+	for _, val := range vals {
+		switch v := val.(type) {
 		case bool:
 			b = append(b, intFlag)
 			if v {
@@ -81,14 +78,11 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(v))
 		case string:
-			b = append(b, stringFlag)
-			b = EncodeBytes(b, []byte(v))
+			b = encodeBytes(b, []byte(v), comparable)
 		case []byte:
-			b = append(b, bytesFlag)
-			b = EncodeBytes(b, v)
+			b = encodeBytes(b, v, comparable)
 		case mysql.Time:
-			b = append(b, stringFlag)
-			b = EncodeBytes(b, []byte(v.String()))
+			b = encodeBytes(b, []byte(v.String()), comparable)
 		case mysql.Duration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
@@ -111,15 +105,39 @@ func EncodeKey(args ...interface{}) ([]byte, error) {
 		case nil:
 			b = append(b, nilFlag)
 		default:
-			return nil, errors.Errorf("unsupport encode type %T", arg)
+			return nil, errors.Errorf("unsupport encode type %T", val)
 		}
 	}
 
 	return b, nil
 }
 
-// DecodeKey decodes values from a byte slice generated with EncodeKey before.
-func DecodeKey(b []byte) ([]interface{}, error) {
+func encodeBytes(b []byte, v []byte, comparable bool) []byte {
+	if comparable {
+		b = append(b, bytesFlag)
+		b = EncodeBytes(b, v)
+	} else {
+		b = append(b, compactBytesFlag)
+		b = EncodeCompactBytes(b, v)
+	}
+	return b
+}
+
+// EncodeKey appends the encoded values to byte slice b, returns the appended
+// slice. It guarantees the encoded value is in ascending order for comparison.
+func EncodeKey(b []byte, v ...interface{}) ([]byte, error) {
+	return encode(b, v, true)
+}
+
+// EncodeValue appends the encoded values to byte slice b, returning the appended
+// slice. It does not guarantee the order for comparison.
+func EncodeValue(b []byte, v ...interface{}) ([]byte, error) {
+	return encode(b, v, false)
+}
+
+// Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
+// before.
+func Decode(b []byte) ([]interface{}, error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
@@ -143,12 +161,8 @@ func DecodeKey(b []byte) ([]interface{}, error) {
 			b, v, err = DecodeFloat(b)
 		case bytesFlag:
 			b, v, err = DecodeBytes(b)
-		case stringFlag:
-			var r []byte
-			b, r, err = DecodeBytes(b)
-			if err == nil {
-				v = string(r)
-			}
+		case compactBytesFlag:
+			b, v, err = DecodeCompactBytes(b)
 		case decimalFlag:
 			b, v, err = DecodeDecimal(b)
 		case durationFlag:

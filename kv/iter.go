@@ -13,10 +13,7 @@
 
 package kv
 
-import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/util/codec"
-)
+import "github.com/juju/errors"
 
 var (
 	// ErrClosed is used when close an already closed txn.
@@ -39,30 +36,6 @@ var (
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
 	ErrInvalidTxn = errors.New("invalid transaction")
 )
-
-var (
-	codecEncoder = &encoder{
-		codec.EncodeKey,
-		codec.DecodeKey,
-	}
-
-	defaultEncoder = codecEncoder
-)
-
-type encoder struct {
-	enc func(...interface{}) ([]byte, error)
-	dec func([]byte) ([]interface{}, error)
-}
-
-// EncodeValue encodes values before it is stored to the KV store.
-func EncodeValue(values ...interface{}) ([]byte, error) {
-	return defaultEncoder.enc(values...)
-}
-
-// DecodeValue decodes values after it is fetched from the KV store.
-func DecodeValue(data []byte) ([]interface{}, error) {
-	return defaultEncoder.dec(data)
-}
 
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
 // It will stop when fn returns true, or iterator is invalid or occur error

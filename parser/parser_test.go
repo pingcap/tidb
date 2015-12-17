@@ -37,7 +37,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"date", "datetime", "deallocate", "do", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "text", "time", "timestamp", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substring", "mode", "any", "some", "user", "identified",
+		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
@@ -261,6 +261,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{`SHOW COLUMNS FROM City;`, true},
 		{`SHOW FIELDS FROM City;`, true},
 		{`SHOW TRIGGERS LIKE 't'`, true},
+		{"SHOW DATABASES LIKE 'test2'", true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
@@ -332,6 +333,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
 
+		{"SELECT SUBSTR('Quadratically',5);", true},
+		{"SELECT SUBSTR('Quadratically',5, 3);", true},
+		{"SELECT SUBSTR('Quadratically' FROM 5);", true},
+		{"SELECT SUBSTR('Quadratically' FROM 5 FOR 3);", true},
+
 		{"SELECT SUBSTRING('Quadratically',5);", true},
 		{"SELECT SUBSTRING('Quadratically',5, 3);", true},
 		{"SELECT SUBSTRING('Quadratically' FROM 5);", true},
@@ -339,10 +345,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{"SELECT CONVERT('111', SIGNED);", true},
 
+		// Information Functions
 		{"SELECT DATABASE();", true},
 		{"SELECT USER();", true},
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
+		{"SELECT CONNECTION_ID();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
@@ -411,11 +419,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// For issue 224
 		{`SELECT CAST('test collated returns' AS CHAR CHARACTER SET utf8) COLLATE utf8_bin;`, true},
 
-		// For trim
+		// For string functions
+		// Trim
 		{`SELECT TRIM('  bar   ');`, true},
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
+		// Repeat
+		{`SELECT REPEAT("a", 10);`, true},
 
 		// For date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true},
