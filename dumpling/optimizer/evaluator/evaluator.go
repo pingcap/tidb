@@ -540,12 +540,8 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 	for i, arg := range v.Args {
 		a[i] = arg.GetValue()
 	}
-	var argMap map[interface{}]interface{}
-	switch v.FnName.L {
-	case "current_user", "database", "found_rows", "user":
-		argMap = make(map[interface{}]interface{})
-		argMap[builtin.ExprEvalArgCtx] = e.ctx
-	}
+	argMap := make(map[interface{}]interface{})
+	argMap[builtin.ExprEvalArgCtx] = e.ctx
 	val, err := f.F(a, argMap)
 	if err != nil {
 		e.err = errors.Trace(err)

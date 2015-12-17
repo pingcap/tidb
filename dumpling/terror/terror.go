@@ -32,6 +32,8 @@ var (
 
 	UnknownStatusVar = ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
 	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
+
+	MissConnectionID = ClassExpression.New(CodeMissConnectionID, "miss connection id information")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -63,6 +65,11 @@ const (
 	CodeUnknownSystemVar
 )
 
+// Expression error codes.
+const (
+	CodeMissConnectionID ErrCode = iota + 1
+)
+
 // ErrClass represents a class of errors.
 type ErrClass int
 
@@ -77,6 +84,7 @@ const (
 	ClassKV
 	ClassServer
 	ClassVariable
+	ClassExpression
 	// Add more as needed.
 )
 
@@ -95,6 +103,8 @@ func (ec ErrClass) String() string {
 		return "kv"
 	case ClassServer:
 		return "server"
+	case ClassExpression:
+		return "expression"
 	}
 	return strconv.Itoa(int(ec))
 }

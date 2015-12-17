@@ -538,8 +538,26 @@ func (s *ShowPlan) fetchShowDatabases(ctx context.Context) error {
 
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
-
+	m := map[interface{}]interface{}{}
 	for _, d := range dbs {
+		if s.Pattern != nil {
+			s.Pattern.Expr = expression.Value{Val: d}
+		} else if s.Where != nil {
+			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				if strings.EqualFold(name, "Database") {
+					return d, nil
+				}
+
+				return nil, errors.Errorf("unknown field %s", name)
+			}
+		}
+		match, err := s.evalCondition(ctx, m)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !match {
+			continue
+		}
 		s.rows = append(s.rows, &plan.Row{Data: []interface{}{d}})
 	}
 	return nil

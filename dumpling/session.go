@@ -29,6 +29,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -317,15 +318,6 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
-	sessionVars := variable.GetSessionVars(ctx)
-	// We should check cache first.
-	// See: https://dev.mysql.com/doc/refman/5.7/en/using-system-variables.html
-	// The global variable change does not affect the session variable for any client that is currently connected.
-	// We do not want to load all variable values at session start time for performance issue. So we do lazy init here.
-	v, ok := sessionVars.Systems[name]
-	if ok {
-		return v, nil
-	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(ctx, sql)
@@ -335,7 +327,6 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 		}
 		return "", errors.Trace(err)
 	}
-	sessionVars.Systems[name] = sysVar
 	return sysVar, nil
 }
 
@@ -344,8 +335,6 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	sql := fmt.Sprintf(`UPDATE  %s.%s SET VARIABLE_VALUE="%s" WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, value, strings.ToLower(name))
 	_, err := s.ExecRestrictedSQL(ctx, sql)
-	sessionVars := variable.GetSessionVars(ctx)
-	sessionVars.Systems[name] = value
 	return errors.Trace(err)
 }
 
@@ -590,6 +579,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
+
+	// set connection id
+	s.SetValue(builtin.ConnectionIDKey, s.sid)
 
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	variable.BindGlobalVarAccessor(s, s)

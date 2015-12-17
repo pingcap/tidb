@@ -301,11 +301,12 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 			break
 		}
 		// DB
-		db, ok := row.Data[1].(string)
+		db, ok := row.Data[1].([]byte)
 		if !ok {
-			errors.New("This should be never happened!")
+			return errors.New("This should be never happened!")
 		}
-		ps[db] = &privileges{Level: coldef.GrantLevelDB}
+		dbStr := string(db)
+		ps[dbStr] = &privileges{Level: coldef.GrantLevelDB}
 		for i := dbTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			ed, ok := d.(mysql.Enum)
@@ -320,7 +321,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 			if !ok {
 				return errors.New("Unknown Privilege Type!")
 			}
-			ps[db].add(p)
+			ps[dbStr].add(p)
 		}
 	}
 	p.privs.DBPrivs = ps
@@ -345,20 +346,22 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 			break
 		}
 		// DB
-		db, ok := row.Data[1].(string)
+		db, ok := row.Data[1].([]byte)
 		if !ok {
 			return errors.New("This should be never happened!")
 		}
+		dbStr := string(db)
 		// Table_name
-		tbl, ok := row.Data[3].(string)
+		tbl, ok := row.Data[3].([]byte)
 		if !ok {
 			return errors.New("This should be never happened!")
 		}
-		_, ok = ps[db]
+		tblStr := string(tbl)
+		_, ok = ps[dbStr]
 		if !ok {
-			ps[db] = make(map[string]*privileges)
+			ps[dbStr] = make(map[string]*privileges)
 		}
-		ps[db][tbl] = &privileges{Level: coldef.GrantLevelTable}
+		ps[dbStr][tblStr] = &privileges{Level: coldef.GrantLevelTable}
 		// Table_priv
 		tblPrivs, ok := row.Data[6].(mysql.Set)
 		if !ok {
@@ -370,7 +373,7 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 			if !ok {
 				return errors.New("Unknown Privilege Type!")
 			}
-			ps[db][tbl].add(p)
+			ps[dbStr][tblStr].add(p)
 		}
 	}
 	p.privs.TablePrivs = ps

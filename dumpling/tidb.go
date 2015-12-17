@@ -313,7 +313,7 @@ func newStoreWithRetry(uri string, maxRetries int) (kv.Storage, error) {
 
 	d, ok := stores[name]
 	if !ok {
-		return nil, errors.Errorf("invalid uri foramt, storage %s is not registered", name)
+		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
 	var err error

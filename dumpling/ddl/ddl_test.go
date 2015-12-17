@@ -153,7 +153,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 3)
 	c.Assert(cols[0], Equals, nil)
-	c.Assert(cols[1], Equals, "abc")
+	c.Assert(cols[1], BytesEquals, []byte("abc"))
 	c.Assert(cols[2], Equals, int64(2))
 	rid3, err := tb.AddRecord(ctx, []interface{}{mysql.Enum{Name: "bb", Value: 1}, "c", 3}, 0)
 	c.Assert(err, IsNil)
@@ -161,7 +161,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 3)
 	c.Assert(cols[0], Equals, mysql.Enum{Name: "bb", Value: 1})
-	c.Assert(cols[1], Equals, "c")
+	c.Assert(cols[1], BytesEquals, []byte("c"))
 	c.Assert(cols[2], Equals, int64(3))
 
 	// Test add column after a not exist column, get an error.
@@ -187,7 +187,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	cols, err = tb.Row(ctx, rid0)
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
-	c.Assert(cols[0], Equals, "abc")
+	c.Assert(cols[0], BytesEquals, []byte("abc"))
 	c.Assert(cols[1], Equals, int64(1))
 
 	// Test drop a not exist column from table, get an error.

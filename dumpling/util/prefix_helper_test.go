@@ -120,12 +120,14 @@ func (c *MockContext) FinishTxn(rollback bool) error {
 func (s *testPrefixSuite) TestPrefix(c *C) {
 	ctx := &MockContext{10000000, make(map[fmt.Stringer]interface{}), s.s, nil}
 	ctx.fillTxn()
-	err := DelKeyWithPrefix(ctx, string(encodeInt(ctx.prefix)))
+	txn, err := ctx.GetTxn(false)
+	c.Assert(err, IsNil)
+	err = DelKeyWithPrefix(txn, string(encodeInt(ctx.prefix)))
 	c.Assert(err, IsNil)
 	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
 
-	txn, err := s.s.Begin()
+	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	str := "key100jfowi878230"
 	err = txn.Set([]byte(str), []byte("val32dfaskli384757^*&%^"))

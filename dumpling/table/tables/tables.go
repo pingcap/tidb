@@ -208,7 +208,7 @@ func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error)
 	case mysql.TypeDuration:
 		return mysql.Duration{Duration: time.Duration(rec.(int64)), Fsp: col.Decimal}, nil
 	case mysql.TypeNewDecimal, mysql.TypeDecimal:
-		return mysql.ParseDecimal(rec.(string))
+		return mysql.ParseDecimal(string(rec.([]byte)))
 	case mysql.TypeEnum:
 		return mysql.ParseEnumValue(col.Elems, rec.(uint64))
 	case mysql.TypeSet:
@@ -282,12 +282,12 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 }
 
 // Truncate implements table.Table Truncate interface.
-func (t *Table) Truncate(ctx context.Context) error {
-	err := util.DelKeyWithPrefix(ctx, t.KeyPrefix())
+func (t *Table) Truncate(rm kv.RetrieverMutator) error {
+	err := util.DelKeyWithPrefix(rm, t.KeyPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return util.DelKeyWithPrefix(ctx, t.IndexPrefix())
+	return util.DelKeyWithPrefix(rm, t.IndexPrefix())
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -489,12 +489,13 @@ func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return kv.EncodeValue(v)
+	b, err := codec.EncodeValue(nil, v)
+	return b, errors.Trace(err)
 }
 
 // DecodeValue implements table.Table DecodeValue interface.
 func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	values, err := kv.DecodeValue(data)
+	values, err := codec.Decode(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
