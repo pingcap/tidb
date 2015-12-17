@@ -1,3 +1,16 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -56,6 +69,7 @@ type Prepared struct {
 	SchemaVersion int64
 }
 
+// PrepareExec represents a PREPARE executor.
 type PrepareExec struct {
 	IS      infoschema.InfoSchema
 	Ctx     context.Context
@@ -68,16 +82,19 @@ type PrepareExec struct {
 	Err          error
 }
 
+// Fields implements Executor Fields interface.
 func (e *PrepareExec) Fields() []*ast.ResultField {
 	// returns nil to indicate prepare will not return Recordset.
 	return nil
 }
 
+// Next implements Executor Next interface.
 func (e *PrepareExec) Next() (*Row, error) {
 	e.DoPrepare()
 	return nil, e.Err
 }
 
+// Close implements plan.Plan Close interface.
 func (e *PrepareExec) Close() error {
 	return nil
 }
@@ -134,6 +151,8 @@ func (e *PrepareExec) DoPrepare() {
 	vars.PreparedStmts[e.ID] = prepared
 }
 
+// ExecuteExec represents an EXECUTE executor.
+// it executes a prepared statement.
 type ExecuteExec struct {
 	IS        infoschema.InfoSchema
 	Ctx       context.Context
@@ -144,21 +163,25 @@ type ExecuteExec struct {
 	OldStmt   stmt.Statement
 }
 
+// Fields implements Executor Fields interface.
 func (e *ExecuteExec) Fields() []*ast.ResultField {
 	// Will never be called.
 	return nil
 }
 
+// Next implements Executor Next interface.
 func (e *ExecuteExec) Next() (*Row, error) {
 	// Will never be called.
 	return nil, nil
 }
 
+// Close implements plan.Plan Close interface.
 func (e *ExecuteExec) Close() error {
 	// Will never be called.
 	return nil
 }
 
+// Build builds a prepared statement into an executor.
 func (e *ExecuteExec) Build() error {
 	vars := variable.GetSessionVars(e.Ctx)
 	if e.Name != "" {
@@ -169,15 +192,7 @@ func (e *ExecuteExec) Build() error {
 		return ErrStmtNotFound
 	}
 	prepared := v.(*Prepared)
-	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
-		// If the schema version has changed we need to prepare it again,
-		// if this time it failed, the real reason for the error is schema changed.
-		err := optimizer.Prepare(e.IS, e.Ctx, prepared.Stmt)
-		if err != nil {
-			return ErrSchemaChanged
-		}
-		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
-	}
+
 	if len(prepared.Params) != len(e.UsingVars) {
 		return ErrWrongParamCount
 	}
@@ -191,6 +206,15 @@ func (e *ExecuteExec) Build() error {
 	}
 
 	if optimizer.IsSupported(prepared.Stmt) {
+		if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
+			// If the schema version has changed we need to prepare it again,
+			// if this time it failed, the real reason for the error is schema changed.
+			err := optimizer.Prepare(e.IS, e.Ctx, prepared.Stmt)
+			if err != nil {
+				return ErrSchemaChanged.Gen("Schema change casued error: %s", err.Error())
+			}
+			prepared.SchemaVersion = e.IS.SchemaMetaVersion()
+		}
 		plan, err := optimizer.Optimize(e.Ctx, prepared.Stmt)
 		if err != nil {
 			return errors.Trace(err)
@@ -212,15 +236,18 @@ func (e *ExecuteExec) Build() error {
 	return nil
 }
 
+// DeallocateExec represent a DEALLOCATE executor.
 type DeallocateExec struct {
 	Name string
 	ctx  context.Context
 }
 
+// Fields implements Executor Fields interface.
 func (e *DeallocateExec) Fields() []*ast.ResultField {
 	return nil
 }
 
+// Next implements Executor Next interface.
 func (e *DeallocateExec) Next() (*Row, error) {
 	vars := variable.GetSessionVars(e.ctx)
 	id, ok := vars.PreparedStmtNameToID[e.Name]
@@ -232,6 +259,7 @@ func (e *DeallocateExec) Next() (*Row, error) {
 	return nil, nil
 }
 
+// Close implements plan.Plan Close interface.
 func (e *DeallocateExec) Close() error {
 	return nil
 }
@@ -251,6 +279,7 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 	return charset, collation
 }
 
+// CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) stmt.Statement {
 	execPlan := &plan.Execute{ID: ID}
 	execPlan.UsingVars = make([]ast.ExprNode, len(args))
