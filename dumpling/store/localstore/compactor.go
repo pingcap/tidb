@@ -33,7 +33,7 @@ const (
 
 var localCompactDefaultPolicy = kv.CompactPolicy{
 	SafePoint:       20 * 1000, // in ms
-	TriggerInterval: 1 * time.Second,
+	TriggerInterval: 10 * time.Second,
 	BatchDeleteCnt:  100,
 }
 
@@ -100,6 +100,7 @@ func (gc *localstoreCompactor) deleteWorker() {
 			batch.Delete(key)
 			// Batch delete.
 			if cnt == gc.policy.BatchDeleteCnt {
+				log.Debugf("GC delete commit %d keys", batch.Len())
 				err := gc.db.Commit(batch)
 				if err != nil {
 					log.Error(err)
@@ -116,7 +117,7 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 	for {
 		select {
 		case <-gc.stopCh:
-			log.Info("GC stopped")
+			log.Debug("GC stopped")
 			return
 		case <-gc.ticker.C:
 			gc.mu.Lock()
@@ -127,7 +128,6 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 			}
 			gc.recentKeys = make(map[string]struct{})
 			gc.mu.Unlock()
-			log.Info("GC trigger")
 			for k := range m {
 				err := gc.Compact([]byte(k))
 				if err != nil {
@@ -168,9 +168,9 @@ func (gc *localstoreCompactor) Compact(k kv.Key) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, key := range gc.filterExpiredKeys(keys) {
-		// Send timeout key to deleteWorker.
-		log.Info("GC send key to deleteWorker", key)
+	filteredKeys := gc.filterExpiredKeys(keys)
+	log.Debugf("GC send %d keys to delete worker", len(filteredKeys))
+	for _, key := range filteredKeys {
 		gc.delCh <- key
 	}
 	return nil
