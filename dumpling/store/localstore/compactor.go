@@ -112,7 +112,6 @@ func (gc *localstoreCompactor) deleteWorker() {
 }
 
 func (gc *localstoreCompactor) checkExpiredKeysWorker() {
-	gc.workerWaitGroup.Add(1)
 	defer gc.workerWaitGroup.Done()
 	for {
 		select {
@@ -184,6 +183,7 @@ func (gc *localstoreCompactor) Start() {
 		go gc.deleteWorker()
 	}
 
+	gc.workerWaitGroup.Add(1)
 	go gc.checkExpiredKeysWorker()
 }
 
