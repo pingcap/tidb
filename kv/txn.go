@@ -96,3 +96,8 @@ func BackOff(attempts int) int {
 	time.Sleep(sleep)
 	return int(sleep)
 }
+
+// LogTxn is a switch for toggle debug level log for transaction.
+var (
+	LogTxn = true
+)
