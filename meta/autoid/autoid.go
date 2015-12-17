@@ -68,9 +68,7 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	}
 
 	alloc.base++
-	if kv.LogTxn {
-		log.Debugf("Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
-	}
+	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
 	return alloc.base, nil
 }
 

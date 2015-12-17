@@ -50,9 +50,7 @@ func (txn *dbTxn) markOrigin(k []byte) {
 // Implement transaction interface
 
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
-	if kv.LogTxn {
-		log.Debugf("get key:%q, txn:%d", k, txn.tid)
-	}
+	log.Debugf("[kv] get key:%q, txn:%d", k, txn.tid)
 	val, err := txn.UnionStore.Get(k)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -62,9 +60,7 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
-	if kv.LogTxn {
-		log.Debugf("set key:%q, txn:%d", k, txn.tid)
-	}
+	log.Debugf("[kv] set key:%q, txn:%d", k, txn.tid)
 	err := txn.UnionStore.Set(k, data)
 	if err != nil {
 		return errors.Trace(err)
@@ -75,9 +71,7 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 }
 
 func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
-	if kv.LogTxn {
-		log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
-	}
+	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
 
 	txn.markOrigin(k)
 	val, err := txn.UnionStore.Inc(k, step)
@@ -89,9 +83,7 @@ func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 }
 
 func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
-	if kv.LogTxn {
-		log.Debugf("GetInt64 %q, txn:%d", k, txn.tid)
-	}
+	log.Debugf("[kv] GetInt64 %q, txn:%d", k, txn.tid)
 	val, err := txn.UnionStore.GetInt64(k)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -105,9 +97,7 @@ func (txn *dbTxn) String() string {
 }
 
 func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
-	if kv.LogTxn {
-		log.Debugf("seek key:%q, txn:%d", k, txn.tid)
-	}
+	log.Debugf("[kv] seek key:%q, txn:%d", k, txn.tid)
 	iter, err := txn.UnionStore.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -120,9 +110,7 @@ func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
-	if kv.LogTxn {
-		log.Debugf("delete key:%q, txn:%d", k, txn.tid)
-	}
+	log.Debugf("[kv] delete key:%q, txn:%d", k, txn.tid)
 	err := txn.UnionStore.Delete(k)
 	if err != nil {
 		return errors.Trace(err)
@@ -189,9 +177,7 @@ func (txn *dbTxn) Commit() error {
 	if !txn.valid {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
-	if kv.LogTxn {
-		log.Debugf("commit txn %d", txn.tid)
-	}
+	log.Debugf("[kv] commit txn %d", txn.tid)
 	defer func() {
 		txn.close()
 	}()
@@ -218,7 +204,7 @@ func (txn *dbTxn) Rollback() error {
 	if !txn.valid {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
-	log.Warnf("Rollback txn %d", txn.tid)
+	log.Warnf("[kv] Rollback txn %d", txn.tid)
 	return txn.close()
 }
 

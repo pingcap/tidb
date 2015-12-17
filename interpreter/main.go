@@ -27,14 +27,12 @@ import (
 	"github.com/ngaut/log"
 	"github.com/peterh/liner"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
 	logLevel = flag.String("L", "error", "log level")
-	logTxn   = flag.Bool("log_txn", true, "true/false, log transaction debug level message")
 	store    = flag.String("store", "goleveldb", "the name for the registered storage, e.g. hbase, memory, goleveldb, boltdb")
 	dbPath   = flag.String("dbpath", "test", "db path")
 	dbName   = flag.String("dbname", "test", "default db name")
@@ -169,7 +167,6 @@ func main() {
 
 	flag.Parse()
 	log.SetLevelByString(*logLevel)
-	kv.LogTxn = *logTxn
 	// support for signal notify
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
