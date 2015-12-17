@@ -123,7 +123,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 
 func mergeArithType(a, b byte) byte {
 	switch a {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble:
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeFloat:
 		return mysql.TypeDouble
 	}
 	switch b {
