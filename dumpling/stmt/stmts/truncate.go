@@ -18,6 +18,7 @@
 package stmts
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/stmt"
@@ -61,5 +62,9 @@ func (s *TruncateTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	if err != nil {
 		return nil, err
 	}
-	return nil, t.Truncate(ctx)
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return nil, t.Truncate(txn)
 }

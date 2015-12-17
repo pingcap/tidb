@@ -22,13 +22,12 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 )
 
 // ScanMetaWithPrefix scans metadata with the prefix.
-func ScanMetaWithPrefix(txn kv.Transaction, prefix string, filter func([]byte, []byte) bool) error {
-	iter, err := txn.Seek([]byte(prefix))
+func ScanMetaWithPrefix(retriever kv.Retriever, prefix string, filter func([]byte, []byte) bool) error {
+	iter, err := retriever.Seek([]byte(prefix))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -56,14 +55,9 @@ func ScanMetaWithPrefix(txn kv.Transaction, prefix string, filter func([]byte, [
 }
 
 // DelKeyWithPrefix deletes keys with prefix.
-func DelKeyWithPrefix(ctx context.Context, prefix string) error {
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
+func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix string) error {
 	var keys []string
-	iter, err := txn.Seek([]byte(prefix))
+	iter, err := rm.Seek([]byte(prefix))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -86,7 +80,7 @@ func DelKeyWithPrefix(ctx context.Context, prefix string) error {
 	}
 
 	for _, key := range keys {
-		err := txn.Delete([]byte(key))
+		err := rm.Delete([]byte(key))
 		if err != nil {
 			return errors.Trace(err)
 		}
