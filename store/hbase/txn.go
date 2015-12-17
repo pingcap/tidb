@@ -190,9 +190,7 @@ func (txn *hbaseTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	if kv.LogTxn {
-		log.Warnf("Rollback txn %d", txn.tid)
-	}
+	log.Warnf("Rollback txn %d", txn.tid)
 	return txn.close()
 }
 

@@ -190,7 +190,7 @@ func (txn *dbTxn) Commit() error {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
 	if kv.LogTxn {
-		log.Infof("commit txn %d", txn.tid)
+		log.Debugf("commit txn %d", txn.tid)
 	}
 	defer func() {
 		txn.close()
@@ -218,9 +218,7 @@ func (txn *dbTxn) Rollback() error {
 	if !txn.valid {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
-	if kv.LogTxn {
-		log.Warnf("Rollback txn %d", txn.tid)
-	}
+	log.Warnf("Rollback txn %d", txn.tid)
 	return txn.close()
 }
 
