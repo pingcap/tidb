@@ -107,7 +107,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 			x.Type = types.NewFieldType(xTp)
 			leftUnsigned := x.L.GetType().Flag & mysql.UnsignedFlag
 			rightUnsigned := x.R.GetType().Flag & mysql.UnsignedFlag
-			// If both operand is unsigned, result is unsigned.
+			// If both operands are unsigned, result is unsigned.
 			x.Type.Flag |= (leftUnsigned & rightUnsigned)
 		}
 	case opcode.Div:
