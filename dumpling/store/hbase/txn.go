@@ -65,22 +65,30 @@ func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
 // Implement transaction interface
 
 func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
-	log.Debugf("get key:%q, txn:%d", k, txn.tid)
+	if kv.LogTxn {
+		log.Debugf("get key:%q, txn:%d", k, txn.tid)
+	}
 	return txn.UnionStore.Get(k)
 }
 
 func (txn *hbaseTxn) Set(k kv.Key, v []byte) error {
-	log.Debugf("seek %q txn:%d", k, txn.tid)
+	if kv.LogTxn {
+		log.Debugf("seek %q txn:%d", k, txn.tid)
+	}
 	return txn.UnionStore.Set(k, v)
 }
 
 func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
-	log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
+	if kv.LogTxn {
+		log.Debugf("Inc %q, step %d txn:%d", k, step, txn.tid)
+	}
 	return txn.UnionStore.Inc(k, step)
 }
 
 func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
-	log.Debugf("GetInt64 %q, txn:%d", k, txn.tid)
+	if kv.LogTxn {
+		log.Debugf("GetInt64 %q, txn:%d", k, txn.tid)
+	}
 	return txn.UnionStore.GetInt64(k)
 }
 
@@ -89,7 +97,9 @@ func (txn *hbaseTxn) String() string {
 }
 
 func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
-	log.Debugf("seek %q txn:%d", k, txn.tid)
+	if kv.LogTxn {
+		log.Debugf("seek %q txn:%d", k, txn.tid)
+	}
 	iter, err := txn.UnionStore.Seek(k)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -98,7 +108,9 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 }
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
-	log.Debugf("delete %q txn:%d", k, txn.tid)
+	if kv.LogTxn {
+		log.Debugf("delete %q txn:%d", k, txn.tid)
+	}
 	err := txn.UnionStore.Delete(k)
 	if err != nil {
 		return errors.Trace(err)
@@ -140,7 +152,9 @@ func (txn *hbaseTxn) doCommit() error {
 	}
 
 	txn.version = kv.NewVersion(txn.txn.GetCommitTS())
-	log.Debugf("commit successfully, txn.version:%d", txn.version.Ver)
+	if kv.LogTxn {
+		log.Debugf("commit successfully, txn.version:%d", txn.version.Ver)
+	}
 	return nil
 }
 
@@ -148,7 +162,9 @@ func (txn *hbaseTxn) Commit() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	log.Debugf("start to commit txn %d", txn.tid)
+	if kv.LogTxn {
+		log.Debugf("start to commit txn %d", txn.tid)
+	}
 	defer func() {
 		txn.close()
 	}()
@@ -174,7 +190,9 @@ func (txn *hbaseTxn) Rollback() error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	log.Warnf("Rollback txn %d", txn.tid)
+	if kv.LogTxn {
+		log.Warnf("Rollback txn %d", txn.tid)
+	}
 	return txn.close()
 }
 
