@@ -217,17 +217,21 @@ func (e *Error) getMySQLErrorCode() uint16 {
 	return code
 }
 
-var parserMySQLErrCodes = map[ErrCode]uint16{}
-var schemaMySQLErrCodes = map[ErrCode]uint16{}
-var optimizerMySQLErrCodes = map[ErrCode]uint16{}
-var executorMySQLErrCodes = map[ErrCode]uint16{}
-var kvMySQLErrCodes = map[ErrCode]uint16{
-	CodeKeyExists: mysql.ErrDupEntry,
-}
-var serverMySQLErrCodes = map[ErrCode]uint16{}
-var expressionMySQLErrCodes = map[ErrCode]uint16{}
+var (
+	// ErrCode to mysql error code map.
+	parserMySQLErrCodes    = map[ErrCode]uint16{}
+	schemaMySQLErrCodes    = map[ErrCode]uint16{}
+	optimizerMySQLErrCodes = map[ErrCode]uint16{}
+	executorMySQLErrCodes  = map[ErrCode]uint16{}
+	kvMySQLErrCodes        = map[ErrCode]uint16{
+		CodeKeyExists: mysql.ErrDupEntry,
+	}
+	serverMySQLErrCodes     = map[ErrCode]uint16{}
+	expressionMySQLErrCodes = map[ErrCode]uint16{}
 
-var errClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
+	// ErrClass to code-map map.
+	errClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
+)
 
 func init() {
 	errClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
@@ -238,8 +242,7 @@ func init() {
 	errClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
 	errClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
 	errClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
-	defaultMySQLErrorCode = mysql.ErrDupEntry
-
+	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 
 // ErrorEqual returns a boolean indicating whether err1 is equal to err2.
