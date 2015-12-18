@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
@@ -121,14 +120,6 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 }
 
 func (txn *dbTxn) doCommit() error {
-	b := txn.store.newBatch()
-	keysLocked := make([]string, 0, len(txn.snapshotVals))
-	defer func() {
-		for _, key := range keysLocked {
-			txn.store.unLockKeys(key)
-		}
-	}()
-
 	// check lazy condition pairs
 	if err := txn.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
@@ -136,41 +127,7 @@ func (txn *dbTxn) doCommit() error {
 
 	txn.ReleaseSnapshot()
 
-	// Check locked keys
-	for k := range txn.snapshotVals {
-		err := txn.store.tryConditionLockKey(txn.tid, k)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		keysLocked = append(keysLocked, k)
-	}
-
-	// disable version provider temporarily
-	providerMu.Lock()
-	defer providerMu.Unlock()
-
-	curVer, err := globalVersionProvider.CurrentVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = txn.WalkBuffer(func(k kv.Key, v []byte) error {
-		metaKey := codec.EncodeBytes(nil, k)
-		// put dummy meta key, write current version
-		b.Put(metaKey, codec.EncodeUint(nil, curVer.Ver))
-		mvccKey := MvccEncodeVersionKey(k, curVer)
-		if len(v) == 0 { // Deleted marker
-			b.Put(mvccKey, nil)
-		} else {
-			b.Put(mvccKey, v)
-		}
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Update commit version.
-	txn.version = curVer
-	return txn.store.writeBatch(b)
+	return txn.store.CommitTxn(txn)
 }
 
 func (txn *dbTxn) Commit() error {
