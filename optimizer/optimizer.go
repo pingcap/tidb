@@ -58,7 +58,7 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 // The statement must be prepared before it can be passed to optimize function
 // We pass InfoSchema instead of get from Context in case it is changed after resolving name.
 func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	if err := validate(node); err != nil {
+	if err := Validate(node, true); err != nil {
 		return errors.Trace(err)
 	}
 	ast.SetFlag(node)

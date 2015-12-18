@@ -15,6 +15,7 @@ package optimizer
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
 )
@@ -37,9 +38,9 @@ var (
 	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
 )
 
-// validate checkes whether the node is valid.
-func validate(node ast.Node) error {
-	var v validator
+// Validate checkes whether the node is valid.
+func Validate(node ast.Node, inPrepare bool) error {
+	v := validator{inPrepare: inPrepare}
 	node.Accept(&v)
 	return v.err
 }
@@ -49,6 +50,7 @@ func validate(node ast.Node) error {
 type validator struct {
 	err           error
 	wildCardCount int
+	inPrepare     bool
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -75,6 +77,10 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkFieldList(x)
 	case *ast.ByItem:
 		v.checkAllOneColumn(x.Expr)
+	case *ast.ParamMarkerExpr:
+		if !v.inPrepare {
+			v.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
+		}
 	}
 	return in, v.err == nil
 }
