@@ -25,13 +25,23 @@ import (
 	"github.com/pingcap/tidb/util/bytes"
 )
 
-var _ kv.Compactor = (*localstoreCompactor)(nil)
-
 const (
 	deleteWorkerCnt = 3
 )
 
-var localCompactDefaultPolicy = kv.CompactPolicy{
+// compactPolicy defines gc policy of MVCC storage.
+type compactPolicy struct {
+	// SafePoint specifies
+	SafePoint int
+	// TriggerInterval specifies how often should the compactor
+	// scans outdated data.
+	TriggerInterval time.Duration
+	// BatchDeleteCnt specifies the batch size for
+	// deleting outdated data transaction.
+	BatchDeleteCnt int
+}
+
+var localCompactDefaultPolicy = compactPolicy{
 	SafePoint:       20 * 1000, // in ms
 	TriggerInterval: 10 * time.Second,
 	BatchDeleteCnt:  100,
@@ -45,7 +55,7 @@ type localstoreCompactor struct {
 	workerWaitGroup *sync.WaitGroup
 	ticker          *time.Ticker
 	db              engine.DB
-	policy          kv.CompactPolicy
+	policy          compactPolicy
 }
 
 func (gc *localstoreCompactor) OnSet(k kv.Key) {
@@ -196,7 +206,7 @@ func (gc *localstoreCompactor) Stop() {
 	gc.workerWaitGroup.Wait()
 }
 
-func newLocalCompactor(policy kv.CompactPolicy, db engine.DB) *localstoreCompactor {
+func newLocalCompactor(policy compactPolicy, db engine.DB) *localstoreCompactor {
 	return &localstoreCompactor{
 		recentKeys:      make(map[string]struct{}),
 		stopCh:          make(chan struct{}),

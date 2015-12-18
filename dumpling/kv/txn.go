@@ -16,32 +16,11 @@ package kv
 import (
 	"math"
 	"math/rand"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/go-themis"
-	"github.com/pingcap/tidb/terror"
 )
-
-// IsRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
-func IsRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	if terror.ErrorEqual(err, ErrRetryable) ||
-		terror.ErrorEqual(err, ErrLockConflict) ||
-		terror.ErrorEqual(err, ErrConditionNotMatch) ||
-		terror.ErrorEqual(err, themis.ErrRetryable) ||
-		// HBase exception message will tell you if you should retry or not
-		strings.Contains(err.Error(), "try again later") {
-		return true
-	}
-
-	return false
-}
 
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
