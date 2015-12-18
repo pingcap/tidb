@@ -296,6 +296,15 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 }
 
 // NewStore creates a kv Storage with data source name.
+//
+// The dataSource must be formatted as an URL 'engine://path?params' like the one for tidb.Open() but
+// with the dbname cut off.
+// Examples:
+//    goleveldb://relative/path
+//    boltdb:///absolute/path
+//    hbase://zk1,zk2,zk3/hbasetbl?tso=127.0.0.1:1234
+//
+// The engine should be registered before creating storage.
 func NewStore(dataSource string) (kv.Storage, error) {
 	return newStoreWithRetry(dataSource, defaultMaxRetries)
 }

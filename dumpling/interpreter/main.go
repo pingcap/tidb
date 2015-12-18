@@ -34,7 +34,8 @@ import (
 var (
 	logLevel = flag.String("L", "error", "log level")
 	store    = flag.String("store", "goleveldb", "the name for the registered storage, e.g. hbase, memory, goleveldb, boltdb")
-	dbPath   = flag.String("dbpath", "test/test", "db path")
+	dbPath   = flag.String("dbpath", "test", "db path")
+	dbName   = flag.String("dbname", "test", "default db name")
 	lease    = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 
 	line        *liner.State
@@ -178,7 +179,7 @@ func main() {
 	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
 
 	// use test as default DB.
-	mdb, err := sql.Open(tidb.DriverName, *store+"://"+*dbPath)
+	mdb, err := sql.Open(tidb.DriverName, *store+"://"+*dbPath+"/"+*dbName)
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
 	}

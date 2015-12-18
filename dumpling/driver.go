@@ -24,7 +24,6 @@ import (
 	"database/sql/driver"
 	"io"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -124,6 +123,27 @@ func (d *sqlDriver) unlock() {
 	d.mu.Unlock()
 }
 
+// parseDriverDSN cuts off DB name from dataSource name. It returns error if
+// dataSource is not valid.
+func parseDriverDSN(dataSource string) (storeDSN, dbName string, err error) {
+	u, err := url.Parse(dataSource)
+	if err != nil {
+		return "", "", errors.Annotate(err, "dataSource should be an URL")
+	}
+	path := filepath.Join(u.Host, u.Path)
+	dbName = filepath.Clean(filepath.Base(path))
+	if dbName == "" || dbName == "." || dbName == string(filepath.Separator) {
+		return "", "", errors.Errorf("invalid DB name %q", dbName)
+	}
+	// cut off dbName
+	path = filepath.Clean(filepath.Dir(path))
+	if path == "" || path == "." || path == string(filepath.Separator) {
+		return "", "", errors.Errorf("invalid dataSource %q", dataSource)
+	}
+	u.Path, u.Host = path, ""
+	return u.String(), dbName, nil
+}
+
 // Open returns a new connection to the database.
 //
 // The dataSource must be formatted as an URL 'engine://path/dbname?params'.
@@ -133,7 +153,7 @@ func (d *sqlDriver) unlock() {
 // Examples:
 //    goleveldb://relative/path/test
 //    boltdb:///absolute/path/test
-//    hbase://localhost,zkhost1,zkhost2/test?tso=127.0.0.1:1234&table=tidb
+//    hbase://zk1,zk2,zk3/hbasetbl/test?tso=127.0.0.1:1234
 //
 // Open may return a cached connection (one previously closed), but doing so is
 // unnecessary; the sql package maintains a pool of idle connections for
@@ -141,20 +161,11 @@ func (d *sqlDriver) unlock() {
 //
 // The returned connection is only used by one goroutine at a time.
 func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
-	url, err := url.Parse(dataSource)
+	storeDSN, dbName, err := parseDriverDSN(dataSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	if len(url.Path) == 0 {
-		return nil, errors.Errorf("invalid dataSource: %q", dataSource)
-	}
-	dbName := filepath.Clean(filepath.Base(url.Path))
-	if dbName == "" || dbName == "." || dbName == string(os.PathSeparator) {
-		return nil, errors.Errorf("invalid DB name %q", dbName)
-	}
-
-	store, err := NewStore(dataSource)
+	store, err := NewStore(storeDSN)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
