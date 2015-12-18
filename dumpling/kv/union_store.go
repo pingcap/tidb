@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
-	"github.com/pingcap/tidb/terror"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -63,15 +62,6 @@ var (
 		return NewMemDbBuffer()
 	})
 )
-
-// IsErrNotFound checks if err is a kind of NotFound error.
-func IsErrNotFound(err error) bool {
-	if terror.ErrorEqual(err, ErrNotExist) {
-		return true
-	}
-
-	return false
-}
 
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.

@@ -64,3 +64,12 @@ func IsRetryableError(err error) bool {
 
 	return false
 }
+
+// IsErrNotFound checks if err is a kind of NotFound error.
+func IsErrNotFound(err error) bool {
+	if terror.ErrorEqual(err, ErrNotExist) {
+		return true
+	}
+
+	return false
+}
