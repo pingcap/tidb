@@ -48,13 +48,13 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 	for i := 0; i < maxRetryCnt; i++ {
 		txn, err := store.Begin()
 		if err != nil {
-			log.Errorf("RunInNewTxn error - %v", err)
+			log.Errorf("[kv] RunInNewTxn error - %v", err)
 			return errors.Trace(err)
 		}
 
 		err = f(txn)
 		if retryable && IsRetryableError(err) {
-			log.Warnf("Retry txn %v", txn)
+			log.Warnf("[kv] Retry txn %v", txn)
 			txn.Rollback()
 			continue
 		}
@@ -64,7 +64,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 
 		err = txn.Commit()
 		if retryable && IsRetryableError(err) {
-			log.Warnf("Retry txn %v", txn)
+			log.Warnf("[kv] Retry txn %v", txn)
 			txn.Rollback()
 			BackOff(i)
 			continue
