@@ -50,7 +50,6 @@ type command struct {
 type seekReply struct {
 	key   []byte
 	value []byte
-	err   error
 }
 
 type commitReply struct {
