@@ -13,12 +13,6 @@
 
 package kv
 
-import "github.com/juju/errors"
-
-// ErrNotCommitted is the error returned by CommitVersion when this
-// transaction is not committed.
-var ErrNotCommitted = errors.New("this transaction is not committed")
-
 const (
 	// RangePrefetchOnCacheMiss directives that when dealing with a Get operation but failing to read data from cache,
 	// it will launch a RangePrefetch to underlying storage instead of Get. The range starts from requested key and
