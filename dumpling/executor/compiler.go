@@ -33,11 +33,11 @@ type Compiler struct {
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
-	if err := optimizer.Validate(node, false); err != nil {
-		return nil, errors.Trace(err)
-	}
 	if optimizer.IsSupported(node) {
 		ast.SetFlag(node)
+		if err := optimizer.Validate(node, false); err != nil {
+			return nil, errors.Trace(err)
+		}
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		if err := optimizer.ResolveName(node, is, ctx); err != nil {
 			return nil, errors.Trace(err)
