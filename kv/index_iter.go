@@ -29,6 +29,30 @@ var (
 	_ IndexIterator = (*indexIter)(nil)
 )
 
+// IndexIterator is the interface for iterator of index data on KV store.
+type IndexIterator interface {
+	Next() (k []interface{}, h int64, err error)
+	Close()
+}
+
+// Index is the interface for index data on KV store.
+type Index interface {
+	// Create supports insert into statement.
+	Create(rm RetrieverMutator, indexedValues []interface{}, h int64) error
+	// Delete supports delete from statement.
+	Delete(m Mutator, indexedValues []interface{}, h int64) error
+	// Drop supports drop table, drop index statements.
+	Drop(rm RetrieverMutator) error
+	// Exist supports check index exists or not.
+	Exist(rm RetrieverMutator, indexedValues []interface{}, h int64) (bool, int64, error)
+	// GenIndexKey generates an index key.
+	GenIndexKey(indexedValues []interface{}, h int64) (key []byte, distinct bool, err error)
+	// Seek supports where clause.
+	Seek(r Retriever, indexedValues []interface{}) (iter IndexIterator, hit bool, err error)
+	// SeekFirst supports aggregate min and ascend order by.
+	SeekFirst(r Retriever) (iter IndexIterator, err error)
+}
+
 func encodeHandle(h int64) []byte {
 	buf := &bytes.Buffer{}
 	err := binary.Write(buf, binary.BigEndian, h)
