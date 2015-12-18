@@ -15,10 +15,12 @@ package parser
 
 import "github.com/pingcap/tidb/terror"
 
+// Error instances.
 var (
 	ErrSyntax = terror.ClassParser.New(CodeSyntaxErr, "syntax error")
 )
 
+// Error codes.
 const (
 	CodeSyntaxErr terror.ErrCode = iota + 1
 )
