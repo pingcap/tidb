@@ -76,7 +76,7 @@ func (ts *testTypeInferrerSuite) TestInterType(c *C) {
 		ctx := testKit.Se.(context.Context)
 		stmts, err := tidb.Parse(ctx, "select "+ca.expr+" from t")
 		c.Assert(err, IsNil)
-		c.Assert(len(stmts), Equals, 1)
+		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0].(*ast.SelectStmt)
 		is := sessionctx.GetDomain(ctx).InfoSchema()
 		err = optimizer.ResolveName(stmt, is, ctx)
