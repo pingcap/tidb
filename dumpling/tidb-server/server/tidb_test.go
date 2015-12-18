@@ -68,6 +68,10 @@ func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
 }
 
+func (ts *TidbTestSuite) TestErrorCode(c *C) {
+	runTestErrorCode(c)
+}
+
 func (ts *TidbTestSuite) TestAuth(c *C) {
 	runTestAuth(c)
 }
