@@ -100,7 +100,7 @@ func (gc *localstoreCompactor) deleteWorker() {
 			batch.Delete(key)
 			// Batch delete.
 			if cnt == gc.policy.BatchDeleteCnt {
-				log.Debugf("GC delete commit %d keys", batch.Len())
+				log.Debugf("[kv] GC delete commit %d keys", batch.Len())
 				err := gc.db.Commit(batch)
 				if err != nil {
 					log.Error(err)
@@ -117,7 +117,7 @@ func (gc *localstoreCompactor) checkExpiredKeysWorker() {
 	for {
 		select {
 		case <-gc.stopCh:
-			log.Debug("GC stopped")
+			log.Debug("[kv] GC stopped")
 			return
 		case <-gc.ticker.C:
 			gc.mu.Lock()
@@ -169,7 +169,9 @@ func (gc *localstoreCompactor) Compact(k kv.Key) error {
 		return errors.Trace(err)
 	}
 	filteredKeys := gc.filterExpiredKeys(keys)
-	log.Debugf("GC send %d keys to delete worker", len(filteredKeys))
+	if len(filteredKeys) > 0 {
+		log.Debugf("[kv] GC send %d keys to delete worker", len(filteredKeys))
+	}
 	for _, key := range filteredKeys {
 		gc.delCh <- key
 	}

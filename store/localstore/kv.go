@@ -82,7 +82,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 
 	if store, ok := mc.cache[schema]; ok {
 		// TODO: check the cache store has the same engine with this Driver.
-		log.Info("cache store", schema)
+		log.Info("[kv] cache store", schema)
 		return store, nil
 	}
 
@@ -91,7 +91,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		return nil, errors.Trace(err)
 	}
 
-	log.Info("New store", schema)
+	log.Info("[kv] New store", schema)
 	s := &dbStore{
 		txns:       make(map[uint64]*dbTxn),
 		keysLocked: make(map[string]uint64),
@@ -164,7 +164,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		version:      kv.MinVersion,
 		snapshotVals: make(map[string]struct{}),
 	}
-	log.Debugf("Begin txn:%d", txn.tid)
+	log.Debugf("[kv] Begin txn:%d", txn.tid)
 	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, s.db, beginVer))
 	return txn, nil
 }
@@ -247,7 +247,7 @@ func (s *dbStore) tryConditionLockKey(tid uint64, key string) error {
 
 	// If there's newer version of this key, returns error.
 	if ver > tid {
-		log.Warnf("txn:%d, tryLockKey condition not match for key %s, currValue:%q", tid, key, currValue)
+		log.Warnf("[kv] txn:%d, tryLockKey condition not match for key %s, currValue:%q", tid, key, currValue)
 		return errors.Trace(kv.ErrConditionNotMatch)
 	}
 
