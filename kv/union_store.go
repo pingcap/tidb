@@ -22,6 +22,42 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
+// UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
+// Also, it provides some transaction related utilities.
+type UnionStore interface {
+	MemBuffer
+	// Inc increases the value for key k in KV storage by step.
+	Inc(k Key, step int64) (int64, error)
+	// GetInt64 get int64 which created by Inc method.
+	GetInt64(k Key) (int64, error)
+	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
+	// Lazy condition pairs should be checked before transaction commit.
+	CheckLazyConditionPairs() error
+	// BatchPrefetch fetches values from KV storage to cache for later use.
+	BatchPrefetch(keys []Key) error
+	// RangePrefetch fetches values in the range [start, end] from KV storage
+	// to cache for later use. Maximum number of values is up to limit.
+	RangePrefetch(start, end Key, limit int) error
+	// WalkBuffer iterates all buffered kv pairs.
+	WalkBuffer(f func(k Key, v []byte) error) error
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
+	// ReleaseSnapshot releases underlying snapshot.
+	ReleaseSnapshot()
+}
+
+// Option is used for customizing kv store's behaviors during a transaction.
+type Option int
+
+// Options is an interface of a set of options. Each option is associated with a value.
+type Options interface {
+	// Get gets an option value.
+	Get(opt Option) (v interface{}, ok bool)
+}
+
 var (
 	p = pool.NewCache("memdb pool", 100, func() interface{} {
 		return NewMemDbBuffer()
