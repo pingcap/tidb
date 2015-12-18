@@ -35,6 +35,10 @@ const (
 	opCommit
 )
 
+const (
+	maxSeekWorkers = 3
+)
+
 type command struct {
 	op    op
 	txn   *dbTxn
@@ -128,7 +132,7 @@ func (s *dbStore) seekWorker(seekCh chan *command) {
 func (s *dbStore) scheduler() {
 	closed := false
 	seekCh := make(chan *command, 1000)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < maxSeekWorkers; i++ {
 		go s.seekWorker(seekCh)
 	}
 
@@ -361,7 +365,6 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// todo: send to chan
 	txn := &dbTxn{
 		tid:          beginVer.Ver,
 		valid:        true,
