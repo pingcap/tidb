@@ -56,9 +56,9 @@ var Funcs = map[string]Func{
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1, true, false},
-	"rand":  {builtinRand, 0, 1, true, false},
 	"pow":   {builtinPow, 2, 2, true, false},
 	"power": {builtinPower, 2, 2, true, false},
+	"rand":  {builtinRand, 0, 1, true, false},
 
 	// group by functions
 	"avg":          {builtinAvg, 1, 1, false, true},
