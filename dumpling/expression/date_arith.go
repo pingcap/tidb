@@ -37,17 +37,12 @@ const (
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
-	// DateArithDaysForm is to run adddate or subdate function with days form Flag.
-	DateArithDaysForm
 )
 
 // DateArith is used for dealing with addition and substraction of time.
 type DateArith struct {
 	// Op is used for distinguishing date_add and date_sub.
-	Op DateArithType
-	// Form is the flag of DateArith running form.
-	// The function runs with interval or days.
-	Form     DateArithType
+	Op       DateArithType
 	Date     Expression
 	Unit     string
 	Interval Expression
@@ -150,7 +145,7 @@ func (da *DateArith) evalArgs(ctx context.Context, args map[interface{}]interfac
 		return ret, errors.Trace(err)
 	}
 	// handle adddate(expr,days) or subdate(expr,days) form
-	if da.Form == DateArithDaysForm {
+	if strings.ToLower(da.Unit) == "day" {
 		if iVal, err = da.evalDaysForm(iVal); err != nil {
 			return ret, errors.Trace(err)
 		}

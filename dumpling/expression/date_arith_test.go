@@ -135,7 +135,6 @@ func (t *testDateArithSuite) TestDateArith(c *C) {
 	for _, t := range tblDays {
 		e := &DateArith{
 			Op:       DateAdd,
-			Form:     DateArithDaysForm,
 			Unit:     "day",
 			Date:     Value{Val: input},
 			Interval: Value{Val: t.Interval},
