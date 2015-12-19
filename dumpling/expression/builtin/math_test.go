@@ -60,6 +60,21 @@ func (s *testBuiltinSuite) TestPow(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.Ret)
 	}
+
+	t := []interface{}{'a', 3}
+	_, err := builtinPow(t, nil)
+	c.Assert(err, NotNil)
+	t = []interface{}{3, 'a'}
+	_, err = builtinPow(t, nil)
+	c.Assert(err, NotNil)
+
+	t = []interface{}{nil, 3}
+	_, err = builtinPow(t, nil)
+	c.Assert(err, NotNil)
+	t = []interface{}{3, nil}
+	_, err = builtinPow(t, nil)
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testBuiltinSuite) TestPower(c *C) {
@@ -78,4 +93,19 @@ func (s *testBuiltinSuite) TestPower(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.Ret)
 	}
+
+	t := []interface{}{'a', 3}
+	_, err := builtinPower(t, nil)
+	c.Assert(err, NotNil)
+	t = []interface{}{3, 'a'}
+	_, err = builtinPower(t, nil)
+	c.Assert(err, NotNil)
+
+	t = []interface{}{nil, 3}
+	_, err = builtinPower(t, nil)
+	c.Assert(err, NotNil)
+	t = []interface{}{3, nil}
+	_, err = builtinPower(t, nil)
+	c.Assert(err, NotNil)
+
 }
