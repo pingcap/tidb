@@ -414,6 +414,8 @@ or		{o}{r}
 order		{o}{r}{d}{e}{r}
 outer		{o}{u}{t}{e}{r}
 password	{p}{a}{s}{s}{w}{o}{r}{d}
+pow 		{p}{o}{w}
+power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
 quarter		{q}{u}{a}{r}{t}{e}{r}
@@ -850,6 +852,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {outer}			return outer
 {password}		lval.item = string(l.val)
 			return password
+{pow}			lval.item = string(l.val)
+			return pow
+{power}			lval.item = string(l.val)
+			return power
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
