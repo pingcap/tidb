@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 )
 
 func TestT(t *testing.T) {
@@ -109,4 +110,11 @@ func (s *testTErrorSuite) TestErrorEqual(c *C) {
 	c.Assert(ErrorEqual(te1, te2), IsTrue)
 	c.Assert(ErrorEqual(te1, te3), IsFalse)
 	c.Assert(ErrorEqual(te3, te4), IsFalse)
+}
+
+func (s *testTErrorSuite) TestMySQLErrorCode(c *C) {
+	ke := ErrKeyExists.Gen("key exists")
+	me := ke.ToSQLError()
+	c.Assert(me.Code, Equals, uint16(mysql.ErrDupEntry))
+	c.Assert(me.Message, Equals, "key exists")
 }

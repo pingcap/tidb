@@ -17,8 +17,9 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	tmysql "github.com/pingcap/tidb/mysql"
 )
 
 func TestT(t *testing.T) {
@@ -218,6 +219,25 @@ func runTestConcurrentUpdate(c *C) {
 		err = txn1.Commit()
 		c.Assert(err, IsNil)
 	})
+}
+
+func runTestErrorCode(c *C) {
+	runTests(c, dsn, func(dbt *DBTest) {
+		dbt.mustExec("create table test (c int PRIMARY KEY);")
+		dbt.mustExec("insert into test values (1);")
+		txn1, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+		_, err = txn1.Exec("insert into test values(1)")
+		c.Assert(err, IsNil)
+		err = txn1.Commit()
+		checkErrorCode(c, err, tmysql.ErrDupEntry)
+	})
+}
+
+func checkErrorCode(c *C, e error, code uint16) {
+	me, ok := e.(*mysql.MySQLError)
+	c.Assert(ok, IsTrue)
+	c.Assert(me.Number, Equals, code)
 }
 
 func runTestAuth(c *C) {

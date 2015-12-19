@@ -101,7 +101,8 @@ func (s *dbStore) CommitTxn(txn *dbTxn) error {
 	return errors.Trace(err)
 }
 
-func (s *dbStore) seekWorker(seekCh chan *command) {
+func (s *dbStore) seekWorker(wg *sync.WaitGroup, seekCh chan *command) {
+	defer wg.Done()
 	for {
 		var pending []*command
 		select {
@@ -131,8 +132,10 @@ func (s *dbStore) seekWorker(seekCh chan *command) {
 func (s *dbStore) scheduler() {
 	closed := false
 	seekCh := make(chan *command, 1000)
+	wgSeekWorkers := &sync.WaitGroup{}
+	wgSeekWorkers.Add(maxSeekWorkers)
 	for i := 0; i < maxSeekWorkers; i++ {
-		go s.seekWorker(seekCh)
+		go s.seekWorker(wgSeekWorkers, seekCh)
 	}
 
 	for {
@@ -150,9 +153,10 @@ func (s *dbStore) scheduler() {
 			}
 		case <-s.closeCh:
 			closed = true
-			s.wg.Done()
 			// notify seek worker to exit
 			close(seekCh)
+			wgSeekWorkers.Wait()
+			s.wg.Done()
 		}
 	}
 }
