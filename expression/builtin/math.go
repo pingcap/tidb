@@ -63,3 +63,22 @@ func builtinRand(args []interface{}, ctx map[interface{}]interface{}) (v interfa
 
 	return rand.Float64(), nil
 }
+
+func builtinPow(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+	x, err := types.ToFloat64(args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	y, err := types.ToFloat64(args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return math.Pow(x, y), nil
+
+}
+
+func builtinPower(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+	return builtinPow(args, ctx)
+}

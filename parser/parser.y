@@ -210,6 +210,8 @@ import (
 	outer		"OUTER"
 	password	"PASSWORD"
 	placeholder	"PLACEHOLDER"
+	pow 		"POW"
+	power 		"POWER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
 	quarter		"QUARTER"
@@ -2256,6 +2258,16 @@ FunctionCallNonKeyword:
 |	"NULLIF" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
+|	"POW" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"POWER" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
 |	"RAND" '(' ExpressionOpt ')'
 	{
