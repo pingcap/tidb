@@ -309,6 +309,13 @@ func builtinCurrentDate(args []interface{}, ctx map[interface{}]interface{}) (in
 		Type: mysql.TypeDate, Fsp: 0}, nil
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
+func builtinCurrentTime(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	return mysql.Time{
+		Time: time.Now(),
+		Type: mysql.TypeDuration, Fsp: 0}, nil
+}
+
 func checkFsp(arg interface{}) (int, error) {
 	fsp, err := types.ToInt64(arg)
 	if err != nil {
