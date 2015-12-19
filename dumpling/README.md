@@ -12,7 +12,7 @@ Grow TiDB as your business grows. You can increase the capacity simply by adding
 Evolve TiDB schemas as your requirement evolves. You can add new columns and indices without stopping or affecting the on-going operations.
 
 - __Consistent distributed transactions__  
-Think TiDB as a single-machine RDBMS. You can start a transaction that acrosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
+Think TiDB as a single-machine RDBMS. You can start a transaction that crosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
 
 - __Compatible with MySQL protocol__  
 Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
@@ -22,10 +22,10 @@ Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable 
 
 
 - __NewSQL over HBase__  
-Turns HBase into NewSQL database
+Turn HBase into NewSQL database
 
 - __Multiple storage engine support__  
-Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from goleveldb, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
+Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from GolevelDB, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
 
 ## Status
 
