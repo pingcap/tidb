@@ -854,7 +854,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return password
 {pow}			lval.item = string(l.val)
 			return pow
-{power}			lval.item = string(l.val)
+{power}		lval.item = string(l.val)
 			return power
 {prepare}		lval.item = string(l.val)
 			return prepare
