@@ -418,179 +418,116 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDateArith(c *C) {
-	c.Skip("to be implement")
 	ctx := mock.NewContext()
-	input := "2011-11-11 10:10:10"
-	e := &ast.FuncDateArithExpr{
-		Op:   ast.DateAdd,
-		Date: ast.NewValueExpr(input),
-		DateArithInterval: ast.DateArithInterval{
-			Interval: ast.NewValueExpr(1),
-			Unit:     "DAY",
-		},
-	}
-	c.Assert(e.GetFlag(), Equals, ast.FlagHasFunc)
-	_, err := Eval(ctx, e)
-	c.Assert(err, IsNil)
 
-	// Test null.
-	nullTbl := []struct {
-		Op       ast.DateArithType
-		Unit     string
-		Date     interface{}
-		Interval interface{}
+	// list all test cases
+	tests := []struct {
+		Date      interface{}
+		Interval  interface{}
+		Unit      string
+		AddResult interface{}
+		SubResult interface{}
+		error     bool
 	}{
-		{ast.DateAdd, "DAY", nil, "1"},
-		{ast.DateAdd, "DAY", input, nil},
+		// basic test
+		{"2011-11-11", 1, "DAY", "2011-11-12", "2011-11-10", false},
+		// nil test
+		{nil, 1, "DAY", nil, nil, false},
+		{"2011-11-11", nil, "DAY", nil, nil, false},
+		// tests for different units
+		{"2011-11-11 10:10:10", 1000, "MICROSECOND", "2011-11-11 10:10:10.001000", "2011-11-11 10:10:09.999000", false},
+		{"2011-11-11 10:10:10", "10", "SECOND", "2011-11-11 10:10:20", "2011-11-11 10:10:00", false},
+		{"2011-11-11 10:10:10", "10", "MINUTE", "2011-11-11 10:20:10", "2011-11-11 10:00:10", false},
+		{"2011-11-11 10:10:10", "10", "HOUR", "2011-11-11 20:10:10", "2011-11-11 00:10:10", false},
+		{"2011-11-11 10:10:10", "11", "DAY", "2011-11-22 10:10:10", "2011-10-31 10:10:10", false},
+		{"2011-11-11 10:10:10", "2", "WEEK", "2011-11-25 10:10:10", "2011-10-28 10:10:10", false},
+		{"2011-11-11 10:10:10", "2", "MONTH", "2012-01-11 10:10:10", "2011-09-11 10:10:10", false},
+		{"2011-11-11 10:10:10", "4", "QUARTER", "2012-11-11 10:10:10", "2010-11-11 10:10:10", false},
+		{"2011-11-11 10:10:10", "2", "YEAR", "2013-11-11 10:10:10", "2009-11-11 10:10:10", false},
+		{"2011-11-11 10:10:10", "10.00100000", "SECOND_MICROSECOND", "2011-11-11 10:10:20.100000", "2011-11-11 10:09:59.900000", false},
+		{"2011-11-11 10:10:10", "10.0010000000", "SECOND_MICROSECOND", "2011-11-11 10:10:30", "2011-11-11 10:09:50", false},
+		{"2011-11-11 10:10:10", "10.0010000010", "SECOND_MICROSECOND", "2011-11-11 10:10:30.000010", "2011-11-11 10:09:49.999990", false},
+		{"2011-11-11 10:10:10", "10:10.100", "MINUTE_MICROSECOND", "2011-11-11 10:20:20.100000", "2011-11-11 09:59:59.900000", false},
+		{"2011-11-11 10:10:10", "10:10", "MINUTE_SECOND", "2011-11-11 10:20:20", "2011-11-11 10:00:00", false},
+		{"2011-11-11 10:10:10", "10:10:10.100", "HOUR_MICROSECOND", "2011-11-11 20:20:20.100000", "2011-11-10 23:59:59.900000", false},
+		{"2011-11-11 10:10:10", "10:10:10", "HOUR_SECOND", "2011-11-11 20:20:20", "2011-11-11 00:00:00", false},
+		{"2011-11-11 10:10:10", "10:10", "HOUR_MINUTE", "2011-11-11 20:20:10", "2011-11-11 00:00:10", false},
+		{"2011-11-11 10:10:10", "11 10:10:10.100", "DAY_MICROSECOND", "2011-11-22 20:20:20.100000", "2011-10-30 23:59:59.900000", false},
+		{"2011-11-11 10:10:10", "11 10:10:10", "DAY_SECOND", "2011-11-22 20:20:20", "2011-10-31 00:00:00", false},
+		{"2011-11-11 10:10:10", "11 10:10", "DAY_MINUTE", "2011-11-22 20:20:10", "2011-10-31 00:00:10", false},
+		{"2011-11-11 10:10:10", "11 10", "DAY_HOUR", "2011-11-22 20:10:10", "2011-10-31 00:10:10", false},
+		{"2011-11-11 10:10:10", "11-1", "YEAR_MONTH", "2022-12-11 10:10:10", "2000-10-11 10:10:10", false},
+		{"2011-11-11 10:10:10", "11-11", "YEAR_MONTH", "2023-10-11 10:10:10", "1999-12-11 10:10:10", false},
+		// tests for interval in day forms
+		{"2011-11-11 10:10:10", "20", "DAY", "2011-12-01 10:10:10", "2011-10-22 10:10:10", false},
+		{"2011-11-11 10:10:10", 19.88, "DAY", "2011-12-01 10:10:10", "2011-10-22 10:10:10", false},
+		{"2011-11-11 10:10:10", "19.88", "DAY", "2011-11-30 10:10:10", "2011-10-23 10:10:10", false},
+		{"2011-11-11 10:10:10", "prefix19suffix", "DAY", "2011-11-30 10:10:10", "2011-10-23 10:10:10", false},
+		{"2011-11-11 10:10:10", "20-11", "DAY", "2011-12-01 10:10:10", "2011-10-22 10:10:10", false},
+		{"2011-11-11 10:10:10", "20,11", "daY", "2011-12-01 10:10:10", "2011-10-22 10:10:10", false},
+		{"2011-11-11 10:10:10", "1000", "dAy", "2014-08-07 10:10:10", "2009-02-14 10:10:10", false},
+		{"2011-11-11 10:10:10", "true", "Day", "2011-11-12 10:10:10", "2011-11-10 10:10:10", false},
+		{"2011-11-11 10:10:10", true, "Day", "2011-11-12 10:10:10", "2011-11-10 10:10:10", false},
+		// test for different return data types
+		{"2011-11-11", 1, "DAY", "2011-11-12", "2011-11-10", false},
+		{"2011-11-11", 10, "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00", false},
+		{"2011-11-11", 10, "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00", false},
+		{"2011-11-11", 10, "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50", false},
+		{"2011-11-11", "10:10", "HOUR_MINUTE", "2011-11-11 10:10:00", "2011-11-10 13:50:00", false},
+		{"2011-11-11", "10:10:10", "HOUR_SECOND", "2011-11-11 10:10:10", "2011-11-10 13:49:50", false},
+		{"2011-11-11", "10:10:10.101010", "HOUR_MICROSECOND", "2011-11-11 10:10:10.101010", "2011-11-10 13:49:49.898990", false},
+		{"2011-11-11", "10:10", "MINUTE_SECOND", "2011-11-11 00:10:10", "2011-11-10 23:49:50", false},
+		{"2011-11-11", "10:10.101010", "MINUTE_MICROSECOND", "2011-11-11 00:10:10.101010", "2011-11-10 23:49:49.898990", false},
+		{"2011-11-11", "10.101010", "SECOND_MICROSECOND", "2011-11-11 00:00:10.101010", "2011-11-10 23:59:49.898990", false},
+		{"2011-11-11 00:00:00", 1, "DAY", "2011-11-12 00:00:00", "2011-11-10 00:00:00", false},
+		{"2011-11-11 00:00:00", 10, "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00", false},
+		{"2011-11-11 00:00:00", 10, "MINUTE", "2011-11-11 00:10:00", "2011-11-10 23:50:00", false},
+		{"2011-11-11 00:00:00", 10, "SECOND", "2011-11-11 00:00:10", "2011-11-10 23:59:50", false},
+		// tests for invalid input
+		{"2011-11-11", "abc1000", "MICROSECOND", nil, nil, true},
+		{"20111111 10:10:10", "1", "DAY", nil, nil, true},
+		{"2011-11-11", "10", "SECOND_MICROSECOND", nil, nil, true},
+		{"2011-11-11", "10.0000", "MINUTE_MICROSECOND", nil, nil, true},
+		{"2011-11-11", "10:10:10", "MINUTE_MICROSECOND", nil, nil, true},
 	}
-	for _, t := range nullTbl {
-		e := &ast.FuncDateArithExpr{
-			Op:   t.Op,
+	// run the test cases
+	for _, t := range tests {
+		expr := &ast.FuncDateArithExpr{
+			Op:   ast.DateAdd,
 			Date: ast.NewValueExpr(t.Date),
 			DateArithInterval: ast.DateArithInterval{
 				Interval: ast.NewValueExpr(t.Interval),
 				Unit:     t.Unit,
 			},
 		}
-		v, err := Eval(ctx, e)
-		c.Assert(err, IsNil)
-		c.Assert(v, IsNil)
-		e.Op = ast.DateSub
-		v, err = Eval(ctx, e)
-		c.Assert(err, IsNil)
-		c.Assert(v, IsNil)
-	}
-
-	// Test eval.
-	tbl := []struct {
-		Unit      string
-		Interval  interface{}
-		AddExpect string
-		SubExpect string
-	}{
-		{"MICROSECOND", "1000", "2011-11-11 10:10:10.001000", "2011-11-11 10:10:09.999000"},
-		{"MICROSECOND", 1000, "2011-11-11 10:10:10.001000", "2011-11-11 10:10:09.999000"},
-		{"SECOND", "10", "2011-11-11 10:10:20", "2011-11-11 10:10:00"},
-		{"MINUTE", "10", "2011-11-11 10:20:10", "2011-11-11 10:00:10"},
-		{"HOUR", "10", "2011-11-11 20:10:10", "2011-11-11 00:10:10"},
-		{"DAY", "11", "2011-11-22 10:10:10", "2011-10-31 10:10:10"},
-		{"WEEK", "2", "2011-11-25 10:10:10", "2011-10-28 10:10:10"},
-		{"MONTH", "2", "2012-01-11 10:10:10", "2011-09-11 10:10:10"},
-		{"QUARTER", "4", "2012-11-11 10:10:10", "2010-11-11 10:10:10"},
-		{"YEAR", "2", "2013-11-11 10:10:10", "2009-11-11 10:10:10"},
-		{"SECOND_MICROSECOND", "10.00100000", "2011-11-11 10:10:20.100000", "2011-11-11 10:09:59.900000"},
-		{"SECOND_MICROSECOND", "10.0010000000", "2011-11-11 10:10:30", "2011-11-11 10:09:50"},
-		{"SECOND_MICROSECOND", "10.0010000010", "2011-11-11 10:10:30.000010", "2011-11-11 10:09:49.999990"},
-		{"MINUTE_MICROSECOND", "10:10.100", "2011-11-11 10:20:20.100000", "2011-11-11 09:59:59.900000"},
-		{"MINUTE_SECOND", "10:10", "2011-11-11 10:20:20", "2011-11-11 10:00:00"},
-		{"HOUR_MICROSECOND", "10:10:10.100", "2011-11-11 20:20:20.100000", "2011-11-10 23:59:59.900000"},
-		{"HOUR_SECOND", "10:10:10", "2011-11-11 20:20:20", "2011-11-11 00:00:00"},
-		{"HOUR_MINUTE", "10:10", "2011-11-11 20:20:10", "2011-11-11 00:00:10"},
-		{"DAY_MICROSECOND", "11 10:10:10.100", "2011-11-22 20:20:20.100000", "2011-10-30 23:59:59.900000"},
-		{"DAY_SECOND", "11 10:10:10", "2011-11-22 20:20:20", "2011-10-31 00:00:00"},
-		{"DAY_MINUTE", "11 10:10", "2011-11-22 20:20:10", "2011-10-31 00:00:10"},
-		{"DAY_HOUR", "11 10", "2011-11-22 20:10:10", "2011-10-31 00:10:10"},
-		{"YEAR_MONTH", "11-1", "2022-12-11 10:10:10", "2000-10-11 10:10:10"},
-		{"YEAR_MONTH", "11-11", "2023-10-11 10:10:10", "1999-12-11 10:10:10"},
-	}
-	for _, t := range tbl {
-		e := &ast.FuncDateArithExpr{
-			Op:   ast.DateAdd,
-			Date: ast.NewValueExpr(input),
-			DateArithInterval: ast.DateArithInterval{
-				Interval: ast.NewValueExpr(t.Interval),
-				Unit:     t.Unit,
-			},
+		v, err := Eval(ctx, expr)
+		if t.error == true {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if v == nil {
+				c.Assert(v, Equals, t.AddResult)
+			} else {
+				value, ok := v.(mysql.Time)
+				c.Assert(ok, IsTrue)
+				c.Assert(value.String(), Equals, t.AddResult)
+			}
 		}
-		v, err := Eval(ctx, e)
-		c.Assert(err, IsNil)
-		value, ok := v.(mysql.Time)
-		c.Assert(ok, IsTrue)
-		c.Assert(value.String(), Equals, t.AddExpect)
 
-		e.Op = ast.DateSub
-		v, err = Eval(ctx, e)
-		c.Assert(err, IsNil)
-		value, ok = v.(mysql.Time)
-		c.Assert(ok, IsTrue)
-		c.Assert(value.String(), Equals, t.SubExpect)
-	}
-
-	// Test eval for adddate and subdate with days form
-	tblDays := []struct {
-		Interval  interface{}
-		AddExpect string
-		SubExpect string
-	}{
-		{"20", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
-		{19.88, "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
-		{"19.88", "2011-11-30 10:10:10", "2011-10-23 10:10:10"},
-		{"20-11", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
-		{"20,11", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
-		{"1000", "2014-08-07 10:10:10", "2009-02-14 10:10:10"},
-		{"true", "2011-11-12 10:10:10", "2011-11-10 10:10:10"},
-	}
-	for _, t := range tblDays {
-		e := &ast.FuncDateArithExpr{
-			Op:   ast.DateAdd,
-			Date: ast.NewValueExpr(input),
-			DateArithInterval: ast.DateArithInterval{
-				Interval: ast.NewValueExpr(t.Interval),
-				Unit:     "day",
-				Form:     ast.DateArithDaysForm,
-			},
+		expr.Op = ast.DateSub
+		v, err = Eval(ctx, expr)
+		if t.error == true {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if v == nil {
+				c.Assert(v, Equals, t.AddResult)
+			} else {
+				value, ok := v.(mysql.Time)
+				c.Assert(ok, IsTrue)
+				c.Assert(value.String(), Equals, t.SubResult)
+			}
 		}
-		v, err := Eval(ctx, e)
-		c.Assert(err, IsNil)
-		value, ok := v.(mysql.Time)
-		c.Assert(ok, IsTrue)
-		c.Assert(value.String(), Equals, t.AddExpect)
-
-		e.Op = ast.DateSub
-		v, err = Eval(ctx, e)
-		c.Assert(err, IsNil)
-		value, ok = v.(mysql.Time)
-		c.Assert(ok, IsTrue)
-		c.Assert(value.String(), Equals, t.SubExpect)
-	}
-
-	// Test error.
-	errInput := "20111111 10:10:10"
-	errTbl := []struct {
-		Unit     string
-		Interval interface{}
-	}{
-		{"MICROSECOND", "abc1000"},
-		{"MICROSECOND", ""},
-		{"SECOND_MICROSECOND", "10"},
-		{"MINUTE_MICROSECOND", "10.0000"},
-		{"MINUTE_MICROSECOND", "10:10:10.0000"},
-
-		// MySQL support, but tidb not.
-		{"HOUR_MICROSECOND", "10:10.0000"},
-		{"YEAR_MONTH", "10 1"},
-	}
-	for _, t := range errTbl {
-		e := &ast.FuncDateArithExpr{
-			Op:   ast.DateAdd,
-			Date: ast.NewValueExpr(input),
-			DateArithInterval: ast.DateArithInterval{
-				Interval: ast.NewValueExpr(t.Interval),
-				Unit:     t.Unit,
-			},
-		}
-		_, err := Eval(ctx, e)
-		c.Assert(err, NotNil)
-		e.Date = ast.NewValueExpr(errInput)
-		v, err := Eval(ctx, e)
-		c.Assert(err, NotNil, Commentf("%s", v))
-
-		e.Op = ast.DateSub
-		_, err = Eval(ctx, e)
-		c.Assert(err, NotNil)
-		e.Date = ast.NewValueExpr(errInput)
-		v, err = Eval(ctx, e)
-		c.Assert(err, NotNil, Commentf("%s", v))
 	}
 }
 
