@@ -2139,13 +2139,21 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
-|	"CURTIME" '(' ')'
+|	"CURTIME" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
-|	"CURRENT_TIME" '(' ')'
+|	"CURRENT_TIME" FuncDatetimePrec
 	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{
