@@ -282,5 +282,26 @@ func (s *testBuiltinSuite) TestCurrentTime(c *C) {
 	c.Assert(err, IsNil)
 	n, ok := v.(mysql.Time)
 	c.Assert(ok, IsTrue)
+	c.Assert(n.String(), HasLen, 8)
 	c.Assert(n.String(), GreaterEqual, last.Format(mysql.CurrentTimeFormat))
+
+	v, err = builtinCurrentTime([]interface{}{3}, nil)
+	c.Assert(err, IsNil)
+	n, ok = v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(n.String(), HasLen, 12)
+	c.Assert(n.String(), GreaterEqual, last.Format(mysql.CurrentTimeFormat))
+
+	v, err = builtinCurrentTime([]interface{}{6}, nil)
+	c.Assert(err, IsNil)
+	n, ok = v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(n.String(), HasLen, 15)
+	c.Assert(n.String(), GreaterEqual, last.Format(mysql.CurrentTimeFormat))
+
+	v, err = builtinCurrentTime([]interface{}{-1}, nil)
+	c.Assert(err, NotNil)
+
+	v, err = builtinCurrentTime([]interface{}{7}, nil)
+	c.Assert(err, NotNil)
 }
