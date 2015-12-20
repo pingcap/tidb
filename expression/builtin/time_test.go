@@ -277,27 +277,29 @@ func (s *testBuiltinSuite) TestCurrentDate(c *C) {
 }
 
 func (s *testBuiltinSuite) TestCurrentTime(c *C) {
+	tfStr := "15:04:05"
+
 	last := time.Now()
 	v, err := builtinCurrentTime(nil, nil)
 	c.Assert(err, IsNil)
-	n, ok := v.(mysql.Time)
+	n, ok := v.(mysql.Duration)
 	c.Assert(ok, IsTrue)
 	c.Assert(n.String(), HasLen, 8)
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.CurrentTimeFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
 	v, err = builtinCurrentTime([]interface{}{3}, nil)
 	c.Assert(err, IsNil)
-	n, ok = v.(mysql.Time)
+	n, ok = v.(mysql.Duration)
 	c.Assert(ok, IsTrue)
 	c.Assert(n.String(), HasLen, 12)
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.CurrentTimeFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
 	v, err = builtinCurrentTime([]interface{}{6}, nil)
 	c.Assert(err, IsNil)
-	n, ok = v.(mysql.Time)
+	n, ok = v.(mysql.Duration)
 	c.Assert(ok, IsTrue)
 	c.Assert(n.String(), HasLen, 15)
-	c.Assert(n.String(), GreaterEqual, last.Format(mysql.CurrentTimeFormat))
+	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
 
 	v, err = builtinCurrentTime([]interface{}{-1}, nil)
 	c.Assert(err, NotNil)
