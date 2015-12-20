@@ -126,11 +126,13 @@ func (t Time) String() string {
 		return t.Time.Format(DateFormat)
 	}
 
+	var tfStr string
 	if t.Type == TypeDuration {
-		return t.Time.Format(CurrentTimeFormat)
+		tfStr = CurrentTimeFormat
+	} else {
+		tfStr = TimeFormat
 	}
 
-	tfStr := TimeFormat
 	if t.Fsp > 0 {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
