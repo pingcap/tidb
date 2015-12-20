@@ -69,9 +69,9 @@ var Funcs = map[string]Func{
 	// time functions
 	"curdate":           {builtinCurrentDate, 0, 0, false, false},
 	"current_date":      {builtinCurrentDate, 0, 0, false, false},
-	"current_time":      {builtinCurrentTime, 0, 0, false, false},
+	"current_time":      {builtinCurrentTime, 0, 1, false, false},
 	"current_timestamp": {builtinNow, 0, 1, false, false},
-	"curtime":           {builtinCurrentTime, 0, 0, false, false},
+	"curtime":           {builtinCurrentTime, 0, 1, false, false},
 	"date":              {builtinDate, 8, 8, true, false},
 	"day":               {builtinDay, 1, 1, true, false},
 	"dayofmonth":        {builtinDayOfMonth, 1, 1, true, false},
