@@ -34,9 +34,9 @@ var (
 
 // Time format without fractional seconds precision.
 const (
-	DateFormat    = "2006-01-02"
-	CurtimeFormat = "15:04:05"
-	TimeFormat    = "2006-01-02 15:04:05"
+	DateFormat        = "2006-01-02"
+	CurrentTimeFormat = "15:04:05"
+	TimeFormat        = "2006-01-02 15:04:05"
 	// TimeFSPFormat is time format with fractional seconds precision.
 	TimeFSPFormat = "2006-01-02 15:04:05.000000"
 )
@@ -127,7 +127,7 @@ func (t Time) String() string {
 	}
 
 	if t.Type == TypeDuration {
-		return t.Time.Format(CurtimeFormat)
+		return t.Time.Format(CurrentTimeFormat)
 	}
 
 	tfStr := TimeFormat
