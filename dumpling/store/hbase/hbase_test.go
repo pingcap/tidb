@@ -28,7 +28,7 @@ var _ = Suite(&testHBaseSuite{})
 type testHBaseSuite struct {
 }
 
-func (t *testHBaseSuite) TestParseDSN(c *C) {
+func (t *testHBaseSuite) TestParsePath(c *C) {
 	tbl := []struct {
 		dsn    string
 		ok     bool
@@ -44,7 +44,7 @@ func (t *testHBaseSuite) TestParseDSN(c *C) {
 	}
 
 	for _, t := range tbl {
-		zks, oracle, table, err := parseDSN(t.dsn)
+		zks, oracle, table, err := parsePath(t.dsn)
 		if t.ok {
 			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
 			c.Assert(zks, DeepEquals, t.zks, Commentf("dsn=%v", t.dsn))
