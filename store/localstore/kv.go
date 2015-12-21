@@ -285,7 +285,7 @@ func IsLocalStore(s kv.Storage) bool {
 }
 
 // Open opens or creates a storage with specific format for a local engine Driver.
-// The path should be formatted as an URL which is described in tidb package.
+// The path should be a URL format which is described in tidb package.
 func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
