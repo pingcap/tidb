@@ -242,22 +242,16 @@ func checkColsAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol
 	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	err := t.IterRecords(txn, string(startKey), cols,
 		func(h1 int64, vals1 []interface{}, cols []*column.Col) (bool, error) {
-			it, hit, err := kvIndex.Seek(txn, vals1)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			defer it.Close()
-
-			if !hit {
-				ret := newDiffRetError(h1, resultNotExist, vals1, nil)
+			isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
+			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+				ret := newDiffRetError(h1, h2, vals1, vals1)
 				return false, errors.Trace(ret)
 			}
-			_, h2, err := it.Next()
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if h1 != h2 {
-				ret := newDiffRetError(h1, h2, vals1, vals1)
+			if !isExist {
+				ret := newDiffRetError(h1, resultNotExist, vals1, nil)
 				return false, errors.Trace(ret)
 			}
 
