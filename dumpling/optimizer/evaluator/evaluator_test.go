@@ -386,12 +386,33 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 func (s *testEvaluatorSuite) TestCall(c *C) {
 	ctx := mock.NewContext()
 
-	// Test case for unknown function
+	// Test case for correct number of arguments
 	expr := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args:   []ast.ExprNode{ast.NewValueExpr("2015-12-21 11:11:11")},
+	}
+	v, err := Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	value, ok := v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(value.String(), Equals, "2015-12-21")
+
+	// Test case for unlimited upper bound
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("concat"),
+		Args: []ast.ExprNode{ast.NewValueExpr("Ti"),
+			ast.NewValueExpr("D"), ast.NewValueExpr("B")},
+	}
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "TiDB")
+
+	// Test case for unknown function
+	expr = &ast.FuncCallExpr{
 		FnName: model.NewCIStr("unknown"),
 		Args:   []ast.ExprNode{},
 	}
-	_, err := Eval(ctx, expr)
+	_, err = Eval(ctx, expr)
 	c.Assert(err, NotNil)
 
 	// Test case for invalid number of arguments, violating the lower bound
@@ -410,23 +431,6 @@ func (s *testEvaluatorSuite) TestCall(c *C) {
 	}
 	_, err = Eval(ctx, expr)
 	c.Assert(err, NotNil)
-
-	// Test case for correct number of arguments
-	expr = &ast.FuncCallExpr{
-		FnName: model.NewCIStr("date"),
-		Args:   []ast.ExprNode{ast.NewValueExpr("2015-12-21")},
-	}
-	_, err = Eval(ctx, expr)
-	c.Assert(err, IsNil)
-
-	// Test case for unlimited upper bound
-	expr = &ast.FuncCallExpr{
-		FnName: model.NewCIStr("concat"),
-		Args: []ast.ExprNode{ast.NewValueExpr(1),
-			ast.NewValueExpr(2)},
-	}
-	_, err = Eval(ctx, expr)
-	c.Assert(err, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
