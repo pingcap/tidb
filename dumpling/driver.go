@@ -123,12 +123,12 @@ func (d *sqlDriver) unlock() {
 	d.mu.Unlock()
 }
 
-// parseDriverDSN cuts off DB name from dataSource name. It returns error if
-// dataSource is not valid.
-func parseDriverDSN(dataSource string) (storeDSN, dbName string, err error) {
-	u, err := url.Parse(dataSource)
+// parseDriverDSN cuts off DB name from dsn. It returns error if the dsn is not
+// valid.
+func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
+	u, err := url.Parse(dsn)
 	if err != nil {
-		return "", "", errors.Annotate(err, "dataSource should be an URL")
+		return "", "", errors.Trace(err)
 	}
 	path := filepath.Join(u.Host, u.Path)
 	dbName = filepath.Clean(filepath.Base(path))
@@ -138,7 +138,7 @@ func parseDriverDSN(dataSource string) (storeDSN, dbName string, err error) {
 	// cut off dbName
 	path = filepath.Clean(filepath.Dir(path))
 	if path == "" || path == "." || path == string(filepath.Separator) {
-		return "", "", errors.Errorf("invalid dataSource %q", dataSource)
+		return "", "", errors.Errorf("invalid dsn %q", dsn)
 	}
 	u.Path, u.Host = path, ""
 	return u.String(), dbName, nil
@@ -161,11 +161,11 @@ func parseDriverDSN(dataSource string) (storeDSN, dbName string, err error) {
 //
 // The returned connection is only used by one goroutine at a time.
 func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
-	storeDSN, dbName, err := parseDriverDSN(dataSource)
+	storePath, dbName, err := parseDriverDSN(dataSource)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	store, err := NewStore(storeDSN)
+	store, err := NewStore(storePath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
