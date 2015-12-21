@@ -20,7 +20,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
@@ -385,10 +384,6 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCall(c *C) {
-	// To test this case, we need to fake a wrong builtin.Funcs
-	builtin.Funcs = map[string]builtin.Func{
-		"date": {nil, 8, 8, false, false},
-	}
 	ctx := mock.NewContext()
 
 	// Test case for unknown function
@@ -399,13 +394,39 @@ func (s *testEvaluatorSuite) TestCall(c *C) {
 	_, err := Eval(ctx, expr)
 	c.Assert(err, NotNil)
 
-	// Test case for invalid number of arguments
+	// Test case for invalid number of arguments, violating the lower bound
 	expr = &ast.FuncCallExpr{
 		FnName: model.NewCIStr("date"),
 		Args:   []ast.ExprNode{},
 	}
 	_, err = Eval(ctx, expr)
 	c.Assert(err, NotNil)
+
+	// Test case for invalid number of arguments, violating the upper bound
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args: []ast.ExprNode{ast.NewValueExpr("2015-12-21"),
+			ast.NewValueExpr("2015-12-22")},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, NotNil)
+
+	// Test case for correct number of arguments
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args:   []ast.ExprNode{ast.NewValueExpr("2015-12-21")},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+
+	// Test case for unlimited upper bound
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("concat"),
+		Args: []ast.ExprNode{ast.NewValueExpr(1),
+			ast.NewValueExpr(2)},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
