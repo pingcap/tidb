@@ -68,6 +68,14 @@ func mustQuery(c *C, currDB *sql.DB, s string) int {
 	return cnt
 }
 
+func mustFailQuery(c *C, currDB *sql.DB, s string) {
+	rows, err := currDB.Query(s)
+	c.Assert(err, IsNil)
+	rows.Next()
+	c.Assert(rows.Err(), NotNil)
+	rows.Close()
+}
+
 func mustExec(c *C, currDB *sql.DB, sql string) sql.Result {
 	tx := mustBegin(c, currDB)
 	r := mustExecuteSql(c, tx, sql)
