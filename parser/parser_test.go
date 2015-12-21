@@ -41,7 +41,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
-		"curtime",
+		"curtime", "variables",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
