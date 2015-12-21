@@ -138,4 +138,14 @@ func (s *testSuite) TestDB(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(k, IsNil)
 	c.Assert(v, IsNil)
+
+	m := db.MultiSeek([][]byte{[]byte("z"), []byte("a"), []byte("a1")})
+	c.Assert(m, HasLen, 3)
+	c.Assert(m[0].Err, NotNil)
+	c.Assert(m[1].Err, IsNil)
+	c.Assert(m[1].Key, BytesEquals, []byte("a"))
+	c.Assert(m[1].Value, BytesEquals, []byte("1"))
+	c.Assert(m[2].Err, IsNil)
+	c.Assert(m[2].Key, BytesEquals, []byte("b"))
+	c.Assert(m[2].Value, BytesEquals, []byte("2"))
 }
