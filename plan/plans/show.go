@@ -356,8 +356,14 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 			s.Pattern.Expr = expression.Value{Val: data[0]}
 		} else if s.Where != nil {
 			m[expression.ExprEvalIdentFunc] = func(name string) (interface{}, error) {
+				// The first column is Tables_in_{database}.
+				// If s.Full is true, there will be a column named Table_type at the second place.
 				if s.Full && strings.EqualFold(name, "Table_type") {
 					return data[1], nil
+				}
+				fieldName := fmt.Sprintf("Tables_in_%s", dbName)
+				if strings.EqualFold(name, fieldName) {
+					return data[0], nil
 				}
 				return nil, errors.Errorf("unknown field %s", name)
 			}
