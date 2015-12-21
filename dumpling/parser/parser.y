@@ -104,6 +104,8 @@ import (
 	cross 		"CROSS"
 	curDate 	"CURDATE"
 	currentDate 	"CURRENT_DATE"
+	curTime 	"CUR_TIME"
+	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -1687,7 +1689,7 @@ NotKeywordToken:
 |	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
 |	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
 |	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
-|	"YEARWEEK" | "CONNECTION_ID"
+|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME" 
 
 /************************************************************************************
  *
@@ -2136,6 +2138,22 @@ FunctionCallNonKeyword:
 |	"CURDATE" '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"CUR_TIME" '(' ExpressionOpt ')' 
+	{
+		args := []ast.ExprNode{}
+		if $3 != nil {
+			args = append(args, $3.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"CURRENT_TIME" FuncDatetimePrec
+	{
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{
