@@ -69,7 +69,8 @@ func mustQuery(c *C, currDB *sql.DB, s string) int {
 }
 
 func mustFailQuery(c *C, currDB *sql.DB, s string) {
-	rows, _ := currDB.Query(s)
+	rows, err := currDB.Query(s)
+	c.Assert(err, IsNil)
 	rows.Next()
 	c.Assert(rows.Err(), NotNil)
 	rows.Close()

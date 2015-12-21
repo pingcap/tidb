@@ -363,6 +363,7 @@ func (p *testShowSuit) TestShowTables(c *C) {
 	cnt = mustQuery(c, testDB, `show full tables where Tables_in_test='tab00' and Table_type != 'VIEW';`)
 	c.Assert(cnt, Equals, 1)
 	mustFailQuery(c, testDB, `show full tables where Tables_in_unknowndb ='tab00' and Table_type != 'VIEW';`)
+	mustFailQuery(c, testDB, `show tables where Tables_in_test ='tab00' and Table_type != 'VIEW';`)
 
 	mustQuery(c, testDB, `show create table tab00;`)
 	mustFailQuery(c, testDB, `show create table abc;`)
