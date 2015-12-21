@@ -61,51 +61,15 @@ func (s *testBuiltinSuite) TestPow(c *C) {
 		c.Assert(v, DeepEquals, t.Ret)
 	}
 
-	t := []interface{}{'a', 3}
-	_, err := builtinPow(t, nil)
-	c.Assert(err, NotNil)
-	t = []interface{}{3, 'a'}
-	_, err = builtinPow(t, nil)
-	c.Assert(err, NotNil)
-
-	t = []interface{}{nil, 3}
-	_, err = builtinPow(t, nil)
-	c.Assert(err, NotNil)
-	t = []interface{}{3, nil}
-	_, err = builtinPow(t, nil)
-	c.Assert(err, NotNil)
-
-}
-
-func (s *testBuiltinSuite) TestPower(c *C) {
-	tbl := []struct {
-		Arg []interface{}
-		Ret float64
-	}{
-		{[]interface{}{1, 3}, 1},
-		{[]interface{}{2, 2}, 4},
-		{[]interface{}{4, 0.5}, 2},
-		{[]interface{}{4, -2}, 0.0625},
+	errTbl := [][]interface{}{
+		[]interface{}{"test", "test"},
+		[]interface{}{nil, nil},
+		[]interface{}{1, "test"},
+		[]interface{}{"test", 1},
 	}
-
-	for _, t := range tbl {
-		v, err := builtinPower(t.Arg, nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t.Ret)
+	for _, t := range errTbl {
+		_, err := builtinPow(t, nil)
+		c.Assert(err, NotNil)
 	}
-
-	t := []interface{}{'a', 3}
-	_, err := builtinPower(t, nil)
-	c.Assert(err, NotNil)
-	t = []interface{}{3, 'a'}
-	_, err = builtinPower(t, nil)
-	c.Assert(err, NotNil)
-
-	t = []interface{}{nil, 3}
-	_, err = builtinPower(t, nil)
-	c.Assert(err, NotNil)
-	t = []interface{}{3, nil}
-	_, err = builtinPower(t, nil)
-	c.Assert(err, NotNil)
 
 }

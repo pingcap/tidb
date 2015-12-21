@@ -330,6 +330,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 	table := []testCase{
 		// For buildin functions
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT POW(1,2)", true},
+		{"SELECT POW(1, 0.5)", true},
+		{"SELECT POW(1, -1)", true},
+		{"SELECT POW(-1, 1)", true},
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
 
