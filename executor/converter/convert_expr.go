@@ -106,6 +106,8 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.funcCast(v)
 	case *ast.FuncSubstringExpr:
 		c.funcSubstring(v)
+	case *ast.FuncSubstringIndexExpr:
+		c.funcSubstringIndex(v)
 	case *ast.FuncLocateExpr:
 		c.funcLocate(v)
 	case *ast.FuncTrimExpr:
@@ -361,6 +363,15 @@ func (c *expressionConverter) funcSubstring(v *ast.FuncSubstringExpr) {
 		StrExpr: c.exprMap[v.StrExpr],
 	}
 	c.exprMap[v] = oldSubstring
+}
+
+func (c *expressionConverter) funcSubstringIndex(v *ast.FuncSubstringIndexExpr) {
+	oldSubstrIdx := &expression.FunctionSubstringIndex{
+		Delim:   c.exprMap[v.Delim],
+		Count:   c.exprMap[v.Count],
+		StrExpr: c.exprMap[v.StrExpr],
+	}
+	c.exprMap[v] = oldSubstrIdx
 }
 
 func (c *expressionConverter) funcLocate(v *ast.FuncLocateExpr) {
