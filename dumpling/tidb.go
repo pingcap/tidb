@@ -297,8 +297,8 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 
 // NewStore creates a kv Storage with path.
 //
-// The path must be formatted as an URL 'engine://path?params' like the one for tidb.Open() but
-// with the dbname cut off.
+// The path must be a URL format 'engine://path?params' like the one for
+// tidb.Open() but with the dbname cut off.
 // Examples:
 //    goleveldb://relative/path
 //    boltdb:///absolute/path

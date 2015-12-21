@@ -146,7 +146,7 @@ func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
 
 // Open returns a new connection to the database.
 //
-// The dsn must be formatted as an URL 'engine://path/dbname?params'.
+// The dsn must be a URL format 'engine://path/dbname?params'.
 // Engine is the storage name registered with RegisterStore.
 // Path is the storage specific format.
 // Params is key-value pairs split by '&', optional params are storage specific.

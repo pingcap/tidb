@@ -151,8 +151,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	uuid := fmt.Sprintf("hbase-%v-%v", zks, tableName)
 
+	uuid := fmt.Sprintf("hbase-%v-%v", zks, tableName)
 	if store, ok := mc.cache[uuid]; ok {
 		if oracleAddr != store.oracleAddr {
 			return nil, errors.Errorf("store(%s) is opened with a different tso(%v)", uuid, store.oracleAddr)
