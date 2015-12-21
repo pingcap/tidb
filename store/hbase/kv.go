@@ -139,15 +139,15 @@ func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
 type Driver struct {
 }
 
-// Open opens or creates an HBase storage with given dataSource.
+// Open opens or creates an HBase storage with given path.
 //
-// The format of dsn should be 'hbase://zk1,zk2,zk3/table[?tso=host:port]'.
+// The format of path should be 'hbase://zk1,zk2,zk3/table[?tso=host:port]'.
 // If tso is not provided, it will use a local oracle instead. (for test only)
-func (d Driver) Open(dataSource string) (kv.Storage, error) {
+func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	zks, oracleAddr, tableName, err := parseDSN(dataSource)
+	zks, oracleAddr, tableName, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -208,8 +208,8 @@ func (d Driver) Open(dataSource string) (kv.Storage, error) {
 	return s, nil
 }
 
-func parseDSN(dsn string) (zks []string, oracleAddr, tableName string, err error) {
-	u, err := url.Parse(dsn)
+func parsePath(path string) (zks []string, oracleAddr, tableName string, err error) {
+	u, err := url.Parse(path)
 	if err != nil {
 		return nil, "", "", errors.Trace(err)
 	}

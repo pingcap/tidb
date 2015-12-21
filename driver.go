@@ -146,7 +146,7 @@ func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
 
 // Open returns a new connection to the database.
 //
-// The dataSource must be formatted as an URL 'engine://path/dbname?params'.
+// The dsn must be formatted as an URL 'engine://path/dbname?params'.
 // Engine is the storage name registered with RegisterStore.
 // Path is the storage specific format.
 // Params is key-value pairs split by '&', optional params are storage specific.
@@ -160,8 +160,8 @@ func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
 // efficient re-use.
 //
 // The returned connection is only used by one goroutine at a time.
-func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
-	storePath, dbName, err := parseDriverDSN(dataSource)
+func (d *sqlDriver) Open(dsn string) (driver.Conn, error) {
+	storePath, dbName, err := parseDriverDSN(dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
