@@ -214,6 +214,7 @@ import (
 	placeholder	"PLACEHOLDER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	procedure	"PROCEDURE"
 	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
@@ -3454,6 +3455,12 @@ ShowTargetFilterable:
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowTriggers,
 			DBName:	$2.(string),
+		}
+	}
+|	"PROCEDURE" "STATUS"
+	{
+		$$ = &ast.ShowStmt {
+			Tp: ast.ShowProcedureStatus,
 		}
 	}
 
