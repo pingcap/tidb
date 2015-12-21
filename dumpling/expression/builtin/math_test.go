@@ -61,14 +61,16 @@ func (s *testBuiltinSuite) TestPow(c *C) {
 		c.Assert(v, DeepEquals, t.Ret)
 	}
 
-	errTbl := [][]interface{}{
-		[]interface{}{"test", "test"},
-		[]interface{}{nil, nil},
-		[]interface{}{1, "test"},
-		[]interface{}{"test", 1},
+	errTbl := []struct {
+		Arg []interface{}
+	}{
+		{[]interface{}{"test", "test"}},
+		{[]interface{}{nil, nil}},
+		{[]interface{}{1, "test"}},
+		{[]interface{}{1, nil}},
 	}
 	for _, t := range errTbl {
-		_, err := builtinPow(t, nil)
+		_, err := builtinPow(t.Arg, nil)
 		c.Assert(err, NotNil)
 	}
 
