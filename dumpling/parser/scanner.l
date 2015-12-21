@@ -695,7 +695,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {current_date}		lval.item = string(l.val)
 			return currentDate
 {curtime}		lval.item = string(l.val)
-			return currentTime
+			return curTime
 {current_time}		lval.item = string(l.val)
 			return currentTime
 {current_user}		lval.item = string(l.val)
