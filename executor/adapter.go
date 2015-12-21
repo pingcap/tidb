@@ -156,8 +156,8 @@ func (a *statementAdapter) Exec(ctx context.Context) (rset.Recordset, error) {
 
 	if len(e.Fields()) == 0 {
 		// No result fields means no Recordset.
+		defer e.Close()
 		for {
-			defer e.Close()
 			row, err := e.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
