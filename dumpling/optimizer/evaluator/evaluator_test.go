@@ -20,6 +20,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression/builtin"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -380,6 +382,30 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		_, err := Eval(ctx, f)
 		c.Assert(err, NotNil)
 	}
+}
+
+func (s *testEvaluatorSuite) TestCall(c *C) {
+	// To test this case, we need to fake a wrong builtin.Funcs
+	builtin.Funcs = map[string]builtin.Func{
+		"date": {nil, 8, 8, false, false},
+	}
+	ctx := mock.NewContext()
+
+	// Test case for unknown function
+	expr := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("unknown"),
+		Args:   []ast.ExprNode{},
+	}
+	_, err := Eval(ctx, expr)
+	c.Assert(err, NotNil)
+
+	// Test case for invalid number of arguments
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args:   []ast.ExprNode{},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
