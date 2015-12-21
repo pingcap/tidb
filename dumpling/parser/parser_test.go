@@ -394,6 +394,14 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
 
+		// Select current_time
+		{"select current_time", true},
+		{"select current_time()", true},
+		{"select current_time(6)", true},
+		{"select curtime", true},
+		{"select curtime()", true},
+		{"select curtime(6)", true},
+
 		// For time extract
 		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},
 		{`select extract(second from "2011-11-11 10:10:10.123456")`, true},
