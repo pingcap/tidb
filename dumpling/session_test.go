@@ -1373,8 +1373,8 @@ func (s *testSessionSuite) TestSubstringIndexExpr(c *C) {
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t;")
 	mustExecSQL(c, se, "create table t (c varchar(128));")
-	mustExecSQL(c, se, `insert into t values ("www.mysql.com");`)
-	mustExecMatch(c, se, "SELECT DISTINCT SUBSTRING_INDEX(c, '.', 2) from t;", [][]interface{}{{"www.mysql"}})
+	mustExecSQL(c, se, `insert into t values ("www.pingcap.com");`)
+	mustExecMatch(c, se, "SELECT DISTINCT SUBSTRING_INDEX(c, '.', 2) from t;", [][]interface{}{{"www.pingcap"}})
 }
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {

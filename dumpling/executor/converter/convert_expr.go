@@ -14,12 +14,13 @@
 package converter
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/model"
-	"strings"
 )
 
 func convertExpr(converter *expressionConverter, expr ast.ExprNode) (expression.Expression, error) {
