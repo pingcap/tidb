@@ -126,13 +126,13 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
-	l := parser.NewLexer(src)
-	l.SetCharsetInfo(getCtxCharsetInfo(ctx))
-	if parser.YYParse(l) != 0 {
-		log.Warnf("compiling %s, error: %v", src, l.Errors()[0])
-		return nil, errors.Trace(l.Errors()[0])
+	charset, collation := getCtxCharsetInfo(ctx)
+	stmts, err := parser.Parse(src, charset, collation)
+	if err != nil {
+		log.Warnf("compiling %s, error: %v", src, err)
+		return nil, errors.Trace(err)
 	}
-	return l.Stmts(), nil
+	return stmts, nil
 }
 
 // Compile is safe for concurrent use by multiple goroutines.

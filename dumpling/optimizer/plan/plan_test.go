@@ -186,11 +186,9 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 
 	for _, ca := range cases {
 		sql := "select 1 from dual where " + ca.exprStr
-		lexer := parser.NewLexer(sql)
-
-		rc := parser.YYParse(lexer)
-		c.Assert(rc, Equals, 0, Commentf("error %v, for expr %s", lexer.Errors(), ca.exprStr))
-		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
+		stmts, err := parser.Parse(sql, "", "")
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, ca.exprStr))
+		stmt := stmts[0].(*ast.SelectStmt)
 		result := rb.build(stmt.Where)
 		c.Assert(rb.err, IsNil)
 		got := fmt.Sprintf("%v", result)
@@ -233,10 +231,9 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		lexer := parser.NewLexer(ca.sqlStr)
-		rc := parser.YYParse(lexer)
-		c.Assert(rc, Equals, 0, Commentf("error %v for expr %s", lexer.Errors(), ca.sqlStr))
-		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
+		s, err := parser.ParseOne(ca.sqlStr, "", "")
+		c.Assert(err, IsNil, Commentf("for expr %s", ca.sqlStr))
+		stmt := s.(*ast.SelectStmt)
 		mockResolve(stmt)
 		p, err := BuildPlan(stmt)
 		c.Assert(err, IsNil)
@@ -293,10 +290,9 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		lexer := parser.NewLexer(ca.sql)
-		rc := parser.YYParse(lexer)
-		c.Assert(rc, Equals, 0, Commentf("error %v for sql %s", lexer.Errors(), ca.sql))
-		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
+		s, err := parser.ParseOne(ca.sql, "", "")
+		c.Assert(err, IsNil, Commentf("for expr %s", ca.sql))
+		stmt := s.(*ast.SelectStmt)
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
 		p, err := BuildPlan(stmt)
