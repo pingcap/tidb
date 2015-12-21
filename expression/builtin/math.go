@@ -78,7 +78,3 @@ func builtinPow(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	return math.Pow(x, y), nil
 
 }
-
-func builtinPower(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
-	return builtinPow(args, ctx)
-}
