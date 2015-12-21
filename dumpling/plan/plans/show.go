@@ -128,6 +128,9 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
 		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case stmt.ShowProcedureStatus:
+		names = []string{}
+		types = []byte{}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
@@ -193,6 +196,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowGrants(ctx)
 	case stmt.ShowTriggers:
 		return s.fetchShowTriggers(ctx)
+	case stmt.ShowProcedureStatus:
+		return s.fetchShowProcedureStatus(ctx)
 	}
 	return nil
 }
@@ -658,5 +663,10 @@ func (s *ShowPlan) fetchShowGrants(ctx context.Context) error {
 }
 
 func (s *ShowPlan) fetchShowTriggers(ctx context.Context) error {
+	return nil
+}
+
+// Do nothing.
+func (s *ShowPlan) fetchShowProcedureStatus(ctx context.Context) error {
 	return nil
 }
