@@ -104,6 +104,7 @@ import (
 	cross 		"CROSS"
 	curDate 	"CURDATE"
 	currentDate 	"CURRENT_DATE"
+	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -2136,6 +2137,14 @@ FunctionCallNonKeyword:
 |	"CURDATE" '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"CURRENT_TIME" FuncDatetimePrec
+	{
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{

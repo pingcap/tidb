@@ -46,9 +46,9 @@ func convertToTime(arg interface{}, tp byte) (interface{}, error) {
 	return t, nil
 }
 
-func convertToDuration(arg interface{}) (interface{}, error) {
+func convertToDuration(arg interface{}, fsp int) (interface{}, error) {
 	f := types.NewFieldType(mysql.TypeDuration)
-	f.Decimal = mysql.MaxFsp
+	f.Decimal = fsp
 
 	v, err := types.Convert(arg, f)
 	if err != nil {
@@ -79,7 +79,7 @@ func builtinDay(args []interface{}, ctx map[interface{}]interface{}) (interface{
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
 func builtinHour(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	v, err := convertToDuration(args[0])
+	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || types.IsNil(v) {
 		return v, err
 	}
@@ -91,7 +91,7 @@ func builtinHour(args []interface{}, ctx map[interface{}]interface{}) (interface
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func builtinMinute(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	v, err := convertToDuration(args[0])
+	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || types.IsNil(v) {
 		return v, err
 	}
@@ -103,7 +103,7 @@ func builtinMinute(args []interface{}, ctx map[interface{}]interface{}) (interfa
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
 func builtinSecond(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	v, err := convertToDuration(args[0])
+	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || types.IsNil(v) {
 		return v, err
 	}
@@ -115,7 +115,7 @@ func builtinSecond(args []interface{}, ctx map[interface{}]interface{}) (interfa
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func builtinMicroSecond(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
-	v, err := convertToDuration(args[0])
+	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || types.IsNil(v) {
 		return v, err
 	}
@@ -307,6 +307,18 @@ func builtinCurrentDate(args []interface{}, ctx map[interface{}]interface{}) (in
 	return mysql.Time{
 		Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
 		Type: mysql.TypeDate, Fsp: 0}, nil
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
+func builtinCurrentTime(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	fsp := 0
+	if len(args) == 1 {
+		var err error
+		if fsp, err = checkFsp(args[0]); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return convertToDuration(time.Now().Format("15:04:05.000000"), fsp)
 }
 
 func checkFsp(arg interface{}) (int, error) {
