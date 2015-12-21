@@ -80,11 +80,11 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		lexer := parser.NewLexer("select " + ca.expr)
-		parser.YYParse(lexer)
-		stmt := lexer.Stmts()[0].(*ast.SelectStmt)
-		ast.SetFlag(stmt)
-		expr := stmt.Fields.Fields[0].Expr
+		stmt, err := parser.ParseOne("select "+ca.expr, "", "")
+		c.Assert(err, IsNil)
+		selectStmt := stmt.(*ast.SelectStmt)
+		ast.SetFlag(selectStmt)
+		expr := selectStmt.Fields.Fields[0].Expr
 		c.Assert(expr.GetFlag(), Equals, ca.flag, Commentf("For %s", ca.expr))
 	}
 }
