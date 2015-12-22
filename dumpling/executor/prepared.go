@@ -99,7 +99,7 @@ func (e *PrepareExec) Close() error {
 	return nil
 }
 
-// DoPrepare prepares prepares the statement, it can be called multiple times without
+// DoPrepare prepares the statement, it can be called multiple times without
 // side effect.
 func (e *PrepareExec) DoPrepare() {
 	vars := variable.GetSessionVars(e.Ctx)
@@ -110,7 +110,7 @@ func (e *PrepareExec) DoPrepare() {
 		}
 	}
 	l := parser.NewLexer(e.SQLText)
-	l.SetCharsetInfo(getCtxCharsetInfo(e.Ctx))
+	l.SetCharsetInfo(variable.GetCharsetInfo(e.Ctx))
 	if parser.YYParse(l) != 0 {
 		e.Err = errors.Trace(l.Errors()[0])
 		return
@@ -152,7 +152,7 @@ func (e *PrepareExec) DoPrepare() {
 }
 
 // ExecuteExec represents an EXECUTE executor.
-// it executes a prepared statement.
+// It executes a prepared statement.
 type ExecuteExec struct {
 	IS        infoschema.InfoSchema
 	Ctx       context.Context
@@ -262,21 +262,6 @@ func (e *DeallocateExec) Next() (*Row, error) {
 // Close implements plan.Plan Close interface.
 func (e *DeallocateExec) Close() error {
 	return nil
-}
-
-// What character set should the server translate a statement to after receiving it?
-// For this, the server uses the character_set_connection and collation_connection system variables.
-// It converts statements sent by the client from character_set_client to character_set_connection
-// (except for string literals that have an introducer such as _latin1 or _utf8).
-// collation_connection is important for comparisons of literal strings.
-// For comparisons of strings with column values, collation_connection does not matter because columns
-// have their own collation, which has a higher collation precedence.
-// See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
-func getCtxCharsetInfo(ctx context.Context) (string, string) {
-	sessionVars := variable.GetSessionVars(ctx)
-	charset := sessionVars.Systems["character_set_connection"]
-	collation := sessionVars.Systems["collation_connection"]
-	return charset, collation
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.

@@ -79,6 +79,21 @@ func GetSessionVars(ctx context.Context) *SessionVars {
 	return v
 }
 
+// What character set should the server translate a statement to after receiving it?
+// For this, the server uses the character_set_connection and collation_connection system variables.
+// It converts statements sent by the client from character_set_client to character_set_connection
+// (except for string literals that have an introducer such as _latin1 or _utf8).
+// collation_connection is important for comparisons of literal strings.
+// For comparisons of strings with column values, collation_connection does not matter because columns
+// have their own collation, which has a higher collation precedence.
+// See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
+func GetCharsetInfo(ctx context.Context) (charset, collation string) {
+	sessionVars := GetSessionVars(ctx)
+	charset = sessionVars.Systems["character_set_connection"]
+	collation = sessionVars.Systems["collation_connection"]
+	return
+}
+
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
