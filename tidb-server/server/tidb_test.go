@@ -43,7 +43,9 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
-	ts.server.Close()
+	if ts.server != nil {
+		ts.server.Close()
+	}
 }
 
 func (ts *TidbTestSuite) TestRegression(c *C) {
