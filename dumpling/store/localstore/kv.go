@@ -16,11 +16,13 @@ package localstore
 import (
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/segmentmap"
 	"github.com/twinj/uuid"
 )
 
@@ -37,6 +39,8 @@ const (
 
 const (
 	maxSeekWorkers = 3
+
+	lowerWaterMark = 10 // second
 )
 
 type command struct {
@@ -62,8 +66,6 @@ type seekArgs struct {
 
 type commitArgs struct {
 }
-
-//scheduler
 
 // Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 // if such key is not found.
@@ -138,6 +140,11 @@ func (s *dbStore) scheduler() {
 		go s.seekWorker(wgSeekWorkers, seekCh)
 	}
 
+	segmentIndex := 0
+
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+
 	for {
 		select {
 		case cmd := <-s.commandCh:
@@ -157,6 +164,26 @@ func (s *dbStore) scheduler() {
 			close(seekCh)
 			wgSeekWorkers.Wait()
 			s.wg.Done()
+		case <-tick.C:
+			segmentIndex = segmentIndex % s.recentUpdates.SegmentCount()
+			s.cleanRecentUpdates(segmentIndex)
+			segmentIndex++
+		}
+	}
+}
+
+func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
+	m, err := s.recentUpdates.GetSegment(segmentIndex)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	now := time.Now().Unix()
+	for k, v := range m {
+		dis := now - version2Second(v.(kv.Version))
+		if dis > lowerWaterMark {
+			delete(m, k)
 		}
 	}
 }
@@ -168,12 +195,12 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 			return errors.Trace(kv.ErrLockConflict)
 		}
 
-		lastVer, ok := s.recentUpdates[k]
+		lastVer, ok := s.recentUpdates.Get([]byte(k))
 		if !ok {
 			continue
 		}
 		// If there's newer version of this key, returns error.
-		if lastVer.Cmp(kv.Version{Ver: txn.tid}) > 0 {
+		if lastVer.(kv.Version).Cmp(kv.Version{Ver: txn.tid}) > 0 {
 			return errors.Trace(kv.ErrConditionNotMatch)
 		}
 	}
@@ -235,15 +262,13 @@ func (s *dbStore) NewBatch() engine.Batch {
 	return s.db.NewBatch()
 }
 
-//end of scheduler
-
 type dbStore struct {
 	db engine.DB
 
 	txns       map[uint64]*dbTxn
 	keysLocked map[string]uint64
 	// TODO: clean up recentUpdates
-	recentUpdates map[string]kv.Version
+	recentUpdates *segmentmap.SegmentMap
 	uuid          string
 	path          string
 	compactor     *localstoreCompactor
@@ -304,17 +329,20 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 
 	log.Info("[kv] New store", schema)
 	s := &dbStore{
-		txns:          make(map[uint64]*dbTxn),
-		keysLocked:    make(map[string]uint64),
-		uuid:          uuid.NewV4().String(),
-		path:          schema,
-		db:            db,
-		compactor:     newLocalCompactor(localCompactDefaultPolicy, db),
-		commandCh:     make(chan *command, 1000),
-		closed:        false,
-		closeCh:       make(chan struct{}),
-		recentUpdates: make(map[string]kv.Version),
-		wg:            &sync.WaitGroup{},
+		txns:       make(map[uint64]*dbTxn),
+		keysLocked: make(map[string]uint64),
+		uuid:       uuid.NewV4().String(),
+		path:       schema,
+		db:         db,
+		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
+		commandCh:  make(chan *command, 1000),
+		closed:     false,
+		closeCh:    make(chan struct{}),
+		wg:         &sync.WaitGroup{},
+	}
+	s.recentUpdates, err = segmentmap.NewSegmentMap(100)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	mc.cache[schema] = s
 	s.compactor.Start()
@@ -428,7 +456,7 @@ func (s *dbStore) unLockKeys(txn *dbTxn) error {
 		}
 
 		delete(s.keysLocked, k)
-		s.recentUpdates[k] = txn.version
+		s.recentUpdates.Set([]byte(k), txn.version, true)
 	}
 
 	return nil
