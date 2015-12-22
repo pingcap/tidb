@@ -24,7 +24,8 @@ type testSegmentMapSuite struct {
 
 func (s *testSegmentMapSuite) TestSegment(c *C) {
 	segs := 2
-	m := NewSegmentMap(segs)
+	m, err := NewSegmentMap(segs)
+	c.Assert(err, IsNil)
 	c.Assert(m.SegmentCount(), Equals, segs)
 	k := []byte("k")
 	v := []byte("v")
