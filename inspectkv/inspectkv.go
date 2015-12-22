@@ -341,10 +341,7 @@ func CompareTableData(txn kv.Transaction, t table.Table, data []*RecordData, exa
 		record := &RecordData{Handle: h, Values: vals}
 		return false, errors.Errorf("data:%v != record:%v", nil, record)
 	}
-	err = t.IterRecords(txn, string(startKey), t.Cols(),
-		func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
-			return filterFunc(h, vals, cols)
-		})
+	err = t.IterRecords(txn, string(startKey), t.Cols(), filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
