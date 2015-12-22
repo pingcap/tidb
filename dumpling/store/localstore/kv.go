@@ -16,6 +16,7 @@ package localstore
 import (
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -139,6 +140,10 @@ func (s *dbStore) scheduler() {
 		go s.seekWorker(wgSeekWorkers, seekCh)
 	}
 
+	segmentIndex := 0
+
+	tick := time.NewTicker(time.Second)
+
 	for {
 		select {
 		case cmd := <-s.commandCh:
@@ -158,6 +163,27 @@ func (s *dbStore) scheduler() {
 			close(seekCh)
 			wgSeekWorkers.Wait()
 			s.wg.Done()
+		case <-tick.C:
+			segmentIndex = segmentIndex % s.recentUpdates.SegmentCount()
+			s.cleanRecentUpdates(segmentIndex)
+			segmentIndex++
+		}
+	}
+}
+
+func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
+	m, err := s.recentUpdates.GetSegment(segmentIndex)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	lowerWaterMark := int64(10) // second
+	now := time.Now().UnixNano() / int64(time.Second)
+	for k, v := range m {
+		dis := now - version2Second(v.(kv.Version))
+		if dis > lowerWaterMark {
+			delete(m, k)
 		}
 	}
 }
