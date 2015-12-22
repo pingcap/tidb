@@ -37,7 +37,7 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/check",
-			"Rev": "dbd36251e82f4d1aed5561647b402a448839c412"
+			"Rev": "ce8a2f822ab1e245a4eefcef2996531c79c943f1"
 		},
 		{
 			"ImportPath": "github.com/rcrowley/go-metrics",
