@@ -156,8 +156,8 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 
 	index2 := kv.NewKVIndex("i", "test", 1, false)
 	iter, hit, err := index2.Seek(txn, []interface{}{"abc", nil})
-	defer iter.Close()
 	c.Assert(err, IsNil)
+	defer iter.Close()
 	c.Assert(hit, IsFalse)
 	_, h, err := iter.Next()
 	c.Assert(err, IsNil)
