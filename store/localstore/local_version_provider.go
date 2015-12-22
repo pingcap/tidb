@@ -27,6 +27,14 @@ const (
 	timePrecisionOffset = 18
 )
 
+func time2TsPhysical(t time.Time) uint64 {
+	return uint64((t.UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
+}
+
+func version2Second(v kv.Version) int64 {
+	return int64(v.Ver>>timePrecisionOffset) / 1000
+}
+
 // CurrentVersion implements the VersionProvider's GetCurrentVer interface.
 func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 	l.mu.Lock()
@@ -34,7 +42,7 @@ func (l *LocalVersionProvider) CurrentVersion() (kv.Version, error) {
 
 	for {
 		var ts uint64
-		ts = uint64((time.Now().UnixNano() / int64(time.Millisecond)) << timePrecisionOffset)
+		ts = time2TsPhysical(time.Now())
 
 		if l.lastTimestamp > ts {
 			log.Error("[kv] invalid physical time stamp")
