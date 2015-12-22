@@ -21,6 +21,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/segmentmap"
 	"github.com/twinj/uuid"
 )
 
@@ -168,12 +169,12 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 			return errors.Trace(kv.ErrLockConflict)
 		}
 
-		lastVer, ok := s.recentUpdates[k]
+		lastVer, ok := s.recentUpdates.Get([]byte(k))
 		if !ok {
 			continue
 		}
 		// If there's newer version of this key, returns error.
-		if lastVer.Cmp(kv.Version{Ver: txn.tid}) > 0 {
+		if lastVer.(kv.Version).Cmp(kv.Version{Ver: txn.tid}) > 0 {
 			return errors.Trace(kv.ErrConditionNotMatch)
 		}
 	}
@@ -243,7 +244,7 @@ type dbStore struct {
 	txns       map[uint64]*dbTxn
 	keysLocked map[string]uint64
 	// TODO: clean up recentUpdates
-	recentUpdates map[string]kv.Version
+	recentUpdates *segmentmap.SegmentMap
 	uuid          string
 	path          string
 	compactor     *localstoreCompactor
@@ -313,7 +314,7 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 		commandCh:     make(chan *command, 1000),
 		closed:        false,
 		closeCh:       make(chan struct{}),
-		recentUpdates: make(map[string]kv.Version),
+		recentUpdates: segmentmap.NewSegmentMap(100),
 		wg:            &sync.WaitGroup{},
 	}
 	mc.cache[schema] = s
@@ -428,7 +429,7 @@ func (s *dbStore) unLockKeys(txn *dbTxn) error {
 		}
 
 		delete(s.keysLocked, k)
-		s.recentUpdates[k] = txn.version
+		s.recentUpdates.Set([]byte(k), txn.version, true)
 	}
 
 	return nil
