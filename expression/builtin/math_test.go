@@ -43,3 +43,35 @@ func (s *testBuiltinSuite) TestRand(c *C) {
 	c.Assert(v, Less, float64(1))
 	c.Assert(v, GreaterEqual, float64(0))
 }
+
+func (s *testBuiltinSuite) TestPow(c *C) {
+	tbl := []struct {
+		Arg []interface{}
+		Ret float64
+	}{
+		{[]interface{}{1, 3}, 1},
+		{[]interface{}{2, 2}, 4},
+		{[]interface{}{4, 0.5}, 2},
+		{[]interface{}{4, -2}, 0.0625},
+	}
+
+	for _, t := range tbl {
+		v, err := builtinPow(t.Arg, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t.Ret)
+	}
+
+	errTbl := []struct {
+		Arg []interface{}
+	}{
+		{[]interface{}{"test", "test"}},
+		{[]interface{}{nil, nil}},
+		{[]interface{}{1, "test"}},
+		{[]interface{}{1, nil}},
+	}
+	for _, t := range errTbl {
+		_, err := builtinPow(t.Arg, nil)
+		c.Assert(err, NotNil)
+	}
+
+}

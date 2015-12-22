@@ -55,8 +55,10 @@ var Funcs = map[string]Func{
 	"coalesce": {builtinCoalesce, 1, -1, true, false},
 
 	// math functions
-	"abs":  {builtinAbs, 1, 1, true, false},
-	"rand": {builtinRand, 0, 1, true, false},
+	"abs":   {builtinAbs, 1, 1, true, false},
+	"pow":   {builtinPow, 2, 2, true, false},
+	"power": {builtinPow, 2, 2, true, false},
+	"rand":  {builtinRand, 0, 1, true, false},
 
 	// group by functions
 	"avg":          {builtinAvg, 1, 1, false, true},
@@ -69,8 +71,10 @@ var Funcs = map[string]Func{
 	// time functions
 	"curdate":           {builtinCurrentDate, 0, 0, false, false},
 	"current_date":      {builtinCurrentDate, 0, 0, false, false},
+	"current_time":      {builtinCurrentTime, 0, 1, false, false},
 	"current_timestamp": {builtinNow, 0, 1, false, false},
-	"date":              {builtinDate, 8, 8, true, false},
+	"curtime":           {builtinCurrentTime, 0, 1, false, false},
+	"date":              {builtinDate, 1, 1, true, false},
 	"day":               {builtinDay, 1, 1, true, false},
 	"dayofmonth":        {builtinDayOfMonth, 1, 1, true, false},
 	"dayofweek":         {builtinDayOfWeek, 1, 1, true, false},
