@@ -172,7 +172,7 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 	}
 	if !b {
 		// Create new hbase table for store.
-		t := hbase.NewTableDesciptor(hbase.NewTableNameWithDefaultNS(tableName))
+		t := hbase.NewTableDesciptor(tableName)
 		cf := hbase.NewColumnFamilyDescriptor(hbaseColFamily)
 		cf.AddAttr("THEMIS_ENABLE", "true")
 		t.AddColumnDesc(cf)
