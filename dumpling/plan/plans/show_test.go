@@ -360,11 +360,13 @@ func (p *testShowSuit) TestShowTables(c *C) {
 	c.Assert(cnt, Equals, 2)
 	cnt = mustQuery(c, testDB, `show full tables where Table_type != 'VIEW';`)
 	c.Assert(cnt, Equals, 3)
+	cnt = mustQuery(c, testDB, `show full tables where Tables_in_test='tab00' and Table_type != 'VIEW';`)
+	c.Assert(cnt, Equals, 1)
+	mustFailQuery(c, testDB, `show full tables where Tables_in_unknowndb ='tab00' and Table_type != 'VIEW';`)
+	mustFailQuery(c, testDB, `show tables where Tables_in_test ='tab00' and Table_type != 'VIEW';`)
 
 	mustQuery(c, testDB, `show create table tab00;`)
-	rows, _ := testDB.Query(`show create table abc;`)
-	rows.Next()
-	c.Assert(rows.Err(), NotNil)
+	mustFailQuery(c, testDB, `show create table abc;`)
 }
 
 func (p *testShowSuit) TestShowGrants(c *C) {

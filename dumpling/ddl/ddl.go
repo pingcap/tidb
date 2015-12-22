@@ -193,7 +193,7 @@ func (d *ddl) SetLease(lease time.Duration) {
 		return
 	}
 
-	log.Warnf("change schema lease %s -> %s", d.lease, lease)
+	log.Warnf("[ddl] change schema lease %s -> %s", d.lease, lease)
 
 	if d.isClosed() {
 		// if already closed, just set lease and return

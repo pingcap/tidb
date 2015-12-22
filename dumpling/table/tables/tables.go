@@ -430,7 +430,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(bs, colVals, recordID); err != nil {
-			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			if terror.ErrorEqual(err, terror.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
 				iter, _, err1 := v.X.Seek(bs, colVals)

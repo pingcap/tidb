@@ -46,7 +46,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	db := store.(*dbStore).db
 	store.(*dbStore).compactor.Stop()
 
-	policy := kv.CompactPolicy{
+	policy := compactPolicy{
 		SafePoint:       500,
 		BatchDeleteCnt:  1,
 		TriggerInterval: 100 * time.Millisecond,
@@ -75,7 +75,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	txn.Set([]byte("a"), []byte("5"))
 	txn.Commit()
 	t := count(db)
-	c.Assert(t, Equals, 7)
+	c.Assert(t, Equals, 6)
 
 	// Simulating timeout
 	time.Sleep(1 * time.Second)
@@ -86,7 +86,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	time.Sleep(1 * time.Second)
 	// Do background GC
 	t = count(db)
-	c.Assert(t, Equals, 3)
+	c.Assert(t, Equals, 2)
 
 	compactor.Stop()
 }
@@ -110,4 +110,23 @@ func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
 	keys, err := compactor.getAllVersions([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(keys, HasLen, 2)
+}
+
+// TestStartStop is to test `Panic: sync: WaitGroup is reused before previous Wait has returned`
+// in Stop function.
+func (s *localstoreCompactorTestSuite) TestStartStop(c *C) {
+	store := createMemStore()
+	db := store.(*dbStore).db
+
+	for i := 0; i < 10000; i++ {
+		policy := compactPolicy{
+			SafePoint:       500,
+			BatchDeleteCnt:  1,
+			TriggerInterval: 100 * time.Millisecond,
+		}
+		compactor := newLocalCompactor(policy, db)
+		compactor.Start()
+		compactor.Stop()
+		c.Logf("Test compactor stop and start %d times", i)
+	}
 }
