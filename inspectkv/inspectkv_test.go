@@ -14,6 +14,7 @@
 package inspectkv
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -218,43 +219,54 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func newDiffRetError(prefix string, ra, rb *RecordData) string {
+	return fmt.Sprintf("%s:%v != record:%v", prefix, ra, rb)
+}
+
 func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	err = CompareTableData(txn, tb, rs)
+	err = CompareTableData(txn, tb, rs, true)
 	c.Assert(err, IsNil)
 
 	cnt, err := GetTableRecordsCount(txn, tb, 0)
 	c.Assert(err, IsNil)
 	c.Assert(cnt, Equals, int64(len(rs)))
 
+	records := []*RecordData{
+		{Handle: rs[0].Handle},
+		{Handle: rs[1].Handle},
+	}
+	err = CompareTableData(txn, tb, records, false)
+	c.Assert(err, IsNil)
+
 	record := &RecordData{Handle: rs[1].Handle, Values: []interface{}{int64(30)}}
-	err = CompareTableData(txn, tb, []*RecordData{rs[0], record})
+	err = CompareTableData(txn, tb, []*RecordData{rs[0], record}, true)
 	c.Assert(err, NotNil)
-	diffMsg := newDiffRetError(rs[1].Handle, record.Handle, rs[1].Values, record.Values)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	diffMsg := newDiffRetError("data", record, rs[1])
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	record.Handle = 3
-	err = CompareTableData(txn, tb, []*RecordData{rs[0], record, rs[1]})
+	err = CompareTableData(txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(resultNotExist, record.Handle, nil, record.Values)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	diffMsg = newDiffRetError("data", record, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableData(txn, tb, []*RecordData{rs[0], rs[1], record})
+	err = CompareTableData(txn, tb, []*RecordData{rs[0], rs[1], record}, true)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(resultNotExist, record.Handle, nil, record.Values)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	diffMsg = newDiffRetError("data", record, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableData(txn, tb, []*RecordData{rs[0]})
+	err = CompareTableData(txn, tb, []*RecordData{rs[0]}, true)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(rs[1].Handle, resultNotExist, rs[1].Values, nil)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	diffMsg = newDiffRetError("data", nil, rs[1])
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableData(txn, tb, nil)
+	err = CompareTableData(txn, tb, nil, true)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(rs[0].Handle, resultNotExist, rs[0].Values, nil)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	diffMsg = newDiffRetError("data", nil, rs[0])
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 }
 
 func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
@@ -284,8 +296,9 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	c.Assert(err, IsNil)
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
-	diffMsg := newDiffRetError(int64(3), resultNotExist, []interface{}{int64(30)}, nil)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	record1 := &RecordData{Handle: int64(3), Values: []interface{}{int64(30)}}
+	diffMsg := newDiffRetError("index", record1, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -302,8 +315,9 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	c.Assert(err, IsNil)
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(int64(3), int64(3), []interface{}{int64(30)}, []interface{}{int64(31)})
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	record2 := &RecordData{Handle: int64(3), Values: []interface{}{int64(31)}}
+	diffMsg = newDiffRetError("index", record1, record2)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -320,8 +334,9 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	c.Assert(err, IsNil)
 	err = checkColsAndIndex(txn, tb, idx)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(int64(5), int64(3), []interface{}{int64(30)}, []interface{}{int64(30)})
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	record2 = &RecordData{Handle: int64(5), Values: []interface{}{int64(30)}}
+	diffMsg = newDiffRetError("index", record1, record2)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
@@ -338,8 +353,9 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	c.Assert(err, IsNil)
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(int64(4), resultNotExist, []interface{}{int64(40)}, nil)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	record1 = &RecordData{Handle: int64(4), Values: []interface{}{int64(40)}}
+	diffMsg = newDiffRetError("index", record1, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
@@ -356,6 +372,6 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	c.Assert(err, IsNil)
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
-	diffMsg = newDiffRetError(int64(4), resultNotExist, []interface{}{int64(40)}, nil)
-	c.Assert(err.Error(), DeepEquals, diffMsg.Error())
+	diffMsg = newDiffRetError("index", nil, record1)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 }
