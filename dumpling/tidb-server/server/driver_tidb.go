@@ -110,9 +110,10 @@ func (ts *TiDBStatement) Close() error {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(capability uint32, collation uint8, dbname string) (IContext, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (IContext, error) {
 	session, _ := tidb.CreateSession(qd.store)
 	session.SetClientCapability(capability)
+	session.SetConnectionID(connID)
 	if dbname != "" {
 		_, err := session.Execute("use " + dbname)
 		if err != nil {
