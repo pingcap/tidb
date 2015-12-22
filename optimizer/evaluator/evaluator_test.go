@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -380,6 +381,56 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		_, err := Eval(ctx, f)
 		c.Assert(err, NotNil)
 	}
+}
+
+func (s *testEvaluatorSuite) TestCall(c *C) {
+	ctx := mock.NewContext()
+
+	// Test case for correct number of arguments
+	expr := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args:   []ast.ExprNode{ast.NewValueExpr("2015-12-21 11:11:11")},
+	}
+	v, err := Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	value, ok := v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(value.String(), Equals, "2015-12-21")
+
+	// Test case for unlimited upper bound
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("concat"),
+		Args: []ast.ExprNode{ast.NewValueExpr("Ti"),
+			ast.NewValueExpr("D"), ast.NewValueExpr("B")},
+	}
+	v, err = Eval(ctx, expr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "TiDB")
+
+	// Test case for unknown function
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("unknown"),
+		Args:   []ast.ExprNode{},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, NotNil)
+
+	// Test case for invalid number of arguments, violating the lower bound
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args:   []ast.ExprNode{},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, NotNil)
+
+	// Test case for invalid number of arguments, violating the upper bound
+	expr = &ast.FuncCallExpr{
+		FnName: model.NewCIStr("date"),
+		Args: []ast.ExprNode{ast.NewValueExpr("2015-12-21"),
+			ast.NewValueExpr("2015-12-22")},
+	}
+	_, err = Eval(ctx, expr)
+	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestCast(c *C) {

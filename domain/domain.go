@@ -55,7 +55,7 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 	if info != nil && schemaMetaVersion <= info.SchemaMetaVersion() {
 		// info may be changed by other txn, so here its version may be bigger than schema version,
 		// so we don't need to reload.
-		log.Debugf("schema version is still %d, no need reload", schemaMetaVersion)
+		log.Debugf("[ddl] schema version is still %d, no need reload", schemaMetaVersion)
 		return nil
 	}
 
@@ -85,7 +85,7 @@ func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
 		}
 	}
 
-	log.Infof("loadInfoSchema %d", schemaMetaVersion)
+	log.Infof("[ddl] loadInfoSchema %d", schemaMetaVersion)
 	err = do.infoHandle.Set(schemas, schemaMetaVersion)
 	return errors.Trace(err)
 }
@@ -167,7 +167,7 @@ func (do *Domain) reload() error {
 			}
 
 			if err != nil {
-				log.Errorf("load schema err %v, retry again", errors.ErrorStack(err))
+				log.Errorf("[ddl] load schema err %v, retry again", errors.ErrorStack(err))
 				// TODO: use a backoff algorithm.
 				time.Sleep(500 * time.Millisecond)
 				continue
@@ -192,7 +192,7 @@ func (do *Domain) mustReload() {
 	// if reload error, we will terminate whole program to guarantee data safe.
 	err := do.reload()
 	if err != nil {
-		log.Fatalf("reload schema err %v", errors.ErrorStack(err))
+		log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 	}
 }
 
@@ -216,7 +216,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if terror.ErrorEqual(err, localstore.ErrDBClosed) {
 				return
 			} else if err != nil {
-				log.Fatalf("reload schema err %v", errors.ErrorStack(err))
+				log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 			}
 		case newLease := <-do.leaseCh:
 			if newLease <= 0 {
@@ -245,7 +245,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	log.Warnf("on DDL change")
+	log.Warnf("[ddl] on DDL change")
 
 	c.do.mustReload()
 	return nil
