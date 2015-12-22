@@ -14,7 +14,6 @@
 package inspectkv
 
 import (
-	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 )
 
 // DDLInfo is for DDL information.
@@ -79,40 +77,8 @@ type RecordData struct {
 	Values []interface{}
 }
 
-// DiffRetError is an error implementation that includes a different set of records.
-type DiffRetError struct {
-	recordA *RecordData
-	recordB *RecordData
-}
-
-const resultNotExist = -1
-
-func newDiffRetError(hA, hB int64, valsA, valsB []interface{}) *DiffRetError {
-	ra := &RecordData{Handle: hA, Values: valsA}
-	rb := &RecordData{Handle: hB, Values: valsB}
-
-	return &DiffRetError{recordA: ra, recordB: rb}
-}
-
-// Error implements error Error interface.
-func (d *DiffRetError) Error() string {
-	var msgA, msgB string
-
-	if d.recordA.Handle == resultNotExist {
-		msgA = "recordA is empty"
-	} else {
-		msgA = fmt.Sprintf("recordA handle:%d, vals:%v", d.recordA.Handle, d.recordA.Values)
-	}
-	if d.recordB.Handle == resultNotExist {
-		msgB = "recordB is empty"
-	} else {
-		msgB = fmt.Sprintf("recordB handle:%d, vals:%v", d.recordB.Handle, d.recordB.Values)
-	}
-
-	return fmt.Sprintf("results are different, %s, %s", msgA, msgB)
-}
-
-// GetIndexRecordsCount returns the total number of the index records.
+// GetIndexRecordsCount returns the total number of the index records from startVals.
+// If startVals = nil, returns the total number of the index records.
 func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}) (int64, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
@@ -219,13 +185,16 @@ func checkIndexAndCols(txn kv.Transaction, t table.Table, idx *column.IndexedCol
 
 		vals2, err := t.RowWithCols(txn, h, cols)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			return errors.Trace(newDiffRetError(h, resultNotExist, vals1, nil))
+			record := &RecordData{Handle: h, Values: vals1}
+			err = errors.Errorf("index:%v != record:%v", record, nil)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !reflect.DeepEqual(vals1, vals2) {
-			return errors.Trace(newDiffRetError(h, h, vals1, vals2))
+			record1 := &RecordData{Handle: h, Values: vals1}
+			record2 := &RecordData{Handle: h, Values: vals2}
+			return errors.Errorf("index:%v != record:%v", record1, record2)
 		}
 	}
 
@@ -244,15 +213,16 @@ func checkColsAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol
 		func(h1 int64, vals1 []interface{}, cols []*column.Col) (bool, error) {
 			isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
 			if terror.ErrorEqual(err, terror.ErrKeyExists) {
-				ret := newDiffRetError(h1, h2, vals1, vals1)
-				return false, errors.Trace(ret)
+				record1 := &RecordData{Handle: h1, Values: vals1}
+				record2 := &RecordData{Handle: h2, Values: vals1}
+				return false, errors.Errorf("index:%v != record:%v", record2, record1)
 			}
 			if err != nil {
 				return false, errors.Trace(err)
 			}
 			if !isExist {
-				ret := newDiffRetError(h1, resultNotExist, vals1, nil)
-				return false, errors.Trace(ret)
+				record := &RecordData{Handle: h1, Values: vals1}
+				return false, errors.Errorf("index:%v != record:%v", nil, record)
 			}
 
 			return true, nil
@@ -323,41 +293,57 @@ func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, star
 	return records, nextHandle, errors.Trace(err)
 }
 
-// CompareTableData compares records and the corresponding table data one by one.
-// It returns nil if records is equal to the data that scans from table, otherwise
-// it returns an error with a different set of records.
-func CompareTableData(txn kv.Transaction, t table.Table, records []*RecordData) error {
-	var ret *DiffRetError
+// CompareTableData compares data and the corresponding table data one by one.
+// It returns nil if data is equal to the data that scans from table, otherwise
+// it returns an error with a different set of records. If exact is false, only
+// compares handle.
+func CompareTableData(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
+	var err error
+	var vals []interface{}
 
-	for _, r := range records {
-		vals, err := t.RowWithCols(txn, r.Handle, t.Cols())
+	for _, r := range data {
+		vals, err = t.RowWithCols(txn, r.Handle, t.Cols())
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			ret = newDiffRetError(resultNotExist, r.Handle, nil, r.Values)
-			break
+			record1 := &RecordData{Handle: r.Handle, Values: r.Values}
+			err = errors.Errorf("data:%v != record:%v", record1, nil)
 		}
 		if err != nil {
-			return errors.Trace(err)
+			break
 		}
 
+		if !exact {
+			continue
+		}
 		if !reflect.DeepEqual(r.Values, vals) {
-			ret = newDiffRetError(r.Handle, r.Handle, vals, r.Values)
+			record1 := &RecordData{Handle: r.Handle, Values: r.Values}
+			record2 := &RecordData{Handle: r.Handle, Values: vals}
+			err = errors.Errorf("data:%v != record:%v", record1, record2)
 			break
 		}
 	}
-	if ret != nil {
-		return errors.Trace(ret)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	startKey := t.RecordKey(0, nil)
-	err := t.IterRecords(txn, string(startKey), t.Cols(),
-		func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
-			for _, r := range records {
-				if r.Handle == h && reflect.DeepEqual(r.Values, vals) {
+	filterFunc := func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
+		for _, r := range data {
+			if !exact {
+				if r.Handle == h {
 					return true, nil
 				}
+				continue
 			}
-			ret = newDiffRetError(h, resultNotExist, vals, nil)
-			return false, errors.Trace(ret)
+			if r.Handle == h && reflect.DeepEqual(r.Values, vals) {
+				return true, nil
+			}
+		}
+		record := &RecordData{Handle: h, Values: vals}
+		return false, errors.Errorf("data:%v != record:%v", nil, record)
+	}
+	err = t.IterRecords(txn, string(startKey), t.Cols(),
+		func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
+			return filterFunc(h, vals, cols)
 		})
 	if err != nil {
 		return errors.Trace(err)
@@ -366,14 +352,14 @@ func CompareTableData(txn kv.Transaction, t table.Table, records []*RecordData) 
 	return nil
 }
 
-// GetTableRecordsCount returns the total number of table records.
+// GetTableRecordsCount returns the total number of table records from startHandle.
+// If startHandle = 0, returns the total number of table records.
 func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) (int64, error) {
 	startKey := t.RecordKey(startHandle, nil)
 	it, err := txn.Seek(startKey)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	defer it.Close()
 
 	var cnt int64
 	prefix := t.KeyPrefix()
@@ -383,14 +369,17 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 			return 0, errors.Trace(err)
 		}
 
-		rk := t.RecordKey(handle, nil)
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		it.Close()
+		rk := t.RecordKey(handle+1, nil)
+		it, err = txn.Seek(rk)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 
 		cnt++
 	}
+
+	it.Close()
 
 	return cnt, nil
 }
