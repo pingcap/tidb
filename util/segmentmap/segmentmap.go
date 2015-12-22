@@ -20,6 +20,7 @@ import (
 )
 
 // SegmentMap is used for handle a big map slice by slice
+// It's not thread safe
 type SegmentMap struct {
 	size int
 	maps []map[string]interface{}
@@ -48,17 +49,17 @@ func (sm *SegmentMap) Get(key []byte) (interface{}, bool) {
 // GetSegment gets the map specific by index
 func (sm *SegmentMap) GetSegment(index int) (map[string]interface{}, error) {
 	if index >= len(sm.maps) {
-		return nil, errors.Errorf("index out of bound")
+		return nil, errors.Errorf("index out of bound: %d", index)
 	}
 
 	return sm.maps[index], nil
 }
 
 // Set if empty, return whether already exists
-func (sm *SegmentMap) Set(key []byte, value interface{}, force bool) (exist bool) {
+func (sm *SegmentMap) Set(key []byte, value interface{}, force bool) bool {
 	idx := int(crc32.ChecksumIEEE(key)) % sm.size
 	k := string(key)
-	_, exist = sm.maps[idx][k]
+	_, exist := sm.maps[idx][k]
 	if exist && !force {
 		return exist
 	}

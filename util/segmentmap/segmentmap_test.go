@@ -29,14 +29,14 @@ func (s *testSegmentMapSuite) TestSegment(c *C) {
 	k := []byte("k")
 	v := []byte("v")
 	val, exist := m.Get(k)
-	c.Assert(exist, Equals, false)
+	c.Assert(exist, IsFalse)
 
 	exist = m.Set(k, v, false)
 	c.Assert(exist, IsFalse)
 
 	val, exist = m.Get(k)
 	c.Assert(v, DeepEquals, val.([]byte))
-	c.Assert(exist, Equals, true)
+	c.Assert(exist, IsTrue)
 
 	m0, err := m.GetSegment(0)
 	c.Assert(err, IsNil)
