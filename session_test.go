@@ -1364,6 +1364,13 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 
+	// Test varchar type.
+	mustExecSQL(c, se, "drop table t;")
+	mustExecSQL(c, se, "create table t (c1 varchar(64), c2 varchar(64), index c1_c2 (c1, c2));")
+	mustExecSQL(c, se, "insert into t values ('abc', 'def')")
+	sql = "select c1 from t where c1 = 'abc'"
+	mustExecMatch(c, se, sql, [][]interface{}{{[]byte("abc")}})
+
 	err := se.Close()
 	c.Assert(err, IsNil)
 }
