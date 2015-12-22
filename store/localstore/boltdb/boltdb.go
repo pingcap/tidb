@@ -65,10 +65,12 @@ func (d *db) MultiSeek(keys [][]byte) []*engine.MSeekResult {
 			}
 
 			r := &engine.MSeekResult{}
-			r.Key, r.Value, r.Err = bytes.CloneBytes(k), bytes.CloneBytes(v), nil
 			if k == nil {
 				r.Err = engine.ErrNotFound
+			} else {
+				r.Key, r.Value, r.Err = bytes.CloneBytes(k), bytes.CloneBytes(v), nil
 			}
+
 			res = append(res, r)
 		}
 		return nil
