@@ -79,6 +79,7 @@ func GetSessionVars(ctx context.Context) *SessionVars {
 	return v
 }
 
+// GetCharsetInfo gets charset and collation for current context.
 // What character set should the server translate a statement to after receiving it?
 // For this, the server uses the character_set_connection and collation_connection system variables.
 // It converts statements sent by the client from character_set_client to character_set_connection
