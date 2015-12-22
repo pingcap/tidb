@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/subquery"
@@ -117,6 +118,8 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.funcDateArith(v)
 	case *ast.AggregateFuncExpr:
 		c.aggregateFunc(v)
+	case ast.ExprNode:
+		log.Errorf("Unknown expr node %T", v)
 	}
 	return in, c.err == nil
 }
