@@ -14,12 +14,14 @@
 package converter
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/subquery"
 	"github.com/pingcap/tidb/model"
-	"strings"
 )
 
 func convertExpr(converter *expressionConverter, expr ast.ExprNode) (expression.Expression, error) {
@@ -106,6 +108,8 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.funcCast(v)
 	case *ast.FuncSubstringExpr:
 		c.funcSubstring(v)
+	case *ast.FuncSubstringIndexExpr:
+		c.funcSubstringIndex(v)
 	case *ast.FuncLocateExpr:
 		c.funcLocate(v)
 	case *ast.FuncTrimExpr:
@@ -114,6 +118,8 @@ func (c *expressionConverter) Leave(in ast.Node) (out ast.Node, ok bool) {
 		c.funcDateArith(v)
 	case *ast.AggregateFuncExpr:
 		c.aggregateFunc(v)
+	case ast.ExprNode:
+		log.Errorf("Unknown expr node %T", v)
 	}
 	return in, c.err == nil
 }
@@ -361,6 +367,15 @@ func (c *expressionConverter) funcSubstring(v *ast.FuncSubstringExpr) {
 		StrExpr: c.exprMap[v.StrExpr],
 	}
 	c.exprMap[v] = oldSubstring
+}
+
+func (c *expressionConverter) funcSubstringIndex(v *ast.FuncSubstringIndexExpr) {
+	oldSubstrIdx := &expression.FunctionSubstringIndex{
+		Delim:   c.exprMap[v.Delim],
+		Count:   c.exprMap[v.Count],
+		StrExpr: c.exprMap[v.StrExpr],
+	}
+	c.exprMap[v] = oldSubstrIdx
 }
 
 func (c *expressionConverter) funcLocate(v *ast.FuncLocateExpr) {
