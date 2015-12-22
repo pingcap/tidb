@@ -77,11 +77,10 @@ type unionStore struct {
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	lazy := &lazyMemBuffer{}
 	opts := make(map[Option]interface{})
-	cacheSnapshot := NewCacheSnapshot(snapshot, lazy, options(opts))
-	bufferStore := NewBufferStore(cacheSnapshot)
+	bufferStore := NewBufferStore(snapshot)
 	return &unionStore{
 		BufferStore:        bufferStore,
-		snapshot:           cacheSnapshot,
+		snapshot:           snapshot,
 		lazyConditionPairs: lazy,
 		opts:               opts,
 	}
