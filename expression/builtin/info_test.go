@@ -86,9 +86,11 @@ func (s *testBuiltinSuite) TestConnectionID(c *C) {
 	ctx := mock.NewContext()
 	m := map[interface{}]interface{}{}
 	variable.BindSessionVars(ctx)
-	ctx.SetValue(ConnectionIDKey, int64(1))
+	sessionVars := variable.GetSessionVars(ctx)
+	sessionVars.ConnectionID = uint64(1)
+
 	m[ExprEvalArgCtx] = ctx
 	v, err := builtinConnectionID(nil, m)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(1))
+	c.Assert(v, Equals, uint64(1))
 }

@@ -36,6 +36,9 @@ type SessionVars struct {
 	// Client capability
 	ClientCapability uint32
 
+	// Connection ID
+	ConnectionID uint64
+
 	// Found rows
 	FoundRows uint64
 
