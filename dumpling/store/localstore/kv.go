@@ -39,6 +39,8 @@ const (
 
 const (
 	maxSeekWorkers = 3
+
+	lowerWaterMark = 10 // second
 )
 
 type command struct {
@@ -64,8 +66,6 @@ type seekArgs struct {
 
 type commitArgs struct {
 }
-
-//scheduler
 
 // Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 // if such key is not found.
@@ -179,7 +179,6 @@ func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
 		return
 	}
 
-	lowerWaterMark := int64(10) // second
 	now := time.Now().Unix()
 	for k, v := range m {
 		dis := now - version2Second(v.(kv.Version))
@@ -262,8 +261,6 @@ func (s *dbStore) doSeek(seekCmds []*command) {
 func (s *dbStore) NewBatch() engine.Batch {
 	return s.db.NewBatch()
 }
-
-//end of scheduler
 
 type dbStore struct {
 	db engine.DB

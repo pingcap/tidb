@@ -19,7 +19,7 @@ import (
 	"github.com/juju/errors"
 )
 
-// SegmentMap is used for handle a big map slice by slice
+// SegmentMap is used for handle a big map slice by slice.
 // It's not thread safe.
 type SegmentMap struct {
 	size int
@@ -33,11 +33,11 @@ func NewSegmentMap(size int) (*SegmentMap, error) {
 	if size <= 0 {
 		return nil, errors.Errorf("Invalid size: %d", size)
 	}
+
 	sm := &SegmentMap{
 		maps: make([]map[string]interface{}, size),
 		size: size,
 	}
-
 	for i := 0; i < size; i++ {
 		sm.maps[i] = make(map[string]interface{})
 	}
@@ -62,7 +62,7 @@ func (sm *SegmentMap) GetSegment(index int) (map[string]interface{}, error) {
 	return sm.maps[index], nil
 }
 
-// Set if empty, returns whether already exists.
+// Set if key not exists, returns whether already exists.
 func (sm *SegmentMap) Set(key []byte, value interface{}, force bool) bool {
 	idx := int(crc32.Checksum(key, sm.crcTable)) % sm.size
 	k := string(key)
