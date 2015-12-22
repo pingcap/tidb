@@ -243,7 +243,7 @@ func checkColsAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol
 	err := t.IterRecords(txn, string(startKey), cols,
 		func(h1 int64, vals1 []interface{}, cols []*column.Col) (bool, error) {
 			isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
-			if terror.ErrorEqual(err, kv.ErrKeyExists) {
+			if terror.ErrorEqual(err, terror.ErrKeyExists) {
 				ret := newDiffRetError(h1, h2, vals1, vals1)
 				return false, errors.Trace(ret)
 			}
