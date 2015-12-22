@@ -24,6 +24,8 @@ import (
 type SegmentMap struct {
 	size int
 	maps []map[string]interface{}
+
+	crcTable *crc32.Table
 }
 
 // NewSegmentMap crate a new SegmentMap
@@ -36,19 +38,21 @@ func NewSegmentMap(size int) *SegmentMap {
 	for i := 0; i < size; i++ {
 		sm.maps[i] = make(map[string]interface{})
 	}
+
+	sm.crcTable = crc32.MakeTable(crc32.Castagnoli)
 	return sm
 }
 
 // Get is the same as map[k]
 func (sm *SegmentMap) Get(key []byte) (interface{}, bool) {
-	idx := int(crc32.ChecksumIEEE(key)) % sm.size
+	idx := int(crc32.Checksum(key, sm.crcTable)) % sm.size
 	val, ok := sm.maps[idx][string(key)]
 	return val, ok
 }
 
 // GetSegment gets the map specific by index
 func (sm *SegmentMap) GetSegment(index int) (map[string]interface{}, error) {
-	if index >= len(sm.maps) {
+	if index >= sm.size || index < 0 {
 		return nil, errors.Errorf("index out of bound: %d", index)
 	}
 
@@ -57,7 +61,7 @@ func (sm *SegmentMap) GetSegment(index int) (map[string]interface{}, error) {
 
 // Set if empty, return whether already exists
 func (sm *SegmentMap) Set(key []byte, value interface{}, force bool) bool {
-	idx := int(crc32.ChecksumIEEE(key)) % sm.size
+	idx := int(crc32.Checksum(key, sm.crcTable)) % sm.size
 	k := string(key)
 	_, exist := sm.maps[idx][k]
 	if exist && !force {
