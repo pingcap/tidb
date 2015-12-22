@@ -420,6 +420,7 @@ pow 		{p}{o}{w}
 power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+procedure	{p}{r}{o}{c}{e}{d}{u}{r}{e}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
@@ -865,6 +866,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{procedure}		return procedure
 {quarter}		lval.item = string(l.val)
 			return quarter
 {quick}			lval.item = string(l.val)
