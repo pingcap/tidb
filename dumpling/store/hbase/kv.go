@@ -155,7 +155,9 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	uuid := fmt.Sprintf("hbase-%v-%v", zks, tableName)
 	if store, ok := mc.cache[uuid]; ok {
 		if oracleAddr != store.oracleAddr {
-			return nil, errors.Errorf("store(%s) is opened with a different tso(%v)", uuid, store.oracleAddr)
+			err = errors.Errorf("hbase: store(%s) is opened with a different tso(%v)", uuid, store.oracleAddr)
+			log.Warn(err)
+			return nil, err
 		}
 		return store, nil
 	}
@@ -192,6 +194,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	var ora oracle.Oracle
 	if len(oracleAddr) == 0 {
+		log.Warnf("hbase: store(%s) is using local oracle(for test only)", uuid)
 		ora = oracles.NewLocalOracle()
 	} else {
 		ora = oracles.NewRemoteOracle(oracleAddr)
