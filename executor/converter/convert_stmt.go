@@ -880,6 +880,8 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 		oldShow.Target = stmt.ShowTriggers
 	case ast.ShowProcedureStatus:
 		oldShow.Target = stmt.ShowProcedureStatus
+	case ast.ShowIndex:
+		oldShow.Target = stmt.ShowIndex
 	case ast.ShowNone:
 		oldShow.Target = stmt.ShowNone
 	}
