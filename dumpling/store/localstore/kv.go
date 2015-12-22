@@ -143,6 +143,7 @@ func (s *dbStore) scheduler() {
 	segmentIndex := 0
 
 	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 
 	for {
 		select {
@@ -179,7 +180,7 @@ func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
 	}
 
 	lowerWaterMark := int64(10) // second
-	now := time.Now().UnixNano() / int64(time.Second)
+	now := time.Now().Unix()
 	for k, v := range m {
 		dis := now - version2Second(v.(kv.Version))
 		if dis > lowerWaterMark {
@@ -331,17 +332,20 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 
 	log.Info("[kv] New store", schema)
 	s := &dbStore{
-		txns:          make(map[uint64]*dbTxn),
-		keysLocked:    make(map[string]uint64),
-		uuid:          uuid.NewV4().String(),
-		path:          schema,
-		db:            db,
-		compactor:     newLocalCompactor(localCompactDefaultPolicy, db),
-		commandCh:     make(chan *command, 1000),
-		closed:        false,
-		closeCh:       make(chan struct{}),
-		recentUpdates: segmentmap.NewSegmentMap(100),
-		wg:            &sync.WaitGroup{},
+		txns:       make(map[uint64]*dbTxn),
+		keysLocked: make(map[string]uint64),
+		uuid:       uuid.NewV4().String(),
+		path:       schema,
+		db:         db,
+		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
+		commandCh:  make(chan *command, 1000),
+		closed:     false,
+		closeCh:    make(chan struct{}),
+		wg:         &sync.WaitGroup{},
+	}
+	s.recentUpdates, err = segmentmap.NewSegmentMap(100)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	mc.cache[schema] = s
 	s.compactor.Start()
