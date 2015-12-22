@@ -323,6 +323,8 @@ create		{c}{r}{e}{a}{t}{e}
 cross		{c}{r}{o}{s}{s}
 curdate 	{c}{u}{r}{d}{a}{t}{e}
 current_date	{c}{u}{r}{r}{e}{n}{t}_{d}{a}{t}{e}
+curtime 	{c}{u}{r}{t}{i}{m}{e}
+current_time	{c}{u}{r}{r}{e}{n}{t}_{t}{i}{m}{e}
 current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
@@ -414,8 +416,11 @@ or		{o}{r}
 order		{o}{r}{d}{e}{r}
 outer		{o}{u}{t}{e}{r}
 password	{p}{a}{s}{s}{w}{o}{r}{d}
+pow 		{p}{o}{w}
+power		{p}{o}{w}{e}{r}
 prepare		{p}{r}{e}{p}{a}{r}{e}
 primary		{p}{r}{i}{m}{a}{r}{y}
+procedure	{p}{r}{o}{c}{e}{d}{u}{r}{e}
 quarter		{q}{u}{a}{r}{t}{e}{r}
 quick		{q}{u}{i}{c}{k}
 rand		{r}{a}{n}{d}
@@ -692,6 +697,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return curDate
 {current_date}		lval.item = string(l.val)
 			return currentDate
+{curtime}		lval.item = string(l.val)
+			return curTime
+{current_time}		lval.item = string(l.val)
+			return currentTime
 {current_user}		lval.item = string(l.val)
 			return currentUser
 {database}		lval.item = string(l.val)
@@ -850,9 +859,14 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {outer}			return outer
 {password}		lval.item = string(l.val)
 			return password
+{pow}			lval.item = string(l.val)
+			return pow
+{power}		lval.item = string(l.val)
+			return power
 {prepare}		lval.item = string(l.val)
 			return prepare
 {primary}		return primary
+{procedure}		return procedure
 {quarter}		lval.item = string(l.val)
 			return quarter
 {quick}			lval.item = string(l.val)

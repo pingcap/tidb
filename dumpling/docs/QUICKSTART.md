@@ -2,10 +2,10 @@
 
 #### Run TiDB with docker
 
-You can quickly test tidb with docker, the source repository contains the Dockerfile which
+You can quickly test TiDB with docker, the source repository contains the Dockerfile which
 contains local tidb-server.
 
-Or you can pull TiDB docker image contains HBase standalone and then run TiDB as distributed database in a docker container.
+Or you can pull TiDB docker image contains HBase standalone and then run TiDB as a distributed database in a docker container.
 
 To install docker on your system, you can read the document on https://docs.docker.com/
 
