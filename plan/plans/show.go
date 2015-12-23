@@ -131,6 +131,13 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 	case stmt.ShowProcedureStatus:
 		names = []string{}
 		types = []byte{}
+	case stmt.ShowIndex:
+		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
+			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
+			"Null", "Index_type", "Comment", "Index_comment"}
+		types = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
@@ -198,6 +205,8 @@ func (s *ShowPlan) fetchAll(ctx context.Context) error {
 		return s.fetchShowTriggers(ctx)
 	case stmt.ShowProcedureStatus:
 		return s.fetchShowProcedureStatus(ctx)
+	case stmt.ShowIndex:
+		return s.fetchShowIndex(ctx)
 	}
 	return nil
 }
@@ -674,5 +683,41 @@ func (s *ShowPlan) fetchShowTriggers(ctx context.Context) error {
 
 // Do nothing.
 func (s *ShowPlan) fetchShowProcedureStatus(ctx context.Context) error {
+	return nil
+}
+
+func (s *ShowPlan) fetchShowIndex(ctx context.Context) error {
+	tb, err := s.getTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, idx := range tb.Indices() {
+		for i, col := range idx.Columns {
+			nonUniq := 1
+			if idx.Unique {
+				nonUniq = 0
+			}
+			var subPart interface{}
+			if col.Length != types.UnspecifiedLength {
+				subPart = col.Length
+			}
+			data := []interface{}{
+				tb.TableName().O, // Table
+				nonUniq,          // Non_unique
+				idx.Name.O,       // Key_name
+				i + 1,            // Seq_in_index
+				col.Name.O,       // Column_name
+				"utf8_bin",       // Colation
+				0,                // Cardinality
+				subPart,          // Sub_part
+				nil,              // Packed
+				"YES",            // Null
+				"BTREE",          // Index_type
+				"",               // Comment
+				"",               // Index_comment
+			}
+			s.rows = append(s.rows, &plan.Row{Data: data})
+		}
+	}
 	return nil
 }

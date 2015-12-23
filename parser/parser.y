@@ -3386,6 +3386,13 @@ ShowStmt:
 			User:	$4.(string),
 		}
 	}
+|	"SHOW" "INDEX" "FROM" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowIndex,
+			Table: $4.(*ast.TableName),
+		}
+	}
 
 ShowTargetFilterable:
 	"ENGINES"
