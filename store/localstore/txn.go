@@ -28,11 +28,11 @@ var (
 // dbTxn is not thread safe
 type dbTxn struct {
 	kv.UnionStore
-	store        *dbStore // for commit
-	tid          uint64
-	valid        bool
-	version      kv.Version          // commit version
-	snapshotVals map[string]struct{} // origin version in snapshot
+	store      *dbStore // for commit
+	tid        uint64
+	valid      bool
+	version    kv.Version          // commit version
+	lockedKeys map[string]struct{} // origin version in snapshot
 }
 
 // Implement transaction interface
@@ -134,7 +134,7 @@ func (txn *dbTxn) Commit() error {
 
 func (txn *dbTxn) close() error {
 	txn.UnionStore.Release()
-	txn.snapshotVals = nil
+	txn.lockedKeys = nil
 	txn.valid = false
 	return nil
 }
@@ -149,7 +149,7 @@ func (txn *dbTxn) Rollback() error {
 
 func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
-		txn.snapshotVals[string(key)] = struct{}{}
+		txn.lockedKeys[string(key)] = struct{}{}
 	}
 	return nil
 }
