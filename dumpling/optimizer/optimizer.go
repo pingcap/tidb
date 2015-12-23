@@ -25,24 +25,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// Optimizer error codes.
-const (
-	CodeOneColumn     terror.ErrCode = 1
-	CodeRowColumns                   = 2
-	CodeSameColumns                  = 3
-	CodeMultiWildCard                = 4
-	CodeUnsupported                  = 5
-)
-
-// Optimizer base errors.
-var (
-	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
-	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
-	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
-	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
-)
-
 // Optimize do optimization and create a Plan.
 // InfoSchema has to be passed in as parameter because
 // it can not be changed after resolving name.
@@ -131,11 +113,30 @@ func IsSupported(node ast.Node) bool {
 	return !checker.unsupported
 }
 
+// Optimizer error codes.
+const (
+	CodeOneColumn     terror.ErrCode = 1
+	CodeRowColumns                   = 2
+	CodeSameColumns                  = 3
+	CodeMultiWildCard                = 4
+	CodeUnsupported                  = 5
+)
+
+// Optimizer base errors.
+var (
+	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
+	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
+	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
+	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
+)
+
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOneColumn:     mysql.ErrBadDb,
-		CodeMultiWildCard: mysql.ErrParse,
+		CodeOneColumn:     mysql.ErrOperandColumns,
 		CodeSameColumns:   mysql.ErrOperandColumns,
+		CodeRowColumns:    mysql.ErrParse,
+		CodeMultiWildCard: mysql.ErrParse,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 }
