@@ -231,6 +231,13 @@ func runTestErrorCode(c *C) {
 		c.Assert(err, IsNil)
 		err = txn1.Commit()
 		checkErrorCode(c, err, tmysql.ErrDupEntry)
+
+		txn2, err := dbt.db.Begin()
+		c.Assert(err, IsNil)
+		_, err = txn2.Exec("use db_not_exists;")
+		checkErrorCode(c, err, tmysql.ErrBadDb)
+		_, err = txn2.Exec("select * from tbl_not_exists;")
+		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
 	})
 }
 

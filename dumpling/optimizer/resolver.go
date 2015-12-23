@@ -494,14 +494,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 	if field.AsName.L == "" {
 		switch x := innerExpr.(type) {
 		case *ast.ColumnNameExpr:
-			var fieldText string
-			if innerExpr.Text() != "" {
-				fieldText = innerExpr.Text()
-			} else {
-				fieldText = field.Text()
-			}
-			fieldText = fieldText[len(fieldText)-len(x.Name.Name.L):]
-			rf.ColumnAsName = model.NewCIStr(fieldText)
+			rf.ColumnAsName = model.NewCIStr(x.Name.Name.O)
 		case *ast.ValueExpr:
 			if innerExpr.Text() != "" {
 				rf.ColumnAsName = model.NewCIStr(innerExpr.Text())

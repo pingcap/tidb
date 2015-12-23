@@ -2724,7 +2724,6 @@ PreparedStmt:
 			sqlVar = $4.(*ast.VariableExpr)
 		}
 		$$ = &ast.PrepareStmt{
-			InPrepare:	true,
 			Name:		$2.(string), 
 			SQLText:	sqlText, 
 			SQLVar: 	sqlVar,
@@ -3384,6 +3383,13 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowGrants,
 			User:	$4.(string),
+		}
+	}
+|	"SHOW" "INDEX" "FROM" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowIndex,
+			Table: $4.(*ast.TableName),
 		}
 	}
 

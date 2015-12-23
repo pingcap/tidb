@@ -24,9 +24,9 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 const (
@@ -122,7 +122,7 @@ const (
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
-	if err != nil && terror.DatabaseNotExists.NotEqual(err) {
+	if err != nil && infoschema.DatabaseNotExists.NotEqual(err) {
 		log.Fatal(err)
 	}
 	// Check bootstrapped variable value in TiDB table.
@@ -138,7 +138,7 @@ func checkBootstrappedVar(s Session) (bool, error) {
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar)
 	rs, err := s.Execute(sql)
 	if err != nil {
-		if terror.TableNotExists.Equal(err) {
+		if infoschema.TableNotExists.Equal(err) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
