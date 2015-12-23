@@ -19,6 +19,8 @@ import (
 	"strconv"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // Common base error instances.
@@ -34,6 +36,8 @@ var (
 	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
 
 	MissConnectionID = ClassExpression.New(CodeMissConnectionID, "miss connection id information")
+
+	ErrKeyExists = ClassKV.New(CodeKeyExists, "key already exist")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -57,6 +61,7 @@ const (
 const (
 	CodeIncompatibleDBFormat ErrCode = iota + 1
 	CodeNoDataForHandle
+	CodeKeyExists
 )
 
 // Variable error codes.
@@ -188,6 +193,56 @@ func (e *Error) Equal(err error) bool {
 // NotEqual checks if err is not equal to e.
 func (e *Error) NotEqual(err error) bool {
 	return !e.Equal(err)
+}
+
+// ToSQLError convert Error to mysql.SQLError.
+func (e *Error) ToSQLError() *mysql.SQLError {
+	code := e.getMySQLErrorCode()
+	return mysql.NewErrf(code, e.message)
+}
+
+var defaultMySQLErrorCode uint16
+
+func (e *Error) getMySQLErrorCode() uint16 {
+	codeMap, ok := errClassToMySQLCodes[e.class]
+	if !ok {
+		log.Warnf("Unknown error class: %v", e.class)
+		return defaultMySQLErrorCode
+	}
+	code, ok := codeMap[e.code]
+	if !ok {
+		log.Warnf("Unknown error class: %v", e.class)
+		return defaultMySQLErrorCode
+	}
+	return code
+}
+
+var (
+	// ErrCode to mysql error code map.
+	parserMySQLErrCodes    = map[ErrCode]uint16{}
+	schemaMySQLErrCodes    = map[ErrCode]uint16{}
+	optimizerMySQLErrCodes = map[ErrCode]uint16{}
+	executorMySQLErrCodes  = map[ErrCode]uint16{}
+	kvMySQLErrCodes        = map[ErrCode]uint16{
+		CodeKeyExists: mysql.ErrDupEntry,
+	}
+	serverMySQLErrCodes     = map[ErrCode]uint16{}
+	expressionMySQLErrCodes = map[ErrCode]uint16{}
+
+	// ErrClass to code-map map.
+	errClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
+)
+
+func init() {
+	errClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
+	errClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
+	errClassToMySQLCodes[ClassSchema] = schemaMySQLErrCodes
+	errClassToMySQLCodes[ClassOptimizer] = optimizerMySQLErrCodes
+	errClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
+	errClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
+	errClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
+	errClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
+	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 
 // ErrorEqual returns a boolean indicating whether err1 is equal to err2.

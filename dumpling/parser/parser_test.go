@@ -41,6 +41,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
+		"curtime", "variables",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -261,7 +262,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{`SHOW COLUMNS FROM City;`, true},
 		{`SHOW FIELDS FROM City;`, true},
 		{`SHOW TRIGGERS LIKE 't'`, true},
-		{"SHOW DATABASES LIKE 'test2'", true},
+		{`SHOW DATABASES LIKE 'test2'`, true},
+		{`SHOW PROCEDURE STATUS WHERE Db='test'`, true},
 
 		// For default value
 		{"CREATE TABLE sbtest (id INTEGER UNSIGNED NOT NULL AUTO_INCREMENT, k integer UNSIGNED DEFAULT '0' NOT NULL, c char(120) DEFAULT '' NOT NULL, pad char(60) DEFAULT '' NOT NULL, PRIMARY KEY  (id) )", true},
@@ -330,6 +332,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 	table := []testCase{
 		// For buildin functions
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT POW(1, 2)", true},
+		{"SELECT POW(1, 0.5)", true},
+		{"SELECT POW(1, -1)", true},
+		{"SELECT POW(-1, 1)", true},
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
 
@@ -393,6 +399,13 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now()", true},
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
+
+		// Select current_time
+		{"select current_time", true},
+		{"select current_time()", true},
+		{"select current_time(6)", true},
+		{"select curtime()", true},
+		{"select curtime(6)", true},
 
 		// For time extract
 		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},

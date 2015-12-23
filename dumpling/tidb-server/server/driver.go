@@ -15,8 +15,8 @@ package server
 
 // IDriver opens IContext.
 type IDriver interface {
-	// OpenCtx opens an IContext with client capability, collation and dbname.
-	OpenCtx(capability uint32, collation uint8, dbname string) (IContext, error)
+	// OpenCtx opens an IContext with connection id, client capability, collation and dbname.
+	OpenCtx(connID uint64, capability uint32, collation uint8, dbname string) (IContext, error)
 }
 
 // IContext is the interface to execute commant.

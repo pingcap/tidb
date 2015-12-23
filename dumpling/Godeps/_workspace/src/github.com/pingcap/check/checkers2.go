@@ -69,10 +69,7 @@ func (b *bytesEquals) Check(params []interface{}, names []string) (bool, string)
 		return false, "Arguments to BytesEqual must both be bytestrings"
 	}
 
-	if bytes.Equal(b1, b2) {
-		return true, ""
-	}
-	return false, "Byte arrays were different"
+	return bytes.Equal(b1, b2), ""
 }
 
 func (b *bytesEquals) Info() *CheckerInfo {

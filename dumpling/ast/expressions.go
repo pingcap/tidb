@@ -14,13 +14,11 @@
 package ast
 
 import (
-	"fmt"
 	"regexp"
 
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -59,46 +57,13 @@ type ValueExpr struct {
 func NewValueExpr(value interface{}) *ValueExpr {
 	ve := &ValueExpr{}
 	ve.Data = types.RawData(value)
-	// TODO: make it more precise.
-	switch x := value.(type) {
-	case nil:
-		ve.Type = types.NewFieldType(mysql.TypeNull)
-	case bool, int64, int:
-		ve.Type = types.NewFieldType(mysql.TypeLonglong)
-	case uint64:
-		ve.Type = types.NewFieldType(mysql.TypeLonglong)
-		ve.Type.Flag |= mysql.UnsignedFlag
-	case string, UnquoteString:
+	if _, ok := value.(UnquoteString); ok {
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
 		ve.Type.Charset = mysql.DefaultCharset
 		ve.Type.Collate = mysql.DefaultCollationName
-	case float64:
-		ve.Type = types.NewFieldType(mysql.TypeDouble)
-	case []byte:
-		ve.Type = types.NewFieldType(mysql.TypeBlob)
-		ve.Type.Charset = charset.CharsetBin
-		ve.Type.Collate = charset.CharsetBin
-	case mysql.Bit:
-		ve.Type = types.NewFieldType(mysql.TypeBit)
-	case mysql.Hex:
-		ve.Type = types.NewFieldType(mysql.TypeVarchar)
-		ve.Type.Charset = charset.CharsetBin
-		ve.Type.Collate = charset.CharsetBin
-	case mysql.Time:
-		ve.Type = types.NewFieldType(x.Type)
-	case mysql.Duration:
-		ve.Type = types.NewFieldType(mysql.TypeDuration)
-	case mysql.Decimal:
-		ve.Type = types.NewFieldType(mysql.TypeNewDecimal)
-	case mysql.Enum:
-		ve.Type = types.NewFieldType(mysql.TypeEnum)
-	case mysql.Set:
-		ve.Type = types.NewFieldType(mysql.TypeSet)
-	case *types.DataItem:
-		ve.Type = value.(*types.DataItem).Type
-	default:
-		panic(fmt.Sprintf("illegal literal value type:%T", value))
+		return ve
 	}
+	ve.Type = types.DefaultTypeForValue(value)
 	return ve
 }
 

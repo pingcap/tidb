@@ -143,3 +143,23 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
+
+func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
+	index := kv.NewKVIndex("i", "test", 1, false)
+
+	txn, err := s.s.Begin()
+	c.Assert(err, IsNil)
+
+	values := []interface{}{"abc", "def"}
+	err = index.Create(txn, values, 1)
+	c.Assert(err, IsNil)
+
+	index2 := kv.NewKVIndex("i", "test", 1, false)
+	iter, hit, err := index2.Seek(txn, []interface{}{"abc", nil})
+	c.Assert(err, IsNil)
+	defer iter.Close()
+	c.Assert(hit, IsFalse)
+	_, h, err := iter.Next()
+	c.Assert(err, IsNil)
+	c.Assert(h, Equals, int64(1))
+}

@@ -29,7 +29,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression/builtin"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -65,6 +64,7 @@ type Session interface {
 	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (rset.Recordset, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags
+	SetConnectionID(uint64)
 	Close() error
 	Retry() error
 	Auth(user string, auth []byte, salt []byte) bool
@@ -143,6 +143,10 @@ func (s *session) resetHistory() {
 
 func (s *session) SetClientCapability(capability uint32) {
 	variable.GetSessionVars(s).ClientCapability = capability
+}
+
+func (s *session) SetConnectionID(connectionID uint64) {
+	variable.GetSessionVars(s).ConnectionID = connectionID
 }
 
 func (s *session) FinishTxn(rollback bool) error {
@@ -579,9 +583,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	variable.BindSessionVars(s)
 	variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusAutocommit, true)
-
-	// set connection id
-	s.SetValue(builtin.ConnectionIDKey, s.sid)
 
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	variable.BindGlobalVarAccessor(s, s)

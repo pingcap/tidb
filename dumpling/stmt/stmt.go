@@ -61,6 +61,7 @@ const (
 	ShowCreateTable
 	ShowGrants
 	ShowTriggers
+	ShowProcedureStatus
 )
 
 const (

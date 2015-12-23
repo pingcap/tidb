@@ -95,7 +95,7 @@ func (s *testSuite) TestPutNilAndDelete(c *C) {
 	c.Assert(found, Equals, false)
 }
 
-func (s *testSuite) TestDB(c *C) {
+func (s *testSuite) TestGetSet(c *C) {
 	db := s.db
 
 	b := db.NewBatch()
@@ -113,29 +113,55 @@ func (s *testSuite) TestDB(c *C) {
 	v, err = db.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("1"))
+}
 
-	k, v, err := db.Seek(nil)
+func (s *testSuite) TestSeek(c *C) {
+	b := s.db.NewBatch()
+	b.Put([]byte("a"), []byte("1"))
+	b.Put([]byte("b"), []byte("2"))
+	err := s.db.Commit(b)
+	c.Assert(err, IsNil)
+
+	k, v, err := s.db.Seek(nil)
 	c.Assert(err, IsNil)
 	c.Assert(k, BytesEquals, []byte("a"))
 	c.Assert(v, BytesEquals, []byte("1"))
 
-	k, v, err = db.Seek([]byte("a"))
+	k, v, err = s.db.Seek([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(k, BytesEquals, []byte("a"))
 	c.Assert(v, BytesEquals, []byte("1"))
 
-	k, v, err = db.Seek([]byte("b"))
+	k, v, err = s.db.Seek([]byte("b"))
 	c.Assert(err, IsNil)
 	c.Assert(k, BytesEquals, []byte("b"))
 	c.Assert(v, BytesEquals, []byte("2"))
 
-	k, v, err = db.Seek([]byte("a1"))
+	k, v, err = s.db.Seek([]byte("a1"))
 	c.Assert(err, IsNil)
 	c.Assert(k, BytesEquals, []byte("b"))
 	c.Assert(v, BytesEquals, []byte("2"))
 
-	k, v, err = db.Seek([]byte("c1"))
+	k, v, err = s.db.Seek([]byte("c1"))
 	c.Assert(err, NotNil)
 	c.Assert(k, IsNil)
 	c.Assert(v, IsNil)
+}
+
+func (s *testSuite) TestMultiSeek(c *C) {
+	b := s.db.NewBatch()
+	b.Put([]byte("a"), []byte("1"))
+	b.Put([]byte("b"), []byte("2"))
+	err := s.db.Commit(b)
+	c.Assert(err, IsNil)
+
+	m := s.db.MultiSeek([][]byte{[]byte("z"), []byte("a"), []byte("a1")})
+	c.Assert(m, HasLen, 3)
+	c.Assert(m[0].Err, NotNil)
+	c.Assert(m[1].Err, IsNil)
+	c.Assert(m[1].Key, BytesEquals, []byte("a"))
+	c.Assert(m[1].Value, BytesEquals, []byte("1"))
+	c.Assert(m[2].Err, IsNil)
+	c.Assert(m[2].Key, BytesEquals, []byte("b"))
+	c.Assert(m[2].Value, BytesEquals, []byte("2"))
 }

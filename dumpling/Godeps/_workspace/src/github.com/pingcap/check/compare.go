@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"time"
 )
 
 type compareFunc func(v1 interface{}, v2 interface{}) (bool, error)
@@ -33,9 +34,8 @@ func compare(v1 interface{}, v2 interface{}) (int, error) {
 			return 1, nil
 		} else if a1 == a2 {
 			return 0, nil
-		} else {
-			return -1, nil
 		}
+		return -1, nil
 	case uint, uint8, uint16, uint32, uint64:
 		a1 := value1.Uint()
 		a2 := value2.Uint()
@@ -43,9 +43,8 @@ func compare(v1 interface{}, v2 interface{}) (int, error) {
 			return 1, nil
 		} else if a1 == a2 {
 			return 0, nil
-		} else {
-			return -1, nil
 		}
+		return -1, nil
 	case float32, float64:
 		a1 := value1.Float()
 		a2 := value2.Float()
@@ -53,9 +52,8 @@ func compare(v1 interface{}, v2 interface{}) (int, error) {
 			return 1, nil
 		} else if a1 == a2 {
 			return 0, nil
-		} else {
-			return -1, nil
 		}
+		return -1, nil
 	case string:
 		a1 := value1.String()
 		a2 := value2.String()
@@ -63,13 +61,30 @@ func compare(v1 interface{}, v2 interface{}) (int, error) {
 			return 1, nil
 		} else if a1 == a2 {
 			return 0, nil
-		} else {
-			return -1, nil
 		}
+		return -1, nil
 	case []byte:
 		a1 := value1.Bytes()
 		a2 := value2.Bytes()
 		return bytes.Compare(a1, a2), nil
+	case time.Time:
+		a1 := v1.(time.Time)
+		a2 := v2.(time.Time)
+		if a1.After(a2) {
+			return 1, nil
+		} else if a1.Equal(a2) {
+			return 0, nil
+		}
+		return -1, nil
+	case time.Duration:
+		a1 := v1.(time.Duration)
+		a2 := v2.(time.Duration)
+		if a1 > a2 {
+			return 1, nil
+		} else if a1 == a2 {
+			return 0, nil
+		}
+		return -1, nil
 	default:
 		return 0, fmt.Errorf("type %T is not supported now", v1)
 	}

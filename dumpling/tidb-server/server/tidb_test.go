@@ -43,7 +43,9 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
-	ts.server.Close()
+	if ts.server != nil {
+		ts.server.Close()
+	}
 }
 
 func (ts *TidbTestSuite) TestRegression(c *C) {
@@ -66,6 +68,10 @@ func (ts *TidbTestSuite) TestPreparedString(c *C) {
 
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	runTestConcurrentUpdate(c)
+}
+
+func (ts *TidbTestSuite) TestErrorCode(c *C) {
+	runTestErrorCode(c)
 }
 
 func (ts *TidbTestSuite) TestAuth(c *C) {
