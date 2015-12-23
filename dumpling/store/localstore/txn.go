@@ -35,17 +35,6 @@ type dbTxn struct {
 	snapshotVals map[string]struct{} // origin version in snapshot
 }
 
-func (txn *dbTxn) markOrigin(k []byte) {
-	keystr := string(k)
-
-	// Already exist, do nothing.
-	if _, ok := txn.snapshotVals[keystr]; ok {
-		return
-	}
-
-	txn.snapshotVals[keystr] = struct{}{}
-}
-
 // Implement transaction interface
 
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
@@ -64,15 +53,12 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.markOrigin(k)
 	txn.store.compactor.OnSet(k)
 	return nil
 }
 
 func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
-
-	txn.markOrigin(k)
 	val, err := txn.UnionStore.Inc(k, step)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -114,7 +100,6 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.markOrigin(k)
 	txn.store.compactor.OnDelete(k)
 	return nil
 }
@@ -126,6 +111,11 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	txn.ReleaseSnapshot()
+
+	txn.WalkBuffer(func(k kv.Key, v []byte) error {
+		txn.LockKeys(k)
+		return nil
+	})
 
 	return txn.store.CommitTxn(txn)
 }
@@ -159,7 +149,7 @@ func (txn *dbTxn) Rollback() error {
 
 func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
-		txn.markOrigin(key)
+		txn.snapshotVals[string(key)] = struct{}{}
 	}
 	return nil
 }
