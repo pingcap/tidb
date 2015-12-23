@@ -232,12 +232,17 @@ func runTestErrorCode(c *C) {
 		err = txn1.Commit()
 		checkErrorCode(c, err, tmysql.ErrDupEntry)
 
+		// Schema errors
 		txn2, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 		_, err = txn2.Exec("use db_not_exists;")
 		checkErrorCode(c, err, tmysql.ErrBadDb)
 		_, err = txn2.Exec("select * from tbl_not_exists;")
 		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
+		_, err = txn2.Exec("create database test;")
+		checkErrorCode(c, err, tmysql.ErrDbCreateExists)
+		_, err = txn2.Exec("create table test (c int);")
+		checkErrorCode(c, err, tmysql.ErrTableExists)
 	})
 }
 

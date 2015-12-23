@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -133,7 +134,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	}
 
 	err := d1.startJob(ctx, job)
-	c.Assert(terror.ErrorEqual(err, ErrNotExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.DatabaseNotExists), IsTrue)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {

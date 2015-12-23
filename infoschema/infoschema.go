@@ -257,6 +257,9 @@ const (
 	CodeDatabaseNotExists terror.ErrCode = 1049
 	CodeTableNotExists                   = 1146
 	CodeColumnNotExists                  = 1054
+
+	CodeDatabaseExists = 1007
+	CodeTableExists    = 1050
 )
 
 var (
@@ -266,6 +269,11 @@ var (
 	TableNotExists = terror.ClassSchema.New(CodeTableNotExists, "table not exists")
 	// ColumnNotExists returns for column not exists.
 	ColumnNotExists = terror.ClassSchema.New(CodeColumnNotExists, "field not exists")
+
+	// DatabaseExists returns for database already exists.
+	DatabaseExists = terror.ClassSchema.New(CodeDatabaseExists, "database already exists")
+	// TableExists returns for table already exists.
+	TableExists = terror.ClassSchema.New(CodeTableExists, "table already exists")
 )
 
 func init() {
@@ -273,6 +281,8 @@ func init() {
 		CodeDatabaseNotExists: mysql.ErrBadDb,
 		CodeTableNotExists:    mysql.ErrNoSuchTable,
 		CodeColumnNotExists:   mysql.ErrBadField,
+		CodeDatabaseExists:    mysql.ErrDbCreateExists,
+		CodeTableExists:       mysql.ErrTableExists,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }
