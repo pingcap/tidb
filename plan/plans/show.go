@@ -704,15 +704,15 @@ func (s *ShowPlan) fetchShowIndex(ctx context.Context) error {
 			data := []interface{}{
 				tb.TableName().O, // Table
 				nonUniq,          // Non_unique
-				idx.Name.O,       //Key_name
+				idx.Name.O,       // Key_name
 				i + 1,            // Seq_in_index
 				col.Name.O,       // Column_name
 				"utf8_bin",       // Colation
-				0,                //
+				0,                // Cardinality
 				subPart,          // Sub_part
 				nil,              // Packed
 				"YES",            // Null
-				"BTREE",          //Index_type
+				"BTREE",          // Index_type
 				"",               // Comment
 				"",               // Index_comment
 			}
