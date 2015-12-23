@@ -369,6 +369,35 @@ func (p *testShowSuit) TestShowTables(c *C) {
 	mustFailQuery(c, testDB, `show create table abc;`)
 }
 
+func (p *testShowSuit) TestShowIndex(c *C) {
+	se := newSession(c, p.store, p.dbName)
+	ctx, _ := se.(context.Context)
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t(c int unique, c1 int, c2 int, index c12 (c1, c2));")
+	pln := &plans.ShowPlan{
+		Target:    stmt.ShowIndex,
+		TableName: "t",
+		DBName:    p.dbName,
+	}
+	expectedRows := []interface{}{
+		[]interface{}{"t", 1, "c12", 1, "c1", "utf8_bin", 0, nil, nil, "YES", "BTREE", "", ""},
+		[]interface{}{"t", 1, "c12", 2, "c2", "utf8_bin", 0, nil, nil, "YES", "BTREE", "", ""},
+		[]interface{}{"t", 0, "c", 1, "c", "utf8_bin", 0, nil, nil, "YES", "BTREE", "", ""},
+	}
+	row, err := pln.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, DeepEquals, expectedRows[0])
+	row, err = pln.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, DeepEquals, expectedRows[1])
+	row, err = pln.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, DeepEquals, expectedRows[2])
+	row, err = pln.Next(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+}
+
 func (p *testShowSuit) TestShowGrants(c *C) {
 	se := newSession(c, p.store, p.dbName)
 	ctx, _ := se.(context.Context)

@@ -62,6 +62,7 @@ const (
 	ShowGrants
 	ShowTriggers
 	ShowProcedureStatus
+	ShowIndex
 )
 
 const (
