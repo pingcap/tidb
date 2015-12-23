@@ -13,26 +13,45 @@
 
 package hbasekv
 
-import . "github.com/pingcap/check"
+import (
+	"testing"
+
+	. "github.com/pingcap/check"
+)
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testHBaseSuite{})
 
 type testHBaseSuite struct {
 }
 
-func (t *testHBaseSuite) TestParseDSN(c *C) {
-	zks, oracle, table, err := parseDSN("zk1.com,zk2,192.168.0.1|localhost:1234/tidb")
-	c.Assert(zks, DeepEquals, []string{"zk1.com", "zk2", "192.168.0.1"})
-	c.Assert(oracle, Equals, "localhost:1234")
-	c.Assert(table, Equals, "tidb")
-	c.Assert(err, IsNil)
+func (t *testHBaseSuite) TestParsePath(c *C) {
+	tbl := []struct {
+		dsn    string
+		ok     bool
+		zks    []string
+		oracle string
+		table  string
+	}{
+		{"hbase://z,k,zk/tbl", true, []string{"z", "k", "zk"}, "", "tbl"},
+		{"hbase://z:80,k:80/tbl?tso=127.0.0.1:1234", true, []string{"z:80", "k:80"}, "127.0.0.1:1234", "tbl"},
+		{"goleveldb://zk/tbl", false, nil, "", ""},
+		{"hbase://zk/path/tbl", false, nil, "", ""},
+		{"hbase:///zk/tbl", false, nil, "", ""},
+	}
 
-	zks, oracle, table, err = parseDSN("zk1,zk2/tidb")
-	c.Assert(zks, DeepEquals, []string{"zk1", "zk2"})
-	c.Assert(oracle, Equals, "")
-	c.Assert(table, Equals, "tidb")
-	c.Assert(err, IsNil)
-
-	_, _, _, err = parseDSN("zk1,zk2|localhost:1234")
-	c.Assert(err, NotNil)
+	for _, t := range tbl {
+		zks, oracle, table, err := parsePath(t.dsn)
+		if t.ok {
+			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
+			c.Assert(zks, DeepEquals, t.zks, Commentf("dsn=%v", t.dsn))
+			c.Assert(oracle, Equals, t.oracle, Commentf("dsn=%v", t.dsn))
+			c.Assert(table, Equals, t.table, Commentf("dsn=%v", t.dsn))
+		} else {
+			c.Assert(err, NotNil, Commentf("dsn=%v", t.dsn))
+		}
+	}
 }
