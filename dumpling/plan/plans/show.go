@@ -698,7 +698,7 @@ func (s *ShowPlan) fetchShowIndex(ctx context.Context) error {
 				nonUniq = 0
 			}
 			var subPart interface{}
-			if col.Length != -1 {
+			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
 			data := []interface{}{
