@@ -23,6 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
@@ -138,7 +139,7 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		}
 
 		err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, fullti)
-		if terror.ErrorEqual(err, ddl.ErrNotExists) || terror.DatabaseNotExists.Equal(err) {
+		if terror.ErrorEqual(err, ddl.ErrNotExists) || infoschema.DatabaseNotExists.Equal(err) {
 			notExistTables = append(notExistTables, ti.String())
 		} else if err != nil {
 			return nil, errors.Trace(err)
@@ -182,7 +183,7 @@ func (s *DropIndexStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *DropIndexStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	err := sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, s.TableIdent.Full(ctx), model.NewCIStr(s.IndexName))
-	if (terror.ErrorEqual(err, ddl.ErrNotExists) || terror.DatabaseNotExists.Equal(err)) && s.IfExists {
+	if (terror.ErrorEqual(err, ddl.ErrNotExists) || infoschema.DatabaseNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
 

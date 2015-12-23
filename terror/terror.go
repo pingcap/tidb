@@ -25,9 +25,6 @@ import (
 
 // Common base error instances.
 var (
-	DatabaseNotExists = ClassSchema.New(CodeDatabaseNotExists, "database not exists")
-	TableNotExists    = ClassSchema.New(CodeTableNotExists, "table not exists")
-
 	CommitNotInTransaction   = ClassExecutor.New(CodeCommitNotInTransaction, "commit not in transaction")
 	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
 	ExecResultIsEmpty        = ClassExecutor.New(CodeExecResultIsEmpty, "exec result is empty")
@@ -44,24 +41,18 @@ var (
 // Same error code can be used in different error classes.
 type ErrCode int
 
-// Schema error codes.
-const (
-	CodeDatabaseNotExists ErrCode = iota + 1
-	CodeTableNotExists
-)
-
 // Executor error codes.
 const (
-	CodeCommitNotInTransaction ErrCode = iota + 1
-	CodeRollbackNotInTransaction
-	CodeExecResultIsEmpty
+	CodeCommitNotInTransaction   ErrCode = 1
+	CodeRollbackNotInTransaction         = 2
+	CodeExecResultIsEmpty                = 3
 )
 
 // KV error codes.
 const (
-	CodeIncompatibleDBFormat ErrCode = iota + 1
-	CodeNoDataForHandle
-	CodeKeyExists
+	CodeIncompatibleDBFormat ErrCode = 1
+	CodeNoDataForHandle              = 2
+	CodeKeyExists                    = 3
 )
 
 // Variable error codes.
@@ -204,7 +195,7 @@ func (e *Error) ToSQLError() *mysql.SQLError {
 var defaultMySQLErrorCode uint16
 
 func (e *Error) getMySQLErrorCode() uint16 {
-	codeMap, ok := errClassToMySQLCodes[e.class]
+	codeMap, ok := ErrClassToMySQLCodes[e.class]
 	if !ok {
 		log.Warnf("Unknown error class: %v", e.class)
 		return defaultMySQLErrorCode
@@ -220,7 +211,6 @@ func (e *Error) getMySQLErrorCode() uint16 {
 var (
 	// ErrCode to mysql error code map.
 	parserMySQLErrCodes    = map[ErrCode]uint16{}
-	schemaMySQLErrCodes    = map[ErrCode]uint16{}
 	optimizerMySQLErrCodes = map[ErrCode]uint16{}
 	executorMySQLErrCodes  = map[ErrCode]uint16{}
 	kvMySQLErrCodes        = map[ErrCode]uint16{
@@ -229,19 +219,18 @@ var (
 	serverMySQLErrCodes     = map[ErrCode]uint16{}
 	expressionMySQLErrCodes = map[ErrCode]uint16{}
 
-	// ErrClass to code-map map.
-	errClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
+	// ErrClassToMySQLCodes is the map of ErrClass to code-map.
+	ErrClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
 )
 
 func init() {
-	errClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
-	errClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
-	errClassToMySQLCodes[ClassSchema] = schemaMySQLErrCodes
-	errClassToMySQLCodes[ClassOptimizer] = optimizerMySQLErrCodes
-	errClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
-	errClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
-	errClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
-	errClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
+	ErrClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
+	ErrClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
+	ErrClassToMySQLCodes[ClassOptimizer] = optimizerMySQLErrCodes
+	ErrClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
+	ErrClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
+	ErrClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
+	ErrClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
 	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 
