@@ -89,8 +89,8 @@ type Snapshot interface {
 // Driver is the interface that must be implemented by a KV storage.
 type Driver interface {
 	// Open returns a new Storage.
-	// The schema is the string for storage specific format.
-	Open(schema string) (Storage, error)
+	// The path is the string for storage specific format.
+	Open(path string) (Storage, error)
 }
 
 // Storage defines the interface for storage.
