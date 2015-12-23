@@ -66,9 +66,6 @@ type Transaction interface {
 	UnionStore
 	// Commit commits the transaction operations to KV store.
 	Commit() error
-	// CommittedVersion returns the version of this committed transaction. If this
-	// transaction has not been committed, returns ErrNotCommitted error.
-	CommittedVersion() (Version, error)
 	// Rollback undoes the transaction operations to KV store.
 	Rollback() error
 	// String implements fmt.Stringer interface.
