@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/optimizer/evaluator"
@@ -177,8 +178,8 @@ func (e *IndexRangeExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		seekVals := make([]interface{}, len(e.lowVals))
-		for i := 0; i < len(seekVals); i++ {
+		seekVals := make([]interface{}, len(e.scan.idx.Columns))
+		for i := 0; i < len(e.lowVals); i++ {
 			var err error
 			if e.lowVals[i] == plan.MinNotNullVal {
 				seekVals[i] = []byte{}
@@ -189,12 +190,11 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 				}
 			}
 		}
-
 		txn, err := e.scan.ctx.GetTxn(false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, _, err = e.scan.idx.Seek(txn, seekVals)
+		e.iter, _, err = e.scan.idx.X.Seek(txn, seekVals)
 		if err != nil {
 			return nil, types.EOFAsNil(err)
 		}
@@ -315,7 +315,7 @@ func (e *IndexRangeExec) Close() error {
 // IndexScanExec represents an index scan executor.
 type IndexScanExec struct {
 	tbl        table.Table
-	idx        kv.Index
+	idx        *column.IndexedCol
 	fields     []*ast.ResultField
 	Ranges     []*IndexRangeExec
 	Desc       bool

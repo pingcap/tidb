@@ -536,6 +536,10 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 		e.err = ErrInvalidOperation.Gen("unknown function %s", v.FnName.O)
 		return false
 	}
+	if len(v.Args) < f.MinArgs || (f.MaxArgs != -1 && len(v.Args) > f.MaxArgs) {
+		e.err = ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", f.MinArgs, f.MaxArgs)
+		return false
+	}
 	a := make([]interface{}, len(v.Args))
 	for i, arg := range v.Args {
 		a[i] = arg.GetValue()

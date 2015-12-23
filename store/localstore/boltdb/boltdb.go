@@ -53,11 +53,29 @@ func (d *db) Get(key []byte) ([]byte, error) {
 
 func (d *db) MultiSeek(keys [][]byte) []*engine.MSeekResult {
 	res := make([]*engine.MSeekResult, 0, len(keys))
-	for _, key := range keys {
-		r := &engine.MSeekResult{}
-		r.Key, r.Value, r.Err = d.Seek(key)
-		res = append(res, r)
-	}
+	d.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		for _, key := range keys {
+			var k, v []byte
+			if key == nil {
+				k, v = c.First()
+			} else {
+				k, v = c.Seek(key)
+			}
+
+			r := &engine.MSeekResult{}
+			if k == nil {
+				r.Err = engine.ErrNotFound
+			} else {
+				r.Key, r.Value, r.Err = bytes.CloneBytes(k), bytes.CloneBytes(v), nil
+			}
+
+			res = append(res, r)
+		}
+		return nil
+	})
+
 	return res
 }
 

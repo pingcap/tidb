@@ -191,7 +191,7 @@ func (cc *clientConn) readHandshakeResponse() error {
 		}
 	}
 	// Open session and do auth
-	cc.ctx, err = cc.server.driver.OpenCtx(cc.capability, uint8(cc.collation), cc.dbname)
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, uint8(cc.collation), cc.dbname)
 	if err != nil {
 		cc.Close()
 		return errors.Trace(err)
@@ -319,10 +319,15 @@ func (cc *clientConn) writeOK() error {
 }
 
 func (cc *clientConn) writeError(e error) error {
-	var m *mysql.SQLError
-	var ok bool
+	var (
+		m  *mysql.SQLError
+		te *terror.Error
+		ok bool
+	)
 	originErr := errors.Cause(e)
-	if m, ok = originErr.(*mysql.SQLError); !ok {
+	if te, ok = originErr.(*terror.Error); ok {
+		m = te.ToSQLError()
+	} else {
 		m = mysql.NewErrf(mysql.ErrUnknown, e.Error())
 	}
 

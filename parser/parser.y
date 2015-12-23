@@ -104,6 +104,8 @@ import (
 	cross 		"CROSS"
 	curDate 	"CURDATE"
 	currentDate 	"CURRENT_DATE"
+	curTime 	"CUR_TIME"
+	currentTime 	"CURRENT_TIME"
 	currentUser	"CURRENT_USER"
 	database	"DATABASE"
 	databases	"DATABASES"
@@ -210,8 +212,11 @@ import (
 	outer		"OUTER"
 	password	"PASSWORD"
 	placeholder	"PLACEHOLDER"
+	pow 		"POW"
+	power 		"POWER"
 	prepare		"PREPARE"
 	primary		"PRIMARY"
+	procedure	"PROCEDURE"
 	quarter		"QUARTER"
 	quick		"QUICK"
 	rand		"RAND"
@@ -1680,14 +1685,14 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYOFMONTH"
 |	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
-|	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
+|	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
 |	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
-|	"YEARWEEK" | "CONNECTION_ID"
+|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME" 
 
 /************************************************************************************
  *
@@ -2137,6 +2142,22 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
+|	"CUR_TIME" '(' ExpressionOpt ')' 
+	{
+		args := []ast.ExprNode{}
+		if $3 != nil {
+			args = append(args, $3.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"CURRENT_TIME" FuncDatetimePrec
+	{
+		args := []ast.ExprNode{}
+		if $2 != nil {
+			args = append(args, $2.(ast.ExprNode))
+		}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
 |	"CURRENT_TIMESTAMP" FuncDatetimePrec
 	{
 		args := []ast.ExprNode{}
@@ -2256,6 +2277,16 @@ FunctionCallNonKeyword:
 |	"NULLIF" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
+|	"POW" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"POWER" '(' Expression ',' Expression ')'
+	{
+		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
 |	"RAND" '(' ExpressionOpt ')'
 	{
@@ -3436,6 +3467,12 @@ ShowTargetFilterable:
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowTriggers,
 			DBName:	$2.(string),
+		}
+	}
+|	"PROCEDURE" "STATUS"
+	{
+		$$ = &ast.ShowStmt {
+			Tp: ast.ShowProcedureStatus,
 		}
 	}
 

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
@@ -69,30 +68,11 @@ func builtinUser(args []interface{}, data map[interface{}]interface{}) (v interf
 	return variable.GetSessionVars(ctx).User, nil
 }
 
-// connectionIDKeyType is a dummy type to avoid naming collision in context.
-type connectionIDKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k connectionIDKeyType) String() string {
-	return "connection_id"
-}
-
-// ConnectionIDKey is the key for get connection id from context
-const ConnectionIDKey connectionIDKeyType = 0
-
 func builtinConnectionID(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
 	c, ok := data[ExprEvalArgCtx]
 	if !ok {
 		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
 	}
 	ctx := c.(context.Context)
-	idValue := ctx.Value(ConnectionIDKey)
-	if idValue == nil {
-		return nil, terror.MissConnectionID
-	}
-	id, ok := idValue.(int64)
-	if !ok {
-		return nil, terror.MissConnectionID.Gen("connection id is not int64 but %T", idValue)
-	}
-	return id, nil
+	return variable.GetSessionVars(ctx).ConnectionID, nil
 }

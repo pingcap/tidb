@@ -46,7 +46,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	db := store.(*dbStore).db
 	store.(*dbStore).compactor.Stop()
 
-	policy := kv.CompactPolicy{
+	policy := compactPolicy{
 		SafePoint:       500,
 		BatchDeleteCnt:  1,
 		TriggerInterval: 100 * time.Millisecond,
@@ -119,7 +119,7 @@ func (s *localstoreCompactorTestSuite) TestStartStop(c *C) {
 	db := store.(*dbStore).db
 
 	for i := 0; i < 10000; i++ {
-		policy := kv.CompactPolicy{
+		policy := compactPolicy{
 			SafePoint:       500,
 			BatchDeleteCnt:  1,
 			TriggerInterval: 100 * time.Millisecond,

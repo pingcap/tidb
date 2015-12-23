@@ -34,7 +34,7 @@ func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (pla
 	if err := ResolveName(node, is, ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := inferType(node); err != nil {
+	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := preEvaluate(ctx, node); err != nil {

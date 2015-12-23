@@ -84,7 +84,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	}
 	e := &IndexScanExec{
 		tbl:        tbl,
-		idx:        idx.X,
+		idx:        idx,
 		fields:     v.Fields(),
 		ctx:        b.ctx,
 		Desc:       v.Desc,
