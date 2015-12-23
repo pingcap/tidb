@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
@@ -106,7 +107,7 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	id, ok := is.tableNameToID[tableName{schema: schema.L, table: table.L}]
 	if !ok {
-		return nil, terror.TableNotExists.Gen("table %s.%s does not exist", schema, table)
+		return nil, TableNotExists.Gen("table %s.%s does not exist", schema, table)
 	}
 	t = is.tables[id]
 	return
@@ -249,4 +250,29 @@ func (h *Handle) Get() InfoSchema {
 	v := h.value.Load()
 	schema, _ := v.(InfoSchema)
 	return schema
+}
+
+// Schema error codes.
+const (
+	CodeDatabaseNotExists terror.ErrCode = 1049
+	CodeTableNotExists                   = 1146
+	CodeColumnNotExists                  = 1054
+)
+
+var (
+	// DatabaseNotExists returns for database not exists.
+	DatabaseNotExists = terror.ClassSchema.New(CodeDatabaseNotExists, "database not exists")
+	// TableNotExists returns for table not exists.
+	TableNotExists = terror.ClassSchema.New(CodeTableNotExists, "table not exists")
+	// ColumnNotExists returns for column not exists.
+	ColumnNotExists = terror.ClassSchema.New(CodeColumnNotExists, "field not exists")
+)
+
+func init() {
+	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeDatabaseNotExists: mysql.ErrBadDb,
+		CodeTableNotExists:    mysql.ErrNoSuchTable,
+		CodeColumnNotExists:   mysql.ErrBadField,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }

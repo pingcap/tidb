@@ -19,13 +19,13 @@ package stmts
 
 import (
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -64,7 +64,7 @@ func (s *UseStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	dbname := model.NewCIStr(s.DBName)
 	dbinfo, exists := sessionctx.GetDomain(ctx).InfoSchema().SchemaByName(dbname)
 	if !exists {
-		return nil, terror.DatabaseNotExists.Gen("database %s not exists", dbname)
+		return nil, infoschema.DatabaseNotExists.Gen("database %s not exists", dbname)
 	}
 	db.BindCurrentSchema(ctx, dbname.O)
 	s.updateSysVars(ctx, dbinfo)

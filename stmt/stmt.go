@@ -62,6 +62,7 @@ const (
 	ShowGrants
 	ShowTriggers
 	ShowProcedureStatus
+	ShowIndex
 )
 
 const (
@@ -70,31 +71,3 @@ const (
 	// GlobalScope shows varibales in global scope.
 	GlobalScope
 )
-
-// A dummy type to avoid naming collision in context.
-type execArgsKeyType int
-
-func (k execArgsKeyType) String() string {
-	return "stmt_exec_args"
-}
-
-const execArgsKey execArgsKeyType = 0
-
-// BindExecArgs binds executive args to context.
-func BindExecArgs(ctx context.Context, args []interface{}) {
-	ctx.SetValue(execArgsKey, args)
-}
-
-// GetExecArgs gets executive args from context.
-func GetExecArgs(ctx context.Context) []interface{} {
-	v, ok := ctx.Value(execArgsKey).([]interface{})
-	if !ok {
-		return nil
-	}
-	return v
-}
-
-// ClearExecArgs clears executive args from context.
-func ClearExecArgs(ctx context.Context) {
-	ctx.ClearValue(execArgsKey)
-}

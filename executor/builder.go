@@ -57,6 +57,12 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSort(v)
 	case *plan.Limit:
 		return b.buildLimit(v)
+	case *plan.Prepare:
+		return b.buildPrepare(v)
+	case *plan.Execute:
+		return b.buildExecute(v)
+	case *plan.Deallocate:
+		return &DeallocateExec{ctx: b.ctx, Name: v.Name}
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -184,4 +190,23 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 		Count:  v.Count,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
+	return &PrepareExec{
+		Ctx:     b.ctx,
+		IS:      b.is,
+		Name:    v.Name,
+		SQLText: v.SQLText,
+	}
+}
+
+func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
+	return &ExecuteExec{
+		Ctx:       b.ctx,
+		IS:        b.is,
+		Name:      v.Name,
+		UsingVars: v.UsingVars,
+		ID:        v.ID,
+	}
 }

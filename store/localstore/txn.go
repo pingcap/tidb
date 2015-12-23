@@ -28,22 +28,11 @@ var (
 // dbTxn is not thread safe
 type dbTxn struct {
 	kv.UnionStore
-	store        *dbStore // for commit
-	tid          uint64
-	valid        bool
-	version      kv.Version          // commit version
-	snapshotVals map[string]struct{} // origin version in snapshot
-}
-
-func (txn *dbTxn) markOrigin(k []byte) {
-	keystr := string(k)
-
-	// Already exist, do nothing.
-	if _, ok := txn.snapshotVals[keystr]; ok {
-		return
-	}
-
-	txn.snapshotVals[keystr] = struct{}{}
+	store      *dbStore // for commit
+	tid        uint64
+	valid      bool
+	version    kv.Version          // commit version
+	lockedKeys map[string]struct{} // origin version in snapshot
 }
 
 // Implement transaction interface
@@ -64,15 +53,12 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.markOrigin(k)
 	txn.store.compactor.OnSet(k)
 	return nil
 }
 
 func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
-
-	txn.markOrigin(k)
 	val, err := txn.UnionStore.Inc(k, step)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -114,7 +100,6 @@ func (txn *dbTxn) Delete(k kv.Key) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn.markOrigin(k)
 	txn.store.compactor.OnDelete(k)
 	return nil
 }
@@ -126,6 +111,14 @@ func (txn *dbTxn) doCommit() error {
 	}
 
 	txn.ReleaseSnapshot()
+
+	err := txn.WalkBuffer(func(k kv.Key, v []byte) error {
+		e := txn.LockKeys(k)
+		return errors.Trace(e)
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	return txn.store.CommitTxn(txn)
 }
@@ -142,17 +135,9 @@ func (txn *dbTxn) Commit() error {
 	return errors.Trace(txn.doCommit())
 }
 
-func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
-	// Check if this transaction is not committed.
-	if txn.version.Cmp(kv.MinVersion) == 0 {
-		return kv.MinVersion, kv.ErrNotCommitted
-	}
-	return txn.version, nil
-}
-
 func (txn *dbTxn) close() error {
 	txn.UnionStore.Release()
-	txn.snapshotVals = nil
+	txn.lockedKeys = nil
 	txn.valid = false
 	return nil
 }
@@ -167,7 +152,7 @@ func (txn *dbTxn) Rollback() error {
 
 func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
-		txn.markOrigin(key)
+		txn.lockedKeys[string(key)] = struct{}{}
 	}
 	return nil
 }

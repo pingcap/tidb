@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/field"
@@ -141,8 +142,40 @@ func (a *statementAdapter) Exec(ctx context.Context) (rset.Recordset, error) {
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
 	}
-	fields := make([]*field.ResultField, 0, len(e.Fields()))
-	for _, v := range e.Fields() {
+
+	if executorExec, ok := e.(*ExecuteExec); ok {
+		err := executorExec.Build()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if executorExec.OldStmt != nil {
+			return executorExec.OldStmt.Exec(executorExec.Ctx)
+		}
+		e = executorExec.StmtExec
+	}
+
+	if len(e.Fields()) == 0 {
+		// No result fields means no Recordset.
+		defer e.Close()
+		for {
+			row, err := e.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				return nil, nil
+			}
+		}
+	}
+	return &recordsetAdapter{
+		executor: e,
+		fields:   convertResultFields(e.Fields()),
+	}, nil
+}
+
+func convertResultFields(astFields []*ast.ResultField) []*field.ResultField {
+	fields := make([]*field.ResultField, 0, len(astFields))
+	for _, v := range astFields {
 		f := &field.ResultField{
 			Col:       column.Col{ColumnInfo: *v.Column},
 			Name:      v.ColumnAsName.O,
@@ -157,8 +190,5 @@ func (a *statementAdapter) Exec(ctx context.Context) (rset.Recordset, error) {
 		}
 		fields = append(fields, f)
 	}
-	return &recordsetAdapter{
-		executor: e,
-		fields:   fields,
-	}, nil
+	return fields
 }

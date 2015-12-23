@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/twinj/uuid"
 )
@@ -473,7 +472,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return terror.DatabaseNotExists.Gen("database %s not exists", ident.Schema)
+		return infoschema.DatabaseNotExists.Gen("database %s not exists", ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		return errors.Trace(ErrExists)
@@ -567,7 +566,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return errors.Trace(terror.DatabaseNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -607,7 +606,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return errors.Trace(terror.DatabaseNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -638,7 +637,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return terror.DatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.DatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
@@ -661,7 +660,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return terror.DatabaseNotExists.Gen("database %s not exists", ti.Schema)
+		return infoschema.DatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
@@ -689,7 +688,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIS
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return errors.Trace(terror.DatabaseNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)

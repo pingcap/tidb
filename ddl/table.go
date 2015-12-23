@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -36,7 +37,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	tables, err := t.ListTables(schemaID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return errors.Trace(terror.DatabaseNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	} else if err != nil {
 		return errors.Trace(err)
 	}
@@ -82,7 +83,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return errors.Trace(terror.DatabaseNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	} else if err != nil {
 		return errors.Trace(err)
 	}

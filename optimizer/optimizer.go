@@ -24,16 +24,9 @@ import (
 )
 
 // Optimize do optimization and create a Plan.
-// InfoSchema has to be passed in as parameter because
-// it can not be changed after resolving name.
-func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (plan.Plan, error) {
-	if err := validate(node); err != nil {
-		return nil, errors.Trace(err)
-	}
-	ast.SetFlag(node)
-	if err := ResolveName(node, is, ctx); err != nil {
-		return nil, errors.Trace(err)
-	}
+// The node must be prepared first.
+func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
+	// We have to inter type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -61,13 +54,30 @@ func Optimize(is infoschema.InfoSchema, ctx context.Context, node ast.Node) (pla
 	return bestPlan, nil
 }
 
+// Prepare prepares a raw statement parsed from parser.
+// The statement must be prepared before it can be passed to optimize function
+// We pass InfoSchema instead of get from Context in case it is changed after resolving name.
+func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
+	if err := Validate(node, true); err != nil {
+		return errors.Trace(err)
+	}
+	ast.SetFlag(node)
+	if err := ResolveName(node, is, ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err := InferType(node); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 type supportChecker struct {
 	unsupported bool
 }
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch in.(type) {
-	case *ast.SubqueryExpr, *ast.AggregateFuncExpr, *ast.GroupByClause, *ast.HavingClause, *ast.ParamMarkerExpr:
+	case *ast.SubqueryExpr, *ast.AggregateFuncExpr, *ast.GroupByClause, *ast.HavingClause:
 		c.unsupported = true
 	case *ast.Join:
 		x := in.(*ast.Join)
@@ -103,9 +113,12 @@ func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
 // We first support single table select statement without group by clause or aggregate functions.
 // TODO: 1. insert/update/delete. 2. join tables. 3. subquery. 4. group by and aggregate function.
 func IsSupported(node ast.Node) bool {
-	if _, ok := node.(*ast.SelectStmt); !ok {
+	switch node.(type) {
+	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
+	default:
 		return false
 	}
+
 	var checker supportChecker
 	node.Accept(&checker)
 	return !checker.unsupported
