@@ -16,25 +16,6 @@ package optimizer
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/terror"
-)
-
-// Optimizer error codes.
-const (
-	CodeOneColumn terror.ErrCode = iota + 1
-	CodeRowColumns
-	CodeSameColumns
-	CodeMultiWildCard
-	CodeUnsupported
-)
-
-// Optimizer base errors.
-var (
-	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
-	ErrSameColumns   = terror.ClassOptimizer.New(CodeRowColumns, "Operands should contain same columns")
-	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
-	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
 )
 
 // validate checkes whether the node is valid.
