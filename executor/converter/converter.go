@@ -15,9 +15,7 @@ package converter
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/stmt"
-	"sort"
 )
 
 // Converter converts ast.Node into an old stmt.Statement.
@@ -58,12 +56,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertTruncateTable(c, v)
 	case *ast.ExplainStmt:
 		return convertExplain(c, v)
-	case *ast.PrepareStmt:
-		return convertPrepare(c, v)
-	case *ast.DeallocateStmt:
-		return convertDeallocate(c, v)
-	case *ast.ExecuteStmt:
-		return convertExecute(c, v)
 	case *ast.ShowStmt:
 		return convertShow(c, v)
 	case *ast.BeginStmt:
@@ -88,29 +80,4 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertGrant(c, v)
 	}
 	return nil, nil
-}
-
-type paramMarkers []*ast.ParamMarkerExpr
-
-func (p paramMarkers) Len() int {
-	return len(p)
-}
-
-func (p paramMarkers) Less(i, j int) bool {
-	return p[i].Offset < p[j].Offset
-}
-
-func (p paramMarkers) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-// ParamMarkers returns parameter markers for prepared statement.
-func (con *Converter) ParamMarkers() []*expression.ParamMarker {
-	c := con.converter
-	sort.Sort(c.paramMarkers)
-	oldMarkers := make([]*expression.ParamMarker, len(c.paramMarkers))
-	for i, val := range c.paramMarkers {
-		oldMarkers[i] = c.exprMap[val].(*expression.ParamMarker)
-	}
-	return oldMarkers
 }

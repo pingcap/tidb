@@ -51,6 +51,12 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
+	case *ast.PrepareStmt:
+		return b.buildPrepare(x)
+	case *ast.ExecuteStmt:
+		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+	case *ast.DeallocateStmt:
+		return &Deallocate{Name: x.Name}
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
@@ -184,4 +190,16 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 	li.SetSrc(src)
 	li.SetFields(src.Fields())
 	return li
+}
+
+func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
+	p := &Prepare{
+		Name: x.Name,
+	}
+	if x.SQLVar != nil {
+		p.SQLText, _ = x.SQLVar.GetValue().(string)
+	} else {
+		p.SQLText = x.SQLText
+	}
+	return p
 }

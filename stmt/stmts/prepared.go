@@ -91,7 +91,6 @@ func (s *PreparedStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		s.ID = vars.GetNextPreparedStmtID()
 		s.Name = getPreparedStmtIDKey(s.ID)
 	}
-	vars.PreparedStmts[s.Name] = s
 	return nil, nil
 }
 
@@ -167,11 +166,11 @@ func (s *DeallocateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	if len(s.Name) == 0 {
 		s.Name = getPreparedStmtIDKey(s.ID)
 	}
-	_, ok := vars.PreparedStmts[s.Name]
+	_, ok := vars.PreparedStmts[0]
 	if !ok {
 		return nil, errors.Errorf("Can not find prepared statement with name %s", s.Name)
 	}
-	delete(vars.PreparedStmts, s.Name)
+	delete(vars.PreparedStmts, 0)
 	return nil, nil
 }
 
@@ -212,7 +211,7 @@ func (s *ExecuteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	if len(s.Name) == 0 {
 		s.Name = getPreparedStmtIDKey(s.ID)
 	}
-	vs, ok := vars.PreparedStmts[s.Name]
+	vs, ok := vars.PreparedStmts[0]
 	if !ok {
 		return nil, errors.Errorf("Can not find prepared statement with name %s", s.Name)
 	}
