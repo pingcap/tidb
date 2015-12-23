@@ -112,10 +112,13 @@ func (txn *dbTxn) doCommit() error {
 
 	txn.ReleaseSnapshot()
 
-	txn.WalkBuffer(func(k kv.Key, v []byte) error {
-		txn.LockKeys(k)
-		return nil
+	err := txn.WalkBuffer(func(k kv.Key, v []byte) error {
+		e := txn.LockKeys(k)
+		return errors.Trace(e)
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	return txn.store.CommitTxn(txn)
 }
