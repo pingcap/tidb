@@ -29,6 +29,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -197,7 +198,7 @@ func (s *session) String() string {
 
 func needRetry(st stmt.Statement) bool {
 	switch st.(type) {
-	case *stmts.PreparedStmt, *stmts.ShowStmt, *stmts.DoStmt, *stmts.CommitStmt:
+	case *stmts.ShowStmt, *stmts.DoStmt, *stmts.CommitStmt:
 		return false
 	default:
 		return true
@@ -234,12 +235,7 @@ func (s *session) Retry() error {
 				continue
 			}
 			log.Warnf("Retry %s", st.OriginText())
-			switch st.(type) {
-			case *stmts.ExecuteStmt:
-				_, err = runStmt(s, st, sr.params...)
-			default:
-				_, err = runStmt(s, st)
-			}
+			_, err = runStmt(s, st)
 			if err != nil {
 				if kv.IsRetryableError(err) {
 					success = false
@@ -406,7 +402,13 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 
 // For execute prepare statement in binary protocol
 func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {
-	return prepareStmt(s, sql)
+	prepareExec := &executor.PrepareExec{
+		IS:      sessionctx.GetDomain(s).InfoSchema(),
+		Ctx:     s,
+		SQLText: sql,
+	}
+	prepareExec.DoPrepare()
+	return prepareExec.ID, prepareExec.ParamCount, prepareExec.ResultFields, prepareExec.Err
 }
 
 // checkArgs makes sure all the arguments' types are known and can be handled.
@@ -461,13 +463,18 @@ func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.
 	if err != nil {
 		return nil, err
 	}
-	st := &stmts.ExecuteStmt{ID: stmtID}
+	st := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	r, err := runStmt(s, st, args...)
 	return r, errors.Trace(err)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
-	return dropPreparedStmt(s, stmtID)
+	vars := variable.GetSessionVars(s)
+	if _, ok := vars.PreparedStmts[stmtID]; !ok {
+		return executor.ErrStmtNotFound
+	}
+	delete(vars.PreparedStmts, stmtID)
+	return nil
 }
 
 // If forceNew is true, GetTxn() must return a new transaction.

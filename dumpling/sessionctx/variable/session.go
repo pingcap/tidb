@@ -24,7 +24,9 @@ type SessionVars struct {
 	// system variables
 	Systems map[string]string
 	// prepared statement
-	PreparedStmts map[string]interface{}
+	PreparedStmts map[uint32]interface{}
+
+	PreparedStmtNameToID map[string]uint32
 	// prepared statement auto increment id
 	preparedStmtID uint32
 
@@ -59,9 +61,10 @@ const sessionVarsKey sessionVarsKeyType = 0
 // BindSessionVars creates a session vars object and binds it to context.
 func BindSessionVars(ctx context.Context) {
 	v := &SessionVars{
-		Users:         make(map[string]string),
-		Systems:       make(map[string]string),
-		PreparedStmts: make(map[string]interface{}),
+		Users:                make(map[string]string),
+		Systems:              make(map[string]string),
+		PreparedStmts:        make(map[uint32]interface{}),
+		PreparedStmtNameToID: make(map[string]uint32),
 	}
 
 	ctx.SetValue(sessionVarsKey, v)
@@ -74,6 +77,27 @@ func GetSessionVars(ctx context.Context) *SessionVars {
 		return nil
 	}
 	return v
+}
+
+const (
+	characterSetConnection = "character_set_connection"
+	collationConnection    = "collation_connection"
+)
+
+// GetCharsetInfo gets charset and collation for current context.
+// What character set should the server translate a statement to after receiving it?
+// For this, the server uses the character_set_connection and collation_connection system variables.
+// It converts statements sent by the client from character_set_client to character_set_connection
+// (except for string literals that have an introducer such as _latin1 or _utf8).
+// collation_connection is important for comparisons of literal strings.
+// For comparisons of strings with column values, collation_connection does not matter because columns
+// have their own collation, which has a higher collation precedence.
+// See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
+func GetCharsetInfo(ctx context.Context) (charset, collation string) {
+	sessionVars := GetSessionVars(ctx)
+	charset = sessionVars.Systems[characterSetConnection]
+	collation = sessionVars.Systems[collationConnection]
+	return
 }
 
 // SetLastInsertID saves the last insert id to the session context.

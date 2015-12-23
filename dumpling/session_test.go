@@ -1433,7 +1433,9 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	stmt := stmts[0]
 	c.Assert(optimizer.IsSupported(stmt), IsTrue)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
-	p, err := optimizer.Optimize(is, ctx, stmt)
+	err = optimizer.Prepare(is, ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err := optimizer.Optimize(ctx, stmt)
 	c.Assert(err, IsNil)
 	planStr, err := plan.Explain(p)
 	c.Assert(err, IsNil)

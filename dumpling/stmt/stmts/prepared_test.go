@@ -15,7 +15,6 @@ package stmts_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/stmt/stmts"
 )
 
 func (s *testStmtSuite) TestPreparedStmt(c *C) {
@@ -50,37 +49,4 @@ func (s *testStmtSuite) TestPreparedStmt(c *C) {
 	_, err = tx.Exec(errTestSQL)
 	c.Assert(err, NotNil)
 	tx.Rollback()
-
-	// Mock PreparedStmt.
-	testPrepareStmt := &stmts.PreparedStmt{}
-
-	mf := newMockFormatter()
-	testPrepareStmt.Explain(nil, mf)
-	c.Assert(mf.Len(), Greater, 0)
-
-	c.Assert(testPrepareStmt.IsDDL(), IsFalse)
-	c.Assert(len(testPrepareStmt.OriginText()), Equals, 0)
-
-	_, err = testPrepareStmt.Exec(nil)
-	c.Assert(err, IsNil)
-
-	// Mock DeallocateStmt.
-	testDeallocateStmt := &stmts.DeallocateStmt{}
-
-	mf = newMockFormatter()
-	testDeallocateStmt.Explain(nil, mf)
-	c.Assert(mf.Len(), Greater, 0)
-
-	c.Assert(testDeallocateStmt.IsDDL(), IsFalse)
-	c.Assert(len(testDeallocateStmt.OriginText()), Equals, 0)
-
-	// Mock ExecuteStmt.
-	testExecuteStmt := &stmts.ExecuteStmt{}
-
-	mf = newMockFormatter()
-	testExecuteStmt.Explain(nil, mf)
-	c.Assert(mf.Len(), Greater, 0)
-
-	c.Assert(testExecuteStmt.IsDDL(), IsFalse)
-	c.Assert(len(testExecuteStmt.OriginText()), Equals, 0)
 }

@@ -780,48 +780,6 @@ func convertExplain(converter *expressionConverter, v *ast.ExplainStmt) (*stmts.
 	return oldExplain, nil
 }
 
-func convertPrepare(converter *expressionConverter, v *ast.PrepareStmt) (*stmts.PreparedStmt, error) {
-	oldPrepare := &stmts.PreparedStmt{
-		InPrepare: true,
-		Name:      v.Name,
-		SQLText:   v.SQLText,
-		Text:      v.Text(),
-	}
-	if v.SQLVar != nil {
-		oldSQLVar, err := convertExpr(converter, v.SQLVar)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		oldPrepare.SQLVar = oldSQLVar.(*expression.Variable)
-	}
-	return oldPrepare, nil
-}
-
-func convertDeallocate(converter *expressionConverter, v *ast.DeallocateStmt) (*stmts.DeallocateStmt, error) {
-	return &stmts.DeallocateStmt{
-		ID:   v.ID,
-		Name: v.Name,
-		Text: v.Text(),
-	}, nil
-}
-
-func convertExecute(converter *expressionConverter, v *ast.ExecuteStmt) (*stmts.ExecuteStmt, error) {
-	oldExec := &stmts.ExecuteStmt{
-		ID:   v.ID,
-		Name: v.Name,
-		Text: v.Text(),
-	}
-	oldExec.UsingVars = make([]expression.Expression, len(v.UsingVars))
-	for i, val := range v.UsingVars {
-		oldVar, err := convertExpr(converter, val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		oldExec.UsingVars[i] = oldVar
-	}
-	return oldExec, nil
-}
-
 func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowStmt, error) {
 	oldShow := &stmts.ShowStmt{
 		DBName:      v.DBName,
