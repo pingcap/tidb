@@ -155,14 +155,6 @@ func (txn *hbaseTxn) Commit() error {
 	return txn.doCommit()
 }
 
-func (txn *hbaseTxn) CommittedVersion() (kv.Version, error) {
-	// Check if this transaction is not committed.
-	if txn.version.Cmp(kv.MinVersion) == 0 {
-		return kv.MinVersion, kv.ErrNotCommitted
-	}
-	return txn.version, nil
-}
-
 func (txn *hbaseTxn) close() error {
 	txn.UnionStore.Release()
 	txn.valid = false

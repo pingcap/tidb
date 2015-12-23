@@ -165,6 +165,8 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	c.Assert(err, IsNil)
 	tx.Commit()
 
+	lastVer, err := globalVersionProvider.CurrentVersion()
+	c.Assert(err, IsNil)
 	// Modify
 	tx, _ = t.s.Begin()
 	err = tx.Set(encodeInt(1), []byte("new"))
@@ -178,6 +180,13 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	b, err = snapshot.Get(testKey)
 	c.Assert(err, IsNil)
 	c.Assert(string(b), Equals, "new")
+
+	// Get last version
+	lastVerSnapshot, err := t.s.GetSnapshot(lastVer)
+	c.Assert(err, IsNil)
+	b, err = lastVerSnapshot.Get(testKey)
+	c.Assert(err, IsNil)
+	c.Assert(string(b), Equals, string(encodeInt(1)))
 
 	// Get version not exists
 	minVerSnapshot, err := t.s.GetSnapshot(kv.MinVersion)
@@ -221,6 +230,8 @@ func (t *testMvccSuite) TestMvccSeek(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+	v1, err := globalVersionProvider.CurrentVersion()
+	c.Assert(err, IsNil)
 
 	txn, err = t.s.Begin()
 	c.Assert(err, IsNil)
@@ -228,6 +239,20 @@ func (t *testMvccSuite) TestMvccSeek(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+	v2, err := globalVersionProvider.CurrentVersion()
+	c.Assert(err, IsNil)
+
+	s = t.getSnapshot(c, v2)
+	k, v, err = s.mvccSeek(encodeInt(2), false)
+	c.Assert(err, IsNil)
+	c.Assert([]byte(k), BytesEquals, encodeInt(3))
+	c.Assert(v, BytesEquals, encodeInt(1003))
+
+	s = t.getSnapshot(c, v1)
+	k, v, err = s.mvccSeek(encodeInt(2), false)
+	c.Assert(err, IsNil)
+	c.Assert([]byte(k), BytesEquals, encodeInt(2))
+	c.Assert(v, BytesEquals, encodeInt(2))
 }
 
 func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
