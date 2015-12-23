@@ -142,14 +142,6 @@ func (txn *dbTxn) Commit() error {
 	return errors.Trace(txn.doCommit())
 }
 
-func (txn *dbTxn) CommittedVersion() (kv.Version, error) {
-	// Check if this transaction is not committed.
-	if txn.version.Cmp(kv.MinVersion) == 0 {
-		return kv.MinVersion, kv.ErrNotCommitted
-	}
-	return txn.version, nil
-}
-
 func (txn *dbTxn) close() error {
 	txn.UnionStore.Release()
 	txn.snapshotVals = nil
