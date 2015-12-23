@@ -88,7 +88,7 @@ func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
 
 // Commit writes the changed data in Batch.
 func (s *dbStore) CommitTxn(txn *dbTxn) error {
-	if len(txn.snapshotVals) == 0 {
+	if len(txn.lockedKeys) == 0 {
 		return nil
 	}
 	c := &command{
@@ -190,7 +190,7 @@ func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
 
 func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 	// check conflict
-	for k := range txn.snapshotVals {
+	for k := range txn.lockedKeys {
 		if _, ok := s.keysLocked[k]; ok {
 			return errors.Trace(kv.ErrLockConflict)
 		}
@@ -206,7 +206,7 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 	}
 
 	// record
-	for k := range txn.snapshotVals {
+	for k := range txn.lockedKeys {
 		s.keysLocked[k] = txn.tid
 	}
 
@@ -397,11 +397,11 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	}
 
 	txn := &dbTxn{
-		tid:          beginVer.Ver,
-		valid:        true,
-		store:        s,
-		version:      kv.MinVersion,
-		snapshotVals: make(map[string]struct{}),
+		tid:        beginVer.Ver,
+		valid:      true,
+		store:      s,
+		version:    kv.MinVersion,
+		lockedKeys: make(map[string]struct{}),
 	}
 	log.Debugf("[kv] Begin txn:%d", txn.tid)
 	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, beginVer))
@@ -449,7 +449,7 @@ func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
 }
 func (s *dbStore) unLockKeys(txn *dbTxn) error {
-	for k := range txn.snapshotVals {
+	for k := range txn.lockedKeys {
 		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
 			debug.PrintStack()
 			log.Fatalf("should never happend:%v, %v", tid, txn.tid)
