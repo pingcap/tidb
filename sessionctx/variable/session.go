@@ -79,6 +79,11 @@ func GetSessionVars(ctx context.Context) *SessionVars {
 	return v
 }
 
+const (
+	characterSetConnection = "character_set_connection"
+	collationConnection    = "collation_connection"
+)
+
 // GetCharsetInfo gets charset and collation for current context.
 // What character set should the server translate a statement to after receiving it?
 // For this, the server uses the character_set_connection and collation_connection system variables.
@@ -90,8 +95,8 @@ func GetSessionVars(ctx context.Context) *SessionVars {
 // See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func GetCharsetInfo(ctx context.Context) (charset, collation string) {
 	sessionVars := GetSessionVars(ctx)
-	charset = sessionVars.Systems["character_set_connection"]
-	collation = sessionVars.Systems["collation_connection"]
+	charset = sessionVars.Systems[characterSetConnection]
+	collation = sessionVars.Systems[collationConnection]
 	return
 }
 

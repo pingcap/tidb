@@ -104,6 +104,8 @@ func (e *PrepareExec) Close() error {
 func (e *PrepareExec) DoPrepare() {
 	vars := variable.GetSessionVars(e.Ctx)
 	if e.ID != 0 {
+		// Must be the case when we retry a prepare.
+		// Make sure it is idempotent.
 		_, ok := vars.PreparedStmts[e.ID]
 		if ok {
 			return
@@ -122,6 +124,10 @@ func (e *PrepareExec) DoPrepare() {
 	stmt := l.Stmts()[0]
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+
+	// The parameter markers are appended in visiting order, which may not
+	// be the same as the position order in the query string. We need to
+	// sort it by position.
 	sorter := &paramMarkerSorter{markers: extractor.markers}
 	sort.Sort(sorter)
 	e.ParamCount = len(sorter.markers)
