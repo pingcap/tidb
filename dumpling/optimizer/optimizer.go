@@ -38,7 +38,7 @@ const (
 var (
 	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
 	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
-	ErrSameColumns   = terror.ClassOptimizer.New(CodeRowColumns, "Operands should contain same columns")
+	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
 	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
 	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
 )

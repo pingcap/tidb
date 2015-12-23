@@ -238,6 +238,12 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrBadDb)
 		_, err = txn2.Exec("select * from tbl_not_exists;")
 		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
+
+		// Optimizer errors
+		_, err = txn2.Exec("select *, * from test;")
+		checkErrorCode(c, err, tmysql.ErrParse)
+		_, err = txn2.Exec("select row(1, 2) > 1;")
+		checkErrorCode(c, err, tmysql.ErrOperandColumns)
 	})
 }
 
