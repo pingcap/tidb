@@ -48,19 +48,6 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 		}
 	}
 	if IsErrNotFound(err) {
-		if opt, ok := c.opts.Get(RangePrefetchOnCacheMiss); ok {
-			if limit, ok := opt.(int); ok && limit > 0 {
-				vals, err2 := c.RangeGet(k, nil, limit)
-				if err2 != nil {
-					return nil, errors.Trace(err2)
-				}
-				if val, ok := vals[string(k)]; ok {
-					v, err = val, nil
-				}
-			}
-		}
-	}
-	if IsErrNotFound(err) {
 		v, err = c.snapshot.Get(k)
 		if err == nil {
 			err = cachePut(c.cache, k, v)
