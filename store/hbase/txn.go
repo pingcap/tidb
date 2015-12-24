@@ -74,16 +74,6 @@ func (txn *hbaseTxn) Set(k kv.Key, v []byte) error {
 	return txn.us.Set(k, v)
 }
 
-func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
-	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
-	return txn.us.Inc(k, step)
-}
-
-func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
-	log.Debugf("[kv] GetInt64 %q, txn:%d", k, txn.tid)
-	return txn.us.GetInt64(k)
-}
-
 func (txn *hbaseTxn) String() string {
 	return fmt.Sprintf("%d", txn.tid)
 }
