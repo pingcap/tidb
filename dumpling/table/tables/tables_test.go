@@ -70,7 +70,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"}, 0)
+	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
@@ -78,9 +78,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].(int64), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
 	c.Assert(err, NotNil)
 
 	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, map[int]bool{0: false, 1: true}), IsNil)
@@ -102,7 +102,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
 	// Make sure index data is also removed after tb.RemoveRecord().
 	c.Assert(indexCnt(), Equals, 0)
-	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	// Make sure index data is also removed after tb.Truncate().
@@ -190,9 +190,9 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, nil}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, nil})
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, nil}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{2, nil})
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
