@@ -28,8 +28,6 @@ type UnionStore interface {
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
-	// BatchPrefetch fetches values from KV storage to cache for later use.
-	BatchPrefetch(keys []Key) error
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -142,12 +140,6 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		return nil, errors.Trace(ErrNotExist)
 	}
 	return v, nil
-}
-
-// BatchPrefetch implements the UnionStore interface.
-func (us *unionStore) BatchPrefetch(keys []Key) error {
-	_, err := us.snapshot.BatchGet(keys)
-	return errors.Trace(err)
 }
 
 // markLazyConditionPair marks a kv pair for later check.

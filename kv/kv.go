@@ -58,8 +58,6 @@ type MemBuffer interface {
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
-	// BatchPrefetch fetches values from KV storage to cache for later use.
-	BatchPrefetch(keys []Key) error
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.
