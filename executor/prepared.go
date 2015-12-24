@@ -111,17 +111,17 @@ func (e *PrepareExec) DoPrepare() {
 			return
 		}
 	}
-	l := parser.NewLexer(e.SQLText)
-	l.SetCharsetInfo(variable.GetCharsetInfo(e.Ctx))
-	if parser.YYParse(l) != 0 {
-		e.Err = errors.Trace(l.Errors()[0])
+	charset, collation := variable.GetCharsetInfo(e.Ctx)
+	stmts, err := parser.Parse(e.SQLText, charset, collation)
+	if err != nil {
+		e.Err = errors.Trace(err)
 		return
 	}
-	if len(l.Stmts()) != 1 {
+	if len(stmts) != 1 {
 		e.Err = ErrPrepareMulti
 		return
 	}
-	stmt := l.Stmts()[0]
+	stmt := stmts[0]
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
