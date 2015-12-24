@@ -55,13 +55,13 @@ func (s *testSuite) TestPrepared(c *C) {
 	// Prepare multiple statement is not allowed.
 	_, err := tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
 	c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
-	// The variable count do not match.
+	// The variable count does not match.
 	_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
 	c.Assert(executor.ErrWrongParamCount.Equal(err), IsTrue)
 	// Prepare and deallocate prepared statement immediately.
 	tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
 
-	// Not found
+	// Statement not found.
 	_, err = tk.Exec("deallocate prepare stmt_test_5")
 	c.Assert(executor.ErrStmtNotFound.Equal(err), IsTrue)
 
