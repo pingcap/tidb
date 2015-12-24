@@ -81,24 +81,6 @@ func (s *testCacheSnapshotSuite) TestBatchGet(c *C) {
 	c.Assert(exist, IsFalse)
 }
 
-func (s *testCacheSnapshotSuite) TestRangeGet(c *C) {
-	s.store.Set([]byte("1"), []byte("1"))
-	s.store.Set([]byte("2"), []byte("2"))
-	s.store.Set([]byte("3"), []byte("3"))
-
-	m, err := s.cache.RangeGet([]byte("1"), []byte("2"), 100)
-	c.Assert(err, IsNil)
-	c.Assert(m, HasLen, 2)
-	c.Assert(m["1"], BytesEquals, []byte("1"))
-	c.Assert(m["2"], BytesEquals, []byte("2"))
-
-	// result should be saved in cache
-	s.store.Set([]byte("1"), []byte("4"))
-	v, err := s.cache.Get([]byte("1"))
-	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, []byte("1"))
-}
-
 type mockSnapshot struct {
 	store MemBuffer
 }
@@ -118,30 +100,6 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		m[string(k)] = v
-	}
-	return m, nil
-}
-
-func (s *mockSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, error) {
-	m := make(map[string][]byte)
-	it, err := s.Seek(start)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer it.Close()
-	endKey := string(end)
-	for i := 0; i < limit; i++ {
-		if !it.Valid() {
-			break
-		}
-		if it.Key() > endKey {
-			break
-		}
-		m[string(it.Key())] = it.Value()
-		err := it.Next()
-		if err != nil {
-			return nil, err
-		}
 	}
 	return m, nil
 }

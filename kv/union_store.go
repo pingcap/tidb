@@ -30,9 +30,6 @@ type UnionStore interface {
 	CheckLazyConditionPairs() error
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
-	// RangePrefetch fetches values in the range [start, end] from KV storage
-	// to cache for later use. Maximum number of values is up to limit.
-	RangePrefetch(start, end Key, limit int) error
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -130,12 +127,6 @@ func (lmb *lazyMemBuffer) Release() {
 // BatchPrefetch implements the UnionStore interface.
 func (us *unionStore) BatchPrefetch(keys []Key) error {
 	_, err := us.snapshot.BatchGet(keys)
-	return errors.Trace(err)
-}
-
-// RangePrefetch implements the UnionStore interface.
-func (us *unionStore) RangePrefetch(start, end Key, limit int) error {
-	_, err := us.snapshot.RangeGet(start, end, limit)
 	return errors.Trace(err)
 }
 

@@ -120,30 +120,6 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *dbSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
-	m := make(map[string][]byte)
-	it, err := s.Seek(start)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer it.Close()
-	endKey := string(end)
-	for i := 0; i < limit; i++ {
-		if !it.Valid() {
-			break
-		}
-		if it.Key() > endKey {
-			break
-		}
-		m[it.Key()] = it.Value()
-		err := it.Next()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return m, nil
-}
-
 func (s *dbSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 	it, err := newDBIter(s, k)
 	return it, errors.Trace(err)

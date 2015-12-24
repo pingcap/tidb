@@ -60,9 +60,6 @@ type Transaction interface {
 	RetrieverMutator
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
-	// RangePrefetch fetches values in the range [start, end] from KV storage
-	// to cache for later use. Maximum number of values is up to limit.
-	RangePrefetch(start, end Key, limit int) error
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.
@@ -83,9 +80,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// RangeGet gets values in the range [start, end] from snapshot. Maximum
-	// number of values is up to limit.
-	RangeGet(start, end Key, limit int) (map[string][]byte, error)
 	// Release releases the snapshot to store.
 	Release()
 }
