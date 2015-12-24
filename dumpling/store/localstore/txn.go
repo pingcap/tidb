@@ -27,7 +27,7 @@ var (
 
 // dbTxn is not thread safe
 type dbTxn struct {
-	kv.UnionStore
+	us         kv.UnionStore
 	store      *dbStore // for commit
 	tid        uint64
 	valid      bool
@@ -35,26 +35,39 @@ type dbTxn struct {
 	lockedKeys map[string]struct{} // origin version in snapshot
 }
 
+func newTxn(s *dbStore, ver kv.Version) *dbTxn {
+	txn := &dbTxn{
+		us:         kv.NewUnionStore(newSnapshot(s, ver)),
+		store:      s,
+		tid:        ver.Ver,
+		valid:      true,
+		version:    kv.MinVersion,
+		lockedKeys: make(map[string]struct{}),
+	}
+	log.Debugf("[kv] Begin txn:%d", txn.tid)
+	return txn
+}
+
 // Implement transaction interface
 
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("[kv] get key:%q, txn:%d", k, txn.tid)
-	return txn.UnionStore.Get(k)
+	return txn.us.Get(k)
 }
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	log.Debugf("[kv] set key:%q, txn:%d", k, txn.tid)
-	return txn.UnionStore.Set(k, data)
+	return txn.us.Set(k, data)
 }
 
 func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
-	return txn.UnionStore.Inc(k, step)
+	return txn.us.Inc(k, step)
 }
 
 func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
 	log.Debugf("[kv] GetInt64 %q, txn:%d", k, txn.tid)
-	return txn.UnionStore.GetInt64(k)
+	return txn.us.GetInt64(k)
 }
 
 func (txn *dbTxn) String() string {
@@ -63,23 +76,37 @@ func (txn *dbTxn) String() string {
 
 func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("[kv] seek key:%q, txn:%d", k, txn.tid)
-	return txn.UnionStore.Seek(k)
+	return txn.us.Seek(k)
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("[kv] delete key:%q, txn:%d", k, txn.tid)
-	return txn.UnionStore.Delete(k)
+	return txn.us.Delete(k)
+}
+
+func (txn *dbTxn) BatchPrefetch(keys []kv.Key) error {
+	return txn.us.BatchPrefetch(keys)
+}
+
+func (txn *dbTxn) RangePrefetch(start, end kv.Key, limit int) error {
+	return txn.us.RangePrefetch(start, end, limit)
+}
+
+func (txn *dbTxn) SetOption(opt kv.Option, val interface{}) {
+	txn.us.SetOption(opt, val)
+}
+
+func (txn *dbTxn) DelOption(opt kv.Option) {
+	txn.us.DelOption(opt)
 }
 
 func (txn *dbTxn) doCommit() error {
 	// check lazy condition pairs
-	if err := txn.CheckLazyConditionPairs(); err != nil {
+	if err := txn.us.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
 	}
 
-	txn.ReleaseSnapshot()
-
-	err := txn.WalkBuffer(func(k kv.Key, v []byte) error {
+	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		e := txn.LockKeys(k)
 		return errors.Trace(e)
 	})
@@ -103,7 +130,7 @@ func (txn *dbTxn) Commit() error {
 }
 
 func (txn *dbTxn) close() error {
-	txn.UnionStore.Release()
+	txn.us.Release()
 	txn.lockedKeys = nil
 	txn.valid = false
 	return nil

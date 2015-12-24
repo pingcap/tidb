@@ -45,8 +45,6 @@ type UnionStore interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
-	// ReleaseSnapshot releases underlying snapshot.
-	ReleaseSnapshot()
 }
 
 // Option is used for customizing kv store's behaviors during a transaction.
@@ -232,11 +230,6 @@ func (us *unionStore) SetOption(opt Option, val interface{}) {
 // DelOption implements the UnionStore DelOption interface.
 func (us *unionStore) DelOption(opt Option) {
 	delete(us.opts, opt)
-}
-
-// ReleaseSnapshot implements the UnionStore ReleaseSnapshot interface.
-func (us *unionStore) ReleaseSnapshot() {
-	us.snapshot.Release()
 }
 
 // Release implements the UnionStore Release interface.

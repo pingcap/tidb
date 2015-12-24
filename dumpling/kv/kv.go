@@ -63,7 +63,16 @@ type MemBuffer interface {
 // Transaction defines the interface for operations inside a Transaction.
 // This is not thread safe.
 type Transaction interface {
-	UnionStore
+	RetrieverMutator
+	// Inc increases the value for key k in KV storage by step.
+	Inc(k Key, step int64) (int64, error)
+	// GetInt64 get int64 which created by Inc method.
+	GetInt64(k Key) (int64, error)
+	// BatchPrefetch fetches values from KV storage to cache for later use.
+	BatchPrefetch(keys []Key) error
+	// RangePrefetch fetches values in the range [start, end] from KV storage
+	// to cache for later use. Maximum number of values is up to limit.
+	RangePrefetch(start, end Key, limit int) error
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.
@@ -72,6 +81,11 @@ type Transaction interface {
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
 	LockKeys(keys ...Key) error
+	// SetOption sets an option with a value, when val is nil, uses the default
+	// value of this option.
+	SetOption(opt Option, val interface{})
+	// DelOption deletes an option.
+	DelOption(opt Option)
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
