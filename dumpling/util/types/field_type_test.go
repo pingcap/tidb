@@ -118,3 +118,31 @@ func (s *testFieldTypeSuite) TestDataItem(c *check.C) {
 	c.Assert(RawData(d), check.Equals, "string")
 	c.Assert(IsNil(d), check.IsFalse)
 }
+
+func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
+	nullType := DefaultTypeForValue(nil)
+	di := &DataItem{Type: nullType}
+	cases := []struct {
+		value interface{}
+		tp    byte
+	}{
+		{nil, mysql.TypeNull},
+		{1, mysql.TypeLonglong},
+		{uint64(1), mysql.TypeLonglong},
+		{"abc", mysql.TypeVarchar},
+		{1.1, mysql.TypeNewDecimal},
+		{[]byte("abc"), mysql.TypeBlob},
+		{mysql.Bit{}, mysql.TypeBit},
+		{mysql.Hex{}, mysql.TypeVarchar},
+		{mysql.Time{Type: mysql.TypeDatetime}, mysql.TypeDatetime},
+		{mysql.Duration{}, mysql.TypeDuration},
+		{mysql.Decimal{}, mysql.TypeNewDecimal},
+		{mysql.Enum{}, mysql.TypeEnum},
+		{mysql.Set{}, mysql.TypeSet},
+		{di, mysql.TypeNull},
+	}
+	for _, ca := range cases {
+		ft := DefaultTypeForValue(ca.value)
+		c.Assert(ft.Tp, check.Equals, ca.tp, check.Commentf("%v %v", ft, ca))
+	}
+}
