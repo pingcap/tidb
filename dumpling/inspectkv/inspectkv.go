@@ -286,7 +286,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	m := make(map[int64][]interface{}, len(data))
 	for _, r := range data {
 		if _, ok := m[r.Handle]; ok {
-			return errors.Errorf("handle is repeated in data")
+			return errors.Errorf("handle:%d is repeated in data", r.Handle)
 		}
 		m[r.Handle] = r.Values
 	}
