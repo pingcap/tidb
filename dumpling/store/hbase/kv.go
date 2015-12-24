@@ -16,6 +16,8 @@ package hbasekv
 import (
 	"fmt"
 	"math/rand"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -67,11 +69,12 @@ func init() {
 }
 
 type hbaseStore struct {
-	mu        sync.Mutex
-	dsn       string
-	storeName string
-	oracle    oracle.Oracle
-	conns     []hbase.HBaseClient
+	mu         sync.Mutex
+	uuid       string
+	storeName  string
+	oracleAddr string
+	oracle     oracle.Oracle
+	conns      []hbase.HBaseClient
 }
 
 func (s *hbaseStore) getHBaseClient() hbase.HBaseClient {
@@ -104,7 +107,7 @@ func (s *hbaseStore) Close() error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	delete(mc.cache, s.dsn)
+	delete(mc.cache, s.uuid)
 
 	var err error
 	for _, conn := range s.conns {
@@ -118,7 +121,7 @@ func (s *hbaseStore) Close() error {
 }
 
 func (s *hbaseStore) UUID() string {
-	return fmt.Sprintf("hbase.%s.%s", s.storeName, s.dsn)
+	return s.uuid
 }
 
 func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
@@ -136,20 +139,27 @@ func (s *hbaseStore) CurrentVersion() (kv.Version, error) {
 type Driver struct {
 }
 
-// Open opens or creates an HBase storage with given dsn, format should be 'zk1,zk2,zk3|tsoaddr:port/tblName'.
-// If tsoAddr is not provided, it will use a local oracle instead.
-func (d Driver) Open(dsn string) (kv.Storage, error) {
+// Open opens or creates an HBase storage with given path.
+//
+// The format of path should be 'hbase://zk1,zk2,zk3/table[?tso=host:port]'.
+// If tso is not provided, it will use a local oracle instead. (for test only)
+func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if store, ok := mc.cache[dsn]; ok {
-		// TODO: check the cache store has the same engine with this Driver.
-		return store, nil
-	}
-
-	zks, oracleAddr, tableName, err := parseDSN(dsn)
+	zks, oracleAddr, tableName, err := parsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	uuid := fmt.Sprintf("hbase-%v-%v", zks, tableName)
+	if store, ok := mc.cache[uuid]; ok {
+		if oracleAddr != store.oracleAddr {
+			err = errors.Errorf("hbase: store(%s) is opened with a different tso, old: %v, new: %v", uuid, store.oracleAddr, oracleAddr)
+			log.Warn(errors.ErrorStack(err))
+			return nil, err
+		}
+		return store, nil
 	}
 
 	// create buffered HBase connections, HBaseClient is goroutine-safe, so
@@ -184,35 +194,36 @@ func (d Driver) Open(dsn string) (kv.Storage, error) {
 
 	var ora oracle.Oracle
 	if len(oracleAddr) == 0 {
+		log.Warnf("hbase: store(%s) is using local oracle(for test only)", uuid)
 		ora = oracles.NewLocalOracle()
 	} else {
 		ora = oracles.NewRemoteOracle(oracleAddr)
 	}
 
 	s := &hbaseStore{
-		dsn:       dsn,
-		storeName: tableName,
-		oracle:    ora,
-		conns:     conns,
+		uuid:       uuid,
+		storeName:  tableName,
+		oracleAddr: oracleAddr,
+		oracle:     ora,
+		conns:      conns,
 	}
-	mc.cache[dsn] = s
+	mc.cache[uuid] = s
 	return s, nil
 }
 
-func parseDSN(dsn string) (zks []string, oracleAddr, tableName string, err error) {
-	pos := strings.LastIndex(dsn, "/")
-	if pos == -1 {
-		err = errors.Trace(ErrInvalidDSN)
-		return
+func parsePath(path string) (zks []string, oracleAddr, tableName string, err error) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return nil, "", "", errors.Trace(err)
 	}
-	tableName = dsn[pos+1:]
-	addrs := dsn[:pos]
-
-	pos = strings.LastIndex(addrs, "|")
-	if pos != -1 {
-		oracleAddr = addrs[pos+1:]
-		addrs = addrs[:pos]
+	if strings.ToLower(u.Scheme) != "hbase" {
+		return nil, "", "", errors.Trace(ErrInvalidDSN)
 	}
-	zks = strings.Split(addrs, ",")
-	return
+	p, tableName := filepath.Split(u.Path)
+	if p != "/" {
+		return nil, "", "", errors.Trace(ErrInvalidDSN)
+	}
+	zks = strings.Split(u.Host, ",")
+	oracleAddr = u.Query().Get("tso")
+	return zks, oracleAddr, tableName, nil
 }

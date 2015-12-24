@@ -18,6 +18,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"runtime"
 	"sync"
@@ -320,6 +321,43 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
+}
+
+func (s *testMainSuite) TestParseDSN(c *C) {
+	tbl := []struct {
+		dsn      string
+		ok       bool
+		storeDSN string
+		dbName   string
+	}{
+		{"s://path/db", true, "s://path", "db"},
+		{"s://path/db/", true, "s://path", "db"},
+		{"s:///path/db", true, "s:///path", "db"},
+		{"s:///path/db/", true, "s:///path", "db"},
+		{"s://zk1,zk2/tbl/db", true, "s://zk1,zk2/tbl", "db"},
+		{"s://zk1:80,zk2:81/tbl/db", true, "s://zk1:80,zk2:81/tbl", "db"},
+		{"s://path/db?p=v", true, "s://path?p=v", "db"},
+		{"s:///path/db?p1=v1&p2=v2", true, "s:///path?p1=v1&p2=v2", "db"},
+		{"s://z,k,zk/tbl/db?p=v", true, "s://z,k,zk/tbl?p=v", "db"},
+		{"", false, "", ""},
+		{"/", false, "", ""},
+		{"s://", false, "", ""},
+		{"s:///", false, "", ""},
+		{"s:///db", false, "", ""},
+	}
+
+	for _, t := range tbl {
+		storeDSN, dbName, err := parseDriverDSN(t.dsn)
+		if t.ok {
+			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
+			c.Assert(storeDSN, Equals, t.storeDSN, Commentf("dsn=%v", t.dsn))
+			c.Assert(dbName, Equals, t.dbName, Commentf("dsn=%v", t.dsn))
+			_, err = url.Parse(storeDSN)
+			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
+		} else {
+			c.Assert(err, NotNil, Commentf("dsn=%v", t.dsn))
+		}
+	}
 }
 
 func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {

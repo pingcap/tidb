@@ -23,7 +23,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
-	"os"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -123,32 +123,51 @@ func (d *sqlDriver) unlock() {
 	d.mu.Unlock()
 }
 
-// Open returns a new connection to the database.  The name is a string in a
-// driver-specific format.
+// parseDriverDSN cuts off DB name from dsn. It returns error if the dsn is not
+// valid.
+func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	path := filepath.Join(u.Host, u.Path)
+	dbName = filepath.Clean(filepath.Base(path))
+	if dbName == "" || dbName == "." || dbName == string(filepath.Separator) {
+		return "", "", errors.Errorf("invalid DB name %q", dbName)
+	}
+	// cut off dbName
+	path = filepath.Clean(filepath.Dir(path))
+	if path == "" || path == "." || path == string(filepath.Separator) {
+		return "", "", errors.Errorf("invalid dsn %q", dsn)
+	}
+	u.Path, u.Host = path, ""
+	return u.String(), dbName, nil
+}
+
+// Open returns a new connection to the database.
+//
+// The dsn must be a URL format 'engine://path/dbname?params'.
+// Engine is the storage name registered with RegisterStore.
+// Path is the storage specific format.
+// Params is key-value pairs split by '&', optional params are storage specific.
+// Examples:
+//    goleveldb://relative/path/test
+//    boltdb:///absolute/path/test
+//    hbase://zk1,zk2,zk3/hbasetbl/test?tso=127.0.0.1:1234
 //
 // Open may return a cached connection (one previously closed), but doing so is
 // unnecessary; the sql package maintains a pool of idle connections for
 // efficient re-use.
 //
 // The returned connection is only used by one goroutine at a time.
-func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
-	// Split the dataSource to uri and dbName
-	i := strings.LastIndex(dataSource, "/")
-	if i == -1 {
-		return nil, errors.Errorf("Invalid dataSource: %q", dataSource)
-	}
-	uri := dataSource[:i]
-	dbName := dataSource[i+1:]
-
-	store, err := NewStore(uri)
+func (d *sqlDriver) Open(dsn string) (driver.Conn, error) {
+	storePath, dbName, err := parseDriverDSN(dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	driver := &sqlDriver{}
-	dbName = filepath.Clean(dbName)
-	if dbName == "" || dbName == "." || dbName == string(os.PathSeparator) {
-		return nil, errors.Errorf("invalid DB name %q", dbName)
+	store, err := NewStore(storePath)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	sess, err := CreateSession(store)
@@ -172,6 +191,7 @@ func (d *sqlDriver) Open(dataSource string) (driver.Conn, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+	driver := &sqlDriver{}
 	return newDriverConn(s, driver, DBName.O)
 }
 
