@@ -60,16 +60,6 @@ func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	return txn.us.Set(k, data)
 }
 
-func (txn *dbTxn) Inc(k kv.Key, step int64) (int64, error) {
-	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
-	return txn.us.Inc(k, step)
-}
-
-func (txn *dbTxn) GetInt64(k kv.Key) (int64, error) {
-	log.Debugf("[kv] GetInt64 %q, txn:%d", k, txn.tid)
-	return txn.us.GetInt64(k)
-}
-
 func (txn *dbTxn) String() string {
 	return fmt.Sprintf("%d", txn.tid)
 }

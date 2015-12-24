@@ -54,7 +54,7 @@ func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	ek := t.encodeStringDataKey(key)
 	// txn Inc will lock this key, so we don't lock it here.
-	n, err := t.txn.Inc(ek, step)
+	n, err := kv.IncInt64(t.txn, ek, step)
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		err = nil
 	}
