@@ -47,7 +47,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 			if tbl.ID != tbInfo.ID {
 				// table exists, can't create, we should cancel this job now.
 				job.State = model.JobCancelled
-				return errors.Trace(ErrExists)
+				return errors.Trace(infoschema.TableExists)
 			}
 
 			tbInfo = tbl
@@ -90,7 +90,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 
 	if tblInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.TableNotExists)
 	}
 
 	_, err = t.GenSchemaVersion()
@@ -163,12 +163,12 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return nil, errors.Trace(ErrNotExists)
+		return nil, errors.Trace(infoschema.DatabaseNotExists)
 	} else if err != nil {
 		return nil, errors.Trace(err)
 	} else if tblInfo == nil {
 		job.State = model.JobCancelled
-		return nil, errors.Trace(ErrNotExists)
+		return nil, errors.Trace(infoschema.TableNotExists)
 	}
 
 	if tblInfo.State != model.StatePublic {

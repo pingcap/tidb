@@ -22,7 +22,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -73,8 +72,12 @@ func (s *DropDatabaseStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *DropDatabaseStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	err := sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, model.NewCIStr(s.Name))
-	if terror.ErrorEqual(err, ddl.ErrNotExists) && s.IfExists {
-		err = nil
+	if terror.ErrorEqual(err, infoschema.DatabaseNotExists) {
+		if s.IfExists {
+			err = nil
+		} else {
+			err = infoschema.DatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
+		}
 	}
 	return nil, errors.Trace(err)
 }
@@ -139,14 +142,14 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		}
 
 		err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, fullti)
-		if terror.ErrorEqual(err, ddl.ErrNotExists) || infoschema.DatabaseNotExists.Equal(err) {
+		if infoschema.DatabaseNotExists.Equal(err) || infoschema.TableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, ti.String())
 		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
-		return nil, errors.Errorf("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
+		return nil, infoschema.TableDropExists.Gen("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
 	}
 	return nil, nil
 }
@@ -183,7 +186,7 @@ func (s *DropIndexStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *DropIndexStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	err := sessionctx.GetDomain(ctx).DDL().DropIndex(ctx, s.TableIdent.Full(ctx), model.NewCIStr(s.IndexName))
-	if (terror.ErrorEqual(err, ddl.ErrNotExists) || infoschema.DatabaseNotExists.Equal(err)) && s.IfExists {
+	if (infoschema.DatabaseNotExists.Equal(err) || infoschema.TableNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
 

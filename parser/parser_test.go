@@ -45,28 +45,25 @@ func (s *testParserSuite) TestSimple(c *C) {
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
-		l := NewLexer(src)
-		c.Assert(yyParse(l), Equals, 0)
-		c.Assert(l.errs, HasLen, 0, Commentf("source %s", src))
+		_, err := ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
-	l := NewLexer(src)
-	c.Assert(yyParse(l), Equals, 0)
-	c.Assert(len(l.Stmts()), Equals, 1)
+	_, err := ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 
 	// Testcase for -- Comment and unary -- operator
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED); -- foo\nSelect --1 from foo;"
-	l = NewLexer(src)
-	c.Assert(yyParse(l), Equals, 0)
-	c.Assert(len(l.Stmts()), Equals, 2)
+	stmts, err := Parse(src, "", "")
+	c.Assert(err, IsNil)
+	c.Assert(stmts, HasLen, 2)
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
-	l = NewLexer(src)
-	c.Assert(yyParse(l), Equals, 0)
-	st := l.Stmts()[0]
+	st, err := ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
 	ss, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
 	c.Assert(len(ss.Fields.Fields), Equals, 1)
@@ -83,9 +80,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"SELECT CONVERT('111', SIGNED) /*comment*/;",
 	}
 	for _, src := range srcs {
-		l = NewLexer(src)
-		c.Assert(yyParse(l), Equals, 0)
-		st = l.Stmts()[0]
+		st, err = ParseOneStmt(src, "", "")
+		c.Assert(err, IsNil)
 		ss, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)
 	}
@@ -98,14 +94,12 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	for _, t := range table {
-		l := NewLexer(t.src)
-		ok := yyParse(l) == 0
-		c.Assert(ok, Equals, t.ok, Commentf("source %v %v", t.src, l.errs))
-		switch ok {
-		case true:
-			c.Assert(l.errs, HasLen, 0, Commentf("src: %s", t.src))
-		case false:
-			c.Assert(len(l.errs), Not(Equals), 0, Commentf("src: %s", t.src))
+		_, err := Parse(t.src, "", "")
+		comment := Commentf("source %v", t.src)
+		if t.ok {
+			c.Assert(err, IsNil, comment)
+		} else {
+			c.Assert(err, NotNil, comment)
 		}
 	}
 }
