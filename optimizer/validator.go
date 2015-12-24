@@ -44,10 +44,6 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkAllOneColumn(x.Expr)
 	case *ast.BetweenExpr:
 		v.checkAllOneColumn(x.Expr, x.Left, x.Right)
-	case *ast.RowExpr:
-		if len(x.Values) < 2 {
-			v.err = ErrRowColumns
-		}
 	case *ast.BinaryOperationExpr:
 		v.checkBinaryOperation(x)
 	case *ast.PatternInExpr:
