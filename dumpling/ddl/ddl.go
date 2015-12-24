@@ -39,14 +39,6 @@ import (
 	"github.com/twinj/uuid"
 )
 
-// Pre-defined errors.
-var (
-	// ErrExists returns for creating an exist schema or table.
-	ErrExists = errors.Errorf("DDL:exists")
-	// ErrNotExists returns for dropping a not exist schema or table.
-	ErrNotExists = errors.Errorf("DDL:not exists")
-)
-
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr, charsetInfo *coldef.CharsetOpt) error
@@ -232,7 +224,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
-		return errors.Trace(ErrExists)
+		return errors.Trace(infoschema.DatabaseExists)
 	}
 
 	schemaID, err := d.genGlobalID()
@@ -264,7 +256,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	}
 
 	job := &model.Job{
@@ -475,7 +467,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 		return infoschema.DatabaseNotExists.Gen("database %s not exists", ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
-		return errors.Trace(ErrExists)
+		return errors.Trace(infoschema.TableExists)
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
 		return errors.Trace(err)
@@ -571,7 +563,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.TableNotExists)
 	}
 
 	// Check whether added column has existed.
@@ -611,7 +603,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.TableNotExists)
 	}
 
 	// Check whether dropped column has existed.
@@ -642,7 +634,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.TableNotExists)
 	}
 
 	job := &model.Job{
@@ -665,7 +657,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.TableNotExists)
 	}
 	indexID, err := d.genGlobalID()
 	if err != nil {
@@ -693,7 +685,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIS
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.TableNotExists)
 	}
 
 	job := &model.Job{

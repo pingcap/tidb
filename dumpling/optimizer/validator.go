@@ -17,25 +17,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/terror"
-)
-
-// Optimizer error codes.
-const (
-	CodeOneColumn terror.ErrCode = iota + 1
-	CodeRowColumns
-	CodeSameColumns
-	CodeMultiWildCard
-	CodeUnsupported
-)
-
-// Optimizer base errors.
-var (
-	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
-	ErrSameColumns   = terror.ClassOptimizer.New(CodeRowColumns, "Operands should contain same columns")
-	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
-	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
 )
 
 // Validate checkes whether the node is valid.
@@ -65,10 +46,6 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkAllOneColumn(x.Expr)
 	case *ast.BetweenExpr:
 		v.checkAllOneColumn(x.Expr, x.Left, x.Right)
-	case *ast.RowExpr:
-		if len(x.Values) < 2 {
-			v.err = ErrRowColumns
-		}
 	case *ast.BinaryOperationExpr:
 		v.checkBinaryOperation(x)
 	case *ast.PatternInExpr:

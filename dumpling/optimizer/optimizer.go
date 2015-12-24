@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/terror"
 )
 
 // Optimize do optimization and create a Plan.
@@ -122,4 +124,29 @@ func IsSupported(node ast.Node) bool {
 	var checker supportChecker
 	node.Accept(&checker)
 	return !checker.unsupported
+}
+
+// Optimizer error codes.
+const (
+	CodeOneColumn     terror.ErrCode = 1
+	CodeSameColumns                  = 2
+	CodeMultiWildCard                = 3
+	CodeUnsupported                  = 4
+)
+
+// Optimizer base errors.
+var (
+	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
+	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
+	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
+)
+
+func init() {
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeOneColumn:     mysql.ErrOperandColumns,
+		CodeSameColumns:   mysql.ErrOperandColumns,
+		CodeMultiWildCard: mysql.ErrParse,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 }

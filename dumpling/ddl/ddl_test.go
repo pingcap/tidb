@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -71,7 +70,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	err := sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema, ts.charsetInfo)
 	c.Assert(err, IsNil)
 	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, tbIdent.Schema, ts.charsetInfo)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.DatabaseExists), IsTrue)
 
 	tbStmt := statement(ctx, "create table t (a int primary key not null, b varchar(255), key idx_b (b), c int, d int unique)").(*stmts.CreateTableStmt)
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, table.Ident{Schema: noExist, Name: tbIdent.Name}, tbStmt.Cols, tbStmt.Constraints)
@@ -81,7 +80,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, tbIdent, tbStmt.Cols, tbStmt.Constraints)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.TableExists), IsTrue)
 
 	tb, err := sessionctx.GetDomain(ctx).InfoSchema().TableByName(tbIdent.Schema, tbIdent.Name)
 	c.Assert(err, IsNil)
@@ -234,7 +233,7 @@ func (ts *testSuite) TestDDL(c *C) {
 	c.Assert(len(tbs), Equals, 1)
 
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, noExist)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrNotExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.DatabaseNotExists), IsTrue)
 
 	err = sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, tbIdent.Schema)
 	c.Assert(err, IsNil)
@@ -338,10 +337,9 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 
 func statement(ctx context.Context, sql string) stmt.Statement {
 	log.Debug("[ddl] Compile", sql)
-	lexer := parser.NewLexer(sql)
-	parser.YYParse(lexer)
+	s, _ := parser.ParseOneStmt(sql, "", "")
 	compiler := &executor.Compiler{}
-	stm, _ := compiler.Compile(ctx, lexer.Stmts()[0])
+	stm, _ := compiler.Compile(ctx, s)
 	return stm
 }
 
