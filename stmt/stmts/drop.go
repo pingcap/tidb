@@ -72,8 +72,12 @@ func (s *DropDatabaseStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *DropDatabaseStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 	err := sessionctx.GetDomain(ctx).DDL().DropSchema(ctx, model.NewCIStr(s.Name))
-	if terror.ErrorEqual(err, infoschema.DatabaseNotExists) && s.IfExists {
-		err = nil
+	if terror.ErrorEqual(err, infoschema.DatabaseNotExists) {
+		if s.IfExists {
+			err = nil
+		} else {
+			err = infoschema.DatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
+		}
 	}
 	return nil, errors.Trace(err)
 }
@@ -138,14 +142,14 @@ func (s *DropTableStmt) Exec(ctx context.Context) (rset.Recordset, error) {
 		}
 
 		err = sessionctx.GetDomain(ctx).DDL().DropTable(ctx, fullti)
-		if infoschema.DatabaseNotExists.Equal(err) {
+		if infoschema.DatabaseNotExists.Equal(err) || infoschema.TableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, ti.String())
 		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
-		return nil, errors.Errorf("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
+		return nil, infoschema.TableDropExists.Gen("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
 	}
 	return nil, nil
 }

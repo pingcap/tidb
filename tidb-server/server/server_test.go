@@ -243,6 +243,10 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrDbCreateExists)
 		_, err = txn2.Exec("create table test (c int);")
 		checkErrorCode(c, err, tmysql.ErrTableExists)
+		_, err = txn2.Exec("drop table unknown_table;")
+		checkErrorCode(c, err, tmysql.ErrBadTable)
+		_, err = txn2.Exec("drop database unknown_db;")
+		checkErrorCode(c, err, tmysql.ErrDbDropExists)
 	})
 }
 
