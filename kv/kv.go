@@ -64,10 +64,6 @@ type MemBuffer interface {
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
-	// Inc increases the value for key k in KV storage by step.
-	Inc(k Key, step int64) (int64, error)
-	// GetInt64 get int64 which created by Inc method.
-	GetInt64(k Key) (int64, error)
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
 	// RangePrefetch fetches values in the range [start, end] from KV storage
