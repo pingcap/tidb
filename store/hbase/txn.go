@@ -27,20 +27,6 @@ var (
 	_ kv.Transaction = (*hbaseTxn)(nil)
 )
 
-var (
-	// default values for txn.SetOption
-	optionDefaultVals = map[kv.Option]interface{}{
-		kv.RangePrefetchOnCacheMiss: 1024,
-	}
-)
-
-func getOptionDefaultVal(opt kv.Option) interface{} {
-	if v, ok := optionDefaultVals[opt]; ok {
-		return v
-	}
-	return nil
-}
-
 // dbTxn implements kv.Transacton. It is not thread safe.
 type hbaseTxn struct {
 	us        kv.UnionStore
