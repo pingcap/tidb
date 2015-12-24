@@ -341,6 +341,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
 		handle, err := tables.DecodeRecordKeyHandle(it.Key())
 		if err != nil {
+			it.Close()
 			return 0, errors.Trace(err)
 		}
 
