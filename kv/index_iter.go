@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -194,7 +193,7 @@ func (c *kvIndex) Create(rm RetrieverMutator, indexedValues []interface{}, h int
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(terror.ErrKeyExists)
+	return errors.Trace(ErrKeyExists)
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
@@ -283,7 +282,7 @@ func (c *kvIndex) Exist(rm RetrieverMutator, indexedValues []interface{}, h int6
 		}
 
 		if handle != h {
-			return true, handle, errors.Trace(terror.ErrKeyExists)
+			return true, handle, errors.Trace(ErrKeyExists)
 		}
 
 		return true, handle, nil
