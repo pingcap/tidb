@@ -15,6 +15,8 @@ package inspectkv
 
 import (
 	"io"
+	"reflect"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
@@ -22,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -68,23 +71,48 @@ func nextIndexVals(data []interface{}) []interface{} {
 	return append(data, nil)
 }
 
-// IndexRow is the index information composed of a handle and values.
-type IndexRow struct {
+// RecordData is the record data composed of a handle and values.
+type RecordData struct {
 	Handle int64
 	Values []interface{}
 }
 
-// ScanIndexData scans the index handles and values in a limited number.
-// It returns data and the next startVals.
+// GetIndexRecordsCount returns the total number of the index records from startVals.
+// If startVals = nil, returns the total number of the index records.
+func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}) (int64, error) {
+	it, _, err := kvIndex.Seek(txn, startVals)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer it.Close()
+
+	var cnt int64
+	for {
+		_, _, err := it.Next()
+		if terror.ErrorEqual(err, io.EOF) {
+			break
+		} else if err != nil {
+			return 0, errors.Trace(err)
+		}
+		cnt++
+	}
+
+	return cnt, nil
+}
+
+// ScanIndexData scans the index handles and values in a limited number, according to the index information.
+// It returns data and the next startVals until it doesn't have data, then returns data is nil and
+// the next startVals is the values which can't get data. If startVals = nil and limit = -1,
+// it returns the index data of the whole.
 func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int64) (
-	[]*IndexRow, []interface{}, error) {
+	[]*RecordData, []interface{}, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	defer it.Close()
 
-	var idxRows []*IndexRow
+	var idxRows []*RecordData
 	var curVals []interface{}
 	for limit != 0 {
 		val, h, err1 := it.Next()
@@ -93,7 +121,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 		} else if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
-		idxRows = append(idxRows, &IndexRow{Handle: h, Values: val})
+		idxRows = append(idxRows, &RecordData{Handle: h, Values: val})
 		limit--
 		curVals = val
 	}
@@ -108,33 +136,110 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	return idxRows, nextVals, nil
 }
 
-// RecordData is the record data composed of a handle and column values.
-type RecordData struct {
-	Handle int64
-	Values []interface{}
+// CompareIndexData compares index data one by one.
+// It returns nil if the data from the index is equal to the data from the table columns,
+// otherwise it returns an error with a different set of records.
+func CompareIndexData(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
+	err := checkIndexAndRecord(txn, t, idx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return checkRecordAndIndex(txn, t, idx)
 }
 
-// ScanTableData scans table row handles and column values in a limited number.
-// It returns data and the next startKey.
-func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int64) (
+func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
+	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
+	it, err := kvIndex.SeekFirst(txn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	cols := make([]*column.Col, len(idx.Columns))
+	for i, col := range idx.Columns {
+		cols[i] = t.Cols()[col.Offset]
+	}
+
+	for {
+		vals1, h, err := it.Next()
+		if terror.ErrorEqual(err, io.EOF) {
+			break
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+
+		vals2, err := t.RowWithCols(txn, h, cols)
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			record := &RecordData{Handle: h, Values: vals1}
+			err = errors.Errorf("index:%v != record:%v", record, nil)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !reflect.DeepEqual(vals1, vals2) {
+			record1 := &RecordData{Handle: h, Values: vals1}
+			record2 := &RecordData{Handle: h, Values: vals2}
+			return errors.Errorf("index:%v != record:%v", record1, record2)
+		}
+	}
+
+	return nil
+}
+
+func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
+	cols := make([]*column.Col, len(idx.Columns))
+	for i, col := range idx.Columns {
+		cols[i] = t.Cols()[col.Offset]
+	}
+
+	startKey := t.RecordKey(0, nil)
+	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
+	filterFunc := func(h1 int64, vals1 []interface{}, cols []*column.Col) (bool, error) {
+		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
+		if terror.ErrorEqual(err, terror.ErrKeyExists) {
+			record1 := &RecordData{Handle: h1, Values: vals1}
+			record2 := &RecordData{Handle: h2, Values: vals1}
+			return false, errors.Errorf("index:%v != record:%v", record2, record1)
+		}
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if !isExist {
+			record := &RecordData{Handle: h1, Values: vals1}
+			return false, errors.Errorf("index:%v != record:%v", nil, record)
+		}
+
+		return true, nil
+	}
+	err := t.IterRecords(txn, string(startKey), cols, filterFunc)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
+func scanTableData(retriever kv.Retriever, t table.Table, cols []*column.Col, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	var records []*RecordData
 
 	startKey := t.RecordKey(startHandle, nil)
-	err := t.IterRecords(retriever, string(startKey), t.Cols(),
-		func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
-			if limit != 0 {
-				r := &RecordData{
-					Handle: h,
-					Values: d,
-				}
-				records = append(records, r)
-				limit--
-				return true, nil
+	filterFunc := func(h int64, d []interface{}, cols []*column.Col) (bool, error) {
+		if limit != 0 {
+			r := &RecordData{
+				Handle: h,
+				Values: d,
 			}
+			records = append(records, r)
+			limit--
+			return true, nil
+		}
 
-			return false, nil
-		})
+		return false, nil
+	}
+	err := t.IterRecords(retriever, string(startKey), cols, filterFunc)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -148,9 +253,20 @@ func ScanTableData(t table.Table, retriever kv.Retriever, startHandle, limit int
 	return records, nextHandle, nil
 }
 
-// ScanSnapshotTableData scans the ver version of the table data in a limited number.
-// It returns data and the next startKey.
-func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
+// ScanTableRecord scans table row handles and column values in a limited number.
+// It returns data and the next startHandle until it doesn't have data, then returns data is nil and
+// the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
+// it returns the table data of the whole.
+func ScanTableRecord(retriever kv.Retriever, t table.Table, startHandle, limit int64) (
+	[]*RecordData, int64, error) {
+	return scanTableData(retriever, t, t.Cols(), startHandle, limit)
+}
+
+// ScanSnapshotTableRecord scans the ver version of the table data in a limited number.
+// It returns data and the next startHandle until it doesn't have data, then returns data is nil and
+// the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
+// it returns the table data of the whole.
+func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
@@ -158,7 +274,86 @@ func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, star
 	}
 	defer snap.Release()
 
-	records, nextHandle, err := ScanTableData(t, snap, startHandle, limit)
+	records, nextHandle, err := ScanTableRecord(snap, t, startHandle, limit)
 
 	return records, nextHandle, errors.Trace(err)
+}
+
+// CompareTableRecord compares data and the corresponding table data one by one.
+// It returns nil if data is equal to the data that scans from table, otherwise
+// it returns an error with a different set of records. If exact is false, only compares handle.
+func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
+	m := make(map[int64][]interface{}, len(data))
+	for _, r := range data {
+		if _, ok := m[r.Handle]; ok {
+			return errors.Errorf("handle:%d is repeated in data", r.Handle)
+		}
+		m[r.Handle] = r.Values
+	}
+
+	startKey := t.RecordKey(0, nil)
+	filterFunc := func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
+		vals2, ok := m[h]
+		if !ok {
+			record := &RecordData{Handle: h, Values: vals}
+			return false, errors.Errorf("data:%v != record:%v", nil, record)
+		}
+		if !exact {
+			delete(m, h)
+			return true, nil
+		}
+
+		if !reflect.DeepEqual(vals, vals2) {
+			record1 := &RecordData{Handle: h, Values: vals2}
+			record2 := &RecordData{Handle: h, Values: vals}
+			return false, errors.Errorf("data:%v != record:%v", record1, record2)
+		}
+
+		delete(m, h)
+
+		return true, nil
+	}
+	err := t.IterRecords(txn, string(startKey), t.Cols(), filterFunc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for h, vals := range m {
+		record := &RecordData{Handle: h, Values: vals}
+		return errors.Errorf("data:%v != record:%v", record, nil)
+	}
+
+	return nil
+}
+
+// GetTableRecordsCount returns the total number of table records from startHandle.
+// If startHandle = 0, returns the total number of table records.
+func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) (int64, error) {
+	startKey := t.RecordKey(startHandle, nil)
+	it, err := txn.Seek(startKey)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	var cnt int64
+	prefix := t.KeyPrefix()
+	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+		handle, err := tables.DecodeRecordKeyHandle(it.Key())
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		it.Close()
+		rk := t.RecordKey(handle+1, nil)
+		it, err = txn.Seek(rk)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		cnt++
+	}
+
+	it.Close()
+
+	return cnt, nil
 }

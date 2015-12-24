@@ -502,7 +502,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	handle, err = t.AddRecord(ctx, newRow, 0)
 	c.Assert(err, IsNil)
 
-	_, err = ctx.GetTxn(true)
+	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	rows := [][]interface{}{oldRow, newRow}
