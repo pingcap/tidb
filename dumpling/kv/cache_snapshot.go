@@ -48,19 +48,6 @@ func (c *cacheSnapshot) Get(k Key) ([]byte, error) {
 		}
 	}
 	if IsErrNotFound(err) {
-		if opt, ok := c.opts.Get(RangePrefetchOnCacheMiss); ok {
-			if limit, ok := opt.(int); ok && limit > 0 {
-				vals, err2 := c.RangeGet(k, nil, limit)
-				if err2 != nil {
-					return nil, errors.Trace(err2)
-				}
-				if val, ok := vals[string(k)]; ok {
-					v, err = val, nil
-				}
-			}
-		}
-	}
-	if IsErrNotFound(err) {
 		v, err = c.snapshot.Get(k)
 		if err == nil {
 			err = cachePut(c.cache, k, v)
@@ -108,22 +95,6 @@ func (c *cacheSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 		}
 	}
 	return m, nil
-}
-
-// RangeGet gets values from snapshot and saves them in cache.
-// The range should be [start, end] as Snapshot.RangeGet() indicated.
-func (c *cacheSnapshot) RangeGet(start, end Key, limit int) (map[string][]byte, error) {
-	values, err := c.snapshot.RangeGet(start, end, limit)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for k, v := range values {
-		err = cachePut(c.cache, []byte(k), v)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return values, nil
 }
 
 // Seek creates an iterator of snapshot.
