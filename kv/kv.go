@@ -14,17 +14,11 @@
 package kv
 
 const (
-	// RangePrefetchOnCacheMiss directives that when dealing with a Get operation but failing to read data from cache,
-	// it will launch a RangePrefetch to underlying storage instead of Get. The range starts from requested key and
-	// has a limit of the option value. The feature is disabled if option value <= 0 or value type is not int.
-	// This option is particularly useful when we have to do sequential Gets, e.g. table scans.
-	RangePrefetchOnCacheMiss Option = iota + 1
-
 	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
 	// we presume that the key does not exist in Store. The actual existence will be checked before the
 	// transaction's commit.
 	// This option is an optimization for frequent checks during a transaction, e.g. batch inserts.
-	PresumeKeyNotExists
+	PresumeKeyNotExists Option = iota + 1
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -66,9 +60,6 @@ type Transaction interface {
 	RetrieverMutator
 	// BatchPrefetch fetches values from KV storage to cache for later use.
 	BatchPrefetch(keys []Key) error
-	// RangePrefetch fetches values in the range [start, end] from KV storage
-	// to cache for later use. Maximum number of values is up to limit.
-	RangePrefetch(start, end Key, limit int) error
 	// Commit commits the transaction operations to KV store.
 	Commit() error
 	// Rollback undoes the transaction operations to KV store.
@@ -89,9 +80,6 @@ type Snapshot interface {
 	Retriever
 	// BatchGet gets a batch of values from snapshot.
 	BatchGet(keys []Key) (map[string][]byte, error)
-	// RangeGet gets values in the range [start, end] from snapshot. Maximum
-	// number of values is up to limit.
-	RangeGet(start, end Key, limit int) (map[string][]byte, error)
 	// Release releases the snapshot to store.
 	Release()
 }
