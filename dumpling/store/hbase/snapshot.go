@@ -75,27 +75,6 @@ func (s *hbaseSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-// RangeGet implements kv.Snapshot.RangeGet interface.
-// The range should be [start, end] as Snapshot.RangeGet() indicated.
-func (s *hbaseSnapshot) RangeGet(start, end kv.Key, limit int) (map[string][]byte, error) {
-	scanner := s.txn.GetScanner([]byte(s.storeName), start, end, limit)
-	defer scanner.Close()
-
-	m := make(map[string][]byte)
-	for i := 0; i < limit; i++ {
-		r := scanner.Next()
-		if r != nil && len(r.Columns) > 0 {
-			k := string(r.Row)
-			v := r.Columns[hbaseFmlAndQual].Value
-			m[k] = v
-		} else {
-			break
-		}
-	}
-
-	return m, nil
-}
-
 func internalGet(s *hbaseSnapshot, g *hbase.Get) ([]byte, error) {
 	r, err := s.txn.Get(s.storeName, g)
 	if err != nil {

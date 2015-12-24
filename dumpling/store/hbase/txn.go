@@ -78,10 +78,6 @@ func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
 	return txn.us.BatchPrefetch(keys)
 }
 
-func (txn *hbaseTxn) RangePrefetch(start, end kv.Key, limit int) error {
-	return txn.us.RangePrefetch(start, end, limit)
-}
-
 func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 }
