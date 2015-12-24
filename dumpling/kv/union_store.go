@@ -15,7 +15,6 @@ package kv
 
 import (
 	"bytes"
-	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
@@ -26,10 +25,6 @@ import (
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// Inc increases the value for key k in KV storage by step.
-	Inc(k Key, step int64) (int64, error)
-	// GetInt64 get int64 which created by Inc method.
-	GetInt64(k Key) (int64, error)
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
@@ -130,46 +125,6 @@ func (lmb *lazyMemBuffer) Release() {
 
 	p.Put(lmb.mb)
 	lmb.mb = nil
-}
-
-// Inc implements the UnionStore interface.
-func (us *unionStore) Inc(k Key, step int64) (int64, error) {
-	val, err := us.Get(k)
-	if IsErrNotFound(err) {
-		err = us.Set(k, []byte(strconv.FormatInt(step, 10)))
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return step, nil
-	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal += step
-	err = us.Set(k, []byte(strconv.FormatInt(intVal, 10)))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return intVal, nil
-}
-
-// GetInt64 implements UnionStore interface.
-func (us *unionStore) GetInt64(k Key) (int64, error) {
-	val, err := us.Get(k)
-	if IsErrNotFound(err) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	return intVal, errors.Trace(err)
 }
 
 // BatchPrefetch implements the UnionStore interface.
