@@ -82,6 +82,7 @@ type TableInfo struct {
 	Columns []*ColumnInfo `json:"cols"`
 	Indices []*IndexInfo  `json:"index_info"`
 	State   SchemaState   `json:"state"`
+	PKIsHandle bool       `json:"pk_is_handle"`
 }
 
 // Clone clones TableInfo.
