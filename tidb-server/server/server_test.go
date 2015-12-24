@@ -247,6 +247,14 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrBadTable)
 		_, err = txn2.Exec("drop database unknown_db;")
 		checkErrorCode(c, err, tmysql.ErrDbDropExists)
+
+		// Optimizer errors
+		_, err = txn2.Exec("select *, * from test;")
+		checkErrorCode(c, err, tmysql.ErrParse)
+		_, err = txn2.Exec("select row(1, 2) > 1;")
+		checkErrorCode(c, err, tmysql.ErrOperandColumns)
+		_, err = txn2.Exec("select * from test order by row(c, c);")
+		checkErrorCode(c, err, tmysql.ErrOperandColumns)
 	})
 }
 
