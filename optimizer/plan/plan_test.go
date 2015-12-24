@@ -231,7 +231,7 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		s, err := parser.ParseOne(ca.sqlStr, "", "")
+		s, err := parser.ParseOneStmt(ca.sqlStr, "", "")
 		c.Assert(err, IsNil, Commentf("for expr %s", ca.sqlStr))
 		stmt := s.(*ast.SelectStmt)
 		mockResolve(stmt)
@@ -290,7 +290,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		s, err := parser.ParseOne(ca.sql, "", "")
+		s, err := parser.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, Commentf("for expr %s", ca.sql))
 		stmt := s.(*ast.SelectStmt)
 		ast.SetFlag(stmt)

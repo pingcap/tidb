@@ -48,9 +48,9 @@ func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 	return l.Stmts(), nil
 }
 
-// ParseOne parses a query and return the ast.StmtNode.
+// ParseOneStmt parses a query and return the ast.StmtNode.
 // The query must has one statement, otherwise ErrSyntax is returned.
-func ParseOne(sql, charset, collation string) (ast.StmtNode, error) {
+func ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
 	stmts, err := Parse(sql, charset, collation)
 	if err != nil {
 		return nil, errors.Trace(err)
