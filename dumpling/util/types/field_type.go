@@ -166,12 +166,14 @@ func DefaultTypeForValue(value interface{}) *FieldType {
 		tp := NewFieldType(mysql.TypeBlob)
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
+		return tp
 	case mysql.Bit:
 		return NewFieldType(mysql.TypeBit)
 	case mysql.Hex:
 		tp := NewFieldType(mysql.TypeVarchar)
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
+		return tp
 	case mysql.Time:
 		return NewFieldType(x.Type)
 	case mysql.Duration:
