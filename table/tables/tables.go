@@ -55,7 +55,7 @@ type Table struct {
 	recordPrefix    string
 	indexPrefix     string
 	alloc           autoid.Allocator
-	state           model.SchemaState
+	meta            *model.TableInfo
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -74,7 +74,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
-	t := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
+	t := newTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
@@ -89,13 +89,12 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		t.AddIndex(idx)
 	}
-
-	t.state = tblInfo.State
+	t.meta = tblInfo
 	return t, nil
 }
 
 // NewTable constructs a Table instance.
-func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
+func newTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
 	name := model.NewCIStr(tableName)
 	t := &Table{
 		ID:           tableID,
@@ -104,7 +103,6 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 		indexPrefix:  string(genTableIndexPrefix(tableID)),
 		alloc:        alloc,
 		Columns:      cols,
-		state:        model.StatePublic,
 	}
 
 	t.publicColumns = t.Cols()
@@ -134,22 +132,7 @@ func (t *Table) TableName() model.CIStr {
 
 // Meta implements table.Table Meta interface.
 func (t *Table) Meta() *model.TableInfo {
-	ti := &model.TableInfo{
-		Name:  t.Name,
-		ID:    t.ID,
-		State: t.state,
-	}
-	// load table meta
-	for _, col := range t.Columns {
-		ti.Columns = append(ti.Columns, &col.ColumnInfo)
-	}
-
-	// load table indices
-	for _, idx := range t.indices {
-		ti.Indices = append(ti.Indices, &idx.IndexInfo)
-	}
-
-	return ti
+	return t.meta
 }
 
 // Cols implements table.Table Cols interface.
@@ -406,11 +389,26 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error) {
-	// Already have recordID
-	if h != 0 {
-		recordID = int64(h)
-	} else {
+func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
+	var hasRecordID bool
+	for _, col := range t.Cols() {
+		if mysql.HasPriKeyFlag(col.Flag) && t.meta.PKIsHandle {
+			// The value must have been filled with int64 or uint64 value, or it will not pass null check.
+			switch x := r[col.Offset].(type) {
+			case int64:
+				recordID = x
+			case uint64:
+				recordID = int64(x)
+			case int:
+				recordID = int64(x)
+			default:
+				return 0, errors.Errorf("unexpected type %T, should not happen!", x)
+			}
+			hasRecordID = true
+			break
+		}
+	}
+	if !hasRecordID {
 		recordID, err = t.alloc.Alloc(t.ID)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -453,6 +451,10 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 
 	// Set public and write only column value.
 	for _, col := range t.writableCols() {
+		if mysql.HasPriKeyFlag(col.Flag) && t.Meta().PKIsHandle {
+			continue
+		}
+
 		var value interface{}
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
@@ -509,6 +511,10 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 	for _, col := range cols {
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
+		}
+		if mysql.HasPriKeyFlag(col.Flag) && t.Meta().PKIsHandle {
+			v[col.Offset] = h
+			continue
 		}
 
 		k := t.RecordKey(h, col)

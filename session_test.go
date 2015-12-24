@@ -1069,6 +1069,7 @@ func (s *testSessionSuite) TestIssue463(c *C) {
 	// Testcase for https://github.com/pingcap/tidb/issues/463
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "DROP TABLE IF EXISTS test")
 	mustExecSQL(c, se,
 		`CREATE TABLE test (
 			id int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -1326,7 +1327,7 @@ func (s *testSessionSuite) TestErrorRollback(c *C) {
 				// force generate a txn in session for later insert use.
 				se.(*session).GetTxn(false)
 
-				se.Execute("insert into t_rollback values (1, 1, 1)")
+				se.Execute("insert into t_rollback values (1, 1)")
 
 				_, err := se.Execute("update t_rollback set c2 = c2 + 1 where c1 = 0")
 				c.Assert(err, IsNil)

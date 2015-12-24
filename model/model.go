@@ -79,10 +79,10 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns []*ColumnInfo `json:"cols"`
-	Indices []*IndexInfo  `json:"index_info"`
-	State   SchemaState   `json:"state"`
-	PKIsHandle bool       `json:"pk_is_handle"`
+	Columns    []*ColumnInfo `json:"cols"`
+	Indices    []*IndexInfo  `json:"index_info"`
+	State      SchemaState   `json:"state"`
+	PKIsHandle bool          `json:"pk_is_handle"`
 }
 
 // Clone clones TableInfo.

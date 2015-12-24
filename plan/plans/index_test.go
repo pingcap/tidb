@@ -52,9 +52,12 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 	p.store = store
 	se, _ := tidb.CreateSession(store)
 	p.ctx = se.(context.Context)
-	p.cols = []*column.Col{
-		{
-			ColumnInfo: model.ColumnInfo{
+	tbInfo := &model.TableInfo{
+		ID:    2,
+		Name:  model.NewCIStr("t2"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
 				ID:           0,
 				Name:         model.NewCIStr("id"),
 				Offset:       0,
@@ -62,9 +65,7 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
 				State:        model.StatePublic,
 			},
-		},
-		{
-			ColumnInfo: model.ColumnInfo{
+			{
 				ID:           1,
 				Name:         model.NewCIStr("name"),
 				Offset:       1,
@@ -73,33 +74,29 @@ func (p *testIndexSuit) SetUpSuite(c *C) {
 				State:        model.StatePublic,
 			},
 		},
-	}
-
-	p.tbl = tables.NewTable(2, "t2", p.cols, &simpleAllocator{})
-
-	idxCol := &column.IndexedCol{
-		IndexInfo: model.IndexInfo{
-			Name:  model.NewCIStr("id"),
-			Table: model.NewCIStr("t2"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					Length: 0,
+		Indices: []*model.IndexInfo{
+			{
+				Name:  model.NewCIStr("id"),
+				Table: model.NewCIStr("t2"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   model.NewCIStr("id"),
+						Offset: 0,
+						Length: 0,
+					},
 				},
+				Unique:  false,
+				Primary: false,
+				State:   model.StatePublic,
 			},
-			Unique:  false,
-			Primary: false,
-			State:   model.StatePublic,
 		},
 	}
 
-	idxCol.X = kv.NewKVIndex("i", "id", 0, false)
-
-	p.tbl.AddIndex(idxCol)
+	p.tbl, err = tables.TableFromMeta(&simpleAllocator{}, tbInfo)
+	c.Assert(err, IsNil)
 	var i int64
 	for i = 0; i < 10; i++ {
-		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"}, 0)
+		p.tbl.AddRecord(p.ctx, []interface{}{i * 10, "hello"})
 	}
 }
 
@@ -123,8 +120,8 @@ func (p *testIndexSuit) TestIndexPlan(c *C) {
 	pln := &plans.TableDefaultPlan{
 		T: p.tbl,
 		Fields: []*field.ResultField{
-			field.ColToResultField(p.cols[0], "t"),
-			field.ColToResultField(p.cols[1], "t"),
+			field.ColToResultField(p.tbl.Cols()[0], "t"),
+			field.ColToResultField(p.tbl.Cols()[1], "t"),
 		},
 	}
 
