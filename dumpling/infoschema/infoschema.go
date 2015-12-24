@@ -254,25 +254,43 @@ func (h *Handle) Get() InfoSchema {
 
 // Schema error codes.
 const (
-	CodeDatabaseNotExists terror.ErrCode = 1049
+	CodeDbDropExists      terror.ErrCode = 1008
+	CodeDatabaseNotExists                = 1049
 	CodeTableNotExists                   = 1146
 	CodeColumnNotExists                  = 1054
+
+	CodeDatabaseExists = 1007
+	CodeTableExists    = 1050
+	CodeBadTable       = 1051
 )
 
 var (
+	// DatabaseDropExists returns for drop an unexist database.
+	DatabaseDropExists = terror.ClassSchema.New(CodeDbDropExists, "database doesn't exist")
 	// DatabaseNotExists returns for database not exists.
 	DatabaseNotExists = terror.ClassSchema.New(CodeDatabaseNotExists, "database not exists")
 	// TableNotExists returns for table not exists.
 	TableNotExists = terror.ClassSchema.New(CodeTableNotExists, "table not exists")
 	// ColumnNotExists returns for column not exists.
 	ColumnNotExists = terror.ClassSchema.New(CodeColumnNotExists, "field not exists")
+
+	// DatabaseExists returns for database already exists.
+	DatabaseExists = terror.ClassSchema.New(CodeDatabaseExists, "database already exists")
+	// TableExists returns for table already exists.
+	TableExists = terror.ClassSchema.New(CodeTableExists, "table already exists")
+	// TableDropExists returns for drop an unexist table.
+	TableDropExists = terror.ClassSchema.New(CodeBadTable, "unknown table")
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeDbDropExists:      mysql.ErrDbDropExists,
 		CodeDatabaseNotExists: mysql.ErrBadDb,
 		CodeTableNotExists:    mysql.ErrNoSuchTable,
 		CodeColumnNotExists:   mysql.ErrBadField,
+		CodeDatabaseExists:    mysql.ErrDbCreateExists,
+		CodeTableExists:       mysql.ErrTableExists,
+		CodeBadTable:          mysql.ErrBadTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }

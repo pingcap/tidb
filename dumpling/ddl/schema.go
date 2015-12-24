@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -44,7 +45,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 			if db.ID != schemaID {
 				// database exists, can't create, we should cancel this job now.
 				job.State = model.JobCancelled
-				return errors.Trace(ErrExists)
+				return errors.Trace(infoschema.DatabaseExists)
 			}
 			dbInfo = db
 		}
@@ -80,7 +81,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 	}
 	if dbInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Trace(ErrNotExists)
+		return errors.Trace(infoschema.DatabaseNotExists)
 	}
 
 	_, err = t.GenSchemaVersion()

@@ -21,7 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/rset"
@@ -73,7 +73,7 @@ func (s *CreateDatabaseStmt) Exec(ctx context.Context) (_ rset.Recordset, err er
 	log.Debug("create database")
 	err = sessionctx.GetDomain(ctx).DDL().CreateSchema(ctx, model.NewCIStr(s.Name), s.Opt)
 	if err != nil {
-		if terror.ErrorEqual(err, ddl.ErrExists) && s.IfNotExists {
+		if terror.ErrorEqual(err, infoschema.DatabaseExists) && s.IfNotExists {
 			err = nil
 		}
 	}
@@ -115,11 +115,11 @@ func (s *CreateTableStmt) SetText(text string) {
 // Exec implements the stmt.Statement Exec interface.
 func (s *CreateTableStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	err = sessionctx.GetDomain(ctx).DDL().CreateTable(ctx, s.Ident.Full(ctx), s.Cols, s.Constraints)
-	if terror.ErrorEqual(err, ddl.ErrExists) {
+	if terror.ErrorEqual(err, infoschema.TableExists) {
 		if s.IfNotExists {
 			return nil, nil
 		}
-		return nil, errors.Errorf("CREATE TABLE: table exists %s", s.Ident)
+		return nil, infoschema.TableExists.Gen("CREATE TABLE: table exists %s", s.Ident)
 	}
 	return nil, errors.Trace(err)
 }
