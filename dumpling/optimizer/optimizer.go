@@ -116,16 +116,14 @@ func IsSupported(node ast.Node) bool {
 // Optimizer error codes.
 const (
 	CodeOneColumn     terror.ErrCode = 1
-	CodeRowColumns                   = 2
-	CodeSameColumns                  = 3
-	CodeMultiWildCard                = 4
-	CodeUnsupported                  = 5
+	CodeSameColumns                  = 2
+	CodeMultiWildCard                = 3
+	CodeUnsupported                  = 4
 )
 
 // Optimizer base errors.
 var (
 	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrRowColumns    = terror.ClassOptimizer.New(CodeRowColumns, "Operand should contain >= 2 columns for Row")
 	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
 	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
 	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
@@ -135,7 +133,6 @@ func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
 		CodeOneColumn:     mysql.ErrOperandColumns,
 		CodeSameColumns:   mysql.ErrOperandColumns,
-		CodeRowColumns:    mysql.ErrParse,
 		CodeMultiWildCard: mysql.ErrParse,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
