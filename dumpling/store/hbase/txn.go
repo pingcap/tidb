@@ -74,10 +74,6 @@ func (txn *hbaseTxn) Delete(k kv.Key) error {
 	return txn.us.Delete(k)
 }
 
-func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
-	return txn.us.BatchPrefetch(keys)
-}
-
 func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 }
