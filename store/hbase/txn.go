@@ -43,7 +43,7 @@ func getOptionDefaultVal(opt kv.Option) interface{} {
 
 // dbTxn implements kv.Transacton. It is not thread safe.
 type hbaseTxn struct {
-	kv.UnionStore
+	us        kv.UnionStore
 	txn       themis.Txn
 	store     *hbaseStore // for commit
 	storeName string
@@ -54,11 +54,11 @@ type hbaseTxn struct {
 
 func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
 	return &hbaseTxn{
-		txn:        t,
-		valid:      true,
-		storeName:  storeName,
-		tid:        t.GetStartTS(),
-		UnionStore: kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
+		txn:       t,
+		valid:     true,
+		storeName: storeName,
+		tid:       t.GetStartTS(),
+		us:        kv.NewUnionStore(newHbaseSnapshot(t, storeName)),
 	}
 }
 
@@ -66,22 +66,22 @@ func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
 
 func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("[kv] get key:%q, txn:%d", k, txn.tid)
-	return txn.UnionStore.Get(k)
+	return txn.us.Get(k)
 }
 
 func (txn *hbaseTxn) Set(k kv.Key, v []byte) error {
 	log.Debugf("[kv] seek %q txn:%d", k, txn.tid)
-	return txn.UnionStore.Set(k, v)
+	return txn.us.Set(k, v)
 }
 
 func (txn *hbaseTxn) Inc(k kv.Key, step int64) (int64, error) {
 	log.Debugf("[kv] Inc %q, step %d txn:%d", k, step, txn.tid)
-	return txn.UnionStore.Inc(k, step)
+	return txn.us.Inc(k, step)
 }
 
 func (txn *hbaseTxn) GetInt64(k kv.Key) (int64, error) {
 	log.Debugf("[kv] GetInt64 %q, txn:%d", k, txn.tid)
-	return txn.UnionStore.GetInt64(k)
+	return txn.us.GetInt64(k)
 }
 
 func (txn *hbaseTxn) String() string {
@@ -90,28 +90,36 @@ func (txn *hbaseTxn) String() string {
 
 func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	log.Debugf("[kv] seek %q txn:%d", k, txn.tid)
-	iter, err := txn.UnionStore.Seek(k)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return iter, nil
+	return txn.us.Seek(k)
 }
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
 	log.Debugf("[kv] delete %q txn:%d", k, txn.tid)
-	err := txn.UnionStore.Delete(k)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return txn.us.Delete(k)
+}
+
+func (txn *hbaseTxn) BatchPrefetch(keys []kv.Key) error {
+	return txn.us.BatchPrefetch(keys)
+}
+
+func (txn *hbaseTxn) RangePrefetch(start, end kv.Key, limit int) error {
+	return txn.us.RangePrefetch(start, end, limit)
+}
+
+func (txn *hbaseTxn) SetOption(opt kv.Option, val interface{}) {
+	txn.us.SetOption(opt, val)
+}
+
+func (txn *hbaseTxn) DelOption(opt kv.Option) {
+	txn.us.DelOption(opt)
 }
 
 func (txn *hbaseTxn) doCommit() error {
-	if err := txn.UnionStore.CheckLazyConditionPairs(); err != nil {
+	if err := txn.us.CheckLazyConditionPairs(); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := txn.WalkBuffer(func(k kv.Key, v []byte) error {
+	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		row := append([]byte(nil), k...)
 		if len(v) == 0 { // Deleted marker
 			d := hbase.NewDelete(row)
@@ -156,7 +164,7 @@ func (txn *hbaseTxn) Commit() error {
 }
 
 func (txn *hbaseTxn) close() error {
-	txn.UnionStore.Release()
+	txn.us.Release()
 	txn.valid = false
 	return nil
 }
