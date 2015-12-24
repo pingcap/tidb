@@ -31,7 +31,7 @@ const (
 )
 
 // Parse parses a query string to raw ast.StmtNode.
-// If charset and collation is "", default charset and collation will be used.
+// If charset or collation is "", default charset and collation will be used.
 func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 	if charset == "" {
 		charset = mysql.DefaultCharset
@@ -48,8 +48,8 @@ func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 	return l.Stmts(), nil
 }
 
-// ParseOneStmt parses a query and return the ast.StmtNode.
-// The query must has one statement, otherwise ErrSyntax is returned.
+// ParseOneStmt parses a query and returns an ast.StmtNode.
+// The query must have one statement, otherwise ErrSyntax is returned.
 func ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
 	stmts, err := Parse(sql, charset, collation)
 	if err != nil {
