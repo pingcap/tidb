@@ -505,8 +505,7 @@ func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
 
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error) {
-	// use the length of t.Cols() for alignment
-	v := make([]interface{}, len(t.Cols()))
+	v := make([]interface{}, len(cols))
 	for _, col := range cols {
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
