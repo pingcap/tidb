@@ -102,8 +102,8 @@ func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []inte
 
 // ScanIndexData scans the index handles and values in a limited number, according to the index information.
 // It returns data and the next startVals until it doesn't have data, then returns data is nil and
-// the next startVals is the values which can't get data.
-// If limit = -1, it returns the index data of the whole.
+// the next startVals is the values which can't get data. If startVals = nil and limit = -1,
+// it returns the index data of the whole.
 func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int64) (
 	[]*RecordData, []interface{}, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
@@ -136,33 +136,19 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	return idxRows, nextVals, nil
 }
 
-// ScanIndexColData scans the index handles and values in a limited number, according to the corresponding column.
-// It returns data and the next startHandle until it doesn't have data, then returns data is nil and
-// the next startHandle is the handle which can't get data.
-// If limit = -1, it returns the index data of the whole.
-func ScanIndexColData(txn kv.Transaction, t table.Table, idx *column.IndexedCol, startHandle, limit int64) (
-	[]*RecordData, int64, error) {
-	cols := make([]*column.Col, len(idx.Columns))
-	for i, col := range idx.Columns {
-		cols[i] = t.Cols()[col.Offset]
-	}
-
-	return scanTableData(txn, t, cols, startHandle, limit)
-}
-
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
 func CompareIndexData(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
-	err := checkIndexAndCols(txn, t, idx)
+	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return checkColsAndIndex(txn, t, idx)
+	return checkRecordAndIndex(txn, t, idx)
 }
 
-func checkIndexAndCols(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
+func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
 	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	it, err := kvIndex.SeekFirst(txn)
 	if err != nil {
@@ -201,7 +187,7 @@ func checkIndexAndCols(txn kv.Transaction, t table.Table, idx *column.IndexedCol
 	return nil
 }
 
-func checkColsAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
+func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
 	cols := make([]*column.Col, len(idx.Columns))
 	for i, col := range idx.Columns {
 		cols[i] = t.Cols()[col.Offset]
@@ -227,7 +213,6 @@ func checkColsAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol
 		return true, nil
 	}
 	err := t.IterRecords(txn, string(startKey), cols, filterFunc)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -267,20 +252,20 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*column.Col, st
 	return records, nextHandle, nil
 }
 
-// ScanTableData scans table row handles and column values in a limited number.
+// ScanTableRecord scans table row handles and column values in a limited number.
 // It returns data and the next startHandle until it doesn't have data, then returns data is nil and
-// the next startHandle is the handle which can't get data.
-// If limit = -1, it returns the table data of the whole.
-func ScanTableData(retriever kv.Retriever, t table.Table, startHandle, limit int64) (
+// the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
+// it returns the table data of the whole.
+func ScanTableRecord(retriever kv.Retriever, t table.Table, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	return scanTableData(retriever, t, t.Cols(), startHandle, limit)
 }
 
-// ScanSnapshotTableData scans the ver version of the table data in a limited number.
+// ScanSnapshotTableRecord scans the ver version of the table data in a limited number.
 // It returns data and the next startHandle until it doesn't have data, then returns data is nil and
-// the next startHandle is the handle which can't get data.
-// If limit = -1, it returns the table data of the whole.
-func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
+// the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
+// it returns the table data of the whole.
+func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	snap, err := store.GetSnapshot(ver)
 	if err != nil {
@@ -288,16 +273,15 @@ func ScanSnapshotTableData(store kv.Storage, ver kv.Version, t table.Table, star
 	}
 	defer snap.Release()
 
-	records, nextHandle, err := ScanTableData(snap, t, startHandle, limit)
+	records, nextHandle, err := ScanTableRecord(snap, t, startHandle, limit)
 
 	return records, nextHandle, errors.Trace(err)
 }
 
-// CompareTableData compares data and the corresponding table data one by one.
+// CompareTableRecord compares data and the corresponding table data one by one.
 // It returns nil if data is equal to the data that scans from table, otherwise
-// it returns an error with a different set of records. If exact is false, only
-// compares handle.
-func CompareTableData(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
+// it returns an error with a different set of records. If exact is false, only compares handle.
+func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
 	var err error
 	var vals []interface{}
 	m := make(map[int64]struct{}, len(data))
