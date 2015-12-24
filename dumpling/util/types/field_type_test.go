@@ -121,11 +121,7 @@ func (s *testFieldTypeSuite) TestDataItem(c *check.C) {
 
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
 	nullType := DefaultTypeForValue(nil)
-	c.Log(nullType.Tp)
 	di := &DataItem{Type: nullType}
-	c.Log(di.Type.Tp)
-	ftp := DefaultTypeForValue(di)
-	c.Log(ftp.Tp)
 	cases := []struct {
 		value interface{}
 		tp    byte
