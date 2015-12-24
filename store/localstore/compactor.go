@@ -64,10 +64,6 @@ func (gc *localstoreCompactor) OnSet(k kv.Key) {
 	gc.recentKeys[string(k)] = struct{}{}
 }
 
-func (gc *localstoreCompactor) OnGet(k kv.Key) {
-	// Do nothing now.
-}
-
 func (gc *localstoreCompactor) OnDelete(k kv.Key) {
 	gc.mu.Lock()
 	defer gc.mu.Unlock()

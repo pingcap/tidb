@@ -233,8 +233,10 @@ func (s *dbStore) doCommit(cmd *command) {
 		mvccKey := MvccEncodeVersionKey(kv.Key(k), curVer)
 		if len(value) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
+			s.compactor.OnDelete(k)
 		} else {
 			b.Put(mvccKey, value)
+			s.compactor.OnSet(k)
 		}
 		return nil
 	})
