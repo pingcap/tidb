@@ -44,12 +44,20 @@ var (
 
 // Error instances.
 var (
-	ErrUnknownPlan = terror.ClassExecutor.New(CodeUnknownPlan, "Unknown plan")
+	ErrUnknownPlan     = terror.ClassExecutor.New(CodeUnknownPlan, "Unknown plan")
+	ErrPrepareMulti    = terror.ClassExecutor.New(CodePrepareMulti, "Can not prepare multiple statements")
+	ErrStmtNotFound    = terror.ClassExecutor.New(CodeStmtNotFound, "Prepared statemeent not found")
+	ErrSchemaChanged   = terror.ClassExecutor.New(CodeSchemaChanged, "Schema has changed")
+	ErrWrongParamCount = terror.ClassExecutor.New(CodeWrongParamCount, "Wrong parameter count")
 )
 
 // Error codes.
 const (
 	CodeUnknownPlan terror.ErrCode = iota + 1
+	CodePrepareMulti
+	CodeStmtNotFound
+	CodeSchemaChanged
+	CodeWrongParamCount
 )
 
 // Row represents a record row.

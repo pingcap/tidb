@@ -22,6 +22,7 @@ import (
 	"time"
 	// For pprof
 	_ "net/http/pprof"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -32,16 +33,12 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/executor/converter"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
-	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
@@ -158,82 +155,21 @@ func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
 	return stmts, nil
 }
 
-// CompilePrepare compiles prepared statement, allows placeholder as expr.
-// The return values are compiled statement, parameter list and error.
-func CompilePrepare(ctx context.Context, src string) (stmt.Statement, []*expression.ParamMarker, error) {
-	log.Debug("compiling prepared", src)
-	l := parser.NewLexer(src)
-	l.SetCharsetInfo(getCtxCharsetInfo(ctx))
-	l.SetPrepare()
-	if parser.YYParse(l) != 0 {
-		log.Errorf("compiling %s\n, error: %v", src, l.Errors()[0])
-		return nil, nil, errors.Trace(l.Errors()[0])
-	}
-	sms := l.Stmts()
-	if len(sms) != 1 {
-		log.Warnf("compiling %s, error: prepared statement should have only one statement.", src)
-		return nil, nil, nil
-	}
-	sm := sms[0]
-	conv := &converter.Converter{}
-	s, err := conv.Convert(sm)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return s, conv.ParamMarkers(), nil
-}
-
-func prepareStmt(ctx context.Context, sqlText string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {
-	s := &stmts.PreparedStmt{
-		InPrepare: true,
-		SQLText:   sqlText,
-	}
-	_, err = runStmt(ctx, s, nil)
-	return s.ID, len(s.Params), s.Fields, errors.Trace(err)
-}
-
-func executePreparedStmt(ctx context.Context, stmtID uint32, args ...interface{}) (rset.Recordset, error) {
-	s := &stmts.ExecuteStmt{ID: stmtID}
-	return runStmt(ctx, s, args...)
-}
-
-func dropPreparedStmt(ctx context.Context, stmtID uint32) error {
-	s := &stmts.DeallocateStmt{ID: stmtID}
-	_, err := runStmt(ctx, s, nil)
-	return err
-}
-
 func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.Recordset, error) {
 	var err error
 	var rs rset.Recordset
 	// before every execution, we must clear affectedrows.
 	variable.GetSessionVars(ctx).SetAffectedRows(0)
-	switch ts := s.(type) {
-	case *stmts.PreparedStmt:
-		rs, err = runPreparedStmt(ctx, ts)
-	case *stmts.ExecuteStmt:
-		rs, err = runExecute(ctx, ts, args...)
-	default:
-		if s.IsDDL() {
-			err = ctx.FinishTxn(false)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+	if s.IsDDL() {
+		err = ctx.FinishTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		stmt.BindExecArgs(ctx, args)
-		rs, err = s.Exec(ctx)
-		stmt.ClearExecArgs(ctx)
 	}
+	rs, err = s.Exec(ctx)
 	// All the history should be added here.
 	se := ctx.(*session)
-	switch ts := s.(type) {
-	case *stmts.PreparedStmt:
-		se.history.add(ts.ID, s)
-	case *stmts.ExecuteStmt:
-		se.history.add(ts.ID, s, args...)
-	default:
-		se.history.add(0, s)
-	}
+	se.history.add(0, s)
 	// MySQL DDL should be auto-commit
 	if s.IsDDL() || autocommit.ShouldAutocommit(ctx) {
 		if err != nil {
@@ -242,37 +178,6 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 			err = ctx.FinishTxn(false)
 		}
 	}
-	return rs, errors.Trace(err)
-}
-
-func runExecute(ctx context.Context, es *stmts.ExecuteStmt, args ...interface{}) (rset.Recordset, error) {
-	if len(args) > 0 {
-		es.UsingVars = make([]expression.Expression, 0, len(args))
-		for _, v := range args {
-			var exp expression.Expression = &expression.Value{Val: v}
-			es.UsingVars = append(es.UsingVars, exp)
-		}
-	}
-	return es.Exec(ctx)
-}
-
-func runPreparedStmt(ctx context.Context, ps *stmts.PreparedStmt) (rset.Recordset, error) {
-	SQLText, err := ps.GetSQL(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(SQLText) == 0 {
-		// TODO: Empty sql should return error?
-		return nil, nil
-	}
-	// compile SQLText
-	stmt, params, err := CompilePrepare(ctx, SQLText)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ps.Params = params
-	ps.SQLStmt = stmt
-	rs, err := ps.Exec(ctx)
 	return rs, errors.Trace(err)
 }
 
@@ -294,32 +199,35 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 	return RegisterStore(name, d)
 }
 
-// NewStore creates a kv Storage with specific uri.
-// The uri format must be engine://schema, like goleveldb://testpath
-// Engine is the storage name registered with RegisterStore.
-// Schema is the storage specific format.
-func NewStore(uri string) (kv.Storage, error) {
-	return newStoreWithRetry(uri, defaultMaxRetries)
+// NewStore creates a kv Storage with path.
+//
+// The path must be a URL format 'engine://path?params' like the one for
+// tidb.Open() but with the dbname cut off.
+// Examples:
+//    goleveldb://relative/path
+//    boltdb:///absolute/path
+//    hbase://zk1,zk2,zk3/hbasetbl?tso=127.0.0.1:1234
+//
+// The engine should be registered before creating storage.
+func NewStore(path string) (kv.Storage, error) {
+	return newStoreWithRetry(path, defaultMaxRetries)
 }
 
-func newStoreWithRetry(uri string, maxRetries int) (kv.Storage, error) {
-	pos := strings.Index(uri, "://")
-	if pos == -1 {
-		return nil, errors.Errorf("invalid uri format, must engine://schema")
+func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
+	url, err := url.Parse(path)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	name := strings.ToLower(uri[0:pos])
-	schema := uri[pos+3:]
-
+	name := strings.ToLower(url.Scheme)
 	d, ok := stores[name]
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
-	var err error
 	var s kv.Storage
 	for i := 1; i <= maxRetries; i++ {
-		s, err = d.Open(schema)
+		s, err = d.Open(path)
 		if err == nil || !kv.IsRetryableError(err) {
 			break
 		}

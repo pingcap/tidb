@@ -13,6 +13,18 @@
 
 package parser
 
+import "github.com/pingcap/tidb/terror"
+
+// Error instances.
+var (
+	ErrSyntax = terror.ClassParser.New(CodeSyntaxErr, "syntax error")
+)
+
+// Error codes.
+const (
+	CodeSyntaxErr terror.ErrCode = iota + 1
+)
+
 // YYParse is an wrapper of `yyParse` to make it exported.
 func YYParse(yylex yyLexer) int {
 	return yyParse(yylex)

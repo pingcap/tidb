@@ -14,6 +14,8 @@
 package localstore
 
 import (
+	"net/url"
+	"path/filepath"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -88,7 +90,7 @@ func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
 
 // Commit writes the changed data in Batch.
 func (s *dbStore) CommitTxn(txn *dbTxn) error {
-	if len(txn.snapshotVals) == 0 {
+	if len(txn.lockedKeys) == 0 {
 		return nil
 	}
 	c := &command{
@@ -190,7 +192,7 @@ func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
 
 func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 	// check conflict
-	for k := range txn.snapshotVals {
+	for k := range txn.lockedKeys {
 		if _, ok := s.keysLocked[k]; ok {
 			return errors.Trace(kv.ErrLockConflict)
 		}
@@ -206,7 +208,7 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 	}
 
 	// record
-	for k := range txn.snapshotVals {
+	for k := range txn.lockedKeys {
 		s.keysLocked[k] = txn.tid
 	}
 
@@ -312,27 +314,34 @@ func IsLocalStore(s kv.Storage) bool {
 }
 
 // Open opens or creates a storage with specific format for a local engine Driver.
-func (d Driver) Open(schema string) (kv.Storage, error) {
+// The path should be a URL format which is described in tidb package.
+func (d Driver) Open(path string) (kv.Storage, error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	if store, ok := mc.cache[schema]; ok {
-		// TODO: check the cache store has the same engine with this Driver.
-		log.Info("[kv] cache store", schema)
-		return store, nil
-	}
-
-	db, err := d.Driver.Open(schema)
+	u, err := url.Parse(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	log.Info("[kv] New store", schema)
+	engineSchema := filepath.Join(u.Host, u.Path)
+	if store, ok := mc.cache[engineSchema]; ok {
+		// TODO: check the cache store has the same engine with this Driver.
+		log.Info("[kv] cache store", engineSchema)
+		return store, nil
+	}
+
+	db, err := d.Driver.Open(engineSchema)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	log.Info("[kv] New store", engineSchema)
 	s := &dbStore{
 		txns:       make(map[uint64]*dbTxn),
 		keysLocked: make(map[string]uint64),
 		uuid:       uuid.NewV4().String(),
-		path:       schema,
+		path:       engineSchema,
 		db:         db,
 		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
 		commandCh:  make(chan *command, 1000),
@@ -343,8 +352,9 @@ func (d Driver) Open(schema string) (kv.Storage, error) {
 	s.recentUpdates, err = segmentmap.NewSegmentMap(100)
 	if err != nil {
 		return nil, errors.Trace(err)
+
 	}
-	mc.cache[schema] = s
+	mc.cache[engineSchema] = s
 	s.compactor.Start()
 	s.wg.Add(1)
 	go s.scheduler()
@@ -397,11 +407,11 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 	}
 
 	txn := &dbTxn{
-		tid:          beginVer.Ver,
-		valid:        true,
-		store:        s,
-		version:      kv.MinVersion,
-		snapshotVals: make(map[string]struct{}),
+		tid:        beginVer.Ver,
+		valid:      true,
+		store:      s,
+		version:    kv.MinVersion,
+		lockedKeys: make(map[string]struct{}),
 	}
 	log.Debugf("[kv] Begin txn:%d", txn.tid)
 	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, beginVer))
@@ -449,7 +459,7 @@ func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
 }
 func (s *dbStore) unLockKeys(txn *dbTxn) error {
-	for k := range txn.snapshotVals {
+	for k := range txn.lockedKeys {
 		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
 			debug.PrintStack()
 			log.Fatalf("should never happend:%v, %v", tid, txn.tid)
