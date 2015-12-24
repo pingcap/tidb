@@ -262,6 +262,10 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[0])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	errRs := append(rs, &RecordData{Handle: int64(1), Values: []interface{}{int64(3)}})
+	err = CompareTableRecord(txn, tb, errRs, false)
+	c.Assert(err.Error(), DeepEquals, "handle is repeated in data")
 }
 
 func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {

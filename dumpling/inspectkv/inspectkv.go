@@ -213,6 +213,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 		return true, nil
 	}
 	err := t.IterRecords(txn, string(startKey), cols, filterFunc)
+
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -282,49 +283,47 @@ func ScanSnapshotTableRecord(store kv.Storage, ver kv.Version, t table.Table, st
 // It returns nil if data is equal to the data that scans from table, otherwise
 // it returns an error with a different set of records. If exact is false, only compares handle.
 func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
-	var err error
-	var vals []interface{}
-	m := make(map[int64]struct{}, len(data))
-
+	m := make(map[int64][]interface{}, len(data))
 	for _, r := range data {
-		vals, err = t.RowWithCols(txn, r.Handle, t.Cols())
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			record1 := &RecordData{Handle: r.Handle, Values: r.Values}
-			err = errors.Errorf("data:%v != record:%v", record1, nil)
+		if _, ok := m[r.Handle]; ok {
+			return errors.Errorf("handle is repeated in data")
 		}
-		if err != nil {
-			break
-		}
-
-		if !exact {
-			m[r.Handle] = struct{}{}
-			continue
-		}
-		if !reflect.DeepEqual(r.Values, vals) {
-			record1 := &RecordData{Handle: r.Handle, Values: r.Values}
-			record2 := &RecordData{Handle: r.Handle, Values: vals}
-			err = errors.Errorf("data:%v != record:%v", record1, record2)
-			break
-		}
-		m[r.Handle] = struct{}{}
-	}
-	if err != nil {
-		return errors.Trace(err)
+		m[r.Handle] = r.Values
 	}
 
 	startKey := t.RecordKey(0, nil)
 	filterFunc := func(h int64, vals []interface{}, cols []*column.Col) (bool, error) {
-		if _, ok := m[h]; !ok {
+		vals2, ok := m[h]
+		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
 			return false, errors.Errorf("data:%v != record:%v", nil, record)
-
 		}
+		if !exact {
+			delete(m, h)
+			return true, nil
+		}
+
+		if !reflect.DeepEqual(vals, vals2) {
+			record1 := &RecordData{Handle: h, Values: vals2}
+			record2 := &RecordData{Handle: h, Values: vals}
+			return false, errors.Errorf("data:%v != record:%v", record1, record2)
+		}
+
+		delete(m, h)
 
 		return true, nil
 	}
-	err = t.IterRecords(txn, string(startKey), t.Cols(), filterFunc)
+	err := t.IterRecords(txn, string(startKey), t.Cols(), filterFunc)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-	return errors.Trace(err)
+	for h, vals := range m {
+		record := &RecordData{Handle: h, Values: vals}
+		return errors.Errorf("data:%v != record:%v", record, nil)
+	}
+
+	return nil
 }
 
 // GetTableRecordsCount returns the total number of table records from startHandle.
@@ -341,7 +340,6 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
 		handle, err := tables.DecodeRecordKeyHandle(it.Key())
 		if err != nil {
-			it.Close()
 			return 0, errors.Trace(err)
 		}
 
