@@ -165,7 +165,7 @@ func (s *testSuite) TestScan(c *C) {
 	record2 := &RecordData{Handle: int64(2), Values: []interface{}{int64(20), int64(21)}}
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	records, _, err := ScanSnapshotTableData(s.store, ver, tb, int64(1), 1)
+	records, _, err := ScanSnapshotTableRecord(s.store, ver, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
@@ -175,25 +175,20 @@ func (s *testSuite) TestScan(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	records, nextHandle, err := ScanTableData(txn, tb, int64(1), 1)
+	records, nextHandle, err := ScanTableRecord(txn, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
-	records, nextHandle, err = ScanTableData(txn, tb, nextHandle, 1)
+	records, nextHandle, err = ScanTableRecord(txn, tb, nextHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record2})
 	startHandle := nextHandle
-	records, nextHandle, err = ScanTableData(txn, tb, startHandle, 1)
+	records, nextHandle, err = ScanTableRecord(txn, tb, startHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, IsNil)
 	c.Assert(nextHandle, Equals, startHandle)
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: []interface{}{int64(10)}}
 	idxRow2 := &RecordData{Handle: int64(2), Values: []interface{}{int64(20)}}
-	idxRows, nextHandle, err := ScanIndexColData(txn, tb, indices[0], 0, 2)
-	c.Assert(err, IsNil)
-	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
-	c.Assert(nextHandle, Equals, startHandle)
-
 	kvIndex := kv.NewKVIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
 	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
@@ -227,7 +222,7 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	err = CompareTableData(txn, tb, rs, true)
+	err = CompareTableRecord(txn, tb, rs, true)
 	c.Assert(err, IsNil)
 
 	cnt, err := GetTableRecordsCount(txn, tb, 0)
@@ -238,32 +233,32 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 		{Handle: rs[0].Handle},
 		{Handle: rs[1].Handle},
 	}
-	err = CompareTableData(txn, tb, records, false)
+	err = CompareTableRecord(txn, tb, records, false)
 	c.Assert(err, IsNil)
 
 	record := &RecordData{Handle: rs[1].Handle, Values: []interface{}{int64(30)}}
-	err = CompareTableData(txn, tb, []*RecordData{rs[0], record}, true)
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record}, true)
 	c.Assert(err, NotNil)
 	diffMsg := newDiffRetError("data", record, rs[1])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	record.Handle = 3
-	err = CompareTableData(txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", record, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableData(txn, tb, []*RecordData{rs[0], rs[1], record}, true)
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], rs[1], record}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", record, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableData(txn, tb, []*RecordData{rs[0]}, true)
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0]}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[1])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableData(txn, tb, nil, true)
+	err = CompareTableRecord(txn, tb, nil, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[0])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
@@ -332,7 +327,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = checkColsAndIndex(txn, tb, idx)
+	err = checkRecordAndIndex(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: []interface{}{int64(30)}}
 	diffMsg = newDiffRetError("index", record1, record2)
