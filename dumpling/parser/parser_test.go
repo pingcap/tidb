@@ -45,13 +45,13 @@ func (s *testParserSuite) TestSimple(c *C) {
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
-		_, err := ParseOne(src, "", "")
+		_, err := ParseOneStmt(src, "", "")
 		c.Assert(err, IsNil, Commentf("source %s", src))
 	}
 
 	// Testcase for prepared statement
 	src := "SELECT id+?, id+? from t;"
-	_, err := ParseOne(src, "", "")
+	_, err := ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 
 	// Testcase for -- Comment and unary -- operator
@@ -62,7 +62,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
-	st, err := ParseOne(src, "", "")
+	st, err := ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 	ss, ok := st.(*ast.SelectStmt)
 	c.Assert(ok, IsTrue)
@@ -80,7 +80,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"SELECT CONVERT('111', SIGNED) /*comment*/;",
 	}
 	for _, src := range srcs {
-		st, err = ParseOne(src, "", "")
+		st, err = ParseOneStmt(src, "", "")
 		c.Assert(err, IsNil)
 		ss, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)

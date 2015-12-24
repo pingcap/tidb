@@ -80,7 +80,7 @@ func (ts *testFlagSuite) TestFlag(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		stmt, err := parser.ParseOne("select "+ca.expr, "", "")
+		stmt, err := parser.ParseOneStmt("select "+ca.expr, "", "")
 		c.Assert(err, IsNil)
 		selectStmt := stmt.(*ast.SelectStmt)
 		ast.SetFlag(selectStmt)

@@ -95,7 +95,7 @@ func (ts *testNameResolverSuite) TestNameResolver(c *C) {
 	domain := sessionctx.GetDomain(ctx)
 	db.BindCurrentSchema(ctx, "test")
 	for _, tc := range resolverTestCases {
-		node, err := parser.ParseOne(tc.src, "", "")
+		node, err := parser.ParseOneStmt(tc.src, "", "")
 		c.Assert(err, IsNil)
 		resolveErr := optimizer.ResolveName(node, domain.InfoSchema(), ctx)
 		if tc.valid {

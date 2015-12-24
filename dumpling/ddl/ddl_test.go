@@ -338,7 +338,7 @@ func (ts *testSuite) TestAlterTableColumn(c *C) {
 
 func statement(ctx context.Context, sql string) stmt.Statement {
 	log.Debug("[ddl] Compile", sql)
-	s, _ := parser.ParseOne(sql, "", "")
+	s, _ := parser.ParseOneStmt(sql, "", "")
 	compiler := &executor.Compiler{}
 	stm, _ := compiler.Compile(ctx, s)
 	return stm
