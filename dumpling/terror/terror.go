@@ -33,8 +33,6 @@ var (
 	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
 
 	MissConnectionID = ClassExpression.New(CodeMissConnectionID, "miss connection id information")
-
-	ErrKeyExists = ClassKV.New(CodeKeyExists, "key already exist")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -46,13 +44,6 @@ const (
 	CodeCommitNotInTransaction   ErrCode = 1
 	CodeRollbackNotInTransaction         = 2
 	CodeExecResultIsEmpty                = 3
-)
-
-// KV error codes.
-const (
-	CodeIncompatibleDBFormat ErrCode = 1
-	CodeNoDataForHandle              = 2
-	CodeKeyExists                    = 3
 )
 
 // Variable error codes.
@@ -210,12 +201,8 @@ func (e *Error) getMySQLErrorCode() uint16 {
 
 var (
 	// ErrCode to mysql error code map.
-	parserMySQLErrCodes    = map[ErrCode]uint16{}
-	optimizerMySQLErrCodes = map[ErrCode]uint16{}
-	executorMySQLErrCodes  = map[ErrCode]uint16{}
-	kvMySQLErrCodes        = map[ErrCode]uint16{
-		CodeKeyExists: mysql.ErrDupEntry,
-	}
+	parserMySQLErrCodes     = map[ErrCode]uint16{}
+	executorMySQLErrCodes   = map[ErrCode]uint16{}
 	serverMySQLErrCodes     = map[ErrCode]uint16{}
 	expressionMySQLErrCodes = map[ErrCode]uint16{}
 
@@ -226,9 +213,7 @@ var (
 func init() {
 	ErrClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
 	ErrClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
-	ErrClassToMySQLCodes[ClassOptimizer] = optimizerMySQLErrCodes
 	ErrClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
-	ErrClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
 	ErrClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
 	ErrClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
 	defaultMySQLErrorCode = mysql.ErrUnknown
