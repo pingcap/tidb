@@ -45,6 +45,10 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return nil
 	case *plan.TableScan:
 		return b.buildTableScan(v)
+	case *plan.ShowDDL:
+		return b.buildShowDDL(v)
+	case *plan.CheckTable:
+		return b.buildCheckTable(v)
 	case *plan.IndexScan:
 		return b.buildIndexScan(v)
 	case *plan.Filter:
@@ -76,6 +80,14 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		fields: v.Fields(),
 		ctx:    b.ctx,
 	}
+}
+
+func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
+	return &ShowDDL{}
+}
+
+func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
+	return &CheckTable{Tables: v.Tables}
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {

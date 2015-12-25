@@ -32,6 +32,33 @@ func (p *TableScan) Accept(v Visitor) (Plan, bool) {
 	return v.Leave(np)
 }
 
+// ShowDDL shows DDL information.
+type ShowDDL struct {
+	basePlan
+}
+
+// Accept implements Plan Accept interface.
+func (p *ShowDDL) Accept(v Visitor) (Plan, bool) {
+	np, _ := v.Enter(p)
+
+	return v.Leave(np)
+}
+
+// CheckTable checks table data.
+type CheckTable struct {
+	basePlan
+
+	Tables []*ast.TableName
+}
+
+// Accept implements Plan Accept interface.
+func (p *CheckTable) Accept(v Visitor) (Plan, bool) {
+	np, _ := v.Enter(p)
+
+	return v.Leave(np)
+
+}
+
 type bound int
 
 // Bound values.

@@ -57,6 +57,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
+	case *ast.AdminStmt:
+		return b.buildAdmin(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
@@ -202,4 +204,20 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		p.SQLText = x.SQLText
 	}
 	return p
+}
+
+func (b *planBuilder) buildAdmin(adm *ast.AdminStmt) Plan {
+	if adm.Tp == ast.AdminCheckTable {
+		if adm.Tables != nil {
+			return &CheckTable{Tables: adm.Tables}
+		}
+
+		return nil
+	}
+
+	if adm.Tp == ast.AdminShowDDL {
+		return &ShowDDL{}
+	}
+
+	return nil
 }

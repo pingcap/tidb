@@ -84,6 +84,45 @@ type Executor interface {
 	Close() error
 }
 
+// ShowDDL represetns
+type ShowDDL struct {
+}
+
+// Fields implements Executor Fields interface.
+func (e *ShowDDL) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Execution Next interface.
+func (e *ShowDDL) Next() (*Row, error) {
+	return nil, nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *ShowDDL) Close() error {
+	return nil
+}
+
+// CheckTable represetns tables name.
+type CheckTable struct {
+	Tables []*ast.TableName
+}
+
+// Fields implements Executor Fields interface.
+func (e *CheckTable) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Execution Next interface.
+func (e *CheckTable) Next() (*Row, error) {
+	return nil, nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *CheckTable) Close() error {
+	return nil
+}
+
 // TableScanExec represents a table scan executor.
 type TableScanExec struct {
 	t      table.Table
