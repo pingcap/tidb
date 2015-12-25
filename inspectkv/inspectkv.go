@@ -197,7 +197,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	filterFunc := func(h1 int64, vals1 []interface{}, cols []*column.Col) (bool, error) {
 		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
-		if terror.ErrorEqual(err, terror.ErrKeyExists) {
+		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, errors.Errorf("index:%v != record:%v", record2, record1)
