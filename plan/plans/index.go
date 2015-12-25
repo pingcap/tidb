@@ -428,12 +428,12 @@ func (r *indexPlan) pointLookup(ctx context.Context, val interface{}) (*plan.Row
 	}
 	var exist bool
 	var h int64
-	// We expect a terror.ErrKeyExists Error because we pass -1 as the handle which is not equal to the existed handle.
+	// We expect a kv.ErrKeyExists Error because we pass -1 as the handle which is not equal to the existed handle.
 	exist, h, err = r.idx.Exist(txn, []interface{}{val}, -1)
 	if !exist {
 		return nil, errors.Trace(err)
 	}
-	if terror.ErrorNotEqual(terror.ErrKeyExists, err) {
+	if terror.ErrorNotEqual(kv.ErrKeyExists, err) {
 		return nil, errors.Trace(err)
 	}
 	var row *plan.Row
