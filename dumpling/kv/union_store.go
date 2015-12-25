@@ -17,7 +17,6 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/pool"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -47,7 +46,7 @@ type Options interface {
 }
 
 var (
-	p = pool.NewCache("memdb pool", 100, func() interface{} {
+	p = newCache("memdb pool", 100, func() MemBuffer {
 		return NewMemDbBuffer()
 	})
 )
@@ -85,7 +84,7 @@ func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
-		lmb.mb = p.Get().(MemBuffer)
+		lmb.mb = p.get()
 	}
 
 	return lmb.mb.Set(key, value)
@@ -93,7 +92,7 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 
 func (lmb *lazyMemBuffer) Delete(k Key) error {
 	if lmb.mb == nil {
-		lmb.mb = p.Get().(MemBuffer)
+		lmb.mb = p.get()
 	}
 
 	return lmb.mb.Delete(k)
@@ -101,7 +100,7 @@ func (lmb *lazyMemBuffer) Delete(k Key) error {
 
 func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
 	if lmb.mb == nil {
-		lmb.mb = p.Get().(MemBuffer)
+		lmb.mb = p.get()
 	}
 
 	return lmb.mb.Seek(k)
@@ -114,7 +113,7 @@ func (lmb *lazyMemBuffer) Release() {
 
 	lmb.mb.Release()
 
-	p.Put(lmb.mb)
+	p.put(lmb.mb)
 	lmb.mb = nil
 }
 
