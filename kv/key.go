@@ -32,6 +32,11 @@ func (k Key) Cmp(another Key) int {
 	return bytes.Compare(k, another)
 }
 
+// HasPrefix tests whether the Key begins with prefix.
+func (k Key) HasPrefix(prefix Key) bool {
+	return bytes.HasPrefix(k, prefix)
+}
+
 // EncodedKey represents encoded key in low-level storage engine.
 type EncodedKey []byte
 

@@ -122,17 +122,17 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	ctx.fillTxn()
 	txn, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
-	err = DelKeyWithPrefix(txn, string(encodeInt(ctx.prefix)))
+	err = DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
 	c.Assert(err, IsNil)
 	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
-	str := "key100jfowi878230"
-	err = txn.Set([]byte(str), []byte("val32dfaskli384757^*&%^"))
+	k := []byte("key100jfowi878230")
+	err = txn.Set(k, []byte("val32dfaskli384757^*&%^"))
 	c.Assert(err, IsNil)
-	err = ScanMetaWithPrefix(txn, str, func([]byte, []byte) bool {
+	err = ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return true
 	})
 	c.Assert(err, IsNil)

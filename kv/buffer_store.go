@@ -74,7 +74,7 @@ func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
 	}
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
-		if err := f([]byte(iter.Key()), iter.Value()); err != nil {
+		if err := f(iter.Key(), iter.Value()); err != nil {
 			return errors.Trace(err)
 		}
 	}
