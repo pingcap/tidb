@@ -428,6 +428,42 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// AdminStmtType is the type for admin statement.
+type AdminStmtType int
+
+// Admin statement types.
+const (
+	AdminShowDDL = iota
+	AdminCheckTable
+)
+
+// AdminStmt is the struct for Admin statement.
+type AdminStmt struct {
+	stmtNode
+
+	Tp     AdminStmtType
+	Tables []*TableName
+}
+
+// Accept implements Node Accpet interface.
+func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
+	newNod, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNod)
+	}
+
+	n = newNod.(*AdminStmt)
+	for i, val := range n.Tables {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+
+	return v.Leave(n)
+}
+
 // PrivElem is the privilege type and optional column list.
 type PrivElem struct {
 	node
