@@ -18,7 +18,15 @@ import (
 	"strings"
 
 	"github.com/pingcap/go-themis"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+)
+
+// KV error codes.
+const (
+	CodeIncompatibleDBFormat terror.ErrCode = 1
+	CodeNoDataForHandle                     = 2
+	CodeKeyExists                           = 3
 )
 
 var (
@@ -43,7 +51,17 @@ var (
 	// ErrNotCommitted is the error returned by CommitVersion when this
 	// transaction is not committed.
 	ErrNotCommitted = errors.New("this transaction has not committed")
+
+	// ErrKeyExists returns when key is already exist.
+	ErrKeyExists = terror.ClassKV.New(CodeKeyExists, "key already exist")
 )
+
+func init() {
+	kvMySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeKeyExists: mysql.ErrDupEntry,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassKV] = kvMySQLErrCodes
+}
 
 // IsRetryableError checks if the err is a fatal error and the under going operation is worth to retry.
 func IsRetryableError(err error) bool {

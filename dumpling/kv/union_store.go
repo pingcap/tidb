@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pool"
-	"github.com/pingcap/tidb/terror"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -177,7 +176,7 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 	for ; it.Valid(); it.Next() {
 		if len(it.Value()) == 0 {
 			if _, exist := values[it.Key()]; exist {
-				return errors.Trace(terror.ErrKeyExists)
+				return errors.Trace(ErrKeyExists)
 			}
 		} else {
 			if bytes.Compare(values[it.Key()], it.Value()) != 0 {
