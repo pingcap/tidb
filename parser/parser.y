@@ -60,6 +60,7 @@ import (
 	abs		"ABS"
 	add		"ADD"
 	addDate		"ADDDATE"
+	admin		"ADMIN"
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
@@ -115,6 +116,7 @@ import (
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
+	ddl		"DDL"
 	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
@@ -359,6 +361,7 @@ import (
 	yearMonth		"YEAR_MONTH"
 
 %type   <item>
+	AdminStmt		"Check table/index statement or show ddl statement"
 	AlterTableStmt		"Alter table statement"
 	AlterTableSpec	"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
@@ -3350,6 +3353,17 @@ AuthString:
 	{
 		$$ = $1.(string)
 	}
+
+/****************************Admin Statement*******************************/
+AdminStmt:
+	"ADMIN" "SHOW" "DDL"
+	{
+	}
+|	"ADMIN" "CHECK" TableOptionList
+	{
+	}
+
+
 
 /****************************Show Statement*******************************/
 ShowStmt:

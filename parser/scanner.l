@@ -283,6 +283,7 @@ z		[zZ]
 abs		{a}{b}{s}
 add		{a}{d}{d}
 adddate		{a}{d}{d}{d}{a}{t}{e}
+admin		{a}{d}{m}{i}{n}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
@@ -334,6 +335,7 @@ day		{d}{a}{y}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
 dayofyear	{d}{a}{y}{o}{f}{y}{e}{a}{r}
+ddl		{d}{d}{l}
 deallocate	{d}{e}{a}{l}{l}{o}{c}{a}{t}{e}
 default		{d}{e}{f}{a}{u}{l}{t}
 delayed		{d}{e}{l}{a}{y}{e}{d}
