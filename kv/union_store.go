@@ -28,8 +28,6 @@ type UnionStore interface {
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
-	// BatchPrefetch fetches values from KV storage to cache for later use.
-	BatchPrefetch(keys []Key) error
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -65,15 +63,11 @@ type unionStore struct {
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
-	lazy := &lazyMemBuffer{}
-	opts := make(map[Option]interface{})
-	cacheSnapshot := NewCacheSnapshot(snapshot, lazy, options(opts))
-	bufferStore := NewBufferStore(cacheSnapshot)
 	return &unionStore{
-		BufferStore:        bufferStore,
-		snapshot:           cacheSnapshot,
-		lazyConditionPairs: lazy,
-		opts:               opts,
+		BufferStore:        NewBufferStore(snapshot),
+		snapshot:           snapshot,
+		lazyConditionPairs: &lazyMemBuffer{},
+		opts:               make(map[Option]interface{}),
 	}
 }
 
@@ -124,10 +118,36 @@ func (lmb *lazyMemBuffer) Release() {
 	lmb.mb = nil
 }
 
-// BatchPrefetch implements the UnionStore interface.
-func (us *unionStore) BatchPrefetch(keys []Key) error {
-	_, err := us.snapshot.BatchGet(keys)
-	return errors.Trace(err)
+// Get implements the Retriever interface.
+func (us *unionStore) Get(k Key) ([]byte, error) {
+	v, err := us.MemBuffer.Get(k)
+	if IsErrNotFound(err) {
+		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
+			err = us.markLazyConditionPair(k, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return nil, errors.Trace(ErrNotExist)
+		}
+	}
+	if IsErrNotFound(err) {
+		v, err = us.BufferStore.r.Get(k)
+	}
+	if err != nil {
+		return v, errors.Trace(err)
+	}
+	if len(v) == 0 {
+		return nil, errors.Trace(ErrNotExist)
+	}
+	return v, nil
+}
+
+// markLazyConditionPair marks a kv pair for later check.
+func (us *unionStore) markLazyConditionPair(k Key, v []byte) error {
+	if len(v) == 0 {
+		return errors.Trace(us.lazyConditionPairs.Delete(k))
+	}
+	return errors.Trace(us.lazyConditionPairs.Set(k, v))
 }
 
 // CheckLazyConditionPairs implements the UnionStore interface.
