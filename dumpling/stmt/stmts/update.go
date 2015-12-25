@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
@@ -306,7 +307,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			}
 
 			// Update row
-			handle, err1 := tables.DecodeRecordKeyHandle(k)
+			handle, err1 := tables.DecodeRecordKeyHandle(kv.Key(k))
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

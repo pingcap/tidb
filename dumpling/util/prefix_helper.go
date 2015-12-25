@@ -19,14 +19,13 @@ package util
 
 import (
 	"bytes"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 )
 
 // ScanMetaWithPrefix scans metadata with the prefix.
-func ScanMetaWithPrefix(retriever kv.Retriever, prefix string, filter func([]byte, []byte) bool) error {
+func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Key, []byte) bool) error {
 	iter, err := retriever.Seek([]byte(prefix))
 	if err != nil {
 		return errors.Trace(err)
@@ -38,8 +37,8 @@ func ScanMetaWithPrefix(retriever kv.Retriever, prefix string, filter func([]byt
 			return errors.Trace(err)
 		}
 
-		if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
-			if !filter([]byte(iter.Key()), iter.Value()) {
+		if iter.Valid() && iter.Key().HasPrefix(prefix) {
+			if !filter(iter.Key(), iter.Value()) {
 				break
 			}
 			err = iter.Next()
@@ -55,9 +54,9 @@ func ScanMetaWithPrefix(retriever kv.Retriever, prefix string, filter func([]byt
 }
 
 // DelKeyWithPrefix deletes keys with prefix.
-func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix string) error {
-	var keys []string
-	iter, err := rm.Seek([]byte(prefix))
+func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix kv.Key) error {
+	var keys []kv.Key
+	iter, err := rm.Seek(prefix)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -68,7 +67,7 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix string) error {
 			return errors.Trace(err)
 		}
 
-		if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
+		if iter.Valid() && iter.Key().HasPrefix(prefix) {
 			keys = append(keys, iter.Key())
 			err = iter.Next()
 			if err != nil {
@@ -80,7 +79,7 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix string) error {
 	}
 
 	for _, key := range keys {
-		err := rm.Delete([]byte(key))
+		err := rm.Delete(key)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -90,7 +89,7 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix string) error {
 }
 
 // RowKeyPrefixFilter returns a function which checks whether currentKey has decoded rowKeyPrefix as prefix.
-func RowKeyPrefixFilter(rowKeyPrefix []byte) kv.FnKeyCmp {
+func RowKeyPrefixFilter(rowKeyPrefix kv.Key) kv.FnKeyCmp {
 	return func(currentKey kv.Key) bool {
 		// Next until key without prefix of this record.
 		return !bytes.HasPrefix(currentKey, rowKeyPrefix)

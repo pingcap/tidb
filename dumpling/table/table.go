@@ -34,7 +34,7 @@ type RecordIterFunc func(h int64, rec []interface{}, cols []*column.Col) (more b
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
-	IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col, fn RecordIterFunc) error
+	IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
 	RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error)
@@ -63,17 +63,17 @@ type Table interface {
 	// FindIndexByColName finds the index by column name.
 	FindIndexByColName(name string) *column.IndexedCol
 
-	// KeyPrefix returns the key prefix string.
-	KeyPrefix() string
+	// RecordPrefix returns the record key prefix.
+	RecordPrefix() kv.Key
 
-	// IndexPrefix returns the index prefix string.
-	IndexPrefix() string
+	// IndexPrefix returns the index key prefix.
+	IndexPrefix() kv.Key
 
-	// FirstKey returns the first key string.
-	FirstKey() string
+	// FirstKey returns the first key.
+	FirstKey() kv.Key
 
 	// RecordKey returns the key in KV storage for the column.
-	RecordKey(h int64, col *column.Col) []byte
+	RecordKey(h int64, col *column.Col) kv.Key
 
 	// Truncate truncates the table.
 	Truncate(rm kv.RetrieverMutator) (err error)

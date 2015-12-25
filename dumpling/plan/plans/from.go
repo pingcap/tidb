@@ -18,8 +18,6 @@
 package plans
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -74,7 +72,7 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
+	if !r.iter.Valid() || !r.iter.Key().HasPrefix(r.T.RecordPrefix()) {
 		return
 	}
 	handle, err := tables.DecodeRecordKeyHandle(r.iter.Key())
@@ -283,7 +281,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 			return nil, errors.Trace(err)
 		}
 	}
-	if !r.iter.Valid() || !strings.HasPrefix(r.iter.Key(), r.T.KeyPrefix()) {
+	if !r.iter.Valid() || !r.iter.Key().HasPrefix(r.T.RecordPrefix()) {
 		return
 	}
 	// TODO: check if lock valid
@@ -310,7 +308,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	// Put rowKey to the tail of record row
 	rke := &plan.RowKeyEntry{
 		Tbl: r.T,
-		Key: rowKey,
+		Key: string(rowKey),
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 

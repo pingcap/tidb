@@ -14,9 +14,6 @@
 package ddl
 
 import (
-	"bytes"
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
@@ -373,7 +370,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	defer snap.Release()
 
 	firstKey := t.RecordKey(seekHandle, nil)
-	prefix := []byte(t.KeyPrefix())
 
 	it, err := snap.Seek(firstKey)
 	if err != nil {
@@ -384,13 +380,12 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 	handles := make([]int64, 0, maxBatchSize)
 
 	for it.Valid() {
-		key := []byte(it.Key())
-		if !bytes.HasPrefix(key, prefix) {
+		if !it.Key().HasPrefix(t.RecordPrefix()) {
 			break
 		}
 
 		var handle int64
-		handle, err = tables.DecodeRecordKeyHandle(string(key))
+		handle, err = tables.DecodeRecordKeyHandle(it.Key())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -481,20 +476,17 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
-
-	prefixBytes := []byte(prefix)
-
 	for {
-		keys := make([]string, 0, maxBatchSize)
+		keys := make([]kv.Key, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			iter, err := txn.Seek(prefixBytes)
+			iter, err := txn.Seek(prefix)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
 			defer iter.Close()
 			for i := 0; i < maxBatchSize; i++ {
-				if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
+				if iter.Valid() && iter.Key().HasPrefix(prefix) {
 					keys = append(keys, iter.Key())
 					err = iter.Next()
 					if err != nil {
@@ -520,7 +512,7 @@ func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 					return errors.Trace(err1)
 				}
 
-				err1 := txn.Delete([]byte(key))
+				err1 := txn.Delete(key)
 				// if key doesn't exist, skip this error.
 				if err1 != nil && !terror.ErrorEqual(err1, kv.ErrNotExist) {
 					return errors.Trace(err1)

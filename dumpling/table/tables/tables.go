@@ -18,7 +18,6 @@
 package tables
 
 import (
-	"bytes"
 	"reflect"
 	"strings"
 	"time"
@@ -52,8 +51,8 @@ type Table struct {
 	publicColumns   []*column.Col
 	writableColumns []*column.Col
 	indices         []*column.IndexedCol
-	recordPrefix    string
-	indexPrefix     string
+	recordPrefix    kv.Key
+	indexPrefix     kv.Key
 	alloc           autoid.Allocator
 	state           model.SchemaState
 }
@@ -100,8 +99,8 @@ func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	t := &Table{
 		ID:           tableID,
 		Name:         name,
-		recordPrefix: string(genTableRecordPrefix(tableID)),
-		indexPrefix:  string(genTableIndexPrefix(tableID)),
+		recordPrefix: genTableRecordPrefix(tableID),
+		indexPrefix:  genTableIndexPrefix(tableID),
 		alloc:        alloc,
 		Columns:      cols,
 		state:        model.StatePublic,
@@ -241,18 +240,18 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 	}
 }
 
-// KeyPrefix implements table.Table KeyPrefix interface.
-func (t *Table) KeyPrefix() string {
+// RecordPrefix implements table.Table RecordPrefix interface.
+func (t *Table) RecordPrefix() kv.Key {
 	return t.recordPrefix
 }
 
 // IndexPrefix implements table.Table IndexPrefix interface.
-func (t *Table) IndexPrefix() string {
+func (t *Table) IndexPrefix() kv.Key {
 	return t.indexPrefix
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *Table) RecordKey(h int64, col *column.Col) []byte {
+func (t *Table) RecordKey(h int64, col *column.Col) kv.Key {
 	colID := int64(0)
 	if col != nil {
 		colID = col.ID
@@ -261,8 +260,8 @@ func (t *Table) RecordKey(h int64, col *column.Col) []byte {
 }
 
 // FirstKey implements table.Table FirstKey interface.
-func (t *Table) FirstKey() string {
-	return string(t.RecordKey(0, nil))
+func (t *Table) FirstKey() kv.Key {
+	return t.RecordKey(0, nil)
 }
 
 // FindIndexByColName implements table.Table FindIndexByColName interface.
@@ -283,7 +282,7 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 
 // Truncate implements table.Table Truncate interface.
 func (t *Table) Truncate(rm kv.RetrieverMutator) error {
-	err := util.DelKeyWithPrefix(rm, t.KeyPrefix())
+	err := util.DelKeyWithPrefix(rm, t.RecordPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -646,9 +645,9 @@ func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interfa
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *Table) IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col,
+func (t *Table) IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col,
 	fn table.RecordIterFunc) error {
-	it, err := retriever.Seek([]byte(startKey))
+	it, err := retriever.Seek(startKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -660,8 +659,8 @@ func (t *Table) IterRecords(retriever kv.Retriever, startKey string, cols []*col
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
-	prefix := t.KeyPrefix()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+	prefix := t.RecordPrefix()
+	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
@@ -730,7 +729,7 @@ var (
 )
 
 // record prefix is "t[tableID]_r"
-func genTableRecordPrefix(tableID int64) []byte {
+func genTableRecordPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(TablePrefix)+8+len(recordPrefixSep))
 	buf = append(buf, TablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
@@ -739,7 +738,7 @@ func genTableRecordPrefix(tableID int64) []byte {
 }
 
 // index prefix is "t[tableID]_i"
-func genTableIndexPrefix(tableID int64) []byte {
+func genTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(TablePrefix)+8+len(indexPrefixSep))
 	buf = append(buf, TablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
@@ -747,7 +746,7 @@ func genTableIndexPrefix(tableID int64) []byte {
 	return buf
 }
 
-func encodeRecordKey(recordPrefix string, h int64, columnID int64) []byte {
+func encodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+16)
 	buf = append(buf, recordPrefix...)
 	buf = codec.EncodeInt(buf, h)
@@ -759,15 +758,15 @@ func encodeRecordKey(recordPrefix string, h int64, columnID int64) []byte {
 }
 
 // EncodeRecordKey encodes the record key for a table column.
-func EncodeRecordKey(tableID int64, h int64, columnID int64) []byte {
+func EncodeRecordKey(tableID int64, h int64, columnID int64) kv.Key {
 	prefix := genTableRecordPrefix(tableID)
-	return encodeRecordKey(string(prefix), h, columnID)
+	return encodeRecordKey(prefix, h, columnID)
 }
 
 // DecodeRecordKey decodes the key and gets the tableID, handle and columnID.
-func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, err error) {
+func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, err error) {
 	k := key
-	if !bytes.HasPrefix(key, TablePrefix) {
+	if !key.HasPrefix(TablePrefix) {
 		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
 	}
 
@@ -777,7 +776,7 @@ func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, e
 		return 0, 0, 0, errors.Trace(err)
 	}
 
-	if !bytes.HasPrefix(key, recordPrefixSep) {
+	if !key.HasPrefix(recordPrefixSep) {
 		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
 	}
 
@@ -800,8 +799,8 @@ func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, e
 }
 
 // DecodeRecordKeyHandle decodes the key and gets the record handle.
-func DecodeRecordKeyHandle(key string) (int64, error) {
-	_, handle, _, err := DecodeRecordKey([]byte(key))
+func DecodeRecordKeyHandle(key kv.Key) (int64, error) {
+	_, handle, _, err := DecodeRecordKey(key)
 	return handle, errors.Trace(err)
 }
 

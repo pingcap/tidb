@@ -101,7 +101,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 		val := encodeInt(i * indexStep)
 		iter, err := txn.Seek(val)
 		c.Assert(err, IsNil)
-		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
 		iter.Close()
 	}
@@ -111,7 +111,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 		val := encodeInt(i * indexStep)
 		iter, err := txn.Seek(val)
 		c.Assert(err, IsNil)
-		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
 		err = iter.Next()
@@ -119,7 +119,7 @@ func checkSeek(c *C, txn kv.Transaction) {
 		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
@@ -136,8 +136,8 @@ func checkSeek(c *C, txn kv.Transaction) {
 	iter, err = txn.Seek(inBetween)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsTrue)
-	c.Assert(iter.Key(), Not(Equals), string(inBetween))
-	c.Assert(iter.Key(), Equals, string(last))
+	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
+	c.Assert([]byte(iter.Key()), BytesEquals, last)
 	iter.Close()
 }
 
@@ -338,30 +338,30 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 
 	it, err := txn.Seek([]byte("0"))
 	c.Assert(err, IsNil)
-	c.Assert(it.Key(), Equals, "1")
+	c.Assert(string(it.Key()), Equals, "1")
 
 	err = txn.Set([]byte("0"), []byte("0"))
 	c.Assert(err, IsNil)
 	it, err = txn.Seek([]byte("0"))
 	c.Assert(err, IsNil)
-	c.Assert(it.Key(), Equals, "0")
+	c.Assert(string(it.Key()), Equals, "0")
 	err = txn.Delete([]byte("0"))
 	c.Assert(err, IsNil)
 
 	txn.Delete([]byte("1"))
 	it, err = txn.Seek([]byte("0"))
 	c.Assert(err, IsNil)
-	c.Assert(it.Key(), Equals, "2")
+	c.Assert(string(it.Key()), Equals, "2")
 
 	err = txn.Delete([]byte("3"))
 	c.Assert(err, IsNil)
 	it, err = txn.Seek([]byte("2"))
 	c.Assert(err, IsNil)
-	c.Assert(it.Key(), Equals, "2")
+	c.Assert(string(it.Key()), Equals, "2")
 
 	it, err = txn.Seek([]byte("3"))
 	c.Assert(err, IsNil)
-	c.Assert(it.Key(), Equals, "4")
+	c.Assert(string(it.Key()), Equals, "4")
 	err = txn.Delete([]byte("2"))
 	c.Assert(err, IsNil)
 	err = txn.Delete([]byte("4"))
