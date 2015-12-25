@@ -31,7 +31,6 @@ package server
 import (
 	"math/rand"
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,7 +49,6 @@ type Server struct {
 	cfg               *Config
 	driver            IDriver
 	listener          net.Listener
-	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 }
@@ -101,7 +99,6 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(100),
-		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 	}
 
@@ -132,9 +129,6 @@ func (s *Server) Run() error {
 
 // Close closes the server.
 func (s *Server) Close() {
-	s.rwlock.Lock()
-	defer s.rwlock.Unlock()
-
 	if s.listener != nil {
 		s.listener.Close()
 		s.listener = nil
@@ -156,9 +150,7 @@ func (s *Server) onConn(c net.Conn) {
 		log.Infof("close %s", conn)
 	}()
 
-	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
-	s.rwlock.Unlock()
 
 	conn.Run()
 }
