@@ -229,7 +229,7 @@ func (s *dbStore) doCommit(cmd *command) {
 	// Update commit version.
 	txn.version = curVer
 	b := s.db.NewBatch()
-	txn.WalkBuffer(func(k kv.Key, value []byte) error {
+	txn.us.WalkBuffer(func(k kv.Key, value []byte) error {
 		mvccKey := MvccEncodeVersionKey(kv.Key(k), curVer)
 		if len(value) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
@@ -408,16 +408,7 @@ func (s *dbStore) Begin() (kv.Transaction, error) {
 		return nil, errors.Trace(err)
 	}
 
-	txn := &dbTxn{
-		tid:        beginVer.Ver,
-		valid:      true,
-		store:      s,
-		version:    kv.MinVersion,
-		lockedKeys: make(map[string]struct{}),
-	}
-	log.Debugf("[kv] Begin txn:%d", txn.tid)
-	txn.UnionStore = kv.NewUnionStore(newSnapshot(s, beginVer))
-	return txn, nil
+	return newTxn(s, beginVer), nil
 }
 
 func (s *dbStore) Close() error {

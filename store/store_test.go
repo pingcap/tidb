@@ -202,7 +202,7 @@ func (s *testKVSuite) TestInc(c *C) {
 	c.Assert(err, IsNil)
 
 	key := []byte("incKey")
-	n, err := txn.Inc(key, 100)
+	n, err := kv.IncInt64(txn, key, 100)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(100))
 
@@ -213,14 +213,14 @@ func (s *testKVSuite) TestInc(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	n, err = txn.Inc(key, -200)
+	n, err = kv.IncInt64(txn, key, -200)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(-100))
 
 	err = txn.Delete(key)
 	c.Assert(err, IsNil)
 
-	n, err = txn.Inc(key, 100)
+	n, err = kv.IncInt64(txn, key, 100)
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(100))
 
@@ -506,7 +506,7 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Delete([]byte("b"))
-	txn.Inc([]byte("a"), 1)
+	kv.IncInt64(txn, []byte("a"), 1)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
@@ -571,11 +571,11 @@ func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
 
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		txn.Set([]byte("a"), []byte("0"))
-		txn.Inc([]byte("a"), 1)
+		kv.IncInt64(txn, []byte("a"), 1)
 
 		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 			txn.Set([]byte("b"), []byte("0"))
-			txn.Inc([]byte("b"), 1)
+			kv.IncInt64(txn, []byte("b"), 1)
 
 			return nil
 		})
@@ -584,11 +584,11 @@ func (s *testKVSuite) TestBoltDBDeadlock(c *C) {
 	})
 
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
-		n, err := txn.GetInt64([]byte("a"))
+		n, err := kv.GetInt64(txn, []byte("a"))
 		c.Assert(err, IsNil)
 		c.Assert(n, Equals, int64(1))
 
-		n, err = txn.GetInt64([]byte("b"))
+		n, err = kv.GetInt64(txn, []byte("b"))
 		c.Assert(err, IsNil)
 		c.Assert(n, Equals, int64(1))
 		return nil

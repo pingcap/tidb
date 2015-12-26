@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
 )
@@ -109,4 +110,35 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 		c.Assert(iter.Next(), IsNil)
 	}
 	c.Assert(iter.Valid(), IsFalse)
+}
+
+type mockSnapshot struct {
+	store MemBuffer
+}
+
+func (s *mockSnapshot) Get(k Key) ([]byte, error) {
+	return s.store.Get(k)
+}
+
+func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+	m := make(map[string][]byte)
+	for _, k := range keys {
+		v, err := s.store.Get(k)
+		if IsErrNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m[string(k)] = v
+	}
+	return m, nil
+}
+
+func (s *mockSnapshot) Seek(k Key) (Iterator, error) {
+	return s.store.Seek(k)
+}
+
+func (s *mockSnapshot) Release() {
+	s.store.Release()
 }

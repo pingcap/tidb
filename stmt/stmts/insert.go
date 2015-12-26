@@ -192,13 +192,6 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 		return nil, errors.Trace(err)
 	}
 
-	if len(s.OnDuplicate) > 0 {
-		err = s.prefetchIndices(ctx, t, rows)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
 	for i, row := range rows {
 		if len(s.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
@@ -215,7 +208,7 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 			continue
 		}
 
-		if len(s.OnDuplicate) == 0 || !terror.ErrorEqual(err, terror.ErrKeyExists) {
+		if len(s.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
 		if err = execOnDuplicateUpdate(ctx, t, row, h, toUpdateColumns); err != nil {
@@ -224,45 +217,6 @@ func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error)
 	}
 
 	return nil, nil
-}
-
-// prefetchIndices uses a BatchPrefetch to load all unique indices that very likely
-// will be checked later. The fetched data will be stored in kv cache.
-func (s *InsertIntoStmt) prefetchIndices(ctx context.Context, t table.Table, rows [][]interface{}) error {
-	var keys []kv.Key
-	for _, index := range t.Indices() {
-		if !index.Unique {
-			continue
-		}
-		for _, row := range rows {
-			colVals, err := index.FetchValues(row)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			key, distinct, err := index.X.GenIndexKey(colVals, 0)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if distinct {
-				keys = append(keys, key)
-			}
-		}
-	}
-	// Only activate if we got more than 1 distinct index.
-	if len(keys) <= 1 {
-		return nil
-	}
-
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = txn.BatchPrefetch(keys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 func (s *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
