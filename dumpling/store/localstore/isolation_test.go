@@ -39,7 +39,7 @@ func (t *testIsolationSuite) TestInc(c *C) {
 				var id int64
 				err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 					var err1 error
-					id, err1 = txn.Inc([]byte("key"), 1)
+					id, err1 = kv.IncInt64(txn, []byte("key"), 1)
 					return err1
 				})
 				c.Assert(err, IsNil)
@@ -79,7 +79,7 @@ func (t *testIsolationSuite) TestMultiInc(c *C) {
 			for j := 0; j < incCnt; j++ {
 				err1 := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 					for _, key := range keys {
-						_, err2 := txn.Inc(key, 1)
+						_, err2 := kv.IncInt64(txn, key, 1)
 						if err2 != nil {
 							return err2
 						}
@@ -97,7 +97,7 @@ func (t *testIsolationSuite) TestMultiInc(c *C) {
 	for i := 0; i < keyCnt; i++ {
 		err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 			for _, key := range keys {
-				id, err1 := txn.GetInt64(key)
+				id, err1 := kv.GetInt64(txn, key)
 				if err1 != nil {
 					return err1
 				}

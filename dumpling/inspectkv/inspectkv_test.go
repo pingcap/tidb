@@ -14,9 +14,11 @@
 package inspectkv
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
@@ -34,33 +37,48 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testInspectSuite{})
+var _ = Suite(&testSuite{})
 
-type testInspectSuite struct {
+type testSuite struct {
+	store  kv.Storage
+	ctx    *mock.Context
+	dbInfo *model.DBInfo
+	tbInfo *model.TableInfo
 }
 
-func (s *testInspectSuite) TestInspect(c *C) {
+func (s *testSuite) SetUpSuite(c *C) {
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
-	store, err := driver.Open("memory:test_inspect")
-	c.Assert(err, IsNil)
-	defer store.Close()
-
-	txn, err := store.Begin()
+	var err error
+	s.store, err = driver.Open("memory:test_inspect")
 	c.Assert(err, IsNil)
 
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	variable.BindSessionVars(s.ctx)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
-	dbInfo := &model.DBInfo{
+	s.dbInfo = &model.DBInfo{
 		ID:   1,
 		Name: model.NewCIStr("a"),
 	}
-	err = t.CreateDatabase(dbInfo)
+	err = t.CreateDatabase(s.dbInfo)
 	c.Assert(err, IsNil)
 
 	col := &model.ColumnInfo{
 		Name:         model.NewCIStr("c"),
 		ID:           0,
 		Offset:       0,
+		DefaultValue: 1,
+		State:        model.StatePublic,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+	}
+	col1 := &model.ColumnInfo{
+		Name:         model.NewCIStr("c1"),
+		ID:           1,
+		Offset:       1,
 		DefaultValue: 1,
 		State:        model.StatePublic,
 		FieldType:    *types.NewFieldType(mysql.TypeLong),
@@ -76,15 +94,40 @@ func (s *testInspectSuite) TestInspect(c *C) {
 		}},
 		State: model.StatePublic,
 	}
-	tbInfo := &model.TableInfo{
+	s.tbInfo = &model.TableInfo{
 		ID:      1,
 		Name:    model.NewCIStr("t"),
 		State:   model.StatePublic,
-		Columns: []*model.ColumnInfo{col},
+		Columns: []*model.ColumnInfo{col, col1},
 		Indices: []*model.IndexInfo{idx},
 	}
-	err = t.CreateTable(dbInfo.ID, tbInfo)
+	err = t.CreateTable(s.dbInfo.ID, s.tbInfo)
 	c.Assert(err, IsNil)
+
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TearDownSuite(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+
+	err = t.DropTable(s.dbInfo.ID, s.tbInfo.ID)
+	c.Assert(err, IsNil)
+	err = t.DropDatabase(s.dbInfo.ID)
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	err = s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestGetDDLInfo(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
 
 	owner := &model.Owner{OwnerID: "owner"}
 	err = t.SetDDLOwner(owner)
@@ -107,61 +150,227 @@ func (s *testInspectSuite) TestInspect(c *C) {
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Commit()
 	c.Assert(err, IsNil)
+}
 
-	ctx := mock.NewContext()
-	c.Assert(err, IsNil)
-	ctx.Store = store
-	variable.BindSessionVars(ctx)
-
-	alloc := autoid.NewAllocator(store, dbInfo.ID)
-	tb, err := tables.TableFromMeta(alloc, tbInfo)
+func (s *testSuite) TestScan(c *C) {
+	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
+	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
-	_, err = tb.AddRecord(ctx, []interface{}{10}, 0)
+	_, err = tb.AddRecord(s.ctx, []interface{}{10, 11}, 0)
 	c.Assert(err, IsNil)
-	ctx.FinishTxn(false)
+	s.ctx.FinishTxn(false)
 
-	record := &RecordData{Handle: int64(1), Values: []interface{}{int64(10)}}
-	ver, err := store.CurrentVersion()
+	record1 := &RecordData{Handle: int64(1), Values: []interface{}{int64(10), int64(11)}}
+	record2 := &RecordData{Handle: int64(2), Values: []interface{}{int64(20), int64(21)}}
+	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	records, _, err := ScanSnapshotTableData(store, ver, tb, int64(1), 1)
+	records, _, err := ScanSnapshotTableRecord(s.store, ver, tb, int64(1), 1)
 	c.Assert(err, IsNil)
-	c.Assert(records, DeepEquals, []*RecordData{record})
+	c.Assert(records, DeepEquals, []*RecordData{record1})
 
-	_, err = tb.AddRecord(ctx, []interface{}{20}, 0)
+	_, err = tb.AddRecord(s.ctx, record2.Values, record2.Handle)
 	c.Assert(err, IsNil)
-	ctx.FinishTxn(false)
-	txn, err = store.Begin()
+	s.ctx.FinishTxn(false)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	records, nextHandle, err := ScanTableData(tb, txn, int64(1), 1)
+	records, nextHandle, err := ScanTableRecord(txn, tb, int64(1), 1)
 	c.Assert(err, IsNil)
-	c.Assert(records, DeepEquals, []*RecordData{record})
-	records, nextHandle, err = ScanTableData(tb, txn, nextHandle, 1)
+	c.Assert(records, DeepEquals, []*RecordData{record1})
+	records, nextHandle, err = ScanTableRecord(txn, tb, nextHandle, 1)
 	c.Assert(err, IsNil)
-	record.Handle = int64(2)
-	record.Values = []interface{}{int64(20)}
-	c.Assert(records, DeepEquals, []*RecordData{record})
+	c.Assert(records, DeepEquals, []*RecordData{record2})
 	startHandle := nextHandle
-	records, nextHandle, err = ScanTableData(tb, txn, startHandle, 1)
+	records, nextHandle, err = ScanTableRecord(txn, tb, startHandle, 1)
+	c.Assert(err, IsNil)
 	c.Assert(records, IsNil)
 	c.Assert(nextHandle, Equals, startHandle)
-	c.Assert(err, IsNil)
 
-	idxRow1 := &IndexRow{Handle: int64(1), Values: []interface{}{int64(10)}}
-	idxRow2 := &IndexRow{Handle: int64(2), Values: []interface{}{int64(20)}}
+	idxRow1 := &RecordData{Handle: int64(1), Values: []interface{}{int64(10)}}
+	idxRow2 := &RecordData{Handle: int64(2), Values: []interface{}{int64(20)}}
 	kvIndex := kv.NewKVIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
-	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, []interface{}{int64(10)}, 2)
+	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
-	c.Assert(idxRows, DeepEquals, []*IndexRow{idxRow1, idxRow2})
-	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, []interface{}{int64(10)}, 1)
+	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
+	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, idxRow1.Values, 1)
 	c.Assert(err, IsNil)
-	c.Assert(idxRows, DeepEquals, []*IndexRow{idxRow1})
+	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
 	c.Assert(err, IsNil)
-	c.Assert(idxRows, DeepEquals, []*IndexRow{idxRow2})
+	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow2})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
 	c.Assert(idxRows, IsNil)
 	c.Assert(nextVals, DeepEquals, []interface{}{nil})
 	c.Assert(err, IsNil)
+
+	s.testTableData(c, tb, []*RecordData{record1, record2})
+
+	s.testIndex(c, tb, tb.Indices()[0])
+
+	err = tb.RemoveRecord(s.ctx, 1, record1.Values)
+	c.Assert(err, IsNil)
+	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
+	c.Assert(err, IsNil)
+}
+
+func newDiffRetError(prefix string, ra, rb *RecordData) string {
+	return fmt.Sprintf("%s:%v != record:%v", prefix, ra, rb)
+}
+
+func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+
+	err = CompareTableRecord(txn, tb, rs, true)
+	c.Assert(err, IsNil)
+
+	cnt, err := GetTableRecordsCount(txn, tb, 0)
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Equals, int64(len(rs)))
+
+	records := []*RecordData{
+		{Handle: rs[0].Handle},
+		{Handle: rs[1].Handle},
+	}
+	err = CompareTableRecord(txn, tb, records, false)
+	c.Assert(err, IsNil)
+
+	record := &RecordData{Handle: rs[1].Handle, Values: []interface{}{int64(30)}}
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record}, true)
+	c.Assert(err, NotNil)
+	diffMsg := newDiffRetError("data", record, rs[1])
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	record.Handle = 3
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
+	c.Assert(err, NotNil)
+	diffMsg = newDiffRetError("data", record, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], rs[1], record}, true)
+	c.Assert(err, NotNil)
+	diffMsg = newDiffRetError("data", record, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	err = CompareTableRecord(txn, tb, []*RecordData{rs[0]}, true)
+	c.Assert(err, NotNil)
+	diffMsg = newDiffRetError("data", nil, rs[1])
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	err = CompareTableRecord(txn, tb, nil, true)
+	c.Assert(err, NotNil)
+	diffMsg = newDiffRetError("data", nil, rs[0])
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	errRs := append(rs, &RecordData{Handle: int64(1), Values: []interface{}{int64(3)}})
+	err = CompareTableRecord(txn, tb, errRs, false)
+	c.Assert(err.Error(), DeepEquals, "handle:1 is repeated in data")
+}
+
+func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+
+	err = CompareIndexData(txn, tb, idx)
+	c.Assert(err, IsNil)
+
+	cnt, err := GetIndexRecordsCount(txn, idx.X, nil)
+	c.Assert(err, IsNil)
+	c.Assert(cnt, Equals, int64(2))
+
+	// current index data:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
+	// index col data (handle, data): (1, 10), (2, 20), (4, 40)
+	err = idx.X.Create(txn, []interface{}{int64(30)}, 3)
+	c.Assert(err, IsNil)
+	col := tb.Cols()[idx.Columns[0].Offset]
+	key := tb.RecordKey(4, col)
+	err = tb.SetColValue(txn, key, int64(40))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = CompareIndexData(txn, tb, idx)
+	c.Assert(err, NotNil)
+	record1 := &RecordData{Handle: int64(3), Values: []interface{}{int64(30)}}
+	diffMsg := newDiffRetError("index", record1, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	// current index data:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
+	err = idx.X.Create(txn, []interface{}{int64(40)}, 4)
+	c.Assert(err, IsNil)
+	key = tb.RecordKey(3, col)
+	err = tb.SetColValue(txn, key, int64(31))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = CompareIndexData(txn, tb, idx)
+	c.Assert(err, NotNil)
+	record2 := &RecordData{Handle: int64(3), Values: []interface{}{int64(31)}}
+	diffMsg = newDiffRetError("index", record1, record2)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	// current index data:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (5, 30)
+	key = tb.RecordKey(3, col)
+	txn.Delete(key)
+	key = tb.RecordKey(5, col)
+	err = tb.SetColValue(txn, key, int64(30))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = checkRecordAndIndex(txn, tb, idx)
+	c.Assert(err, NotNil)
+	record2 = &RecordData{Handle: int64(5), Values: []interface{}{int64(30)}}
+	diffMsg = newDiffRetError("index", record1, record2)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	// current index data:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	// index col data (handle, data): (1, 10), (2, 20), (3, 30)
+	key = tb.RecordKey(4, col)
+	txn.Delete(key)
+	key = tb.RecordKey(3, col)
+	err = tb.SetColValue(txn, key, int64(30))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = CompareIndexData(txn, tb, idx)
+	c.Assert(err, NotNil)
+	record1 = &RecordData{Handle: int64(4), Values: []interface{}{int64(40)}}
+	diffMsg = newDiffRetError("index", record1, nil)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
+
+	// current index data:
+	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
+	// index col data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
+	err = idx.X.Delete(txn, []interface{}{int64(40)}, 4)
+	c.Assert(err, IsNil)
+	key = tb.RecordKey(4, col)
+	err = tb.SetColValue(txn, key, int64(40))
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = CompareIndexData(txn, tb, idx)
+	c.Assert(err, NotNil)
+	diffMsg = newDiffRetError("index", nil, record1)
+	c.Assert(err.Error(), DeepEquals, diffMsg)
 }

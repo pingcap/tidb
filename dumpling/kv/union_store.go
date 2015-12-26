@@ -15,29 +15,17 @@ package kv
 
 import (
 	"bytes"
-	"strconv"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/pool"
-	"github.com/pingcap/tidb/terror"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// Inc increases the value for key k in KV storage by step.
-	Inc(k Key, step int64) (int64, error)
-	// GetInt64 get int64 which created by Inc method.
-	GetInt64(k Key) (int64, error)
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
-	// BatchPrefetch fetches values from KV storage to cache for later use.
-	BatchPrefetch(keys []Key) error
-	// RangePrefetch fetches values in the range [start, end] from KV storage
-	// to cache for later use. Maximum number of values is up to limit.
-	RangePrefetch(start, end Key, limit int) error
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -45,8 +33,6 @@ type UnionStore interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
-	// ReleaseSnapshot releases underlying snapshot.
-	ReleaseSnapshot()
 }
 
 // Option is used for customizing kv store's behaviors during a transaction.
@@ -59,7 +45,7 @@ type Options interface {
 }
 
 var (
-	p = pool.NewCache("memdb pool", 100, func() interface{} {
+	p = newCache("memdb pool", 100, func() MemBuffer {
 		return NewMemDbBuffer()
 	})
 )
@@ -75,15 +61,11 @@ type unionStore struct {
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
-	lazy := &lazyMemBuffer{}
-	opts := make(map[Option]interface{})
-	cacheSnapshot := NewCacheSnapshot(snapshot, lazy, options(opts))
-	bufferStore := NewBufferStore(cacheSnapshot)
 	return &unionStore{
-		BufferStore:        bufferStore,
-		snapshot:           cacheSnapshot,
-		lazyConditionPairs: lazy,
-		opts:               opts,
+		BufferStore:        NewBufferStore(snapshot),
+		snapshot:           snapshot,
+		lazyConditionPairs: &lazyMemBuffer{},
+		opts:               make(map[Option]interface{}),
 	}
 }
 
@@ -101,7 +83,7 @@ func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
-		lmb.mb = p.Get().(MemBuffer)
+		lmb.mb = p.get()
 	}
 
 	return lmb.mb.Set(key, value)
@@ -109,7 +91,7 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 
 func (lmb *lazyMemBuffer) Delete(k Key) error {
 	if lmb.mb == nil {
-		lmb.mb = p.Get().(MemBuffer)
+		lmb.mb = p.get()
 	}
 
 	return lmb.mb.Delete(k)
@@ -117,7 +99,7 @@ func (lmb *lazyMemBuffer) Delete(k Key) error {
 
 func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
 	if lmb.mb == nil {
-		lmb.mb = p.Get().(MemBuffer)
+		lmb.mb = p.get()
 	}
 
 	return lmb.mb.Seek(k)
@@ -130,60 +112,40 @@ func (lmb *lazyMemBuffer) Release() {
 
 	lmb.mb.Release()
 
-	p.Put(lmb.mb)
+	p.put(lmb.mb)
 	lmb.mb = nil
 }
 
-// Inc implements the UnionStore interface.
-func (us *unionStore) Inc(k Key, step int64) (int64, error) {
-	val, err := us.Get(k)
+// Get implements the Retriever interface.
+func (us *unionStore) Get(k Key) ([]byte, error) {
+	v, err := us.MemBuffer.Get(k)
 	if IsErrNotFound(err) {
-		err = us.Set(k, []byte(strconv.FormatInt(step, 10)))
-		if err != nil {
-			return 0, errors.Trace(err)
+		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
+			err = us.markLazyConditionPair(k, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			return nil, errors.Trace(ErrNotExist)
 		}
-		return step, nil
 	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	intVal += step
-	err = us.Set(k, []byte(strconv.FormatInt(intVal, 10)))
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return intVal, nil
-}
-
-// GetInt64 implements UnionStore interface.
-func (us *unionStore) GetInt64(k Key) (int64, error) {
-	val, err := us.Get(k)
 	if IsErrNotFound(err) {
-		return 0, nil
+		v, err = us.BufferStore.r.Get(k)
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return v, errors.Trace(err)
 	}
-	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	return intVal, errors.Trace(err)
+	if len(v) == 0 {
+		return nil, errors.Trace(ErrNotExist)
+	}
+	return v, nil
 }
 
-// BatchPrefetch implements the UnionStore interface.
-func (us *unionStore) BatchPrefetch(keys []Key) error {
-	_, err := us.snapshot.BatchGet(keys)
-	return errors.Trace(err)
-}
-
-// RangePrefetch implements the UnionStore interface.
-func (us *unionStore) RangePrefetch(start, end Key, limit int) error {
-	_, err := us.snapshot.RangeGet(start, end, limit)
-	return errors.Trace(err)
+// markLazyConditionPair marks a kv pair for later check.
+func (us *unionStore) markLazyConditionPair(k Key, v []byte) error {
+	if len(v) == 0 {
+		return errors.Trace(us.lazyConditionPairs.Delete(k))
+	}
+	return errors.Trace(us.lazyConditionPairs.Set(k, v))
 }
 
 // CheckLazyConditionPairs implements the UnionStore interface.
@@ -213,7 +175,7 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 	for ; it.Valid(); it.Next() {
 		if len(it.Value()) == 0 {
 			if _, exist := values[it.Key()]; exist {
-				return errors.Trace(terror.ErrKeyExists)
+				return errors.Trace(ErrKeyExists)
 			}
 		} else {
 			if bytes.Compare(values[it.Key()], it.Value()) != 0 {
@@ -232,11 +194,6 @@ func (us *unionStore) SetOption(opt Option, val interface{}) {
 // DelOption implements the UnionStore DelOption interface.
 func (us *unionStore) DelOption(opt Option) {
 	delete(us.opts, opt)
-}
-
-// ReleaseSnapshot implements the UnionStore ReleaseSnapshot interface.
-func (us *unionStore) ReleaseSnapshot() {
-	us.snapshot.Release()
 }
 
 // Release implements the UnionStore Release interface.
