@@ -393,16 +393,9 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	var hasRecordID bool
 	for _, col := range t.Cols() {
 		if mysql.HasPriKeyFlag(col.Flag) && t.meta.PKIsHandle {
-			// The value must have been filled with int64 or uint64 value, or it will not pass null check.
-			switch x := r[col.Offset].(type) {
-			case int64:
-				recordID = x
-			case uint64:
-				recordID = int64(x)
-			case int:
-				recordID = int64(x)
-			default:
-				return 0, errors.Errorf("unexpected type %T, should not happen!", x)
+			recordID, err = types.ToInt64(r[col.Offset])
+			if err != nil {
+				return 0, errors.Trace(err)
 			}
 			hasRecordID = true
 			break
