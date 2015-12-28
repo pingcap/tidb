@@ -67,7 +67,7 @@ func (r *TableNilPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.iter, err = txn.Seek([]byte(r.T.FirstKey()))
+		r.iter, err = txn.Seek(r.T.FirstKey())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -276,7 +276,7 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		r.iter, err = txn.Seek([]byte(r.T.FirstKey()))
+		r.iter, err = txn.Seek(r.T.FirstKey())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

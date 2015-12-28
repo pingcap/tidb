@@ -103,7 +103,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, err = txn.Seek([]byte(e.t.FirstKey()))
+		e.iter, err = txn.Seek(e.t.FirstKey())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/kv"
 )
 
 // TypeFlag is for data structure meta/data flag.
@@ -38,7 +39,7 @@ const (
 	ListData TypeFlag = 'l'
 )
 
-func (t *TxStructure) encodeStringDataKey(key []byte) []byte {
+func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
 	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
@@ -47,14 +48,14 @@ func (t *TxStructure) encodeStringDataKey(key []byte) []byte {
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
-func (t *TxStructure) encodeHashMetaKey(key []byte) []byte {
+func (t *TxStructure) encodeHashMetaKey(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashMeta))
 }
 
-func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) []byte {
+func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+len(field)+30)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
@@ -62,7 +63,7 @@ func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) []byte {
 	return codec.EncodeBytes(ek, field)
 }
 
-func (t *TxStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
+func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
 	var (
 		key   []byte
 		field []byte
@@ -92,21 +93,21 @@ func (t *TxStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
 	return key, field, errors.Trace(err)
 }
 
-func (t *TxStructure) hashDataKeyPrefix(key []byte) []byte {
+func (t *TxStructure) hashDataKeyPrefix(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashData))
 }
 
-func (t *TxStructure) encodeListMetaKey(key []byte) []byte {
+func (t *TxStructure) encodeListMetaKey(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(ListMeta))
 }
 
-func (t *TxStructure) encodeListDataKey(key []byte, index int64) []byte {
+func (t *TxStructure) encodeListDataKey(key []byte, index int64) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+len(key)+36)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)

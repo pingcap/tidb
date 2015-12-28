@@ -511,7 +511,7 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 		}
 
 		k := t.RecordKey(h, col)
-		data, err := retriever.Get([]byte(k))
+		data, err := retriever.Get(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -549,7 +549,7 @@ func (t *Table) LockRow(ctx context.Context, h int64) error {
 	// Get row lock key
 	lockKey := t.RecordKey(h, nil)
 	// set row lock key to current txn
-	err = txn.Set([]byte(lockKey), []byte(txn.String()))
+	err = txn.Set(lockKey, []byte(txn.String()))
 	return errors.Trace(err)
 }
 
