@@ -169,7 +169,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
 			defer iter.Close()
 			for i := 0; i < maxBatchSize; i++ {
 				if iter.Valid() && iter.Key().HasPrefix(prefix) {
-					keys = append(keys, iter.Key())
+					keys = append(keys, iter.Key().Clone())
 					err = iter.Next()
 					if err != nil {
 						return errors.Trace(err)

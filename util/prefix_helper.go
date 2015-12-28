@@ -68,7 +68,7 @@ func DelKeyWithPrefix(rm kv.RetrieverMutator, prefix kv.Key) error {
 		}
 
 		if iter.Valid() && iter.Key().HasPrefix(prefix) {
-			keys = append(keys, iter.Key())
+			keys = append(keys, iter.Key().Clone())
 			err = iter.Next()
 			if err != nil {
 				return errors.Trace(err)
