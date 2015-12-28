@@ -33,6 +33,11 @@ var (
 	encPads = []byte{encPad}
 )
 
+// MaxEncodedBytesLen returns the maximum encoded length for slice b.
+func MaxEncodedBytesLen(b []byte) int {
+	return (len(b)/encGroupSize + 1) * (encGroupSize + 1)
+}
+
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
 // encoding with the following rule:
 //  [group1][marker1]...[groupN][markerN]
@@ -49,8 +54,7 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	// Assume that the byte slice size is about `(len(data) / encGroupSize + 1) * (encGroupSize + 1)` bytes,
 	// that is `(len(data) / 8 + 1) * 9` in our implement.
 	dLen := len(data)
-	reallocSize := (dLen/encGroupSize + 1) * (encGroupSize + 1)
-	result := reallocBytes(b, reallocSize)
+	result := reallocBytes(b, MaxEncodedBytesLen(b))
 	for idx := 0; idx <= dLen; idx += encGroupSize {
 		remain := dLen - idx
 		padCount := 0
