@@ -466,7 +466,7 @@ LOOP:
 	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		i++
 		k := t.RecordKey(h, col)
-		_, err1 := txn.Get([]byte(k))
+		_, err1 := txn.Get(k)
 		c.Assert(terror.ErrorEqual(err1, kv.ErrNotExist), IsTrue)
 		return true, nil
 	})

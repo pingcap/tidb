@@ -15,7 +15,6 @@ package executor
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -104,12 +103,12 @@ func (e *TableScanExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, err = txn.Seek([]byte(e.t.FirstKey()))
+		e.iter, err = txn.Seek(e.t.FirstKey())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	if !e.iter.Valid() || !strings.HasPrefix(e.iter.Key(), e.t.KeyPrefix()) {
+	if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
 		return nil, nil
 	}
 	// TODO: check if lock valid
@@ -141,7 +140,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 	// Put rowKey to the tail of record row
 	rke := &RowKeyEntry{
 		Tbl: e.t,
-		Key: rowKey,
+		Key: string(rowKey),
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 

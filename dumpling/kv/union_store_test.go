@@ -105,7 +105,7 @@ func checkIterator(c *C, iter Iterator, keys [][]byte, values [][]byte) {
 	for i, k := range keys {
 		v := values[i]
 		c.Assert(iter.Valid(), IsTrue)
-		c.Assert(iter.Key(), Equals, string(k))
+		c.Assert([]byte(iter.Key()), BytesEquals, k)
 		c.Assert(iter.Value(), BytesEquals, v)
 		c.Assert(iter.Next(), IsNil)
 	}
