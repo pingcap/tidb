@@ -41,21 +41,21 @@ const (
 func (t *TxStructure) encodeStringDataKey(key []byte) []byte {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
+	ek := make([]byte, 0, len(t.prefix)+codec.MaxEncodedBytesLen(key)+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
 func (t *TxStructure) encodeHashMetaKey(key []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
+	ek := make([]byte, 0, len(t.prefix)+codec.MaxEncodedBytesLen(key)+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashMeta))
 }
 
 func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+len(field)+30)
+	ek := make([]byte, 0, len(t.prefix)+codec.MaxEncodedBytesLen(key)+codec.MaxEncodedBytesLen(field)+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	ek = codec.EncodeUint(ek, uint64(HashData))
@@ -93,21 +93,21 @@ func (t *TxStructure) decodeHashDataKey(ek []byte) ([]byte, []byte, error) {
 }
 
 func (t *TxStructure) hashDataKeyPrefix(key []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
+	ek := make([]byte, 0, len(t.prefix)+codec.MaxEncodedBytesLen(key)+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashData))
 }
 
 func (t *TxStructure) encodeListMetaKey(key []byte) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
+	ek := make([]byte, 0, len(t.prefix)+codec.MaxEncodedBytesLen(key)+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(ListMeta))
 }
 
 func (t *TxStructure) encodeListDataKey(key []byte, index int64) []byte {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+36)
+	ek := make([]byte, 0, len(t.prefix)+codec.MaxEncodedBytesLen(key)+16)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	ek = codec.EncodeUint(ek, uint64(ListData))

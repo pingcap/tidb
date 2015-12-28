@@ -28,7 +28,8 @@ func isTombstone(v []byte) bool {
 
 // MvccEncodeVersionKey returns the encoded key.
 func MvccEncodeVersionKey(key kv.Key, ver kv.Version) kv.EncodedKey {
-	b := codec.EncodeBytes(nil, key)
+	b := make([]byte, 0, codec.MaxEncodedBytesLen(key)+8)
+	b = codec.EncodeBytes(b, key)
 	ret := codec.EncodeUintDesc(b, ver.Ver)
 	return ret
 }

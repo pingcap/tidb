@@ -146,7 +146,7 @@ func Decode(b []byte) ([]interface{}, error) {
 		flag   byte
 		err    error
 		v      interface{}
-		values = make([]interface{}, 0)
+		values = make([]interface{}, 0, 1)
 	)
 
 	for len(b) > 0 {
