@@ -29,9 +29,6 @@ var (
 	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
 	ExecResultIsEmpty        = ClassExecutor.New(CodeExecResultIsEmpty, "exec result is empty")
 
-	UnknownStatusVar = ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
-
 	MissConnectionID = ClassExpression.New(CodeMissConnectionID, "miss connection id information")
 )
 
@@ -44,12 +41,6 @@ const (
 	CodeCommitNotInTransaction   ErrCode = 1
 	CodeRollbackNotInTransaction         = 2
 	CodeExecResultIsEmpty                = 3
-)
-
-// Variable error codes.
-const (
-	CodeUnknownStatusVar ErrCode = iota + 1
-	CodeUnknownSystemVar
 )
 
 // Expression error codes.
@@ -90,6 +81,8 @@ func (ec ErrClass) String() string {
 		return "kv"
 	case ClassServer:
 		return "server"
+	case ClassVariable:
+		return "variable"
 	case ClassExpression:
 		return "expression"
 	}
