@@ -229,12 +229,11 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 	var field []byte
 
 	for it.Valid() {
-		k := []byte(it.Key())
-		if !bytes.HasPrefix(k, dataPrefix) {
+		if !it.Key().HasPrefix(dataPrefix) {
 			break
 		}
 
-		_, field, err = t.decodeHashDataKey(k)
+		_, field, err = t.decodeHashDataKey(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}

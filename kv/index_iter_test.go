@@ -48,7 +48,7 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
-	index := kv.NewKVIndex("i", "test", 0, false)
+	index := kv.NewKVIndex([]byte("i"), "test", 0, false)
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
@@ -118,7 +118,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	index = kv.NewKVIndex("j", "test", 1, true)
+	index = kv.NewKVIndex([]byte("j"), "test", 1, true)
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
@@ -145,7 +145,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 }
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
-	index := kv.NewKVIndex("i", "test", 1, false)
+	index := kv.NewKVIndex([]byte("i"), "test", 1, false)
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -154,7 +154,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	err = index.Create(txn, values, 1)
 	c.Assert(err, IsNil)
 
-	index2 := kv.NewKVIndex("i", "test", 1, false)
+	index2 := kv.NewKVIndex([]byte("i"), "test", 1, false)
 	iter, hit, err := index2.Seek(txn, []interface{}{"abc", nil})
 	c.Assert(err, IsNil)
 	defer iter.Close()

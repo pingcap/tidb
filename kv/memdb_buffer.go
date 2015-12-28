@@ -91,8 +91,8 @@ func (i *memDbIter) Valid() bool {
 }
 
 // Key implements the Iterator Key.
-func (i *memDbIter) Key() string {
-	return string(i.iter.Key())
+func (i *memDbIter) Key() Key {
+	return i.iter.Key()
 }
 
 // Value implements the Iterator Value.
