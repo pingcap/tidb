@@ -26,7 +26,7 @@ import (
 
 // ScanMetaWithPrefix scans metadata with the prefix.
 func ScanMetaWithPrefix(retriever kv.Retriever, prefix kv.Key, filter func(kv.Key, []byte) bool) error {
-	iter, err := retriever.Seek([]byte(prefix))
+	iter, err := retriever.Seek(prefix)
 	if err != nil {
 		return errors.Trace(err)
 	}

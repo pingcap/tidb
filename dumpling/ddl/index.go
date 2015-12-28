@@ -296,7 +296,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 }
 
 func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error) {
-	_, err := txn.Get([]byte(t.RecordKey(handle, nil)))
+	_, err := txn.Get(t.RecordKey(handle, nil))
 	if terror.ErrorEqual(err, kv.ErrNotExist) {
 		// If row doesn't exist, we may have deleted the row already,
 		// no need to add index again.
@@ -317,7 +317,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 
 		col := cols[v.Offset]
 		k := t.RecordKey(handle, col)
-		data, err := txn.Get([]byte(k))
+		data, err := txn.Get(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -413,7 +413,7 @@ func lockRow(txn kv.Transaction, t table.Table, h int64) error {
 	// Get row lock key
 	lockKey := t.RecordKey(h, nil)
 	// set row lock key to current txn
-	err := txn.Set([]byte(lockKey), []byte(txn.String()))
+	err := txn.Set(lockKey, []byte(txn.String()))
 	return errors.Trace(err)
 }
 
