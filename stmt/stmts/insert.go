@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 var _ stmt.Statement = (*InsertIntoStmt)(nil)
@@ -361,33 +360,6 @@ func getOnDuplicateUpdateColumns(assignList []*expression.Assignment, t table.Ta
 func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row []interface{}, marked map[int]struct{}) error {
 	var defaultValueCols []*column.Col
 	for i, c := range t.Cols() {
-		if mysql.HasPriKeyFlag(c.Flag) && t.Meta().PKIsHandle {
-			if row[i] != nil {
-				recordID, err := types.ToInt64(row[i])
-				if err != nil {
-					return errors.Trace(err)
-				}
-				row[i] = recordID
-			} else {
-				if mysql.HasAutoIncrementFlag(c.Flag) {
-					recordID, err := t.AllocAutoID()
-					if err != nil {
-						return errors.Trace(err)
-					}
-					row[i] = recordID
-					// Notes: incompatible with mysql
-					// MySQL will set last insert id to the first row, as follows:
-					// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-					// `insert t (c1) values(1),(2),(3);`
-					// Last insert id will be 1, not 3.
-					variable.GetSessionVars(ctx).SetLastInsertID(uint64(recordID))
-				} else {
-					// Null primary key, will be checked later.
-				}
-			}
-			continue
-		}
-
 		if row[i] != nil {
 			// Column value is not nil, continue.
 			continue
@@ -399,13 +371,19 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 		}
 
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			// The auto_increment column is not primary key, don't set
-			// last insert id.
 			recordID, err := t.AllocAutoID()
 			if err != nil {
 				return errors.Trace(err)
 			}
 			row[i] = recordID
+			if mysql.HasPriKeyFlag(c.Flag) && t.Meta().PKIsHandle {
+				// Notes: incompatible with mysql
+				// MySQL will set last insert id to the first row, as follows:
+				// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
+				// `insert t (c1) values(1),(2),(3);`
+				// Last insert id will be 1, not 3.
+				variable.GetSessionVars(ctx).SetLastInsertID(uint64(recordID))
+			}
 		} else {
 			var value interface{}
 			value, _, err := tables.GetColDefaultValue(ctx, &c.ColumnInfo)

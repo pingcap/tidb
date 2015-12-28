@@ -428,6 +428,9 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 			if len(constr.Keys) == 1 {
 				key := constr.Keys[0]
 				col := column.FindCol(cols, key.ColumnName)
+				if col == nil {
+					return nil, errors.Errorf("No such column: %v", key)
+				}
 				switch col.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					tbInfo.PKIsHandle = true
