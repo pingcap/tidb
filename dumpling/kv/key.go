@@ -37,6 +37,11 @@ func (k Key) HasPrefix(prefix Key) bool {
 	return bytes.HasPrefix(k, prefix)
 }
 
+// Clone returns a copy of the Key.
+func (k Key) Clone() Key {
+	return append([]byte(nil), k...)
+}
+
 // EncodedKey represents encoded key in low-level storage engine.
 type EncodedKey []byte
 

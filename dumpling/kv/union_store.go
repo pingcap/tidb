@@ -156,7 +156,7 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 		return errors.Trace(err)
 	}
 	for ; it.Valid(); it.Next() {
-		keys = append(keys, it.Key())
+		keys = append(keys, it.Key().Clone())
 	}
 	it.Close()
 
