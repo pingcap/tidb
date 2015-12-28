@@ -54,7 +54,7 @@ func randBytes(r *rand.Rand, size int) []byte {
 
 // Put test data
 func (t *testMvccBenchSuite) loadTestData(numKeys, numVersions, valSize int) {
-	testName := fmt.Sprintf("bench-%drows-%dversions-%dsize", numRows, numVersions, valSize)
+	testName := fmt.Sprintf("bench-%drows-%dversions-%dsize", numKeys, numVersions, valSize)
 	t.s = createStore(testName).(*dbStore)
 	r := rand.New(rand.NewSource(1))
 	b := t.s.newBatch()
