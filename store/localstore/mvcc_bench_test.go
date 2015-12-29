@@ -14,7 +14,9 @@
 package localstore
 
 import (
+	crand "crypto/rand"
 	"fmt"
+	"log"
 	"math/rand"
 
 	. "github.com/pingcap/check"
@@ -37,26 +39,15 @@ func createStore(testName string) kv.Storage {
 	}
 	store, err := d.Open(path)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	return store
-}
-
-var randLetters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-func randBytes(r *rand.Rand, size int) []byte {
-	arr := make([]byte, size)
-	for i := 0; i < len(arr); i++ {
-		arr[i] = randLetters[r.Intn(len(randLetters))]
-	}
-	return arr
 }
 
 // Put test data
 func (t *testMvccBenchSuite) loadTestData(numKeys, numVersions, valSize int) {
 	testName := fmt.Sprintf("bench-%drows-%dversions-%dsize", numKeys, numVersions, valSize)
 	t.s = createStore(testName).(*dbStore)
-	r := rand.New(rand.NewSource(1))
 	b := t.s.newBatch()
 
 	for i := 0; i < numKeys; i++ {
@@ -70,7 +61,13 @@ func (t *testMvccBenchSuite) loadTestData(numKeys, numVersions, valSize int) {
 		for j := 0; j < numVersions; j++ {
 			ver := kv.NewVersion(uint64((j + 1) * 5))
 			k := MvccEncodeVersionKey(row, ver)
-			b.Put(k, randBytes(r, valSize))
+			// prepare random value
+			val := make([]byte, valSize)
+			_, err := crand.Read(val)
+			if err != nil {
+				log.Fatal(err)
+			}
+			b.Put(k, val)
 		}
 	}
 	t.s.writeBatch(b)
@@ -93,7 +90,6 @@ func (t *testMvccBenchSuite) runMvccScan(c *C, scanKeys, numVersions, valSize in
 			it.Next()
 		}
 	}
-	c.StopTimer()
 }
 
 func (t *testMvccBenchSuite) BenchmarkScan1Keys10Versions10Bytes(c *C) {
