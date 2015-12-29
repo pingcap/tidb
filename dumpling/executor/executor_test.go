@@ -43,6 +43,17 @@ func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testSuite) TestAdmin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
+	tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
+	r, err := tk.Exec("admin show ddl")
+	c.Assert(err, IsNil)
+	c.Assert(r.Next(), Equals, nil)
+}
+
 func (s *testSuite) TestPrepared(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
