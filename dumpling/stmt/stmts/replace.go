@@ -16,6 +16,7 @@ package stmts
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -67,22 +68,21 @@ func (s *ReplaceIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error
 	}
 
 	var rows [][]interface{}
-	var recordIDs []int64
 	if s.Sel != nil {
-		rows, recordIDs, err = s.getRowsSelect(ctx, t, cols)
+		rows, err = s.getRowsSelect(ctx, t, cols)
 	} else {
-		rows, recordIDs, err = s.getRows(ctx, t, cols)
+		rows, err = s.getRows(ctx, t, cols)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	for i, row := range rows {
-		h, err := t.AddRecord(ctx, row, recordIDs[i])
+	for _, row := range rows {
+		h, err := t.AddRecord(ctx, row)
 		if err == nil {
 			continue
 		}
-		if err != nil && !terror.ErrorEqual(err, terror.ErrKeyExists) {
+		if err != nil && !terror.ErrorEqual(err, kv.ErrKeyExists) {
 			return nil, errors.Trace(err)
 		}
 

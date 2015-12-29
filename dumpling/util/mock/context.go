@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 )
 
 var _ context.Context = (*Context)(nil)
@@ -90,7 +89,7 @@ func (c *Context) FinishTxn(rollback bool) error {
 func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", terror.UnknownSystemVar.Gen("unknown sys variable: %s", name)
+		return "", variable.UnknownSystemVar.Gen("Unknown system variable: %s", name)
 	}
 	return v.Value, nil
 }
@@ -99,7 +98,7 @@ func (c *Context) GetGlobalSysVar(ctx context.Context, name string) (string, err
 func (c *Context) SetGlobalSysVar(ctx context.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return terror.UnknownSystemVar.Gen("unknown sys variable: %s", name)
+		return variable.UnknownSystemVar.Gen("Unknown system variable: %s", name)
 	}
 	v.Value = value
 	return nil

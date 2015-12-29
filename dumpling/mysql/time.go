@@ -1375,3 +1375,37 @@ func ExtractTimeValue(unit string, format string) (int64, int64, int64, time.Dur
 		return 0, 0, 0, 0, errors.Errorf("invalid singel timeunit - %s", unit)
 	}
 }
+
+// IsClockUnit returns true when unit is interval unit with hour, minute or second.
+func IsClockUnit(unit string) bool {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND", "SECOND", "MINUTE", "HOUR",
+		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "MINUTE_SECOND",
+		"HOUR_MICROSECOND", "HOUR_SECOND", "HOUR_MINUTE",
+		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDateFormat returns true when the specified time format could contain only date.
+func IsDateFormat(format string) bool {
+	format = strings.TrimSpace(format)
+	seps := parseDateFormat(format)
+	length := len(format)
+	switch len(seps) {
+	case 1:
+		if (length == 8) || (length == 6) {
+			return true
+		}
+	case 3:
+		return true
+	}
+	return false
+}
+
+// ParseTimeFromInt64 parses mysql time value from int64.
+func ParseTimeFromInt64(num int64) (Time, error) {
+	return parseDateTimeFromNum(num)
+}

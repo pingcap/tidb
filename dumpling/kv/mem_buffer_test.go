@@ -79,7 +79,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Seek(val)
 		c.Assert(err, IsNil)
-		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
 		iter.Close()
 	}
@@ -89,7 +89,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 		val := encodeInt(i * indexStep)
 		iter, err := buffer.Seek(val)
 		c.Assert(err, IsNil)
-		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 
 		err = iter.Next()
@@ -97,7 +97,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 		c.Assert(iter.Valid(), IsTrue)
 
 		val = encodeInt((i + 1) * indexStep)
-		c.Assert(iter.Key(), Equals, string(val))
+		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
 		iter.Close()
 	}
@@ -114,8 +114,8 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	iter, err = buffer.Seek(inBetween)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsTrue)
-	c.Assert(iter.Key(), Not(Equals), string(inBetween))
-	c.Assert(iter.Key(), Equals, string(last))
+	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
+	c.Assert([]byte(iter.Key()), BytesEquals, last)
 	iter.Close()
 }
 

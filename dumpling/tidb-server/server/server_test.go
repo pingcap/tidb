@@ -255,6 +255,12 @@ func runTestErrorCode(c *C) {
 		checkErrorCode(c, err, tmysql.ErrOperandColumns)
 		_, err = txn2.Exec("select * from test order by row(c, c);")
 		checkErrorCode(c, err, tmysql.ErrOperandColumns)
+
+		// Variable errors
+		_, err = txn2.Exec("select @@unknown_sys_var;")
+		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
+		_, err = txn2.Exec("set @@unknown_sys_var='1';")
+		checkErrorCode(c, err, tmysql.ErrUnknownSystemVariable)
 	})
 }
 

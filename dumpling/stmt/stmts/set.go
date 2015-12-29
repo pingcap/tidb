@@ -120,7 +120,7 @@ func (s *SetStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		}
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
-			return nil, errors.Errorf("Unknown system variable '%s'", name)
+			return nil, variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
 		}
 		if sysVar.Scope == variable.ScopeNone {
 			return nil, errors.Errorf("Variable '%s' is a read only variable", name)

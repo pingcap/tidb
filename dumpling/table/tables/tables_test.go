@@ -61,16 +61,16 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.TableName().L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(tb.FirstKey(), Not(Equals), "")
-	c.Assert(tb.IndexPrefix(), Not(Equals), "")
-	c.Assert(tb.KeyPrefix(), Not(Equals), "")
+	c.Assert(string(tb.FirstKey()), Not(Equals), "")
+	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tb.FindIndexByColName("b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"}, 0)
+	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
@@ -78,9 +78,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].(int64), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
 	c.Assert(err, NotNil)
 
 	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, map[int]bool{0: false, 1: true}), IsNil)
@@ -102,7 +102,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
 	// Make sure index data is also removed after tb.RemoveRecord().
 	c.Assert(indexCnt(), Equals, 0)
-	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	// Make sure index data is also removed after tb.Truncate().
@@ -113,13 +113,13 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
+func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return 0, err
 	}
 	cnt := 0
-	err = util.ScanMetaWithPrefix(txn, prefix, func(k, v []byte) bool {
+	err = util.ScanMetaWithPrefix(txn, prefix, func(k kv.Key, v []byte) bool {
 		cnt++
 		return true
 	})
@@ -181,18 +181,18 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(tb.TableName().L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(tb.FirstKey(), Not(Equals), "")
-	c.Assert(tb.IndexPrefix(), Not(Equals), "")
-	c.Assert(tb.KeyPrefix(), Not(Equals), "")
+	c.Assert(string(tb.FirstKey()), Not(Equals), "")
+	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tb.FindIndexByColName("b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, nil}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{1, nil})
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, nil}, 0)
+	_, err = tb.AddRecord(ctx, []interface{}{2, nil})
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
@@ -218,7 +218,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 		c.Assert(handle, Equals, t.h)
 		c.Assert(columnID, Equals, t.ID)
 
-		handle, err = tables.DecodeRecordKeyHandle(string(b))
+		handle, err = tables.DecodeRecordKeyHandle(b)
 		c.Assert(err, IsNil)
 		c.Assert(handle, Equals, t.h)
 	}
@@ -236,7 +236,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range tbl {
-		_, err := tables.DecodeRecordKeyHandle(t)
+		_, err := tables.DecodeRecordKeyHandle(kv.Key(t))
 		c.Assert(err, NotNil)
 	}
 }

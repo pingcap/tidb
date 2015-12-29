@@ -18,7 +18,6 @@
 package tables
 
 import (
-	"bytes"
 	"reflect"
 	"strings"
 	"time"
@@ -52,10 +51,10 @@ type Table struct {
 	publicColumns   []*column.Col
 	writableColumns []*column.Col
 	indices         []*column.IndexedCol
-	recordPrefix    string
-	indexPrefix     string
+	recordPrefix    kv.Key
+	indexPrefix     kv.Key
 	alloc           autoid.Allocator
-	state           model.SchemaState
+	meta            *model.TableInfo
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -74,7 +73,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
-	t := NewTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
+	t := newTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
@@ -89,22 +88,20 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		t.AddIndex(idx)
 	}
-
-	t.state = tblInfo.State
+	t.meta = tblInfo
 	return t, nil
 }
 
 // NewTable constructs a Table instance.
-func NewTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
+func newTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
 	name := model.NewCIStr(tableName)
 	t := &Table{
 		ID:           tableID,
 		Name:         name,
-		recordPrefix: string(genTableRecordPrefix(tableID)),
-		indexPrefix:  string(genTableIndexPrefix(tableID)),
+		recordPrefix: genTableRecordPrefix(tableID),
+		indexPrefix:  genTableIndexPrefix(tableID),
 		alloc:        alloc,
 		Columns:      cols,
-		state:        model.StatePublic,
 	}
 
 	t.publicColumns = t.Cols()
@@ -134,22 +131,7 @@ func (t *Table) TableName() model.CIStr {
 
 // Meta implements table.Table Meta interface.
 func (t *Table) Meta() *model.TableInfo {
-	ti := &model.TableInfo{
-		Name:  t.Name,
-		ID:    t.ID,
-		State: t.state,
-	}
-	// load table meta
-	for _, col := range t.Columns {
-		ti.Columns = append(ti.Columns, &col.ColumnInfo)
-	}
-
-	// load table indices
-	for _, idx := range t.indices {
-		ti.Indices = append(ti.Indices, &idx.IndexInfo)
-	}
-
-	return ti
+	return t.meta
 }
 
 // Cols implements table.Table Cols interface.
@@ -241,18 +223,18 @@ func (t *Table) flatten(data interface{}) (interface{}, error) {
 	}
 }
 
-// KeyPrefix implements table.Table KeyPrefix interface.
-func (t *Table) KeyPrefix() string {
+// RecordPrefix implements table.Table RecordPrefix interface.
+func (t *Table) RecordPrefix() kv.Key {
 	return t.recordPrefix
 }
 
 // IndexPrefix implements table.Table IndexPrefix interface.
-func (t *Table) IndexPrefix() string {
+func (t *Table) IndexPrefix() kv.Key {
 	return t.indexPrefix
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *Table) RecordKey(h int64, col *column.Col) []byte {
+func (t *Table) RecordKey(h int64, col *column.Col) kv.Key {
 	colID := int64(0)
 	if col != nil {
 		colID = col.ID
@@ -261,8 +243,8 @@ func (t *Table) RecordKey(h int64, col *column.Col) []byte {
 }
 
 // FirstKey implements table.Table FirstKey interface.
-func (t *Table) FirstKey() string {
-	return string(t.RecordKey(0, nil))
+func (t *Table) FirstKey() kv.Key {
+	return t.RecordKey(0, nil)
 }
 
 // FindIndexByColName implements table.Table FindIndexByColName interface.
@@ -283,7 +265,7 @@ func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
 
 // Truncate implements table.Table Truncate interface.
 func (t *Table) Truncate(rm kv.RetrieverMutator) error {
-	err := util.DelKeyWithPrefix(rm, t.KeyPrefix())
+	err := util.DelKeyWithPrefix(rm, t.RecordPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -406,11 +388,19 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error) {
-	// Already have recordID
-	if h != 0 {
-		recordID = int64(h)
-	} else {
+func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
+	var hasRecordID bool
+	for _, col := range t.Cols() {
+		if col.IsPKHandleColumn(t.meta) {
+			recordID, err = types.ToInt64(r[col.Offset])
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			hasRecordID = true
+			break
+		}
+	}
+	if !hasRecordID {
 		recordID, err = t.alloc.Alloc(t.ID)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -430,7 +420,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 		}
 		colVals, _ := v.FetchValues(r)
 		if err = v.X.Create(bs, colVals, recordID); err != nil {
-			if terror.ErrorEqual(err, terror.ErrKeyExists) {
+			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
 				iter, _, err1 := v.X.Seek(bs, colVals)
@@ -453,6 +443,10 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}, h int64) (record
 
 	// Set public and write only column value.
 	for _, col := range t.writableCols() {
+		if col.IsPKHandleColumn(t.meta) {
+			continue
+		}
+
 		var value interface{}
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
@@ -510,9 +504,13 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
+		if col.IsPKHandleColumn(t.meta) {
+			v[col.Offset] = h
+			continue
+		}
 
 		k := t.RecordKey(h, col)
-		data, err := retriever.Get([]byte(k))
+		data, err := retriever.Get(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -550,7 +548,7 @@ func (t *Table) LockRow(ctx context.Context, h int64) error {
 	// Get row lock key
 	lockKey := t.RecordKey(h, nil)
 	// set row lock key to current txn
-	err = txn.Set([]byte(lockKey), []byte(txn.String()))
+	err = txn.Set(lockKey, []byte(txn.String()))
 	return errors.Trace(err)
 }
 
@@ -646,9 +644,9 @@ func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interfa
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *Table) IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col,
+func (t *Table) IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col,
 	fn table.RecordIterFunc) error {
-	it, err := retriever.Seek([]byte(startKey))
+	it, err := retriever.Seek(startKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -660,8 +658,8 @@ func (t *Table) IterRecords(retriever kv.Retriever, startKey string, cols []*col
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
 
-	prefix := t.KeyPrefix()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+	prefix := t.RecordPrefix()
+	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
 		// get row handle
@@ -730,7 +728,7 @@ var (
 )
 
 // record prefix is "t[tableID]_r"
-func genTableRecordPrefix(tableID int64) []byte {
+func genTableRecordPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(TablePrefix)+8+len(recordPrefixSep))
 	buf = append(buf, TablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
@@ -739,7 +737,7 @@ func genTableRecordPrefix(tableID int64) []byte {
 }
 
 // index prefix is "t[tableID]_i"
-func genTableIndexPrefix(tableID int64) []byte {
+func genTableIndexPrefix(tableID int64) kv.Key {
 	buf := make([]byte, 0, len(TablePrefix)+8+len(indexPrefixSep))
 	buf = append(buf, TablePrefix...)
 	buf = codec.EncodeInt(buf, tableID)
@@ -747,7 +745,7 @@ func genTableIndexPrefix(tableID int64) []byte {
 	return buf
 }
 
-func encodeRecordKey(recordPrefix string, h int64, columnID int64) []byte {
+func encodeRecordKey(recordPrefix kv.Key, h int64, columnID int64) kv.Key {
 	buf := make([]byte, 0, len(recordPrefix)+16)
 	buf = append(buf, recordPrefix...)
 	buf = codec.EncodeInt(buf, h)
@@ -759,15 +757,15 @@ func encodeRecordKey(recordPrefix string, h int64, columnID int64) []byte {
 }
 
 // EncodeRecordKey encodes the record key for a table column.
-func EncodeRecordKey(tableID int64, h int64, columnID int64) []byte {
+func EncodeRecordKey(tableID int64, h int64, columnID int64) kv.Key {
 	prefix := genTableRecordPrefix(tableID)
-	return encodeRecordKey(string(prefix), h, columnID)
+	return encodeRecordKey(prefix, h, columnID)
 }
 
 // DecodeRecordKey decodes the key and gets the tableID, handle and columnID.
-func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, err error) {
+func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, err error) {
 	k := key
-	if !bytes.HasPrefix(key, TablePrefix) {
+	if !key.HasPrefix(TablePrefix) {
 		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
 	}
 
@@ -777,7 +775,7 @@ func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, e
 		return 0, 0, 0, errors.Trace(err)
 	}
 
-	if !bytes.HasPrefix(key, recordPrefixSep) {
+	if !key.HasPrefix(recordPrefixSep) {
 		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
 	}
 
@@ -800,8 +798,8 @@ func DecodeRecordKey(key []byte) (tableID int64, handle int64, columnID int64, e
 }
 
 // DecodeRecordKeyHandle decodes the key and gets the record handle.
-func DecodeRecordKeyHandle(key string) (int64, error) {
-	_, handle, _, err := DecodeRecordKey([]byte(key))
+func DecodeRecordKeyHandle(key kv.Key) (int64, error) {
+	_, handle, _, err := DecodeRecordKey(key)
 	return handle, errors.Trace(err)
 }
 

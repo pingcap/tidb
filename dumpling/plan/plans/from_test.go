@@ -75,9 +75,12 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	p.vars = map[string]interface{}{}
 	p.txn, _ = store.Begin()
-	p.cols = []*column.Col{
-		{
-			ColumnInfo: model.ColumnInfo{
+	tbInfo := &model.TableInfo{
+		ID:    1,
+		Name:  model.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
 				ID:           0,
 				Name:         model.NewCIStr("id"),
 				Offset:       0,
@@ -85,9 +88,7 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 				FieldType:    *types.NewFieldType(mysql.TypeLonglong),
 				State:        model.StatePublic,
 			},
-		},
-		{
-			ColumnInfo: model.ColumnInfo{
+			{
 				ID:           1,
 				Name:         model.NewCIStr("name"),
 				Offset:       1,
@@ -97,14 +98,13 @@ func (p *testFromSuit) SetUpSuite(c *C) {
 			},
 		},
 	}
-
-	p.tbl = tables.NewTable(1, "t", p.cols, &simpleAllocator{})
-
+	p.tbl, err = tables.TableFromMeta(&simpleAllocator{}, tbInfo)
+	c.Assert(err, IsNil)
 	variable.BindSessionVars(p)
 
 	var i int64
 	for i = 0; i < 10; i++ {
-		_, err = p.tbl.AddRecord(p, []interface{}{i * 10, "hello"}, 0)
+		_, err = p.tbl.AddRecord(p, []interface{}{i * 10, "hello"})
 		c.Assert(err, IsNil)
 	}
 }
@@ -131,8 +131,8 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 	pln := &plans.TableDefaultPlan{
 		T: p.tbl,
 		Fields: []*field.ResultField{
-			field.ColToResultField(p.cols[0], "t"),
-			field.ColToResultField(p.cols[1], "t"),
+			field.ColToResultField(p.tbl.Cols()[0], "t"),
+			field.ColToResultField(p.tbl.Cols()[1], "t"),
 		},
 	}
 
@@ -181,7 +181,7 @@ func (p *testFromSuit) TestTableDefaultPlan(c *C) {
 		},
 	}
 
-	idxCol.X = kv.NewKVIndex("i", "id", 0, false)
+	idxCol.X = kv.NewKVIndex([]byte("i"), "id", 0, false)
 
 	p.tbl.AddIndex(idxCol)
 
