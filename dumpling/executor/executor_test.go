@@ -48,10 +48,16 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
-	tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
+	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
 	r, err := tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	c.Assert(r.Next(), Equals, nil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, NotNil)
+
+	r, err = tk.Exec("admin check table admin_test")
+	c.Assert(err, IsNil)
+	c.Assert(r, IsNil)
 }
 
 func (s *testSuite) TestPrepared(c *C) {

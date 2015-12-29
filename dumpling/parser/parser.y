@@ -3360,11 +3360,11 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
 	}
-|	"ADMIN" "CHECK" TableNameList
+|	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
 		$$ = &ast.AdminStmt{
 			Tp:	ast.AdminCheckTable,
-			Tables: $3.([]*ast.TableName),
+			Tables: $4.([]*ast.TableName),
 		}
 	}
 

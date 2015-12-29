@@ -92,6 +92,7 @@ type Executor interface {
 type ShowDDL struct {
 	fields []*ast.ResultField
 	ctx    context.Context
+	cnt    int
 }
 
 // Fields implements Executor Fields interface.
@@ -101,6 +102,10 @@ func (e *ShowDDL) Fields() []*ast.ResultField {
 
 // Next implements Execution Next interface.
 func (e *ShowDDL) Next() (*Row, error) {
+	if e.cnt != 0 {
+		return nil, nil
+	}
+
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -111,13 +116,23 @@ func (e *ShowDDL) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if len(e.fields) != 3 {
-		return nil, errors.New("fields len invild")
+	records := []interface{}{
+		info.SchemaVer,
+		nil,
+		nil,
 	}
-	row := &Row{Data: []interface{}{info}}
-	e.fields[0].Expr.SetValue(info.SchemaVer)
-	e.fields[1].Expr.SetValue(info.Owner)
-	e.fields[2].Expr.SetValue(info.Job)
+	if info.Owner != nil {
+		records[1] = info.Owner.String()
+	}
+	if info.Job != nil {
+		records[2] = info.Job.String()
+	}
+	row := &Row{}
+	row.Data = append(row.Data, records...)
+	for i, f := range e.fields {
+		f.Expr.SetValue(records[i])
+	}
+	e.cnt++
 
 	return row, nil
 }
@@ -160,7 +175,7 @@ func (e *CheckTable) Next() (*Row, error) {
 		}
 	}
 
-	return &Row{Data: []interface{}{"OK"}}, nil
+	return nil, nil
 }
 
 // Close implements plan.Plan Close interface.

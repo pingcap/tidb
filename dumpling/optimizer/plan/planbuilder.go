@@ -34,6 +34,9 @@ const (
 	CodeUnsupportedType = iota + 1
 )
 
+// Table Name.
+const tableShowDDL = "SHOW_DDL"
+
 // BuildPlan builds a plan from a node.
 // returns ErrUnsupportedType if ast.Node type is not supported yet.
 func BuildPlan(node ast.Node) (Plan, error) {
@@ -231,11 +234,11 @@ func (b *planBuilder) buildAdmin(adm *ast.AdminStmt) Plan {
 }
 
 func buildShowDDLFields() []*ast.ResultField {
-	tbName := "SHOW_DDL"
+	tbName := tableShowDDL
 	rfs := make([]*ast.ResultField, 0, 3)
 	rfs = append(rfs, buildResultField(tbName, "SCHEMA_VER", mysql.TypeLonglong, 4))
 	rfs = append(rfs, buildResultField(tbName, "OWNER", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField(tbName, "Job", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "Job", mysql.TypeVarchar, 128))
 
 	return rfs
 }
@@ -261,11 +264,14 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 		Name:      model.NewCIStr(name),
 		FieldType: fieldType,
 	}
+	expr := &ast.ValueExpr{}
+	expr.SetType(&fieldType)
 
 	return &ast.ResultField{
 		Column:       colInfo,
 		ColumnAsName: colInfo.Name,
 		TableAsName:  model.NewCIStr(tableName),
 		DBName:       model.NewCIStr(infoschema.Name),
+		Expr:         expr,
 	}
 }
