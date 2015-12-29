@@ -376,7 +376,7 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 				return errors.Trace(err)
 			}
 			row[i] = recordID
-			if mysql.HasPriKeyFlag(c.Flag) && t.Meta().PKIsHandle {
+			if c.IsPKHandleColumn(t.Meta()) {
 				// Notes: incompatible with mysql
 				// MySQL will set last insert id to the first row, as follows:
 				// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`

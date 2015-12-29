@@ -391,7 +391,7 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]
 func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
 	var hasRecordID bool
 	for _, col := range t.Cols() {
-		if mysql.HasPriKeyFlag(col.Flag) && t.meta.PKIsHandle {
+		if col.IsPKHandleColumn(t.meta) {
 			recordID, err = types.ToInt64(r[col.Offset])
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -443,7 +443,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 
 	// Set public and write only column value.
 	for _, col := range t.writableCols() {
-		if mysql.HasPriKeyFlag(col.Flag) && t.Meta().PKIsHandle {
+		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}
 
@@ -504,7 +504,7 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
-		if mysql.HasPriKeyFlag(col.Flag) && t.Meta().PKIsHandle {
+		if col.IsPKHandleColumn(t.meta) {
 			v[col.Offset] = h
 			continue
 		}
