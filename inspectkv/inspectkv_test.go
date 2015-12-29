@@ -157,7 +157,7 @@ func (s *testSuite) TestScan(c *C) {
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
-	_, err = tb.AddRecord(s.ctx, []interface{}{10, 11}, 0)
+	_, err = tb.AddRecord(s.ctx, []interface{}{10, 11})
 	c.Assert(err, IsNil)
 	s.ctx.FinishTxn(false)
 
@@ -169,7 +169,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
-	_, err = tb.AddRecord(s.ctx, record2.Values, record2.Handle)
+	_, err = tb.AddRecord(s.ctx, record2.Values)
 	c.Assert(err, IsNil)
 	s.ctx.FinishTxn(false)
 	txn, err := s.store.Begin()
