@@ -29,7 +29,7 @@ const (
 )
 
 var (
-	pads    = make([]byte, 8)
+	pads    = make([]byte, encGroupSize)
 	encPads = []byte{encPad}
 )
 
