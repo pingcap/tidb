@@ -66,7 +66,7 @@ func (b *btreeBuffer) Release() {
 
 type btreeIter struct {
 	e  *memkv.Enumerator
-	k  string
+	k  Key
 	v  []byte
 	ok bool
 }
@@ -102,7 +102,7 @@ func (i *btreeIter) Close() {
 }
 
 // Key implements Iterator Key.
-func (i *btreeIter) Key() string {
+func (i *btreeIter) Key() Key {
 	return i.k
 }
 
@@ -121,7 +121,7 @@ func (i *btreeIter) Next() error {
 		}
 		return errors.Trace(err)
 	}
-	i.k, i.v, i.ok = string(fromIfaces(k)), fromIfaces(v), true
+	i.k, i.v, i.ok = fromIfaces(k), fromIfaces(v), true
 	return nil
 }
 

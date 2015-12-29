@@ -29,12 +29,7 @@ var (
 	RollbackNotInTransaction = ClassExecutor.New(CodeRollbackNotInTransaction, "rollback not in transaction")
 	ExecResultIsEmpty        = ClassExecutor.New(CodeExecResultIsEmpty, "exec result is empty")
 
-	UnknownStatusVar = ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar = ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
-
 	MissConnectionID = ClassExpression.New(CodeMissConnectionID, "miss connection id information")
-
-	ErrKeyExists = ClassKV.New(CodeKeyExists, "key already exist")
 )
 
 // ErrCode represents a specific error type in a error class.
@@ -46,19 +41,6 @@ const (
 	CodeCommitNotInTransaction   ErrCode = 1
 	CodeRollbackNotInTransaction         = 2
 	CodeExecResultIsEmpty                = 3
-)
-
-// KV error codes.
-const (
-	CodeIncompatibleDBFormat ErrCode = 1
-	CodeNoDataForHandle              = 2
-	CodeKeyExists                    = 3
-)
-
-// Variable error codes.
-const (
-	CodeUnknownStatusVar ErrCode = iota + 1
-	CodeUnknownSystemVar
 )
 
 // Expression error codes.
@@ -99,6 +81,8 @@ func (ec ErrClass) String() string {
 		return "kv"
 	case ClassServer:
 		return "server"
+	case ClassVariable:
+		return "variable"
 	case ClassExpression:
 		return "expression"
 	}
@@ -210,12 +194,8 @@ func (e *Error) getMySQLErrorCode() uint16 {
 
 var (
 	// ErrCode to mysql error code map.
-	parserMySQLErrCodes    = map[ErrCode]uint16{}
-	optimizerMySQLErrCodes = map[ErrCode]uint16{}
-	executorMySQLErrCodes  = map[ErrCode]uint16{}
-	kvMySQLErrCodes        = map[ErrCode]uint16{
-		CodeKeyExists: mysql.ErrDupEntry,
-	}
+	parserMySQLErrCodes     = map[ErrCode]uint16{}
+	executorMySQLErrCodes   = map[ErrCode]uint16{}
 	serverMySQLErrCodes     = map[ErrCode]uint16{}
 	expressionMySQLErrCodes = map[ErrCode]uint16{}
 
@@ -226,9 +206,7 @@ var (
 func init() {
 	ErrClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
 	ErrClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
-	ErrClassToMySQLCodes[ClassOptimizer] = optimizerMySQLErrCodes
 	ErrClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
-	ErrClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
 	ErrClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
 	ErrClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
 	defaultMySQLErrorCode = mysql.ErrUnknown

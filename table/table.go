@@ -34,7 +34,7 @@ type RecordIterFunc func(h int64, rec []interface{}, cols []*column.Col) (more b
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
-	IterRecords(retriever kv.Retriever, startKey string, cols []*column.Col, fn RecordIterFunc) error
+	IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
 	RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error)
@@ -63,23 +63,23 @@ type Table interface {
 	// FindIndexByColName finds the index by column name.
 	FindIndexByColName(name string) *column.IndexedCol
 
-	// KeyPrefix returns the key prefix string.
-	KeyPrefix() string
+	// RecordPrefix returns the record key prefix.
+	RecordPrefix() kv.Key
 
-	// IndexPrefix returns the index prefix string.
-	IndexPrefix() string
+	// IndexPrefix returns the index key prefix.
+	IndexPrefix() kv.Key
 
-	// FirstKey returns the first key string.
-	FirstKey() string
+	// FirstKey returns the first key.
+	FirstKey() kv.Key
 
 	// RecordKey returns the key in KV storage for the column.
-	RecordKey(h int64, col *column.Col) []byte
+	RecordKey(h int64, col *column.Col) kv.Key
 
 	// Truncate truncates the table.
 	Truncate(rm kv.RetrieverMutator) (err error)
 
-	// AddRecord inserts a row into the table. Is h is 0, it will alloc an unique id inside.
-	AddRecord(ctx context.Context, r []interface{}, h int64) (recordID int64, err error)
+	// AddRecord inserts a row into the table.
+	AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error)
 
 	// UpdateRecord updates a row in the table.
 	UpdateRecord(ctx context.Context, h int64, currData []interface{}, newData []interface{}, touched map[int]bool) error

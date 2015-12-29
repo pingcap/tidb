@@ -17,10 +17,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"strings"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -73,7 +71,7 @@ func decodeHandle(data []byte) (int64, error) {
 type indexIter struct {
 	it     Iterator
 	idx    *kvIndex
-	prefix string
+	prefix Key
 }
 
 // Close does the clean up works when KV store index iterator is closed.
@@ -89,11 +87,11 @@ func (c *indexIter) Next() (val []interface{}, h int64, err error) {
 	if !c.it.Valid() {
 		return nil, 0, errors.Trace(io.EOF)
 	}
-	if !strings.HasPrefix(c.it.Key(), c.prefix) {
+	if !c.it.Key().HasPrefix(c.prefix) {
 		return nil, 0, errors.Trace(io.EOF)
 	}
 	// get indexedValues
-	buf := []byte(c.it.Key())[len(c.prefix):]
+	buf := c.it.Key()[len(c.prefix):]
 	vv, err := codec.Decode(buf)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -123,19 +121,19 @@ type kvIndex struct {
 	indexName string
 	indexID   int64
 	unique    bool
-	prefix    string
+	prefix    Key
 }
 
 // GenIndexPrefix generates the index prefix.
-func GenIndexPrefix(indexPrefix string, indexID int64) string {
+func GenIndexPrefix(indexPrefix Key, indexID int64) Key {
 	buf := make([]byte, 0, len(indexPrefix)+8)
 	buf = append(buf, indexPrefix...)
 	buf = codec.EncodeInt(buf, indexID)
-	return string(buf)
+	return buf
 }
 
 // NewKVIndex builds a new kvIndex object.
-func NewKVIndex(indexPrefix string, indexName string, indexID int64, unique bool) Index {
+func NewKVIndex(indexPrefix Key, indexName string, indexID int64, unique bool) Index {
 	index := &kvIndex{
 		indexName: indexName,
 		indexID:   indexID,
@@ -163,7 +161,7 @@ func (c *kvIndex) GenIndexKey(indexedValues []interface{}, h int64) (key []byte,
 		}
 	}
 
-	key = append(key, []byte(c.prefix)...)
+	key = append(key, c.prefix...)
 	if distinct {
 		key, err = codec.EncodeKey(key, indexedValues...)
 	} else {
@@ -194,7 +192,7 @@ func (c *kvIndex) Create(rm RetrieverMutator, indexedValues []interface{}, h int
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(terror.ErrKeyExists)
+	return errors.Trace(ErrKeyExists)
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
@@ -209,8 +207,7 @@ func (c *kvIndex) Delete(m Mutator, indexedValues []interface{}, h int64) error 
 
 // Drop removes the KV index from store.
 func (c *kvIndex) Drop(rm RetrieverMutator) error {
-	prefix := []byte(c.prefix)
-	it, err := rm.Seek(Key(prefix))
+	it, err := rm.Seek(c.prefix)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -218,10 +215,10 @@ func (c *kvIndex) Drop(rm RetrieverMutator) error {
 
 	// remove all indices
 	for it.Valid() {
-		if !strings.HasPrefix(it.Key(), c.prefix) {
+		if !it.Key().HasPrefix(c.prefix) {
 			break
 		}
-		err := rm.Delete([]byte(it.Key()))
+		err := rm.Delete(it.Key())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -245,7 +242,7 @@ func (c *kvIndex) Seek(r Retriever, indexedValues []interface{}) (iter IndexIter
 	}
 	// check if hit
 	hit = false
-	if it.Valid() && it.Key() == string(key) {
+	if it.Valid() && it.Key().Cmp(key) == 0 {
 		hit = true
 	}
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, hit, nil
@@ -253,8 +250,7 @@ func (c *kvIndex) Seek(r Retriever, indexedValues []interface{}) (iter IndexIter
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
 func (c *kvIndex) SeekFirst(r Retriever) (iter IndexIterator, err error) {
-	prefix := []byte(c.prefix)
-	it, err := r.Seek(prefix)
+	it, err := r.Seek(c.prefix)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -283,7 +279,7 @@ func (c *kvIndex) Exist(rm RetrieverMutator, indexedValues []interface{}, h int6
 		}
 
 		if handle != h {
-			return true, handle, errors.Trace(terror.ErrKeyExists)
+			return true, handle, errors.Trace(ErrKeyExists)
 		}
 
 		return true, handle, nil

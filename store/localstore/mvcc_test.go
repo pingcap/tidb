@@ -321,7 +321,7 @@ func (t *testMvccSuite) TestBufferedIterator(c *C) {
 	it, err := tx.Seek([]byte{0xff, 0xee})
 	c.Assert(err, IsNil)
 	c.Assert(it.Valid(), IsTrue)
-	c.Assert(it.Key(), Equals, "\xff\xff\xee\xff")
+	c.Assert(string(it.Key()), Equals, "\xff\xff\xee\xff")
 	tx.Commit()
 
 	// no such key

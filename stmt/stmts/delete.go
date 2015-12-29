@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
@@ -175,7 +176,7 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 
 	for k, t := range rowKeyMap {
-		handle, err := tables.DecodeRecordKeyHandle(k)
+		handle, err := tables.DecodeRecordKeyHandle(kv.Key(k))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
