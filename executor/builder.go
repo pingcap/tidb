@@ -85,12 +85,14 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	return &ShowDDL{
 		fields: v.Fields(),
+		ctx:    b.ctx,
 	}
 }
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return &CheckTable{
 		tables: v.Tables,
+		ctx:    b.ctx,
 	}
 }
 

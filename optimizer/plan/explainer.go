@@ -41,6 +41,10 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
 	case *IndexScan:
 		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
+	case *ShowDDL:
+		str = "ShowDDL"
+	case *CheckTable:
+		str = "CheckTable"
 	case *Filter:
 		str = "Filter"
 	case *SelectFields:

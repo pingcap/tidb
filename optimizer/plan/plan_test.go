@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -229,11 +230,24 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 			sqlStr:  "select a from t where a = 1 limit 1 for update",
 			planStr: "Table(t)->Filter->Lock->Fields->Limit",
 		},
+		{
+			sqlStr:  "admin show ddl",
+			planStr: "ShowDDL",
+		},
+		{
+			sqlStr:  "admin check table t",
+			planStr: "CheckTable",
+		},
 	}
+	var stmt ast.StmtNode
 	for _, ca := range cases {
 		s, err := parser.ParseOneStmt(ca.sqlStr, "", "")
 		c.Assert(err, IsNil, Commentf("for expr %s", ca.sqlStr))
-		stmt := s.(*ast.SelectStmt)
+		if strings.HasPrefix(ca.sqlStr, "select") {
+			stmt = s.(*ast.SelectStmt)
+		} else if strings.HasPrefix(ca.sqlStr, "admin") {
+			stmt = s.(*ast.AdminStmt)
+		}
 		mockResolve(stmt)
 		p, err := BuildPlan(stmt)
 		c.Assert(err, IsNil)

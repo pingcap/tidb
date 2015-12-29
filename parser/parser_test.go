@@ -229,7 +229,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// For admin
 		{"admin show ddl;", true},
-		{"admin check t1, t2;", true},
+		{"admin check table t1, t2;", true},
 
 		// For set names
 		{"set names utf8", true},

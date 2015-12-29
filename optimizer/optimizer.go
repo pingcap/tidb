@@ -116,7 +116,8 @@ func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
 // TODO: 1. insert/update/delete. 2. join tables. 3. subquery. 4. group by and aggregate function.
 func IsSupported(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt:
+	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
+		*ast.AdminStmt:
 	default:
 		return false
 	}
