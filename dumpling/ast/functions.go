@@ -310,15 +310,10 @@ const (
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 	// See: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-sub
 	DateSub
-	// DateArithDaysForm is to run adddate or subdate function with days form Flag.
-	DateArithDaysForm
 )
 
 // DateArithInterval is the struct of DateArith interval part.
 type DateArithInterval struct {
-	// Form is the flag of DateArith running form.
-	// The function runs with interval or days.
-	Form     DateArithType
 	Unit     string
 	Interval ExprNode
 }
