@@ -361,9 +361,9 @@ import (
 	yearMonth		"YEAR_MONTH"
 
 %type   <item>
-	AdminStmt		"Check table/index statement or show ddl statement"
+	AdminStmt		"Check table statement or show ddl statement"
 	AlterTableStmt		"Alter table statement"
-	AlterTableSpec	"Alter table specification"
+	AlterTableSpec		"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
@@ -1695,7 +1695,7 @@ NotKeywordToken:
 |	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
 |	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
 |	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
-|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME" 
+|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME"
 
 /************************************************************************************
  *
@@ -3358,12 +3358,15 @@ AuthString:
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
+		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
 	}
-|	"ADMIN" "CHECK" TableOptionList
+|	"ADMIN" "CHECK" TableNameList
 	{
+		$$ = &ast.AdminStmt{
+			Tp:	ast.AdminCheckTable,
+			Tables: $3.([]*ast.TableName),
+		}
 	}
-
-
 
 /****************************Show Statement*******************************/
 ShowStmt:
@@ -3556,6 +3559,7 @@ ShowTableAliasOpt:
 
 Statement:
 	EmptyStmt
+|	AdminStmt
 |	AlterTableStmt
 |	BeginTransactionStmt
 |	CommitStmt
