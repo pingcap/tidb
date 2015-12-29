@@ -21,9 +21,13 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -86,16 +90,36 @@ type Executor interface {
 
 // ShowDDL represetns
 type ShowDDL struct {
+	fields []*ast.ResultField
+	ctx    context.Context
 }
 
 // Fields implements Executor Fields interface.
 func (e *ShowDDL) Fields() []*ast.ResultField {
-	return nil
+	return e.fields
 }
 
 // Next implements Execution Next interface.
 func (e *ShowDDL) Next() (*Row, error) {
-	return nil, nil
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	info, err := inspectkv.GetDDLInfo(txn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(e.fields) != 3 {
+		return nil, errors.New("fields len invild")
+	}
+	row := &Row{Data: []interface{}{info}}
+	e.fields[0].Expr.SetValue(info.SchemaVer)
+	e.fields[1].Expr.SetValue(info.Owner)
+	e.fields[2].Expr.SetValue(info.Job)
+
+	return row, nil
 }
 
 // Close implements plan.Plan Close interface.
@@ -105,7 +129,8 @@ func (e *ShowDDL) Close() error {
 
 // CheckTable represetns tables name.
 type CheckTable struct {
-	Tables []*ast.TableName
+	tables []*ast.TableName
+	ctx    context.Context
 }
 
 // Fields implements Executor Fields interface.
@@ -115,7 +140,27 @@ func (e *CheckTable) Fields() []*ast.ResultField {
 
 // Next implements Execution Next interface.
 func (e *CheckTable) Next() (*Row, error) {
-	return nil, nil
+	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
+	is := sessionctx.GetDomain(e.ctx).InfoSchema()
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, t := range e.tables {
+		tb, err := is.TableByName(dbName, t.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, idx := range tb.Indices() {
+			err = inspectkv.CompareIndexData(txn, tb, idx)
+			if err != nil {
+				return nil, errors.Errorf("%v err:%v", t.Name, err.Error())
+			}
+		}
+	}
+
+	return &Row{Data: []interface{}{"OK"}}, nil
 }
 
 // Close implements plan.Plan Close interface.

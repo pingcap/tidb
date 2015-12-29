@@ -15,8 +15,13 @@ package plan
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Error instances.
@@ -216,8 +221,51 @@ func (b *planBuilder) buildAdmin(adm *ast.AdminStmt) Plan {
 	}
 
 	if adm.Tp == ast.AdminShowDDL {
-		return &ShowDDL{}
+		p := &ShowDDL{}
+		p.SetFields(buildShowDDLFields())
+
+		return p
 	}
 
 	return nil
+}
+
+func buildShowDDLFields() []*ast.ResultField {
+	tbName := "SHOW_DDL"
+	rfs := make([]*ast.ResultField, 0, 3)
+	rfs = append(rfs, buildResultField(tbName, "SCHEMA_VER", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField(tbName, "OWNER", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField(tbName, "Job", mysql.TypeVarchar, 64))
+
+	return rfs
+}
+
+func buildResultField(tableName, name string, tp byte, size int) *ast.ResultField {
+	mCharset := charset.CharsetBin
+	mCollation := charset.CharsetBin
+	mFlag := mysql.UnsignedFlag
+	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
+		mCharset = mysql.DefaultCharset
+		mCollation = mysql.DefaultCollationName
+		mFlag = 0
+	}
+
+	fieldType := types.FieldType{
+		Charset: mCharset,
+		Collate: mCollation,
+		Tp:      tp,
+		Flen:    size,
+		Flag:    uint(mFlag),
+	}
+	colInfo := &model.ColumnInfo{
+		Name:      model.NewCIStr(name),
+		FieldType: fieldType,
+	}
+
+	return &ast.ResultField{
+		Column:       colInfo,
+		ColumnAsName: colInfo.Name,
+		TableAsName:  model.NewCIStr(tableName),
+		DBName:       model.NewCIStr(infoschema.Name),
+	}
 }

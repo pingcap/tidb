@@ -83,11 +83,15 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
-	return &ShowDDL{}
+	return &ShowDDL{
+		fields: v.Fields(),
+	}
 }
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
-	return &CheckTable{Tables: v.Tables}
+	return &CheckTable{
+		tables: v.Tables,
+	}
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
