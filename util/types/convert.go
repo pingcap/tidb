@@ -559,16 +559,6 @@ func ToUint64(value interface{}) (uint64, error) {
 
 // ToInt64 converts an interface to an int64.
 func ToInt64(value interface{}) (int64, error) {
-	switch x := value.(type) {
-	case int64:
-		return x, nil
-	case int:
-		return int64(x), nil
-	case uint64:
-		if int64(x) > 0 {
-			return int64(x), nil
-		}
-	}
 	return convertToInt(value, NewFieldType(mysql.TypeLonglong))
 }
 
