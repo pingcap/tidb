@@ -147,7 +147,7 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 
 		colIndex := i - offset
 		col := cols[colIndex]
-		if mysql.HasPriKeyFlag(col.Flag) && t.Meta().PKIsHandle {
+		if col.IsPKHandleColumn(t.Meta()) {
 			newHandle = val
 		}
 
