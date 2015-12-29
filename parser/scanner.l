@@ -637,6 +637,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return abs
 {add}			return add
 {adddate}		return addDate
+{admin}			return admin
 {after}			lval.item = string(l.val)
 			return after
 {all}			return all
@@ -726,6 +727,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return dayMinute
 {day_second}		lval.item = string(l.val)
 			return daySecond
+{ddl}			return ddl
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd

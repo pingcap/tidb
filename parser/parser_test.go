@@ -227,6 +227,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"show columns in t;", true},
 		{"show full columns in t;", true},
 
+		// For admin
+		{"admin show ddl;", true},
+		{"admin check t1, t2;", true},
+
 		// For set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
