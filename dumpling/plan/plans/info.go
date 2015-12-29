@@ -481,6 +481,32 @@ func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 func (isp *InfoSchemaPlan) fetchStatistics(is infoschema.InfoSchema, schemas []*model.DBInfo) {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if table.PKIsHandle {
+				for _, col := range table.Columns {
+					if mysql.HasPriKeyFlag(col.Flag) {
+						record := []interface{}{
+							catalogVal,    // TABLE_CATALOG
+							schema.Name.O, // TABLE_SCHEMA
+							table.Name.O,  // TABLE_NAME
+							"0",           // NON_UNIQUE
+							schema.Name.O, // INDEX_SCHEMA
+							"PRIMARY",     // INDEX_NAME
+							1,             // SEQ_IN_INDEX
+							col.Name.O,    // COLUMN_NAME
+							"A",           // COLLATION
+							0,             // CARDINALITY
+							nil,           // SUB_PART
+							nil,           // PACKED
+							"",            // NULLABLE
+							"BTREE",       // INDEX_TYPE
+							"",            // COMMENT
+							"",            // INDEX_COMMENT
+						}
+						isp.rows = append(isp.rows, &plan.Row{Data: record})
+					}
+				}
+			}
+
 			for _, index := range table.Indices {
 				nonUnique := "1"
 				if index.Unique {

@@ -114,7 +114,7 @@ func (s *testStmtSuite) TestDelete(c *C) {
 	strs := s.queryStrings(s.testDB, `explain DELETE from test where id = 2;`, c)
 	var useIndex bool
 	for _, str := range strs {
-		if strings.Index(str, "index") > 0 {
+		if strings.Index(str, "Range") > 0 {
 			useIndex = true
 		}
 	}

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -85,10 +84,13 @@ type Executor interface {
 
 // TableScanExec represents a table scan executor.
 type TableScanExec struct {
-	t      table.Table
-	fields []*ast.ResultField
-	iter   kv.Iterator
-	ctx    context.Context
+	t       table.Table
+	fields  []*ast.ResultField
+	iter    kv.Iterator
+	ctx     context.Context
+	ranges  []plan.TableRange
+	seekVal int64
+	cursor  int
 }
 
 // Fields implements Executor Fields interface.
@@ -98,36 +100,65 @@ func (e *TableScanExec) Fields() []*ast.ResultField {
 
 // Next implements Execution Next interface.
 func (e *TableScanExec) Next() (*Row, error) {
-	if e.iter == nil {
+	for {
+		if e.cursor >= len(e.ranges) {
+			return nil, nil
+		}
+		ran := e.ranges[e.cursor]
+		if e.seekVal == ran.LowVal {
+			rowKey := tables.EncodeRecordKey(e.t.TableID(), e.seekVal, 0)
+			row, err := e.getRow(e.seekVal, rowKey)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			e.seekVal++
+			return row, nil
+		}
+		if e.seekVal < ran.LowVal {
+			e.seekVal = ran.LowVal
+		}
+		if e.seekVal > ran.HighVal {
+			e.cursor++
+			continue
+		}
+		seekKey := tables.EncodeRecordKey(e.t.TableID(), e.seekVal, 0)
 		txn, err := e.ctx.GetTxn(false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.iter, err = txn.Seek(e.t.FirstKey())
+		if e.iter != nil {
+			e.iter.Close()
+		}
+		e.iter, err = txn.Seek(seekKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
+			e.cursor++
+			return nil, nil
+		}
+		rowKey := e.iter.Key()
+		handle, err := tables.DecodeRecordKeyHandle(rowKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if handle > ran.HighVal {
+			e.seekVal = handle
+			e.cursor++
+			continue
+		}
+		row, err := e.getRow(handle, rowKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		e.seekVal = handle + 1
+		return row, nil
 	}
-	if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
-		return nil, nil
-	}
-	// TODO: check if lock valid
-	// the record layout in storage (key -> value):
-	// r1 -> lock-version
-	// r1_col1 -> r1 col1 value
-	// r1_col2 -> r1 col2 value
-	// r2 -> lock-version
-	// r2_col1 -> r2 col1 value
-	// r2_col2 -> r2 col2 value
-	// ...
-	rowKey := e.iter.Key()
-	handle, err := tables.DecodeRecordKeyHandle(rowKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+}
 
-	// TODO: we could just fetch mentioned columns' values
+func (e *TableScanExec) getRow(handle int64, rowKey kv.Key) (*Row, error) {
 	row := &Row{}
+	var err error
 	row.Data, err = e.t.Row(e.ctx, handle)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -143,12 +174,6 @@ func (e *TableScanExec) Next() (*Row, error) {
 		Key: string(rowKey),
 	}
 	row.RowKeys = append(row.RowKeys, rke)
-
-	rk := e.t.RecordKey(handle, nil)
-	err = kv.NextUntil(e.iter, util.RowKeyPrefixFilter(rk))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	return row, nil
 }
 
