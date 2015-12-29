@@ -2425,7 +2425,6 @@ DateArithInterval:
 	Expression
 	{
 		$$ = ast.DateArithInterval{
-					Form: ast.DateArithDaysForm,
 					Unit: "day",
 					Interval: $1.(ast.ExprNode),
 		}
