@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -52,11 +54,29 @@ func GetSysVar(name string) *SysVar {
 	return SysVars[name]
 }
 
+// Variable error codes.
+const (
+	CodeUnknownStatusVar terror.ErrCode = 1
+	CodeUnknownSystemVar                = 1193
+)
+
+// Variable errors
+var (
+	UnknownStatusVar = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable")
+)
+
 func init() {
 	SysVars = make(map[string]*SysVar)
 	for _, v := range defaultSysVars {
 		SysVars[v.Name] = v
 	}
+
+	// Register terror to mysql error map.
+	mySQLErrCodes := map[terror.ErrCode]uint16{
+		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
 // we only support MySQL now

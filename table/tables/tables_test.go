@@ -61,9 +61,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.TableName().L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(tb.FirstKey(), Not(Equals), "")
-	c.Assert(tb.IndexPrefix(), Not(Equals), "")
-	c.Assert(tb.KeyPrefix(), Not(Equals), "")
+	c.Assert(string(tb.FirstKey()), Not(Equals), "")
+	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tb.FindIndexByColName("b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
@@ -113,13 +113,13 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func countEntriesWithPrefix(ctx context.Context, prefix string) (int, error) {
+func countEntriesWithPrefix(ctx context.Context, prefix []byte) (int, error) {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return 0, err
 	}
 	cnt := 0
-	err = util.ScanMetaWithPrefix(txn, prefix, func(k, v []byte) bool {
+	err = util.ScanMetaWithPrefix(txn, prefix, func(k kv.Key, v []byte) bool {
 		cnt++
 		return true
 	})
@@ -181,9 +181,9 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(tb.TableName().L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
-	c.Assert(tb.FirstKey(), Not(Equals), "")
-	c.Assert(tb.IndexPrefix(), Not(Equals), "")
-	c.Assert(tb.KeyPrefix(), Not(Equals), "")
+	c.Assert(string(tb.FirstKey()), Not(Equals), "")
+	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
+	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tb.FindIndexByColName("b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
@@ -218,7 +218,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 		c.Assert(handle, Equals, t.h)
 		c.Assert(columnID, Equals, t.ID)
 
-		handle, err = tables.DecodeRecordKeyHandle(string(b))
+		handle, err = tables.DecodeRecordKeyHandle(b)
 		c.Assert(err, IsNil)
 		c.Assert(handle, Equals, t.h)
 	}
@@ -236,7 +236,7 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 	}
 
 	for _, t := range tbl {
-		_, err := tables.DecodeRecordKeyHandle(t)
+		_, err := tables.DecodeRecordKeyHandle(kv.Key(t))
 		c.Assert(err, NotNil)
 	}
 }

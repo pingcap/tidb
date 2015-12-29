@@ -13,11 +13,7 @@
 
 package kv
 
-import (
-	"bytes"
-
-	"github.com/ngaut/log"
-)
+import "github.com/ngaut/log"
 
 // UnionIter is the iterator on an UnionStore.
 type UnionIter struct {
@@ -79,9 +75,9 @@ func (iter *UnionIter) updateCur() {
 
 		// both valid
 		if iter.snapshotValid && iter.dirtyValid {
-			snapshotKey := []byte(iter.snapshotIt.Key())
-			dirtyKey := []byte(iter.dirtyIt.Key())
-			cmp := bytes.Compare(dirtyKey, snapshotKey)
+			snapshotKey := iter.snapshotIt.Key()
+			dirtyKey := iter.dirtyIt.Key()
+			cmp := dirtyKey.Cmp(snapshotKey)
 			// if equal, means both have value
 			if cmp == 0 {
 				if len(iter.dirtyIt.Value()) == 0 {
@@ -135,7 +131,7 @@ func (iter *UnionIter) Value() []byte {
 }
 
 // Key implements the Iterator Key interface.
-func (iter *UnionIter) Key() string {
+func (iter *UnionIter) Key() Key {
 	if !iter.curIsDirty {
 		return iter.snapshotIt.Key()
 	}
