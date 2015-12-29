@@ -133,6 +133,7 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 	copy(newData, oldData)
 
 	assignExists := false
+	var newHandle interface{}
 	for i, asgn := range updateColumns {
 		if i < offset || i >= offset+len(cols) {
 			// The assign expression is for another table, not this.
@@ -145,6 +146,11 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 		}
 
 		colIndex := i - offset
+		col := cols[colIndex]
+		if col.IsPKHandleColumn(t.Meta()) {
+			newHandle = val
+		}
+
 		touched[colIndex] = true
 		newData[colIndex] = val
 		assignExists = true
@@ -189,8 +195,17 @@ func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Tabl
 		return nil
 	}
 
-	// Update record to new value and update index.
-	err := t.UpdateRecord(ctx, h, oldData, newData, touched)
+	var err error
+	if newHandle != nil {
+		err = t.RemoveRecord(ctx, h, oldData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = t.AddRecord(ctx, newData)
+	} else {
+		// Update record to new value and update index.
+		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}

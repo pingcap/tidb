@@ -202,6 +202,11 @@ func (c *Col) CheckNotNull(data interface{}) error {
 	return nil
 }
 
+// IsPKHandleColumn checks if the column is primary key handle column.
+func (c *Col) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
+	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
+}
+
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
 func CheckNotNull(cols []*Col, row []interface{}) error {
 	for _, c := range cols {
