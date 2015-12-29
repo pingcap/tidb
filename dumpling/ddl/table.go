@@ -181,7 +181,7 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 
 func (d *ddl) dropTableData(t table.Table) error {
 	// delete table data
-	err := d.delKeysWithPrefix(t.KeyPrefix())
+	err := d.delKeysWithPrefix(t.RecordPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
