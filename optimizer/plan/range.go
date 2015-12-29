@@ -15,8 +15,10 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"sort"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
@@ -424,4 +426,53 @@ func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangeP
 		newRanges = append(newRanges, ir)
 	}
 	return newRanges
+}
+
+func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
+	tableRanges := make([]TableRange, 0, len(rangePoints)/2)
+	for i := 0; i < len(rangePoints); i += 2 {
+		startPoint := rangePoints[i]
+		startInt, err := pointValueToHandle(startPoint.value)
+		if err != nil {
+			r.err = errors.Trace(err)
+			return tableRanges
+		}
+		cmp, err := types.Compare(startInt, startPoint.value)
+		if err != nil {
+			r.err = errors.Trace(err)
+			return tableRanges
+		}
+		if cmp < 0 || (cmp == 0 && startPoint.excl) {
+			startInt++
+		}
+		endPoint := rangePoints[i+1]
+		endInt, err := pointValueToHandle(startPoint.value)
+		if err != nil {
+			r.err = errors.Trace(err)
+			return tableRanges
+		}
+		cmp, err = types.Compare(startInt, startPoint.value)
+		if err != nil {
+			r.err = errors.Trace(err)
+			return tableRanges
+		}
+		if cmp > 0 || (cmp == 0 && endPoint.excl) {
+			endInt--
+		}
+		if startInt > endInt {
+			continue
+		}
+		tableRanges = append(tableRanges, TableRange{LowVal: startInt, HighVal: endInt})
+	}
+	return tableRanges
+}
+
+func pointValueToHandle(value interface{}) (int64, error) {
+	if value == nil || value == MinNotNullVal {
+		return math.MinInt64, nil
+	}
+	if value == MaxVal {
+		return math.MaxInt64, nil
+	}
+	return types.ToInt64(value)
 }

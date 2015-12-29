@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
@@ -125,7 +127,8 @@ func (b *planBuilder) buildJoin(from *ast.Join) Plan {
 		return nil
 	}
 	p := &TableScan{
-		Table: tn.TableInfo,
+		Table:  tn.TableInfo,
+		Ranges: []TableRange{{math.MinInt64, math.MaxInt64}},
 	}
 	p.SetFields(tn.GetResultFields())
 	return p

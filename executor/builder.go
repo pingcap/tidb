@@ -75,6 +75,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		t:      table,
 		fields: v.Fields(),
 		ctx:    b.ctx,
+		ranges: v.Ranges,
 	}
 }
 

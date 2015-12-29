@@ -18,12 +18,19 @@ import (
 	"github.com/pingcap/tidb/model"
 )
 
+// TableRange represents a range of row handle.
+type TableRange struct {
+	LowVal  int64
+	HighVal int64
+}
+
 // TableScan represents a table scan plan.
 type TableScan struct {
 	basePlan
 
-	Table *model.TableInfo
-	Desc  bool
+	Table  *model.TableInfo
+	Desc   bool
+	Ranges []TableRange
 }
 
 // Accept implements Plan Accept interface.
