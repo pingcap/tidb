@@ -84,13 +84,13 @@ type Executor interface {
 
 // TableScanExec represents a table scan executor.
 type TableScanExec struct {
-	t       table.Table
-	fields  []*ast.ResultField
-	iter    kv.Iterator
-	ctx     context.Context
-	ranges  []plan.TableRange
-	seekVal int64
-	cursor  int
+	t          table.Table
+	fields     []*ast.ResultField
+	iter       kv.Iterator
+	ctx        context.Context
+	ranges     []plan.TableRange
+	seekHandle int64
+	cursor     int
 }
 
 // Fields implements Executor Fields interface.
@@ -105,54 +105,74 @@ func (e *TableScanExec) Next() (*Row, error) {
 			return nil, nil
 		}
 		ran := e.ranges[e.cursor]
-		if e.seekVal == ran.LowVal {
-			rowKey := tables.EncodeRecordKey(e.t.TableID(), e.seekVal, 0)
-			row, err := e.getRow(e.seekVal, rowKey)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			e.seekVal++
-			return row, nil
+		if e.seekHandle < ran.LowVal {
+			e.seekHandle = ran.LowVal
 		}
-		if e.seekVal < ran.LowVal {
-			e.seekVal = ran.LowVal
-		}
-		if e.seekVal > ran.HighVal {
+		if e.seekHandle > ran.HighVal {
 			e.cursor++
 			continue
 		}
-		seekKey := tables.EncodeRecordKey(e.t.TableID(), e.seekVal, 0)
-		txn, err := e.ctx.GetTxn(false)
-		if err != nil {
+		rowKey, err := e.seek()
+		if err != nil || rowKey == nil {
 			return nil, errors.Trace(err)
 		}
-		if e.iter != nil {
-			e.iter.Close()
-		}
-		e.iter, err = txn.Seek(seekKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
-			e.cursor++
-			return nil, nil
-		}
-		rowKey := e.iter.Key()
 		handle, err := tables.DecodeRecordKeyHandle(rowKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if handle > ran.HighVal {
-			e.seekVal = handle
-			e.cursor++
-			continue
+			// The handle is out of the current range, but may be in next range.
+			// We try to iterate to the range that contains the handle, so we
+			// don't need to seek again.
+			inRange := e.iterateToRangeContains(handle)
+			if !inRange {
+				continue
+			}
 		}
 		row, err := e.getRow(handle, rowKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		e.seekVal = handle + 1
+		e.seekHandle = handle + 1
 		return row, nil
+	}
+}
+
+func (e *TableScanExec) seek() (kv.Key, error) {
+	seekKey := tables.EncodeRecordKey(e.t.TableID(), e.seekHandle, 0)
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if e.iter != nil {
+		e.iter.Close()
+	}
+	e.iter, err = txn.Seek(seekKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
+		// No more records in the table, skip to the end.
+		e.cursor = len(e.ranges)
+		return nil, nil
+	}
+	return e.iter.Key(), nil
+}
+
+func (e *TableScanExec) iterateToRangeContains(handle int64) (inRange bool) {
+	for {
+		e.cursor++
+		if e.cursor >= len(e.ranges) {
+			return false
+		}
+		ran := e.ranges[e.cursor]
+		if handle < ran.LowVal {
+			return false
+		}
+		if handle > ran.HighVal {
+			continue
+		}
+		return true
 	}
 }
 
