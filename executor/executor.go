@@ -87,7 +87,7 @@ type Executor interface {
 	Close() error
 }
 
-// ShowDDL represetns
+// ShowDDL represents a show DDL executor.
 type ShowDDL struct {
 	fields []*ast.ResultField
 	ctx    context.Context
@@ -141,7 +141,7 @@ func (e *ShowDDL) Close() error {
 	return nil
 }
 
-// CheckTable represetns tables name.
+// CheckTable represents a check table executor.
 type CheckTable struct {
 	tables []*ast.TableName
 	ctx    context.Context
