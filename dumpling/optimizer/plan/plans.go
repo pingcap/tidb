@@ -32,7 +32,7 @@ func (p *TableScan) Accept(v Visitor) (Plan, bool) {
 	return v.Leave(np)
 }
 
-// ShowDDL shows DDL information.
+// ShowDDL is for showing DDL information.
 type ShowDDL struct {
 	basePlan
 }
@@ -44,7 +44,7 @@ func (p *ShowDDL) Accept(v Visitor) (Plan, bool) {
 	return v.Leave(np)
 }
 
-// CheckTable checks table data.
+// CheckTable is for checking table data.
 type CheckTable struct {
 	basePlan
 
