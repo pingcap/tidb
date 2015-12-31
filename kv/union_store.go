@@ -156,7 +156,7 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 		return errors.Trace(err)
 	}
 	for ; it.Valid(); it.Next() {
-		keys = append(keys, []byte(it.Key()))
+		keys = append(keys, it.Key().Clone())
 	}
 	it.Close()
 
@@ -173,12 +173,13 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 	}
 	defer it.Close()
 	for ; it.Valid(); it.Next() {
+		keyStr := string(it.Key())
 		if len(it.Value()) == 0 {
-			if _, exist := values[it.Key()]; exist {
+			if _, exist := values[keyStr]; exist {
 				return errors.Trace(ErrKeyExists)
 			}
 		} else {
-			if bytes.Compare(values[it.Key()], it.Value()) != 0 {
+			if bytes.Compare(values[keyStr], it.Value()) != 0 {
 				return errors.Trace(ErrLazyConditionPairsNotMatch)
 			}
 		}

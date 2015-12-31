@@ -424,6 +424,20 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		tbInfo.Columns = append(tbInfo.Columns, &v.ColumnInfo)
 	}
 	for _, constr := range constraints {
+		if constr.Tp == coldef.ConstrPrimaryKey {
+			if len(constr.Keys) == 1 {
+				key := constr.Keys[0]
+				col := column.FindCol(cols, key.ColumnName)
+				if col == nil {
+					return nil, errors.Errorf("No such column: %v", key)
+				}
+				switch col.Tp {
+				case mysql.TypeLong, mysql.TypeLonglong:
+					tbInfo.PKIsHandle = true
+				}
+			}
+		}
+
 		// 1. check if the column is exists
 		// 2. add index
 		indexColumns := make([]*model.IndexColumn, 0, len(constr.Keys))

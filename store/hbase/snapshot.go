@@ -126,8 +126,8 @@ func (it *hbaseIter) Valid() bool {
 	return true
 }
 
-func (it *hbaseIter) Key() string {
-	return string(it.rs.Row)
+func (it *hbaseIter) Key() kv.Key {
+	return it.rs.Row
 }
 
 func (it *hbaseIter) Value() []byte {

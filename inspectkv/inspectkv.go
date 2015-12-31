@@ -16,7 +16,6 @@ package inspectkv
 import (
 	"io"
 	"reflect"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
@@ -212,7 +211,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 
 		return true, nil
 	}
-	err := t.IterRecords(txn, string(startKey), cols, filterFunc)
+	err := t.IterRecords(txn, startKey, cols, filterFunc)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -239,7 +238,7 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*column.Col, st
 
 		return false, nil
 	}
-	err := t.IterRecords(retriever, string(startKey), cols, filterFunc)
+	err := t.IterRecords(retriever, startKey, cols, filterFunc)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -313,7 +312,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 
 		return true, nil
 	}
-	err := t.IterRecords(txn, string(startKey), t.Cols(), filterFunc)
+	err := t.IterRecords(txn, startKey, t.Cols(), filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -336,8 +335,8 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	}
 
 	var cnt int64
-	prefix := t.KeyPrefix()
-	for it.Valid() && strings.HasPrefix(it.Key(), prefix) {
+	prefix := t.RecordPrefix()
+	for it.Valid() && it.Key().HasPrefix(prefix) {
 		handle, err := tables.DecodeRecordKeyHandle(it.Key())
 		if err != nil {
 			return 0, errors.Trace(err)

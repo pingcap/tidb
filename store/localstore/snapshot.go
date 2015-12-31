@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/bytes"
 )
 
 var (
@@ -160,7 +159,7 @@ func (it *dbIter) Next() error {
 			return errors.Trace(err)
 		}
 	}
-	it.k, it.v = bytes.CloneBytes(k), bytes.CloneBytes(v)
+	it.k, it.v = k, v
 	return nil
 }
 
@@ -168,8 +167,8 @@ func (it *dbIter) Valid() bool {
 	return it.valid
 }
 
-func (it *dbIter) Key() string {
-	return string(it.k)
+func (it *dbIter) Key() kv.Key {
+	return it.k
 }
 
 func (it *dbIter) Value() []byte {
