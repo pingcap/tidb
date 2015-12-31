@@ -23,29 +23,30 @@ import (
 )
 
 var (
-	_ ExprNode = &ValueExpr{}
 	_ ExprNode = &BetweenExpr{}
 	_ ExprNode = &BinaryOperationExpr{}
-	_ Node     = &WhenClause{}
 	_ ExprNode = &CaseExpr{}
-	_ ExprNode = &SubqueryExpr{}
-	_ ExprNode = &CompareSubqueryExpr{}
-	_ Node     = &ColumnName{}
 	_ ExprNode = &ColumnNameExpr{}
+	_ ExprNode = &CompareSubqueryExpr{}
 	_ ExprNode = &DefaultExpr{}
 	_ ExprNode = &ExistsSubqueryExpr{}
-	_ ExprNode = &PatternInExpr{}
 	_ ExprNode = &IsNullExpr{}
 	_ ExprNode = &IsTruthExpr{}
-	_ ExprNode = &PatternLikeExpr{}
 	_ ExprNode = &ParamMarkerExpr{}
 	_ ExprNode = &ParenthesesExpr{}
-	_ ExprNode = &PositionExpr{}
+	_ ExprNode = &PatternInExpr{}
+	_ ExprNode = &PatternLikeExpr{}
 	_ ExprNode = &PatternRegexpExpr{}
+	_ ExprNode = &PositionExpr{}
 	_ ExprNode = &RowExpr{}
+	_ ExprNode = &SubqueryExpr{}
 	_ ExprNode = &UnaryOperationExpr{}
+	_ ExprNode = &ValueExpr{}
 	_ ExprNode = &ValuesExpr{}
 	_ ExprNode = &VariableExpr{}
+
+	_ Node = &ColumnName{}
+	_ Node = &WhenClause{}
 )
 
 // ValueExpr is the simple value expression.
