@@ -32,7 +32,6 @@ var (
 	_ Node = &ColumnOption{}
 	_ Node = &ColumnPosition{}
 	_ Node = &Constraint{}
-	_ Node = &DatabaseOption{}
 	_ Node = &IndexColName{}
 	_ Node = &ReferenceDef{}
 )
@@ -55,8 +54,6 @@ const (
 
 // DatabaseOption represents database option.
 type DatabaseOption struct {
-	node
-
 	Tp    DatabaseOptionType
 	Value string
 }
