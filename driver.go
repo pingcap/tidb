@@ -153,7 +153,7 @@ func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
 // Examples:
 //    goleveldb://relative/path/test
 //    boltdb:///absolute/path/test
-//    hbase://zk1,zk2,zk3/hbasetbl/test?tso=127.0.0.1:1234
+//    hbase://zk1,zk2,zk3/hbasetbl/test?tso=zk
 //
 // Open may return a cached connection (one previously closed), but doing so is
 // unnecessary; the sql package maintains a pool of idle connections for
