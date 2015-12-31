@@ -18,18 +18,28 @@ import (
 )
 
 var (
-	_ DMLNode = &InsertStmt{}
 	_ DMLNode = &DeleteStmt{}
+	_ DMLNode = &InsertStmt{}
+	_ DMLNode = &UnionStmt{}
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
-	_ DMLNode = &UnionStmt{}
-	_ Node    = &Join{}
-	_ Node    = &TableName{}
-	_ Node    = &TableSource{}
-	_ Node    = &Assignment{}
-	_ Node    = &Limit{}
-	_ Node    = &WildCardField{}
-	_ Node    = &SelectField{}
+	_ DMLNode = &ShowStmt{}
+
+	_ Node = &Assignment{}
+	_ Node = &ByItem{}
+	_ Node = &FieldList{}
+	_ Node = &GroupByClause{}
+	_ Node = &HavingClause{}
+	_ Node = &Join{}
+	_ Node = &Limit{}
+	_ Node = &OnCondition{}
+	_ Node = &OrderByClause{}
+	_ Node = &SelectField{}
+	_ Node = &TableName{}
+	_ Node = &TableRefsClause{}
+	_ Node = &TableSource{}
+	_ Node = &UnionClause{}
+	_ Node = &WildCardField{}
 )
 
 // JoinType is join type, including cross/left/right/full.
@@ -110,33 +120,6 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// TableSource represents table source with a name.
-type TableSource struct {
-	node
-
-	// Source is the source of the data, can be a TableName,
-	// a SelectStmt, a UnionStmt, or a JoinNode.
-	Source ResultSetNode
-
-	// AsName is the as name of the table source.
-	AsName model.CIStr
-}
-
-// Accept implements Node Accept interface.
-func (n *TableSource) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*TableSource)
-	node, ok := n.Source.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Source = node.(ResultSetNode)
-	return v.Leave(n)
-}
-
 // OnCondition represetns JOIN on condition.
 type OnCondition struct {
 	node
@@ -156,6 +139,33 @@ func (n *OnCondition) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Expr = node.(ExprNode)
+	return v.Leave(n)
+}
+
+// TableSource represents table source with a name.
+type TableSource struct {
+	node
+
+	// Source is the source of the data, can be a TableName,
+	// a SelectStmt, a UnionStmt, or a JoinNode.
+	Source ResultSetNode
+
+	// AsName is the alias name of the table source.
+	AsName model.CIStr
+}
+
+// Accept implements Node Accept interface.
+func (n *TableSource) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TableSource)
+	node, ok := n.Source.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Source = node.(ResultSetNode)
 	return v.Leave(n)
 }
 
@@ -209,7 +219,7 @@ type SelectField struct {
 	WildCard *WildCardField
 	// If Expr is not nil, WildCard will be nil.
 	Expr ExprNode
-	// AsName name for Expr.
+	// Alias name for Expr.
 	AsName model.CIStr
 }
 
@@ -399,8 +409,8 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*SelectStmt)
 
+	n = newNode.(*SelectStmt)
 	if n.From != nil {
 		node, ok := n.From.Accept(v)
 		if !ok {
@@ -456,6 +466,7 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Limit = node.(*Limit)
 	}
+
 	return v.Leave(n)
 }
 
@@ -584,8 +595,8 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*InsertStmt)
 
+	n = newNode.(*InsertStmt)
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
 		if !ok {
@@ -593,6 +604,7 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Select = node.(ResultSetNode)
 	}
+
 	node, ok := n.Table.Accept(v)
 	if !ok {
 		return n, false
@@ -657,8 +669,8 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*DeleteStmt)
 
+	n = newNode.(*DeleteStmt)
 	node, ok := n.TableRefs.Accept(v)
 	if !ok {
 		return n, false
@@ -770,5 +782,85 @@ func (n *Limit) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*Limit)
+	return v.Leave(n)
+}
+
+// ShowStmtType is the type for SHOW statement.
+type ShowStmtType int
+
+// Show statement types.
+const (
+	ShowNone = iota
+	ShowEngines
+	ShowDatabases
+	ShowTables
+	ShowTableStatus
+	ShowColumns
+	ShowWarnings
+	ShowCharset
+	ShowVariables
+	ShowStatus
+	ShowCollation
+	ShowCreateTable
+	ShowGrants
+	ShowTriggers
+	ShowProcedureStatus
+	ShowIndex
+)
+
+// ShowStmt is a statement to provide information about databases, tables, columns and so on.
+// See: https://dev.mysql.com/doc/refman/5.7/en/show.html
+type ShowStmt struct {
+	dmlNode
+
+	Tp     ShowStmtType // Databases/Tables/Columns/....
+	DBName string
+	Table  *TableName  // Used for showing columns.
+	Column *ColumnName // Used for `desc table column`.
+	Flag   int         // Some flag parsed from sql, such as FULL.
+	Full   bool
+	User   string // Used for show grants.
+
+	// Used by show variables
+	GlobalScope bool
+	Pattern     *PatternLikeExpr
+	Where       ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ShowStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	if n.Column != nil {
+		node, ok := n.Column.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Column = node.(*ColumnName)
+	}
+	if n.Pattern != nil {
+		node, ok := n.Pattern.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Pattern = node.(*PatternLikeExpr)
+	}
+	if n.Where != nil {
+		node, ok := n.Where.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Where = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
