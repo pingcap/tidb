@@ -30,17 +30,17 @@ type testHBaseSuite struct {
 
 func (t *testHBaseSuite) TestParsePath(c *C) {
 	tbl := []struct {
-		dsn    string
-		ok     bool
-		zks    []string
-		oracle string
-		table  string
+		dsn   string
+		ok    bool
+		zks   string
+		tso   string
+		table string
 	}{
-		{"hbase://z,k,zk/tbl", true, []string{"z", "k", "zk"}, "", "tbl"},
-		{"hbase://z:80,k:80/tbl?tso=127.0.0.1:1234", true, []string{"z:80", "k:80"}, "127.0.0.1:1234", "tbl"},
-		{"goleveldb://zk/tbl", false, nil, "", ""},
-		{"hbase://zk/path/tbl", false, nil, "", ""},
-		{"hbase:///zk/tbl", false, nil, "", ""},
+		{"hbase://z,k,zk/tbl", true, "z,k,zk", tsoTypeLocal, "tbl"},
+		{"hbase://z:80,k:80/tbl?tso=zk", true, "z:80,k:80", tsoTypeZK, "tbl"},
+		{"goleveldb://zk/tbl", false, "", "", ""},
+		{"hbase://zk/path/tbl", false, "", "", ""},
+		{"hbase:///zk/tbl", false, "", "", ""},
 	}
 
 	for _, t := range tbl {
@@ -48,7 +48,7 @@ func (t *testHBaseSuite) TestParsePath(c *C) {
 		if t.ok {
 			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
 			c.Assert(zks, DeepEquals, t.zks, Commentf("dsn=%v", t.dsn))
-			c.Assert(oracle, Equals, t.oracle, Commentf("dsn=%v", t.dsn))
+			c.Assert(oracle, Equals, t.tso, Commentf("dsn=%v", t.dsn))
 			c.Assert(table, Equals, t.table, Commentf("dsn=%v", t.dsn))
 		} else {
 			c.Assert(err, NotNil, Commentf("dsn=%v", t.dsn))
