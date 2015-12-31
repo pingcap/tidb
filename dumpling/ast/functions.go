@@ -19,15 +19,16 @@ import (
 )
 
 var (
-	_ FuncNode = &FuncCallExpr{}
-	_ FuncNode = &FuncExtractExpr{}
-	_ FuncNode = &FuncConvertExpr{}
-	_ FuncNode = &FuncCastExpr{}
-	_ FuncNode = &FuncSubstringExpr{}
-	_ FuncNode = &FuncLocateExpr{}
-	_ FuncNode = &FuncTrimExpr{}
-	_ FuncNode = &FuncDateArithExpr{}
 	_ FuncNode = &AggregateFuncExpr{}
+	_ FuncNode = &FuncCallExpr{}
+	_ FuncNode = &FuncCastExpr{}
+	_ FuncNode = &FuncConvertExpr{}
+	_ FuncNode = &FuncDateArithExpr{}
+	_ FuncNode = &FuncExtractExpr{}
+	_ FuncNode = &FuncLocateExpr{}
+	_ FuncNode = &FuncSubstringExpr{}
+	_ FuncNode = &FuncSubstringIndexExpr{}
+	_ FuncNode = &FuncTrimExpr{}
 )
 
 // UnquoteString is not quoted when printed.

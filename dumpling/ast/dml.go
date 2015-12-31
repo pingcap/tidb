@@ -23,6 +23,7 @@ var (
 	_ DMLNode = &UnionStmt{}
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
+	_ DMLNode = &ShowStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -781,5 +782,85 @@ func (n *Limit) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*Limit)
+	return v.Leave(n)
+}
+
+// ShowStmtType is the type for SHOW statement.
+type ShowStmtType int
+
+// Show statement types.
+const (
+	ShowNone = iota
+	ShowEngines
+	ShowDatabases
+	ShowTables
+	ShowTableStatus
+	ShowColumns
+	ShowWarnings
+	ShowCharset
+	ShowVariables
+	ShowStatus
+	ShowCollation
+	ShowCreateTable
+	ShowGrants
+	ShowTriggers
+	ShowProcedureStatus
+	ShowIndex
+)
+
+// ShowStmt is a statement to provide information about databases, tables, columns and so on.
+// See: https://dev.mysql.com/doc/refman/5.7/en/show.html
+type ShowStmt struct {
+	dmlNode
+
+	Tp     ShowStmtType // Databases/Tables/Columns/....
+	DBName string
+	Table  *TableName  // Used for showing columns.
+	Column *ColumnName // Used for `desc table column`.
+	Flag   int         // Some flag parsed from sql, such as FULL.
+	Full   bool
+	User   string // Used for show grants.
+
+	// Used by show variables
+	GlobalScope bool
+	Pattern     *PatternLikeExpr
+	Where       ExprNode
+}
+
+// Accept implements Node Accept interface.
+func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ShowStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	if n.Column != nil {
+		node, ok := n.Column.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Column = node.(*ColumnName)
+	}
+	if n.Pattern != nil {
+		node, ok := n.Pattern.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Pattern = node.(*PatternLikeExpr)
+	}
+	if n.Where != nil {
+		node, ok := n.Where.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Where = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
