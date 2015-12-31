@@ -28,6 +28,11 @@ const (
 	encPad       = byte(0x0)
 )
 
+var (
+	pads    = make([]byte, encGroupSize)
+	encPads = []byte{encPad}
+)
+
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
 // encoding with the following rule:
 //  [group1][marker1]...[groupN][markerN]
@@ -54,7 +59,7 @@ func EncodeBytes(b []byte, data []byte) []byte {
 		} else {
 			padCount = encGroupSize - remain
 			result = append(result, data[idx:]...)
-			result = append(result, make([]byte, padCount)...)
+			result = append(result, pads[:padCount]...)
 		}
 
 		marker := encMarker - byte(padCount)
@@ -91,7 +96,7 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 
 		if marker != encMarker {
 			// Check validity of padding bytes.
-			if bytes.Count(group[realGroupSize:], []byte{encPad}) != int(padCount) {
+			if bytes.Count(group[realGroupSize:], encPads) != int(padCount) {
 				return nil, nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
 			}
 

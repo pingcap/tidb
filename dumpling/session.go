@@ -323,7 +323,7 @@ func (s *session) GetGlobalSysVar(ctx context.Context, name string) (string, err
 	sysVar, err := s.getExecRet(ctx, sql)
 	if err != nil {
 		if terror.ExecResultIsEmpty.Equal(err) {
-			return "", terror.ExecResultIsEmpty.Gen("unknown sys variable:%s", name)
+			return "", variable.UnknownSystemVar.Gen("unknown sys variable:%s", name)
 		}
 		return "", errors.Trace(err)
 	}

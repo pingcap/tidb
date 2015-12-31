@@ -19,7 +19,7 @@ import "github.com/juju/errors"
 // It will stop when fn returns true, or iterator is invalid or an error occurs.
 func NextUntil(it Iterator, fn FnKeyCmp) error {
 	var err error
-	for it.Valid() && !fn([]byte(it.Key())) {
+	for it.Valid() && !fn(it.Key()) {
 		err = it.Next()
 		if err != nil {
 			return errors.Trace(err)

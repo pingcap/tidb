@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -154,23 +153,23 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 	return nil
 }
 
-func (d *ddl) delKeysWithPrefix(prefix string) error {
+func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
 	for {
-		keys := make([]string, 0, maxBatchSize)
+		keys := make([]kv.Key, 0, maxBatchSize)
 		err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 			if err1 := d.isReorgRunnable(txn); err1 != nil {
 				return errors.Trace(err1)
 			}
 
-			iter, err := txn.Seek([]byte(prefix))
+			iter, err := txn.Seek(prefix)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
 			defer iter.Close()
 			for i := 0; i < maxBatchSize; i++ {
-				if iter.Valid() && strings.HasPrefix(iter.Key(), prefix) {
-					keys = append(keys, iter.Key())
+				if iter.Valid() && iter.Key().HasPrefix(prefix) {
+					keys = append(keys, iter.Key().Clone())
 					err = iter.Next()
 					if err != nil {
 						return errors.Trace(err)
@@ -181,7 +180,7 @@ func (d *ddl) delKeysWithPrefix(prefix string) error {
 			}
 
 			for _, key := range keys {
-				err := txn.Delete([]byte(key))
+				err := txn.Delete(key)
 				// must skip ErrNotExist
 				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 					return errors.Trace(err)
