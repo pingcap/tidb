@@ -44,11 +44,11 @@ type FuncCallExpr struct {
 
 // Accept implements Node interface.
 func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncCallExpr)
+	n = newNode.(*FuncCallExpr)
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -70,11 +70,11 @@ type FuncExtractExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncExtractExpr)
+	n = newNode.(*FuncExtractExpr)
 	node, ok := n.Date.Accept(v)
 	if !ok {
 		return n, false
@@ -95,11 +95,11 @@ type FuncConvertExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncConvertExpr)
+	n = newNode.(*FuncConvertExpr)
 	node, ok := n.Expr.Accept(v)
 	if !ok {
 		return n, false
@@ -132,11 +132,11 @@ type FuncCastExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncCastExpr)
+	n = newNode.(*FuncCastExpr)
 	node, ok := n.Expr.Accept(v)
 	if !ok {
 		return n, false
@@ -157,11 +157,11 @@ type FuncSubstringExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncSubstringExpr)
+	n = newNode.(*FuncSubstringExpr)
 	node, ok := n.StrExpr.Accept(v)
 	if !ok {
 		return n, false
@@ -194,11 +194,11 @@ type FuncSubstringIndexExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncSubstringIndexExpr)
+	n = newNode.(*FuncSubstringIndexExpr)
 	node, ok := n.StrExpr.Accept(v)
 	if !ok {
 		return n, false
@@ -229,11 +229,11 @@ type FuncLocateExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncLocateExpr)
+	n = newNode.(*FuncLocateExpr)
 	node, ok := n.Str.Accept(v)
 	if !ok {
 		return n, false
@@ -278,11 +278,11 @@ type FuncTrimExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncTrimExpr)
+	n = newNode.(*FuncTrimExpr)
 	node, ok := n.Str.Accept(v)
 	if !ok {
 		return n, false
@@ -330,11 +330,11 @@ type FuncDateArithExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*FuncDateArithExpr)
+	n = newNode.(*FuncDateArithExpr)
 	if n.Date != nil {
 		node, ok := n.Date.Accept(v)
 		if !ok {
@@ -367,11 +367,11 @@ type AggregateFuncExpr struct {
 
 // Accept implements Node Accept interface.
 func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*AggregateFuncExpr)
+	n = newNode.(*AggregateFuncExpr)
 	for i, val := range n.Args {
 		node, ok := val.Accept(v)
 		if !ok {
