@@ -18,6 +18,8 @@
 package plans
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
-	"math"
 )
 
 var (
@@ -125,7 +126,7 @@ func (r *TableDefaultPlan) Explain(w format.Formatter) {
 func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, bool, error) {
 	ok, name, rval, err := x.IsIdentCompareVal()
 	if err != nil {
-		return r, false, err
+		return r, false, errors.Trace(err)
 	}
 	if !ok {
 		return r, false, nil
@@ -148,7 +149,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 	}
 	var seekVal interface{}
 	if seekVal, err = types.Convert(rval, &c.FieldType); err != nil {
-		return nil, false, err
+		return nil, false, errors.Trace(err)
 	}
 	spans := toSpans(x.Op, rval, seekVal)
 	if c.IsPKHandleColumn(r.T.Meta()) {

@@ -432,7 +432,10 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 	tableRanges := make([]TableRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
-		startInt, err := pointValueToHandle(startPoint.value)
+		if startPoint.value == nil || startPoint.value == MinNotNullVal {
+			startPoint.value = math.MinInt64
+		}
+		startInt, err := types.ToInt64(startPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -446,12 +449,17 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 			startInt++
 		}
 		endPoint := rangePoints[i+1]
-		endInt, err := pointValueToHandle(startPoint.value)
+		if endPoint.value == nil {
+			endPoint.value = math.MinInt64
+		} else if endPoint.value == MaxVal {
+			endPoint.value = math.MaxInt64
+		}
+		endInt, err := types.ToInt64(endPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
-		cmp, err = types.Compare(startInt, startPoint.value)
+		cmp, err = types.Compare(endInt, endPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -465,14 +473,4 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		tableRanges = append(tableRanges, TableRange{LowVal: startInt, HighVal: endInt})
 	}
 	return tableRanges
-}
-
-func pointValueToHandle(value interface{}) (int64, error) {
-	if value == nil || value == MinNotNullVal {
-		return math.MinInt64, nil
-	}
-	if value == MaxVal {
-		return math.MaxInt64, nil
-	}
-	return types.ToInt64(value)
 }

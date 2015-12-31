@@ -103,7 +103,7 @@ func (c *costEstimator) tableScan(v *TableScan) {
 				rowCount += HalfRangeCount
 			}
 			// For condition like 'a > 0 and a < 1'.
-			rowCount += 100
+			rowCount += MiddleRangeCount
 		}
 	}
 	v.startupCost = 0
@@ -137,7 +137,7 @@ func (c *costEstimator) indexScan(v *IndexScan) {
 				rowCount += HalfRangeCount
 			}
 			// For condition like 'a > 0 and a < 1'.
-			rowCount += 100
+			rowCount += MiddleRangeCount
 		}
 		// If the index has too many ranges, the row count may exceed the default row count.
 		// Make sure the cost is lower than full range.

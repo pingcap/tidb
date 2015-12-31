@@ -88,9 +88,9 @@ type TableScanExec struct {
 	fields     []*ast.ResultField
 	iter       kv.Iterator
 	ctx        context.Context
-	ranges     []plan.TableRange
-	seekHandle int64
-	cursor     int
+	ranges     []plan.TableRange // Disjoint close handle ranges.
+	seekHandle int64             // The handle to seek, should be initialized to math.MinInt64.
+	cursor     int               // The range cursor, used to locate to current range.
 }
 
 // Fields implements Executor Fields interface.
@@ -126,6 +126,8 @@ func (e *TableScanExec) Next() (*Row, error) {
 			// don't need to seek again.
 			inRange := e.iterateToRangeContains(handle)
 			if !inRange {
+				// The handle may be less than the current range low value, can not
+				// return directly.
 				continue
 			}
 		}

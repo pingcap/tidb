@@ -413,13 +413,15 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	bs := kv.NewBufferStore(txn)
 	defer bs.Release()
 
-	// Check key exists.
-	recordKey := t.RecordKey(recordID, nil)
-	_, err = txn.Get(recordKey)
-	if err == nil {
-		return recordID, kv.ErrKeyExists
-	} else if !terror.ErrorEqual(err, kv.ErrNotExist) {
-		return 0, errors.Trace(err)
+	if t.meta.PKIsHandle {
+		// Check key exists.
+		recordKey := t.RecordKey(recordID, nil)
+		_, err = txn.Get(recordKey)
+		if err == nil {
+			return recordID, kv.ErrKeyExists
+		} else if !terror.ErrorEqual(err, kv.ErrNotExist) {
+			return 0, errors.Trace(err)
+		}
 	}
 
 	for _, v := range t.indices {

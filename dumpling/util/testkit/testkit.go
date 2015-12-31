@@ -1,7 +1,22 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package testkit
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
@@ -83,4 +98,20 @@ func (res *Result) Check(expected [][]interface{}) {
 	got := fmt.Sprintf("%v", res.rows)
 	need := fmt.Sprintf("%v", expected)
 	res.c.Assert(got, check.Equals, need, res.comment)
+}
+
+// Rows is a convenient function to wrap args to a slice of []interface.
+// The arg represents a row, split by white space, only applicable for
+// values that have no white spaces.
+func Rows(args ...string) [][]interface{} {
+	rows := make([][]interface{}, len(args))
+	for i, v := range args {
+		strs := strings.Split(v, " ")
+		row := make([]interface{}, len(strs))
+		for j, s := range strs {
+			row[j] = s
+		}
+		rows[i] = row
+	}
+	return rows
 }
