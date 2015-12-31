@@ -20,18 +20,19 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-func refine(p Plan) error {
+// Refine tries to build index range, bypass sort, set limit for source plan.
+// It prepares the plan for cost estimation.
+func Refine(p Plan) error {
 	r := refiner{}
 	p.Accept(&r)
 	return r.err
 }
 
-// refiner tries to build index range, bypass sort, set limit for source plan.
-// It prepares the plan for cost estimation.
 type refiner struct {
 	conditions []ast.ExprNode
-	// store index scan plan for sort to use.
+	// store scan plan for sort to use.
 	indexScan *IndexScan
+	tableScan *TableScan
 	err       error
 }
 
@@ -41,6 +42,8 @@ func (r *refiner) Enter(in Plan) (Plan, bool) {
 		r.conditions = x.Conditions
 	case *IndexScan:
 		r.indexScan = x
+	case *TableScan:
+		r.tableScan = x
 	}
 	return in, false
 }
@@ -85,6 +88,26 @@ func (r *refiner) sortBypass(p *Sort) {
 		if desc {
 			// TODO: support desc when index reverse iterator is supported.
 			r.indexScan.Desc = true
+			return
+		}
+		p.Bypass = true
+	} else if r.tableScan != nil {
+		if len(p.ByItems) != 1 {
+			return
+		}
+		byItem := p.ByItems[0]
+		if byItem.Desc {
+			// TODO: support desc when table reverse iterator is supported.
+			return
+		}
+		cn, ok := byItem.Expr.(*ast.ColumnNameExpr)
+		if !ok {
+			return
+		}
+		if !mysql.HasPriKeyFlag(cn.Refer.Column.Flag) {
+			return
+		}
+		if !cn.Refer.Table.PKIsHandle {
 			return
 		}
 		p.Bypass = true

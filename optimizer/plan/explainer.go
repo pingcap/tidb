@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -38,7 +39,16 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 	var str string
 	switch x := in.(type) {
 	case *TableScan:
-		str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+		if len(x.Ranges) > 0 {
+			ran := x.Ranges[0]
+			if ran.LowVal != math.MinInt64 || ran.HighVal != math.MaxInt64 {
+				str = fmt.Sprintf("Range(%s)", x.Table.Name.L)
+			} else {
+				str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+			}
+		} else {
+			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
+		}
 	case *IndexScan:
 		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
 	case *Filter:

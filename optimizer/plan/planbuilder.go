@@ -36,11 +36,7 @@ const (
 func BuildPlan(node ast.Node) (Plan, error) {
 	var builder planBuilder
 	p := builder.build(node)
-	if builder.err != nil {
-		return nil, builder.err
-	}
-	err := refine(p)
-	return p, err
+	return p, builder.err
 }
 
 // planBuilder builds Plan from an ast.Node.
