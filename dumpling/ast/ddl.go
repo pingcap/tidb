@@ -18,21 +18,23 @@ import (
 )
 
 var (
-	_ DDLNode = &CreateDatabaseStmt{}
-	_ DDLNode = &DropDatabaseStmt{}
-	_ DDLNode = &CreateTableStmt{}
-	_ DDLNode = &DropTableStmt{}
-	_ DDLNode = &CreateIndexStmt{}
-	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &AlterTableStmt{}
+	_ DDLNode = &CreateDatabaseStmt{}
+	_ DDLNode = &CreateIndexStmt{}
+	_ DDLNode = &CreateTableStmt{}
+	_ DDLNode = &DropDatabaseStmt{}
+	_ DDLNode = &DropIndexStmt{}
+	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
-	_ Node    = &IndexColName{}
-	_ Node    = &ReferenceDef{}
-	_ Node    = &ColumnOption{}
-	_ Node    = &Constraint{}
-	_ Node    = &ColumnDef{}
-	_ Node    = &ColumnPosition{}
-	_ Node    = &AlterTableSpec{}
+
+	_ Node = &AlterTableSpec{}
+	_ Node = &ColumnDef{}
+	_ Node = &ColumnOption{}
+	_ Node = &ColumnPosition{}
+	_ Node = &Constraint{}
+	_ Node = &DatabaseOption{}
+	_ Node = &IndexColName{}
+	_ Node = &ReferenceDef{}
 )
 
 // CharsetOpt is used for parsing charset option from SQL.
