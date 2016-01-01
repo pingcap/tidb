@@ -36,7 +36,7 @@ var (
 )
 
 // FloatOpt is used for parsing floating-point type option from SQL.
-// TODO: add reference doc.
+// See: http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
 type FloatOpt struct {
 	Flen    int
 	Decimal int
@@ -351,6 +351,7 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 // PrivElem is the privilege type and optional column list.
 type PrivElem struct {
 	node
+
 	Priv mysql.PrivilegeType
 	Cols []*ColumnName
 }

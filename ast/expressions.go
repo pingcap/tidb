@@ -97,8 +97,8 @@ func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*BetweenExpr)
 
+	n = newNode.(*BetweenExpr)
 	node, ok := n.Expr.Accept(v)
 	if !ok {
 		return n, false
@@ -120,7 +120,7 @@ func (n *BetweenExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// BinaryOperationExpr is for binary operation like 1 + 1, 1 - 1, etc.
+// BinaryOperationExpr is for binary operation like `1 + 1`, `1 - 1`, etc.
 type BinaryOperationExpr struct {
 	exprNode
 	// Op is the operator code for BinaryOperation.
@@ -137,8 +137,8 @@ func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*BinaryOperationExpr)
 
+	n = newNode.(*BinaryOperationExpr)
 	node, ok := n.L.Accept(v)
 	if !ok {
 		return n, false
@@ -169,6 +169,7 @@ func (n *WhenClause) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
+
 	n = newNode.(*WhenClause)
 	node, ok := n.Expr.Accept(v)
 	if !ok {
@@ -201,6 +202,7 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	if skipChildren {
 		return v.Leave(newNode)
 	}
+
 	n = newNode.(*CaseExpr)
 	if n.Value != nil {
 		node, ok := n.Value.Accept(v)
@@ -248,12 +250,12 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SetResultFields implements ResultSet interface.
+// SetResultFields implements ResultSetNode interface.
 func (n *SubqueryExpr) SetResultFields(rfs []*ResultField) {
 	n.Query.SetResultFields(rfs)
 }
 
-// GetResultFields implements ResultSet interface.
+// GetResultFields implements ResultSetNode interface.
 func (n *SubqueryExpr) GetResultFields() []*ResultField {
 	return n.Query.GetResultFields()
 }
@@ -694,7 +696,7 @@ type VariableExpr struct {
 	Name string
 	// IsGlobal indicates whether this variable is global.
 	IsGlobal bool
-	// IsSystem indicates whether this variable is a global variable in current session.
+	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
 }
 
