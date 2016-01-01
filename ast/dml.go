@@ -169,12 +169,12 @@ func (n *TableSource) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SetResultFields implements ResultSet interface.
+// SetResultFields implements ResultSetNode interface.
 func (n *TableSource) SetResultFields(rfs []*ResultField) {
 	n.Source.SetResultFields(rfs)
 }
 
-// GetResultFields implements ResultSet interface.
+// GetResultFields implements ResultSetNode interface.
 func (n *TableSource) GetResultFields() []*ResultField {
 	return n.Source.GetResultFields()
 }
