@@ -81,8 +81,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	tbl, _ := b.is.TableByID(v.Table.ID)
 	var idx *column.IndexedCol
-	indices := tbl.Indices()
-	for _, val := range indices {
+	for _, val := range tbl.Indices() {
 		if val.IndexInfo.Name.L == v.Index.Name.L {
 			idx = val
 			break
@@ -110,14 +109,14 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 }
 
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
-	rang := &IndexRangeExec{
+	ran := &IndexRangeExec{
 		scan:        scan,
 		lowVals:     v.LowVal,
 		lowExclude:  v.LowExclude,
 		highVals:    v.HighVal,
 		highExclude: v.HighExclude,
 	}
-	return rang
+	return ran
 }
 
 func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode {
