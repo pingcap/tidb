@@ -191,7 +191,7 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 		for _, val := range v.WhenClauses {
 			cmp, err := types.Compare(target, val.Expr.GetValue())
 			if err != nil {
-				e.err = err
+				e.err = errors.Trace(err)
 				return false
 			}
 			if cmp == 0 {
@@ -268,7 +268,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		}
 		r, err := types.Compare(n.Expr.GetValue(), v.GetValue())
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		}
 		if r == 0 {
@@ -304,7 +304,7 @@ func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	if !types.IsNil(val) {
 		ival, err := types.ToBool(val)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		}
 		if ival == v.True {
@@ -357,7 +357,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 	case opcode.Not:
 		n, err := types.ToBool(a)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 		} else if n == 0 {
 			u.SetValue(int64(1))
 		} else {
@@ -367,7 +367,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		// for bit operation, we will use int64 first, then return uint64
 		n, err := types.ToInt64(a)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		}
 		u.SetValue(uint64(^n))
@@ -460,14 +460,14 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 			u.SetValue(mysql.ZeroDecimal.Sub(x.ToNumber()))
 		case string:
 			f, err := types.StrToFloat(x)
-			e.err = err
+			e.err = errors.Trace(err)
 			u.SetValue(-f)
 		case mysql.Decimal:
 			f, _ := x.Float64()
 			u.SetValue(mysql.NewDecimalFromFloat(-f))
 		case []byte:
 			f, err := types.StrToFloat(string(x))
-			e.err = err
+			e.err = errors.Trace(err)
 			u.SetValue(-f)
 		case mysql.Hex:
 			u.SetValue(-x.ToNumber())
