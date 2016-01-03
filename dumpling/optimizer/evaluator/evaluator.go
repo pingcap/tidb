@@ -55,12 +55,10 @@ func Eval(ctx context.Context, expr ast.ExprNode) (interface{}, error) {
 // EvalBool evalueates an expression to a boolean value.
 func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 	val, err := Eval(ctx, expr)
-	if err != nil {
+	if err != nil || val == nil {
 		return false, errors.Trace(err)
 	}
-	if val == nil {
-		return false, nil
-	}
+
 	i, err := types.ToBool(val)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -75,7 +73,7 @@ func boolToInt64(v bool) int64 {
 	return int64(0)
 }
 
-// Evaluator is a ast Visitor that evaluates an expression.
+// Evaluator is an ast Visitor that evaluates an expression.
 type Evaluator struct {
 	ctx context.Context
 	err error
@@ -239,7 +237,7 @@ func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) (i
 
 		r, err := types.Compare(in, v)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 
 		if r == 0 {

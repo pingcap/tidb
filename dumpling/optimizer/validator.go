@@ -63,7 +63,7 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 // checkAllOneColumn checks that all expressions have one column.
-// Expression may has more than one column when it is a rowExpr or
+// Expression may have more than one column when it is a rowExpr or
 // a Subquery with more than one result fields.
 func (v *validator) checkAllOneColumn(exprs ...ast.ExprNode) {
 	for _, expr := range exprs {
@@ -113,7 +113,7 @@ func (v *validator) checkSameColumns(exprs ...ast.ExprNode) {
 	}
 }
 
-// checkFieldList checks there is only one '*" and each field has only one column,
+// checkFieldList checks there is only one '*" and each field has only one column.
 func (v *validator) checkFieldList(x *ast.FieldList) {
 	var hasWildCard bool
 	for _, val := range x.Fields {
