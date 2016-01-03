@@ -16,7 +16,7 @@ package plan
 import "github.com/juju/errors"
 
 // Alternatives returns multiple alternative plans that
-// can be picked base on their cost.
+// can be picked based on their cost.
 func Alternatives(p Plan) ([]Plan, error) {
 	var plans []Plan
 	switch x := p.(type) {
@@ -52,19 +52,19 @@ func tableScanAlternatives(p *TableScan) []Plan {
 			LowVal:  []interface{}{nil},
 			HighVal: []interface{}{MaxVal},
 		}
-		ip := &IndexScan{
+		is := &IndexScan{
 			Index:  v,
 			Table:  p.Table,
 			Ranges: []*IndexRange{fullRange},
 		}
-		ip.SetFields(p.Fields())
-		alts = append(alts, ip)
+		is.SetFields(p.Fields())
+		alts = append(alts, is)
 	}
 	return alts
 }
 
 // planWithSrcAlternatives shallow copies the WithSrcPlan,
-// and set its src to src alternatives.
+// and sets its src to src alternatives.
 func planWithSrcAlternatives(p WithSrcPlan) ([]Plan, error) {
 	srcs, err := Alternatives(p.Src())
 	if err != nil {

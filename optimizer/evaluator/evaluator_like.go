@@ -14,10 +14,11 @@
 package evaluator
 
 import (
+	"regexp"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/types"
-	"regexp"
 )
 
 const (
@@ -199,7 +200,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 		}
 
 		if re, err = regexp.Compile(spattern); err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		}
 
