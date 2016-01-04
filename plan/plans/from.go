@@ -244,7 +244,9 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 	cn := cns[0]
 	t := r.T
 	col := column.FindCol(t.Cols(), cn)
-
+	if col == nil {
+		return r, false, nil
+	}
 	if col.IsPKHandleColumn(t.Meta()) {
 		if x.Not {
 			// PK handle column never be null.
