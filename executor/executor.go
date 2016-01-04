@@ -32,13 +32,14 @@ import (
 )
 
 var (
-	_ Executor = &TableScanExec{}
-	_ Executor = &IndexScanExec{}
-	_ Executor = &IndexRangeExec{}
-	_ Executor = &SelectFieldsExec{}
 	_ Executor = &FilterExec{}
+	_ Executor = &IndexRangeExec{}
+	_ Executor = &IndexScanExec{}
 	_ Executor = &LimitExec{}
+	_ Executor = &SelectFieldsExec{}
+	_ Executor = &SelectLockExec{}
 	_ Executor = &SortExec{}
+	_ Executor = &TableScanExec{}
 )
 
 // Error instances.
@@ -111,7 +112,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 	if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
 		return nil, nil
 	}
-	// TODO: check if lock valid
+
 	// the record layout in storage (key -> value):
 	// r1 -> lock-version
 	// r1_col1 -> r1 col1 value
@@ -206,6 +207,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			return nil, types.EOFAsNil(err)
 		}
 	}
+
 	for {
 		if e.finished {
 			return nil, nil
@@ -359,8 +361,7 @@ func (e *IndexScanExec) Next() (*Row, error) {
 // Close implements Executor Close interface.
 func (e *IndexScanExec) Close() error {
 	for e.rangeIdx < len(e.Ranges) {
-		ran := e.Ranges[e.rangeIdx]
-		ran.Close()
+		e.Ranges[e.rangeIdx].Close()
 		e.rangeIdx++
 	}
 	return nil
@@ -544,7 +545,7 @@ func (e *LimitExec) Close() error {
 	return e.Src.Close()
 }
 
-// orderByRow bind a row to its order values, so it can be sorted.
+// orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
 	key []interface{}
 	row *Row
@@ -604,9 +605,6 @@ func (e *SortExec) Less(i, j int) bool {
 
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
-	if e.err != nil {
-		return nil, errors.Trace(e.err)
-	}
 	if !e.fetched {
 		for {
 			srcRow, err := e.Src.Next()
@@ -630,6 +628,9 @@ func (e *SortExec) Next() (*Row, error) {
 		}
 		sort.Sort(e)
 		e.fetched = true
+	}
+	if e.err != nil {
+		return nil, errors.Trace(e.err)
 	}
 	if e.Idx >= len(e.Rows) {
 		return nil, nil
