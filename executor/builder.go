@@ -169,6 +169,14 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 		ResultFields: v.Fields(),
 		ctx:          b.ctx,
 	}
+	hasAgg := false
+	for _, field := range e.ResultFields {
+		if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
+			hasAgg = true
+			break
+		}
+	}
+	e.hasAggFunc = hasAgg
 	return e
 }
 

@@ -422,6 +422,7 @@ type SelectFieldsExec struct {
 	ResultFields []*ast.ResultField
 	executed     bool
 	ctx          context.Context
+	hasAggFunc   bool
 }
 
 // Fields implements Executor Fields interface.
@@ -431,6 +432,13 @@ func (e *SelectFieldsExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *SelectFieldsExec) Next() (*Row, error) {
+	if e.hasAggFunc {
+		return e.aggNext()
+	}
+	return e.noneAggNext()
+}
+
+func (e *SelectFieldsExec) noneAggNext() (*Row, error) {
 	var rowKeys []*RowKeyEntry
 	if e.Src != nil {
 		srcRow, err := e.Src.Next()
@@ -460,6 +468,14 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		row.Data[i] = val
 	}
 	return row, nil
+}
+
+func (e *SelectFieldsExec) aggNext() (*Row, error) {
+	if !e.executed {
+		// Agg Init
+	}
+	// Read next group and eval
+	return nil, nil
 }
 
 // Close implements Executor Close interface.
