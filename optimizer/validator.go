@@ -113,7 +113,7 @@ func (v *validator) checkSameColumns(exprs ...ast.ExprNode) {
 	}
 }
 
-// checkFieldList checks there is only one '*" and each field has only one column.
+// checkFieldList checks if there is only one '*' and each field has only one column.
 func (v *validator) checkFieldList(x *ast.FieldList) {
 	var hasWildCard bool
 	for _, val := range x.Fields {
