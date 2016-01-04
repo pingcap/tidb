@@ -55,8 +55,11 @@ func Eval(ctx context.Context, expr ast.ExprNode) (interface{}, error) {
 // EvalBool evalueates an expression to a boolean value.
 func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 	val, err := Eval(ctx, expr)
-	if err != nil || val == nil {
+	if err != nil {
 		return false, errors.Trace(err)
+	}
+	if val == nil {
+		return false, nil
 	}
 
 	i, err := types.ToBool(val)
