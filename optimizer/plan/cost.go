@@ -71,7 +71,7 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 			v.rowCount = v.Src().RowCount()
 			v.totalCost = v.Src().TotalCost()
 		} else {
-			// Sort plan must retrieves all the rows before returns the first row.
+			// Sort plan must retrieve all the rows before returns the first row.
 			v.startupCost = v.Src().TotalCost() + v.Src().RowCount()*SortCost
 			if v.limit == 0 {
 				v.rowCount = v.Src().RowCount()
@@ -87,6 +87,7 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	}
 	return p, true
 }
+
 func (c *costEstimator) indexScan(v *IndexScan) {
 	var rowCount float64
 	if len(v.Ranges) == 1 && v.Ranges[0].LowVal[0] == nil && v.Ranges[0].HighVal[0] == MaxVal {
