@@ -191,9 +191,13 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
 			return nil
 		})
 
-		// if err or delete no keys, returns.
-		if err != nil || len(keys) == 0 {
+		if err != nil {
 			return errors.Trace(err)
+		}
+
+		// delete no keys, return.
+		if len(keys) == 0 {
+			return nil
 		}
 	}
 }
