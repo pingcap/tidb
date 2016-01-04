@@ -46,11 +46,11 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a := &statementAdapter{
+		sa := &statementAdapter{
 			is:   is,
 			plan: p,
 		}
-		return a, nil
+		return sa, nil
 	}
 	c.converter = &converter.Converter{}
 	s, err := c.converter.Convert(node)

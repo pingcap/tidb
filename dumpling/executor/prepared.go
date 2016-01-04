@@ -31,6 +31,12 @@ import (
 	"github.com/pingcap/tidb/stmt"
 )
 
+var (
+	_ Executor = &DeallocateExec{}
+	_ Executor = &ExecuteExec{}
+	_ Executor = &PrepareExec{}
+)
+
 type paramMarkerSorter struct {
 	markers []*ast.ParamMarkerExpr
 }
@@ -277,9 +283,9 @@ func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interfac
 	for i, val := range args {
 		execPlan.UsingVars[i] = ast.NewValueExpr(val)
 	}
-	a := &statementAdapter{
+	sa := &statementAdapter{
 		is:   sessionctx.GetDomain(ctx).InfoSchema(),
 		plan: execPlan,
 	}
-	return a
+	return sa
 }

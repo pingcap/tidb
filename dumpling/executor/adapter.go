@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// adapter wraps a executor, implements rset.Recordset interface
+// adapter wraps an executor, implements rset.Recordset interface
 type recordsetAdapter struct {
 	fields   []*field.ResultField
 	executor Executor
@@ -42,12 +42,12 @@ func (a *recordsetAdapter) Fields() ([]*field.ResultField, error) {
 }
 
 func (a *recordsetAdapter) FirstRow() ([]interface{}, error) {
-	ro, err := a.Next()
+	row, err := a.Next()
 	a.Close()
-	if ro == nil || err != nil {
+	if err != nil || row == nil {
 		return nil, errors.Trace(err)
 	}
-	return ro.Data, nil
+	return row.Data, nil
 }
 
 func (a *recordsetAdapter) Rows(limit, offset int) ([][]interface{}, error) {
@@ -56,7 +56,7 @@ func (a *recordsetAdapter) Rows(limit, offset int) ([][]interface{}, error) {
 	// Move to offset.
 	for offset > 0 {
 		row, err := a.Next()
-		if row == nil || err != nil {
+		if err != nil || row == nil {
 			return nil, errors.Trace(err)
 		}
 		offset--
@@ -80,7 +80,7 @@ func (a *recordsetAdapter) Rows(limit, offset int) ([][]interface{}, error) {
 
 func (a *recordsetAdapter) Next() (*oplan.Row, error) {
 	row, err := a.executor.Next()
-	if row == nil || err != nil {
+	if err != nil || row == nil {
 		return nil, errors.Trace(err)
 	}
 	oRow := &oplan.Row{
@@ -159,11 +159,8 @@ func (a *statementAdapter) Exec(ctx context.Context) (rset.Recordset, error) {
 		defer e.Close()
 		for {
 			row, err := e.Next()
-			if err != nil {
+			if err != nil || row == nil {
 				return nil, errors.Trace(err)
-			}
-			if row == nil {
-				return nil, nil
 			}
 		}
 	}
