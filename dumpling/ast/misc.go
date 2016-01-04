@@ -16,27 +16,27 @@ package ast
 import "github.com/pingcap/tidb/mysql"
 
 var (
-	_ StmtNode = &ExplainStmt{}
-	_ StmtNode = &PrepareStmt{}
-	_ StmtNode = &DeallocateStmt{}
-	_ StmtNode = &ExecuteStmt{}
-	_ StmtNode = &ShowStmt{}
 	_ StmtNode = &BeginStmt{}
 	_ StmtNode = &CommitStmt{}
+	_ StmtNode = &CreateUserStmt{}
+	_ StmtNode = &DeallocateStmt{}
+	_ StmtNode = &DoStmt{}
+	_ StmtNode = &ExecuteStmt{}
+	_ StmtNode = &ExplainStmt{}
+	_ StmtNode = &GrantStmt{}
+	_ StmtNode = &PrepareStmt{}
 	_ StmtNode = &RollbackStmt{}
-	_ StmtNode = &UseStmt{}
-	_ StmtNode = &SetStmt{}
 	_ StmtNode = &SetCharsetStmt{}
 	_ StmtNode = &SetPwdStmt{}
-	_ StmtNode = &CreateUserStmt{}
-	_ StmtNode = &DoStmt{}
-	_ StmtNode = &GrantStmt{}
+	_ StmtNode = &SetStmt{}
+	_ StmtNode = &UseStmt{}
 
+	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
 )
 
 // FloatOpt is used for parsing floating-point type option from SQL.
-// TODO: add reference doc.
+// See: http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
 type FloatOpt struct {
 	Flen    int
 	Decimal int
@@ -62,11 +62,11 @@ type ExplainStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*ExplainStmt)
+	n = newNode.(*ExplainStmt)
 	node, ok := n.Stmt.Accept(v)
 	if !ok {
 		return n, false
@@ -88,11 +88,11 @@ type PrepareStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*PrepareStmt)
+	n = newNode.(*PrepareStmt)
 	if n.SQLVar != nil {
 		node, ok := n.SQLVar.Accept(v)
 		if !ok {
@@ -113,11 +113,11 @@ type DeallocateStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*DeallocateStmt)
+	n = newNode.(*DeallocateStmt)
 	return v.Leave(n)
 }
 
@@ -132,97 +132,17 @@ type ExecuteStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*ExecuteStmt)
+	n = newNode.(*ExecuteStmt)
 	for i, val := range n.UsingVars {
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false
 		}
 		n.UsingVars[i] = node.(ExprNode)
-	}
-	return v.Leave(n)
-}
-
-// ShowStmtType is the type for SHOW statement.
-type ShowStmtType int
-
-// Show statement types.
-const (
-	ShowNone = iota
-	ShowEngines
-	ShowDatabases
-	ShowTables
-	ShowTableStatus
-	ShowColumns
-	ShowWarnings
-	ShowCharset
-	ShowVariables
-	ShowStatus
-	ShowCollation
-	ShowCreateTable
-	ShowGrants
-	ShowTriggers
-	ShowProcedureStatus
-	ShowIndex
-)
-
-// ShowStmt is a statement to provide information about databases, tables, columns and so on.
-// See: https://dev.mysql.com/doc/refman/5.7/en/show.html
-type ShowStmt struct {
-	dmlNode
-
-	Tp     ShowStmtType // Databases/Tables/Columns/....
-	DBName string
-	Table  *TableName  // Used for showing columns.
-	Column *ColumnName // Used for `desc table column`.
-	Flag   int         // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   string // Used for show grants.
-
-	// Used by show variables
-	GlobalScope bool
-	Pattern     *PatternLikeExpr
-	Where       ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNod)
-	}
-	n = newNod.(*ShowStmt)
-	if n.Table != nil {
-		node, ok := n.Table.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Table = node.(*TableName)
-	}
-	if n.Column != nil {
-		node, ok := n.Column.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Column = node.(*ColumnName)
-	}
-	if n.Pattern != nil {
-		node, ok := n.Pattern.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Pattern = node.(*PatternLikeExpr)
-	}
-	if n.Where != nil {
-		node, ok := n.Where.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Where = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
@@ -235,11 +155,11 @@ type BeginStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*BeginStmt)
+	n = newNode.(*BeginStmt)
 	return v.Leave(n)
 }
 
@@ -251,11 +171,11 @@ type CommitStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *CommitStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*CommitStmt)
+	n = newNode.(*CommitStmt)
 	return v.Leave(n)
 }
 
@@ -267,11 +187,11 @@ type RollbackStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*RollbackStmt)
+	n = newNode.(*RollbackStmt)
 	return v.Leave(n)
 }
 
@@ -285,11 +205,11 @@ type UseStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *UseStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*UseStmt)
+	n = newNode.(*UseStmt)
 	return v.Leave(n)
 }
 
@@ -304,11 +224,11 @@ type VariableAssignment struct {
 
 // Accept implements Node interface.
 func (n *VariableAssignment) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*VariableAssignment)
+	n = newNode.(*VariableAssignment)
 	node, ok := n.Value.Accept(v)
 	if !ok {
 		return n, false
@@ -326,11 +246,11 @@ type SetStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *SetStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*SetStmt)
+	n = newNode.(*SetStmt)
 	for i, val := range n.Variables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -352,11 +272,11 @@ type SetCharsetStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*SetCharsetStmt)
+	n = newNode.(*SetCharsetStmt)
 	return v.Leave(n)
 }
 
@@ -371,11 +291,11 @@ type SetPwdStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*SetPwdStmt)
+	n = newNode.(*SetPwdStmt)
 	return v.Leave(n)
 }
 
@@ -396,11 +316,11 @@ type CreateUserStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*CreateUserStmt)
+	n = newNode.(*CreateUserStmt)
 	return v.Leave(n)
 }
 
@@ -413,11 +333,11 @@ type DoStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *DoStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*DoStmt)
+	n = newNode.(*DoStmt)
 	for i, val := range n.Exprs {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -431,17 +351,18 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 // PrivElem is the privilege type and optional column list.
 type PrivElem struct {
 	node
+
 	Priv mysql.PrivilegeType
 	Cols []*ColumnName
 }
 
 // Accept implements Node Accept interface.
 func (n *PrivElem) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*PrivElem)
+	n = newNode.(*PrivElem)
 	for i, val := range n.Cols {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -495,11 +416,11 @@ type GrantStmt struct {
 
 // Accept implements Node Accept interface.
 func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
-	n = newNod.(*GrantStmt)
+	n = newNode.(*GrantStmt)
 	for i, val := range n.Privs {
 		node, ok := val.Accept(v)
 		if !ok {
