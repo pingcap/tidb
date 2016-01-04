@@ -121,10 +121,10 @@ func (e *TableScanExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if handle > ran.HighVal {
-			// The handle is out of the current range, but may be in next range.
-			// We try to iterate to the range that contains the handle, so we
-			// don't need to seek again.
-			inRange := e.iterateToRangeContains(handle)
+			// The handle is out of the current range, but may be in following ranges.
+			// We seek to the range that may contains the handle, so we
+			// don't need to seek key again.
+			inRange := e.seekRange(handle)
 			if !inRange {
 				// The handle may be less than the current range low value, can not
 				// return directly.
@@ -161,7 +161,9 @@ func (e *TableScanExec) seek() (kv.Key, error) {
 	return e.iter.Key(), nil
 }
 
-func (e *TableScanExec) iterateToRangeContains(handle int64) (inRange bool) {
+// seekRange increments the range cursor to the range
+// with high value greater or equal to handle.
+func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 	for {
 		e.cursor++
 		if e.cursor >= len(e.ranges) {
