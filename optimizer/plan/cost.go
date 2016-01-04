@@ -65,7 +65,7 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 			v.rowCount = v.Src().RowCount()
 			v.totalCost = v.Src().TotalCost()
 		} else {
-			// Sort plan must retrieves all the rows before returns the first row.
+			// Sort plan must retrieve all the rows before returns the first row.
 			v.startupCost = v.Src().TotalCost() + v.Src().RowCount()*SortCost
 			if v.limit == 0 {
 				v.rowCount = v.Src().RowCount()
