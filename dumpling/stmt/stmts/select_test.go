@@ -46,7 +46,7 @@ func (s *testStmtSuite) TestSelectExplain(c *C) {
 
 	strs := s.queryStrings(s.testDB, "explain select * from test where id = 1;", c)
 	// Must use index
-	if strings.Index(strs[0], "index") < 0 {
+	if strings.Index(strs[0], "Range") < 0 {
 		c.Fatalf("Should use index")
 	}
 }

@@ -16,21 +16,23 @@ package plan
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-func refine(p Plan) error {
+// Refine tries to build index range, bypass sort, set limit for source plan.
+// It prepares the plan for cost estimation.
+func Refine(p Plan) error {
 	r := refiner{}
 	p.Accept(&r)
 	return r.err
 }
 
-// refiner tries to build index range, bypass sort, set limit for source plan.
-// It prepares the plan for cost estimation.
 type refiner struct {
 	conditions []ast.ExprNode
-	// store index scan plan for sort to use.
+	// store scan plan for sort to use.
 	indexScan *IndexScan
+	tableScan *TableScan
 	err       error
 }
 
@@ -40,12 +42,16 @@ func (r *refiner) Enter(in Plan) (Plan, bool) {
 		r.conditions = x.Conditions
 	case *IndexScan:
 		r.indexScan = x
+	case *TableScan:
+		r.tableScan = x
 	}
 	return in, false
 }
 
 func (r *refiner) Leave(in Plan) (Plan, bool) {
 	switch x := in.(type) {
+	case *TableScan:
+		r.buildTableRange(x)
 	case *IndexScan:
 		r.buildIndexRange(x)
 	case *Sort:
@@ -82,6 +88,26 @@ func (r *refiner) sortBypass(p *Sort) {
 		if desc {
 			// TODO: support desc when index reverse iterator is supported.
 			r.indexScan.Desc = true
+			return
+		}
+		p.Bypass = true
+	} else if r.tableScan != nil {
+		if len(p.ByItems) != 1 {
+			return
+		}
+		byItem := p.ByItems[0]
+		if byItem.Desc {
+			// TODO: support desc when table reverse iterator is supported.
+			return
+		}
+		cn, ok := byItem.Expr.(*ast.ColumnNameExpr)
+		if !ok {
+			return
+		}
+		if !mysql.HasPriKeyFlag(cn.Refer.Column.Flag) {
+			return
+		}
+		if !cn.Refer.Table.PKIsHandle {
 			return
 		}
 		p.Bypass = true
@@ -122,12 +148,35 @@ func (r *refiner) buildIndexRange(p *IndexScan) {
 	return
 }
 
+func (r *refiner) buildTableRange(p *TableScan) {
+	var pkHandleColumn *model.ColumnInfo
+	for _, colInfo := range p.Table.Columns {
+		if mysql.HasPriKeyFlag(colInfo.Flag) && p.Table.PKIsHandle {
+			pkHandleColumn = colInfo
+		}
+	}
+	if pkHandleColumn == nil {
+		return
+	}
+	rb := rangeBuilder{}
+	rangePoints := fullRange
+	checker := conditionChecker{pkName: pkHandleColumn.Name, tableName: p.Table.Name}
+	for _, cond := range r.conditions {
+		if checker.check(cond) {
+			rangePoints = rb.intersection(rangePoints, rb.build(cond))
+		}
+	}
+	p.Ranges = rb.buildTableRanges(rangePoints)
+	r.err = rb.err
+}
+
 // conditionChecker checks if this condition can be pushed to index plan.
 type conditionChecker struct {
 	tableName model.CIStr
 	idx       *model.IndexInfo
 	// the offset of the indexed column to be checked.
 	columnOffset int
+	pkName       model.CIStr
 }
 
 func (c *conditionChecker) check(condition ast.ExprNode) bool {
@@ -204,8 +253,9 @@ func (c *conditionChecker) checkColumnExpr(expr ast.ExprNode) bool {
 	if cn.Refer.Table.Name.L != c.tableName.L {
 		return false
 	}
-	if cn.Refer.Column.Name.L != c.idx.Columns[c.columnOffset].Name.L {
-		return false
+	if c.pkName.L != "" {
+		return c.pkName.L == cn.Refer.Column.Name.L
 	}
-	return true
+
+	return cn.Refer.Column.Name.L == c.idx.Columns[c.columnOffset].Name.L
 }

@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -72,9 +74,11 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
-		t:      table,
-		fields: v.Fields(),
-		ctx:    b.ctx,
+		t:          table,
+		fields:     v.Fields(),
+		ctx:        b.ctx,
+		ranges:     v.Ranges,
+		seekHandle: math.MinInt64,
 	}
 }
 

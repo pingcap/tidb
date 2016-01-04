@@ -35,12 +35,6 @@ func Alternatives(p Plan) ([]Plan, error) {
 	default:
 		return nil, ErrUnsupportedType.Gen("Unknown plan %T", p)
 	}
-	for _, val := range plans {
-		err := refine(val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
 	return plans, nil
 }
 
