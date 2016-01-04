@@ -201,7 +201,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 	case *expression.BinaryOperation:
 		ok, name, val, err := x.IsIdentCompareVal()
 		if err != nil {
-			return nil, false, err
+			return nil, false, errors.Trace(err)
 		}
 		if !ok {
 			break

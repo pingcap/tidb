@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
@@ -34,11 +36,7 @@ const (
 func BuildPlan(node ast.Node) (Plan, error) {
 	var builder planBuilder
 	p := builder.build(node)
-	if builder.err != nil {
-		return nil, builder.err
-	}
-	err := refine(p)
-	return p, err
+	return p, builder.err
 }
 
 // planBuilder builds Plan from an ast.Node.
@@ -125,7 +123,8 @@ func (b *planBuilder) buildJoin(from *ast.Join) Plan {
 		return nil
 	}
 	p := &TableScan{
-		Table: tn.TableInfo,
+		Table:  tn.TableInfo,
+		Ranges: []TableRange{{math.MinInt64, math.MaxInt64}},
 	}
 	p.SetFields(tn.GetResultFields())
 	return p
