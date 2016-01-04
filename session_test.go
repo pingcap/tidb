@@ -611,6 +611,8 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	row, err = r.FirstRow()
 	c.Assert(err, IsNil)
 	match(c, row, 3)
+
+	mustExecSQL(c, se, `select * from t1, t2 where t1.c1 is null`)
 }
 
 func (s *testSessionSuite) TestSubQuery(c *C) {
