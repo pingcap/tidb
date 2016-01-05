@@ -416,12 +416,15 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 	if t.meta.PKIsHandle {
 		// Check key exists.
 		recordKey := t.RecordKey(recordID, nil)
+		e := kv.ErrKeyExists.Gen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
+		txn.SetOption(kv.PresumeKeyNotExistsError, e)
 		_, err = txn.Get(recordKey)
 		if err == nil {
-			return recordID, kv.ErrKeyExists
+			return recordID, errors.Trace(e)
 		} else if !terror.ErrorEqual(err, kv.ErrNotExist) {
 			return 0, errors.Trace(err)
 		}
+		txn.DelOption(kv.PresumeKeyNotExistsError)
 	}
 
 	for _, v := range t.indices {
@@ -430,6 +433,24 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 			continue
 		}
 		colVals, _ := v.FetchValues(r)
+
+		if v.Unique || v.Primary {
+			// Pass pre-composed error to txn.
+			strVals := make([]string, 0, len(colVals))
+			for _, cv := range colVals {
+				cvs := "NULL"
+				if cv != nil {
+					cvs, err = types.ToString(cv)
+					if err != nil {
+						return 0, errors.Trace(err)
+					}
+				}
+				strVals = append(strVals, cvs)
+			}
+			entryKey := strings.Join(strVals, "-")
+			e := kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Name)
+			txn.SetOption(kv.PresumeKeyNotExistsError, e)
+		}
 		if err = v.X.Create(bs, colVals, recordID); err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
@@ -446,6 +467,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 			}
 			return 0, errors.Trace(err)
 		}
+		txn.DelOption(kv.PresumeKeyNotExistsError)
 	}
 
 	if err = t.LockRow(ctx, recordID); err != nil {
