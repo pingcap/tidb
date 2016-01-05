@@ -130,13 +130,10 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 	if IsErrNotFound(err) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
-			if ok {
-				err = us.markLazyConditionPair(k, nil, e.(error))
+			if ok && e != nil {
+				us.markLazyConditionPair(k, nil, e.(error))
 			} else {
-				err = us.markLazyConditionPair(k, nil, ErrKeyExists)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
+				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
 			return nil, errors.Trace(ErrNotExist)
 		}
@@ -154,13 +151,13 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 }
 
 // markLazyConditionPair marks a kv pair for later check.
-func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) error {
+// If condition not match, should return e as error.
+func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 	us.lazyConditionPairs[string(k)] = &conditionPair{
-		key:   k,
+		key:   k.Clone(),
 		value: v,
 		err:   e,
 	}
-	return nil
 }
 
 // CheckLazyConditionPairs implements the UnionStore interface.
@@ -168,9 +165,9 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 	if len(us.lazyConditionPairs) == 0 {
 		return nil
 	}
-	var keys []Key
+	keys := make([]Key, 0, len(us.lazyConditionPairs))
 	for _, v := range us.lazyConditionPairs {
-		keys = append(keys, v.key.Clone())
+		keys = append(keys, v.key)
 	}
 	values, err := us.snapshot.BatchGet(keys)
 	if err != nil {
