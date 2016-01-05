@@ -137,7 +137,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		// all reorganization jobs done, drop this database
+		// all reorganization jobs done, drop this table.
 		if err = t.DropTable(schemaID, tableID); err != nil {
 			return errors.Trace(err)
 		}
