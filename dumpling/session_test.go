@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -1059,9 +1060,21 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	mustExecSQL(c, se1, "insert into test(id, val) values(1, 1);")
 	se2 := newSession(c, store, s.dbName)
 	mustExecSQL(c, se2, "begin;")
-	mustExecSQL(c, se2, "insert into test(id, val) values(1, 1);")
-	mustExecSQL(c, se2, "commit;")
-	mustExecFailed(c, se1, "commit;")
+	mustExecSQL(c, se2, "insert into test(id, val) values(2, 2);")
+	se3 := newSession(c, store, s.dbName)
+	mustExecSQL(c, se3, "begin;")
+	mustExecSQL(c, se3, "insert into test(id, val) values(1, 2);")
+	mustExecSQL(c, se3, "commit;")
+	_, err := se1.Execute("commit")
+	c.Assert(err, NotNil)
+	// Check error type and error message
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(err.Error(), Equals, "[kv:3]Duplicate entry '1' for key 'PRIMARY'")
+
+	_, err = se2.Execute("commit")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(err.Error(), Equals, "[kv:3]Duplicate entry '2' for key 'val'")
 
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table test;")

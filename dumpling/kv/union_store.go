@@ -50,12 +50,20 @@ var (
 	})
 )
 
+// conditionPair is used to store lazy check condition.
+// If condition not match (value is not equal as expected one), returns err.
+type conditionPair struct {
+	key   Key
+	value []byte
+	err   error
+}
+
 // UnionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	snapshot           Snapshot  // for read
-	lazyConditionPairs MemBuffer // for delay check
+	snapshot           Snapshot                    // for read
+	lazyConditionPairs map[string](*conditionPair) // for delay check
 	opts               options
 }
 
@@ -64,7 +72,7 @@ func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
 		BufferStore:        NewBufferStore(snapshot),
 		snapshot:           snapshot,
-		lazyConditionPairs: &lazyMemBuffer{},
+		lazyConditionPairs: make(map[string](*conditionPair)),
 		opts:               make(map[Option]interface{}),
 	}
 }
@@ -121,9 +129,11 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 	v, err := us.MemBuffer.Get(k)
 	if IsErrNotFound(err) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
-			err = us.markLazyConditionPair(k, nil)
-			if err != nil {
-				return nil, errors.Trace(err)
+			e, ok := us.opts.Get(PresumeKeyNotExistsError)
+			if ok && e != nil {
+				us.markLazyConditionPair(k, nil, e.(error))
+			} else {
+				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
 			return nil, errors.Trace(ErrNotExist)
 		}
@@ -141,45 +151,36 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 }
 
 // markLazyConditionPair marks a kv pair for later check.
-func (us *unionStore) markLazyConditionPair(k Key, v []byte) error {
-	if len(v) == 0 {
-		return errors.Trace(us.lazyConditionPairs.Delete(k))
+// If condition not match, should return e as error.
+func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
+	us.lazyConditionPairs[string(k)] = &conditionPair{
+		key:   k.Clone(),
+		value: v,
+		err:   e,
 	}
-	return errors.Trace(us.lazyConditionPairs.Set(k, v))
 }
 
 // CheckLazyConditionPairs implements the UnionStore interface.
 func (us *unionStore) CheckLazyConditionPairs() error {
-	var keys []Key
-	it, err := us.lazyConditionPairs.Seek(nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for ; it.Valid(); it.Next() {
-		keys = append(keys, it.Key().Clone())
-	}
-	it.Close()
-
-	if len(keys) == 0 {
+	if len(us.lazyConditionPairs) == 0 {
 		return nil
+	}
+	keys := make([]Key, 0, len(us.lazyConditionPairs))
+	for _, v := range us.lazyConditionPairs {
+		keys = append(keys, v.key)
 	}
 	values, err := us.snapshot.BatchGet(keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	it, err = us.lazyConditionPairs.Seek(nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-	for ; it.Valid(); it.Next() {
-		keyStr := string(it.Key())
-		if len(it.Value()) == 0 {
-			if _, exist := values[keyStr]; exist {
-				return errors.Trace(ErrKeyExists)
+
+	for k, v := range us.lazyConditionPairs {
+		if len(v.value) == 0 {
+			if _, exist := values[k]; exist {
+				return errors.Trace(v.err)
 			}
 		} else {
-			if bytes.Compare(values[keyStr], it.Value()) != 0 {
+			if bytes.Compare(values[k], v.value) != 0 {
 				return errors.Trace(ErrLazyConditionPairsNotMatch)
 			}
 		}
@@ -201,7 +202,6 @@ func (us *unionStore) DelOption(opt Option) {
 func (us *unionStore) Release() {
 	us.snapshot.Release()
 	us.BufferStore.Release()
-	us.lazyConditionPairs.Release()
 }
 
 type options map[Option]interface{}
