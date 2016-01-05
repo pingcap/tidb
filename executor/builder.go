@@ -171,12 +171,22 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 	}
 	hasAgg := false
 	for _, field := range e.ResultFields {
-		if _, ok := field.Expr.(*ast.AggregateFuncExpr); ok {
+		aggDetetor := &ast.AggFuncDetector{}
+		field.Expr.Accept(aggDetetor)
+		if aggDetetor.HasAggFunc {
 			hasAgg = true
 			break
 		}
 	}
-	e.hasAggFunc = hasAgg
+	if hasAgg {
+		// Add a aggregate evalue layer
+		aggExec := &AggregateExec{
+			Src:          e.Src,
+			ResultFields: v.Fields(),
+			ctx:          b.ctx,
+		}
+		e.Src = aggExec
+	}
 	return e
 }
 

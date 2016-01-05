@@ -382,3 +382,21 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 	}
 	return v.Leave(n)
 }
+
+// Visit Expr tree to check if it contains AggregateFuncExpr.
+type AggFuncDetector struct {
+	HasAggFunc bool
+}
+
+// Enter implemets Visitor interface.
+func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
+	if _, ok := n.(*AggregateFuncExpr); ok {
+		a.HasAggFunc = true
+	}
+	return n, a.HasAggFunc
+}
+
+// Leave implemets Visitor interface.
+func (a *AggFuncDetector) Leave(n Node) (node Node, ok bool) {
+	return n, !a.HasAggFunc
+}

@@ -36,6 +36,7 @@ var (
 	_ Executor = &IndexScanExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &SelectFieldsExec{}
+	_ Executor = &AggregateExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &TableScanExec{}
@@ -422,7 +423,6 @@ type SelectFieldsExec struct {
 	ResultFields []*ast.ResultField
 	executed     bool
 	ctx          context.Context
-	hasAggFunc   bool
 }
 
 // Fields implements Executor Fields interface.
@@ -432,13 +432,6 @@ func (e *SelectFieldsExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *SelectFieldsExec) Next() (*Row, error) {
-	if e.hasAggFunc {
-		return e.aggNext()
-	}
-	return e.noneAggNext()
-}
-
-func (e *SelectFieldsExec) noneAggNext() (*Row, error) {
 	var rowKeys []*RowKeyEntry
 	if e.Src != nil {
 		srcRow, err := e.Src.Next()
@@ -468,14 +461,6 @@ func (e *SelectFieldsExec) noneAggNext() (*Row, error) {
 		row.Data[i] = val
 	}
 	return row, nil
-}
-
-func (e *SelectFieldsExec) aggNext() (*Row, error) {
-	if !e.executed {
-		// Agg Init
-	}
-	// Read next group and eval
-	return nil, nil
 }
 
 // Close implements Executor Close interface.
@@ -708,4 +693,93 @@ func (e *SortExec) Next() (*Row, error) {
 // Close implements Executor Close interface.
 func (e *SortExec) Close() error {
 	return e.Src.Close()
+}
+
+// AggregateExec represents a select fields executor.
+// TODO: Add having
+type AggregateExec struct {
+	Src          Executor
+	ResultFields []*ast.ResultField
+	executed     bool
+	ctx          context.Context
+	finish       bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *AggregateExec) Fields() []*ast.ResultField {
+	return e.ResultFields
+}
+
+// Next implements Executor Next interface.
+func (e *AggregateExec) Next() (*Row, error) {
+	// 1. read a group
+	// 2. evaluate the fields
+	// 3. check having
+	// 4. return a row
+	if e.finish {
+		return nil, nil
+	}
+	// In this stage we do not consider groupby.
+	// TODO: support group by clause.
+	for {
+		srcRow, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if srcRow == nil {
+			e.finish = true
+		}
+		row := &Row{
+			RowKeys: rowKeys,
+			Data:    make([]interface{}, len(e.ResultFields)),
+		}
+		for i, field := range e.ResultFields {
+			val, err := evaluator.Eval(e.ctx, field.Expr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			row.Data[i] = val
+		}
+	}
+	return nil, nil
+}
+
+func (e *AggregateExec) innerNext() (*Row, error) {
+	var rowKeys []*RowKeyEntry
+	if e.Src != nil {
+		srcRow, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if srcRow == nil {
+			return nil, nil
+		}
+		rowKeys = srcRow.RowKeys
+	} else {
+		// If Src is nil, only one row should be returned.
+		if e.executed {
+			return nil, nil
+		}
+	}
+	e.executed = true
+	row := &Row{
+		RowKeys: rowKeys,
+		Data:    make([]interface{}, len(e.ResultFields)),
+	}
+	for i, field := range e.ResultFields {
+		val, err := evaluator.Eval(e.ctx, field.Expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row.Data[i] = val
+	}
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *AggregateExec) Close() error {
+	if e.Src != nil {
+		return e.Src.Close()
+	}
+	return nil
 }
