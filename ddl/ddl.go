@@ -75,6 +75,9 @@ type ddl struct {
 	uuid      string
 	jobCh     chan struct{}
 	jobDoneCh chan struct{}
+	// drop database/table task
+	taskCh     chan struct{}
+	taskDoneCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: now we use goroutine to simulate reorganization jobs, later we may
@@ -103,6 +106,8 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 		uuid:       uuid.NewV4().String(),
 		jobCh:      make(chan struct{}, 1),
 		jobDoneCh:  make(chan struct{}, 1),
+		taskCh:     make(chan struct{}, 1),
+		taskDoneCh: make(chan struct{}, 1),
 	}
 
 	d.start()
@@ -150,7 +155,8 @@ func (d *ddl) Start() error {
 
 func (d *ddl) start() {
 	d.quitCh = make(chan struct{})
-	d.wait.Add(1)
+	d.wait.Add(2)
+	go d.onExecute()
 	go d.onWorker()
 	// for every start, we will send a fake job to let worker
 	// check owner first and try to find whether a job exists and run.
