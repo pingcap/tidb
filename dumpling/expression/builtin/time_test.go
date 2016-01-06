@@ -53,12 +53,13 @@ func (s *testBuiltinSuite) TestDate(c *C) {
 		DayOfWeek  int64
 		DayOfYear  int64
 		WeekDay    int64
+		DayName    string
 		Week       int64
 		WeekOfYear int64
 		YearWeek   int64
 	}{
-		{"2000-01-01", 2000, 1, 1, 7, 1, 5, 52, 52, 199952},
-		{"2011-11-11", 2011, 11, 11, 6, 315, 4, 45, 45, 201145},
+		{"2000-01-01", 2000, 1, 1, 7, 1, 5, "Saturday", 52, 52, 199952},
+		{"2011-11-11", 2011, 11, 11, 6, 315, 4, "Friday", 45, 45, 201145},
 	}
 
 	for _, t := range tbl {
@@ -87,6 +88,10 @@ func (s *testBuiltinSuite) TestDate(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.WeekDay)
 
+		v, err = builtinDayName(args, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t.DayName)
+
 		v, err = builtinWeek(args, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.Week)
@@ -109,12 +114,13 @@ func (s *testBuiltinSuite) TestDate(c *C) {
 		DayOfWeek  interface{}
 		DayOfYear  interface{}
 		WeekDay    interface{}
+		DayName    interface{}
 		Week       interface{}
 		WeekOfYear interface{}
 		YearWeek   interface{}
 	}{
-		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
-		{"0000-00-00", int64(0), int64(0), int64(0), nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", int64(0), int64(0), int64(0), nil, nil, nil, nil, nil, nil, nil},
 	}
 
 	for _, t := range tblNil {
@@ -142,6 +148,10 @@ func (s *testBuiltinSuite) TestDate(c *C) {
 		v, err = builtinWeekDay(args, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.WeekDay)
+
+		v, err = builtinWeekDay(args, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, t.DayName)
 
 		v, err = builtinWeek(args, nil)
 		c.Assert(err, IsNil)
