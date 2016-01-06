@@ -117,8 +117,8 @@ func (e *ShowDDL) Next() (*Row, error) {
 
 	rowData := []interface{}{
 		info.SchemaVer,
-		nil,
-		nil,
+		"",
+		"",
 	}
 	if info.Owner != nil {
 		rowData[1] = info.Owner.String()
