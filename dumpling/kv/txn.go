@@ -38,6 +38,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			continue
 		}
 		if err != nil {
+			txn.Rollback()
 			return errors.Trace(err)
 		}
 

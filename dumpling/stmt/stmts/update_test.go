@@ -58,7 +58,7 @@ func (s *testStmtSuite) TestUpdate(c *C) {
 	strs := s.queryStrings(testDB, `explain `+updateStr, c)
 	var useIndex bool
 	for _, str := range strs {
-		if strings.Index(str, "index") > 0 {
+		if strings.Index(str, "Range") > 0 {
 			useIndex = true
 		}
 	}

@@ -96,7 +96,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	if !types.IsNil(leftVal) {
 		x, err := types.ToBool(leftVal)
 		if err != nil {
-			e.err = err
+			e.err = errors.Trace(err)
 			return false
 		} else if x == 1 {
 			// true || any other types is true.
@@ -137,7 +137,7 @@ func (e *Evaluator) handleXor(o *ast.BinaryOperationExpr) bool {
 
 	y, err := types.ToBool(righVal)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	if x == y {
@@ -167,13 +167,13 @@ func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 
 	n, err := types.Compare(a, b)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 
 	r, err := getCompResult(o.Op, n)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 	if r {
@@ -215,13 +215,13 @@ func (e *Evaluator) handleBitOp(o *ast.BinaryOperationExpr) bool {
 
 	x, err := types.ToInt64(a)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 
 	y, err := types.ToInt64(b)
 	if err != nil {
-		e.err = err
+		e.err = errors.Trace(err)
 		return false
 	}
 
@@ -256,8 +256,8 @@ func (e *Evaluator) handleArithmeticOp(o *ast.BinaryOperationExpr) bool {
 		e.err = errors.Trace(err)
 		return false
 	}
-	a, b = types.Coerce(a, b)
 
+	a, b = types.Coerce(a, b)
 	if a == nil || b == nil {
 		o.SetValue(nil)
 		return true
@@ -385,7 +385,7 @@ func computeDiv(a, b interface{}) (interface{}, error) {
 	case float64:
 		y, err := types.ToFloat64(b)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 
 		if y == 0 {
@@ -399,12 +399,12 @@ func computeDiv(a, b interface{}) (interface{}, error) {
 		// we will use 4 here
 		xa, err := types.ToDecimal(a)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 
 		xb, err := types.ToDecimal(b)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if f, _ := xb.Float64(); f == 0 {
 			// division by zero return null
@@ -505,12 +505,12 @@ func computeIntDiv(a, b interface{}) (interface{}, error) {
 	// if any is none integer, use decimal to calculate
 	x, err := types.ToDecimal(a)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	y, err := types.ToDecimal(b)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	if f, _ := y.Float64(); f == 0 {
@@ -526,9 +526,9 @@ func coerceArithmetic(a interface{}) (interface{}, error) {
 		// MySQL will convert string to float for arithmetic operation
 		f, err := types.StrToFloat(x)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
-		return f, err
+		return f, errors.Trace(err)
 	case mysql.Time:
 		// if time has no precision, return int64
 		v := x.ToNumber()
@@ -547,9 +547,9 @@ func coerceArithmetic(a interface{}) (interface{}, error) {
 		// []byte is the same as string, converted to float for arithmetic operator.
 		f, err := types.StrToFloat(string(x))
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
-		return f, err
+		return f, errors.Trace(err)
 	case mysql.Hex:
 		return x.ToNumber(), nil
 	case mysql.Bit:

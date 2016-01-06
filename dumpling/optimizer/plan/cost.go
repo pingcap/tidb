@@ -43,13 +43,7 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	case *IndexScan:
 		c.indexScan(v)
 	case *TableScan:
-		v.startupCost = 0
-		if v.limit == 0 {
-			v.rowCount = FullRangeCount
-		} else {
-			v.rowCount = math.Min(FullRangeCount, v.limit)
-		}
-		v.totalCost = v.rowCount * RowCost
+		c.tableScan(v)
 	case *SelectFields:
 		if v.Src() != nil {
 			v.startupCost = v.Src().StartupCost()
@@ -71,7 +65,7 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 			v.rowCount = v.Src().RowCount()
 			v.totalCost = v.Src().TotalCost()
 		} else {
-			// Sort plan must retrieves all the rows before returns the first row.
+			// Sort plan must retrieve all the rows before returns the first row.
 			v.startupCost = v.Src().TotalCost() + v.Src().RowCount()*SortCost
 			if v.limit == 0 {
 				v.rowCount = v.Src().RowCount()
@@ -87,6 +81,41 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	}
 	return p, true
 }
+
+func (c *costEstimator) tableScan(v *TableScan) {
+	var rowCount float64
+	if len(v.Ranges) == 1 && v.Ranges[0].LowVal == math.MinInt64 && v.Ranges[0].HighVal == math.MaxInt64 {
+		// full range use default row count.
+		rowCount = FullRangeCount
+	} else {
+		for _, v := range v.Ranges {
+			// for condition like 'a = 0'.
+			if v.LowVal == v.HighVal {
+				rowCount++
+				continue
+			}
+			// For condition like 'a < 0'.
+			if v.LowVal == math.MinInt64 {
+				rowCount += HalfRangeCount
+			}
+			// For condition like 'a > 0'.
+			if v.HighVal == math.MaxInt64 {
+				rowCount += HalfRangeCount
+			}
+			// For condition like 'a > 0 and a < 1'.
+			rowCount += MiddleRangeCount
+		}
+	}
+	v.startupCost = 0
+	if v.limit == 0 {
+		// limit is zero means no limit.
+		v.rowCount = rowCount
+	} else {
+		v.rowCount = math.Min(rowCount, v.limit)
+	}
+	v.totalCost = v.rowCount * RowCost
+}
+
 func (c *costEstimator) indexScan(v *IndexScan) {
 	var rowCount float64
 	if len(v.Ranges) == 1 && v.Ranges[0].LowVal[0] == nil && v.Ranges[0].HighVal[0] == MaxVal {
@@ -108,7 +137,7 @@ func (c *costEstimator) indexScan(v *IndexScan) {
 				rowCount += HalfRangeCount
 			}
 			// For condition like 'a > 0 and a < 1'.
-			rowCount += 100
+			rowCount += MiddleRangeCount
 		}
 		// If the index has too many ranges, the row count may exceed the default row count.
 		// Make sure the cost is lower than full range.

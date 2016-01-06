@@ -435,84 +435,117 @@ func (isp *InfoSchemaPlan) fetchTables(schemas []*model.DBInfo) {
 func (isp *InfoSchemaPlan) fetchColumns(schemas []*model.DBInfo) {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			for i, col := range table.Columns {
-				colLen := col.Flen
-				if colLen == types.UnspecifiedLength {
-					colLen = mysql.GetDefaultFieldLength(col.Tp)
-				}
-				decimal := col.Decimal
-				if decimal == types.UnspecifiedLength {
-					decimal = 0
-				}
-				columnType := col.FieldType.CompactStr()
-				columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
-				var columnDefault interface{}
-				if columnDesc.DefaultValue != nil {
-					columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-				}
-				record := []interface{}{
-					catalogVal,                           // TABLE_CATALOG
-					schema.Name.O,                        // TABLE_SCHEMA
-					table.Name.O,                         // TABLE_NAME
-					col.Name.O,                           // COLUMN_NAME
-					i + 1,                                // ORIGINAL_POSITION
-					columnDefault,                        // COLUMN_DEFAULT
-					columnDesc.Null,                      // IS_NULLABLE
-					types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-					colLen,                            // CHARACTER_MAXIMUM_LENGTH
-					colLen,                            // CHARACTOR_OCTET_LENGTH
-					decimal,                           // NUMERIC_PRECISION
-					0,                                 // NUMERIC_SCALE
-					0,                                 // DATETIME_PRECISION
-					col.Charset,                       // CHARACTER_SET_NAME
-					col.Collate,                       // COLLATION_NAME
-					columnType,                        // COLUMN_TYPE
-					columnDesc.Key,                    // COLUMN_KEY
-					columnDesc.Extra,                  // EXTRA
-					"select,insert,update,references", // PRIVILEGES
-					"", // COLUMN_COMMENT
-				}
-				isp.rows = append(isp.rows, &plan.Row{Data: record})
-			}
+			isp.fetchColumnsInTable(schema, table)
 		}
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchColumnsInTable(schema *model.DBInfo, table *model.TableInfo) {
+	for i, col := range table.Columns {
+		colLen := col.Flen
+		if colLen == types.UnspecifiedLength {
+			colLen = mysql.GetDefaultFieldLength(col.Tp)
+		}
+		decimal := col.Decimal
+		if decimal == types.UnspecifiedLength {
+			decimal = 0
+		}
+		columnType := col.FieldType.CompactStr()
+		columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
+		var columnDefault interface{}
+		if columnDesc.DefaultValue != nil {
+			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+		}
+		record := []interface{}{
+			catalogVal,                           // TABLE_CATALOG
+			schema.Name.O,                        // TABLE_SCHEMA
+			table.Name.O,                         // TABLE_NAME
+			col.Name.O,                           // COLUMN_NAME
+			i + 1,                                // ORIGINAL_POSITION
+			columnDefault,                        // COLUMN_DEFAULT
+			columnDesc.Null,                      // IS_NULLABLE
+			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
+			colLen,                            // CHARACTER_MAXIMUM_LENGTH
+			colLen,                            // CHARACTOR_OCTET_LENGTH
+			decimal,                           // NUMERIC_PRECISION
+			0,                                 // NUMERIC_SCALE
+			0,                                 // DATETIME_PRECISION
+			col.Charset,                       // CHARACTER_SET_NAME
+			col.Collate,                       // COLLATION_NAME
+			columnType,                        // COLUMN_TYPE
+			columnDesc.Key,                    // COLUMN_KEY
+			columnDesc.Extra,                  // EXTRA
+			"select,insert,update,references", // PRIVILEGES
+			"", // COLUMN_COMMENT
+		}
+		isp.rows = append(isp.rows, &plan.Row{Data: record})
 	}
 }
 
 func (isp *InfoSchemaPlan) fetchStatistics(is infoschema.InfoSchema, schemas []*model.DBInfo) {
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			for _, index := range table.Indices {
-				nonUnique := "1"
-				if index.Unique {
-					nonUnique = "0"
+			isp.fetchStatisticsInTable(is, schema, table)
+		}
+	}
+}
+
+func (isp *InfoSchemaPlan) fetchStatisticsInTable(is infoschema.InfoSchema, schema *model.DBInfo, table *model.TableInfo) {
+	if table.PKIsHandle {
+		for _, col := range table.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				record := []interface{}{
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					"0",           // NON_UNIQUE
+					schema.Name.O, // INDEX_SCHEMA
+					"PRIMARY",     // INDEX_NAME
+					1,             // SEQ_IN_INDEX
+					col.Name.O,    // COLUMN_NAME
+					"A",           // COLLATION
+					0,             // CARDINALITY
+					nil,           // SUB_PART
+					nil,           // PACKED
+					"",            // NULLABLE
+					"BTREE",       // INDEX_TYPE
+					"",            // COMMENT
+					"",            // INDEX_COMMENT
 				}
-				for i, key := range index.Columns {
-					col, _ := is.ColumnByName(schema.Name, table.Name, key.Name)
-					nullable := "YES"
-					if mysql.HasNotNullFlag(col.Flag) {
-						nullable = ""
-					}
-					record := []interface{}{
-						catalogVal,    // TABLE_CATALOG
-						schema.Name.O, // TABLE_SCHEMA
-						table.Name.O,  // TABLE_NAME
-						nonUnique,     // NON_UNIQUE
-						schema.Name.O, // INDEX_SCHEMA
-						index.Name.O,  // INDEX_NAME
-						i + 1,         // SEQ_IN_INDEX
-						key.Name.O,    // COLUMN_NAME
-						"A",           // COLLATION
-						0,             // CARDINALITY
-						nil,           // SUB_PART
-						nil,           // PACKED
-						nullable,      // NULLABLE
-						"BTREE",       // INDEX_TYPE
-						"",            // COMMENT
-						"",            // INDEX_COMMENT
-					}
-					isp.rows = append(isp.rows, &plan.Row{Data: record})
-				}
+				isp.rows = append(isp.rows, &plan.Row{Data: record})
 			}
+		}
+	}
+	for _, index := range table.Indices {
+		nonUnique := "1"
+		if index.Unique {
+			nonUnique = "0"
+		}
+		for i, key := range index.Columns {
+			col, _ := is.ColumnByName(schema.Name, table.Name, key.Name)
+			nullable := "YES"
+			if mysql.HasNotNullFlag(col.Flag) {
+				nullable = ""
+			}
+			record := []interface{}{
+				catalogVal,    // TABLE_CATALOG
+				schema.Name.O, // TABLE_SCHEMA
+				table.Name.O,  // TABLE_NAME
+				nonUnique,     // NON_UNIQUE
+				schema.Name.O, // INDEX_SCHEMA
+				index.Name.O,  // INDEX_NAME
+				i + 1,         // SEQ_IN_INDEX
+				key.Name.O,    // COLUMN_NAME
+				"A",           // COLLATION
+				0,             // CARDINALITY
+				nil,           // SUB_PART
+				nil,           // PACKED
+				nullable,      // NULLABLE
+				"BTREE",       // INDEX_TYPE
+				"",            // COMMENT
+				"",            // INDEX_COMMENT
+			}
+			isp.rows = append(isp.rows, &plan.Row{Data: record})
 		}
 	}
 }
