@@ -16,6 +16,7 @@ package ast
 import "github.com/pingcap/tidb/mysql"
 
 var (
+	_ StmtNode = &AdminStmt{}
 	_ StmtNode = &BeginStmt{}
 	_ StmtNode = &CommitStmt{}
 	_ StmtNode = &CreateUserStmt{}
@@ -353,7 +354,7 @@ type AdminStmtType int
 
 // Admin statement types.
 const (
-	AdminShowDDL = iota
+	AdminShowDDL = iota + 1
 	AdminCheckTable
 )
 
@@ -367,12 +368,12 @@ type AdminStmt struct {
 
 // Accept implements Node Accpet interface.
 func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
-	newNod, skipChildren := v.Enter(n)
+	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
-		return v.Leave(newNod)
+		return v.Leave(newNode)
 	}
 
-	n = newNod.(*AdminStmt)
+	n = newNode.(*AdminStmt)
 	for i, val := range n.Tables {
 		node, ok := val.Accept(v)
 		if !ok {
@@ -414,7 +415,7 @@ type ObjectTypeType int
 
 const (
 	// ObjectTypeNone is for empty object type.
-	ObjectTypeNone ObjectTypeType = iota
+	ObjectTypeNone ObjectTypeType = iota + 1
 	// ObjectTypeTable means the following object is a table.
 	ObjectTypeTable
 )
@@ -424,7 +425,7 @@ type GrantLevelType int
 
 const (
 	// GrantLevelNone is the dummy const for default value.
-	GrantLevelNone GrantLevelType = iota
+	GrantLevelNone GrantLevelType = iota + 1
 	// GrantLevelGlobal means the privileges are administrative or apply to all databases on a given server.
 	GrantLevelGlobal
 	// GrantLevelDB means the privileges apply to all objects in a given database.
