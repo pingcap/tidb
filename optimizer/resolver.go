@@ -23,12 +23,12 @@ import (
 )
 
 // ResolveName resolves table name and column name.
-// It generates ResultFields for ResetSetNode and resolve ColumnNameExpr to a ResultField.
+// It generates ResultFields for ResultSetNode and resolves ColumnNameExpr to a ResultField.
 func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context) error {
 	defaultSchema := db.GetCurrentSchema(ctx)
 	resolver := nameResolver{Info: info, Ctx: ctx, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&resolver)
-	return resolver.Err
+	return errors.Trace(resolver.Err)
 }
 
 // nameResolver is the visitor to resolve table name and column name.
@@ -37,7 +37,7 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 // available for following elements.
 //
 // During visiting, information are collected and stored in resolverContext.
-// When we enter a subquery, a new resolverContext is pushed to the contextStack, so sub query
+// When we enter a subquery, a new resolverContext is pushed to the contextStack, so subquery
 // information can overwrite outer query information. When we look up for a column reference,
 // we look up from top to bottom in the contextStack.
 type nameResolver struct {
@@ -139,7 +139,7 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
-			// the resolving rule is different for order by clause.
+			// the resolving rule is different from order by clause.
 			nr.currentContext().inByItemExpression = true
 		}
 	case *ast.InsertStmt:
@@ -194,8 +194,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	return inNode, nr.Err == nil
 }
 
-// handleTableName looks up and set the schema information for table name
-// and set result fields for table name.
+// handleTableName looks up and sets the schema information and result fields for table name.
 func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		tn.Schema = nr.DefaultSchema
@@ -282,7 +281,7 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 }
 
 // resolveColumnNameInContext looks up and sets ResultField for a column with the ctx.
-func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) (done bool) {
+func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast.ColumnNameExpr) bool {
 	if ctx.inTableRefs {
 		// In TableRefsClause, column reference only in join on condition which is handled before.
 		return false
@@ -439,7 +438,7 @@ func (nr *nameResolver) resolveColumnInResultFields(cn *ast.ColumnNameExpr, rfs 
 	return false
 }
 
-// handleFieldList expands wild card field and set fieldList in current context.
+// handleFieldList expands wild card field and sets fieldList in current context.
 func (nr *nameResolver) handleFieldList(fieldList *ast.FieldList) {
 	var resultFields []*ast.ResultField
 	for _, v := range fieldList.Fields {
@@ -460,7 +459,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 	ctx := nr.currentContext()
 	if field.WildCard != nil {
 		if len(ctx.tables) == 0 {
-			nr.Err = errors.Errorf("No table used.")
+			nr.Err = errors.New("No table used.")
 			return
 		}
 		if field.WildCard.Table.L == "" {

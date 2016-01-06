@@ -18,6 +18,8 @@
 package plans
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -103,17 +105,28 @@ type TableDefaultPlan struct {
 	T      table.Table
 	Fields []*field.ResultField
 	iter   kv.Iterator
+
+	// for range scan.
+	rangeScan  bool
+	spans      []*indexSpan
+	seekKey    kv.Key
+	cursor     int
+	skipLowCmp bool
 }
 
 // Explain implements the plan.Plan Explain interface.
 func (r *TableDefaultPlan) Explain(w format.Formatter) {
-	w.Format("┌Iterate all rows of table %q\n└Output field names %v\n", r.T.TableName(), field.RFQNames(r.Fields))
+	fmtStr := "┌Iterate all rows of table %q\n└Output field names %v\n"
+	if r.rangeScan {
+		fmtStr = "┌Range scan rows of table %q\n└Output field names %v\n"
+	}
+	w.Format(fmtStr, r.T.TableName(), field.RFQNames(r.Fields))
 }
 
 func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, bool, error) {
 	ok, name, rval, err := x.IsIdentCompareVal()
 	if err != nil {
-		return r, false, err
+		return r, false, errors.Trace(err)
 	}
 	if !ok {
 		return r, false, nil
@@ -134,15 +147,29 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 	if c == nil {
 		return nil, false, errors.Errorf("No such column: %s", cn)
 	}
+	var seekVal interface{}
+	if seekVal, err = types.Convert(rval, &c.FieldType); err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	spans := toSpans(x.Op, rval, seekVal)
+	if c.IsPKHandleColumn(r.T.Meta()) {
+		if r.rangeScan {
+			spans = filterSpans(r.spans, spans)
+		}
+		return &TableDefaultPlan{
+			T:         r.T,
+			Fields:    r.Fields,
+			rangeScan: true,
+			spans:     spans,
+		}, true, nil
+	} else if r.rangeScan {
+		// Already filtered on PK handle column, should not switch to index plan.
+		return r, false, nil
+	}
 
 	ix := t.FindIndexByColName(cn)
 	if ix == nil { // Column cn has no index.
 		return r, false, nil
-	}
-
-	var seekVal interface{}
-	if seekVal, err = types.Convert(rval, &c.FieldType); err != nil {
-		return nil, false, err
 	}
 	return &indexPlan{
 		src:     t,
@@ -150,7 +177,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		unique:  ix.Unique,
 		idxName: ix.Name.O,
 		idx:     ix.X,
-		spans:   toSpans(x.Op, rval, seekVal),
+		spans:   spans,
 	}, true, nil
 }
 
@@ -159,6 +186,26 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 	for _, v := range t.Cols() {
 		if x.L != v.Name.L {
 			continue
+		}
+		var spans []*indexSpan
+		if trueValue {
+			spans = toSpans(opcode.NE, 0, 0)
+		} else {
+			spans = toSpans(opcode.EQ, 0, 0)
+		}
+
+		if v.IsPKHandleColumn(t.Meta()) {
+			if r.rangeScan {
+				spans = filterSpans(r.spans, spans)
+			}
+			return &TableDefaultPlan{
+				T:         r.T,
+				Fields:    r.Fields,
+				rangeScan: true,
+				spans:     spans,
+			}, true, nil
+		} else if r.rangeScan {
+			return r, false, nil
 		}
 
 		xi := v.Offset
@@ -169,12 +216,6 @@ func (r *TableDefaultPlan) filterIdent(ctx context.Context, x *expression.Ident,
 		ix := t.Indices()[xi]
 		if ix == nil { // Column cn has no index.
 			return r, false, nil
-		}
-		var spans []*indexSpan
-		if trueValue {
-			spans = toSpans(opcode.NE, 0, 0)
-		} else {
-			spans = toSpans(opcode.EQ, 0, 0)
 		}
 		return &indexPlan{
 			src:     t,
@@ -202,16 +243,32 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 
 	cn := cns[0]
 	t := r.T
-	ix := t.FindIndexByColName(cn)
-	if ix == nil { // Column cn has no index.
+	col := column.FindCol(t.Cols(), cn)
+	if col == nil {
 		return r, false, nil
 	}
-	col := column.FindCol(t.Cols(), cn)
+	if col.IsPKHandleColumn(t.Meta()) {
+		if x.Not {
+			// PK handle column never be null.
+			return r, false, nil
+		}
+		return &NullPlan{
+			Fields: r.Fields,
+		}, true, nil
+	} else if r.rangeScan {
+		return r, false, nil
+	}
+
 	var spans []*indexSpan
 	if x.Not {
 		spans = toSpans(opcode.GE, minNotNullVal, nil)
 	} else {
 		spans = toSpans(opcode.EQ, nil, nil)
+	}
+
+	ix := t.FindIndexByColName(cn)
+	if ix == nil { // Column cn has no index.
+		return r, false, nil
 	}
 	return &indexPlan{
 		src:     t,
@@ -270,6 +327,9 @@ func (r *TableDefaultPlan) GetFields() []*field.ResultField {
 
 // Next implements plan.Plan Next interface.
 func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) {
+	if r.rangeScan {
+		return r.rangeNext(ctx)
+	}
 	if r.iter == nil {
 		var txn kv.Transaction
 		txn, err = ctx.GetTxn(false)
@@ -320,11 +380,100 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	return
 }
 
+func (r *TableDefaultPlan) rangeNext(ctx context.Context) (*plan.Row, error) {
+	for {
+		if r.cursor == len(r.spans) {
+			return nil, nil
+		}
+		span := r.spans[r.cursor]
+		if r.seekKey == nil {
+			seekVal := span.seekVal
+			var err error
+			r.seekKey, err = r.toSeekKey(seekVal)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		txn, err := ctx.GetTxn(false)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if r.iter != nil {
+			r.iter.Close()
+		}
+		r.iter, err = txn.Seek(r.seekKey)
+		if err != nil {
+			return nil, types.EOFAsNil(err)
+		}
+
+		if !r.iter.Valid() || !r.iter.Key().HasPrefix(r.T.RecordPrefix()) {
+			r.seekKey = nil
+			r.cursor++
+			r.skipLowCmp = false
+			continue
+		}
+		rowKey := r.iter.Key()
+		handle, err := tables.DecodeRecordKeyHandle(rowKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.seekKey, err = r.toSeekKey(handle + 1)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !r.skipLowCmp {
+			cmp := indexCompare(handle, span.lowVal)
+			if cmp < 0 || (cmp == 0 && span.lowExclude) {
+				continue
+			}
+			r.skipLowCmp = true
+		}
+		cmp := indexCompare(handle, span.highVal)
+		if cmp > 0 || (cmp == 0 && span.highExclude) {
+			// This span has finished iteration.
+			// Move to the next span.
+			r.seekKey = nil
+			r.cursor++
+			r.skipLowCmp = false
+			continue
+		}
+		row := &plan.Row{}
+		row.Data, err = r.T.Row(ctx, handle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Put rowKey to the tail of record row
+		rke := &plan.RowKeyEntry{
+			Tbl: r.T,
+			Key: string(rowKey),
+		}
+		row.RowKeys = append(row.RowKeys, rke)
+		return row, nil
+	}
+}
+
+func (r *TableDefaultPlan) toSeekKey(seekVal interface{}) (kv.Key, error) {
+	var handle int64
+	var err error
+	if seekVal == nil {
+		handle = math.MinInt64
+	} else {
+		handle, err = types.ToInt64(seekVal)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return tables.EncodeRecordKey(r.T.TableID(), handle, 0), nil
+}
+
 // Close implements plan.Plan Close interface.
 func (r *TableDefaultPlan) Close() error {
 	if r.iter != nil {
 		r.iter.Close()
 		r.iter = nil
 	}
+	r.seekKey = nil
+	r.cursor = 0
+	r.skipLowCmp = false
 	return nil
 }

@@ -117,3 +117,65 @@ func (s *testSuite) TestPrepared(c *C) {
 	exec.Next()
 	exec.Close()
 }
+
+func (s *testSuite) TestTablePKisHandleScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int PRIMARY KEY AUTO_INCREMENT)")
+	tk.MustExec("insert t values (),()")
+	tk.MustExec("insert t values (-100),(0)")
+
+	cases := []struct {
+		sql    string
+		result [][]interface{}
+	}{
+		{
+			"select * from t",
+			testkit.Rows("-100", "0", "1", "2"),
+		},
+		{
+			"select * from t where a = 1",
+			testkit.Rows("1"),
+		},
+		{
+			"select * from t where a != 1",
+			testkit.Rows("-100", "0", "2"),
+		},
+		{
+			"select * from t where a >= '1.1'",
+			testkit.Rows("2"),
+		},
+		{
+			"select * from t where a < '1.1'",
+			testkit.Rows("-100", "0", "1"),
+		},
+		{
+			"select * from t where a > '-100.1' and a < 2",
+			testkit.Rows("-100", "0", "1"),
+		},
+		{
+			"select * from t where a is null",
+			testkit.Rows(),
+		}, {
+			"select * from t where a is true",
+			testkit.Rows("-100", "1", "2"),
+		}, {
+			"select * from t where a is false",
+			testkit.Rows("0"),
+		},
+		{
+			"select * from t where a in (0, 2)",
+			testkit.Rows("0", "2"),
+		},
+		{
+			"select * from t where a between 0 and 1",
+			testkit.Rows("0", "1"),
+		},
+	}
+
+	for _, ca := range cases {
+		result := tk.MustQuery(ca.sql)
+		result.Check(ca.result)
+	}
+}

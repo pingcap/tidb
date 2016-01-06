@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// Optimize do optimization and create a Plan.
+// Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 	// We have to inter type again because after parameter is set, the expression type may change.
@@ -39,14 +39,21 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bestCost := plan.EstimateCost(p)
-	bestPlan := p
-
 	alts, err := plan.Alternatives(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	err = plan.Refine(p)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bestCost := plan.EstimateCost(p)
+	bestPlan := p
 	for _, alt := range alts {
+		err = plan.Refine(alt)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		cost := plan.EstimateCost(alt)
 		if cost < bestCost {
 			bestCost = cost
@@ -57,8 +64,8 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 }
 
 // Prepare prepares a raw statement parsed from parser.
-// The statement must be prepared before it can be passed to optimize function
-// We pass InfoSchema instead of get from Context in case it is changed after resolving name.
+// The statement must be prepared before it can be passed to optimize function.
+// We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
 func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
 	if err := Validate(node, true); err != nil {
 		return errors.Trace(err)

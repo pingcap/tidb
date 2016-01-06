@@ -434,6 +434,8 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 				switch col.Tp {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					tbInfo.PKIsHandle = true
+					// Avoid creating index for PK handle column.
+					continue
 				}
 			}
 		}

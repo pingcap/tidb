@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 )
 
@@ -253,7 +254,7 @@ func (s *testPlanSuite) TestBuilder(c *C) {
 		c.Assert(err, IsNil)
 		explainStr, err := Explain(p)
 		c.Assert(err, IsNil)
-		c.Assert(ca.planStr, Equals, explainStr)
+		c.Assert(explainStr, Equals, ca.planStr, Commentf("for expr %s", ca.sqlStr))
 	}
 }
 
@@ -268,7 +269,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t order by a",
-			best: "Index(t.a)->Fields",
+			best: "Table(t)->Fields",
 		},
 		{
 			sql:  "select * from t where b = 1 order by a",
@@ -291,8 +292,8 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			best: "Index(t.c_d)->Filter->Fields",
 		},
 		{
-			sql:  "select * from t where a like 'abc%'",
-			best: "Index(t.a)->Filter->Fields",
+			sql:  "select * from t where b like 'abc%'",
+			best: "Index(t.b)->Filter->Fields",
 		},
 		{
 			sql:  "select * from t where d",
@@ -300,22 +301,29 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t where a is null",
-			best: "Index(t.a)->Filter->Fields",
+			best: "Range(t)->Filter->Fields",
 		},
 	}
 	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
 		s, err := parser.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil, Commentf("for expr %s", ca.sql))
+		c.Assert(err, IsNil, comment)
 		stmt := s.(*ast.SelectStmt)
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
+
 		p, err := BuildPlan(stmt)
+		c.Assert(err, IsNil)
+		alts, err := Alternatives(p)
+		c.Assert(err, IsNil)
+
+		err = Refine(p)
 		c.Assert(err, IsNil)
 		bestCost := EstimateCost(p)
 		bestPlan := p
-		alts, err := Alternatives(p)
-		c.Assert(err, IsNil)
+
 		for _, alt := range alts {
+			c.Assert(Refine(alt), IsNil)
 			cost := EstimateCost(alt)
 			if cost < bestCost {
 				bestCost = cost
@@ -330,14 +338,6 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 
 func mockResolve(node ast.Node) {
 	indices := []*model.IndexInfo{
-		{
-			Name: model.NewCIStr("a"),
-			Columns: []*model.IndexColumn{
-				{
-					Name: model.NewCIStr("a"),
-				},
-			},
-		},
 		{
 			Name: model.NewCIStr("b"),
 			Columns: []*model.IndexColumn{
@@ -358,9 +358,15 @@ func mockResolve(node ast.Node) {
 			},
 		},
 	}
+	pkColumn := &model.ColumnInfo{
+		Name: model.NewCIStr("a"),
+	}
+	pkColumn.Flag = mysql.PriKeyFlag
 	table := &model.TableInfo{
-		Indices: indices,
-		Name:    model.NewCIStr("t"),
+		Columns:    []*model.ColumnInfo{pkColumn},
+		Indices:    indices,
+		Name:       model.NewCIStr("t"),
+		PKIsHandle: true,
 	}
 	resolver := mockResolver{table: table}
 	node.Accept(&resolver)
@@ -382,6 +388,9 @@ func (b *mockResolver) Leave(in ast.Node) (ast.Node, bool) {
 				Name: x.Name.Name,
 			},
 			Table: b.table,
+		}
+		if x.Name.Name.L == "a" {
+			x.Refer.Column = b.table.Columns[0]
 		}
 	case *ast.TableName:
 		x.TableInfo = b.table
