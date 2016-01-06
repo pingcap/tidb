@@ -65,6 +65,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExecute(v)
 	case *plan.Deallocate:
 		return &DeallocateExec{ctx: b.ctx, Name: v.Name}
+	case *plan.Aggregate:
+		return b.buildAggregate(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -169,23 +171,15 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 		ResultFields: v.Fields(),
 		ctx:          b.ctx,
 	}
-	hasAgg := false
-	for _, field := range e.ResultFields {
-		aggDetetor := &ast.AggFuncDetector{}
-		field.Expr.Accept(aggDetetor)
-		if aggDetetor.HasAggFunc {
-			hasAgg = true
-			break
-		}
-	}
-	if hasAgg {
-		// Add a aggregate evalue layer
-		aggExec := &AggregateExec{
-			Src:          e.Src,
-			ResultFields: v.Fields(),
-			ctx:          b.ctx,
-		}
-		e.Src = aggExec
+	return e
+}
+
+func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
+	src := b.build(v.Src())
+	e := &AggregateExec{
+		Src:          src,
+		ResultFields: v.Fields(),
+		ctx:          b.ctx,
 	}
 	return e
 }

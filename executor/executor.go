@@ -719,29 +719,32 @@ func (e *AggregateExec) Next() (*Row, error) {
 	if e.finish {
 		return nil, nil
 	}
-	// In this stage we do not consider groupby.
+	// In this stage we consider all data from src as a single group.
 	// TODO: support group by clause.
 	for {
-		srcRow, err := e.Src.Next()
+		row, err := e.innerNext()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if srcRow == nil {
+		if row == nil {
 			e.finish = true
-		}
-		row := &Row{
-			RowKeys: rowKeys,
-			Data:    make([]interface{}, len(e.ResultFields)),
-		}
-		for i, field := range e.ResultFields {
-			val, err := evaluator.Eval(e.ctx, field.Expr)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			row.Data[i] = val
+			break
 		}
 	}
-	return nil, nil
+	// Finish read data, evalue
+	e.ctx.SetValue(ast.AggDone, true)
+	defer e.ctx.ClearValue(ast.AggDone)
+	r := &Row{
+		Data: make([]interface{}, len(e.ResultFields)),
+	}
+	for i, field := range e.ResultFields {
+		val, err := evaluator.Eval(e.ctx, field.Expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.Data[i] = val
+	}
+	return r, nil
 }
 
 func (e *AggregateExec) innerNext() (*Row, error) {

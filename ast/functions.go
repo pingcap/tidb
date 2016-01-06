@@ -14,6 +14,9 @@
 package ast
 
 import (
+	"strings"
+
+	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -353,6 +356,15 @@ func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type aggDone struct{}
+
+// String implements Stringer interface.
+func (a aggDone) String() string {
+	return "aggdone"
+}
+
+var AggDone = aggDone{}
+
 // AggregateFuncExpr represents aggregate function expression.
 type AggregateFuncExpr struct {
 	funcNode
@@ -364,6 +376,10 @@ type AggregateFuncExpr struct {
 	// For example, column c1 values are "1", "2", "2",  "sum(c1)" is "5",
 	// but "sum(distinct c1)" is "3".
 	Distinct bool
+
+	Context *AggEvalueContext
+	// Done is used to indicate if aggregation is done.
+	Done bool
 }
 
 // Accept implements Node Accept interface.
@@ -399,4 +415,69 @@ func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
 // Leave implemets Visitor interface.
 func (a *AggFuncDetector) Leave(n Node) (node Node, ok bool) {
 	return n, !a.HasAggFunc
+}
+
+// AggregateDistinct handles distinct data for aggregate function: count, sum, avg, and group_concat.
+type AggregateDistinct struct {
+	// Distinct is a memory key-value map.
+	// Now we have to use memkv Temp, later may be use map directly
+	Distinct memkv.Temp
+}
+
+// CreateAggregateDistinct creates a distinct for function f.
+func CreateAggregateDistinct(f string, distinct bool) *AggregateDistinct {
+	a := &AggregateDistinct{}
+
+	switch strings.ToLower(f) {
+	case "count", "sum", "avg", "group_concat":
+		// only these aggregate functions support distinct
+		if distinct {
+			a.Distinct, _ = memkv.CreateTemp(true)
+		}
+	}
+
+	return a
+}
+
+// Check whether v is distinct or not, return true for distinct
+func (a *AggregateDistinct) IsDistinct(v ...interface{}) (bool, error) {
+	// no distinct flag
+	if a.Distinct == nil {
+		return true, nil
+	}
+
+	k := v
+	r, err := a.Distinct.Get(k)
+	if err != nil {
+		return false, nil
+	}
+
+	if len(r) > 0 {
+		// we save a same value before
+		return false, nil
+	}
+
+	if err := a.Distinct.Set(k, []interface{}{true}); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (a *AggregateDistinct) Clear() {
+	if a.Distinct == nil {
+		return
+	}
+
+	// drop does nothing, no need to check error
+	a.Distinct.Drop()
+	// CreateTemp returns no error, no need to check error
+	// later we may use another better way instead of memkv
+	a.Distinct, _ = memkv.CreateTemp(true)
+}
+
+type AggEvalueContext struct {
+	Distinct *AggregateDistinct
+	Count    int64
+	Value    interface{}
 }

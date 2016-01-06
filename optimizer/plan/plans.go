@@ -311,3 +311,33 @@ func (p *Deallocate) Accept(v Visitor) (Plan, bool) {
 	p = np.(*Deallocate)
 	return v.Leave(p)
 }
+
+// Agggregate represents a select fields plan.
+type Aggregate struct {
+	planWithSrc
+}
+
+// Accept implements Plan Accept interface.
+func (p *Aggregate) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Aggregate)
+	if p.src != nil {
+		var ok bool
+		p.src, ok = p.src.Accept(v)
+		if !ok {
+			return p, false
+		}
+	}
+	return v.Leave(p)
+}
+
+// SetLimit implements Plan SetLimit interface.
+func (p *Aggregate) SetLimit(limit float64) {
+	p.limit = limit
+	if p.src != nil {
+		p.src.SetLimit(limit)
+	}
+}
