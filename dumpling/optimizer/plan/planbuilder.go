@@ -34,9 +34,6 @@ const (
 	CodeUnsupportedType = iota + 1
 )
 
-// Table Name.
-const tableShowDDL = "SHOW_DDL"
-
 // BuildPlan builds a plan from a node.
 // returns ErrUnsupportedType if ast.Node type is not supported yet.
 func BuildPlan(node ast.Node) (Plan, error) {
@@ -216,11 +213,7 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 
 func (b *planBuilder) buildAdmin(adm *ast.AdminStmt) Plan {
 	if adm.Tp == ast.AdminCheckTable {
-		if adm.Tables != nil {
-			return &CheckTable{Tables: adm.Tables}
-		}
-
-		return nil
+		return &CheckTable{Tables: adm.Tables}
 	}
 
 	if adm.Tp == ast.AdminShowDDL {
@@ -230,15 +223,16 @@ func (b *planBuilder) buildAdmin(adm *ast.AdminStmt) Plan {
 		return p
 	}
 
+	b.err = ErrUnsupportedType.Gen("Unsupported type %T", adm)
+
 	return nil
 }
 
 func buildShowDDLFields() []*ast.ResultField {
-	tbName := tableShowDDL
 	rfs := make([]*ast.ResultField, 0, 3)
-	rfs = append(rfs, buildResultField(tbName, "SCHEMA_VER", mysql.TypeLonglong, 4))
-	rfs = append(rfs, buildResultField(tbName, "OWNER", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField(tbName, "Job", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "SCHEMA_VER", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField("", "OWNER", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField("", "Job", mysql.TypeVarchar, 128))
 
 	return rfs
 }

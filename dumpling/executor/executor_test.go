@@ -53,6 +53,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row, err := r.Next()
 	c.Assert(err, IsNil)
+	c.Logf("row:%v\n", row)
 	c.Assert(row, NotNil)
 
 	r, err = tk.Exec("admin check table admin_test")

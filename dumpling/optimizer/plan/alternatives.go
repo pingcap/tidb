@@ -23,16 +23,14 @@ func Alternatives(p Plan) ([]Plan, error) {
 	case nil:
 	case *TableScan:
 		plans = tableScanAlternatives(x)
-	case *ShowDDL:
-		plans = showDDLAlternatives(x)
-	case *CheckTable:
-		plans = checkTableAlternatives(x)
 	case WithSrcPlan:
 		var err error
 		plans, err = planWithSrcAlternatives(x)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	case *ShowDDL:
+	case *CheckTable:
 	case *Prepare:
 	case *Execute:
 	case *Deallocate:
@@ -65,17 +63,6 @@ func tableScanAlternatives(p *TableScan) []Plan {
 		alts = append(alts, ip)
 	}
 	return alts
-}
-
-func showDDLAlternatives(p *ShowDDL) []Plan {
-	sp := &ShowDDL{}
-	sp.SetFields(p.fields)
-
-	return []Plan{sp}
-}
-
-func checkTableAlternatives(p *CheckTable) []Plan {
-	return []Plan{&CheckTable{}}
 }
 
 // planWithSrcAlternatives shallow copies the WithSrcPlan,

@@ -91,7 +91,7 @@ type Executor interface {
 type ShowDDL struct {
 	fields []*ast.ResultField
 	ctx    context.Context
-	cnt    int
+	done   bool
 }
 
 // Fields implements Executor Fields interface.
@@ -101,7 +101,7 @@ func (e *ShowDDL) Fields() []*ast.ResultField {
 
 // Next implements Execution Next interface.
 func (e *ShowDDL) Next() (*Row, error) {
-	if e.cnt != 0 {
+	if e.done {
 		return nil, nil
 	}
 
@@ -115,23 +115,23 @@ func (e *ShowDDL) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	records := []interface{}{
+	rowData := []interface{}{
 		info.SchemaVer,
 		nil,
 		nil,
 	}
 	if info.Owner != nil {
-		records[1] = info.Owner.String()
+		rowData[1] = info.Owner.String()
 	}
 	if info.Job != nil {
-		records[2] = info.Job.String()
+		rowData[2] = info.Job.String()
 	}
 	row := &Row{}
-	row.Data = append(row.Data, records...)
+	row.Data = rowData
 	for i, f := range e.fields {
-		f.Expr.SetValue(records[i])
+		f.Expr.SetValue(rowData[i])
 	}
-	e.cnt++
+	e.done = true
 
 	return row, nil
 }
@@ -145,6 +145,7 @@ func (e *ShowDDL) Close() error {
 type CheckTable struct {
 	tables []*ast.TableName
 	ctx    context.Context
+	done   bool
 }
 
 // Fields implements Executor Fields interface.
@@ -154,6 +155,10 @@ func (e *CheckTable) Fields() []*ast.ResultField {
 
 // Next implements Execution Next interface.
 func (e *CheckTable) Next() (*Row, error) {
+	if e.done {
+		return nil, nil
+	}
+
 	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
 	is := sessionctx.GetDomain(e.ctx).InfoSchema()
 	txn, err := e.ctx.GetTxn(false)
@@ -173,6 +178,7 @@ func (e *CheckTable) Next() (*Row, error) {
 			}
 		}
 	}
+	e.done = true
 
 	return nil, nil
 }
