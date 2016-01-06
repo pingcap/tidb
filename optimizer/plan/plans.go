@@ -47,7 +47,6 @@ type ShowDDL struct {
 // Accept implements Plan Accept interface.
 func (p *ShowDDL) Accept(v Visitor) (Plan, bool) {
 	np, _ := v.Enter(p)
-
 	return v.Leave(np)
 }
 
@@ -61,7 +60,6 @@ type CheckTable struct {
 // Accept implements Plan Accept interface.
 func (p *CheckTable) Accept(v Visitor) (Plan, bool) {
 	np, _ := v.Enter(p)
-
 	return v.Leave(np)
 
 }

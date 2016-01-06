@@ -35,12 +35,14 @@ import (
 )
 
 var (
+	_ Executor = &CheckTableExec{}
 	_ Executor = &FilterExec{}
 	_ Executor = &IndexRangeExec{}
 	_ Executor = &IndexScanExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &SelectFieldsExec{}
 	_ Executor = &SelectLockExec{}
+	_ Executor = &ShowDDLExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &TableScanExec{}
 )
@@ -87,20 +89,20 @@ type Executor interface {
 	Close() error
 }
 
-// ShowDDL represents a show DDL executor.
-type ShowDDL struct {
+// ShowDDLExec represents a show DDL executor.
+type ShowDDLExec struct {
 	fields []*ast.ResultField
 	ctx    context.Context
 	done   bool
 }
 
 // Fields implements Executor Fields interface.
-func (e *ShowDDL) Fields() []*ast.ResultField {
+func (e *ShowDDLExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
 // Next implements Execution Next interface.
-func (e *ShowDDL) Next() (*Row, error) {
+func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -136,25 +138,25 @@ func (e *ShowDDL) Next() (*Row, error) {
 	return row, nil
 }
 
-// Close implements plan.Plan Close interface.
-func (e *ShowDDL) Close() error {
+// Close implements Executor Close interface.
+func (e *ShowDDLExec) Close() error {
 	return nil
 }
 
-// CheckTable represents a check table executor.
-type CheckTable struct {
+// CheckTableExec represents a check table executor.
+type CheckTableExec struct {
 	tables []*ast.TableName
 	ctx    context.Context
 	done   bool
 }
 
 // Fields implements Executor Fields interface.
-func (e *CheckTable) Fields() []*ast.ResultField {
+func (e *CheckTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 
 // Next implements Execution Next interface.
-func (e *CheckTable) Next() (*Row, error) {
+func (e *CheckTableExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
@@ -184,7 +186,7 @@ func (e *CheckTable) Next() (*Row, error) {
 }
 
 // Close implements plan.Plan Close interface.
-func (e *CheckTable) Close() error {
+func (e *CheckTableExec) Close() error {
 	return nil
 }
 
@@ -307,7 +309,7 @@ func (e *TableScanExec) getRow(handle int64, rowKey kv.Key) (*Row, error) {
 	return row, nil
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements Executor Close interface.
 func (e *TableScanExec) Close() error {
 	if e.iter != nil {
 		e.iter.Close()

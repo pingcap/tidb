@@ -69,8 +69,9 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 
+	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	// check table test
-	r, err = tk.Exec("admin check table admin_test")
+	r, err = tk.Exec("admin check table admin_test, admin_test1")
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 	// error table name

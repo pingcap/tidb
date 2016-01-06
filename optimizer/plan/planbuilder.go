@@ -210,21 +210,20 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildAdmin(adm *ast.AdminStmt) Plan {
-	if adm.Tp == ast.AdminCheckTable {
-		return &CheckTable{Tables: adm.Tables}
-	}
+func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
+	var p Plan
 
-	if adm.Tp == ast.AdminShowDDL {
-		p := &ShowDDL{}
+	switch as.Tp {
+	case ast.AdminCheckTable:
+		p = &CheckTable{Tables: as.Tables}
+	case ast.AdminShowDDL:
+		p = &ShowDDL{}
 		p.SetFields(buildShowDDLFields())
-
-		return p
+	default:
+		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 
-	b.err = ErrUnsupportedType.Gen("Unsupported type %T", adm)
-
-	return nil
+	return p
 }
 
 func buildShowDDLFields() []*ast.ResultField {
@@ -237,21 +236,21 @@ func buildShowDDLFields() []*ast.ResultField {
 }
 
 func buildResultField(tableName, name string, tp byte, size int) *ast.ResultField {
-	mCharset := charset.CharsetBin
-	mCollation := charset.CharsetBin
-	mFlag := mysql.UnsignedFlag
+	cs := charset.CharsetBin
+	cl := charset.CharsetBin
+	flag := mysql.UnsignedFlag
 	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
-		mCharset = mysql.DefaultCharset
-		mCollation = mysql.DefaultCollationName
-		mFlag = 0
+		cs = mysql.DefaultCharset
+		cl = mysql.DefaultCollationName
+		flag = 0
 	}
 
 	fieldType := types.FieldType{
-		Charset: mCharset,
-		Collate: mCollation,
+		Charset: cs,
+		Collate: cl,
 		Tp:      tp,
 		Flen:    size,
-		Flag:    uint(mFlag),
+		Flag:    uint(flag),
 	}
 	colInfo := &model.ColumnInfo{
 		Name:      model.NewCIStr(name),
