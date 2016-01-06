@@ -230,9 +230,8 @@ func (d *ddl) handleJobQueue() error {
 			// running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
 			owner.LastUpdateTS = time.Now().UnixNano()
-			if err = t.SetDDLOwner(owner); err != nil {
-				return errors.Trace(err)
-			}
+			err = t.SetDDLOwner(owner)
+
 			return errors.Trace(err)
 		})
 
