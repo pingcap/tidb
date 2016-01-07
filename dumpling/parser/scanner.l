@@ -636,8 +636,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {abs}			lval.item = string(l.val)
 			return abs
 {add}			return add
-{adddate}		return addDate
-{admin}			return admin
+{adddate}		lval.item = string(l.val)
+			return addDate
+{admin}			lval.item = string(l.val)
+			return admin
 {after}			lval.item = string(l.val)
 			return after
 {all}			return all
@@ -709,8 +711,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
-{date_add}		return dateAdd
-{date_sub}		return dateSub
+{date_add}		lval.item = string(l.val)
+			return dateAdd
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayofweek}		lval.item = string(l.val)
@@ -922,7 +926,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {set}			return set
 {share}			return share
 {show}			return show
-{subdate}		return subDate
+{subdate}		lval.item = string(l.val)
+			return subDate
 {substr}		lval.item = string(l.val)
 			return substring
 {substring}		lval.item = string(l.val)
