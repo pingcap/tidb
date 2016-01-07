@@ -162,6 +162,22 @@ func builtinNow(args []interface{}, ctx map[interface{}]interface{}) (interface{
 	return t.RoundFrac(int(fsp))
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
+func builtinDayName(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	v, err := builtinWeekDay(args, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if types.IsNil(v) {
+		return nil, nil
+	}
+	weekday := v.(int64)
+	if (weekday < 0) || (weekday >= int64(len(mysql.WeekdayNames))) {
+		return nil, errors.Errorf("no name for invalid weekday: %d.", weekday)
+	}
+	return mysql.WeekdayNames[weekday], nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
 func builtinDayOfMonth(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	// TODO: some invalid format like 2000-00-00 will return 0 too.

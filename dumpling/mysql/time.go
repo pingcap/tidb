@@ -95,6 +95,17 @@ var (
 	MinTimestamp = time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC)
 	// MaxTimestamp is the maximum for mysql timestamp type.
 	MaxTimestamp = time.Date(2038, 1, 19, 3, 14, 7, 999999, time.UTC)
+
+	// WeekdayNames lists names of weekdays, which are used in builtin time function `dayname`.
+	WeekdayNames = []string{
+		"Monday",
+		"Tuesday",
+		"Wednesday",
+		"Thursday",
+		"Friday",
+		"Saturday",
+		"Sunday",
+	}
 )
 
 // Time is the struct for handling datetime, timestamp and date.
