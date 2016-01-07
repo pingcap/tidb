@@ -176,7 +176,7 @@ func (e *CheckTableExec) Next() (*Row, error) {
 		for _, idx := range tb.Indices() {
 			err = inspectkv.CompareIndexData(txn, tb, idx)
 			if err != nil {
-				return nil, errors.Errorf("%v err:%v", t.Name, err.Error())
+				return nil, errors.Errorf("%v err:%v", t.Name, err)
 			}
 		}
 	}
