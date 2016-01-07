@@ -169,6 +169,23 @@ func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Pla
 	selectFields := &SelectFields{}
 	selectFields.SetSrc(src)
 	selectFields.SetFields(fields)
+
+	hasAgg := false
+	for _, field := range fields {
+		aggDetetor := &ast.AggFuncDetector{}
+		field.Expr.Accept(aggDetetor)
+		if aggDetetor.HasAggFunc {
+			hasAgg = true
+			break
+		}
+	}
+	if hasAgg {
+		// Add aggregate plan
+		aggPlan := &Aggregate{}
+		aggPlan.SetSrc(src)
+		aggPlan.SetFields(fields)
+		selectFields.SetSrc(aggPlan)
+	}
 	return selectFields
 }
 

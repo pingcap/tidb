@@ -14,6 +14,8 @@
 package optimizer
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -76,6 +78,8 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	case *ast.ParenthesesExpr:
 		x.SetType(x.Expr.GetType())
+	case *ast.AggregateFuncExpr:
+		v.aggregateFunc(x)
 		// TODO: handle all expression types.
 	}
 	return in, true
@@ -89,6 +93,16 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 		if val.Column.ID == 0 && val.Expr.GetType() != nil {
 			val.Column.FieldType = *(val.Expr.GetType())
 		}
+	}
+}
+
+func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
+	name := strings.ToLower(x.F)
+	switch name {
+	case "count":
+		ft := types.NewFieldType(mysql.TypeLonglong)
+		ft.Flen = 21
+		x.SetType(ft)
 	}
 }
 

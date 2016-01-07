@@ -36,6 +36,7 @@ var (
 	_ Executor = &IndexScanExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &SelectFieldsExec{}
+	_ Executor = &AggregateExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &TableScanExec{}
@@ -692,4 +693,96 @@ func (e *SortExec) Next() (*Row, error) {
 // Close implements Executor Close interface.
 func (e *SortExec) Close() error {
 	return e.Src.Close()
+}
+
+// AggregateExec represents a select fields executor.
+// TODO: Add having
+type AggregateExec struct {
+	Src          Executor
+	ResultFields []*ast.ResultField
+	executed     bool
+	ctx          context.Context
+	finish       bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *AggregateExec) Fields() []*ast.ResultField {
+	return e.ResultFields
+}
+
+// Next implements Executor Next interface.
+func (e *AggregateExec) Next() (*Row, error) {
+	// 1. read a group
+	// 2. evaluate the fields
+	// 3. check having
+	// 4. return a row
+	if e.finish {
+		return nil, nil
+	}
+	// In this stage we consider all data from src as a single group.
+	// TODO: support group by clause.
+	for {
+		row, err := e.innerNext()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.finish = true
+			break
+		}
+	}
+	// Finish read data, evalue
+	e.ctx.SetValue(ast.AggDone, true)
+	defer e.ctx.ClearValue(ast.AggDone)
+	r := &Row{
+		Data: make([]interface{}, len(e.ResultFields)),
+	}
+	for i, field := range e.ResultFields {
+		val, err := evaluator.Eval(e.ctx, field.Expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		r.Data[i] = val
+	}
+	return r, nil
+}
+
+func (e *AggregateExec) innerNext() (*Row, error) {
+	var rowKeys []*RowKeyEntry
+	if e.Src != nil {
+		srcRow, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if srcRow == nil {
+			return nil, nil
+		}
+		rowKeys = srcRow.RowKeys
+	} else {
+		// If Src is nil, only one row should be returned.
+		if e.executed {
+			return nil, nil
+		}
+	}
+	e.executed = true
+	row := &Row{
+		RowKeys: rowKeys,
+		Data:    make([]interface{}, len(e.ResultFields)),
+	}
+	for i, field := range e.ResultFields {
+		val, err := evaluator.Eval(e.ctx, field.Expr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row.Data[i] = val
+	}
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *AggregateExec) Close() error {
+	if e.Src != nil {
+		return e.Src.Close()
+	}
+	return nil
 }
