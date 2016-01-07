@@ -182,6 +182,7 @@ func (d *ddl) delKeysWithPrefix(prefix kv.Key) error {
 			for _, key := range keys {
 				err := txn.Delete(key)
 				// must skip ErrNotExist
+				// if key doesn't exist, skip this error.
 				if err != nil && !terror.ErrorEqual(err, kv.ErrNotExist) {
 					return errors.Trace(err)
 				}
