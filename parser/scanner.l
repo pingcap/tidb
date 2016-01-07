@@ -332,6 +332,7 @@ databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
 date_add	{d}{a}{t}{e}_{a}{d}{d}
 date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
+dayname	{d}{a}{y}{n}{a}{m}{e}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
 dayofyear	{d}{a}{y}{o}{f}{y}{e}{a}{r}
@@ -717,6 +718,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return dateSub
 {day}			lval.item = string(l.val)
 			return day
+{dayname}		lval.item = string(l.val)
+			return dayname
 {dayofweek}		lval.item = string(l.val)
 			return dayofweek
 {dayofmonth}		lval.item = string(l.val)
