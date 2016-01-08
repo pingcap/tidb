@@ -105,8 +105,18 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
-	owner, err := t.GetDDLOwner()
+func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
+	var owner *model.Owner
+	var err error
+
+	switch flag {
+	case ddlJobFlag:
+		owner, err = t.GetDDLOwner()
+	case ddlTaskFlag:
+		owner, err = t.GetDDLTaskOwner()
+	default:
+		err = errors.Errorf("invalid ddl flag %v", flag)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -122,18 +132,28 @@ func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
+	if flag == ddlTaskFlag {
+		// task doesn't need to guarantee other servers update the schema.
+		maxTimeout = int64(2 * d.lease)
+	}
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
 		owner.OwnerID = d.uuid
 		owner.LastUpdateTS = now
 		// update status.
-		if err = t.SetDDLOwner(owner); err != nil {
+		switch flag {
+		case ddlJobFlag:
+			err = t.SetDDLOwner(owner)
+		case ddlTaskFlag:
+			err = t.SetDDLTaskOwner(owner)
+		}
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[ddl] become owner %s", owner.OwnerID)
+		log.Debugf("[ddl] become %s owner %s", flag, owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not owner, owner is %s", owner.OwnerID)
+		log.Debugf("[ddl] not %s owner, owner is %s", flag, owner.OwnerID)
 		return nil, errors.Trace(ErrNotOwner)
 	}
 
@@ -158,6 +178,13 @@ func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	switch job.Type {
+	case model.ActionDropSchema, model.ActionDropTable,
+		model.ActionDropColumn, model.ActionDropIndex:
+		if err = d.prepareTask(job); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
@@ -168,6 +195,11 @@ var ErrNotOwner = errors.New("DDL: not owner")
 
 // ErrWorkerClosed means we have already closed the DDL worker.
 var ErrWorkerClosed = errors.New("DDL: worker is closed")
+
+const (
+	ddlJobFlag  = "job"
+	ddlTaskFlag = "task"
+)
 
 func (d *ddl) handleJobQueue() error {
 	for {
@@ -180,7 +212,8 @@ func (d *ddl) handleJobQueue() error {
 		var job *model.Job
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
-			owner, err := d.checkOwner(t)
+			//owner, err := d.checkOwner(t)
+			owner, err := d.checkOwner(t, ddlJobFlag)
 			if terror.ErrorEqual(err, ErrNotOwner) {
 				// we are not owner, return and retry checking later.
 				return nil
@@ -222,7 +255,6 @@ func (d *ddl) handleJobQueue() error {
 			} else {
 				err = d.updateJob(t, job)
 			}
-
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -234,6 +266,10 @@ func (d *ddl) handleJobQueue() error {
 
 			return errors.Trace(err)
 		})
+
+		if job != nil && job.IsFinished() {
+			d.startTask(job.Type)
+		}
 
 		if err != nil {
 			return errors.Trace(err)
