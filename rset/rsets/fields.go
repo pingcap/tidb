@@ -74,12 +74,15 @@ func (r *SelectFieldsRset) Plan(ctx context.Context) (plan.Plan, error) {
 					// e.g, select c as a from t;
 					match = false
 					break
+				} else {
+					// pass
 				}
-				continue
+
+			} else {
+				match = false
+				break
 			}
 
-			match = false
-			break
 		}
 
 		if match {
