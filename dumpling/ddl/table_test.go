@@ -187,7 +187,7 @@ func (s *testTableSuite) TestTable(c *C) {
 func (s *testTableSuite) TestTableResume(c *C) {
 	d := s.d
 
-	testCheckOwner(c, d, true)
+	testCheckOwner(c, d, true, ddlJobFlag)
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
 

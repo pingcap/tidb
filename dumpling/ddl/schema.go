@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
@@ -75,21 +74,27 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
+	dbInfo, err := t.GetDatabase(task.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if dbInfo == nil {
+		task.State = model.JobCancelled
+		return errors.Trace(infoschema.DatabaseNotExists)
+	}
+
+	_, err = t.GenSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// wait reorganization jobs done and drop meta.
 	tables, err := t.ListTables(dbInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = d.runReorgJob(func() error {
-		return d.dropSchemaData(dbInfo, tables)
-	})
-
-	if terror.ErrorEqual(err, errWaitReorgTimeout) {
-		// if timeout, we should return, check for the owner and re-wait job done.
-		return nil
-	}
-	if err != nil {
+	if err = d.dropSchemaData(dbInfo, tables); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -98,9 +103,11 @@ func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	// finish this job
-	job.State = model.JobDone
-	job.SchemaState = model.StateNone
+	// finish this task
+	task.State = model.JobDone
+	task.SchemaState = model.StateNone
+
+	return nil
 }
 
 func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
@@ -131,34 +138,8 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		err = t.UpdateDatabase(dbInfo)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
 		dbInfo.State = model.StateDeleteReorganization
 		err = t.UpdateDatabase(dbInfo)
-	case model.StateDeleteReorganization:
-		// wait reorganization jobs done and drop meta.
-		var tables []*model.TableInfo
-		tables, err = t.ListTables(dbInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = d.runReorgJob(func() error {
-			return d.dropSchemaData(dbInfo, tables)
-		})
-
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// all reorganization jobs done, drop this database
-		if err = t.DropDatabase(dbInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
-
 		// finish this job
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone

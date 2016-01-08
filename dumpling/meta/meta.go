@@ -601,29 +601,29 @@ var (
 
 // UpdateDDLTask updates the DDL task with index.
 func (m *Meta) UpdateDDLTask(index int64, task *model.Job) error {
-	return m.updateDDLTask(index, task, mDDLTaskListKey)
+	return m.updateDDLJob(index, task, mDDLTaskListKey)
 }
 
 // GetDDLTask returns the DDL task with index.
 func (m *Meta) GetDDLTask(index int64) (*model.Job, error) {
-	task, err := m.getDDLTask(mDDLTaskListKey, index)
+	task, err := m.getDDLJob(mDDLTaskListKey, index)
 
 	return task, errors.Trace(err)
 }
 
 // EnQueueDDLTask adds a DDL task to the list.
 func (m *Meta) EnQueueDDLTask(task *model.Job) error {
-	return m.enQueueDDLTask(mDDLTaskListKey, task)
+	return m.enQueueDDLJob(mDDLTaskListKey, task)
 }
 
 // AddHistoryDDLTask adds DDL task to history.
 func (m *Meta) AddHistoryDDLTask(task *model.Job) error {
-	return m.addHistoryDDLTask(mDDLTaskHistoryKey, task)
+	return m.addHistoryDDLJob(mDDLTaskHistoryKey, task)
 }
 
 // DeQueueDDLTask pops a DDL task from the list.
 func (m *Meta) DeQueueDDLTask() (*model.Job, error) {
-	return m.deQueueDDLTask(mDDLTaskListKey)
+	return m.deQueueDDLJob(mDDLTaskListKey)
 }
 
 // GetDDLOwner gets the current task owner for DDL.

@@ -50,10 +50,10 @@ func testCreateStore(c *C, name string) kv.Storage {
 type testDDLSuite struct {
 }
 
-func testCheckOwner(c *C, d *ddl, isOwner bool) {
+func testCheckOwner(c *C, d *ddl, isOwner bool, flag string) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		_, err := d.checkOwner(t)
+		_, err := d.checkOwner(t, flag)
 		return err
 	})
 	if isOwner {
@@ -64,7 +64,7 @@ func testCheckOwner(c *C, d *ddl, isOwner bool) {
 	c.Assert(terror.ErrorEqual(err, ErrNotOwner), IsTrue)
 }
 
-func (s *testDDLSuite) TestCheckOnwer(c *C) {
+func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
@@ -74,17 +74,20 @@ func (s *testDDLSuite) TestCheckOnwer(c *C) {
 
 	time.Sleep(lease)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true, ddlTaskFlag)
 
 	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
 
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
+	testCheckOwner(c, d2, false, ddlTaskFlag)
 	d1.close()
 
 	time.Sleep(6 * lease)
 
-	testCheckOwner(c, d2, true)
+	testCheckOwner(c, d2, true, ddlJobFlag)
+	testCheckOwner(c, d2, true, ddlTaskFlag)
 
 	d2.SetLease(1 * time.Second)
 
@@ -97,7 +100,8 @@ func (s *testDDLSuite) TestCheckOnwer(c *C) {
 	err = d1.Start()
 	c.Assert(err, IsNil)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true, ddlTaskFlag)
 
 	d2.SetLease(1 * time.Second)
 	d2.SetLease(2 * time.Second)
@@ -124,7 +128,6 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	err := d.startJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
-
 }
 
 func (s *testDDLSuite) TestTableError(c *C) {

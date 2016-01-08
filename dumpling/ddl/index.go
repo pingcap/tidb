@@ -67,7 +67,6 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	} else {
 		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
 	}
-
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {

@@ -76,6 +76,49 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 }
 
+func (d *ddl) delReorgTable(t *meta.Meta, task *model.Job) error {
+	tblInfo, err := t.GetTable(task.SchemaID, task.TableID)
+	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+		task.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tblInfo == nil {
+		task.State = model.JobCancelled
+		return errors.Trace(err)
+	}
+
+	_, err = t.GenSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// reorganization -> absent
+	var tbl table.Table
+	tbl, err = d.getTable(t, task.SchemaID, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = d.dropTableData(tbl)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// all reorganization jobs done, drop this table.
+	if err = t.DropTable(task.SchemaID, task.TableID); err != nil {
+		return errors.Trace(err)
+	}
+
+	// finish this job
+	task.SchemaState = model.StateNone
+	task.State = model.JobDone
+
+	return nil
+}
+
 func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tableID := job.TableID
@@ -104,51 +147,23 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.State = model.StateDeleteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
 		tblInfo.State = model.StateDeleteReorganization
 		err = t.UpdateTable(schemaID, tblInfo)
-		return errors.Trace(err)
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		var tbl table.Table
-		tbl, err = d.getTable(t, schemaID, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		err = d.runReorgJob(func() error {
-			return d.dropTableData(tbl)
-		})
-
-		if terror.ErrorEqual(err, errWaitReorgTimeout) {
-			// if timeout, we should return, check for the owner and re-wait job done.
-			return nil
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// all reorganization jobs done, drop this table.
-		if err = t.DropTable(schemaID, tableID); err != nil {
-			return errors.Trace(err)
-		}
-
 		// finish this job
-		job.SchemaState = model.StateNone
 		job.State = model.JobDone
-		return nil
+		job.SchemaState = model.StateNone
 	default:
-		return errors.Errorf("invalid table state %v", tblInfo.State)
+		err = errors.Errorf("invalid table state %v", tblInfo.State)
 	}
+
+	return errors.Trace(err)
 }
 
 func (d *ddl) getTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {

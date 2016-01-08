@@ -76,8 +76,7 @@ type ddl struct {
 	jobCh     chan struct{}
 	jobDoneCh chan struct{}
 	// drop database/table task
-	taskCh     chan struct{}
-	taskDoneCh chan struct{}
+	taskCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: now we use goroutine to simulate reorganization jobs, later we may
@@ -107,7 +106,6 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 		jobCh:      make(chan struct{}, 1),
 		jobDoneCh:  make(chan struct{}, 1),
 		taskCh:     make(chan struct{}, 1),
-		taskDoneCh: make(chan struct{}, 1),
 	}
 
 	d.start()
@@ -126,16 +124,26 @@ func (d *ddl) Stop() error {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		owner, err := t.GetDDLOwner()
-		if err != nil || owner == nil {
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if owner == nil || owner.OwnerID != d.uuid {
+			return nil
+		}
+		// owner is mine, clean it so other servers can compete for it quickly.
+		if err = t.SetDDLOwner(&model.Owner{}); err != nil {
 			return errors.Trace(err)
 		}
 
-		if owner.OwnerID != d.uuid {
+		// clean task owner like job owner.
+		owner, err = t.GetDDLTaskOwner()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if owner == nil || owner.OwnerID != d.uuid {
 			return nil
 		}
-
-		// owner is mine, clean it so other servers can compete for it quickly.
-		return errors.Trace(t.SetDDLOwner(&model.Owner{}))
+		return t.SetDDLTaskOwner(&model.Owner{})
 	})
 	return errors.Trace(err)
 }
@@ -161,6 +169,7 @@ func (d *ddl) start() {
 	// for every start, we will send a fake job to let worker
 	// check owner first and try to find whether a job exists and run.
 	asyncNotify(d.jobCh)
+	asyncNotify(d.taskCh)
 }
 
 func (d *ddl) close() {
