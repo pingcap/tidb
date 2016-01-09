@@ -42,7 +42,8 @@ func BuildPlan(node ast.Node) (Plan, error) {
 // planBuilder builds Plan from an ast.Node.
 // It just build the ast node straightforwardly.
 type planBuilder struct {
-	err error
+	err    error
+	hasAgg bool
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -61,6 +62,20 @@ func (b *planBuilder) build(node ast.Node) Plan {
 }
 
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
+	// Detect aggregate function or groupby clause.
+	aggDetetor := &ast.AggFuncDetector{}
+	sel.Accept(aggDetetor)
+	var aggFuncs []*ast.AggregateFuncExpr
+	if aggDetetor.HasAggFunc {
+		extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
+		// TODO: extract aggfuncs from having clause.
+		for _, f := range sel.GetResultFields() {
+			f.Expr.Accept(extractor)
+			// TODO: check error
+		}
+		aggFuncs = extractor.AggFuncs
+		// TODO: extract aggfuncs from having clause.
+	}
 	var p Plan
 	if sel.From != nil {
 		p = b.buildJoin(sel.From.TableRefs)
@@ -79,11 +94,17 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 				return nil
 			}
 		}
+		if len(aggFuncs) > 0 {
+			p = b.buildAggregate(p, aggFuncs)
+		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
 			return nil
 		}
 	} else {
+		if len(aggFuncs) > 0 {
+			p = b.buildAggregate(p, aggFuncs)
+		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
 			return nil
@@ -170,6 +191,18 @@ func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Pla
 	selectFields.SetSrc(src)
 	selectFields.SetFields(fields)
 	return selectFields
+}
+
+func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr) Plan {
+	// Add aggregate plan.
+	aggPlan := &Aggregate{
+		AggFuncs: aggFuncs,
+	}
+	aggPlan.SetSrc(src)
+	if src != nil {
+		aggPlan.SetFields(src.Fields())
+	}
+	return aggPlan
 }
 
 func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {

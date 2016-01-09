@@ -65,6 +65,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExecute(v)
 	case *plan.Deallocate:
 		return &DeallocateExec{ctx: b.ctx, Name: v.Name}
+	case *plan.Aggregate:
+		return b.buildAggregate(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -168,6 +170,17 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 		Src:          src,
 		ResultFields: v.Fields(),
 		ctx:          b.ctx,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
+	src := b.build(v.Src())
+	e := &AggregateExec{
+		Src:          src,
+		ResultFields: v.Fields(),
+		ctx:          b.ctx,
+		AggFuncs:     v.AggFuncs,
 	}
 	return e
 }
