@@ -20,6 +20,7 @@ package builtin
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
@@ -75,4 +76,8 @@ func builtinConnectionID(args []interface{}, data map[interface{}]interface{}) (
 	}
 	ctx := c.(context.Context)
 	return variable.GetSessionVars(ctx).ConnectionID, nil
+}
+
+func builtinVersion(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+	return mysql.ServerVersion, nil
 }
