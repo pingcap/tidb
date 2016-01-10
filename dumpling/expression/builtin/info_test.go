@@ -15,6 +15,7 @@ package builtin
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
@@ -93,4 +94,11 @@ func (s *testBuiltinSuite) TestConnectionID(c *C) {
 	v, err := builtinConnectionID(nil, m)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(1))
+}
+
+func (s *testBuiltinSuite) TestVersion(c *C) {
+	m := map[interface{}]interface{}{}
+	v, err := builtinVersion(nil, m)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, mysql.ServerVersion)
 }
