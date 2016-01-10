@@ -415,7 +415,7 @@ func (n *AggregateFuncExpr) Update() error {
 	return nil
 }
 
-// GetContext get aggregate evaluation context for the current group.
+// GetContext gets aggregate evaluation context for the current group.
 // If it is nil, add a new context into ContextPerGroup.
 func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	if n.ContextPerGroup == nil {
@@ -479,7 +479,7 @@ type AggFuncDetector struct {
 	detecting  bool
 }
 
-// Enter implemets Visitor interface.
+// Enter implements Visitor interface.
 func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
 	defer func() {
 		a.detecting = true
@@ -497,22 +497,21 @@ func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
 	return n, a.HasAggFunc
 }
 
-// Leave implemets Visitor interface.
+// Leave implements Visitor interface.
 func (a *AggFuncDetector) Leave(n Node) (node Node, ok bool) {
 	return n, !a.HasAggFunc
 }
 
-// AggregateFuncExtractor visit Expr tree.
+// AggregateFuncExtractor visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
 	inAggregateFuncExpr bool
-	inSelectFields      bool
 	// AggFuncs is the collected AggregateFuncExprs.
 	AggFuncs  []*AggregateFuncExpr
 	detecting bool
 }
 
-// Enter implemets Visitor interface.
+// Enter implements Visitor interface.
 func (a *AggregateFuncExtractor) Enter(n Node) (node Node, skipChildren bool) {
 	defer func() {
 		a.detecting = true
@@ -531,7 +530,7 @@ func (a *AggregateFuncExtractor) Enter(n Node) (node Node, skipChildren bool) {
 	return n, false
 }
 
-// Leave implemets Visitor interface.
+// Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 	switch n.(type) {
 	case *AggregateFuncExpr:
@@ -571,7 +570,6 @@ func CreateAggregateDistinct(f string, distinct bool) *AggregateDistinct {
 			a.Distinct, _ = memkv.CreateTemp(true)
 		}
 	}
-
 	return a
 }
 
@@ -585,7 +583,7 @@ func (a *AggregateDistinct) IsDistinct(v ...interface{}) (bool, error) {
 	k := v
 	r, err := a.Distinct.Get(k)
 	if err != nil {
-		return false, nil
+		return false, errors.Trace(err)
 	}
 
 	if len(r) > 0 {
@@ -594,7 +592,7 @@ func (a *AggregateDistinct) IsDistinct(v ...interface{}) (bool, error) {
 	}
 
 	if err := a.Distinct.Set(k, []interface{}{true}); err != nil {
-		return false, err
+		return false, errors.Trace(err)
 	}
 
 	return true, nil
