@@ -28,11 +28,11 @@ import (
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
-	// We have to inter type again because after parameter is set, the expression type may change.
+	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := preEvaluate(ctx, node); err != nil {
+	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
 	p, err := plan.BuildPlan(node)
@@ -71,10 +71,7 @@ func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error
 		return errors.Trace(err)
 	}
 	ast.SetFlag(node)
-	if err := ResolveName(node, is, ctx); err != nil {
-		return errors.Trace(err)
-	}
-	if err := InferType(node); err != nil {
+	if err := Preprocess(node, is, ctx); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

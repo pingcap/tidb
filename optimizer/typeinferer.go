@@ -15,9 +15,7 @@ package optimizer
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -27,13 +25,6 @@ func InferType(node ast.Node) error {
 	var inferrer typeInferrer
 	node.Accept(&inferrer)
 	return inferrer.err
-}
-
-// preEvaluate evaluates preEvaluable expression and rewrites constant expression to value expression.
-func preEvaluate(ctx context.Context, node ast.Node) error {
-	pe := preEvaluator{ctx: ctx}
-	node.Accept(&pe)
-	return pe.err
 }
 
 type typeInferrer struct {
@@ -158,37 +149,4 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 			}
 		}
 	}
-}
-
-type preEvaluator struct {
-	ctx context.Context
-	err error
-}
-
-func (r *preEvaluator) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
-}
-
-func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
-	if expr, ok := in.(ast.ExprNode); ok {
-		if _, ok = expr.(*ast.ValueExpr); ok {
-			return in, true
-		} else if ast.IsPreEvaluable(expr) {
-			val, err := evaluator.Eval(r.ctx, expr)
-			if err != nil {
-				r.err = err
-				return in, false
-			}
-			if ast.IsConstant(expr) {
-				// The expression is constant, rewrite the expression to value expression.
-				valExpr := &ast.ValueExpr{}
-				valExpr.SetText(expr.Text())
-				valExpr.SetType(expr.GetType())
-				valExpr.SetValue(val)
-				return valExpr, true
-			}
-			expr.SetValue(val)
-		}
-	}
-	return in, true
 }
