@@ -557,12 +557,12 @@ func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error) {
 	v := make([]interface{}, len(cols))
-	for _, col := range cols {
+	for i, col := range cols {
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
-			v[col.Offset] = h
+			v[i] = h
 			continue
 		}
 
@@ -576,7 +576,7 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v[col.Offset] = val
+		v[i] = val
 	}
 	return v, nil
 }
