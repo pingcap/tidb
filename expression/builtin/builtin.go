@@ -114,6 +114,7 @@ var Funcs = map[string]Func{
 	"found_rows":    {builtinFoundRows, 0, 0, false, false},
 	"user":          {builtinUser, 0, 0, false, false},
 	"connection_id": {builtinConnectionID, 0, 0, true, false},
+	"version":       {builtinVersion, 0, 0, true, false},
 }
 
 func invArg(arg interface{}, s string) error {

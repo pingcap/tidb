@@ -394,7 +394,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 
 		handles = append(handles, handle)
 		if len(handles) == maxBatchSize {
-			seekHandle = handle + 1
 			break
 		}
 
@@ -476,54 +475,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
-	for {
-		keys := make([]kv.Key, 0, maxBatchSize)
-		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			iter, err := txn.Seek(prefix)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	err := d.delKeysWithPrefix(prefix)
 
-			defer iter.Close()
-			for i := 0; i < maxBatchSize; i++ {
-				if iter.Valid() && iter.Key().HasPrefix(prefix) {
-					keys = append(keys, iter.Key().Clone())
-					err = iter.Next()
-					if err != nil {
-						return errors.Trace(err)
-					}
-				} else {
-					break
-				}
-			}
-
-			return nil
-		})
-
-		// if err or delete no keys, return.
-		if err != nil || len(keys) == 0 {
-			return errors.Trace(err)
-		}
-
-		// delete index key one by one
-		for _, key := range keys {
-			err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-				if err1 := d.isReorgRunnable(txn); err1 != nil {
-					return errors.Trace(err1)
-				}
-
-				err1 := txn.Delete(key)
-				// if key doesn't exist, skip this error.
-				if err1 != nil && !terror.ErrorEqual(err1, kv.ErrNotExist) {
-					return errors.Trace(err1)
-				}
-
-				return nil
-			})
-
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
+	return errors.Trace(err)
 }
