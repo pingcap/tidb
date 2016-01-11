@@ -278,6 +278,7 @@ import (
 	value		"VALUE"
 	values		"VALUES"
 	variables	"VARIABLES"
+	version		"VERSION"
 	warnings	"WARNINGS"
 	week		"WEEK"
 	weekday		"WEEKDAY"
@@ -1693,7 +1694,7 @@ NotKeywordToken:
 |	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
 |	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
 |	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
-|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME" 
+|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME" | "VERSION"
 
 /************************************************************************************
  *
@@ -2040,7 +2041,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
