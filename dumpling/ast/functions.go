@@ -381,9 +381,9 @@ type AggregateFuncExpr struct {
 	Distinct bool
 
 	CurrentGroup string
-	// ContextPerGroup is used to store aggregate evaluation context.
+	// contextPerGroupMap is used to store aggregate evaluation context.
 	// Each entry for a group.
-	ContextPerGroup map[string](*AggEvaluateContext)
+	contextPerGroupMap map[string](*AggEvaluateContext)
 }
 
 // Accept implements Node Accept interface.
@@ -416,19 +416,19 @@ func (n *AggregateFuncExpr) Update() error {
 }
 
 // GetContext gets aggregate evaluation context for the current group.
-// If it is nil, add a new context into ContextPerGroup.
+// If it is nil, add a new context into contextPerGroupMap.
 func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
-	if n.ContextPerGroup == nil {
-		n.ContextPerGroup = make(map[string](*AggEvaluateContext))
+	if n.contextPerGroupMap == nil {
+		n.contextPerGroupMap = make(map[string](*AggEvaluateContext))
 	}
-	if _, ok := n.ContextPerGroup[n.CurrentGroup]; !ok {
+	if _, ok := n.contextPerGroupMap[n.CurrentGroup]; !ok {
 		c := &AggEvaluateContext{}
 		if n.Distinct {
 			c.Distinct = CreateAggregateDistinct(n.F, n.Distinct)
 		}
-		n.ContextPerGroup[n.CurrentGroup] = c
+		n.contextPerGroupMap[n.CurrentGroup] = c
 	}
-	return n.ContextPerGroup[n.CurrentGroup]
+	return n.contextPerGroupMap[n.CurrentGroup]
 }
 
 func (n *AggregateFuncExpr) updateCount() error {
