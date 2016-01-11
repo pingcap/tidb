@@ -74,19 +74,11 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
-	dbInfo, err := t.GetDatabase(task.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if dbInfo == nil {
+	if len(task.Args) != 1 || task.Args[0] == nil {
 		task.State = model.JobCancelled
 		return errors.Trace(infoschema.DatabaseNotExists)
 	}
-
-	_, err = t.GenSchemaVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	dbInfo := task.Args[0].(*model.DBInfo)
 
 	// wait reorganization jobs done and drop meta.
 	tables, err := t.ListTables(dbInfo.ID)
@@ -95,11 +87,6 @@ func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
 	}
 
 	if err = d.dropSchemaData(dbInfo, tables); err != nil {
-		return errors.Trace(err)
-	}
-
-	// all reorganization jobs done, drop this database
-	if err = t.DropDatabase(dbInfo.ID); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -140,6 +127,10 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		// delete only -> reorganization
 		dbInfo.State = model.StateDeleteReorganization
 		err = t.UpdateDatabase(dbInfo)
+		// all reorganization jobs done, drop this database
+		if err = t.DropDatabase(dbInfo.ID); err != nil {
+			break
+		}
 		// finish this job
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
