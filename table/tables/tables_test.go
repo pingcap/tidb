@@ -106,7 +106,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	vals, err = tb.RowWithCols(txn, 1, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
-	c.Assert(vals[0], DeepEquals, []uint8("cba"))
+	c.Assert(vals[0], DeepEquals, []byte("cba"))
 
 	// Make sure there is index data in the storage.
 	c.Assert(indexCnt(), Greater, 0)
