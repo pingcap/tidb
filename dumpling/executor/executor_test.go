@@ -15,11 +15,15 @@ package executor_test
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -41,6 +45,53 @@ func (s *testSuite) SetUpSuite(c *C) {
 
 func (s *testSuite) TearDownSuite(c *C) {
 	s.store.Close()
+}
+
+func (s *testSuite) TestAdmin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
+	r, err := tk.Exec("admin show ddl")
+	c.Assert(err, IsNil)
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row.Data, HasLen, 3)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(row.Data[0], Equals, ddlInfo.SchemaVer)
+	c.Assert(row.Data[1], DeepEquals, ddlInfo.Owner.String())
+	c.Assert(row.Data[2], DeepEquals, "")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+
+	// check table test
+	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
+	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
+	r, err = tk.Exec("admin check table admin_test, admin_test1")
+	c.Assert(err, IsNil)
+	c.Assert(r, IsNil)
+	// error table name
+	r, err = tk.Exec("admin check table admin_test_error")
+	c.Assert(err, NotNil)
+	// different index values
+	domain, err := domain.NewDomain(s.store, 1*time.Second)
+	c.Assert(err, IsNil)
+	is := domain.InfoSchema()
+	c.Assert(is, NotNil)
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	c.Assert(err, IsNil)
+	c.Assert(tb.Indices(), HasLen, 1)
+	err = tb.Indices()[0].X.Create(txn, []interface{}{int64(10)}, 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+	r, err = tk.Exec("admin check table admin_test")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestPrepared(c *C) {

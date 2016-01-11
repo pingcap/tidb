@@ -156,3 +156,8 @@ type Owner struct {
 	// TODO: use timestamp allocated by TSO
 	LastUpdateTS int64 `json:"last_update_ts"`
 }
+
+// String implements fmt.Stringer interface.
+func (o *Owner) String() string {
+	return fmt.Sprintf("ID:%s, LastUpdateTS:%d", o.OwnerID, o.LastUpdateTS)
+}

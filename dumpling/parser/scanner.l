@@ -283,6 +283,7 @@ z		[zZ]
 abs		{a}{b}{s}
 add		{a}{d}{d}
 adddate		{a}{d}{d}{d}{a}{t}{e}
+admin		{a}{d}{m}{i}{n}
 after		{a}{f}{t}{e}{r}
 all		{a}{l}{l}
 alter		{a}{l}{t}{e}{r}
@@ -335,6 +336,7 @@ dayname	{d}{a}{y}{n}{a}{m}{e}
 dayofweek	{d}{a}{y}{o}{f}{w}{e}{e}{k}
 dayofmonth	{d}{a}{y}{o}{f}{m}{o}{n}{t}{h}
 dayofyear	{d}{a}{y}{o}{f}{y}{e}{a}{r}
+ddl		{d}{d}{l}
 deallocate	{d}{e}{a}{l}{l}{o}{c}{a}{t}{e}
 default		{d}{e}{f}{a}{u}{l}{t}
 delayed		{d}{e}{l}{a}{y}{e}{d}
@@ -475,6 +477,7 @@ upper		{u}{p}{p}{e}{r}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
+version		{v}{e}{r}{s}{i}{o}{n}
 warnings	{w}{a}{r}{n}{i}{n}{g}{s}
 week		{w}{e}{e}{k}
 weekday		{w}{e}{e}{k}{d}{a}{y}
@@ -635,7 +638,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {abs}			lval.item = string(l.val)
 			return abs
 {add}			return add
-{adddate}		return addDate
+{adddate}		lval.item = string(l.val)
+			return addDate
+{admin}			lval.item = string(l.val)
+			return admin
 {after}			lval.item = string(l.val)
 			return after
 {all}			return all
@@ -707,8 +713,10 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {database}		lval.item = string(l.val)
 			return database
 {databases}		return databases
-{date_add}		return dateAdd
-{date_sub}		return dateSub
+{date_add}		lval.item = string(l.val)
+			return dateAdd
+{date_sub}		lval.item = string(l.val)
+			return dateSub
 {day}			lval.item = string(l.val)
 			return day
 {dayname}		lval.item = string(l.val)
@@ -727,6 +735,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return dayMinute
 {day_second}		lval.item = string(l.val)
 			return daySecond
+{ddl}			return ddl
 {deallocate}		lval.item = string(l.val)
 			return deallocate
 {default}		return defaultKwd
@@ -921,7 +930,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {set}			return set
 {share}			return share
 {show}			return show
-{subdate}		return subDate
+{subdate}		lval.item = string(l.val)
+			return subDate
 {substr}		lval.item = string(l.val)
 			return substring
 {substring}		lval.item = string(l.val)
@@ -967,6 +977,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {values}		return values
 {variables}		lval.item = string(l.val)
 			return variables
+{version}		lval.item = string(l.val)
+			return version
 {warnings}		lval.item = string(l.val)
 			return warnings
 {week}			lval.item = string(l.val)

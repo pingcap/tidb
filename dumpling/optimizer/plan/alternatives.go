@@ -29,6 +29,8 @@ func Alternatives(p Plan) ([]Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	case *ShowDDL:
+	case *CheckTable:
 	case *Prepare:
 	case *Execute:
 	case *Deallocate:

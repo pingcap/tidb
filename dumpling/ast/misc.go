@@ -16,6 +16,7 @@ package ast
 import "github.com/pingcap/tidb/mysql"
 
 var (
+	_ StmtNode = &AdminStmt{}
 	_ StmtNode = &BeginStmt{}
 	_ StmtNode = &CommitStmt{}
 	_ StmtNode = &CreateUserStmt{}
@@ -348,6 +349,42 @@ func (n *DoStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// AdminStmtType is the type for admin statement.
+type AdminStmtType int
+
+// Admin statement types.
+const (
+	AdminShowDDL = iota + 1
+	AdminCheckTable
+)
+
+// AdminStmt is the struct for Admin statement.
+type AdminStmt struct {
+	stmtNode
+
+	Tp     AdminStmtType
+	Tables []*TableName
+}
+
+// Accept implements Node Accpet interface.
+func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*AdminStmt)
+	for i, val := range n.Tables {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+
+	return v.Leave(n)
+}
+
 // PrivElem is the privilege type and optional column list.
 type PrivElem struct {
 	node
@@ -378,7 +415,7 @@ type ObjectTypeType int
 
 const (
 	// ObjectTypeNone is for empty object type.
-	ObjectTypeNone ObjectTypeType = iota
+	ObjectTypeNone ObjectTypeType = iota + 1
 	// ObjectTypeTable means the following object is a table.
 	ObjectTypeTable
 )
@@ -388,7 +425,7 @@ type GrantLevelType int
 
 const (
 	// GrantLevelNone is the dummy const for default value.
-	GrantLevelNone GrantLevelType = iota
+	GrantLevelNone GrantLevelType = iota + 1
 	// GrantLevelGlobal means the privileges are administrative or apply to all databases on a given server.
 	GrantLevelGlobal
 	// GrantLevelDB means the privileges apply to all objects in a given database.
