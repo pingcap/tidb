@@ -41,7 +41,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
-		"curtime", "variables", "dayname",
+		"curtime", "variables", "dayname", "version",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -227,6 +227,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"show columns in t;", true},
 		{"show full columns in t;", true},
 
+		// For admin
+		{"admin show ddl;", true},
+		{"admin check table t1, t2;", true},
+
 		// For set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
@@ -351,6 +355,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
 		{"SELECT CONNECTION_ID();", true},
+		{"SELECT VERSION();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},

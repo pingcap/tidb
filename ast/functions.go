@@ -434,12 +434,10 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 func (n *AggregateFuncExpr) updateCount() error {
 	ctx := n.GetContext()
 	var value interface{}
-	if len(n.Args) > 0 {
-		for _, a := range n.Args {
-			value = a.GetValue()
-			if value == nil {
-				return nil
-			}
+	for _, a := range n.Args {
+		value = a.GetValue()
+		if value == nil {
+			return nil
 		}
 	}
 	if n.Distinct {

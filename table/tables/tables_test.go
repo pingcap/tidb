@@ -76,7 +76,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
-	c.Assert(row[0].(int64), Equals, int64(1))
+	c.Assert(row[0], Equals, int64(1))
 
 	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
 	c.Assert(err, NotNil)
@@ -96,6 +96,17 @@ func (ts *testSuite) TestBasic(c *C) {
 		c.Assert(err2, IsNil)
 		return cnt
 	}
+
+	// RowWithCols test
+	vals, err := tb.RowWithCols(txn, 1, tb.Cols())
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 2)
+	c.Assert(vals[0], Equals, int64(1))
+	cols := []*column.Col{tb.Cols()[1]}
+	vals, err = tb.RowWithCols(txn, 1, cols)
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 1)
+	c.Assert(vals[0], DeepEquals, []byte("cba"))
 
 	// Make sure there is index data in the storage.
 	c.Assert(indexCnt(), Greater, 0)
