@@ -435,15 +435,11 @@ func (n *AggregateFuncExpr) updateCount() error {
 	ctx := n.GetContext()
 	var value interface{}
 	if len(n.Args) > 0 {
-		hasNil := false
 		for _, a := range n.Args {
 			value = a.GetValue()
 			if value == nil {
-				hasNil = true
+				return nil
 			}
-		}
-		if hasNil {
-			return nil
 		}
 	}
 	if n.Distinct {
@@ -481,9 +477,6 @@ type AggFuncDetector struct {
 
 // Enter implements Visitor interface.
 func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
-	defer func() {
-		a.detecting = true
-	}()
 	switch n.(type) {
 	case *AggregateFuncExpr, *GroupByClause:
 		a.HasAggFunc = true
@@ -494,6 +487,7 @@ func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
 			return n, true
 		}
 	}
+	a.detecting = true
 	return n, a.HasAggFunc
 }
 
@@ -507,34 +501,32 @@ func (a *AggFuncDetector) Leave(n Node) (node Node, ok bool) {
 type AggregateFuncExtractor struct {
 	inAggregateFuncExpr bool
 	// AggFuncs is the collected AggregateFuncExprs.
-	AggFuncs  []*AggregateFuncExpr
-	detecting bool
+	AggFuncs   []*AggregateFuncExpr
+	extracting bool
 }
 
 // Enter implements Visitor interface.
 func (a *AggregateFuncExtractor) Enter(n Node) (node Node, skipChildren bool) {
-	defer func() {
-		a.detecting = true
-	}()
-	switch v := n.(type) {
+	switch n.(type) {
 	case *AggregateFuncExpr:
 		a.inAggregateFuncExpr = true
-		a.AggFuncs = append(a.AggFuncs, v)
 	case *SelectStmt, *InsertStmt, *DeleteStmt, *UpdateStmt:
 		// Enter a new context, skip it.
 		// For example: select sum(c) + c + exists(select c from t) from t;
-		if a.detecting {
+		if a.extracting {
 			return n, true
 		}
 	}
+	a.extracting = true
 	return n, false
 }
 
 // Leave implements Visitor interface.
 func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
-	switch n.(type) {
+	switch v := n.(type) {
 	case *AggregateFuncExpr:
 		a.inAggregateFuncExpr = false
+		a.AggFuncs = append(a.AggFuncs, v)
 	case *ColumnNameExpr:
 		// compose new AggregateFuncExpr
 		if !a.inAggregateFuncExpr {
@@ -543,7 +535,7 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 			// The c after plus should be evaluated only once.
 			agg := &AggregateFuncExpr{
 				F:    AggFuncFirstRow,
-				Args: []ExprNode{n.(ExprNode)},
+				Args: []ExprNode{v},
 			}
 			a.AggFuncs = append(a.AggFuncs, agg)
 			return agg, true
