@@ -60,6 +60,7 @@ import (
 	abs		"ABS"
 	add		"ADD"
 	addDate		"ADDDATE"
+	admin		"ADMIN"
 	after		"AFTER"
 	all 		"ALL"
 	alter		"ALTER"
@@ -116,6 +117,7 @@ import (
 	dayofmonth	"DAYOFMONTH"
 	dayofweek	"DAYOFWEEK"
 	dayofyear	"DAYOFYEAR"
+	ddl		"DDL"
 	deallocate	"DEALLOCATE"
 	defaultKwd	"DEFAULT"
 	delayed		"DELAYED"
@@ -361,8 +363,9 @@ import (
 	yearMonth		"YEAR_MONTH"
 
 %type   <item>
+	AdminStmt		"Check table statement or show ddl statement"
 	AlterTableStmt		"Alter table statement"
-	AlterTableSpec	"Alter table specification"
+	AlterTableSpec		"Alter table specification"
 	AlterTableSpecList	"Alter table specification list"
 	AnyOrAll		"Any or All for subquery"
 	Assignment		"assignment"
@@ -1690,11 +1693,11 @@ UnReservedKeyword:
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
 
 NotKeywordToken:
-	"ABS" | "ADDDATE" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "COUNT" | "DAY" | "DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH"
-|	"DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR" | "IFNULL" | "LENGTH" | "LOCATE" | "MAX"
-|	"MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS"
-|	"SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "WEEKDAY" | "WEEKOFYEAR"
-|	"YEARWEEK" | "CONNECTION_ID" | "CUR_TIME" | "VERSION"
+	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
+|	"DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
+|	"IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
+|	"POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen
+|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" |	"YEARWEEK"
 
 /************************************************************************************
  *
@@ -3356,6 +3359,20 @@ AuthString:
 		$$ = $1.(string)
 	}
 
+/****************************Admin Statement*******************************/
+AdminStmt:
+	"ADMIN" "SHOW" "DDL"
+	{
+		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDL}
+	}
+|	"ADMIN" "CHECK" "TABLE" TableNameList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:	ast.AdminCheckTable,
+			Tables: $4.([]*ast.TableName),
+		}
+	}
+
 /****************************Show Statement*******************************/
 ShowStmt:
 	"SHOW" ShowTargetFilterable ShowLikeOrWhereOpt
@@ -3547,6 +3564,7 @@ ShowTableAliasOpt:
 
 Statement:
 	EmptyStmt
+|	AdminStmt
 |	AlterTableStmt
 |	BeginTransactionStmt
 |	CommitStmt

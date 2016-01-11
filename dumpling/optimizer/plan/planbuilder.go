@@ -17,8 +17,13 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Error instances.
@@ -55,6 +60,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
+	case *ast.AdminStmt:
+		return b.buildAdmin(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
@@ -201,4 +208,62 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		p.SQLText = x.SQLText
 	}
 	return p
+}
+
+func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
+	var p Plan
+
+	switch as.Tp {
+	case ast.AdminCheckTable:
+		p = &CheckTable{Tables: as.Tables}
+	case ast.AdminShowDDL:
+		p = &ShowDDL{}
+		p.SetFields(buildShowDDLFields())
+	default:
+		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
+	}
+
+	return p
+}
+
+func buildShowDDLFields() []*ast.ResultField {
+	rfs := make([]*ast.ResultField, 0, 3)
+	rfs = append(rfs, buildResultField("", "SCHEMA_VER", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField("", "OWNER", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField("", "Job", mysql.TypeVarchar, 128))
+
+	return rfs
+}
+
+func buildResultField(tableName, name string, tp byte, size int) *ast.ResultField {
+	cs := charset.CharsetBin
+	cl := charset.CharsetBin
+	flag := mysql.UnsignedFlag
+	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
+		cs = mysql.DefaultCharset
+		cl = mysql.DefaultCollationName
+		flag = 0
+	}
+
+	fieldType := types.FieldType{
+		Charset: cs,
+		Collate: cl,
+		Tp:      tp,
+		Flen:    size,
+		Flag:    uint(flag),
+	}
+	colInfo := &model.ColumnInfo{
+		Name:      model.NewCIStr(name),
+		FieldType: fieldType,
+	}
+	expr := &ast.ValueExpr{}
+	expr.SetType(&fieldType)
+
+	return &ast.ResultField{
+		Column:       colInfo,
+		ColumnAsName: colInfo.Name,
+		TableAsName:  model.NewCIStr(tableName),
+		DBName:       model.NewCIStr(infoschema.Name),
+		Expr:         expr,
+	}
 }

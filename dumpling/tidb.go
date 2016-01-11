@@ -238,7 +238,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	return s, errors.Trace(err)
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
 
 func trimSQL(sql string) string {
 	// Trim space.

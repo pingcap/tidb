@@ -20,9 +20,13 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -31,12 +35,14 @@ import (
 )
 
 var (
+	_ Executor = &CheckTableExec{}
 	_ Executor = &FilterExec{}
 	_ Executor = &IndexRangeExec{}
 	_ Executor = &IndexScanExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &SelectFieldsExec{}
 	_ Executor = &SelectLockExec{}
+	_ Executor = &ShowDDLExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &TableScanExec{}
 )
@@ -81,6 +87,107 @@ type Executor interface {
 	Fields() []*ast.ResultField
 	Next() (*Row, error)
 	Close() error
+}
+
+// ShowDDLExec represents a show DDL executor.
+type ShowDDLExec struct {
+	fields []*ast.ResultField
+	ctx    context.Context
+	done   bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *ShowDDLExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Execution Next interface.
+func (e *ShowDDLExec) Next() (*Row, error) {
+	if e.done {
+		return nil, nil
+	}
+
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	info, err := inspectkv.GetDDLInfo(txn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	rowData := []interface{}{
+		info.SchemaVer,
+		"",
+		"",
+	}
+	if info.Owner != nil {
+		rowData[1] = info.Owner.String()
+	}
+	if info.Job != nil {
+		rowData[2] = info.Job.String()
+	}
+	row := &Row{}
+	row.Data = rowData
+	for i, f := range e.fields {
+		f.Expr.SetValue(rowData[i])
+	}
+	e.done = true
+
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *ShowDDLExec) Close() error {
+	return nil
+}
+
+// CheckTableExec represents a check table executor.
+type CheckTableExec struct {
+	tables []*ast.TableName
+	ctx    context.Context
+	done   bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *CheckTableExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Next implements Execution Next interface.
+func (e *CheckTableExec) Next() (*Row, error) {
+	if e.done {
+		return nil, nil
+	}
+
+	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
+	is := sessionctx.GetDomain(e.ctx).InfoSchema()
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, t := range e.tables {
+		tb, err := is.TableByName(dbName, t.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, idx := range tb.Indices() {
+			err = inspectkv.CompareIndexData(txn, tb, idx)
+			if err != nil {
+				return nil, errors.Errorf("%v err:%v", t.Name, err)
+			}
+		}
+	}
+	e.done = true
+
+	return nil, nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *CheckTableExec) Close() error {
+	return nil
 }
 
 // TableScanExec represents a table scan executor.
@@ -202,7 +309,7 @@ func (e *TableScanExec) getRow(handle int64, rowKey kv.Key) (*Row, error) {
 	return row, nil
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements Executor Close interface.
 func (e *TableScanExec) Close() error {
 	if e.iter != nil {
 		e.iter.Close()
