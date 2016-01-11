@@ -477,6 +477,7 @@ upper		{u}{p}{p}{e}{r}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
+version		{v}{e}{r}{s}{i}{o}{n}
 warnings	{w}{a}{r}{n}{i}{n}{g}{s}
 week		{w}{e}{e}{k}
 weekday		{w}{e}{e}{k}{d}{a}{y}
@@ -976,6 +977,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {values}		return values
 {variables}		lval.item = string(l.val)
 			return variables
+{version}		lval.item = string(l.val)
+			return version
 {warnings}		lval.item = string(l.val)
 			return warnings
 {week}			lval.item = string(l.val)
