@@ -952,5 +952,22 @@ func parseDayInterval(value interface{}) (int64, error) {
 }
 
 func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
-	return true
+	name := strings.ToLower(v.F)
+	switch name {
+	case ast.AggFuncCount:
+		e.evalAggCount(v)
+	case ast.AggFuncFirstRow:
+		e.evalAggFirstRow(v)
+	}
+	return e.err == nil
+}
+
+func (e *Evaluator) evalAggCount(v *ast.AggregateFuncExpr) {
+	ctx := v.GetContext()
+	v.SetValue(ctx.Count)
+}
+
+func (e *Evaluator) evalAggFirstRow(v *ast.AggregateFuncExpr) {
+	ctx := v.GetContext()
+	v.SetValue(ctx.Value)
 }

@@ -92,6 +92,9 @@ func shallowCopy(p WithSrcPlan) WithSrcPlan {
 	case *Limit:
 		n := *x
 		copied = &n
+	case *Aggregate:
+		n := *x
+		copied = &n
 	}
 	return copied
 }
