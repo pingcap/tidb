@@ -45,32 +45,32 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
-	case *plan.TableScan:
-		return b.buildTableScan(v)
-	case *plan.ShowDDL:
-		return b.buildShowDDL(v)
+	case *plan.Aggregate:
+		return b.buildAggregate(v)
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
-	case *plan.IndexScan:
-		return b.buildIndexScan(v)
+	case *plan.Deallocate:
+		return b.buildDeallocate(v)
+	case *plan.Execute:
+		return b.buildExecute(v)
 	case *plan.Filter:
 		return b.buildFilter(v)
-	case *plan.SelectLock:
-		return b.buildSelectLock(v)
-	case *plan.SelectFields:
-		return b.buildSelectFields(v)
-	case *plan.Sort:
-		return b.buildSort(v)
+	case *plan.IndexScan:
+		return b.buildIndexScan(v)
 	case *plan.Limit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
 		return b.buildPrepare(v)
-	case *plan.Execute:
-		return b.buildExecute(v)
-	case *plan.Deallocate:
-		return &DeallocateExec{ctx: b.ctx, Name: v.Name}
-	case *plan.Aggregate:
-		return b.buildAggregate(v)
+	case *plan.SelectFields:
+		return b.buildSelectFields(v)
+	case *plan.SelectLock:
+		return b.buildSelectLock(v)
+	case *plan.ShowDDL:
+		return b.buildShowDDL(v)
+	case *plan.Sort:
+		return b.buildSort(v)
+	case *plan.TableScan:
+		return b.buildTableScan(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -99,6 +99,13 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 	return &CheckTableExec{
 		tables: v.Tables,
 		ctx:    b.ctx,
+	}
+}
+
+func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
+	return &DeallocateExec{
+		ctx:  b.ctx,
+		Name: v.Name,
 	}
 }
 
