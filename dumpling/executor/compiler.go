@@ -39,7 +39,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 			return nil, errors.Trace(err)
 		}
 		is := sessionctx.GetDomain(ctx).InfoSchema()
-		if err := optimizer.ResolveName(node, is, ctx); err != nil {
+		if err := optimizer.Preprocess(node, is, ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
 		p, err := optimizer.Optimize(ctx, node)
