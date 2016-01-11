@@ -31,12 +31,12 @@ import (
 )
 
 var (
+	_ Executor = &AggregateExec{}
 	_ Executor = &FilterExec{}
 	_ Executor = &IndexRangeExec{}
 	_ Executor = &IndexScanExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &SelectFieldsExec{}
-	_ Executor = &AggregateExec{}
 	_ Executor = &SelectLockExec{}
 	_ Executor = &SortExec{}
 	_ Executor = &TableScanExec{}
@@ -699,8 +699,8 @@ func (e *SortExec) Close() error {
 // We consider there is a single group with key singleGroup.
 const singleGroup = "SingleGroup"
 
-// AggregateExec deal with all the aggregate functions.
-// It is built from Aggregate Plan. When Next() is called, it read all the data from Src and update all the items in AggFuncs.
+// AggregateExec deals with all the aggregate functions.
+// It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
 // TODO: Support groupby and having.
 type AggregateExec struct {
 	Src               Executor
@@ -777,12 +777,10 @@ func (e *AggregateExec) innerNext() (bool, error) {
 	groupKey := singleGroup
 	e.groupMap[groupKey] = true
 	for _, af := range e.AggFuncs {
-		if len(af.Args) > 0 {
-			for _, arg := range af.Args {
-				_, err := evaluator.Eval(e.ctx, arg)
-				if err != nil {
-					return false, errors.Trace(err)
-				}
+		for _, arg := range af.Args {
+			_, err := evaluator.Eval(e.ctx, arg)
+			if err != nil {
+				return false, errors.Trace(err)
 			}
 		}
 		af.CurrentGroup = groupKey
