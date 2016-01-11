@@ -170,7 +170,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		var tbl table.Table
-		tbl, err = d.getTable(t, schemaID, tblInfo)
+		tbl, err = d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -254,7 +254,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

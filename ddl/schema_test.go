@@ -64,6 +64,18 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 	return job
 }
 
+func testEnsureDrop(c *C, t *meta.Meta) {
+	for {
+		task, err := t.GetDDLTask(0)
+		c.Assert(err, IsNil)
+		if task == nil {
+			break
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
 	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -71,6 +83,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 		c.Assert(err, IsNil)
 
 		if state == model.StateNone {
+			testEnsureDrop(c, t)
 			c.Assert(info, IsNil)
 			return nil
 		}
@@ -148,20 +161,20 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	d1 := newDDL(store, nil, nil, lease)
 	defer d1.close()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
 	job := testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
@@ -177,7 +190,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	testCheckJobCancelled(c, d2, job)
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
@@ -212,7 +225,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	d1 := newDDL(store, nil, nil, lease)
 	defer d1.close()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 

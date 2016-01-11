@@ -160,7 +160,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -270,7 +270,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

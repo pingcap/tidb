@@ -77,38 +77,18 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) delReorgTable(t *meta.Meta, task *model.Job) error {
-	tblInfo, err := t.GetTable(task.SchemaID, task.TableID)
-	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-		task.State = model.JobCancelled
-		return errors.Trace(err)
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if tblInfo == nil {
-		task.State = model.JobCancelled
-		return errors.Trace(err)
-	}
-
-	_, err = t.GenSchemaVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// reorganization -> absent
-	var tbl table.Table
-	tbl, err = d.getTable(t, task.SchemaID, tblInfo)
+	if len(task.Args) != 1 || task.Args[0] == nil {
+		task.State = model.JobCancelled
+		return errors.Trace(infoschema.TableNotExists)
+	}
+	tbl, err := d.getTable(task.SchemaID, task.Args[0].(*model.TableInfo))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	err = d.dropTableData(tbl)
 	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// all reorganization jobs done, drop this table.
-	if err = t.DropTable(task.SchemaID, task.TableID); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -156,6 +136,10 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		// delete only -> reorganization
 		tblInfo.State = model.StateDeleteReorganization
 		err = t.UpdateTable(schemaID, tblInfo)
+		// all reorganization jobs done, drop this table.
+		if err = t.DropTable(job.SchemaID, job.TableID); err != nil {
+			break
+		}
 		// finish this job
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
@@ -166,7 +150,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) getTable(t *meta.Meta, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
+func (d *ddl) getTable(schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
