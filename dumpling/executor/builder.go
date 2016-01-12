@@ -199,6 +199,7 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		ResultFields: v.Fields(),
 		ctx:          b.ctx,
 		AggFuncs:     v.AggFuncs,
+		GroupByItems: v.GroupByItems,
 	}
 	return e
 }

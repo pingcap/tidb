@@ -16,6 +16,7 @@ package plan
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -75,13 +76,48 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
 	if aggDetetor.HasAggFunc {
 		extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
-		// TODO: extract aggfuncs from having clause.
+		res := make([]*ast.ResultField, 0, len(sel.GetResultFields()))
 		for _, f := range sel.GetResultFields() {
-			f.Expr.Accept(extractor)
-			// TODO: check error
+			n, ok := f.Expr.Accept(extractor)
+			if !ok {
+				b.err = errors.New("Failed to extract agg expr!")
+				return nil
+			}
+			ve, ok := f.Expr.(*ast.ValueExpr)
+			if ok && len(f.Column.Name.O) > 0 {
+				agg := &ast.AggregateFuncExpr{
+					F:    ast.AggFuncFirstRow,
+					Args: []ast.ExprNode{ve},
+				}
+				extractor.AggFuncs = append(extractor.AggFuncs, agg)
+				n = agg
+			}
+			// Clone the ResultField.
+			// For "select c from t group by c;" both "c"s in select field and grouby clause refer to the same ResultField.
+			// So we should not affact the "c" in groupby clause.
+			nf := &ast.ResultField{
+				ColumnAsName: f.ColumnAsName,
+				Column:       f.Column,
+				Table:        f.Table,
+				DBName:       f.DBName,
+				Expr:         n.(ast.ExprNode),
+			}
+			res = append(res, nf)
 		}
-		aggFuncs = extractor.AggFuncs
+		sel.SetResultFields(res)
+		// Extract agg funcs from orderby clause.
+		if sel.OrderBy != nil {
+			for _, item := range sel.OrderBy.Items {
+				n, ok := item.Expr.Accept(extractor)
+				if !ok {
+					b.err = errors.New("Failed to extract agg expr from orderbyu clause")
+					return nil
+				}
+				item.Expr = n.(ast.ExprNode)
+			}
+		}
 		// TODO: extract aggfuncs from having clause.
+		aggFuncs = extractor.AggFuncs
 	}
 	var p Plan
 	if sel.From != nil {
@@ -101,8 +137,8 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 				return nil
 			}
 		}
-		if len(aggFuncs) > 0 {
-			p = b.buildAggregate(p, aggFuncs)
+		if len(aggFuncs) > 0 || sel.GroupBy != nil {
+			p = b.buildAggregate(p, aggFuncs, sel.GroupBy)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
@@ -110,7 +146,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		}
 	} else {
 		if len(aggFuncs) > 0 {
-			p = b.buildAggregate(p, aggFuncs)
+			p = b.buildAggregate(p, aggFuncs, nil)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
@@ -200,7 +236,7 @@ func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Pla
 	return selectFields
 }
 
-func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr) Plan {
+func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr, groupby *ast.GroupByClause) Plan {
 	// Add aggregate plan.
 	aggPlan := &Aggregate{
 		AggFuncs: aggFuncs,
@@ -208,6 +244,9 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 	aggPlan.SetSrc(src)
 	if src != nil {
 		aggPlan.SetFields(src.Fields())
+	}
+	if groupby != nil {
+		aggPlan.GroupByItems = groupby.Items
 	}
 	return aggPlan
 }
