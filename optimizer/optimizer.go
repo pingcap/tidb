@@ -83,8 +83,9 @@ type supportChecker struct {
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch ti := in.(type) {
-	case *ast.SubqueryExpr, *ast.GroupByClause, *ast.HavingClause:
+	case *ast.SubqueryExpr, *ast.HavingClause:
 		c.unsupported = true
+	case *ast.GroupByClause:
 	case *ast.AggregateFuncExpr:
 		fn := strings.ToLower(ti.F)
 		switch fn {
