@@ -344,5 +344,5 @@ func statement(ctx context.Context, sql string) stmt.Statement {
 }
 
 func init() {
-	log.SetLevelByString("warn")
+	log.SetLevelByString("error")
 }

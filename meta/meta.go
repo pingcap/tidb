@@ -626,12 +626,12 @@ func (m *Meta) DeQueueDDLTask() (*model.Job, error) {
 	return m.deQueueDDLJob(mDDLTaskListKey)
 }
 
-// GetDDLOwner gets the current task owner for DDL.
+// GetDDLTaskOwner gets the current task owner for DDL.
 func (m *Meta) GetDDLTaskOwner() (*model.Owner, error) {
 	return m.getDDLOwner(mDDLTaskOwnerKey)
 }
 
-// SetDDLOwner sets the current task owner for DDL.
+// SetDDLTaskOwner sets the current task owner for DDL.
 func (m *Meta) SetDDLTaskOwner(o *model.Owner) error {
 	return m.setDDLOwner(mDDLTaskOwnerKey, o)
 }

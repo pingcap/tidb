@@ -179,8 +179,8 @@ func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 	switch job.Type {
-	case model.ActionDropSchema, model.ActionDropTable,
-		model.ActionDropColumn, model.ActionDropIndex:
+	case model.ActionDropSchema, model.ActionDropTable:
+		//	model.ActionDropColumn, model.ActionDropIndex:
 		if err = d.prepareTask(job); err != nil {
 			return errors.Trace(err)
 		}
@@ -212,7 +212,6 @@ func (d *ddl) handleJobQueue() error {
 		var job *model.Job
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
-			//owner, err := d.checkOwner(t)
 			owner, err := d.checkOwner(t, ddlJobFlag)
 			if terror.ErrorEqual(err, ErrNotOwner) {
 				// we are not owner, return and retry checking later.
@@ -266,11 +265,6 @@ func (d *ddl) handleJobQueue() error {
 
 			return errors.Trace(err)
 		})
-
-		if job != nil && job.IsFinished() {
-			d.startTask(job.Type)
-		}
-
 		if err != nil {
 			return errors.Trace(err)
 		} else if job == nil {
@@ -288,6 +282,7 @@ func (d *ddl) handleJobQueue() error {
 		}
 
 		if job.IsFinished() {
+			d.startTask(job.Type)
 			asyncNotify(d.jobDoneCh)
 		}
 	}

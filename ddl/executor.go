@@ -25,50 +25,48 @@ import (
 )
 
 func (d *ddl) handleTaskQueue() error {
-	for {
-		if d.isClosed() {
+	if d.isClosed() {
+		return nil
+	}
+
+	task := &model.Job{}
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		owner, err := d.checkOwner(t, ddlTaskFlag)
+		if terror.ErrorEqual(err, ErrNotOwner) {
 			return nil
 		}
-
-		task := &model.Job{}
-		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			owner, err := d.checkOwner(t, ddlTaskFlag)
-			if terror.ErrorEqual(err, ErrNotOwner) {
-				return nil
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			// get the first task and run
-			task, err = d.getFirstTask(t)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if task == nil {
-				return nil
-			}
-
-			d.runTask(t, task)
-			if task.IsFinished() {
-				err = d.finishTask(t, task)
-			} else {
-				err = d.updateTask(t, task)
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			owner.LastUpdateTS = time.Now().UnixNano()
-			err = t.SetDDLTaskOwner(owner)
-
-			return errors.Trace(err)
-		})
-
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// get the first task and run
+		task, err = d.getFirstTask(t)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if task == nil {
+			return nil
+		}
+
+		d.runTask(t, task)
+		if task.IsFinished() {
+			err = d.finishTask(t, task)
+		} else {
+			err = d.updateTask(t, task)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		owner.LastUpdateTS = time.Now().UnixNano()
+		err = t.SetDDLTaskOwner(owner)
+
+		return errors.Trace(err)
+	})
+
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -108,8 +106,9 @@ func (d *ddl) prepareTask(job *model.Job) error {
 		SchemaID: job.SchemaID,
 		TableID:  job.TableID,
 		Type:     job.Type,
+		// TODO:
+		Args: job.Args,
 	}
-	copy(task.Args, job.Args)
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -123,8 +122,8 @@ func (d *ddl) prepareTask(job *model.Job) error {
 
 func (d *ddl) startTask(tp model.ActionType) {
 	switch tp {
-	case model.ActionDropSchema, model.ActionDropTable,
-		model.ActionDropColumn, model.ActionDropIndex:
+	case model.ActionDropSchema, model.ActionDropTable:
+		//	model.ActionDropColumn, model.ActionDropIndex:
 		asyncNotify(d.taskCh)
 	}
 }

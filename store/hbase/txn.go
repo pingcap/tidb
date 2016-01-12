@@ -56,7 +56,7 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *hbaseTxn) Set(k kv.Key, v []byte) error {
-	log.Debugf("[kv] seek %q txn:%d", k, txn.tid)
+	log.Debugf("[kv] set %q txn:%d", k, txn.tid)
 	return txn.us.Set(k, v)
 }
 
