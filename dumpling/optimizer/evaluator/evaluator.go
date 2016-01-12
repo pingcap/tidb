@@ -39,7 +39,7 @@ var (
 
 // Error codes.
 const (
-	CodeInvalidOperation terror.ErrCode = iota + 1
+	CodeInvalidOperation terror.ErrCode = iota
 )
 
 // Eval evaluates an expression to a value.
