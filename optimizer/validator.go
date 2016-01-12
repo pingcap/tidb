@@ -40,25 +40,26 @@ func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.IsNullExpr:
-		v.checkAllOneColumn(x.Expr)
-	case *ast.IsTruthExpr:
-		v.checkAllOneColumn(x.Expr)
 	case *ast.BetweenExpr:
 		v.checkAllOneColumn(x.Expr, x.Left, x.Right)
 	case *ast.BinaryOperationExpr:
 		v.checkBinaryOperation(x)
-	case *ast.PatternInExpr:
-		v.checkSameColumns(append(x.List, x.Expr)...)
+	case *ast.ByItem:
+		v.checkAllOneColumn(x.Expr)
 	case *ast.FieldList:
 		v.checkFieldList(x)
-	case *ast.ByItem:
+	case *ast.IsNullExpr:
+		v.checkAllOneColumn(x.Expr)
+	case *ast.IsTruthExpr:
 		v.checkAllOneColumn(x.Expr)
 	case *ast.ParamMarkerExpr:
 		if !v.inPrepare {
 			v.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
 		}
+	case *ast.PatternInExpr:
+		v.checkSameColumns(append(x.List, x.Expr)...)
 	}
+
 	return in, v.err == nil
 }
 
