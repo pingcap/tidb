@@ -120,32 +120,32 @@ func (nr *nameResolver) popJoin() {
 // Enter implements ast.Visitor interface.
 func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
-	case *ast.SelectStmt:
-		nr.pushContext()
-	case *ast.TableRefsClause:
-		nr.currentContext().inTableRefs = true
-	case *ast.Join:
-		nr.pushJoin(v)
-	case *ast.OnCondition:
-		nr.currentContext().inOnCondition = true
-	case *ast.FieldList:
-		nr.currentContext().inFieldList = true
-	case *ast.GroupByClause:
-		nr.currentContext().inGroupBy = true
-	case *ast.HavingClause:
-		nr.currentContext().inHaving = true
-	case *ast.OrderByClause:
-		nr.currentContext().inOrderBy = true
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
 			// the resolving rule is different from order by clause.
 			nr.currentContext().inByItemExpression = true
 		}
-	case *ast.InsertStmt:
-		nr.pushContext()
 	case *ast.DeleteStmt:
 		nr.pushContext()
+	case *ast.FieldList:
+		nr.currentContext().inFieldList = true
+	case *ast.GroupByClause:
+		nr.currentContext().inGroupBy = true
+	case *ast.HavingClause:
+		nr.currentContext().inHaving = true
+	case *ast.InsertStmt:
+		nr.pushContext()
+	case *ast.Join:
+		nr.pushJoin(v)
+	case *ast.OnCondition:
+		nr.currentContext().inOnCondition = true
+	case *ast.OrderByClause:
+		nr.currentContext().inOrderBy = true
+	case *ast.SelectStmt:
+		nr.pushContext()
+	case *ast.TableRefsClause:
+		nr.currentContext().inTableRefs = true
 	case *ast.UpdateStmt:
 		nr.pushContext()
 	}
