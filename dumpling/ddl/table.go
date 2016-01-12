@@ -78,11 +78,16 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 
 func (d *ddl) delReorgTable(t *meta.Meta, task *model.Job) error {
 	// reorganization -> absent
-	if len(task.Args) != 1 || task.Args[0] == nil {
+	tblInfo := &model.TableInfo{}
+	err := task.DecodeArgs(tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tblInfo == nil {
 		task.State = model.JobCancelled
 		return errors.Trace(infoschema.TableNotExists)
 	}
-	tbl, err := d.getTable(task.SchemaID, task.Args[0].(*model.TableInfo))
+	tbl, err := d.getTable(task.SchemaID, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -141,6 +146,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 			break
 		}
 		// finish this job
+		job.Args = []interface{}{tblInfo}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 	default:
