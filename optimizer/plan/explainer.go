@@ -38,6 +38,25 @@ func (e *explainer) Enter(in Plan) (Plan, bool) {
 func (e *explainer) Leave(in Plan) (Plan, bool) {
 	var str string
 	switch x := in.(type) {
+	case *CheckTable:
+		str = "CheckTable"
+	case *Filter:
+		str = "Filter"
+	case *IndexScan:
+		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
+	case *Limit:
+		str = "Limit"
+	case *SelectFields:
+		str = "Fields"
+	case *SelectLock:
+		str = "Lock"
+	case *ShowDDL:
+		str = "ShowDDL"
+	case *Sort:
+		if x.Bypass {
+			return in, true
+		}
+		str = "Sort"
 	case *TableScan:
 		if len(x.Ranges) > 0 {
 			ran := x.Ranges[0]
@@ -49,25 +68,6 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 		} else {
 			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
 		}
-	case *IndexScan:
-		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
-	case *ShowDDL:
-		str = "ShowDDL"
-	case *CheckTable:
-		str = "CheckTable"
-	case *Filter:
-		str = "Filter"
-	case *SelectFields:
-		str = "Fields"
-	case *Sort:
-		if x.Bypass {
-			return in, true
-		}
-		str = "Sort"
-	case *SelectLock:
-		str = "Lock"
-	case *Limit:
-		str = "Limit"
 	default:
 		e.err = ErrUnsupportedType.Gen("Unknown plan type %T", in)
 		return in, false
