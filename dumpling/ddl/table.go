@@ -87,6 +87,7 @@ func (d *ddl) delReorgTable(t *meta.Meta, task *model.Job) error {
 		task.State = model.JobCancelled
 		return errors.Trace(infoschema.TableNotExists)
 	}
+	tblInfo.State = model.StateDeleteReorganization
 	tbl, err := d.getTable(task.SchemaID, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
