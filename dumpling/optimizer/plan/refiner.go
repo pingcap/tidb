@@ -50,14 +50,14 @@ func (r *refiner) Enter(in Plan) (Plan, bool) {
 
 func (r *refiner) Leave(in Plan) (Plan, bool) {
 	switch x := in.(type) {
-	case *TableScan:
-		r.buildTableRange(x)
 	case *IndexScan:
 		r.buildIndexRange(x)
-	case *Sort:
-		r.sortBypass(x)
 	case *Limit:
 		x.SetLimit(0)
+	case *Sort:
+		r.sortBypass(x)
+	case *TableScan:
+		r.buildTableRange(x)
 	}
 	return in, r.err == nil
 }
@@ -183,6 +183,20 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 	switch x := condition.(type) {
 	case *ast.BinaryOperationExpr:
 		return c.checkBinaryOperation(x)
+	case *ast.BetweenExpr:
+		if ast.IsPreEvaluable(x.Left) && ast.IsPreEvaluable(x.Right) && c.checkColumnExpr(x.Expr) {
+			return true
+		}
+	case *ast.ColumnNameExpr:
+		return c.checkColumnExpr(x)
+	case *ast.IsNullExpr:
+		if c.checkColumnExpr(x.Expr) {
+			return true
+		}
+	case *ast.IsTruthExpr:
+		if c.checkColumnExpr(x.Expr) {
+			return true
+		}
 	case *ast.ParenthesesExpr:
 		return c.check(x.Expr)
 	case *ast.PatternInExpr:
@@ -211,20 +225,6 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		patternStr := x.Pattern.GetValue().(string)
 		firstChar := patternStr[0]
 		return firstChar != '%' && firstChar != '.'
-	case *ast.BetweenExpr:
-		if ast.IsPreEvaluable(x.Left) && ast.IsPreEvaluable(x.Right) && c.checkColumnExpr(x.Expr) {
-			return true
-		}
-	case *ast.IsNullExpr:
-		if c.checkColumnExpr(x.Expr) {
-			return true
-		}
-	case *ast.IsTruthExpr:
-		if c.checkColumnExpr(x.Expr) {
-			return true
-		}
-	case *ast.ColumnNameExpr:
-		return c.checkColumnExpr(x)
 	}
 	return false
 }

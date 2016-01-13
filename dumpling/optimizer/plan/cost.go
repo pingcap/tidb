@@ -40,10 +40,16 @@ func (c *costEstimator) Enter(p Plan) (Plan, bool) {
 // Leave implements Visitor Leave interface.
 func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	switch v := p.(type) {
+	case *Filter:
+		v.startupCost = v.Src().StartupCost()
+		v.rowCount = v.Src().RowCount() * FilterRate
+		v.totalCost = v.Src().TotalCost()
 	case *IndexScan:
 		c.indexScan(v)
-	case *TableScan:
-		c.tableScan(v)
+	case *Limit:
+		v.rowCount = v.Src().RowCount()
+		v.startupCost = v.Src().StartupCost()
+		v.totalCost = v.Src().TotalCost()
 	case *SelectFields:
 		if v.Src() != nil {
 			v.startupCost = v.Src().StartupCost()
@@ -53,10 +59,6 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	case *SelectLock:
 		v.startupCost = v.Src().StartupCost()
 		v.rowCount = v.Src().RowCount()
-		v.totalCost = v.Src().TotalCost()
-	case *Filter:
-		v.startupCost = v.Src().StartupCost()
-		v.rowCount = v.Src().RowCount() * FilterRate
 		v.totalCost = v.Src().TotalCost()
 	case *Sort:
 		if v.Bypass {
@@ -74,10 +76,8 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 			}
 			v.totalCost = v.startupCost + v.rowCount*RowCost
 		}
-	case *Limit:
-		v.rowCount = v.Src().RowCount()
-		v.startupCost = v.Src().StartupCost()
-		v.totalCost = v.Src().TotalCost()
+	case *TableScan:
+		c.tableScan(v)
 	}
 	return p, true
 }
