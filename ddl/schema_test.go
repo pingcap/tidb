@@ -64,34 +64,44 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 	return job
 }
 
-func testEnsureDrop(c *C, t *meta.Meta) {
-	for {
-		task, err := t.GetDDLTask(0)
-		c.Assert(err, IsNil)
-		if task == nil {
-			break
-		}
-
-		time.Sleep(5 * time.Millisecond)
+func checkDrop(c *C, t *meta.Meta) bool {
+	task, err := t.GetDDLTask(0)
+	c.Assert(err, IsNil)
+	if task == nil {
+		return true
 	}
+
+	time.Sleep(5 * time.Millisecond)
+	return false
 }
 
 func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		info, err := t.GetDatabase(dbInfo.ID)
-		c.Assert(err, IsNil)
+	isDrop := true
 
-		if state == model.StateNone {
-			testEnsureDrop(c, t)
-			c.Assert(info, IsNil)
+	for {
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			info, err := t.GetDatabase(dbInfo.ID)
+			c.Assert(err, IsNil)
+
+			if state == model.StateNone {
+				isDrop = checkDrop(c, t)
+				if !isDrop {
+					return nil
+				}
+				c.Assert(info, IsNil)
+				return nil
+			}
+
+			c.Assert(info.Name, DeepEquals, dbInfo.Name)
+			c.Assert(info.State, Equals, state)
 			return nil
-		}
+		})
 
-		c.Assert(info.Name, DeepEquals, dbInfo.Name)
-		c.Assert(info.State, Equals, state)
-		return nil
-	})
+		if isDrop {
+			break
+		}
+	}
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
@@ -237,7 +247,6 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
-
 	job = &model.Job{
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,

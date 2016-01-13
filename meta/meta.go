@@ -538,8 +538,7 @@ func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
 	return m.addHistoryDDLJob(mDDLJobHistoryKey, job)
 }
 
-// GetHistoryDDLJob gets a history DDL job.
-func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
+func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 	value, err := m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -548,6 +547,11 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	job := &model.Job{}
 	err = job.Decode(value)
 	return job, errors.Trace(err)
+}
+
+// GetHistoryDDLJob gets a history DDL job.
+func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
+	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
 }
 
 // IsBootstrapped returns whether we have already run bootstrap or not.
@@ -616,9 +620,19 @@ func (m *Meta) EnQueueDDLTask(task *model.Job) error {
 	return m.enQueueDDLJob(mDDLTaskListKey, task)
 }
 
+// DDLTaskLength returns the DDL task length.
+func (m *Meta) DDLTaskLength() (int64, error) {
+	return m.txn.LLen(mDDLTaskListKey)
+}
+
 // AddHistoryDDLTask adds DDL task to history.
 func (m *Meta) AddHistoryDDLTask(task *model.Job) error {
 	return m.addHistoryDDLJob(mDDLTaskHistoryKey, task)
+}
+
+// GetHistoryDDLTask gets a history DDL task.
+func (m *Meta) GetHistoryDDLTask(id int64) (*model.Job, error) {
+	return m.getHistoryDDLJob(mDDLTaskHistoryKey, id)
 }
 
 // DeQueueDDLTask pops a DDL task from the list.

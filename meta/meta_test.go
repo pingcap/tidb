@@ -191,11 +191,9 @@ func (s *testSuite) TestDDL(c *C) {
 	v, err := t.GetDDLJob(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
-
 	v, err = t.GetDDLJob(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
-
 	job.ID = 2
 	err = t.UpdateDDLJob(0, job)
 	c.Assert(err, IsNil)
@@ -216,10 +214,43 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = t.AddHistoryDDLJob(job)
 	c.Assert(err, IsNil)
-
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
+
+	// DDL task test
+	err = t.SetDDLTaskOwner(owner)
+	c.Assert(err, IsNil)
+	ov, err = t.GetDDLTaskOwner()
+	c.Assert(err, IsNil)
+	c.Assert(owner, DeepEquals, ov)
+
+	task := &model.Job{ID: 1}
+	err = t.EnQueueDDLTask(task)
+	c.Assert(err, IsNil)
+	n, err = t.DDLTaskLength()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	v, err = t.GetDDLTask(0)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, task)
+	v, err = t.GetDDLTask(1)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+	task.ID = 2
+	err = t.UpdateDDLTask(0, task)
+	c.Assert(err, IsNil)
+
+	v, err = t.DeQueueDDLTask()
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, task)
+
+	err = t.AddHistoryDDLJob(task)
+	c.Assert(err, IsNil)
+	v, err = t.GetHistoryDDLTask(2)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, task)
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)
