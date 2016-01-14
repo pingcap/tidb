@@ -17,6 +17,22 @@ var _ = Suite(&testFlagSuite{})
 type testFlagSuite struct {
 }
 
+func (ts *testFlagSuite) TestHasAggFlag(c *C) {
+	expr := &ast.BetweenExpr{}
+	cases := []struct {
+		flag   uint64
+		hasAgg bool
+	}{
+		{ast.FlagHasAggregateFunc, true},
+		{ast.FlagHasAggregateFunc | ast.FlagHasVariable, true},
+		{ast.FlagHasVariable, false},
+	}
+	for _, ca := range cases {
+		expr.SetFlag(ca.flag)
+		c.Assert(ast.HasAggFlag(expr), Equals, ca.hasAgg)
+	}
+}
+
 func (ts *testFlagSuite) TestFlag(c *C) {
 	cases := []struct {
 		expr string
