@@ -39,7 +39,7 @@ var (
 
 // Error codes.
 const (
-	CodeInvalidOperation terror.ErrCode = iota + 1
+	CodeInvalidOperation terror.ErrCode = iota
 )
 
 // Eval evaluates an expression to a value.
@@ -90,72 +90,72 @@ func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 // Leave implements ast.Visitor interface.
 func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch v := in.(type) {
-	case *ast.ValueExpr:
-		ok = true
+	case *ast.AggregateFuncExpr:
+		ok = e.aggregateFunc(v)
 	case *ast.BetweenExpr:
 		ok = e.between(v)
 	case *ast.BinaryOperationExpr:
 		ok = e.binaryOperation(v)
 	case *ast.CaseExpr:
 		ok = e.caseExpr(v)
-	case *ast.WhenClause:
-		ok = true
-	case *ast.SubqueryExpr:
-		ok = e.subquery(v)
-	case *ast.CompareSubqueryExpr:
-		ok = e.compareSubquery(v)
 	case *ast.ColumnName:
 		ok = true
 	case *ast.ColumnNameExpr:
 		ok = e.columnName(v)
+	case *ast.CompareSubqueryExpr:
+		ok = e.compareSubquery(v)
 	case *ast.DefaultExpr:
 		ok = e.defaultExpr(v)
 	case *ast.ExistsSubqueryExpr:
 		ok = e.existsSubquery(v)
-	case *ast.PatternInExpr:
-		ok = e.patternIn(v)
-	case *ast.IsNullExpr:
-		ok = e.isNull(v)
-	case *ast.IsTruthExpr:
-		ok = e.isTruth(v)
-	case *ast.PatternLikeExpr:
-		ok = e.patternLike(v)
-	case *ast.ParamMarkerExpr:
-		ok = e.paramMarker(v)
-	case *ast.ParenthesesExpr:
-		ok = e.parentheses(v)
-	case *ast.PositionExpr:
-		ok = e.position(v)
-	case *ast.PatternRegexpExpr:
-		ok = e.patternRegexp(v)
-	case *ast.RowExpr:
-		ok = e.row(v)
-	case *ast.UnaryOperationExpr:
-		ok = e.unaryOperation(v)
-	case *ast.ValuesExpr:
-		ok = e.values(v)
-	case *ast.VariableExpr:
-		ok = e.variable(v)
 	case *ast.FuncCallExpr:
 		ok = e.funcCall(v)
-	case *ast.FuncExtractExpr:
-		ok = e.funcExtract(v)
-	case *ast.FuncConvertExpr:
-		ok = e.funcConvert(v)
 	case *ast.FuncCastExpr:
 		ok = e.funcCast(v)
+	case *ast.FuncConvertExpr:
+		ok = e.funcConvert(v)
+	case *ast.FuncDateArithExpr:
+		ok = e.funcDateArith(v)
+	case *ast.FuncExtractExpr:
+		ok = e.funcExtract(v)
+	case *ast.FuncLocateExpr:
+		ok = e.funcLocate(v)
 	case *ast.FuncSubstringExpr:
 		ok = e.funcSubstring(v)
 	case *ast.FuncSubstringIndexExpr:
 		ok = e.funcSubstringIndex(v)
-	case *ast.FuncLocateExpr:
-		ok = e.funcLocate(v)
 	case *ast.FuncTrimExpr:
 		ok = e.funcTrim(v)
-	case *ast.FuncDateArithExpr:
-		ok = e.funcDateArith(v)
-	case *ast.AggregateFuncExpr:
-		ok = e.aggregateFunc(v)
+	case *ast.IsNullExpr:
+		ok = e.isNull(v)
+	case *ast.IsTruthExpr:
+		ok = e.isTruth(v)
+	case *ast.ParamMarkerExpr:
+		ok = e.paramMarker(v)
+	case *ast.ParenthesesExpr:
+		ok = e.parentheses(v)
+	case *ast.PatternInExpr:
+		ok = e.patternIn(v)
+	case *ast.PatternLikeExpr:
+		ok = e.patternLike(v)
+	case *ast.PatternRegexpExpr:
+		ok = e.patternRegexp(v)
+	case *ast.PositionExpr:
+		ok = e.position(v)
+	case *ast.RowExpr:
+		ok = e.row(v)
+	case *ast.SubqueryExpr:
+		ok = e.subquery(v)
+	case *ast.UnaryOperationExpr:
+		ok = e.unaryOperation(v)
+	case *ast.ValueExpr:
+		ok = true
+	case *ast.ValuesExpr:
+		ok = e.values(v)
+	case *ast.VariableExpr:
+		ok = e.variable(v)
+	case *ast.WhenClause:
+		ok = true
 	}
 	out = in
 	return

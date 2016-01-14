@@ -60,7 +60,7 @@ var (
 
 // Error codes.
 const (
-	CodeUnknownPlan terror.ErrCode = iota + 1
+	CodeUnknownPlan terror.ErrCode = iota
 	CodePrepareMulti
 	CodeStmtNotFound
 	CodeSchemaChanged
