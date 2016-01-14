@@ -308,15 +308,16 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			}
 			return nr.resolveColumnInResultFields(cn, ctx.fieldList)
 		}
-		// Resolve from table first, than from select list.
+		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
+		if nr.Err != nil {
+			return found
+		}
 		// We should copy the refer here.
 		// Because if the ByItem is an identifier, we should check if it
 		// is ambiguous even it is already resolved from table source.
 		// If the ByItem is not an identifier, we do not need the second check.
 		r := cn.Refer
-		pe := nr.Err
-		nr.Err = nil
 		if nr.resolveColumnInResultFields(cn, ctx.fieldList) {
 			if nr.Err != nil {
 				return true
@@ -328,8 +329,6 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			}
 			return true
 		}
-		// Restore err.
-		nr.Err = pe
 		return found
 	}
 	if ctx.inHaving {
