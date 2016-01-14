@@ -845,8 +845,9 @@ func (e *AggregateExec) Next() (*Row, error) {
 		}
 		e.executed = true
 		if (len(e.groups) == 0) && (len(e.GroupByItems) == 0) {
-			// if no group by and no data, we should add a empty group.
-			// For example: "select count(c) from t;" should return one row [0]
+			// If no groupby and no data, we should add an empty group.
+			// For example:
+			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
 			e.groups = append(e.groups, singleGroup)
 		}

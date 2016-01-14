@@ -9,49 +9,6 @@ var _ = Suite(&testFunctionsSuite{})
 type testFunctionsSuite struct {
 }
 
-func (ts *testFunctionsSuite) TestAggFunctionDetector(c *C) {
-	var expr Node
-
-	ad := &AggFuncDetector{}
-	expr = &AggregateFuncExpr{}
-	expr.Accept(ad)
-	c.Assert(ad.HasAggFunc, IsTrue)
-
-	ad = &AggFuncDetector{}
-	expr = &FuncDateArithExpr{}
-	expr.Accept(ad)
-	c.Assert(ad.HasAggFunc, IsFalse)
-
-	ad = &AggFuncDetector{}
-	expr = &BinaryOperationExpr{
-		L: &FuncDateArithExpr{},
-		R: &AggregateFuncExpr{},
-	}
-	expr.Accept(ad)
-	c.Assert(ad.HasAggFunc, IsTrue)
-
-	// select exists(select count(c) from t) from t
-	// subquery contains aggregate function
-	expr1 := &AggregateFuncExpr{}
-	field1 := &SelectField{Expr: expr1}
-	fields1 := &FieldList{Fields: []*SelectField{field1}}
-	subSel := &SelectStmt{Fields: fields1}
-
-	subExpr := &ExistsSubqueryExpr{
-		Sel: &SubqueryExpr{Query: subSel},
-	}
-	field := &SelectField{Expr: subExpr}
-	fields := &FieldList{Fields: []*SelectField{field}}
-	sel := &SelectStmt{Fields: fields}
-
-	ad = &AggFuncDetector{}
-	sel.Accept(ad)
-	c.Assert(ad.HasAggFunc, IsFalse)
-	ad = &AggFuncDetector{}
-	subSel.Accept(ad)
-	c.Assert(ad.HasAggFunc, IsTrue)
-}
-
 func (ts *testFunctionsSuite) TestAggregateFuncExtractor(c *C) {
 	var expr Node
 

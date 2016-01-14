@@ -467,33 +467,6 @@ func (n *AggregateFuncExpr) updateFirstRow() error {
 	return nil
 }
 
-// AggFuncDetector visits Expr tree to check if it contains AggregateFuncExpr.
-type AggFuncDetector struct {
-	HasAggFunc bool
-	detecting  bool
-}
-
-// Enter implements Visitor interface.
-func (a *AggFuncDetector) Enter(n Node) (node Node, skipChildren bool) {
-	switch n.(type) {
-	case *AggregateFuncExpr, *GroupByClause:
-		a.HasAggFunc = true
-	case *SelectStmt, *InsertStmt, *DeleteStmt, *UpdateStmt:
-		if a.detecting {
-			// Enter a new context, skip it.
-			// For example: select sum(c) + c + exists(select c from t) from t;
-			return n, true
-		}
-	}
-	a.detecting = true
-	return n, a.HasAggFunc
-}
-
-// Leave implements Visitor interface.
-func (a *AggFuncDetector) Leave(n Node) (node Node, ok bool) {
-	return n, !a.HasAggFunc
-}
-
 // AggregateFuncExtractor visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {

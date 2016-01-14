@@ -128,9 +128,7 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		}
 		if nr.currentContext().inGroupBy {
 			// make sure item is not aggregate function
-			aggDetetor := &ast.AggFuncDetector{}
-			v.Expr.Accept(aggDetetor)
-			if aggDetetor.HasAggFunc {
+			if v.Expr.GetFlag()&ast.FlagHasAggregateFunc > 0 {
 				nr.Err = errors.New("group by cannot contain aggregate function")
 				return inNode, true
 			}
@@ -557,9 +555,7 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 	pos.Refer = ctx.fieldList[pos.N-1]
 	if nr.currentContext().inGroupBy {
 		// make sure item is not aggregate function
-		aggDetetor := &ast.AggFuncDetector{}
-		pos.Refer.Expr.Accept(aggDetetor)
-		if aggDetetor.HasAggFunc {
+		if pos.Refer.Expr.GetFlag()&ast.FlagHasAggregateFunc > 0 {
 			nr.Err = errors.New("group by cannot contain aggregate function")
 		}
 	}
