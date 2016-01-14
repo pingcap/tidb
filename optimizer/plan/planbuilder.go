@@ -69,55 +69,70 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	return nil
 }
 
-func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
-	// Detect aggregate function or groupby clause.
-	aggDetetor := &ast.AggFuncDetector{}
-	sel.Accept(aggDetetor)
-	var aggFuncs []*ast.AggregateFuncExpr
-	if aggDetetor.HasAggFunc {
-		extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
-		res := make([]*ast.ResultField, 0, len(sel.GetResultFields()))
-		for _, f := range sel.GetResultFields() {
-			n, ok := f.Expr.Accept(extractor)
+// Detect aggregate function or groupby clause.
+func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
+	if sel.GroupBy != nil {
+		return true
+	}
+	for _, f := range sel.GetResultFields() {
+		if f.Expr.GetFlag()&ast.FlagHasAggregateFunc > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// extractSelectAgg extracts aggregate functions and converts ColumnNameExpr to aggregate function.
+func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFuncExpr {
+	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
+	res := make([]*ast.ResultField, 0, len(sel.GetResultFields()))
+	for _, f := range sel.GetResultFields() {
+		n, ok := f.Expr.Accept(extractor)
+		if !ok {
+			b.err = errors.New("Failed to extract agg expr!")
+			return nil
+		}
+		ve, ok := f.Expr.(*ast.ValueExpr)
+		if ok && len(f.Column.Name.O) > 0 {
+			agg := &ast.AggregateFuncExpr{
+				F:    ast.AggFuncFirstRow,
+				Args: []ast.ExprNode{ve},
+			}
+			extractor.AggFuncs = append(extractor.AggFuncs, agg)
+			n = agg
+		}
+		// Clone the ResultField.
+		// For "select c from t group by c;" both "c"s in select field and grouby clause refer to the same ResultField.
+		// So we should not affact the "c" in groupby clause.
+		nf := &ast.ResultField{
+			ColumnAsName: f.ColumnAsName,
+			Column:       f.Column,
+			Table:        f.Table,
+			DBName:       f.DBName,
+			Expr:         n.(ast.ExprNode),
+		}
+		res = append(res, nf)
+	}
+	sel.SetResultFields(res)
+	// Extract agg funcs from orderby clause.
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			n, ok := item.Expr.Accept(extractor)
 			if !ok {
-				b.err = errors.New("Failed to extract agg expr!")
+				b.err = errors.New("Failed to extract agg expr from orderbyu clause")
 				return nil
 			}
-			ve, ok := f.Expr.(*ast.ValueExpr)
-			if ok && len(f.Column.Name.O) > 0 {
-				agg := &ast.AggregateFuncExpr{
-					F:    ast.AggFuncFirstRow,
-					Args: []ast.ExprNode{ve},
-				}
-				extractor.AggFuncs = append(extractor.AggFuncs, agg)
-				n = agg
-			}
-			// Clone the ResultField.
-			// For "select c from t group by c;" both "c"s in select field and grouby clause refer to the same ResultField.
-			// So we should not affact the "c" in groupby clause.
-			nf := &ast.ResultField{
-				ColumnAsName: f.ColumnAsName,
-				Column:       f.Column,
-				Table:        f.Table,
-				DBName:       f.DBName,
-				Expr:         n.(ast.ExprNode),
-			}
-			res = append(res, nf)
+			item.Expr = n.(ast.ExprNode)
 		}
-		sel.SetResultFields(res)
-		// Extract agg funcs from orderby clause.
-		if sel.OrderBy != nil {
-			for _, item := range sel.OrderBy.Items {
-				n, ok := item.Expr.Accept(extractor)
-				if !ok {
-					b.err = errors.New("Failed to extract agg expr from orderbyu clause")
-					return nil
-				}
-				item.Expr = n.(ast.ExprNode)
-			}
-		}
-		// TODO: extract aggfuncs from having clause.
-		aggFuncs = extractor.AggFuncs
+	}
+	// TODO: extract aggfuncs from having clause.
+	return extractor.AggFuncs
+}
+
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
+	var aggFuncs []*ast.AggregateFuncExpr
+	if b.detectSelectAgg(sel) {
+		aggFuncs = b.extractSelectAgg(sel)
 	}
 	var p Plan
 	if sel.From != nil {
