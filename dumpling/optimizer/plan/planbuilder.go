@@ -16,6 +16,7 @@ package plan
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -68,20 +69,71 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	return nil
 }
 
-func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
-	// Detect aggregate function or groupby clause.
-	aggDetetor := &ast.AggFuncDetector{}
-	sel.Accept(aggDetetor)
-	var aggFuncs []*ast.AggregateFuncExpr
-	if aggDetetor.HasAggFunc {
-		extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
-		// TODO: extract aggfuncs from having clause.
-		for _, f := range sel.GetResultFields() {
-			f.Expr.Accept(extractor)
-			// TODO: check error
+// Detect aggregate function or groupby clause.
+func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
+	if sel.GroupBy != nil {
+		return true
+	}
+	for _, f := range sel.GetResultFields() {
+		if ast.HasAggFlag(f.Expr) {
+			return true
 		}
-		aggFuncs = extractor.AggFuncs
-		// TODO: extract aggfuncs from having clause.
+	}
+	return false
+}
+
+// extractSelectAgg extracts aggregate functions and converts ColumnNameExpr to aggregate function.
+func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFuncExpr {
+	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
+	res := make([]*ast.ResultField, 0, len(sel.GetResultFields()))
+	for _, f := range sel.GetResultFields() {
+		n, ok := f.Expr.Accept(extractor)
+		if !ok {
+			b.err = errors.New("Failed to extract agg expr!")
+			return nil
+		}
+		ve, ok := f.Expr.(*ast.ValueExpr)
+		if ok && len(f.Column.Name.O) > 0 {
+			agg := &ast.AggregateFuncExpr{
+				F:    ast.AggFuncFirstRow,
+				Args: []ast.ExprNode{ve},
+			}
+			extractor.AggFuncs = append(extractor.AggFuncs, agg)
+			n = agg
+		}
+		// Clone the ResultField.
+		// For "select c from t group by c;" both "c"s in select field and grouby clause refer to the same ResultField.
+		// So we should not affact the "c" in groupby clause.
+		nf := &ast.ResultField{
+			ColumnAsName: f.ColumnAsName,
+			Column:       f.Column,
+			Table:        f.Table,
+			DBName:       f.DBName,
+			Expr:         n.(ast.ExprNode),
+		}
+		res = append(res, nf)
+	}
+	sel.SetResultFields(res)
+	// Extract agg funcs from orderby clause.
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			n, ok := item.Expr.Accept(extractor)
+			if !ok {
+				b.err = errors.New("Failed to extract agg expr from orderby clause")
+				return nil
+			}
+			item.Expr = n.(ast.ExprNode)
+		}
+	}
+	// TODO: extract aggfuncs from having clause.
+	return extractor.AggFuncs
+}
+
+func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
+	var aggFuncs []*ast.AggregateFuncExpr
+	hasAgg := b.detectSelectAgg(sel)
+	if hasAgg {
+		aggFuncs = b.extractSelectAgg(sel)
 	}
 	var p Plan
 	if sel.From != nil {
@@ -101,16 +153,16 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 				return nil
 			}
 		}
-		if len(aggFuncs) > 0 {
-			p = b.buildAggregate(p, aggFuncs)
+		if hasAgg {
+			p = b.buildAggregate(p, aggFuncs, sel.GroupBy)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
 			return nil
 		}
 	} else {
-		if len(aggFuncs) > 0 {
-			p = b.buildAggregate(p, aggFuncs)
+		if hasAgg {
+			p = b.buildAggregate(p, aggFuncs, nil)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
@@ -200,7 +252,7 @@ func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Pla
 	return selectFields
 }
 
-func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr) Plan {
+func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr, groupby *ast.GroupByClause) Plan {
 	// Add aggregate plan.
 	aggPlan := &Aggregate{
 		AggFuncs: aggFuncs,
@@ -208,6 +260,9 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 	aggPlan.SetSrc(src)
 	if src != nil {
 		aggPlan.SetFields(src.Fields())
+	}
+	if groupby != nil {
+		aggPlan.GroupByItems = groupby.Items
 	}
 	return aggPlan
 }

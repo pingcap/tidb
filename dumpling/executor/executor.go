@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -808,7 +809,7 @@ const singleGroup = "SingleGroup"
 
 // AggregateExec deals with all the aggregate functions.
 // It is built from Aggregate Plan. When Next() is called, it reads all the data from Src and updates all the items in AggFuncs.
-// TODO: Support groupby and having.
+// TODO: Support having.
 type AggregateExec struct {
 	Src               Executor
 	ResultFields      []*ast.ResultField
@@ -819,6 +820,7 @@ type AggregateExec struct {
 	groupMap          map[string]bool
 	groups            []string
 	currentGroupIndex int
+	GroupByItems      []*ast.ByItem
 }
 
 // Fields implements Executor Fields interface.
@@ -829,9 +831,9 @@ func (e *AggregateExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *AggregateExec) Next() (*Row, error) {
 	// In this stage we consider all data from src as a single group.
-	// TODO: support group by clause.
 	if !e.executed {
 		e.groupMap = make(map[string]bool)
+		e.groups = []string{}
 		for {
 			hasMore, err := e.innerNext()
 			if err != nil {
@@ -842,13 +844,12 @@ func (e *AggregateExec) Next() (*Row, error) {
 			}
 		}
 		e.executed = true
-		if len(e.groupMap) == 0 {
-			// No group
-			e.groupMap[singleGroup] = true
-		}
-		e.groups = make([]string, 0, len(e.groupMap))
-		for gk := range e.groupMap {
-			e.groups = append(e.groups, gk)
+		if (len(e.groups) == 0) && (len(e.GroupByItems) == 0) {
+			// If no groupby and no data, we should add an empty group.
+			// For example:
+			// "select count(c) from t;" should return one row [0]
+			// "select count(c) from t group by c1;" should return empty result set.
+			e.groups = append(e.groups, singleGroup)
 		}
 	}
 	if e.currentGroupIndex >= len(e.groups) {
@@ -860,6 +861,25 @@ func (e *AggregateExec) Next() (*Row, error) {
 	}
 	e.currentGroupIndex++
 	return &Row{}, nil
+}
+
+func (e *AggregateExec) getGroupKey() (string, error) {
+	if len(e.GroupByItems) == 0 {
+		return singleGroup, nil
+	}
+	vals := make([]interface{}, 0, len(e.GroupByItems))
+	for _, item := range e.GroupByItems {
+		v, err := evaluator.Eval(e.ctx, item.Expr)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		vals = append(vals, v)
+	}
+	bs, err := codec.EncodeValue([]byte{}, vals...)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(bs), nil
 }
 
 // Fetch a single row from src and update each aggregate function.
@@ -880,9 +900,14 @@ func (e *AggregateExec) innerNext() (bool, error) {
 		}
 	}
 	e.executed = true
-	// TODO: evaluate groupby key and set currentgroup to each aggfunc.
-	groupKey := singleGroup
-	e.groupMap[groupKey] = true
+	groupKey, err := e.getGroupKey()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if _, ok := e.groupMap[groupKey]; !ok {
+		e.groupMap[groupKey] = true
+		e.groups = append(e.groups, groupKey)
+	}
 	for _, af := range e.AggFuncs {
 		for _, arg := range af.Args {
 			_, err := evaluator.Eval(e.ctx, arg)

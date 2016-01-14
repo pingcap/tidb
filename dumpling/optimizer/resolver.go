@@ -126,6 +126,13 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 			// the resolving rule is different from order by clause.
 			nr.currentContext().inByItemExpression = true
 		}
+		if nr.currentContext().inGroupBy {
+			// make sure item is not aggregate function
+			if ast.HasAggFlag(v.Expr) {
+				nr.Err = errors.New("group by cannot contain aggregate function")
+				return inNode, true
+			}
+		}
 	case *ast.DeleteStmt:
 		nr.pushContext()
 	case *ast.FieldList:
@@ -292,6 +299,8 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 	}
 	if ctx.inGroupBy {
 		// From tables first, then field list.
+		// If ctx.InByItemExpression is true, the item is not an identifier.
+		// Otherwise it is an identifier.
 		if ctx.inByItemExpression {
 			// From table first, then field list.
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
@@ -299,20 +308,28 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			}
 			return nr.resolveColumnInResultFields(cn, ctx.fieldList)
 		}
-		// Field list first, then from table.
+		// Resolve from table first, then from select list.
+		found := nr.resolveColumnInTableSources(cn, ctx.tables)
+		if nr.Err != nil {
+			return found
+		}
+		// We should copy the refer here.
+		// Because if the ByItem is an identifier, we should check if it
+		// is ambiguous even it is already resolved from table source.
+		// If the ByItem is not an identifier, we do not need the second check.
+		r := cn.Refer
 		if nr.resolveColumnInResultFields(cn, ctx.fieldList) {
 			if nr.Err != nil {
 				return true
 			}
-			// The column is resolved in field list, but we need to
-			// try to overwrite the ResultField in table sources.
-			nr.resolveColumnInTableSources(cn, ctx.tables)
-			if nr.Err != nil {
-				nr.Err = nil
+			if r != nil {
+				// It is not ambiguous and already resolved from table source.
+				// We should restore its Refer.
+				cn.Refer = r
 			}
 			return true
 		}
-		return false
+		return found
 	}
 	if ctx.inHaving {
 		// First group by, then field list.
@@ -535,4 +552,10 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 		return
 	}
 	pos.Refer = ctx.fieldList[pos.N-1]
+	if nr.currentContext().inGroupBy {
+		// make sure item is not aggregate function
+		if ast.HasAggFlag(pos.Refer.Expr) {
+			nr.Err = errors.New("group by cannot contain aggregate function")
+		}
+	}
 }
