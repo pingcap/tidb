@@ -39,38 +39,38 @@ func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.ColumnNameExpr:
-		x.SetType(&x.Refer.Column.FieldType)
-	case *ast.FuncCastExpr:
-		x.SetType(x.Tp)
-	case *ast.SelectStmt:
-		v.selectStmt(x)
-	case *ast.ParamMarkerExpr:
-		x.SetType(types.DefaultTypeForValue(x.GetValue()))
-	case *ast.BinaryOperationExpr:
-		v.binaryOperation(x)
-	case *ast.UnaryOperationExpr:
-		v.unaryOperation(x)
+	case *ast.AggregateFuncExpr:
+		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	case *ast.BinaryOperationExpr:
+		v.binaryOperation(x)
+	case *ast.ColumnNameExpr:
+		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	case *ast.ExistsSubqueryExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	case *ast.FuncCastExpr:
+		x.SetType(x.Tp)
+	case *ast.IsNullExpr:
+		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	case *ast.IsTruthExpr:
+		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+	case *ast.ParamMarkerExpr:
+		x.SetType(types.DefaultTypeForValue(x.GetValue()))
+	case *ast.ParenthesesExpr:
+		x.SetType(x.Expr.GetType())
 	case *ast.PatternInExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	case *ast.PatternLikeExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 	case *ast.PatternRegexpExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	case *ast.IsNullExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	case *ast.IsTruthExpr:
-		x.SetType(types.NewFieldType(mysql.TypeLonglong))
-	case *ast.ParenthesesExpr:
-		x.SetType(x.Expr.GetType())
-	case *ast.AggregateFuncExpr:
-		v.aggregateFunc(x)
+	case *ast.SelectStmt:
+		v.selectStmt(x)
+	case *ast.UnaryOperationExpr:
+		v.unaryOperation(x)
 		// TODO: handle all expression types.
 	}
 	return in, true

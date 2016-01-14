@@ -20,7 +20,7 @@ func IsPreEvaluable(expr ExprNode) bool {
 	return expr.GetFlag()|preEvaluable == preEvaluable
 }
 
-// IsConstant check if the expression is constant.
+// IsConstant checks if the expression is constant.
 // A constant expression is safe to be rewritten to value expression.
 func IsConstant(expr ExprNode) bool {
 	return expr.GetFlag() == FlagConstant

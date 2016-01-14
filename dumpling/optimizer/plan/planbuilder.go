@@ -34,11 +34,11 @@ var (
 
 // Error codes.
 const (
-	CodeUnsupportedType = iota + 1
+	CodeUnsupportedType = iota
 )
 
 // BuildPlan builds a plan from a node.
-// returns ErrUnsupportedType if ast.Node type is not supported yet.
+// It returns ErrUnsupportedType if ast.Node type is not supported yet.
 func BuildPlan(node ast.Node) (Plan, error) {
 	var builder planBuilder
 	p := builder.build(node)
@@ -46,7 +46,7 @@ func BuildPlan(node ast.Node) (Plan, error) {
 }
 
 // planBuilder builds Plan from an ast.Node.
-// It just build the ast node straightforwardly.
+// It just builds the ast node straightforwardly.
 type planBuilder struct {
 	err    error
 	hasAgg bool
@@ -54,16 +54,16 @@ type planBuilder struct {
 
 func (b *planBuilder) build(node ast.Node) Plan {
 	switch x := node.(type) {
-	case *ast.SelectStmt:
-		return b.buildSelect(x)
-	case *ast.PrepareStmt:
-		return b.buildPrepare(x)
-	case *ast.ExecuteStmt:
-		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
-	case *ast.DeallocateStmt:
-		return &Deallocate{Name: x.Name}
 	case *ast.AdminStmt:
 		return b.buildAdmin(x)
+	case *ast.DeallocateStmt:
+		return &Deallocate{Name: x.Name}
+	case *ast.ExecuteStmt:
+		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+	case *ast.PrepareStmt:
+		return b.buildPrepare(x)
+	case *ast.SelectStmt:
+		return b.buildSelect(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
