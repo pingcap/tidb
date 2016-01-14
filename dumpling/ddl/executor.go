@@ -81,10 +81,6 @@ func (d *ddl) runTask(t *meta.Meta, task *model.Job) {
 		err = d.delReorgSchema(t, task)
 	case model.ActionDropTable:
 		err = d.delReorgTable(t, task)
-		//	case model.ActionDropColumn:
-		//		err = d.delReorgColumn(t, task)
-		//	case model.ActionDropIndex:
-		//		err = d.delReorgIndex(t, task)
 	default:
 		task.State = model.JobCancelled
 		err = errors.Errorf("invalid task %v", task)
@@ -106,8 +102,7 @@ func (d *ddl) prepareTask(job *model.Job) error {
 		SchemaID: job.SchemaID,
 		TableID:  job.TableID,
 		Type:     job.Type,
-		// TODO:
-		Args: job.Args,
+		Args:     job.Args,
 	}
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -123,7 +118,6 @@ func (d *ddl) prepareTask(job *model.Job) error {
 func (d *ddl) startTask(tp model.ActionType) {
 	switch tp {
 	case model.ActionDropSchema, model.ActionDropTable:
-		//	model.ActionDropColumn, model.ActionDropIndex:
 		asyncNotify(d.taskCh)
 	}
 }

@@ -91,8 +91,8 @@ func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
 	}
 
 	// finish this task
-	task.State = model.JobDone
 	task.SchemaState = model.StateNone
+	task.State = model.JobDone
 
 	return nil
 }
