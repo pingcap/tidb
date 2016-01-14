@@ -119,7 +119,7 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 		for _, item := range sel.OrderBy.Items {
 			n, ok := item.Expr.Accept(extractor)
 			if !ok {
-				b.err = errors.New("Failed to extract agg expr from orderbyu clause")
+				b.err = errors.New("Failed to extract agg expr from orderby clause")
 				return nil
 			}
 			item.Expr = n.(ast.ExprNode)
@@ -131,7 +131,8 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
-	if b.detectSelectAgg(sel) {
+	hasAgg := b.detectSelectAgg(sel)
+	if hasAgg {
 		aggFuncs = b.extractSelectAgg(sel)
 	}
 	var p Plan
@@ -152,7 +153,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 				return nil
 			}
 		}
-		if len(aggFuncs) > 0 || sel.GroupBy != nil {
+		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, sel.GroupBy)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
@@ -160,7 +161,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	} else {
-		if len(aggFuncs) > 0 {
+		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
