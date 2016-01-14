@@ -246,7 +246,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, task)
 
-	err = t.AddHistoryDDLJob(task)
+	err = t.AddHistoryDDLTask(task)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryDDLTask(2)
 	c.Assert(err, IsNil)

@@ -539,7 +539,7 @@ func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
 }
 
 func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
-	value, err := m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
+	value, err := m.txn.HGet(key, m.jobIDKey(id))
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
 	}
