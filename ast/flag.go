@@ -26,6 +26,11 @@ func IsConstant(expr ExprNode) bool {
 	return expr.GetFlag() == FlagConstant
 }
 
+// HasAggFlag checks if the expr contains FlagHasAggregateFunc.
+func HasAggFlag(expr ExprNode) bool {
+	return expr.GetFlag()&FlagHasAggregateFunc > 0
+}
+
 // SetFlag sets flag for expression.
 func SetFlag(n Node) {
 	var setter flagSetter

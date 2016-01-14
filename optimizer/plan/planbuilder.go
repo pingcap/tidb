@@ -75,7 +75,7 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 		return true
 	}
 	for _, f := range sel.GetResultFields() {
-		if f.Expr.GetFlag()&ast.FlagHasAggregateFunc > 0 {
+		if ast.HasAggFlag(f.Expr) {
 			return true
 		}
 	}
