@@ -333,6 +333,22 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 		},
 	}
 	s.runTests(c, cases)
+
+	// When expression value changed, result set back to null.
+	valExpr := ast.NewValueExpr(1)
+	whenClause := &ast.WhenClause{Expr: ast.NewValueExpr(1), Result: ast.NewValueExpr(1)}
+	caseExpr := &ast.CaseExpr{
+		Value:       valExpr,
+		WhenClauses: []*ast.WhenClause{whenClause},
+	}
+	ctx := mock.NewContext()
+	v, err := Eval(ctx, caseExpr)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, 1)
+	valExpr.SetValue(4)
+	v, err = Eval(ctx, caseExpr)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestConvert(c *C) {
