@@ -278,5 +278,11 @@ func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
 		ci.Decimal = uint8(fld.Decimal)
 	}
 	ci.Type = uint8(fld.Tp)
+
+	// Keep things compatible for old clients.
+	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
+	if ci.Type == mysql.TypeVarchar {
+		ci.Type = mysql.TypeVarString
+	}
 	return
 }
