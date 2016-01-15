@@ -205,6 +205,8 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 	}
 	if v.ElseClause != nil {
 		v.SetValue(v.ElseClause.GetValue())
+	} else {
+		v.SetValue(nil)
 	}
 	return true
 }
