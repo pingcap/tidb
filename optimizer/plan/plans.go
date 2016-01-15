@@ -31,6 +31,12 @@ type TableScan struct {
 	Table  *model.TableInfo
 	Desc   bool
 	Ranges []TableRange
+
+	// AccessConditions can be used to build index range.
+	AccessConditions []ast.ExprNode
+
+	// FilterConditions can be used to filter result.
+	FilterConditions []ast.ExprNode
 }
 
 // Accept implements Plan Accept interface.
@@ -118,6 +124,12 @@ type IndexScan struct {
 
 	// Desc indicates whether the index should be scanned in descending order.
 	Desc bool
+
+	// AccessConditions can be used to build index range.
+	AccessConditions []ast.ExprNode
+
+	// FilterConditions can be used to filter result.
+	FilterConditions []ast.ExprNode
 }
 
 // Accept implements Plan Accept interface.

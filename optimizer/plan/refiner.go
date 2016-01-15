@@ -264,6 +264,8 @@ func (c *conditionChecker) checkColumnExpr(expr ast.ExprNode) bool {
 	if c.pkName.L != "" {
 		return c.pkName.L == cn.Refer.Column.Name.L
 	}
-
-	return cn.Refer.Column.Name.L == c.idx.Columns[c.columnOffset].Name.L
+	if c.idx != nil {
+		return cn.Refer.Column.Name.L == c.idx.Columns[c.columnOffset].Name.L
+	}
+	return true
 }
