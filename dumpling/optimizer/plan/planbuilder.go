@@ -137,7 +137,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	}
 	var p Plan
 	if sel.From != nil {
-		p = b.buildJoin(sel.From.TableRefs)
+		p = b.buildJoin(sel)
 		if b.err != nil {
 			return nil
 		}
@@ -175,7 +175,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			}
 		}
 	}
-	if sel.OrderBy != nil {
+	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items){
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil
@@ -190,8 +190,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildJoin(from *ast.Join) Plan {
-	// Only support single table for now.
+func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
+	from := sel.From.TableRefs
+	if from.Right != nil {
+		return ErrUnsupportedType.Gen("Only support single table for now.")
+	}
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", from.Left)
@@ -202,22 +205,140 @@ func (b *planBuilder) buildJoin(from *ast.Join) Plan {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", ts.Source)
 		return nil
 	}
+	conditions := splitWhere(sel.Where)
+	candidates := b.buildAllAccessMethodsPlan(tn, conditions)
+	var bestPlan Plan
+	var lowestCost float64
+	for _, v := range candidates {
+		cost := EstimateCost(b.buildPseudoSelectPlan(v, sel))
+		if bestPlan == nil {
+			bestPlan = v
+			lowestCost = cost
+		}
+		if cost < lowestCost {
+			bestPlan = v
+			lowestCost = cost
+		}
+	}
+	return bestPlan
+}
+
+func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []ast.ExprNode) []Plan {
+	var candidates []Plan
 	p := &TableScan{
 		Table:  tn.TableInfo,
-		Ranges: []TableRange{{math.MinInt64, math.MaxInt64}},
 	}
 	p.SetFields(tn.GetResultFields())
+	var pkName model.CIStr
+	if p.Table.PKIsHandle {
+		for _, colInfo := range p.Table.Columns {
+			if mysql.HasPriKeyFlag(colInfo.Flag) {
+				pkName = colInfo.Name
+			}
+		}
+	}
+	for _, con := range conditions {
+		checker := conditionChecker{tableName: tn.TableInfo.Name, pkName: pkName}
+		if checker.check(con) {
+			p.AccessConditions = append(p.AccessConditions, con)
+		} else {
+			p.FilterConditions = append(p.FilterConditions, con)
+		}
+	}
+	candidates = append(candidates, p)
+
+	for _, index := range tn.TableInfo.Indices {
+		ip := &IndexScan{Table: tn.TableInfo, Index: index}
+		ip.SetFields(tn.GetResultFields())
+		// Only use first column as access condition for cost estimation,
+		// In executor, we can try to use second index column to build index range.
+		checker := conditionChecker{tableName: tn.TableInfo.Name, idx:index, columnOffset: 0}
+		for _, con := range conditions {
+			if checker.check(con) {
+				ip.AccessConditions = append(ip.AccessConditions, con)
+			} else {
+				ip.FilterConditions = append(ip.FilterConditions, con)
+			}
+		}
+		candidates = append(candidates, ip)
+	}
+	return candidates
+}
+
+func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
+	if sel.OrderBy == nil {
+		return p
+	}
+	if sel.GroupBy != nil {
+		return p
+	}
+	if !matchOrder(p, sel.OrderBy.Items) {
+		np := &Sort{ByItems: sel.OrderBy.Items}
+		np.SetSrc(p)
+		p = np
+	}
+	if sel.Limit != nil {
+		np := &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
+		np.SetSrc(p)
+		np.SetLimit(0)
+		p = np
+	}
 	return p
 }
 
+func matchOrder(p Plan, items []*ast.ByItem) bool {
+	switch x := p.(type) {
+	case *TableScan:
+		if len(items) != 1 || !x.Table.PKIsHandle {
+			return false
+		}
+		if items[0].Desc {
+			return false
+		}
+		switch items[0].Expr.(type) {
+		case *ast.ColumnNameExpr:
+		case *ast.PositionExpr:
+		default:
+			return false
+		}
+		if mysql.HasPriKeyFlag(items[0].Expr.GetFlag()) {
+			return true
+		}
+	case *IndexScan:
+		if len(items) > len(x.Index.Columns) {
+			return false
+		}
+		for i, item := range items {
+			if item.Desc {
+				return false
+			}
+			var rf *ast.ResultField
+			switch y := item.Expr.(type) {
+			case *ast.ColumnNameExpr:
+				rf = y.Refer
+			case *ast.PositionExpr:
+				rf = y.Refer
+			}
+			if rf == nil {
+				return false
+			}
+			if rf.Table.Name.L != x.Table.Name.L || rf.Column.Name.L != x.Index.Columns[i].Name.L {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // splitWhere split a where expression to a list of AND conditions.
-func (b *planBuilder) splitWhere(where ast.ExprNode) []ast.ExprNode {
+func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	var conditions []ast.ExprNode
 	switch x := where.(type) {
 	case *ast.BinaryOperationExpr:
 		if x.Op == opcode.AndAnd {
 			conditions = append(conditions, x.L)
-			conditions = append(conditions, b.splitWhere(x.R)...)
+			conditions = append(conditions, splitWhere(x.R)...)
 		} else {
 			conditions = append(conditions, x)
 		}
@@ -229,7 +350,7 @@ func (b *planBuilder) splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 func (b *planBuilder) buildFilter(src Plan, where ast.ExprNode) *Filter {
 	filter := &Filter{
-		Conditions: b.splitWhere(where),
+		Conditions: splitWhere(where),
 	}
 	filter.SetSrc(src)
 	filter.SetFields(src.Fields())
