@@ -146,47 +146,64 @@ func IsDataItem(d interface{}) bool {
 
 // DefaultTypeForValue returns the default FieldType for the value.
 func DefaultTypeForValue(value interface{}) *FieldType {
+	var tp *FieldType
 	switch x := value.(type) {
 	case nil:
-		return NewFieldType(mysql.TypeNull)
+		tp = NewFieldType(mysql.TypeNull)
 	case bool, int64, int:
-		return NewFieldType(mysql.TypeLonglong)
+		tp = NewFieldType(mysql.TypeLonglong)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case uint64:
-		tp := NewFieldType(mysql.TypeLonglong)
+		tp = NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
-		return tp
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case string:
-		tp := NewFieldType(mysql.TypeVarchar)
+		tp = NewFieldType(mysql.TypeVarchar)
 		tp.Charset = mysql.DefaultCharset
 		tp.Collate = mysql.DefaultCollationName
-		return tp
 	case float64:
-		return NewFieldType(mysql.TypeNewDecimal)
+		tp = NewFieldType(mysql.TypeNewDecimal)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case []byte:
-		tp := NewFieldType(mysql.TypeBlob)
+		tp = NewFieldType(mysql.TypeBlob)
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-		return tp
 	case mysql.Bit:
-		return NewFieldType(mysql.TypeBit)
-	case mysql.Hex:
-		tp := NewFieldType(mysql.TypeVarchar)
+		tp = NewFieldType(mysql.TypeBit)
 		tp.Charset = charset.CharsetBin
 		tp.Collate = charset.CharsetBin
-		return tp
+	case mysql.Hex:
+		tp = NewFieldType(mysql.TypeVarchar)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case mysql.Time:
-		return NewFieldType(x.Type)
+		tp = NewFieldType(x.Type)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case mysql.Duration:
-		return NewFieldType(mysql.TypeDuration)
+		tp = NewFieldType(mysql.TypeDuration)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case mysql.Decimal:
-		return NewFieldType(mysql.TypeNewDecimal)
+		tp = NewFieldType(mysql.TypeNewDecimal)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case mysql.Enum:
-		return NewFieldType(mysql.TypeEnum)
+		tp = NewFieldType(mysql.TypeEnum)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case mysql.Set:
-		return NewFieldType(mysql.TypeSet)
+		tp = NewFieldType(mysql.TypeSet)
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CharsetBin
 	case *DataItem:
-		return x.Type
+		tp = x.Type
+	default:
+		tp = NewFieldType(mysql.TypeDecimal)
+		log.Errorf("Unknown value type %T for default field type.", value)
 	}
-	log.Errorf("Unknown value type %T for default field type.", value)
-	return nil
+	return tp
 }

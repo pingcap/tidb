@@ -19,18 +19,22 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // InferType infers result type for ast.ExprNode.
 func InferType(node ast.Node) error {
 	var inferrer typeInferrer
+	// TODO: get the default charset from ctx
+	inferrer.defaultCharset = "utf8"
 	node.Accept(&inferrer)
 	return inferrer.err
 }
 
 type typeInferrer struct {
-	err error
+	err            error
+	defaultCharset string
 }
 
 func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -71,6 +75,10 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
 		v.unaryOperation(x)
+	case *ast.ValueExpr:
+		v.handleValueExpr(x)
+	case *ast.FuncCallExpr:
+		v.handleFuncCallExpr(x)
 		// TODO: handle all expression types.
 	}
 	return in, true
@@ -163,4 +171,75 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 			}
 		}
 	}
+}
+
+func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
+	tp := types.DefaultTypeForValue(x.GetValue())
+	// Set charset and collation
+	x.SetType(tp)
+}
+
+func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
+	if len(x.Args) == 1 {
+		a := x.Args[0].GetValue()
+		fsp, err := types.ToInt64(a)
+		if err != nil {
+			v.err = err
+		}
+		return int(fsp)
+	}
+	return 0
+}
+
+func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
+	var (
+		tp  *types.FieldType
+		chs = charset.CharsetBin
+	)
+	switch x.FnName.L {
+	case "abs":
+		if len(x.Args) > 0 {
+			tp = x.Args[0].GetType()
+		}
+	case "pow", "power", "rand":
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case "curdate", "current_date", "date":
+		tp = types.NewFieldType(mysql.TypeDate)
+	case "curtime", "current_time":
+		tp = types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = v.getFsp(x)
+	case "current_timestamp":
+		tp = types.NewFieldType(mysql.TypeDatetime)
+	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
+		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek",
+		"found_rows", "length":
+		tp = types.NewFieldType(mysql.TypeLonglong)
+	case "now", "sysdate":
+		tp = types.NewFieldType(mysql.TypeDatetime)
+		tp.Decimal = v.getFsp(x)
+	case "dayname", "version", "database", "user", "current_user",
+		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper":
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case "connection_id":
+		tp = types.NewFieldType(mysql.TypeLonglong)
+		tp.Flag |= mysql.UnsignedFlag
+	default:
+		// TypeDecimal means unknown type.
+		// For nullif, we do not know the type.
+		tp = types.NewFieldType(mysql.TypeDecimal)
+	}
+	if len(tp.Charset) == 0 {
+		tp.Charset = chs
+		cln := charset.CollationBin
+		if chs != charset.CharsetBin {
+			var err error
+			cln, err = charset.GetDefaultCollation(chs)
+			if err != nil {
+				v.err = err
+			}
+		}
+		tp.Collate = cln
+	}
+	x.SetType(tp)
 }
