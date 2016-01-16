@@ -34,7 +34,7 @@ var (
 
 // Error codes.
 const (
-	CodeUnsupportedType = iota
+	CodeUnsupportedType terror.ErrCode = 1
 )
 
 // BuildPlan builds a plan from a node.
