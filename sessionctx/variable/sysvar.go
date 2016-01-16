@@ -57,7 +57,7 @@ func GetSysVar(name string) *SysVar {
 // Variable error codes.
 const (
 	CodeUnknownStatusVar terror.ErrCode = 1
-	CodeUnknownSystemVar                = 1193
+	CodeUnknownSystemVar terror.ErrCode = 1193
 )
 
 // Variable errors
