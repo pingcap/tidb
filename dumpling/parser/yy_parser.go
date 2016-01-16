@@ -27,7 +27,7 @@ var (
 
 // Error codes.
 const (
-	CodeSyntaxErr terror.ErrCode = iota + 1
+	CodeSyntaxErr terror.ErrCode = 1
 )
 
 // Parse parses a query string to raw ast.StmtNode.

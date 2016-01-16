@@ -25,8 +25,8 @@ import (
 // KV error codes.
 const (
 	CodeIncompatibleDBFormat terror.ErrCode = 1
-	CodeNoDataForHandle                     = 2
-	CodeKeyExists                           = 3
+	CodeNoDataForHandle      terror.ErrCode = 2
+	CodeKeyExists            terror.ErrCode = 3
 )
 
 var (
