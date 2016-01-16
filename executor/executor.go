@@ -60,11 +60,11 @@ var (
 
 // Error codes.
 const (
-	CodeUnknownPlan terror.ErrCode = iota
-	CodePrepareMulti
-	CodeStmtNotFound
-	CodeSchemaChanged
-	CodeWrongParamCount
+	CodeUnknownPlan     terror.ErrCode = 1
+	CodePrepareMulti    terror.ErrCode = 2
+	CodeStmtNotFound    terror.ErrCode = 3
+	CodeSchemaChanged   terror.ErrCode = 4
+	CodeWrongParamCount terror.ErrCode = 5
 )
 
 // Row represents a record row.
