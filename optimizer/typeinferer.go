@@ -19,18 +19,22 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // InferType infers result type for ast.ExprNode.
 func InferType(node ast.Node) error {
 	var inferrer typeInferrer
+	// TODO: get the default charset from ctx
+	inferrer.defaultCharset = "utf8"
 	node.Accept(&inferrer)
 	return inferrer.err
 }
 
 type typeInferrer struct {
-	err error
+	err            error
+	defaultCharset string
 }
 
 func (v *typeInferrer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -43,34 +47,65 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.aggregateFunc(x)
 	case *ast.BetweenExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.BinaryOperationExpr:
 		v.binaryOperation(x)
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.ExistsSubqueryExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
+	case *ast.FuncCallExpr:
+		v.handleFuncCallExpr(x)
 	case *ast.FuncCastExpr:
 		x.SetType(x.Tp)
+		if len(x.Type.Charset) == 0 {
+			x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
+		}
 	case *ast.IsNullExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.IsTruthExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.ParamMarkerExpr:
 		x.SetType(types.DefaultTypeForValue(x.GetValue()))
 	case *ast.ParenthesesExpr:
 		x.SetType(x.Expr.GetType())
 	case *ast.PatternInExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.PatternLikeExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.PatternRegexpExpr:
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
+		x.Type.Charset = charset.CharsetBin
+		x.Type.Collate = charset.CollationBin
 	case *ast.SelectStmt:
 		v.selectStmt(x)
 	case *ast.UnaryOperationExpr:
 		v.unaryOperation(x)
+	case *ast.ValueExpr:
+		v.handleValueExpr(x)
+	case *ast.VariableExpr:
+		x.SetType(types.NewFieldType(mysql.TypeVarString))
+		x.Type.Charset = v.defaultCharset
+		cln, err := charset.GetDefaultCollation(v.defaultCharset)
+		if err != nil {
+			v.err = err
+		}
+		x.Type.Collate = cln
 		// TODO: handle all expression types.
 	}
 	return in, true
@@ -93,6 +128,8 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 	case "count":
 		ft := types.NewFieldType(mysql.TypeLonglong)
 		ft.Flen = 21
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
 		x.SetType(ft)
 	}
 }
@@ -126,6 +163,8 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 			x.Type = types.NewFieldType(xTp)
 		}
 	}
+	x.Type.Charset = charset.CharsetBin
+	x.Type.Collate = charset.CollationBin
 }
 
 func mergeArithType(a, b byte) byte {
@@ -163,4 +202,76 @@ func (v *typeInferrer) unaryOperation(x *ast.UnaryOperationExpr) {
 			}
 		}
 	}
+	x.Type.Charset = charset.CharsetBin
+	x.Type.Collate = charset.CollationBin
+}
+
+func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
+	tp := types.DefaultTypeForValue(x.GetValue())
+	// Set charset and collation
+	x.SetType(tp)
+}
+
+func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
+	if len(x.Args) == 1 {
+		a := x.Args[0].GetValue()
+		fsp, err := types.ToInt64(a)
+		if err != nil {
+			v.err = err
+		}
+		return int(fsp)
+	}
+	return 0
+}
+
+func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
+	var (
+		tp  *types.FieldType
+		chs = charset.CharsetBin
+	)
+	switch x.FnName.L {
+	case "abs", "ifnull", "nullif":
+		tp = x.Args[0].GetType()
+	case "pow", "power", "rand":
+		tp = types.NewFieldType(mysql.TypeDouble)
+	case "curdate", "current_date", "date":
+		tp = types.NewFieldType(mysql.TypeDate)
+	case "curtime", "current_time":
+		tp = types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = v.getFsp(x)
+	case "current_timestamp":
+		tp = types.NewFieldType(mysql.TypeDatetime)
+	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
+		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek",
+		"found_rows", "length":
+		tp = types.NewFieldType(mysql.TypeLonglong)
+	case "now", "sysdate":
+		tp = types.NewFieldType(mysql.TypeDatetime)
+		tp.Decimal = v.getFsp(x)
+	case "dayname", "version", "database", "user", "current_user",
+		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper":
+		tp = types.NewFieldType(mysql.TypeVarString)
+		chs = v.defaultCharset
+	case "connection_id":
+		tp = types.NewFieldType(mysql.TypeLonglong)
+		tp.Flag |= mysql.UnsignedFlag
+	case "if":
+		tp = x.Args[1].GetType()
+	default:
+		tp = types.NewFieldType(mysql.TypeUnspecified)
+	}
+	// If charset is unspecified.
+	if len(tp.Charset) == 0 {
+		tp.Charset = chs
+		cln := charset.CollationBin
+		if chs != charset.CharsetBin {
+			var err error
+			cln, err = charset.GetDefaultCollation(chs)
+			if err != nil {
+				v.err = err
+			}
+		}
+		tp.Collate = cln
+	}
+	x.SetType(tp)
 }

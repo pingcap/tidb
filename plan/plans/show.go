@@ -80,8 +80,8 @@ func (s *ShowPlan) Explain(w format.Formatter) {
 // GetFields implements plan.Plan GetFields interface.
 func (s *ShowPlan) GetFields() []*field.ResultField {
 	var (
-		names []string
-		types []byte
+		names  []string
+		ftypes []byte
 	)
 
 	switch s.Target {
@@ -99,7 +99,7 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
 			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
 			"Create_options", "Comment"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar}
@@ -107,17 +107,17 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 		names = column.ColDescFieldNames(s.Full)
 	case stmt.ShowWarnings:
 		names = []string{"Level", "Code", "Message"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case stmt.ShowCharset:
 		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowVariables:
 		names = []string{"Variable_name", "Value"}
 	case stmt.ShowStatus:
 		names = []string{"Variable_name", "Value"}
 	case stmt.ShowCollation:
 		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case stmt.ShowCreateTable:
 		names = []string{"Table", "Create Table"}
@@ -126,29 +126,29 @@ func (s *ShowPlan) GetFields() []*field.ResultField {
 	case stmt.ShowTriggers:
 		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
 			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case stmt.ShowProcedureStatus:
 		names = []string{}
-		types = []byte{}
+		ftypes = []byte{}
 	case stmt.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
 			"Null", "Index_type", "Comment", "Index_comment"}
-		types = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 	fields := make([]*field.ResultField, 0, len(names))
 	for i, name := range names {
 		f := &field.ResultField{Name: name}
-		if types == nil || types[i] == 0 {
+		if ftypes == nil || ftypes[i] == 0 {
 			// use varchar as the default return column type
 			f.Col.Tp = mysql.TypeVarchar
 		} else {
-			f.Col.Tp = types[i]
+			f.Col.Tp = ftypes[i]
 		}
-
+		f.Col.Charset, f.Col.Collate = types.DefaultCharsetForType(f.Col.Tp)
 		fields = append(fields, f)
 	}
 
