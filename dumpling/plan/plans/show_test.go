@@ -106,6 +106,10 @@ func (p *testShowSuit) TestSimple(c *C) {
 	pln.Target = stmt.ShowCreateTable
 	fls = pln.GetFields()
 	c.Assert(fls, HasLen, 2)
+	// Make sure result fields contains charset info
+	for _, f := range fls {
+		c.Assert(len(f.Col.Charset), Greater, 0)
+	}
 }
 
 func (p *testShowSuit) TestShowSysVariables(c *C) {
