@@ -909,7 +909,7 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t(c int)")
+	mustExecSQL(c, se, "create table t(c int, index(c))")
 	mustExecSQL(c, se, "insert into t values (1),(2),(3),(-11),(11),(123),(211),(210)")
 	mustExecSQL(c, se, "insert into t values ()")
 
@@ -917,6 +917,8 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 6)
+
+	mustExecSQL(c, se, "select c from t where c like binary('abc')")
 }
 
 func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
