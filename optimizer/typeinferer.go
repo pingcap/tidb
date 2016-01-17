@@ -98,6 +98,14 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.unaryOperation(x)
 	case *ast.ValueExpr:
 		v.handleValueExpr(x)
+	case *ast.VariableExpr:
+		x.SetType(types.NewFieldType(mysql.TypeVarString))
+		x.Type.Charset = v.defaultCharset
+		cln, err := charset.GetDefaultCollation(v.defaultCharset)
+		if err != nil {
+			v.err = err
+		}
+		x.Type.Collate = cln
 		// TODO: handle all expression types.
 	}
 	return in, true
