@@ -61,6 +61,8 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.SetType(types.NewFieldType(mysql.TypeLonglong))
 		x.Type.Charset = charset.CharsetBin
 		x.Type.Collate = charset.CollationBin
+	case *ast.FuncCallExpr:
+		v.handleFuncCallExpr(x)
 	case *ast.FuncCastExpr:
 		x.SetType(x.Tp)
 		if len(x.Type.Charset) == 0 {
@@ -96,8 +98,6 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.unaryOperation(x)
 	case *ast.ValueExpr:
 		v.handleValueExpr(x)
-	case *ast.FuncCallExpr:
-		v.handleFuncCallExpr(x)
 		// TODO: handle all expression types.
 	}
 	return in, true
@@ -250,10 +250,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "if":
 		tp = x.Args[1].GetType()
 	default:
-		// TypeDecimal means unknown type.
-		// For nullif, we do not know the type.
-		tp = types.NewFieldType(mysql.TypeDecimal)
+		tp = types.NewFieldType(mysql.TypeUnspecified)
 	}
+	// If charset is unspecified.
 	if len(tp.Charset) == 0 {
 		tp.Charset = chs
 		cln := charset.CollationBin
