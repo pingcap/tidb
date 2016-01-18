@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Refine tries to build index range, bypass sort, set limit for source plan.
@@ -222,7 +223,14 @@ func (c *conditionChecker) check(condition ast.ExprNode) bool {
 		if !ast.IsPreEvaluable(x.Pattern) {
 			return false
 		}
-		patternStr := x.Pattern.GetValue().(string)
+		patternVal := x.Pattern.GetValue()
+		if patternVal == nil {
+			return false
+		}
+		patternStr, err := types.ToString(patternVal)
+		if err != nil {
+			return false
+		}
 		firstChar := patternStr[0]
 		return firstChar != '%' && firstChar != '.'
 	}
