@@ -435,8 +435,7 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 				rf = y.Refer
 			case *ast.PositionExpr:
 				rf = y.Refer
-			}
-			if rf == nil {
+			default:
 				return false
 			}
 			if rf.Table.Name.L != x.Table.Name.L || rf.Column.Name.L != x.Index.Columns[i].Name.L {
