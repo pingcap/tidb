@@ -249,11 +249,13 @@ func (n *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.SubStr = node.(ExprNode)
-	node, ok = n.Pos.Accept(v)
-	if !ok {
-		return n, false
+	if n.Pos != nil {
+		node, ok = n.Pos.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Pos = node.(ExprNode)
 	}
-	n.Pos = node.(ExprNode)
 	return v.Leave(n)
 }
 
