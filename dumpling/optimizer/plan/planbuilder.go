@@ -79,6 +79,11 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 			return true
 		}
 	}
+	if sel.Having != nil {
+		if ast.HasAggFlag(sel.Having.Expr) {
+			return true
+		}
+	}
 	return false
 }
 
