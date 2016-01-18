@@ -183,6 +183,10 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			exprStr:   `(a < 0 OR a > 3) AND (a < 1 OR a > 4)`,
 			resultStr: `[[-inf 0) (4 +inf]]`,
 		},
+		{
+			exprStr:   `a > NULL`,
+			resultStr: `[]`,
+		},
 	}
 
 	for _, ca := range cases {
