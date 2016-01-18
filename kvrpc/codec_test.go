@@ -39,8 +39,8 @@ func (s *testCodecSuite) TestCodec(c *C) {
 	c.Assert(err, IsNil)
 
 	m2 := &kp.Request{}
-	msgId, err := DecodeMessage(buf, m2)
+	msgID, err := DecodeMessage(buf, m2)
 	c.Assert(err, IsNil)
-	c.Assert(msgId, Equals, uint64(42))
+	c.Assert(msgID, Equals, uint64(42))
 	c.Assert(*m1.Type, Equals, *m2.Type)
 }

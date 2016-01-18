@@ -28,19 +28,23 @@ import (
 	"github.com/ngaut/log"
 )
 
+// RPCMsgHeader public header of all message
 type RPCMsgHeader struct {
 	MsgMagic   uint16
 	MsgVersion uint16
 	MsgLen     uint32
-	MsgId      uint64
+	MsgID      uint64
 }
 
 var (
-	MsgMagic      uint16 = 0xdaf4
-	MsgVersion_v1 uint16 = 1
-	_msgHeader           = RPCMsgHeader{}
+	// MsgMagic a fix identifier of message
+	MsgMagic uint16 = 0xdaf4
+	// MsgVersionV1 message version 1
+	MsgVersionV1 uint16 = 1
+	_msgHeader          = RPCMsgHeader{}
 )
 
+// MsgHeaderSize sizeof(RPCMsgHeader)
 // Check this value if migrate other OS, like Windows.
 const MsgHeaderSize int = int(unsafe.Sizeof(_msgHeader))
 
@@ -51,25 +55,25 @@ const MsgHeaderSize int = int(unsafe.Sizeof(_msgHeader))
 //  |                      msg_id (8 bytes)                       |
 // All use bigendian.
 // Payload is a protobuf message.
-func EncodeMessage(w io.Writer, msgId uint64, m proto.Message) error {
+func EncodeMessage(w io.Writer, msgID uint64, m proto.Message) error {
 	buf, err := proto.Marshal(m)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Construct tikv protocol.
-	var bufLen uint32 = uint32(len(buf))
+	var bufLen = uint32(len(buf))
 	sendBuf := new(bytes.Buffer)
 	binary.Write(sendBuf, binary.BigEndian, MsgMagic)
-	binary.Write(sendBuf, binary.BigEndian, MsgVersion_v1)
+	binary.Write(sendBuf, binary.BigEndian, MsgVersionV1)
 	binary.Write(sendBuf, binary.BigEndian, bufLen)
-	binary.Write(sendBuf, binary.BigEndian, msgId)
+	binary.Write(sendBuf, binary.BigEndian, msgID)
 	binary.Write(sendBuf, binary.BigEndian, buf)
 
 	w.Write(sendBuf.Bytes())
 	return nil
 }
 
-func decodeMsgHeader(r io.Reader) (msgId uint64, payloadLen uint32, err error) {
+func decodeMsgHeader(r io.Reader) (msgID uint64, payloadLen uint32, err error) {
 	buf := make([]byte, MsgHeaderSize)
 	n, err := r.Read(buf)
 	if err != nil {
@@ -86,11 +90,11 @@ func decodeMsgHeader(r io.Reader) (msgId uint64, payloadLen uint32, err error) {
 		return 0, 0, errors.Errorf("expect message magic at least %04x instead of %04x",
 			MsgMagic, msgHeader.MsgMagic)
 	}
-	if MsgVersion_v1 != msgHeader.MsgVersion {
+	if MsgVersionV1 != msgHeader.MsgVersion {
 		return 0, 0, errors.Errorf("message version dismatch expected %d instead of %d",
-			MsgVersion_v1, msgHeader.MsgVersion)
+			MsgVersionV1, msgHeader.MsgVersion)
 	}
-	return msgHeader.MsgId, msgHeader.MsgLen, nil
+	return msgHeader.MsgID, msgHeader.MsgLen, nil
 }
 
 func decodeMsgBody(r io.Reader, payloadLen uint32, m proto.Message) error {
@@ -112,7 +116,7 @@ func decodeMsgBody(r io.Reader, payloadLen uint32, m proto.Message) error {
 // DecodeMessage Decodes message with above encoded format, returns message ID
 // and fill proto message.
 func DecodeMessage(r io.Reader, m proto.Message) (uint64, error) {
-	msgId, payloadLen, err := decodeMsgHeader(r)
+	msgID, payloadLen, err := decodeMsgHeader(r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -120,5 +124,5 @@ func DecodeMessage(r io.Reader, m proto.Message) (uint64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return msgId, nil
+	return msgID, nil
 }
