@@ -180,7 +180,6 @@ func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 	}
 	switch job.Type {
 	case model.ActionDropSchema, model.ActionDropTable:
-		//	model.ActionDropColumn, model.ActionDropIndex:
 		if err = d.prepareTask(job); err != nil {
 			return errors.Trace(err)
 		}

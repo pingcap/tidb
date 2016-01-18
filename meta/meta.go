@@ -494,7 +494,6 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 // GetDDLJob returns the DDL job with index.
 func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
 	job, err := m.getDDLJob(mDDLJobListKey, index)
-
 	return job, errors.Trace(err)
 }
 

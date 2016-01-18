@@ -118,7 +118,7 @@ func (d *ddl) prepareTask(job *model.Job) error {
 func (d *ddl) startTask(tp model.ActionType) {
 	switch tp {
 	case model.ActionDropSchema, model.ActionDropTable:
-		asyncNotify(d.taskCh)
+		asyncNotify(d.dropTaskCh)
 	}
 }
 
@@ -156,7 +156,7 @@ func (d *ddl) onExecute() {
 		select {
 		case <-ticker.C:
 			log.Debugf("[ddl] wait %s to check DDL task status again", checkTime)
-		case <-d.taskCh:
+		case <-d.dropTaskCh:
 		case <-d.quitCh:
 			return
 		}
