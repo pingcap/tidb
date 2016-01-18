@@ -14,15 +14,15 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Refine tries to build index range, bypass sort, set limit for source plan.
-// It prepares the plan for cost estimation.
+// Refine tries to build index or table range.
 func Refine(p Plan) error {
 	r := refiner{}
 	p.Accept(&r)
@@ -30,22 +30,10 @@ func Refine(p Plan) error {
 }
 
 type refiner struct {
-	conditions []ast.ExprNode
-	// store scan plan for sort to use.
-	indexScan *IndexScan
-	tableScan *TableScan
-	err       error
+	err error
 }
 
 func (r *refiner) Enter(in Plan) (Plan, bool) {
-	switch x := in.(type) {
-	case *Filter:
-		r.conditions = x.Conditions
-	case *IndexScan:
-		r.indexScan = x
-	case *TableScan:
-		r.tableScan = x
-	}
 	return in, false
 }
 
@@ -55,64 +43,10 @@ func (r *refiner) Leave(in Plan) (Plan, bool) {
 		r.buildIndexRange(x)
 	case *Limit:
 		x.SetLimit(0)
-	case *Sort:
-		r.sortBypass(x)
 	case *TableScan:
 		r.buildTableRange(x)
 	}
 	return in, r.err == nil
-}
-
-func (r *refiner) sortBypass(p *Sort) {
-	if r.indexScan != nil {
-		idx := r.indexScan.Index
-		if len(p.ByItems) > len(idx.Columns) {
-			return
-		}
-		var desc bool
-		for i, val := range p.ByItems {
-			if val.Desc {
-				desc = true
-			}
-			cn, ok := val.Expr.(*ast.ColumnNameExpr)
-			if !ok {
-				return
-			}
-			if r.indexScan.Table.Name.L != cn.Refer.Table.Name.L {
-				return
-			}
-			indexColumn := idx.Columns[i]
-			if indexColumn.Name.L != cn.Refer.Column.Name.L {
-				return
-			}
-		}
-		if desc {
-			// TODO: support desc when index reverse iterator is supported.
-			r.indexScan.Desc = true
-			return
-		}
-		p.Bypass = true
-	} else if r.tableScan != nil {
-		if len(p.ByItems) != 1 {
-			return
-		}
-		byItem := p.ByItems[0]
-		if byItem.Desc {
-			// TODO: support desc when table reverse iterator is supported.
-			return
-		}
-		cn, ok := byItem.Expr.(*ast.ColumnNameExpr)
-		if !ok {
-			return
-		}
-		if !mysql.HasPriKeyFlag(cn.Refer.Column.Flag) {
-			return
-		}
-		if !cn.Refer.Table.PKIsHandle {
-			return
-		}
-		p.Bypass = true
-	}
 }
 
 var fullRange = []rangePoint{
@@ -122,50 +56,25 @@ var fullRange = []rangePoint{
 
 func (r *refiner) buildIndexRange(p *IndexScan) {
 	rb := rangeBuilder{}
-	for i := 0; i < len(p.Index.Columns); i++ {
-		checker := conditionChecker{idx: p.Index, tableName: p.Table.Name, columnOffset: i}
-		rangePoints := fullRange
-		var columnUsed bool
-		for _, cond := range r.conditions {
-			if checker.check(cond) {
-				rangePoints = rb.intersection(rangePoints, rb.build(cond))
-				columnUsed = true
-			}
-		}
-		if !columnUsed {
-			// For multi-column index, if the prefix column is not used, following columns
-			// can not be used.
-			break
-		}
-		if i == 0 {
-			// Build index range from the first column.
-			p.Ranges = rb.buildIndexRanges(rangePoints)
-		} else {
-			// range built from following columns should be appended to previous ranges.
-			p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
-		}
+	rangePoints := fullRange
+	for _, cond := range p.AccessConditions {
+		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 	}
+	p.Ranges = rb.buildIndexRanges(rangePoints)
+	// TODO: build index range for second column.
 	r.err = rb.err
 	return
 }
 
 func (r *refiner) buildTableRange(p *TableScan) {
-	var pkHandleColumn *model.ColumnInfo
-	for _, colInfo := range p.Table.Columns {
-		if mysql.HasPriKeyFlag(colInfo.Flag) && p.Table.PKIsHandle {
-			pkHandleColumn = colInfo
-		}
-	}
-	if pkHandleColumn == nil {
+	if len(p.AccessConditions) == 0 {
+		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
 		return
 	}
 	rb := rangeBuilder{}
 	rangePoints := fullRange
-	checker := conditionChecker{pkName: pkHandleColumn.Name, tableName: p.Table.Name}
-	for _, cond := range r.conditions {
-		if checker.check(cond) {
-			rangePoints = rb.intersection(rangePoints, rb.build(cond))
-		}
+	for _, cond := range p.AccessConditions {
+		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 	}
 	p.Ranges = rb.buildTableRanges(rangePoints)
 	r.err = rb.err

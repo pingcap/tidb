@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"math"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
@@ -175,7 +173,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			}
 		}
 	}
-	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items){
+	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil
@@ -193,7 +191,8 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	from := sel.From.TableRefs
 	if from.Right != nil {
-		return ErrUnsupportedType.Gen("Only support single table for now.")
+		b.err = ErrUnsupportedType.Gen("Only support single table for now.")
+		return nil
 	}
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
@@ -226,7 +225,7 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []ast.ExprNode) []Plan {
 	var candidates []Plan
 	p := &TableScan{
-		Table:  tn.TableInfo,
+		Table: tn.TableInfo,
 	}
 	p.SetFields(tn.GetResultFields())
 	var pkName model.CIStr
@@ -238,9 +237,13 @@ func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []
 		}
 	}
 	for _, con := range conditions {
-		checker := conditionChecker{tableName: tn.TableInfo.Name, pkName: pkName}
-		if checker.check(con) {
-			p.AccessConditions = append(p.AccessConditions, con)
+		if pkName.L != "" {
+			checker := conditionChecker{tableName: tn.TableInfo.Name, pkName: pkName}
+			if checker.check(con) {
+				p.AccessConditions = append(p.AccessConditions, con)
+			} else {
+				p.FilterConditions = append(p.FilterConditions, con)
+			}
 		} else {
 			p.FilterConditions = append(p.FilterConditions, con)
 		}
@@ -252,7 +255,7 @@ func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []
 		ip.SetFields(tn.GetResultFields())
 		// Only use first column as access condition for cost estimation,
 		// In executor, we can try to use second index column to build index range.
-		checker := conditionChecker{tableName: tn.TableInfo.Name, idx:index, columnOffset: 0}
+		checker := conditionChecker{tableName: tn.TableInfo.Name, idx: index, columnOffset: 0}
 		for _, con := range conditions {
 			if checker.check(con) {
 				ip.AccessConditions = append(ip.AccessConditions, con)
@@ -265,6 +268,7 @@ func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []
 	return candidates
 }
 
+// buildPseudoSelectPlan pre-builds more complete plans that may affect total cost.
 func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 	if sel.OrderBy == nil {
 		return p
@@ -284,68 +288,6 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 		p = np
 	}
 	return p
-}
-
-func matchOrder(p Plan, items []*ast.ByItem) bool {
-	switch x := p.(type) {
-	case *TableScan:
-		if len(items) != 1 || !x.Table.PKIsHandle {
-			return false
-		}
-		if items[0].Desc {
-			return false
-		}
-		switch items[0].Expr.(type) {
-		case *ast.ColumnNameExpr:
-		case *ast.PositionExpr:
-		default:
-			return false
-		}
-		if mysql.HasPriKeyFlag(items[0].Expr.GetFlag()) {
-			return true
-		}
-	case *IndexScan:
-		if len(items) > len(x.Index.Columns) {
-			return false
-		}
-		for i, item := range items {
-			if item.Desc {
-				return false
-			}
-			var rf *ast.ResultField
-			switch y := item.Expr.(type) {
-			case *ast.ColumnNameExpr:
-				rf = y.Refer
-			case *ast.PositionExpr:
-				rf = y.Refer
-			}
-			if rf == nil {
-				return false
-			}
-			if rf.Table.Name.L != x.Table.Name.L || rf.Column.Name.L != x.Index.Columns[i].Name.L {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// splitWhere split a where expression to a list of AND conditions.
-func splitWhere(where ast.ExprNode) []ast.ExprNode {
-	var conditions []ast.ExprNode
-	switch x := where.(type) {
-	case *ast.BinaryOperationExpr:
-		if x.Op == opcode.AndAnd {
-			conditions = append(conditions, x.L)
-			conditions = append(conditions, splitWhere(x.R)...)
-		} else {
-			conditions = append(conditions, x)
-		}
-	default:
-		conditions = append(conditions, where)
-	}
-	return conditions
 }
 
 func (b *planBuilder) buildFilter(src Plan, where ast.ExprNode) *Filter {
@@ -475,4 +417,78 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 		DBName:       model.NewCIStr(infoschema.Name),
 		Expr:         expr,
 	}
+}
+
+// matchOrder checks if the plan has the same ordering as items.
+func matchOrder(p Plan, items []*ast.ByItem) bool {
+	switch x := p.(type) {
+	case *TableScan:
+		if len(items) != 1 || !x.Table.PKIsHandle {
+			return false
+		}
+		if items[0].Desc {
+			return false
+		}
+		var refer *ast.ResultField
+		switch x := items[0].Expr.(type) {
+		case *ast.ColumnNameExpr:
+			refer = x.Refer
+		case *ast.PositionExpr:
+			refer = x.Refer
+		default:
+			return false
+		}
+		if mysql.HasPriKeyFlag(refer.Column.Flag) {
+			return true
+		}
+		return false
+	case *IndexScan:
+		if len(items) > len(x.Index.Columns) {
+			return false
+		}
+		for i, item := range items {
+			if item.Desc {
+				return false
+			}
+			var rf *ast.ResultField
+			switch y := item.Expr.(type) {
+			case *ast.ColumnNameExpr:
+				rf = y.Refer
+			case *ast.PositionExpr:
+				rf = y.Refer
+			}
+			if rf == nil {
+				return false
+			}
+			if rf.Table.Name.L != x.Table.Name.L || rf.Column.Name.L != x.Index.Columns[i].Name.L {
+				return false
+			}
+		}
+		return true
+	case *Aggregate:
+		return false
+	case *Sort:
+		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.
+		return false
+	case WithSrcPlan:
+		return matchOrder(x.Src(), items)
+	}
+	return true
+}
+
+// splitWhere split a where expression to a list of AND conditions.
+func splitWhere(where ast.ExprNode) []ast.ExprNode {
+	var conditions []ast.ExprNode
+	switch x := where.(type) {
+	case *ast.BinaryOperationExpr:
+		if x.Op == opcode.AndAnd {
+			conditions = append(conditions, x.L)
+			conditions = append(conditions, splitWhere(x.R)...)
+		} else {
+			conditions = append(conditions, x)
+		}
+	default:
+		conditions = append(conditions, where)
+	}
+	return conditions
 }

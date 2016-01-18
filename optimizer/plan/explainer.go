@@ -53,9 +53,6 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 	case *ShowDDL:
 		str = "ShowDDL"
 	case *Sort:
-		if x.Bypass {
-			return in, true
-		}
 		str = "Sort"
 	case *TableScan:
 		if len(x.Ranges) > 0 {

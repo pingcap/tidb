@@ -233,10 +233,6 @@ type Sort struct {
 	planWithSrc
 
 	ByItems []*ast.ByItem
-	// If the source is already in the same order, the sort process can be by passed.
-	// It depends on the Src plan, so if the Src plan has been modified, Bypass needs
-	// to be recalculated.
-	Bypass bool
 }
 
 // Accept implements Plan Accept interface.
@@ -259,9 +255,6 @@ func (p *Sort) Accept(v Visitor) (Plan, bool) {
 // Bypass has to be determined before this get called.
 func (p *Sort) SetLimit(limit float64) {
 	p.limit = limit
-	if p.Bypass {
-		p.src.SetLimit(limit)
-	}
 }
 
 // Limit represents offset and limit plan.

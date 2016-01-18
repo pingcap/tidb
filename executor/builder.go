@@ -213,9 +213,6 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 	src := b.build(v.Src())
-	if v.Bypass && !v.ByItems[0].Desc {
-		return src
-	}
 	e := &SortExec{
 		Src:     src,
 		ByItems: v.ByItems,
