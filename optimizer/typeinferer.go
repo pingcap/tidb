@@ -51,6 +51,8 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		x.Type.Collate = charset.CollationBin
 	case *ast.BinaryOperationExpr:
 		v.binaryOperation(x)
+	case *ast.CaseExpr:
+		v.handleCaseExpr(x)
 	case *ast.ColumnNameExpr:
 		x.SetType(&x.Refer.Column.FieldType)
 	case *ast.CompareSubqueryExpr:
@@ -256,6 +258,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
 	case "if":
+		// TODO: fix this
+		// See: https://dev.mysql.com/doc/refman/5.5/en/control-flow-functions.html#function_if
+		// The default return type of IF() (which may matter when it is stored into a temporary table) is calculated as follows.
+		// Expression	Return Value
+		// expr2 or expr3 returns a string	string
+		// expr2 or expr3 returns a floating-point value	floating-point
+		// expr2 or expr3 returns an integer	integer
 		tp = x.Args[1].GetType()
 	default:
 		tp = types.NewFieldType(mysql.TypeUnspecified)
@@ -274,4 +283,42 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Collate = cln
 	}
 	x.SetType(tp)
+}
+
+// The return type of a CASE expression is the compatible aggregated type of all return values,
+// but also depends on the context in which it is used.
+// If used in a string context, the result is returned as a string.
+// If used in a numeric context, the result is returned as a decimal, real, or integer value.
+func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
+	var currType *types.FieldType
+	for _, w := range x.WhenClauses {
+		t := w.Result.GetType()
+		if currType == nil {
+			currType = t
+			continue
+		}
+		mtp := types.MergeFieldType(currType.Tp, t.Tp)
+		if mtp == t.Tp && mtp != currType.Tp {
+			currType.Charset = t.Charset
+			currType.Collate = t.Collate
+		}
+		currType.Tp = mtp
+
+	}
+	if x.ElseClause != nil {
+		t := x.ElseClause.GetType()
+		if currType == nil {
+			currType = t
+		} else {
+			mtp := types.MergeFieldType(currType.Tp, t.Tp)
+			if mtp == t.Tp && mtp != currType.Tp {
+				currType.Charset = t.Charset
+				currType.Collate = t.Collate
+			}
+			currType.Tp = mtp
+		}
+	}
+	x.SetType(currType)
+	// TODO: We need a better way to set charset/collation
+	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
 }
