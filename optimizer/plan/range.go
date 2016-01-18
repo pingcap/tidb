@@ -163,6 +163,9 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 		value = x.R.GetValue()
 		op = x.Op
 	}
+	if value == nil {
+		return nil
+	}
 	switch op {
 	case opcode.EQ:
 		startPoint := rangePoint{value: value, start: true}
