@@ -18,13 +18,24 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
+const (
+	rateFull          = 1
+	rateEqual         = 0.001
+	rateNotEqual      = 0.999
+	rateBetween       = 0.3
+	rateGreaterOrLess = 0.4
+	rateIsFalse       = 0.01
+	rateIsNull        = 0.01
+	rateLike          = 0.1
+)
+
 // computeFilterRate computes the filter rate for an expression.
 // It only depends on the expression type, not the expression value.
 // The expr parameter should contains only one column name.
 func computeFilterRate(expr ast.ExprNode) float64 {
 	switch x := expr.(type) {
 	case *ast.BetweenExpr:
-		return computeBetweenFilterRate(x)
+		return rateBetween
 	case *ast.BinaryOperationExpr:
 		return computeBinopFilterRate(x)
 	case *ast.IsNullExpr:
@@ -38,13 +49,9 @@ func computeFilterRate(expr ast.ExprNode) float64 {
 	case *ast.PatternLikeExpr:
 		return computePatternLikeFilterRate(x)
 	case *ast.ColumnNameExpr:
-		return 1
+		return rateFull
 	}
-	return 1
-}
-
-func computeBetweenFilterRate(expr *ast.BetweenExpr) float64 {
-	return 0.3
+	return rateFull
 }
 
 func computeBinopFilterRate(expr *ast.BinaryOperationExpr) float64 {
@@ -53,33 +60,54 @@ func computeBinopFilterRate(expr *ast.BinaryOperationExpr) float64 {
 		return computeFilterRate(expr.L) * computeFilterRate(expr.R)
 	case opcode.OrOr:
 		rate := computeFilterRate(expr.L) + computeFilterRate(expr.R)
-		if rate > 1 {
-			rate = 1
+		if rate > rateFull {
+			rate = rateFull
 		}
 		return rate
 	case opcode.EQ:
-		return 0.001
+		return rateEqual
 	case opcode.GT, opcode.GE, opcode.LT, opcode.LE:
-		return 0.4
+		return rateGreaterOrLess
+	case opcode.NE:
+		return rateNotEqual
 	}
 	return 1
 }
 
 func computeIsNullFilterRate(expr *ast.IsNullExpr) float64 {
-	return 0.01
+	if expr.Not {
+		return rateFull - rateIsNull
+	}
+	return rateIsNull
 }
 
 func computeIsTrueFilterRate(expr *ast.IsTruthExpr) float64 {
-	return 0.9
+	if expr.True == 0 {
+		if expr.Not {
+			return rateFull - rateIsFalse
+		}
+		return rateIsFalse
+	}
+	if expr.Not {
+		return rateIsFalse + rateIsNull
+	}
+	return rateFull - rateIsFalse - rateIsNull
 }
 
 func computePatternInFilterRate(expr *ast.PatternInExpr) float64 {
 	if len(expr.List) > 0 {
-		return 0.01 * float64(len(expr.List))
+		rate := rateEqual * float64(len(expr.List))
+		if expr.Not {
+			return rateFull - rate
+		}
+		return rate
 	}
-	return 1
+	return rateFull
 }
 
 func computePatternLikeFilterRate(expr *ast.PatternLikeExpr) float64 {
-	return 0.1
+	if expr.Not {
+		return rateFull - rateLike
+	}
+	return rateLike
 }
