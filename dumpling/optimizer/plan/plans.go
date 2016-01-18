@@ -138,38 +138,6 @@ func (p *IndexScan) Accept(v Visitor) (Plan, bool) {
 	return v.Leave(np)
 }
 
-// Filter represents a filter plan.
-type Filter struct {
-	planWithSrc
-
-	// Originally the WHERE or ON condition is parsed into a single expression,
-	// but after we converted to CNF(Conjunctive normal form), it can be
-	// split into a list of AND conditions.
-	Conditions []ast.ExprNode
-}
-
-// Accept implements Plan Accept interface.
-func (p *Filter) Accept(v Visitor) (Plan, bool) {
-	np, skip := v.Enter(p)
-	if skip {
-		v.Leave(np)
-	}
-	p = np.(*Filter)
-	var ok bool
-	p.src, ok = p.src.Accept(v)
-	if !ok {
-		return p, false
-	}
-	return v.Leave(p)
-}
-
-// SetLimit implements Plan SetLimit interface.
-func (p *Filter) SetLimit(limit float64) {
-	p.limit = limit
-	// We assume 50% of the src row is filtered out.
-	p.src.SetLimit(limit * 2)
-}
-
 // SelectLock represents a select lock plan.
 type SelectLock struct {
 	planWithSrc

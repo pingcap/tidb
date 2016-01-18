@@ -139,12 +139,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		if b.err != nil {
 			return nil
 		}
-		if sel.Where != nil {
-			p = b.buildFilter(p, sel.Where)
-			if b.err != nil {
-				return nil
-			}
-		}
 		if sel.LockTp != ast.SelectLockNone {
 			p = b.buildSelectLock(p, sel.LockTp)
 			if b.err != nil {
@@ -165,12 +159,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
 			return nil
-		}
-		if sel.Where != nil {
-			p = b.buildFilter(p, sel.Where)
-			if b.err != nil {
-				return nil
-			}
 		}
 	}
 	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
@@ -288,15 +276,6 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 		p = np
 	}
 	return p
-}
-
-func (b *planBuilder) buildFilter(src Plan, where ast.ExprNode) *Filter {
-	filter := &Filter{
-		Conditions: splitWhere(where),
-	}
-	filter.SetSrc(src)
-	filter.SetFields(src.Fields())
-	return filter
 }
 
 func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *SelectLock {
@@ -480,6 +459,7 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	var conditions []ast.ExprNode
 	switch x := where.(type) {
+	case nil:
 	case *ast.BinaryOperationExpr:
 		if x.Op == opcode.AndAnd {
 			conditions = append(conditions, x.L)

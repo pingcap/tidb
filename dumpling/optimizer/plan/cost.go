@@ -40,10 +40,6 @@ func (c *costEstimator) Enter(p Plan) (Plan, bool) {
 // Leave implements Visitor Leave interface.
 func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 	switch v := p.(type) {
-	case *Filter:
-		v.startupCost = v.Src().StartupCost()
-		v.rowCount = v.Src().RowCount() * FilterRate
-		v.totalCost = v.Src().TotalCost()
 	case *IndexScan:
 		c.indexScan(v)
 	case *Limit:

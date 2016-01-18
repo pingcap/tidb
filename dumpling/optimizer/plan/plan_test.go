@@ -15,7 +15,6 @@ package plan
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -198,64 +197,35 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestBuilder(c *C) {
-	c.Skip("for new builder")
+func (s *testPlanSuite) TestFilterRate(c *C) {
 	cases := []struct {
-		sqlStr  string
-		planStr string
+		expr string
+		rate float64
 	}{
-		{
-			sqlStr:  "select 1",
-			planStr: "Fields",
-		},
-		{
-			sqlStr:  "select a from t",
-			planStr: "Table(t)->Fields",
-		},
-		{
-			sqlStr:  "select a from t where a = 1",
-			planStr: "Table(t)->Filter->Fields",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 order by a",
-			planStr: "Table(t)->Filter->Fields->Sort",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 order by a limit 1",
-			planStr: "Table(t)->Filter->Fields->Sort->Limit",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 limit 1",
-			planStr: "Table(t)->Filter->Fields->Limit",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 limit 1 for update",
-			planStr: "Table(t)->Filter->Lock->Fields->Limit",
-		},
-		{
-			sqlStr:  "admin show ddl",
-			planStr: "ShowDDL",
-		},
-		{
-			sqlStr:  "admin check table t",
-			planStr: "CheckTable",
-		},
+		{expr: "a = 1", rate: rateEqual},
+		{expr: "a > 1", rate: rateGreaterOrLess},
+		{expr: "a between 1 and 100", rate: rateBetween},
+		{expr: "a is null", rate: rateIsNull},
+		{expr: "a is not null", rate: rateFull - rateIsNull},
+		{expr: "a is true", rate: rateFull - rateIsNull - rateIsFalse},
+		{expr: "a is not true", rate: rateIsNull + rateIsFalse},
+		{expr: "a is false", rate: rateIsFalse},
+		{expr: "a is not false", rate: rateFull - rateIsFalse},
+		{expr: "a like 'a'", rate: rateLike},
+		{expr: "a not like 'a'", rate: rateFull - rateLike},
+		{expr: "a in (1, 2, 3)", rate: rateEqual * 3},
+		{expr: "a not in (1, 2, 3)", rate: rateFull - rateEqual*3},
+		{expr: "a > 1 and a < 9", rate: float64(rateGreaterOrLess) * float64(rateGreaterOrLess)},
+		{expr: "a = 1 or a = 2", rate: rateEqual + rateEqual},
+		{expr: "a != 1", rate: rateNotEqual},
 	}
-	var stmt ast.StmtNode
 	for _, ca := range cases {
-		s, err := parser.ParseOneStmt(ca.sqlStr, "", "")
-		c.Assert(err, IsNil, Commentf("for expr %s", ca.sqlStr))
-		if strings.HasPrefix(ca.sqlStr, "select") {
-			stmt = s.(*ast.SelectStmt)
-		} else if strings.HasPrefix(ca.sqlStr, "admin") {
-			stmt = s.(*ast.AdminStmt)
-		}
-		mockResolve(stmt)
-		p, err := BuildPlan(stmt)
-		c.Assert(err, IsNil)
-		explainStr, err := Explain(p)
-		c.Assert(err, IsNil)
-		c.Assert(explainStr, Equals, ca.planStr, Commentf("for expr %s", ca.sqlStr))
+		sql := "select 1 from dual where " + ca.expr
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, Commentf("for expr %s", ca.expr))
+		stmt := s.(*ast.SelectStmt)
+		rate := computeFilterRate(stmt.Where)
+		c.Assert(rate, Equals, ca.rate, Commentf("for expr %s", ca.expr))
 	}
 }
 
@@ -274,42 +244,53 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t where b = 1 order by a",
-			best: "Index(t.b)->Filter->Fields->Sort",
+			best: "Index(t.b)->Fields->Sort",
 		},
 		{
 			sql:  "select * from t where (a between 1 and 2) and (b = 3)",
-			best: "Index(t.b)->Filter->Fields",
+			best: "Index(t.b)->Fields",
 		},
 		{
 			sql:  "select * from t where a > 0 order by b limit 100",
-			best: "Index(t.b)->Filter->Fields->Limit",
+			best: "Index(t.b)->Fields->Limit",
 		},
 		{
 			sql:  "select * from t where d = 0",
-			best: "Table(t)->Filter->Fields",
+			best: "Table(t)->Fields",
 		},
 		{
 			sql:  "select * from t where c = 0 and d = 0",
-			best: "Index(t.c_d)->Filter->Fields",
+			best: "Index(t.c_d)->Fields",
 		},
 		{
 			sql:  "select * from t where b like 'abc%'",
-			best: "Index(t.b)->Filter->Fields",
+			best: "Index(t.b)->Fields",
 		},
 		{
 			sql:  "select * from t where d",
-			best: "Table(t)->Filter->Fields",
+			best: "Table(t)->Fields",
 		},
 		{
 			sql:  "select * from t where a is null",
-			best: "Range(t)->Filter->Fields",
+			best: "Range(t)->Fields",
+		},
+		{
+			sql:  "select a from t where a = 1 limit 1 for update",
+			best: "Range(t)->Lock->Fields->Limit",
+		},
+		{
+			sql:  "admin show ddl",
+			best: "ShowDDL",
+		},
+		{
+			sql:  "admin check table t",
+			best: "CheckTable",
 		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)
-		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		stmt := s.(*ast.SelectStmt)
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
 

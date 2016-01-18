@@ -40,8 +40,6 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 	switch x := in.(type) {
 	case *CheckTable:
 		str = "CheckTable"
-	case *Filter:
-		str = "Filter"
 	case *IndexScan:
 		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
 	case *Limit:
