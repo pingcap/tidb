@@ -31,13 +31,15 @@ const (
 
 // computeFilterRate computes the filter rate for an expression.
 // It only depends on the expression type, not the expression value.
-// The expr parameter should contains only one column name.
+// The expr parameter should contain only one column name.
 func computeFilterRate(expr ast.ExprNode) float64 {
 	switch x := expr.(type) {
 	case *ast.BetweenExpr:
 		return rateBetween
 	case *ast.BinaryOperationExpr:
 		return computeBinopFilterRate(x)
+	case *ast.ColumnNameExpr:
+		return rateFull
 	case *ast.IsNullExpr:
 		return computeIsNullFilterRate(x)
 	case *ast.IsTruthExpr:
@@ -48,8 +50,6 @@ func computeFilterRate(expr ast.ExprNode) float64 {
 		return computePatternInFilterRate(x)
 	case *ast.PatternLikeExpr:
 		return computePatternLikeFilterRate(x)
-	case *ast.ColumnNameExpr:
-		return rateFull
 	}
 	return rateFull
 }
