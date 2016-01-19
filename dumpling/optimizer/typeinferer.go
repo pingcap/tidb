@@ -133,6 +133,11 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 		ft.Charset = charset.CharsetBin
 		ft.Collate = charset.CollationBin
 		x.SetType(ft)
+	case "sum":
+		ft := types.NewFieldType(mysql.TypeNewDecimal)
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
+		x.SetType(ft)
 	}
 }
 
