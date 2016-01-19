@@ -264,7 +264,19 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t where c = 0 and d = 0",
-			best: "Index(t.c_d)->Fields",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where c = 0 and d = 0 and e = 0",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where (d = 0 and e = 0) and c = 0",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where e = 0 and (d = 0 and c = 0)",
+			best: "Index(t.c_d_e)->Fields",
 		},
 		{
 			sql:  "select * from t where b like 'abc%'",
@@ -308,6 +320,28 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestSplitWhere(c *C) {
+	cases := []struct {
+		expr  string
+		count int
+	}{
+		{"a = 1 and b = 2 and c = 3", 3},
+		{"(a = 1 and b = 2) and c = 3", 3},
+		{"a = 1 and (b = 2 and c = 3 or d = 4)", 2},
+		{"a = 1 and (b = 2 or c = 3) and d = 4", 3},
+		{"(a = 1 and b = 2) and (c = 3 and d = 4)", 4},
+	}
+	for _, ca := range cases {
+		sql := "select 1 from dual where " + ca.expr
+		comment := Commentf("for expr %s", ca.expr)
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		conditions := splitWhere(stmt.Where)
+		c.Assert(conditions, HasLen, ca.count, comment)
+	}
+}
+
 func mockResolve(node ast.Node) {
 	indices := []*model.IndexInfo{
 		{
@@ -319,13 +353,16 @@ func mockResolve(node ast.Node) {
 			},
 		},
 		{
-			Name: model.NewCIStr("c_d"),
+			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
 					Name: model.NewCIStr("c"),
 				},
 				{
 					Name: model.NewCIStr("d"),
+				},
+				{
+					Name: model.NewCIStr("e"),
 				},
 			},
 		},
