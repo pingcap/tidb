@@ -411,6 +411,8 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateCount()
 	case AggFuncFirstRow:
 		return n.updateFirstRow()
+	case AggFuncSum:
+		return n.updateSum()
 	}
 	return nil
 }
@@ -464,6 +466,32 @@ func (n *AggregateFuncExpr) updateFirstRow() error {
 	}
 	ctx.Value = n.Args[0].GetValue()
 	ctx.evaluated = true
+	return nil
+}
+
+func (n *AggregateFuncExpr) updateSum() error {
+	ctx := n.GetContext()
+	a := n.Args[0]
+	value := a.GetValue()
+	if value == nil {
+		return nil
+	}
+	if n.Distinct {
+		d, err := ctx.distinctChecker.Check([]interface{}{value})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !d {
+			return nil
+		}
+	}
+	sum := ctx.Value
+	var err error
+	sum, err = types.CalculateSum(sum, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.Value = sum
 	return nil
 }
 

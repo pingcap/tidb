@@ -90,6 +90,7 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 		fn := strings.ToLower(ti.F)
 		switch fn {
 		case ast.AggFuncCount:
+		case ast.AggFuncSum:
 		default:
 			c.unsupported = true
 		}
