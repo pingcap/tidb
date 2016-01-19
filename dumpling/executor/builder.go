@@ -75,6 +75,17 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	}
 }
 
+func (b *executorBuilder) buildFilter(src Executor, conditions []ast.ExprNode) Executor {
+	if len(conditions) == 0 {
+		return src
+	}
+	return &FilterExec{
+		Src:       src,
+		Condition: b.joinConditions(conditions),
+		ctx:       b.ctx,
+	}
+}
+
 func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 	table, _ := b.is.TableByID(v.Table.ID)
 	e := &TableScanExec{
@@ -84,15 +95,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		ranges:     v.Ranges,
 		seekHandle: math.MinInt64,
 	}
-	if len(v.FilterConditions) != 0 {
-		fe := &FilterExec{
-			Src:       e,
-			Condition: b.joinConditions(v.FilterConditions),
-			ctx:       b.ctx,
-		}
-		return fe
-	}
-	return e
+	return b.buildFilter(e, v.FilterConditions)
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
@@ -143,15 +146,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	for i, val := range v.Ranges {
 		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
-	if len(v.FilterConditions) != 0 {
-		fe := &FilterExec{
-			Src:       e,
-			Condition: b.joinConditions(v.FilterConditions),
-			ctx:       b.ctx,
-		}
-		return fe
-	}
-	return e
+	return b.buildFilter(e, v.FilterConditions)
 }
 
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
