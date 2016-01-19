@@ -308,6 +308,28 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestSplitWhere(c *C) {
+	cases := []struct {
+		expr  string
+		count int
+	}{
+		{"a = 1 and b = 2 and c = 3", 3},
+		{"(a = 1 and b = 2) and c = 3", 3},
+		{"a = 1 and (b = 2 and c = 3 or d = 4)", 2},
+		{"a = 1 and (b = 2 or c = 3) and d = 4", 3},
+		{"(a = 1 and b = 2) and (c = 3 and d = 4)", 4},
+	}
+	for _, ca := range cases {
+		sql := "select 1 from dual where " + ca.expr
+		comment := Commentf("for expr %s", ca.expr)
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		conditions := splitWhere(stmt.Where)
+		c.Assert(conditions, HasLen, ca.count, comment)
+	}
+}
+
 func mockResolve(node ast.Node) {
 	indices := []*model.IndexInfo{
 		{

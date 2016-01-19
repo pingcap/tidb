@@ -470,11 +470,13 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	case nil:
 	case *ast.BinaryOperationExpr:
 		if x.Op == opcode.AndAnd {
-			conditions = append(conditions, x.L)
+			conditions = append(conditions, splitWhere(x.L)...)
 			conditions = append(conditions, splitWhere(x.R)...)
 		} else {
 			conditions = append(conditions, x)
 		}
+	case *ast.ParenthesesExpr:
+		conditions = append(conditions, splitWhere(x.Expr)...)
 	default:
 		conditions = append(conditions, where)
 	}
