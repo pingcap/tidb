@@ -410,25 +410,7 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 // matchOrder checks if the plan has the same ordering as items.
 func matchOrder(p Plan, items []*ast.ByItem) bool {
 	switch x := p.(type) {
-	case *TableScan:
-		if len(items) != 1 || !x.Table.PKIsHandle {
-			return false
-		}
-		if items[0].Desc {
-			return false
-		}
-		var refer *ast.ResultField
-		switch x := items[0].Expr.(type) {
-		case *ast.ColumnNameExpr:
-			refer = x.Refer
-		case *ast.PositionExpr:
-			refer = x.Refer
-		default:
-			return false
-		}
-		if mysql.HasPriKeyFlag(refer.Column.Flag) {
-			return true
-		}
+	case *Aggregate:
 		return false
 	case *IndexScan:
 		if len(items) > len(x.Index.Columns) {
@@ -452,7 +434,25 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 			}
 		}
 		return true
-	case *Aggregate:
+	case *TableScan:
+		if len(items) != 1 || !x.Table.PKIsHandle {
+			return false
+		}
+		if items[0].Desc {
+			return false
+		}
+		var refer *ast.ResultField
+		switch x := items[0].Expr.(type) {
+		case *ast.ColumnNameExpr:
+			refer = x.Refer
+		case *ast.PositionExpr:
+			refer = x.Refer
+		default:
+			return false
+		}
+		if mysql.HasPriKeyFlag(refer.Column.Flag) {
+			return true
+		}
 		return false
 	case *Sort:
 		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.
