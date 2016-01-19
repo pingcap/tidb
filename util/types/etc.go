@@ -174,23 +174,13 @@ func collateDesc(a, b []interface{}) int {
 // IsOrderedType returns a boolean
 // whether the type of y can be used by order by.
 func IsOrderedType(v interface{}) (r bool) {
-	switch x := v.(type) {
+	switch RawData(v).(type) {
 	case int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64,
 		float32, float64, string, []byte,
 		mysql.Decimal, mysql.Time, mysql.Duration,
 		mysql.Hex, mysql.Bit, mysql.Enum, mysql.Set:
 		return true
-	case *DataItem:
-		switch x.Type.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24,
-			mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat,
-			mysql.TypeDouble, mysql.TypeString, mysql.TypeVarchar,
-			mysql.TypeVarString, mysql.TypeDecimal, mysql.TypeNewDecimal,
-			mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime,
-			mysql.TypeTimestamp, mysql.TypeBit, mysql.TypeEnum, mysql.TypeSet:
-			return true
-		}
 	}
 	return false
 }
