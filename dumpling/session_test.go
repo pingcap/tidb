@@ -684,6 +684,12 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, HasLen, 1)
 	c.Assert(row[0], Equals, "test")
+
+	r = mustExecSQL(c, se, "grant all on *.* to 'root'@'%'")
+	r = mustExecSQL(c, se, "show grants")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 1)
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
@@ -1149,6 +1155,7 @@ func (s *testSessionSuite) TestBuiltin(c *C) {
 
 	// Testcase for https://github.com/pingcap/tidb/issues/382
 	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
+	mustExecMatch(c, se, "select locate('bar', 'foobarbar')", [][]interface{}{{4}})
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
