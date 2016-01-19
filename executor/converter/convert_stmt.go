@@ -822,6 +822,8 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 		oldShow.Target = stmt.ShowCreateTable
 	case ast.ShowDatabases:
 		oldShow.Target = stmt.ShowDatabases
+	case ast.ShowGrants:
+		oldShow.Target = stmt.ShowGrants
 	case ast.ShowTables:
 		oldShow.Target = stmt.ShowTables
 	case ast.ShowEngines:

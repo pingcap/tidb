@@ -377,6 +377,7 @@ func newStore(c *C, dbPath string) kv.Storage {
 func newSession(c *C, store kv.Storage, dbName string) Session {
 	se, err := CreateSession(store)
 	c.Assert(err, IsNil)
+	se.Auth("root@%", nil, []byte("012345678901234567890"))
 	mustExecSQL(c, se, "create database if not exists "+dbName)
 	mustExecSQL(c, se, "use "+dbName)
 	return se
