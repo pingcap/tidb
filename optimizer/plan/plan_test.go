@@ -264,7 +264,19 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t where c = 0 and d = 0",
-			best: "Index(t.c_d)->Fields",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where c = 0 and d = 0 and e = 0",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where (d = 0 and e = 0) and c = 0",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where e = 0 and (d = 0 and c = 0)",
+			best: "Index(t.c_d_e)->Fields",
 		},
 		{
 			sql:  "select * from t where b like 'abc%'",
@@ -341,13 +353,16 @@ func mockResolve(node ast.Node) {
 			},
 		},
 		{
-			Name: model.NewCIStr("c_d"),
+			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
 					Name: model.NewCIStr("c"),
 				},
 				{
 					Name: model.NewCIStr("d"),
+				},
+				{
+					Name: model.NewCIStr("e"),
 				},
 			},
 		},
