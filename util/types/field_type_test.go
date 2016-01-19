@@ -129,7 +129,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
 		{nil, mysql.TypeNull},
 		{1, mysql.TypeLonglong},
 		{uint64(1), mysql.TypeLonglong},
-		{"abc", mysql.TypeVarchar},
+		{"abc", mysql.TypeVarString},
 		{1.1, mysql.TypeNewDecimal},
 		{[]byte("abc"), mysql.TypeBlob},
 		{mysql.Bit{}, mysql.TypeBit},
