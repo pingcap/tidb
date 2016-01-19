@@ -220,7 +220,7 @@ func (s *testPlanSuite) TestFilterRate(c *C) {
 		{expr: "a in (1, 2, 3)", rate: rateEqual * 3},
 		{expr: "a not in (1, 2, 3)", rate: rateFull - rateEqual*3},
 		{expr: "a > 1 and a < 9", rate: float64(rateGreaterOrLess) * float64(rateGreaterOrLess)},
-		{expr: "a = 1 or a = 2", rate: rateEqual + rateEqual},
+		{expr: "a = 1 or a = 2", rate: rateEqual + rateEqual - rateEqual*rateEqual},
 		{expr: "a != 1", rate: rateNotEqual},
 	}
 	for _, ca := range cases {
@@ -228,7 +228,7 @@ func (s *testPlanSuite) TestFilterRate(c *C) {
 		s, err := parser.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, Commentf("for expr %s", ca.expr))
 		stmt := s.(*ast.SelectStmt)
-		rate := computeFilterRate(stmt.Where)
+		rate := guesstimateFilterRate(stmt.Where)
 		c.Assert(rate, Equals, ca.rate, Commentf("for expr %s", ca.expr))
 	}
 }

@@ -74,7 +74,7 @@ func (c *costEstimator) Leave(p Plan) (Plan, bool) {
 func (c *costEstimator) tableScan(v *TableScan) {
 	var rowCount float64 = FullRangeCount
 	for _, con := range v.AccessConditions {
-		rowCount *= computeFilterRate(con)
+		rowCount *= guesstimateFilterRate(con)
 	}
 	v.startupCost = 0
 	if v.limit == 0 {
@@ -89,7 +89,7 @@ func (c *costEstimator) tableScan(v *TableScan) {
 func (c *costEstimator) indexScan(v *IndexScan) {
 	var rowCount float64 = FullRangeCount
 	for _, con := range v.AccessConditions {
-		rowCount *= computeFilterRate(con)
+		rowCount *= guesstimateFilterRate(con)
 	}
 	v.startupCost = 0
 	if v.limit == 0 {
