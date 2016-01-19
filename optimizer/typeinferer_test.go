@@ -123,6 +123,8 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"upper('TiDB')", mysql.TypeVarString, "utf8"},
 		{"connection_id()", mysql.TypeLonglong, charset.CharsetBin},
 		{"if(1>2, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
+		{"case c1 when null then 2 when 2 then 1.1 else 1 END", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"case c1 when null then 2 when 2 then 'tidb' else 1.1 END", mysql.TypeVarchar, "utf8"},
 	}
 	for _, ca := range cases {
 		ctx := testKit.Se.(context.Context)
