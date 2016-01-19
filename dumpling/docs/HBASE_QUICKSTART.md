@@ -62,3 +62,18 @@ tidb> select * from t1;
 +----+-------+
 2 rows in set (0.00 sec)
 tidb>
+```
+
+Run TiDB server:
+
+```
+make server
+cd tidb-server
+./tidb-server -store=hbase -path="zkaddrs/hbaseTbl?tso=tsoType" -P=4000
+DSN parameters:
+zkaddrs is the address of zookeeper.
+hbaseTbl is the table in hbase to store TiDB data.
+tsoaddr is the type of tso sever. Its value could be zk or local.
+Here is an example of dsn:
+./tidb-server -store=hbase -path="zk1,zk2/test?tso=zk" -P=5000
+```
