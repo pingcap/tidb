@@ -1,1 +1,18 @@
-/Users/freeze/git/tikv/src/proto/kvrpc.proto
+syntax = "proto2";
+package kvrpc;
+
+enum MessageType {
+    Get = 1;
+}
+message GetRequest {
+}
+message GetResponse {
+}
+message Request {
+    required MessageType type = 1;
+    optional GetRequest get_req = 2;
+}
+message Response {
+    required MessageType type = 1;
+    optional GetResponse get_resp = 2;
+}

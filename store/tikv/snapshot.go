@@ -39,6 +39,7 @@ func newTiKVSnapshot(storeName string) *tikvSnapshot {
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
+	// TODO: impl this
 	return nil, nil
 	//g := tikv.NewGet([]byte(k))
 	//g.AddColumn(tikvColFamilyBytes, tikvQualifierBytes)
@@ -100,6 +101,7 @@ func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 }
 
 func (s *tikvSnapshot) Release() {
+	// TODO: impl this
 	//if s.txn != nil {
 	//s.txn.Release()
 	//s.txn = nil
@@ -117,6 +119,7 @@ func newTiKVIter() *tikvIter {
 }
 
 func (it *tikvIter) Next() error {
+	// TODO: impl this
 	return nil
 }
 
