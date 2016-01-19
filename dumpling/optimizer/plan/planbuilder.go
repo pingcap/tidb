@@ -212,6 +212,16 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 
 func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []ast.ExprNode) []Plan {
 	var candidates []Plan
+	p := b.buildTableScanPlan(tn, conditions)
+	candidates = append(candidates, p)
+	for _, index := range tn.TableInfo.Indices {
+		ip := b.buildIndexScanPlan(index, tn, conditions)
+		candidates = append(candidates, ip)
+	}
+	return candidates
+}
+
+func (b *planBuilder) buildTableScanPlan(tn *ast.TableName, conditions []ast.ExprNode) Plan {
 	p := &TableScan{
 		Table: tn.TableInfo,
 	}
@@ -236,24 +246,23 @@ func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []
 			p.FilterConditions = append(p.FilterConditions, con)
 		}
 	}
-	candidates = append(candidates, p)
+	return p
+}
 
-	for _, index := range tn.TableInfo.Indices {
-		ip := &IndexScan{Table: tn.TableInfo, Index: index}
-		ip.SetFields(tn.GetResultFields())
-		// Only use first column as access condition for cost estimation,
-		// In executor, we can try to use second index column to build index range.
-		checker := conditionChecker{tableName: tn.TableInfo.Name, idx: index, columnOffset: 0}
-		for _, con := range conditions {
-			if checker.check(con) {
-				ip.AccessConditions = append(ip.AccessConditions, con)
-			} else {
-				ip.FilterConditions = append(ip.FilterConditions, con)
-			}
+func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, tn *ast.TableName, conditions []ast.ExprNode) Plan {
+	ip := &IndexScan{Table: tn.TableInfo, Index: index}
+	ip.SetFields(tn.GetResultFields())
+	// Only use first column as access condition for cost estimation,
+	// In executor, we can try to use second index column to build index range.
+	checker := conditionChecker{tableName: tn.TableInfo.Name, idx: index, columnOffset: 0}
+	for _, con := range conditions {
+		if checker.check(con) {
+			ip.AccessConditions = append(ip.AccessConditions, con)
+		} else {
+			ip.FilterConditions = append(ip.FilterConditions, con)
 		}
-		candidates = append(candidates, ip)
 	}
-	return candidates
+	return ip
 }
 
 // buildPseudoSelectPlan pre-builds more complete plans that may affect total cost.
