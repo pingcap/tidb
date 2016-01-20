@@ -126,6 +126,12 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 				return nil
 			}
 			item.Expr = n.(ast.ExprNode)
+			// If item is PositionExpr, we need to rebind it.
+			// For PositionExpr will refer to a ResultField in fieldlist.
+			// After extract AggExpr from fieldlist, it may be changed (See the code above).
+			if pe, ok := item.Expr.(*ast.PositionExpr); ok {
+				pe.Refer = sel.GetResultFields()[pe.N-1]
+			}
 		}
 	}
 	if sel.Having != nil {
@@ -135,7 +141,6 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 			return nil
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
-
 	}
 	return extractor.AggFuncs
 }
@@ -162,7 +167,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			p = b.buildAggregate(p, aggFuncs, sel.GroupBy)
 		}
 		if sel.Having != nil {
-			p = b.buildFilter(p, sel.Having.Expr)
+			p = b.buildHaving(p, sel.Having)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
@@ -173,7 +178,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
 		if sel.Having != nil {
-			p = b.buildFilter(p, sel.Having.Expr)
+			p = b.buildHaving(p, sel.Having)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
@@ -335,6 +340,15 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 		aggPlan.GroupByItems = groupby.Items
 	}
 	return aggPlan
+}
+
+func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
+	p := &Having{
+		Conditions: splitWhere(having.Expr),
+	}
+	p.SetSrc(src)
+	p.SetFields(src.Fields())
+	return p
 }
 
 func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
