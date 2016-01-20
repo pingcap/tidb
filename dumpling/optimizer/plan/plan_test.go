@@ -187,6 +187,10 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			exprStr:   `a > NULL`,
 			resultStr: `[]`,
 		},
+		{
+			exprStr:   `a IN (8,8,81,45)`,
+			resultStr: `[[8 8] [45 45] [81 81]]`,
+		},
 	}
 
 	for _, ca := range cases {
