@@ -48,6 +48,8 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkAllOneColumn(x.Expr)
 	case *ast.FieldList:
 		v.checkFieldList(x)
+	case *ast.HavingClause:
+		v.checkAllOneColumn(x.Expr)
 	case *ast.IsNullExpr:
 		v.checkAllOneColumn(x.Expr)
 	case *ast.IsTruthExpr:
