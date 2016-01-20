@@ -684,6 +684,12 @@ func (s *testSessionSuite) TestShow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(row, HasLen, 1)
 	c.Assert(row[0], Equals, "test")
+
+	r = mustExecSQL(c, se, "grant all on *.* to 'root'@'%'")
+	r = mustExecSQL(c, se, "show grants")
+	row, err = r.FirstRow()
+	c.Assert(err, IsNil)
+	c.Assert(row, HasLen, 1)
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
@@ -909,7 +915,7 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t(c int)")
+	mustExecSQL(c, se, "create table t(c int, index(c))")
 	mustExecSQL(c, se, "insert into t values (1),(2),(3),(-11),(11),(123),(211),(210)")
 	mustExecSQL(c, se, "insert into t values ()")
 
@@ -917,6 +923,8 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	rows, err := r.Rows(-1, 0)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 6)
+
+	mustExecSQL(c, se, "select c from t where c like binary('abc')")
 }
 
 func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
@@ -977,8 +985,8 @@ func (s *testSessionSuite) TestOrderBy(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (c1 int, c2 int)")
-	mustExecSQL(c, se, "insert into t values (1,2), (2, 1)")
+	mustExecSQL(c, se, "create table t (c1 int, c2 int, c3 varchar(20))")
+	mustExecSQL(c, se, "insert into t values (1, 2, 'abc'), (2, 1, 'bcd')")
 
 	// Fix issue https://github.com/pingcap/tidb/issues/337
 	mustExecMatch(c, se, "select c1 as a, c1 as b from t order by c1", [][]interface{}{{1, 1}, {2, 2}})
@@ -989,15 +997,19 @@ func (s *testSessionSuite) TestOrderBy(c *C) {
 	mustExecMatch(c, se, "select c1 as c2 from t order by c2 + 1", [][]interface{}{{2}, {1}})
 
 	// Order by position
-	mustExecMatch(c, se, "select * from t order by 1", [][]interface{}{{1, 2}, {2, 1}})
-	mustExecMatch(c, se, "select * from t order by 2", [][]interface{}{{2, 1}, {1, 2}})
+	mustExecMatch(c, se, "select * from t order by 1", [][]interface{}{{1, 2, []byte("abc")}, {2, 1, []byte("bcd")}})
+	mustExecMatch(c, se, "select * from t order by 2", [][]interface{}{{2, 1, []byte("bcd")}, {1, 2, []byte("abc")}})
 	mustExecFailed(c, se, "select * from t order by 0")
-	mustExecFailed(c, se, "select * from t order by 3")
+	mustExecFailed(c, se, "select * from t order by 4")
 
 	mustExecFailed(c, se, "select c1 as a, c2 as a from t order by a")
 
 	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c2")
 	mustExecFailed(c, se, "(select c1 as c2, c2 from t) union (select c1, c2 from t) order by c1")
+
+	// Ordery by binary
+	mustExecMatch(c, se, "select c1, c3 from t order by binary c1 desc", [][]interface{}{{2, []byte("bcd")}, {1, []byte("abc")}})
+	mustExecMatch(c, se, "select c1, c2 from t order by binary c3", [][]interface{}{{1, 2}, {2, 1}})
 }
 
 func (s *testSessionSuite) TestHaving(c *C) {
@@ -1147,6 +1159,7 @@ func (s *testSessionSuite) TestBuiltin(c *C) {
 
 	// Testcase for https://github.com/pingcap/tidb/issues/382
 	mustExecFailed(c, se, `select cast("xxx 10:10:10" as datetime)`)
+	mustExecMatch(c, se, "select locate('bar', 'foobarbar')", [][]interface{}{{4}})
 }
 
 func (s *testSessionSuite) TestFieldText(c *C) {
@@ -1364,7 +1377,7 @@ func (s *testSessionSuite) TestMultiColumnIndex(c *C) {
 	mustExecSQL(c, se, "insert into t values (1, 5)")
 
 	sql := "select c1 from t where c1 in (1) and c2 < 10"
-	expectedExplain := "Index(t.idx_c1_c2)->Filter->Fields"
+	expectedExplain := "Index(t.idx_c1_c2)->Fields"
 	checkPlan(c, se, sql, expectedExplain)
 	mustExecMatch(c, se, sql, [][]interface{}{{1}})
 

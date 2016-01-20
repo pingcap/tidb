@@ -163,6 +163,9 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 		value = x.R.GetValue()
 		op = x.Op
 	}
+	if value == nil {
+		return nil
+	}
 	switch op {
 	case opcode.EQ:
 		startPoint := rangePoint{value: value, start: true}
@@ -272,7 +275,11 @@ func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint
 		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
 		return fullRange
 	}
-	pattern := x.Pattern.GetValue().(string)
+	pattern, err := types.ToString(x.Pattern.GetValue())
+	if err != nil {
+		r.err = errors.Trace(err)
+		return fullRange
+	}
 	lowValue := make([]byte, 0, len(pattern))
 	// unscape the pattern
 	var exclude bool
