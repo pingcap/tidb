@@ -561,11 +561,10 @@ func (s *session) Auth(user string, auth []byte, salt []byte) bool {
 			log.Errorf("Get User [%s] password from SystemDB error %v", name, err)
 		}
 		return false
-	} else {
-		if len(pwd) != 0 && len(pwd) != 40 {
-			log.Errorf("User [%s] password from SystemDB not like a sha1sum", name)
-			return false
-		}
+	}
+	if len(pwd) != 0 && len(pwd) != 40 {
+		log.Errorf("User [%s] password from SystemDB not like a sha1sum", name)
+		return false
 	}
 	hpwd, err := util.DecodePassword(pwd)
 	if err != nil {
