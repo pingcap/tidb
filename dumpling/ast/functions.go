@@ -485,13 +485,11 @@ func (n *AggregateFuncExpr) updateSum() error {
 			return nil
 		}
 	}
-	sum := ctx.Value
 	var err error
-	sum, err = types.CalculateSum(sum, value)
+	ctx.Value, err = types.CalculateSum(ctx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.Value = sum
 	return nil
 }
 

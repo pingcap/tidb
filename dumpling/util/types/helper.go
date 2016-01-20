@@ -94,7 +94,7 @@ func CalculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if data == nil {
 		return sum, nil
