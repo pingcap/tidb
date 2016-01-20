@@ -185,8 +185,9 @@ func reverseBytes(b []byte) {
 
 // like realloc.
 func reallocBytes(b []byte, n int) []byte {
-	if cap(b) < n {
-		bs := make([]byte, len(b), len(b)+n)
+	newSize := len(b) + n
+	if cap(b) < newSize {
+		bs := make([]byte, len(b), newSize)
 		copy(bs, b)
 		return bs
 	}

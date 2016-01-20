@@ -39,28 +39,11 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	alts, err := plan.Alternatives(p)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	err = plan.Refine(p)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bestCost := plan.EstimateCost(p)
-	bestPlan := p
-	for _, alt := range alts {
-		err = plan.Refine(alt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		cost := plan.EstimateCost(alt)
-		if cost < bestCost {
-			bestCost = cost
-			bestPlan = alt
-		}
-	}
-	return bestPlan, nil
+	return p, nil
 }
 
 // Prepare prepares a raw statement parsed from parser.
