@@ -79,7 +79,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -92,7 +92,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 		Args:     []interface{}{model.NewCIStr(colName)},
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
 		return nil

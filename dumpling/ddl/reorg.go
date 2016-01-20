@@ -141,7 +141,7 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 	}
 
 	t := meta.NewMeta(txn)
-	owner, err := t.GetDDLOwner()
+	owner, err := t.GetDDLJobOwner()
 	if err != nil {
 		return errors.Trace(err)
 	} else if owner == nil || owner.OwnerID != d.uuid {

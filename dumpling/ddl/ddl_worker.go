@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
+func (d *ddl) startDDLJob(ctx context.Context, job *model.Job) error {
 	// for every DDL, we must commit current transaction.
 	if err := ctx.FinishTxn(false); err != nil {
 		return errors.Trace(err)
@@ -49,7 +49,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// notice worker that we push a new job and wait the job done.
-	asyncNotify(d.jobCh)
+	asyncNotify(d.ddlJobCh)
 
 	log.Warnf("[ddl] start DDL job %v", job)
 
@@ -63,16 +63,16 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-d.jobDoneCh:
+		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
 		}
 
-		historyJob, err = d.getHistoryJob(jobID)
+		historyJob, err = d.getHistoryDDLJob(jobID)
 		if err != nil {
-			log.Errorf("[ddl] get history job err %v, check again", err)
+			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Warnf("[ddl] job %d is not in history, maybe not run", jobID)
+			log.Warnf("[ddl] DDL job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
@@ -85,7 +85,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
+func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
@@ -111,9 +111,9 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 
 	switch flag {
 	case ddlJobFlag:
-		owner, err = t.GetDDLOwner()
-	case ddlTaskFlag:
-		owner, err = t.GetDDLTaskOwner()
+		owner, err = t.GetDDLJobOwner()
+	case bgJobFlag:
+		owner, err = t.GetBgJobOwner()
 	default:
 		err = errors.Errorf("invalid ddl flag %v", flag)
 	}
@@ -132,8 +132,8 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
-	if flag == ddlTaskFlag {
-		// task doesn't need to guarantee other servers update the schema.
+	if flag == bgJobFlag {
+		// backgroun job doesn't need to guarantee other servers update the schema.
 		maxTimeout = int64(2 * d.lease)
 	}
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
@@ -142,36 +142,36 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 		// update status.
 		switch flag {
 		case ddlJobFlag:
-			err = t.SetDDLOwner(owner)
-		case ddlTaskFlag:
-			err = t.SetDDLTaskOwner(owner)
+			err = t.SetDDLJobOwner(owner)
+		case bgJobFlag:
+			err = t.SetBgJobOwner(owner)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[ddl] become %s owner %s", flag, owner.OwnerID)
+		log.Debugf("[ddl] become %s job owner %s", flag, owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not %s owner, owner is %s", flag, owner.OwnerID)
+		log.Debugf("[ddl] not %s job owner, owner is %s", flag, owner.OwnerID)
 		return nil, errors.Trace(ErrNotOwner)
 	}
 
 	return owner, nil
 }
 
-func (d *ddl) getFirstJob(t *meta.Meta) (*model.Job, error) {
+func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJob(0)
 	return job, errors.Trace(err)
 }
 
 // every time we enter another state except final state, we must call this function.
-func (d *ddl) updateJob(t *meta.Meta, job *model.Job) error {
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job) error {
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
+func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 	log.Warnf("[ddl] finish DDL job %v", job)
 	// done, notice and run next job.
 	_, err := t.DeQueueDDLJob()
@@ -180,7 +180,7 @@ func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
 	}
 	switch job.Type {
 	case model.ActionDropSchema, model.ActionDropTable:
-		if err = d.prepareTask(job); err != nil {
+		if err = d.prepareBgJob(job); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -196,11 +196,11 @@ var ErrNotOwner = errors.New("DDL: not owner")
 var ErrWorkerClosed = errors.New("DDL: worker is closed")
 
 const (
-	ddlJobFlag  = "job"
-	ddlTaskFlag = "task"
+	ddlJobFlag = "ddl"
+	bgJobFlag  = "background"
 )
 
-func (d *ddl) handleJobQueue() error {
+func (d *ddl) handleDDLJobQueue() error {
 	for {
 		if d.isClosed() {
 			return nil
@@ -221,7 +221,7 @@ func (d *ddl) handleJobQueue() error {
 
 			// become the owner
 			// get the first job and run
-			job, err = d.getFirstJob(t)
+			job, err = d.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
@@ -246,12 +246,12 @@ func (d *ddl) handleJobQueue() error {
 
 			// if run job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			d.runJob(t, job)
+			d.runDDLJob(t, job)
 
 			if job.IsFinished() {
-				err = d.finishJob(t, job)
+				err = d.finishDDLJob(t, job)
 			} else {
-				err = d.updateJob(t, job)
+				err = d.updateDDLJob(t, job)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -260,7 +260,7 @@ func (d *ddl) handleJobQueue() error {
 			// running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
 			owner.LastUpdateTS = time.Now().UnixNano()
-			err = t.SetDDLOwner(owner)
+			err = t.SetDDLJobOwner(owner)
 
 			return errors.Trace(err)
 		})
@@ -281,8 +281,8 @@ func (d *ddl) handleJobQueue() error {
 		}
 
 		if job.IsFinished() {
-			d.startTask(job.Type)
-			asyncNotify(d.jobDoneCh)
+			d.startBgJob(job.Type)
+			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
 }
@@ -295,9 +295,9 @@ func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
 	return n2
 }
 
-// onWorker is for async online schema change, it will try to become the owner first,
+// onDDLWorker is for async online schema change, it will try to become the owner first,
 // then wait or pull the job queue to handle a schema change job.
-func (d *ddl) onWorker() {
+func (d *ddl) onDDLWorker() {
 	defer d.wait.Done()
 
 	// we use 4 * lease time to check owner's timeout, so here, we will update owner's status
@@ -311,19 +311,19 @@ func (d *ddl) onWorker() {
 		select {
 		case <-ticker.C:
 			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
-		case <-d.jobCh:
+		case <-d.ddlJobCh:
 		case <-d.quitCh:
 			return
 		}
 
-		err := d.handleJobQueue()
+		err := d.handleDDLJobQueue()
 		if err != nil {
-			log.Errorf("[ddl] handle job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] handle ddl job err %v", errors.ErrorStack(err))
 		}
 	}
 }
 
-func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
+func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 	if job.IsFinished() {
 		return
 	}
@@ -351,14 +351,14 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled
-		err = errors.Errorf("invalid job %v", job)
+		err = errors.Errorf("invalid ddl job %v", job)
 	}
 
 	// saves error in job, so that others can know error happens.
 	if err != nil {
 		// if job is not cancelled, we should log this error.
 		if job.State != model.JobCancelled {
-			log.Errorf("run job err %v", errors.ErrorStack(err))
+			log.Errorf("run ddl job err %v", errors.ErrorStack(err))
 		}
 
 		job.Error = err.Error()
