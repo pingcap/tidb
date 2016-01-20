@@ -123,9 +123,9 @@ func (d *ddl) Stop() error {
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		owner, err := t.GetDDLJobOwner()
-		if err != nil {
-			return errors.Trace(err)
+		owner, err1 := t.GetDDLJobOwner()
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if owner == nil && owner.OwnerID != d.uuid {
 			return nil
@@ -140,13 +140,14 @@ func (d *ddl) Stop() error {
 
 	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		owner, err := t.GetBgJobOwner()
-		if err != nil {
-			return errors.Trace(err)
+		owner, err1 := t.GetBgJobOwner()
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if owner == nil || owner.OwnerID != d.uuid {
 			return nil
 		}
+
 		// task's owner is me, clean it so other servers can compete for it quickly.
 		return t.SetBgJobOwner(&model.Owner{})
 	})
