@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-func (d *ddl) handleTaskQueue() error {
+// handleBgJobQueue handles background job queue.
+func (d *ddl) handleBgJobQueue() error {
 	if d.isClosed() {
 		return nil
 	}
@@ -32,7 +33,7 @@ func (d *ddl) handleTaskQueue() error {
 	task := &model.Job{}
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		owner, err := d.checkOwner(t, ddlTaskFlag)
+		owner, err := d.checkOwner(t, bgJobFlag)
 		if terror.ErrorEqual(err, ErrNotOwner) {
 			return nil
 		}
@@ -40,8 +41,8 @@ func (d *ddl) handleTaskQueue() error {
 			return errors.Trace(err)
 		}
 
-		// get the first task and run
-		task, err = d.getFirstTask(t)
+		// get the first background job and run
+		task, err = d.getFirstBgJob(t)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -49,18 +50,18 @@ func (d *ddl) handleTaskQueue() error {
 			return nil
 		}
 
-		d.runTask(t, task)
+		d.runBgJob(t, task)
 		if task.IsFinished() {
-			err = d.finishTask(t, task)
+			err = d.finishBgJob(t, task)
 		} else {
-			err = d.updateTask(t, task)
+			err = d.updateBgJob(t, task)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		owner.LastUpdateTS = time.Now().UnixNano()
-		err = t.SetDDLTaskOwner(owner)
+		err = t.SetBgJobOwner(owner)
 
 		return errors.Trace(err)
 	})
@@ -72,7 +73,8 @@ func (d *ddl) handleTaskQueue() error {
 	return nil
 }
 
-func (d *ddl) runTask(t *meta.Meta, task *model.Job) {
+// runBgJob runs background job.
+func (d *ddl) runBgJob(t *meta.Meta, task *model.Job) {
 	task.State = model.JobRunning
 
 	var err error
@@ -83,12 +85,12 @@ func (d *ddl) runTask(t *meta.Meta, task *model.Job) {
 		err = d.delReorgTable(t, task)
 	default:
 		task.State = model.JobCancelled
-		err = errors.Errorf("invalid task %v", task)
+		err = errors.Errorf("invalid background job %v", task)
 	}
 
 	if err != nil {
 		if task.State != model.JobCancelled {
-			log.Errorf("run task err %v", errors.ErrorStack(err))
+			log.Errorf("run background job err %v", errors.ErrorStack(err))
 		}
 
 		task.Error = err.Error()
@@ -96,7 +98,8 @@ func (d *ddl) runTask(t *meta.Meta, task *model.Job) {
 	}
 }
 
-func (d *ddl) prepareTask(job *model.Job) error {
+// prepareBgJob prepares background job.
+func (d *ddl) prepareBgJob(job *model.Job) error {
 	task := &model.Job{
 		ID:       job.ID,
 		SchemaID: job.SchemaID,
@@ -107,7 +110,7 @@ func (d *ddl) prepareTask(job *model.Job) error {
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err1 := t.EnQueueDDLTask(task)
+		err1 := t.EnQueueBgJob(task)
 
 		return errors.Trace(err1)
 	})
@@ -115,38 +118,42 @@ func (d *ddl) prepareTask(job *model.Job) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) startTask(tp model.ActionType) {
+// startBgJob starts background job.
+func (d *ddl) startBgJob(tp model.ActionType) {
 	switch tp {
 	case model.ActionDropSchema, model.ActionDropTable:
-		asyncNotify(d.dropTaskCh)
+		asyncNotify(d.bgJobCh)
 	}
 }
 
-func (d *ddl) getFirstTask(t *meta.Meta) (*model.Job, error) {
-	task, err := t.GetDDLTask(0)
+// getFirstBgJob gets the first background job.
+func (d *ddl) getFirstBgJob(t *meta.Meta) (*model.Job, error) {
+	task, err := t.GetBgJob(0)
 	return task, errors.Trace(err)
 }
 
-func (d *ddl) updateTask(t *meta.Meta, task *model.Job) error {
-	err := t.UpdateDDLTask(0, task)
+// updateBgJob updates background job.
+func (d *ddl) updateBgJob(t *meta.Meta, task *model.Job) error {
+	err := t.UpdateBgJob(0, task)
 	return errors.Trace(err)
 }
 
-func (d *ddl) finishTask(t *meta.Meta, task *model.Job) error {
-	log.Warnf("[ddl] finish DDL task %v", task)
-	if _, err := t.DeQueueDDLTask(); err != nil {
+// finishBgJob finishs background job.
+func (d *ddl) finishBgJob(t *meta.Meta, task *model.Job) error {
+	log.Warnf("[ddl] finish background job %v", task)
+	if _, err := t.DeQueueBgJob(); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := t.AddHistoryDDLTask(task)
+	err := t.AddHistoryBgJob(task)
 
 	return errors.Trace(err)
 }
 
-func (d *ddl) onExecute() {
+func (d *ddl) onBackgroundWorker() {
 	defer d.wait.Done()
 
-	// ensure that have ddl job convert to ddl task
+	// ensure that have ddl job convert to background job.
 	checkTime := chooseLeaseTime(8*d.lease, 10*time.Second)
 
 	ticker := time.NewTicker(checkTime)
@@ -155,15 +162,15 @@ func (d *ddl) onExecute() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl] wait %s to check DDL task status again", checkTime)
-		case <-d.dropTaskCh:
+			log.Debugf("[ddl] wait %s to check background job status again", checkTime)
+		case <-d.bgJobCh:
 		case <-d.quitCh:
 			return
 		}
 
-		err := d.handleTaskQueue()
+		err := d.handleBgJobQueue()
 		if err != nil {
-			log.Errorf("[ddl] handle task err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] handle background job err %v", errors.ErrorStack(err))
 		}
 	}
 }

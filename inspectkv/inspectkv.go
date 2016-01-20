@@ -41,7 +41,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	info.Owner, err = t.GetDDLOwner()
+	info.Owner, err = t.GetDDLJobOwner()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

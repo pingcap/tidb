@@ -130,7 +130,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	t := meta.NewMeta(txn)
 
 	owner := &model.Owner{OwnerID: "owner"}
-	err = t.SetDDLOwner(owner)
+	err = t.SetDDLJobOwner(owner)
 	c.Assert(err, IsNil)
 	dbInfo2 := &model.DBInfo{
 		ID:    2,

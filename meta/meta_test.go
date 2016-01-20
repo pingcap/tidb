@@ -175,9 +175,9 @@ func (s *testSuite) TestDDL(c *C) {
 	t := meta.NewMeta(txn)
 
 	owner := &model.Owner{OwnerID: "1"}
-	err = t.SetDDLOwner(owner)
+	err = t.SetDDLJobOwner(owner)
 	c.Assert(err, IsNil)
-	ov, err := t.GetDDLOwner()
+	ov, err := t.GetDDLJobOwner()
 	c.Assert(err, IsNil)
 	c.Assert(owner, DeepEquals, ov)
 
@@ -219,36 +219,36 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(v, DeepEquals, job)
 
 	// DDL task test
-	err = t.SetDDLTaskOwner(owner)
+	err = t.SetBgJobOwner(owner)
 	c.Assert(err, IsNil)
-	ov, err = t.GetDDLTaskOwner()
+	ov, err = t.GetBgJobOwner()
 	c.Assert(err, IsNil)
 	c.Assert(owner, DeepEquals, ov)
 
 	task := &model.Job{ID: 1}
-	err = t.EnQueueDDLTask(task)
+	err = t.EnQueueBgJob(task)
 	c.Assert(err, IsNil)
-	n, err = t.DDLTaskLength()
+	n, err = t.BgJobLength()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	v, err = t.GetDDLTask(0)
+	v, err = t.GetBgJob(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, task)
-	v, err = t.GetDDLTask(1)
+	v, err = t.GetBgJob(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	task.ID = 2
-	err = t.UpdateDDLTask(0, task)
+	err = t.UpdateBgJob(0, task)
 	c.Assert(err, IsNil)
 
-	v, err = t.DeQueueDDLTask()
+	v, err = t.DeQueueBgJob()
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, task)
 
-	err = t.AddHistoryDDLTask(task)
+	err = t.AddHistoryBgJob(task)
 	c.Assert(err, IsNil)
-	v, err = t.GetHistoryDDLTask(2)
+	v, err = t.GetHistoryBgJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, task)
 

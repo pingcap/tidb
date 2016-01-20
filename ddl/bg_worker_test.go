@@ -37,25 +37,25 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 			Name: model.CIStr{O: "test"},
 		}},
 	}
-	d.prepareTask(task)
-	d.startTask(task.Type)
+	d.prepareBgJob(task)
+	d.startBgJob(task.Type)
 
 	time.Sleep(lease)
-	testCheckTaskCancelled(c, d, task)
+	testCheckBgJobCancelled(c, d, task)
 }
 
-func testCheckTaskCancelled(c *C, d *ddl, task *model.Job) {
+func testCheckBgJobCancelled(c *C, d *ddl, task *model.Job) {
 	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		historyTask, err := t.GetHistoryDDLTask(task.ID)
+		historyBgJob, err := t.GetHistoryBgJob(task.ID)
 		c.Assert(err, IsNil)
-		c.Assert(historyTask.State, Equals, model.JobCancelled)
+		c.Assert(historyBgJob.State, Equals, model.JobCancelled)
 
 		return nil
 	})
 }
 
-func (s *testDDLSuite) TestInvalidTaskType(c *C) {
+func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	store := testCreateStore(c, "test_invalid_task_type")
 	defer store.Close()
 
@@ -68,9 +68,9 @@ func (s *testDDLSuite) TestInvalidTaskType(c *C) {
 		TableID:  1,
 		Type:     model.ActionCreateTable,
 	}
-	d.prepareTask(task)
-	d.startTask(model.ActionDropTable)
+	d.prepareBgJob(task)
+	d.startBgJob(model.ActionDropTable)
 
 	time.Sleep(lease)
-	testCheckTaskCancelled(c, d, task)
+	testCheckBgJobCancelled(c, d, task)
 }

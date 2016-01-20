@@ -71,12 +71,12 @@ type ddl struct {
 	hook       Callback
 	store      kv.Storage
 	// schema lease seconds.
-	lease     time.Duration
-	uuid      string
-	jobCh     chan struct{}
-	jobDoneCh chan struct{}
-	// drop database/table task
-	dropTaskCh chan struct{}
+	lease        time.Duration
+	uuid         string
+	ddlJobCh     chan struct{}
+	ddlJobDoneCh chan struct{}
+	// drop database/table job runs in the background to preform.
+	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: now we use goroutine to simulate reorganization jobs, later we may
@@ -98,14 +98,14 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	}
 
 	d := &ddl{
-		infoHandle: infoHandle,
-		hook:       hook,
-		store:      store,
-		lease:      lease,
-		uuid:       uuid.NewV4().String(),
-		jobCh:      make(chan struct{}, 1),
-		jobDoneCh:  make(chan struct{}, 1),
-		dropTaskCh: make(chan struct{}, 1),
+		infoHandle:   infoHandle,
+		hook:         hook,
+		store:        store,
+		lease:        lease,
+		uuid:         uuid.NewV4().String(),
+		ddlJobCh:     make(chan struct{}, 1),
+		ddlJobDoneCh: make(chan struct{}, 1),
+		bgJobCh:      make(chan struct{}, 1),
 	}
 
 	d.start()
@@ -123,18 +123,24 @@ func (d *ddl) Stop() error {
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		owner, err := t.GetDDLOwner()
+		owner, err := t.GetDDLJobOwner()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// job's owner is me, clean it so other servers can compete for it quickly.
-		if owner != nil && owner.OwnerID == d.uuid {
-			if err = t.SetDDLOwner(&model.Owner{}); err != nil {
-				return errors.Trace(err)
-			}
+		if owner == nil && owner.OwnerID != d.uuid {
+			return nil
 		}
 
-		owner, err = t.GetDDLTaskOwner()
+		// job's owner is me, clean it so other servers can compete for it quickly.
+		return t.SetDDLJobOwner(&model.Owner{})
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		owner, err := t.GetBgJobOwner()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -142,8 +148,9 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 		// task's owner is me, clean it so other servers can compete for it quickly.
-		return t.SetDDLTaskOwner(&model.Owner{})
+		return t.SetBgJobOwner(&model.Owner{})
 	})
+
 	return errors.Trace(err)
 }
 
@@ -163,12 +170,12 @@ func (d *ddl) Start() error {
 func (d *ddl) start() {
 	d.quitCh = make(chan struct{})
 	d.wait.Add(2)
-	go d.onExecute()
-	go d.onWorker()
+	go d.onBackgroundWorker()
+	go d.onDDLWorker()
 	// for every start, we will send a fake job to let worker
 	// check owner first and try to find whether a job exists and run.
-	asyncNotify(d.jobCh)
-	asyncNotify(d.dropTaskCh)
+	asyncNotify(d.ddlJobCh)
+	asyncNotify(d.bgJobCh)
 }
 
 func (d *ddl) close() {
@@ -261,7 +268,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 		Args:     []interface{}{dbInfo},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -278,7 +285,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		Type:     model.ActionDropSchema,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -525,7 +532,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 		Args:     []interface{}{tbInfo},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -618,7 +625,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -649,7 +656,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 		Args:     []interface{}{colName},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -673,7 +680,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -701,7 +708,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 		Args:     []interface{}{unique, indexName, indexID, idxColNames},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -725,7 +732,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIS
 		Args:     []interface{}{indexName},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }

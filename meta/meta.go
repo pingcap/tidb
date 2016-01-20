@@ -416,13 +416,13 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLOwnerKey      = []byte("DDLOwner")
+	mDDLJobOwnerKey   = []byte("DDLJobOwner")
 	mDDLJobListKey    = []byte("DDLJobList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-func (m *Meta) getDDLOwner(key []byte) (*model.Owner, error) {
+func (m *Meta) getJobOwner(key []byte) (*model.Owner, error) {
 	value, err := m.txn.Get(key)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -433,12 +433,12 @@ func (m *Meta) getDDLOwner(key []byte) (*model.Owner, error) {
 	return owner, errors.Trace(err)
 }
 
-// GetDDLOwner gets the current owner for DDL.
-func (m *Meta) GetDDLOwner() (*model.Owner, error) {
-	return m.getDDLOwner(mDDLOwnerKey)
+// GetDDLJobOwner gets the current owner for DDL.
+func (m *Meta) GetDDLJobOwner() (*model.Owner, error) {
+	return m.getJobOwner(mDDLJobOwnerKey)
 }
 
-func (m *Meta) setDDLOwner(key []byte, o *model.Owner) error {
+func (m *Meta) setJobOwner(key []byte, o *model.Owner) error {
 	b, err := json.Marshal(o)
 	if err != nil {
 		return errors.Trace(err)
@@ -446,9 +446,9 @@ func (m *Meta) setDDLOwner(key []byte, o *model.Owner) error {
 	return m.txn.Set(key, b)
 }
 
-// SetDDLOwner sets the current owner for DDL.
-func (m *Meta) SetDDLOwner(o *model.Owner) error {
-	return m.setDDLOwner(mDDLOwnerKey, o)
+// SetDDLJobOwner sets the current owner for DDL.
+func (m *Meta) SetDDLJobOwner(o *model.Owner) error {
+	return m.setJobOwner(mDDLJobOwnerKey, o)
 }
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
@@ -587,64 +587,64 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 	return value, errors.Trace(err)
 }
 
-// DDL task structure
-//	DDLTaskOnwer: []byte
-//	DDLTaskList: list tasks
-//	DDLTaskHistory: hash
-//	DDLTaskReorg: hash
+// DDL background job structure
+//	BgJobOnwer: []byte
+//	BgJobList: list tasks
+//	BgJobHistory: hash
+//	BgJobReorg: hash
 //
-// for multi DDL executor, only one can become the owner
-// to operate DDL tasks, and dispatch them to MR tasks.
+// for multi background worker, only one can become the owner
+// to operate background job, and dispatch them to MR background job.
 
 var (
-	mDDLTaskOwnerKey   = []byte("DDLTaskOwner")
-	mDDLTaskListKey    = []byte("DDLTaskList")
-	mDDLTaskHistoryKey = []byte("DDLTaskHistory")
+	mBgJobOwnerKey   = []byte("BgJobOwner")
+	mBgJobListKey    = []byte("BgJobList")
+	mBgJobHistoryKey = []byte("BgJobHistory")
 )
 
-// UpdateDDLTask updates the DDL task with index.
-func (m *Meta) UpdateDDLTask(index int64, task *model.Job) error {
-	return m.updateDDLJob(index, task, mDDLTaskListKey)
+// UpdateBgJob updates the background job with index.
+func (m *Meta) UpdateBgJob(index int64, task *model.Job) error {
+	return m.updateDDLJob(index, task, mBgJobListKey)
 }
 
-// GetDDLTask returns the DDL task with index.
-func (m *Meta) GetDDLTask(index int64) (*model.Job, error) {
-	task, err := m.getDDLJob(mDDLTaskListKey, index)
+// GetBgJob returns the background job with index.
+func (m *Meta) GetBgJob(index int64) (*model.Job, error) {
+	task, err := m.getDDLJob(mBgJobListKey, index)
 
 	return task, errors.Trace(err)
 }
 
-// EnQueueDDLTask adds a DDL task to the list.
-func (m *Meta) EnQueueDDLTask(task *model.Job) error {
-	return m.enQueueDDLJob(mDDLTaskListKey, task)
+// EnQueueBgJob adds a background job to the list.
+func (m *Meta) EnQueueBgJob(task *model.Job) error {
+	return m.enQueueDDLJob(mBgJobListKey, task)
 }
 
-// DDLTaskLength returns the DDL task length.
-func (m *Meta) DDLTaskLength() (int64, error) {
-	return m.txn.LLen(mDDLTaskListKey)
+// BgJobLength returns the background job length.
+func (m *Meta) BgJobLength() (int64, error) {
+	return m.txn.LLen(mBgJobListKey)
 }
 
-// AddHistoryDDLTask adds DDL task to history.
-func (m *Meta) AddHistoryDDLTask(task *model.Job) error {
-	return m.addHistoryDDLJob(mDDLTaskHistoryKey, task)
+// AddHistoryBgJob adds background job to history.
+func (m *Meta) AddHistoryBgJob(task *model.Job) error {
+	return m.addHistoryDDLJob(mBgJobHistoryKey, task)
 }
 
-// GetHistoryDDLTask gets a history DDL task.
-func (m *Meta) GetHistoryDDLTask(id int64) (*model.Job, error) {
-	return m.getHistoryDDLJob(mDDLTaskHistoryKey, id)
+// GetHistoryBgJob gets a history background job.
+func (m *Meta) GetHistoryBgJob(id int64) (*model.Job, error) {
+	return m.getHistoryDDLJob(mBgJobHistoryKey, id)
 }
 
-// DeQueueDDLTask pops a DDL task from the list.
-func (m *Meta) DeQueueDDLTask() (*model.Job, error) {
-	return m.deQueueDDLJob(mDDLTaskListKey)
+// DeQueueBgJob pops a background job from the list.
+func (m *Meta) DeQueueBgJob() (*model.Job, error) {
+	return m.deQueueDDLJob(mBgJobListKey)
 }
 
-// GetDDLTaskOwner gets the current task owner for DDL.
-func (m *Meta) GetDDLTaskOwner() (*model.Owner, error) {
-	return m.getDDLOwner(mDDLTaskOwnerKey)
+// GetBgJobOwner gets the current background job owner.
+func (m *Meta) GetBgJobOwner() (*model.Owner, error) {
+	return m.getJobOwner(mBgJobOwnerKey)
 }
 
-// SetDDLTaskOwner sets the current task owner for DDL.
-func (m *Meta) SetDDLTaskOwner(o *model.Owner) error {
-	return m.setDDLOwner(mDDLTaskOwnerKey, o)
+// SetBgJobOwner sets the current background job owner.
+func (m *Meta) SetBgJobOwner(o *model.Owner) error {
+	return m.setJobOwner(mBgJobOwnerKey, o)
 }
