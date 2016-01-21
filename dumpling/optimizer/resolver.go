@@ -364,14 +364,13 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		if nr.resolveColumnInResultFields(cn, ctx.groupBy) {
 			return true
 		}
-		found := nr.resolveColumnInResultFields(cn, ctx.fieldList)
-		if nr.Err != nil {
-			return found
+		if ctx.inHavingAgg {
+			// If cn is in an aggregate function in having clause, check tablesource first.
+			if nr.resolveColumnInTableSources(cn, ctx.tables) {
+				return true
+			}
 		}
-		if found || !ctx.inHavingAgg {
-			return found
-		}
-		return nr.resolveColumnInTableSources(cn, ctx.tables)
+		return nr.resolveColumnInResultFields(cn, ctx.fieldList)
 	}
 	if ctx.inOrderBy {
 		if nr.resolveColumnInResultFields(cn, ctx.groupBy) {
