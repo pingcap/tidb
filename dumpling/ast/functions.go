@@ -368,6 +368,10 @@ const (
 	AggFuncAvg = "avg"
 	// AggFuncFirstRow is the name of FirstRowColumn function.
 	AggFuncFirstRow = "firstrow"
+	// AggFuncMax is the name of max function.
+	AggFuncMax = "max"
+	// AggFuncMin is the name of min function.
+	AggFuncMin = "min"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
@@ -413,6 +417,10 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateCount()
 	case AggFuncFirstRow:
 		return n.updateFirstRow()
+	case AggFuncMax:
+		return n.updateMaxMin(true)
+	case AggFuncMin:
+		return n.updateMaxMin(false)
 	case AggFuncSum:
 		return n.updateSum()
 	}
@@ -468,6 +476,34 @@ func (n *AggregateFuncExpr) updateFirstRow() error {
 	}
 	ctx.Value = n.Args[0].GetValue()
 	ctx.evaluated = true
+	return nil
+}
+
+func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
+	ctx := n.GetContext()
+	if len(n.Args) != 1 {
+		return errors.New("Wrong number of args for AggFuncFirstRow")
+	}
+	v := n.Args[0].GetValue()
+	if !ctx.evaluated {
+		ctx.Value = v
+		ctx.evaluated = true
+		return nil
+	}
+	c, err := types.Compare(ctx.Value, v)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if max {
+		if c == -1 {
+			ctx.Value = v
+		}
+	} else {
+		if c == 1 {
+			ctx.Value = v
+		}
+
+	}
 	return nil
 }
 

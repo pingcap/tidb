@@ -127,13 +127,15 @@ func (v *typeInferrer) selectStmt(x *ast.SelectStmt) {
 func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 	name := strings.ToLower(x.F)
 	switch name {
-	case "count":
+	case ast.AggFuncCount:
 		ft := types.NewFieldType(mysql.TypeLonglong)
 		ft.Flen = 21
 		ft.Charset = charset.CharsetBin
 		ft.Collate = charset.CollationBin
 		x.SetType(ft)
-	case "sum":
+	case ast.AggFuncMax, ast.AggFuncMin:
+		x.SetType(x.Args[0].GetType())
+	case ast.AggFuncSum:
 		ft := types.NewFieldType(mysql.TypeNewDecimal)
 		ft.Charset = charset.CharsetBin
 		ft.Collate = charset.CollationBin
