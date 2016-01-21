@@ -218,15 +218,15 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
 
-	// DDL task test
+	// DDL background job test
 	err = t.SetBgJobOwner(owner)
 	c.Assert(err, IsNil)
 	ov, err = t.GetBgJobOwner()
 	c.Assert(err, IsNil)
 	c.Assert(owner, DeepEquals, ov)
 
-	task := &model.Job{ID: 1}
-	err = t.EnQueueBgJob(task)
+	bgJob := &model.Job{ID: 1}
+	err = t.EnQueueBgJob(bgJob)
 	c.Assert(err, IsNil)
 	n, err = t.BgJobLength()
 	c.Assert(err, IsNil)
@@ -234,23 +234,23 @@ func (s *testSuite) TestDDL(c *C) {
 
 	v, err = t.GetBgJob(0)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, task)
+	c.Assert(v, DeepEquals, bgJob)
 	v, err = t.GetBgJob(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
-	task.ID = 2
-	err = t.UpdateBgJob(0, task)
+	bgJob.ID = 2
+	err = t.UpdateBgJob(0, bgJob)
 	c.Assert(err, IsNil)
 
 	v, err = t.DeQueueBgJob()
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, task)
+	c.Assert(v, DeepEquals, bgJob)
 
-	err = t.AddHistoryBgJob(task)
+	err = t.AddHistoryBgJob(bgJob)
 	c.Assert(err, IsNil)
 	v, err = t.GetHistoryBgJob(2)
 	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, task)
+	c.Assert(v, DeepEquals, bgJob)
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)

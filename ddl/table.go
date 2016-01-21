@@ -76,19 +76,17 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) delReorgTable(t *meta.Meta, task *model.Job) error {
+func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
 	// reorganization -> absent
 	tblInfo := &model.TableInfo{}
-	err := task.DecodeArgs(tblInfo)
+	err := job.DecodeArgs(tblInfo)
 	if err != nil {
+		// arg error, cancel this job.
+		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-	if tblInfo == nil {
-		task.State = model.JobCancelled
-		return errors.Trace(infoschema.TableNotExists)
-	}
 	tblInfo.State = model.StateDeleteReorganization
-	tbl, err := d.getTable(task.SchemaID, tblInfo)
+	tbl, err := d.getTable(job.SchemaID, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -98,9 +96,9 @@ func (d *ddl) delReorgTable(t *meta.Meta, task *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	// finish this job
-	task.SchemaState = model.StateNone
-	task.State = model.JobDone
+	// finish this background job
+	job.SchemaState = model.StateNone
+	job.State = model.JobDone
 
 	return nil
 }

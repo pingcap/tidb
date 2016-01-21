@@ -589,7 +589,7 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 
 // DDL background job structure
 //	BgJobOnwer: []byte
-//	BgJobList: list tasks
+//	BgJobList: list jobs
 //	BgJobHistory: hash
 //	BgJobReorg: hash
 //
@@ -603,20 +603,20 @@ var (
 )
 
 // UpdateBgJob updates the background job with index.
-func (m *Meta) UpdateBgJob(index int64, task *model.Job) error {
-	return m.updateDDLJob(index, task, mBgJobListKey)
+func (m *Meta) UpdateBgJob(index int64, job *model.Job) error {
+	return m.updateDDLJob(index, job, mBgJobListKey)
 }
 
 // GetBgJob returns the background job with index.
 func (m *Meta) GetBgJob(index int64) (*model.Job, error) {
-	task, err := m.getDDLJob(mBgJobListKey, index)
+	job, err := m.getDDLJob(mBgJobListKey, index)
 
-	return task, errors.Trace(err)
+	return job, errors.Trace(err)
 }
 
 // EnQueueBgJob adds a background job to the list.
-func (m *Meta) EnQueueBgJob(task *model.Job) error {
-	return m.enQueueDDLJob(mBgJobListKey, task)
+func (m *Meta) EnQueueBgJob(job *model.Job) error {
+	return m.enQueueDDLJob(mBgJobListKey, job)
 }
 
 // BgJobLength returns the background job length.
@@ -625,8 +625,8 @@ func (m *Meta) BgJobLength() (int64, error) {
 }
 
 // AddHistoryBgJob adds background job to history.
-func (m *Meta) AddHistoryBgJob(task *model.Job) error {
-	return m.addHistoryDDLJob(mBgJobHistoryKey, task)
+func (m *Meta) AddHistoryBgJob(job *model.Job) error {
+	return m.addHistoryDDLJob(mBgJobHistoryKey, job)
 }
 
 // GetHistoryBgJob gets a history background job.
