@@ -82,6 +82,13 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 			return true
 		}
 	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasAggFlag(item.Expr) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
@@ -117,6 +124,15 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 		res = append(res, nf)
 	}
 	sel.SetResultFields(res)
+	// Extract agg funcs from having clause.
+	if sel.Having != nil {
+		n, ok := sel.Having.Expr.Accept(extractor)
+		if !ok {
+			b.err = errors.New("Failed to extract agg expr from having clause")
+			return nil
+		}
+		sel.Having.Expr = n.(ast.ExprNode)
+	}
 	// Extract agg funcs from orderby clause.
 	if sel.OrderBy != nil {
 		for _, item := range sel.OrderBy.Items {
@@ -133,14 +149,6 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 				pe.Refer = sel.GetResultFields()[pe.N-1]
 			}
 		}
-	}
-	if sel.Having != nil {
-		n, ok := sel.Having.Expr.Accept(extractor)
-		if !ok {
-			b.err = errors.New("Failed to extract agg expr from having clause")
-			return nil
-		}
-		sel.Having.Expr = n.(ast.ExprNode)
 	}
 	return extractor.AggFuncs
 }
@@ -166,9 +174,6 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, sel.GroupBy)
 		}
-		if sel.Having != nil {
-			p = b.buildHaving(p, sel.Having)
-		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
 		if b.err != nil {
 			return nil
@@ -177,10 +182,13 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
-		if sel.Having != nil {
-			p = b.buildHaving(p, sel.Having)
-		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Having != nil {
+		p = b.buildHaving(p, sel.Having)
 		if b.err != nil {
 			return nil
 		}

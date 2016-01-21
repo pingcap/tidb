@@ -68,7 +68,6 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch ti := in.(type) {
 	case *ast.SubqueryExpr:
 		c.unsupported = true
-	case *ast.GroupByClause, *ast.HavingClause:
 	case *ast.AggregateFuncExpr:
 		fn := strings.ToLower(ti.F)
 		switch fn {
