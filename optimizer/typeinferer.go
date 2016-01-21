@@ -140,6 +140,15 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 		ft.Charset = charset.CharsetBin
 		ft.Collate = charset.CollationBin
 		x.SetType(ft)
+	case ast.AggFuncGroupConcat:
+		ft := types.NewFieldType(mysql.TypeVarString)
+		ft.Charset = v.defaultCharset
+		cln, err := charset.GetDefaultCollation(v.defaultCharset)
+		if err != nil {
+			v.err = err
+		}
+		ft.Collate = cln
+		x.SetType(ft)
 	}
 }
 

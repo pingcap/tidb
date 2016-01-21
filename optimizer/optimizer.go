@@ -71,7 +71,7 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	case *ast.AggregateFuncExpr:
 		fn := strings.ToLower(ti.F)
 		switch fn {
-		case ast.AggFuncCount, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum:
+		case ast.AggFuncCount, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum, ast.AggFuncGroupConcat:
 		default:
 			c.unsupported = true
 		}

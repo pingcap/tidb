@@ -958,7 +958,7 @@ func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
 	switch name {
 	case ast.AggFuncCount:
 		e.evalAggCount(v)
-	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum:
+	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum, ast.AggFuncGroupConcat:
 		e.evalAggSetValue(v)
 	}
 	return e.err == nil
