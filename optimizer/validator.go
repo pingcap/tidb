@@ -32,14 +32,26 @@ type validator struct {
 	err           error
 	wildCardCount int
 	inPrepare     bool
+	inAggregate   bool
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch in.(type) {
+	case *ast.AggregateFuncExpr:
+		if v.inAggregate {
+			// Aggregate function can not contain aggregate function.
+			v.err = ErrInvalidGroupFuncUse
+			return in, true
+		}
+		v.inAggregate = true
+	}
 	return in, false
 }
 
 func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
+	case *ast.AggregateFuncExpr:
+		v.inAggregate = false
 	case *ast.BetweenExpr:
 		v.checkAllOneColumn(x.Expr, x.Left, x.Right)
 	case *ast.BinaryOperationExpr:
