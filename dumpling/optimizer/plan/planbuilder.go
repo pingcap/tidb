@@ -77,6 +77,18 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 			return true
 		}
 	}
+	if sel.Having != nil {
+		if ast.HasAggFlag(sel.Having.Expr) {
+			return true
+		}
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasAggFlag(item.Expr) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
@@ -112,6 +124,15 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 		res = append(res, nf)
 	}
 	sel.SetResultFields(res)
+	// Extract agg funcs from having clause.
+	if sel.Having != nil {
+		n, ok := sel.Having.Expr.Accept(extractor)
+		if !ok {
+			b.err = errors.New("Failed to extract agg expr from having clause")
+			return nil
+		}
+		sel.Having.Expr = n.(ast.ExprNode)
+	}
 	// Extract agg funcs from orderby clause.
 	if sel.OrderBy != nil {
 		for _, item := range sel.OrderBy.Items {
@@ -121,9 +142,14 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 				return nil
 			}
 			item.Expr = n.(ast.ExprNode)
+			// If item is PositionExpr, we need to rebind it.
+			// For PositionExpr will refer to a ResultField in fieldlist.
+			// After extract AggExpr from fieldlist, it may be changed (See the code above).
+			if pe, ok := item.Expr.(*ast.PositionExpr); ok {
+				pe.Refer = sel.GetResultFields()[pe.N-1]
+			}
 		}
 	}
-	// TODO: extract aggfuncs from having clause.
 	return extractor.AggFuncs
 }
 
@@ -157,6 +183,12 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
 		p = b.buildSelectFields(p, sel.GetResultFields())
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Having != nil {
+		p = b.buildHaving(p, sel.Having)
 		if b.err != nil {
 			return nil
 		}
@@ -316,6 +348,15 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 		aggPlan.GroupByItems = groupby.Items
 	}
 	return aggPlan
+}
+
+func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
+	p := &Having{
+		Conditions: splitWhere(having.Expr),
+	}
+	p.SetSrc(src)
+	p.SetFields(src.Fields())
+	return p
 }
 
 func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
