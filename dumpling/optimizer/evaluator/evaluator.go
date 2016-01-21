@@ -958,10 +958,8 @@ func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
 	switch name {
 	case ast.AggFuncCount:
 		e.evalAggCount(v)
-	case ast.AggFuncFirstRow:
-		e.evalAggFirstRow(v)
-	case ast.AggFuncMax, ast.AggFuncMin:
-		e.evalAggMaxMin(v)
+	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum:
+		e.evalAggSetValue(v)
 	}
 	return e.err == nil
 }
@@ -971,12 +969,7 @@ func (e *Evaluator) evalAggCount(v *ast.AggregateFuncExpr) {
 	v.SetValue(ctx.Count)
 }
 
-func (e *Evaluator) evalAggFirstRow(v *ast.AggregateFuncExpr) {
-	ctx := v.GetContext()
-	v.SetValue(ctx.Value)
-}
-
-func (e *Evaluator) evalAggMaxMin(v *ast.AggregateFuncExpr) {
+func (e *Evaluator) evalAggSetValue(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
 	v.SetValue(ctx.Value)
 }

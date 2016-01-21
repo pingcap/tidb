@@ -78,6 +78,8 @@ type resolverContext struct {
 	inGroupBy bool
 	// When visiting having, only fieldList and groupBy fields are available.
 	inHaving bool
+	// When visiting having, checks if the expr is an aggregate function expr.
+	inHavingAgg bool
 	// OrderBy clause has different resolving rule than group by.
 	inOrderBy bool
 	// When visiting column name in ByItem, we should know if the column name is in an expression.
@@ -120,6 +122,11 @@ func (nr *nameResolver) popJoin() {
 // Enter implements ast.Visitor interface.
 func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
+	case *ast.AggregateFuncExpr:
+		ctx := nr.currentContext()
+		if ctx.inHaving {
+			ctx.inHavingAgg = true
+		}
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
@@ -162,6 +169,11 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
+	case *ast.AggregateFuncExpr:
+		ctx := nr.currentContext()
+		if ctx.inHaving {
+			ctx.inHavingAgg = false
+		}
 	case *ast.TableName:
 		nr.handleTableName(v)
 	case *ast.ColumnNameExpr:
@@ -179,7 +191,14 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.handleFieldList(v)
 		nr.currentContext().inFieldList = false
 	case *ast.GroupByClause:
-		nr.currentContext().inGroupBy = false
+		ctx := nr.currentContext()
+		ctx.inGroupBy = false
+		for _, item := range v.Items {
+			switch x := item.Expr.(type) {
+			case *ast.ColumnNameExpr:
+				ctx.groupBy = append(ctx.groupBy, x.Refer)
+			}
+		}
 	case *ast.HavingClause:
 		nr.currentContext().inHaving = false
 	case *ast.OrderByClause:
@@ -306,7 +325,13 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
 				return true
 			}
-			return nr.resolveColumnInResultFields(cn, ctx.fieldList)
+			found := nr.resolveColumnInResultFields(cn, ctx.fieldList)
+			if !found || nr.Err != nil {
+				return found
+			}
+			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
+				nr.Err = errors.New("Groupby identifier can not refer to aggregate function.")
+			}
 		}
 		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
@@ -327,6 +352,9 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 				// We should restore its Refer.
 				cn.Refer = r
 			}
+			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
+				nr.Err = errors.New("Groupby identifier can not refer to aggregate function.")
+			}
 			return true
 		}
 		return found
@@ -335,6 +363,12 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		// First group by, then field list.
 		if nr.resolveColumnInResultFields(cn, ctx.groupBy) {
 			return true
+		}
+		if ctx.inHavingAgg {
+			// If cn is in an aggregate function in having clause, check tablesource first.
+			if nr.resolveColumnInTableSources(cn, ctx.tables) {
+				return true
+			}
 		}
 		return nr.resolveColumnInResultFields(cn, ctx.fieldList)
 	}
@@ -429,7 +463,7 @@ func (nr *nameResolver) resolveColumnInResultFields(cn *ast.ColumnNameExpr, rfs 
 	var matched *ast.ResultField
 	for _, rf := range rfs {
 		matchAsName := cn.Name.Name.L == rf.ColumnAsName.L
-		matchColumnName := rf.ColumnAsName.L == "" && cn.Name.Name.L == rf.Column.Name.L
+		matchColumnName := cn.Name.Name.L == rf.Column.Name.L
 		if matchAsName || matchColumnName {
 			if rf.Column.Name.L == "" {
 				// This is not a real table column, resolve it directly.

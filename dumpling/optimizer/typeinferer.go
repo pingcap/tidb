@@ -135,6 +135,11 @@ func (v *typeInferrer) aggregateFunc(x *ast.AggregateFuncExpr) {
 		x.SetType(ft)
 	case ast.AggFuncMax, ast.AggFuncMin:
 		x.SetType(x.Args[0].GetType())
+	case ast.AggFuncSum:
+		ft := types.NewFieldType(mysql.TypeNewDecimal)
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
+		x.SetType(ft)
 	}
 }
 
