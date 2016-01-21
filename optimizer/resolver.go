@@ -325,7 +325,13 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			if nr.resolveColumnInTableSources(cn, ctx.tables) {
 				return true
 			}
-			return nr.resolveColumnInResultFields(cn, ctx.fieldList)
+			found := nr.resolveColumnInResultFields(cn, ctx.fieldList)
+			if !found || nr.Err != nil {
+				return found
+			}
+			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
+				nr.Err = errors.New("Groupby identifier can not refer to aggregate function.")
+			}
 		}
 		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
@@ -345,6 +351,9 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 				// It is not ambiguous and already resolved from table source.
 				// We should restore its Refer.
 				cn.Refer = r
+			}
+			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
+				nr.Err = errors.New("Groupby identifier can not refer to aggregate function.")
 			}
 			return true
 		}
