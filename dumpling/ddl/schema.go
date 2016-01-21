@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 )
 
 func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
@@ -73,15 +74,19 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) error {
 	}
 }
 
-func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
-	if len(task.Args) != 1 || task.Args[0] == nil {
-		task.State = model.JobCancelled
-		return errors.Trace(infoschema.DatabaseNotExists)
+func (d *ddl) delReorgSchema(t *meta.Meta, job *model.Job) error {
+	dbInfo := &model.DBInfo{}
+	if err := job.DecodeArgs(dbInfo); err != nil {
+		// arg error, cancel this job.
+		job.State = model.JobCancelled
+		return errors.Trace(err)
 	}
-	dbInfo := task.Args[0].(*model.DBInfo)
 
-	// wait reorganization jobs done and drop meta.
 	tables, err := t.ListTables(dbInfo.ID)
+	if terror.ErrorEqual(meta.ErrDBNotExists, err) {
+		job.State = model.JobDone
+		return nil
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -90,9 +95,9 @@ func (d *ddl) delReorgSchema(t *meta.Meta, task *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	// finish this task
-	task.SchemaState = model.StateNone
-	task.State = model.JobDone
+	// finish this background job
+	job.SchemaState = model.StateNone
+	job.State = model.JobDone
 
 	return nil
 }
@@ -132,6 +137,7 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 			break
 		}
 		// finish this job
+		job.Args = []interface{}{dbInfo}
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 	default:

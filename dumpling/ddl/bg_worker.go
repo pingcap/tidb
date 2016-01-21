@@ -30,7 +30,7 @@ func (d *ddl) handleBgJobQueue() error {
 		return nil
 	}
 
-	task := &model.Job{}
+	job := &model.Job{}
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		owner, err := d.checkOwner(t, bgJobFlag)
@@ -42,19 +42,19 @@ func (d *ddl) handleBgJobQueue() error {
 		}
 
 		// get the first background job and run
-		task, err = d.getFirstBgJob(t)
+		job, err = d.getFirstBgJob(t)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if task == nil {
+		if job == nil {
 			return nil
 		}
 
-		d.runBgJob(t, task)
-		if task.IsFinished() {
-			err = d.finishBgJob(t, task)
+		d.runBgJob(t, job)
+		if job.IsFinished() {
+			err = d.finishBgJob(t, job)
 		} else {
-			err = d.updateBgJob(t, task)
+			err = d.updateBgJob(t, job)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -74,43 +74,45 @@ func (d *ddl) handleBgJobQueue() error {
 }
 
 // runBgJob runs background job.
-func (d *ddl) runBgJob(t *meta.Meta, task *model.Job) {
-	task.State = model.JobRunning
+func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
+	job.State = model.JobRunning
 
 	var err error
-	switch task.Type {
+	switch job.Type {
 	case model.ActionDropSchema:
-		err = d.delReorgSchema(t, task)
+		err = d.delReorgSchema(t, job)
 	case model.ActionDropTable:
-		err = d.delReorgTable(t, task)
+		err = d.delReorgTable(t, job)
 	default:
-		task.State = model.JobCancelled
-		err = errors.Errorf("invalid background job %v", task)
+
+		job.State = model.JobCancelled
+		err = errors.Errorf("invalid background job %v", job)
+
 	}
 
 	if err != nil {
-		if task.State != model.JobCancelled {
+		if job.State != model.JobCancelled {
 			log.Errorf("run background job err %v", errors.ErrorStack(err))
 		}
 
-		task.Error = err.Error()
-		task.ErrorCount++
+		job.Error = err.Error()
+		job.ErrorCount++
 	}
 }
 
 // prepareBgJob prepares background job.
-func (d *ddl) prepareBgJob(job *model.Job) error {
-	task := &model.Job{
-		ID:       job.ID,
-		SchemaID: job.SchemaID,
-		TableID:  job.TableID,
-		Type:     job.Type,
-		Args:     job.Args,
+func (d *ddl) prepareBgJob(ddlJob *model.Job) error {
+	job := &model.Job{
+		ID:       ddlJob.ID,
+		SchemaID: ddlJob.SchemaID,
+		TableID:  ddlJob.TableID,
+		Type:     ddlJob.Type,
+		Args:     ddlJob.Args,
 	}
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		err1 := t.EnQueueBgJob(task)
+		err1 := t.EnQueueBgJob(job)
 
 		return errors.Trace(err1)
 	})
@@ -128,24 +130,24 @@ func (d *ddl) startBgJob(tp model.ActionType) {
 
 // getFirstBgJob gets the first background job.
 func (d *ddl) getFirstBgJob(t *meta.Meta) (*model.Job, error) {
-	task, err := t.GetBgJob(0)
-	return task, errors.Trace(err)
+	job, err := t.GetBgJob(0)
+	return job, errors.Trace(err)
 }
 
 // updateBgJob updates background job.
-func (d *ddl) updateBgJob(t *meta.Meta, task *model.Job) error {
-	err := t.UpdateBgJob(0, task)
+func (d *ddl) updateBgJob(t *meta.Meta, job *model.Job) error {
+	err := t.UpdateBgJob(0, job)
 	return errors.Trace(err)
 }
 
 // finishBgJob finishs background job.
-func (d *ddl) finishBgJob(t *meta.Meta, task *model.Job) error {
-	log.Warnf("[ddl] finish background job %v", task)
+func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
+	log.Warnf("[ddl] finish background job %v", job)
 	if _, err := t.DeQueueBgJob(); err != nil {
 		return errors.Trace(err)
 	}
 
-	err := t.AddHistoryBgJob(task)
+	err := t.AddHistoryBgJob(job)
 
 	return errors.Trace(err)
 }
@@ -153,7 +155,9 @@ func (d *ddl) finishBgJob(t *meta.Meta, task *model.Job) error {
 func (d *ddl) onBackgroundWorker() {
 	defer d.wait.Done()
 
-	// ensure that have ddl job convert to background job.
+	// for a ddl drop job from start to end, the state of it will be pubilc -> write only -> delete only -> none.
+	// for every state changes, we will wait as lease 2 * lease time.
+	// so here the ticker check is 8 * lease to ensure that ddl job have converted to background job.
 	checkTime := chooseLeaseTime(8*d.lease, 10*time.Second)
 
 	ticker := time.NewTicker(checkTime)

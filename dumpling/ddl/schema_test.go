@@ -65,9 +65,9 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 }
 
 func checkDrop(c *C, t *meta.Meta) bool {
-	task, err := t.GetBgJob(0)
+	bgJob, err := t.GetBgJob(0)
 	c.Assert(err, IsNil)
-	if task == nil {
+	if bgJob == nil {
 		return true
 	}
 
@@ -76,7 +76,7 @@ func checkDrop(c *C, t *meta.Meta) bool {
 }
 
 func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
-	isDrop := true
+	isDropped := true
 
 	for {
 		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
@@ -85,8 +85,8 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 			c.Assert(err, IsNil)
 
 			if state == model.StateNone {
-				isDrop = checkDrop(c, t)
-				if !isDrop {
+				isDropped = checkDrop(c, t)
+				if !isDropped {
 					return nil
 				}
 				c.Assert(info, IsNil)
@@ -98,7 +98,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 			return nil
 		})
 
-		if isDrop {
+		if isDropped {
 			break
 		}
 	}

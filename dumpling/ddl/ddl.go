@@ -131,7 +131,7 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 
-		// job's owner is me, clean it so other servers can compete for it quickly.
+		// ddl job's owner is me, clean it so other servers can compete for it quickly.
 		return t.SetDDLJobOwner(&model.Owner{})
 	})
 	if err != nil {
@@ -148,7 +148,7 @@ func (d *ddl) Stop() error {
 			return nil
 		}
 
-		// task's owner is me, clean it so other servers can compete for it quickly.
+		// background job's owner is me, clean it so other servers can compete for it quickly.
 		return t.SetBgJobOwner(&model.Owner{})
 	})
 

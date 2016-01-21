@@ -58,7 +58,7 @@ func (d *ddl) startDDLJob(ctx context.Context, job *model.Job) error {
 	var historyJob *model.Job
 
 	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
-	// for every state change, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	// for every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
 	defer ticker.Stop()
 	for {
@@ -133,7 +133,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
 	if flag == bgJobFlag {
-		// backgroun job doesn't need to guarantee other servers update the schema.
+		// background job doesn't need to guarantee other servers update the schema.
 		maxTimeout = int64(2 * d.lease)
 	}
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
