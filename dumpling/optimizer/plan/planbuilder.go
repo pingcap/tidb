@@ -77,6 +77,13 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 			return true
 		}
 	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasAggFlag(item.Expr) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
