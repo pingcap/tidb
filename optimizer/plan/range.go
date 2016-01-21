@@ -213,7 +213,31 @@ func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
 	if sorter.err != nil {
 		r.err = sorter.err
 	}
-	return rangePoints
+	// check duplicates
+	hasDuplicate := false
+	isStart := false
+	for _, v := range rangePoints {
+		if isStart == v.start {
+			hasDuplicate = true
+			break
+		}
+		isStart = v.start
+	}
+	if !hasDuplicate {
+		return rangePoints
+	}
+	// remove duplicates
+	distinctRangePoints := make([]rangePoint, 0, len(rangePoints))
+	isStart = false
+	for i := 0; i < len(rangePoints); i++ {
+		current := rangePoints[i]
+		if isStart == current.start {
+			continue
+		}
+		distinctRangePoints = append(distinctRangePoints, current)
+		isStart = current.start
+	}
+	return distinctRangePoints
 }
 
 func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {

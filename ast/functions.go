@@ -421,6 +421,8 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateMaxMin(true)
 	case AggFuncMin:
 		return n.updateMaxMin(false)
+	case AggFuncSum:
+		return n.updateSum()
 	}
 	return nil
 }
@@ -501,6 +503,30 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 			ctx.Value = v
 		}
 
+	}
+	return nil
+}
+
+func (n *AggregateFuncExpr) updateSum() error {
+	ctx := n.GetContext()
+	a := n.Args[0]
+	value := a.GetValue()
+	if value == nil {
+		return nil
+	}
+	if n.Distinct {
+		d, err := ctx.distinctChecker.Check([]interface{}{value})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !d {
+			return nil
+		}
+	}
+	var err error
+	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
