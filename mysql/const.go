@@ -136,6 +136,67 @@ const (
 	TiDBTable = "tidb"
 )
 
+// Performance Schema databases and tables.
+const (
+	// PerfSchemaDB is the name of performance schema database.
+	PerfSchemaDB = "performance_schema"
+	// SetupActorsTable is the table in perf db defined which users will be
+	// monitored/instrumented
+	SetupActorsTable = "setup_actors"
+	// SetupObjectsTable is the table in perf db defined which objects need to be
+	// monitored/instrumented
+	SetupObjectsTable = "setup_objects"
+	// SetupInstrsTable is the table in perf db stores which monitoring/instrumentation
+	// points are enabled
+	SetupInstrsTable = "setup_instruments"
+	// SetupConsumersTable is the table in perf db stores which aggregation tables
+	// are maintained
+	SetupConsumersTable = "setup_consumers"
+	// SetupTimersTable is the table in perf db stores the unit of measurement of
+	// each instrumentation component
+	SetupTimersTable = "setup_timers"
+)
+
+// Performance Schema Statement Event tables.
+const (
+	// StatementsCurrentTable is the table in perf db stores current statement events
+	StatementsCurrentTable = "events_statements_current"
+	// StatementsHistoryTable is the table in perf db stores the most recent statement
+	// events for each connection
+	StatementsHistoryTable = "events_statements_history"
+	// StatementsHistoryLongTable is the table in perf db stores the most recent
+	// statement events overall
+	StatementsHistoryLongTable = "events_statements_history_long"
+	// PreparedStatementsInstancesTable if the table in perf db stores prepared
+	// statement instances and statistics
+	PreparedStatementsInstancesTable = "prepared_statements_instances"
+)
+
+// Performance Schema Transaction Event tables.
+const (
+	// TransactionsCurrentTable is the table in perf db stores current transaction
+	// events
+	TransactionsCurrentTable = "events_transactions_current"
+	// TransactionsHistoryTable is the table in perf db stores the most recent transaction
+	// events for each connection
+	TransactionsHistoryTable = "events_transactions_history"
+	// TransactionsHistoryLongTable is the table in perf db stores the most recent
+	// transaction events overall
+	TransactionsHistoryLongTable = "events_transactions_history_long"
+)
+
+// Performance Schema Stage Event tables.
+const (
+	// StagesCurrentTable is the table in perf db stores current stage events
+	StagesCurrentTable = "events_stages_current"
+	// StagesHistoryTable is the table in perf db stores the most recent stage events
+	// for each connection
+	StagesHistoryTable = "events_stages_history"
+	// StagesHistoryLongTable is the table in perf db stores the most recent stage
+	// events overall
+	StagesHistoryLongTable = "events_stages_history_long"
+)
+
 // PrivilegeType  privilege
 type PrivilegeType uint32
 
