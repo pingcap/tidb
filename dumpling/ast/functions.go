@@ -425,7 +425,7 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateMaxMin(true)
 	case AggFuncMin:
 		return n.updateMaxMin(false)
-	case AggFuncSum:
+	case AggFuncSum, AggFuncAvg:
 		return n.updateSum()
 	case AggFuncGroupConcat:
 		return n.updateGroupConcat()
@@ -534,6 +534,7 @@ func (n *AggregateFuncExpr) updateSum() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.Count++
 	return nil
 }
 

@@ -65,18 +65,10 @@ type supportChecker struct {
 }
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
-	switch ti := in.(type) {
+	switch x := in.(type) {
 	case *ast.SubqueryExpr:
 		c.unsupported = true
-	case *ast.AggregateFuncExpr:
-		fn := strings.ToLower(ti.F)
-		switch fn {
-		case ast.AggFuncCount, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum, ast.AggFuncGroupConcat:
-		default:
-			c.unsupported = true
-		}
 	case *ast.Join:
-		x := in.(*ast.Join)
 		if x.Right != nil {
 			c.unsupported = true
 		} else {
@@ -93,7 +85,6 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 			}
 		}
 	case *ast.SelectStmt:
-		x := in.(*ast.SelectStmt)
 		if x.Distinct {
 			c.unsupported = true
 		}
@@ -123,25 +114,28 @@ func IsSupported(node ast.Node) bool {
 
 // Optimizer error codes.
 const (
-	CodeOneColumn     terror.ErrCode = 1
-	CodeSameColumns                  = 2
-	CodeMultiWildCard                = 3
-	CodeUnsupported                  = 4
+	CodeOneColumn           terror.ErrCode = 1
+	CodeSameColumns         terror.ErrCode = 2
+	CodeMultiWildCard       terror.ErrCode = 3
+	CodeUnsupported         terror.ErrCode = 4
+	CodeInvalidGroupFuncUse terror.ErrCode = 5
 )
 
 // Optimizer base errors.
 var (
-	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
-	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
-	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
+	ErrOneColumn           = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
+	ErrSameColumns         = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
+	ErrMultiWildCard       = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrUnSupported         = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
+	ErrInvalidGroupFuncUse = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
 )
 
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOneColumn:     mysql.ErrOperandColumns,
-		CodeSameColumns:   mysql.ErrOperandColumns,
-		CodeMultiWildCard: mysql.ErrParse,
+		CodeOneColumn:           mysql.ErrOperandColumns,
+		CodeSameColumns:         mysql.ErrOperandColumns,
+		CodeMultiWildCard:       mysql.ErrParse,
+		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 }

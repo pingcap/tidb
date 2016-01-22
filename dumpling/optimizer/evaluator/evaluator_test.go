@@ -1054,3 +1054,27 @@ func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 2)
 }
+
+func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
+	ctx := mock.NewContext()
+	avg := &ast.AggregateFuncExpr{
+		F: ast.AggFuncAvg,
+	}
+	avg.CurrentGroup = "emptyGroup"
+	result, err := Eval(ctx, avg)
+	c.Assert(err, IsNil)
+	// Empty group should return nil.
+	c.Assert(result, IsNil)
+
+	avg.Args = []ast.ExprNode{ast.NewValueExpr(2)}
+	avg.Update()
+	avg.Args = []ast.ExprNode{ast.NewValueExpr(4)}
+	avg.Update()
+
+	result, err = Eval(ctx, avg)
+	c.Assert(err, IsNil)
+	expect, _ := mysql.ConvertToDecimal(3)
+	v, ok := result.(mysql.Decimal)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.Equals(expect), IsTrue)
+}
