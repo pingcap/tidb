@@ -956,6 +956,8 @@ func parseDayInterval(value interface{}) (int64, error) {
 func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
 	name := strings.ToLower(v.F)
 	switch name {
+	case ast.AggFuncAvg:
+		e.evalAggAvg(v)
 	case ast.AggFuncCount:
 		e.evalAggCount(v)
 	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum:
@@ -971,5 +973,16 @@ func (e *Evaluator) evalAggCount(v *ast.AggregateFuncExpr) {
 
 func (e *Evaluator) evalAggSetValue(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
+	v.SetValue(ctx.Value)
+}
+
+func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
+	ctx := v.GetContext()
+	switch x := ctx.Value.(type) {
+	case float64:
+		ctx.Value = x / float64(ctx.Count)
+	case mysql.Decimal:
+		ctx.Value = x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
+	}
 	v.SetValue(ctx.Value)
 }
