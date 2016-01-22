@@ -233,11 +233,11 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 }
 
 func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) (interface{}, error) {
-	hasNull := false
 	for _, v := range list {
 		if types.IsNil(v) {
-			hasNull = true
-			continue
+			// if no matched but we got null in In, return null
+			// e.g 1 in (null, 2, 3) returns null
+			return nil, nil
 		}
 
 		r, err := types.Compare(in, v)
@@ -250,12 +250,6 @@ func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) (i
 		}
 	}
 
-	if hasNull {
-		// if no matched but we got null in In, return null
-		// e.g 1 in (null, 2, 3) returns null
-		return nil, nil
-	}
-
 	return not, nil
 }
 
@@ -265,11 +259,13 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		n.SetValue(nil)
 		return true
 	}
-	hasNull := false
+
 	for _, v := range n.List {
 		if types.IsNil(v.GetValue()) {
-			hasNull = true
-			continue
+			// if no matched but we got null in In, return null
+			// e.g 1 in (null, 2, 3) returns null
+			n.SetValue(nil)
+			return true
 		}
 		r, err := types.Compare(n.Expr.GetValue(), v.GetValue())
 		if err != nil {
@@ -281,12 +277,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 			return true
 		}
 	}
-	if hasNull {
-		// if no matched but we got null in In, return null
-		// e.g 1 in (null, 2, 3) returns null
-		n.SetValue(nil)
-		return true
-	}
+
 	n.SetValue(boolToInt64(n.Not))
 	return true
 }
