@@ -370,8 +370,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 				return true
 			}
 		}
-		found := nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
-		return found
+		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	if ctx.inOrderBy {
 		if nr.resolveColumnInResultFields(ctx, cn, ctx.groupBy) {
