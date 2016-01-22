@@ -1326,6 +1326,13 @@ func (s *testSessionSuite) TestSession(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestSessionAuth(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	defer se.Close()
+	c.Assert(se.Auth("Any not exist username with zero password! @anyhost", []byte(""), []byte("")), IsFalse)
+}
+
 func (s *testSessionSuite) TestErrorRollback(c *C) {
 	store := newStore(c, s.dbName)
 	s1 := newSession(c, store, s.dbName)
