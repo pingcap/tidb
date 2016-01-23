@@ -662,8 +662,21 @@ func (s *testEvaluatorSuite) TestPatternIn(c *C) {
 		{
 			exprStr:   "NULL not in (2, 3)",
 			resultStr: "<nil>",
-		}, {
+		},
+		{
 			exprStr:   "NULL in (NULL, 3)",
+			resultStr: "<nil>",
+		},
+		{
+			exprStr:   "1 in (1, NULL)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "1 in (NULL, 1)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "2 in (1, NULL)",
 			resultStr: "<nil>",
 		},
 	}
