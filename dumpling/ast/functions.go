@@ -557,7 +557,9 @@ func (n *AggregateFuncExpr) updateGroupConcat() error {
 			return nil
 		}
 	}
-	if ctx.Buffer.Len() > 0 {
+	if ctx.Buffer == nil {
+		ctx.Buffer = &bytes.Buffer{}
+	} else {
 		// now use comma separator
 		ctx.Buffer.WriteString(",")
 	}
@@ -621,6 +623,6 @@ type AggEvaluateContext struct {
 	distinctChecker *distinct.Checker
 	Count           int64
 	Value           interface{}
-	Buffer          bytes.Buffer // Buffer is used for group_concat.
+	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 	evaluated       bool
 }

@@ -991,7 +991,7 @@ func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
 
 func (e *Evaluator) evalAggGroupConcat(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
-	if ctx.Buffer.Len() > 0 {
+	if ctx.Buffer != nil {
 		v.SetValue(ctx.Buffer.String())
 	} else {
 		v.SetValue(nil)
