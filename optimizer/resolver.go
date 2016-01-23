@@ -136,7 +136,7 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		if nr.currentContext().inGroupBy {
 			// make sure item is not aggregate function
 			if ast.HasAggFlag(v.Expr) {
-				nr.Err = errors.New("group by cannot contain aggregate function")
+				nr.Err = ErrInvalidGroupFuncUse
 				return inNode, true
 			}
 		}
@@ -326,12 +326,13 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 				return true
 			}
 			found := nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
-			if !found || nr.Err != nil {
-				return found
+			if nr.Err == nil && found {
+				// Check if resolved refer is an aggregate function expr.
+				if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
+					nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
+				}
 			}
-			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
-				nr.Err = errors.New("Groupby identifier can not refer to aggregate function.")
-			}
+			return found
 		}
 		// Resolve from table first, then from select list.
 		found := nr.resolveColumnInTableSources(cn, ctx.tables)
@@ -353,7 +354,7 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 				cn.Refer = r
 			}
 			if _, ok := cn.Refer.Expr.(*ast.AggregateFuncExpr); ok {
-				nr.Err = errors.New("Groupby identifier can not refer to aggregate function.")
+				nr.Err = ErrIllegalReference.Gen("Reference '%s' not supported (reference to group function)", cn.Name.Name.O)
 			}
 			return true
 		}
