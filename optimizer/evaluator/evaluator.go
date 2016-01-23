@@ -960,8 +960,10 @@ func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
 		e.evalAggAvg(v)
 	case ast.AggFuncCount:
 		e.evalAggCount(v)
-	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum, ast.AggFuncGroupConcat:
+	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncSum:
 		e.evalAggSetValue(v)
+	case ast.AggFuncGroupConcat:
+		e.evalAggGroupConcat(v)
 	}
 	return e.err == nil
 }
@@ -985,4 +987,13 @@ func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
 		ctx.Value = x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
 	}
 	v.SetValue(ctx.Value)
+}
+
+func (e *Evaluator) evalAggGroupConcat(v *ast.AggregateFuncExpr) {
+	ctx := v.GetContext()
+	if ctx.Buffer.Len() > 0 {
+		v.SetValue(ctx.Buffer.String())
+	} else {
+		v.SetValue(nil)
+	}
 }
