@@ -557,17 +557,14 @@ func (n *AggregateFuncExpr) updateGroupConcat() error {
 			return nil
 		}
 	}
-	var buf bytes.Buffer
-	if ctx.Value != nil {
+	if ctx.Buffer.Len() > 0 {
 		// now use comma separator
-		buf.WriteString(ctx.Value.(string))
-		buf.WriteString(",")
+		ctx.Buffer.WriteString(",")
 	}
 	for _, val := range vals {
-		buf.WriteString(fmt.Sprintf("%v", val))
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
-	ctx.Value = buf.String()
 	return nil
 }
 
@@ -624,5 +621,6 @@ type AggEvaluateContext struct {
 	distinctChecker *distinct.Checker
 	Count           int64
 	Value           interface{}
+	Buffer          bytes.Buffer // Buffer is used for group_concat.
 	evaluated       bool
 }
