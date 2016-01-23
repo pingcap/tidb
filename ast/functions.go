@@ -421,14 +421,14 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateCount()
 	case AggFuncFirstRow:
 		return n.updateFirstRow()
+	case AggFuncGroupConcat:
+		return n.updateGroupConcat()
 	case AggFuncMax:
 		return n.updateMaxMin(true)
 	case AggFuncMin:
 		return n.updateMaxMin(false)
 	case AggFuncSum, AggFuncAvg:
 		return n.updateSum()
-	case AggFuncGroupConcat:
-		return n.updateGroupConcat()
 	}
 	return nil
 }
