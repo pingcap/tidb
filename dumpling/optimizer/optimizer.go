@@ -119,6 +119,7 @@ const (
 	CodeMultiWildCard       terror.ErrCode = 3
 	CodeUnsupported         terror.ErrCode = 4
 	CodeInvalidGroupFuncUse terror.ErrCode = 5
+	CodeIllegalReference    terror.ErrCode = 6
 )
 
 // Optimizer base errors.
@@ -128,6 +129,7 @@ var (
 	ErrMultiWildCard       = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
 	ErrUnSupported         = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
 	ErrInvalidGroupFuncUse = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
+	ErrIllegalReference    = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
 )
 
 func init() {
@@ -136,6 +138,7 @@ func init() {
 		CodeSameColumns:         mysql.ErrOperandColumns,
 		CodeMultiWildCard:       mysql.ErrParse,
 		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
+		CodeIllegalReference:    mysql.ErrIllegalReference,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 }
