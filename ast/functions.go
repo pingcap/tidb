@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -372,6 +374,8 @@ const (
 	AggFuncMax = "max"
 	// AggFuncMin is the name of min function.
 	AggFuncMin = "min"
+	// AggFuncGroupConcat is the name of group_concat function.
+	AggFuncGroupConcat = "group_concat"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
@@ -423,6 +427,8 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateMaxMin(false)
 	case AggFuncSum, AggFuncAvg:
 		return n.updateSum()
+	case AggFuncGroupConcat:
+		return n.updateGroupConcat()
 	}
 	return nil
 }
@@ -532,6 +538,38 @@ func (n *AggregateFuncExpr) updateSum() error {
 	return nil
 }
 
+func (n *AggregateFuncExpr) updateGroupConcat() error {
+	ctx := n.GetContext()
+	vals := make([]interface{}, 0, len(n.Args))
+	for _, a := range n.Args {
+		value := a.GetValue()
+		if value == nil {
+			return nil
+		}
+		vals = append(vals, value)
+	}
+	if n.Distinct {
+		d, err := ctx.distinctChecker.Check(vals)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !d {
+			return nil
+		}
+	}
+	if ctx.Buffer == nil {
+		ctx.Buffer = &bytes.Buffer{}
+	} else {
+		// now use comma separator
+		ctx.Buffer.WriteString(",")
+	}
+	for _, val := range vals {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
+	}
+	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	return nil
+}
+
 // AggregateFuncExtractor visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
@@ -585,5 +623,6 @@ type AggEvaluateContext struct {
 	distinctChecker *distinct.Checker
 	Count           int64
 	Value           interface{}
+	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 	evaluated       bool
 }
