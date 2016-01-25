@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -80,6 +81,8 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 				if !tnok {
 					c.unsupported = true
 				} else if strings.EqualFold(tn.Schema.O, infoschema.Name) {
+					c.unsupported = true
+				} else if strings.EqualFold(tn.Schema.O, perfschema.Name) {
 					c.unsupported = true
 				}
 			}
