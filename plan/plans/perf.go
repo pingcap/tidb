@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -41,6 +41,8 @@ type PerfSchemaPlan struct {
 }
 
 var (
+	// Definition order same as MySQL's reference manual, so don't bother to
+	// adjust according to alphabetical order.
 	setupActorsFields            []*field.ResultField
 	setupObjectsFields           []*field.ResultField
 	setupInstrsFields            []*field.ResultField
@@ -64,6 +66,8 @@ var (
 )
 
 const (
+	// Definition order same as MySQL's reference manual, so don't bother to
+	// adjust according to alphabetical order.
 	tableSetupActors        = "SETUP_ACTORS"
 	tableSetupObjects       = "SETUP_OBJECTS"
 	tableSetupInstrs        = "SETUP_INSTRUMENTS"
