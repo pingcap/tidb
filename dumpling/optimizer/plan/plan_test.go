@@ -314,7 +314,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
 
-		p, err := BuildPlan(stmt)
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
 
 		err = Refine(p)

@@ -154,7 +154,7 @@ func (e *Evaluator) handleComparisonOp(o *ast.BinaryOperationExpr) bool {
 		// for <=>, if a and b are both nil, return true.
 		// if a or b is nil, return false.
 		if o.Op == opcode.NullEQ {
-			if types.IsNil(a) || types.IsNil(b) {
+			if types.IsNil(a) && types.IsNil(b) {
 				o.SetValue(oneI64)
 			} else {
 				o.SetValue(zeroI64)
