@@ -45,7 +45,7 @@ var (
 	// adjust according to alphabetical order.
 	setupActorsFields            []*field.ResultField
 	setupObjectsFields           []*field.ResultField
-	setupInstrsFields            []*field.ResultField
+	setupInstrumentsFields       []*field.ResultField
 	setupConsumersFields         []*field.ResultField
 	setupTimersFields            []*field.ResultField
 	stmtsCurrentFields           []*field.ResultField
@@ -60,7 +60,7 @@ var (
 	stagesHistoryLongFields      []*field.ResultField
 	setupActorsRecords           [][]interface{}
 	setupObjectsRecords          [][]interface{}
-	setupInstrsRecords           [][]interface{}
+	setupInstrumentsRecords      [][]interface{}
 	setupConsumersRecords        [][]interface{}
 	setupTimersRecords           [][]interface{}
 )
@@ -70,7 +70,7 @@ const (
 	// adjust according to alphabetical order.
 	tableSetupActors        = "SETUP_ACTORS"
 	tableSetupObjects       = "SETUP_OBJECTS"
-	tableSetupInstrs        = "SETUP_INSTRUMENTS"
+	tableSetupInstruments   = "SETUP_INSTRUMENTS"
 	tableSetupConsumers     = "SETUP_CONSUMERS"
 	tableSetupTimers        = "SETUP_TIMERS"
 	tableStmtsCurrent       = "EVENTS_STATEMENTS_CURRENT"
@@ -91,7 +91,7 @@ func NewPerfSchemaPlan(tableName string) (isp *PerfSchemaPlan, err error) {
 	switch strings.ToUpper(tableName) {
 	case tableSetupActors:
 	case tableSetupObjects:
-	case tableSetupInstrs:
+	case tableSetupInstruments:
 	case tableSetupConsumers:
 	case tableSetupTimers:
 	case tableStmtsCurrent:
@@ -149,8 +149,8 @@ func buildResultFieldsForSetupObjects() (rfs []*field.ResultField) {
 // 		NAME			VARCHAR(128) NOT NULL,
 // 		ENABLED			ENUM('YES','NO') NOT NULL,
 // 		TIMED			ENUM('YES','NO') NOT NULL);
-func buildResultFieldsForSetupInstrs() (rfs []*field.ResultField) {
-	tbName := tableSetupInstrs
+func buildResultFieldsForSetupInstruments() (rfs []*field.ResultField) {
+	tbName := tableSetupInstruments
 	rfs = append(rfs, buildUsualResultField(tbName, "NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "ENABLED", []string{"YES", "NO"}, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "TIMED", []string{"YES", "NO"}, mysql.NotNullFlag, nil))
@@ -221,15 +221,15 @@ func buildResultFieldsForSetupTimers() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_LEVEL		INT(11));
 func buildResultFieldsForStmtsCurrent() (rfs []*field.ResultField) {
 	tbName := tableStmtsCurrent
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeLonglong, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SQL_TEXT", mysql.TypeLongBlob, -1, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "DIGEST", mysql.TypeVarchar, 32, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "DIGEST_TEXT", mysql.TypeLongBlob, -1, 0, nil))
@@ -237,29 +237,29 @@ func buildResultFieldsForStmtsCurrent() (rfs []*field.ResultField) {
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_TYPE", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_SCHEMA", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_NAME", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "MYSQL_ERRNO", mysql.TypeLong, 11, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "RETURNED_SQLSTATE", mysql.TypeVarchar, 5, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "MESSAGE_TEXT", mysql.TypeVarchar, 128, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_LEVEL", mysql.TypeLong, 11, 0, nil))
 	return rfs
@@ -309,15 +309,15 @@ func buildResultFieldsForStmtsCurrent() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_LEVEL		INT(11));
 func buildResultFieldsForStmtsHistory() (rfs []*field.ResultField) {
 	tbName := tableStmtsHistory
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeLonglong, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SQL_TEXT", mysql.TypeLongBlob, -1, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "DIGEST", mysql.TypeVarchar, 32, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "DIGEST_TEXT", mysql.TypeLongBlob, -1, 0, nil))
@@ -325,29 +325,29 @@ func buildResultFieldsForStmtsHistory() (rfs []*field.ResultField) {
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_TYPE", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_SCHEMA", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_NAME", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "MYSQL_ERRNO", mysql.TypeLong, 11, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "RETURNED_SQLSTATE", mysql.TypeVarchar, 5, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "MESSAGE_TEXT", mysql.TypeVarchar, 128, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_LEVEL", mysql.TypeLong, 11, 0, nil))
 	return rfs
@@ -397,15 +397,15 @@ func buildResultFieldsForStmtsHistory() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_LEVEL		INT(11));
 func buildResultFieldsForStmtsHistoryLong() (rfs []*field.ResultField) {
 	tbName := tableStmtsHistoryLong
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeLonglong, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SQL_TEXT", mysql.TypeLongBlob, -1, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "DIGEST", mysql.TypeVarchar, 32, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "DIGEST_TEXT", mysql.TypeLongBlob, -1, 0, nil))
@@ -413,29 +413,29 @@ func buildResultFieldsForStmtsHistoryLong() (rfs []*field.ResultField) {
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_TYPE", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_SCHEMA", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_NAME", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "MYSQL_ERRNO", mysql.TypeLong, 11, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "RETURNED_SQLSTATE", mysql.TypeVarchar, 5, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "MESSAGE_TEXT", mysql.TypeVarchar, 128, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_LEVEL", mysql.TypeLong, 11, 0, nil))
 	return rfs
@@ -479,41 +479,41 @@ func buildResultFieldsForStmtsHistoryLong() (rfs []*field.ResultField) {
 // 		SUM_NO_GOOD_INDEX_USED	BIGINT(20) UNSIGNED NOT NULL);
 func buildResultFieldsForPreparedStmtsInstances() (rfs []*field.ResultField) {
 	tbName := tablePrepStmtsInstances
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "STATEMENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "STATEMENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "STATEMENT_NAME", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SQL_TEXT", mysql.TypeLongBlob, -1, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OWNER_THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OWNER_EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OWNER_THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OWNER_EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "ONWER_OBJECT_TYPE", []string{"EVENT", "FUNCTION", "TABLE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OWNER_OBJECT_SCHEMA", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "OWNER_OBJECT_NAME", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_PREPARE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "COUNT_REPREPARE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "COUNT_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "MIN_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "AVG_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "MAX_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "SUM_NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_PREPARE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "COUNT_REPREPARE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "COUNT_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "MIN_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "AVG_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "MAX_TIMER_EXECUTE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_LOCK_TIME", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ERRORS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_WARNINGS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ROWS_AFFECTED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ROWS_SENT", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_ROWS_EXAMINED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_CREATED_TMP_DISK_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_CREATED_TMP_TABLES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_FULL_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_FULL_RANGE_JOIN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_RANGE_CHECK", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SELECT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_MERGE_PASSES", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_RANGE", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_ROWS", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_SORT_SCAN", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_NO_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "SUM_NO_GOOD_INDEX_USED", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	return rfs
 }
 
@@ -544,29 +544,29 @@ func buildResultFieldsForPreparedStmtsInstances() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
 func buildResultFieldsForTransCurrent() (rfs []*field.ResultField) {
 	tbName := tableTransCurrent
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "STATE", []string{"ACTIVE", "COMMITTED", "ROLLED BACK"}, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TRX_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TRX_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "GTID", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_FORMAT_ID", mysql.TypeLong, 11, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_GTRID", mysql.TypeVarchar, 130, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_BQUAL", mysql.TypeVarchar, 130, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XA_STATE", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "ACCESS_MODE", []string{"READ ONLY", "READ WRITE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "ISOLATION_LEVEL", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "AUTOCOMMIT", []string{"YES", "NO"}, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_SAVEPOINTS", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_ROLLBACK_TO_SAVEPOINT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_RELEASE_SAVEPOINT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_SAVEPOINTS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_ROLLBACK_TO_SAVEPOINT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_RELEASE_SAVEPOINT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	return rfs
 }
@@ -598,29 +598,29 @@ func buildResultFieldsForTransCurrent() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
 func buildResultFieldsForTransHistory() (rfs []*field.ResultField) {
 	tbName := tableTransHistory
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "STATE", []string{"ACTIVE", "COMMITTED", "ROLLED BACK"}, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TRX_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TRX_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "GTID", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_FORMAT_ID", mysql.TypeLong, 11, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_GTRID", mysql.TypeVarchar, 130, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_BQUAL", mysql.TypeVarchar, 130, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XA_STATE", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "ACCESS_MODE", []string{"READ ONLY", "READ WRITE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "ISOLATION_LEVEL", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "AUTOCOMMIT", []string{"YES", "NO"}, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_SAVEPOINTS", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_ROLLBACK_TO_SAVEPOINT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_RELEASE_SAVEPOINT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_SAVEPOINTS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_ROLLBACK_TO_SAVEPOINT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_RELEASE_SAVEPOINT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	return rfs
 }
@@ -652,29 +652,29 @@ func buildResultFieldsForTransHistory() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
 func buildResultFieldsForTransHistoryLong() (rfs []*field.ResultField) {
 	tbName := tableTransHistoryLong
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "STATE", []string{"ACTIVE", "COMMITTED", "ROLLED BACK"}, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TRX_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TRX_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "GTID", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_FORMAT_ID", mysql.TypeLong, 11, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_GTRID", mysql.TypeVarchar, 130, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XID_BQUAL", mysql.TypeVarchar, 130, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "XA_STATE", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "ACCESS_MODE", []string{"READ ONLY", "READ WRITE"}, 0, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "ISOLATION_LEVEL", mysql.TypeVarchar, 64, 0, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "AUTOCOMMIT", []string{"YES", "NO"}, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_SAVEPOINTS", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_ROLLBACK_TO_SAVEPOINT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_RELEASE_SAVEPOINT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_SAVEPOINTS", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_ROLLBACK_TO_SAVEPOINT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NUMBER_OF_RELEASE_SAVEPOINT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "OBJECT_INSTANCE_BEGIN", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	return rfs
 }
@@ -694,17 +694,17 @@ func buildResultFieldsForTransHistoryLong() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
 func buildResultFieldsForStagesCurrent() (rfs []*field.ResultField) {
 	tbName := tableStagesCurrent
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WORK_COMPLETED", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WORK_ESTIMATED", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WORK_COMPLETED", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WORK_ESTIMATED", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	return rfs
 }
@@ -724,17 +724,17 @@ func buildResultFieldsForStagesCurrent() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
 func buildResultFieldsForStagesHistory() (rfs []*field.ResultField) {
 	tbName := tableStagesHistory
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WORK_COMPLETED", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WORK_ESTIMATED", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WORK_COMPLETED", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WORK_ESTIMATED", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	return rfs
 }
@@ -754,17 +754,17 @@ func buildResultFieldsForStagesHistory() (rfs []*field.ResultField) {
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
 func buildResultFieldsForStagesHistoryLong() (rfs []*field.ResultField) {
 	tbName := tableStagesHistoryLong
-	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "THREAD_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_ID", mysql.TypeLonglong, 20, mysql.NotNullFlag|mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "END_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "EVENT_NAME", mysql.TypeVarchar, 128, mysql.NotNullFlag, nil))
 	rfs = append(rfs, buildUsualResultField(tbName, "SOURCE", mysql.TypeVarchar, 64, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WORK_COMPLETED", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "WORK_ESTIMATED", mysql.TypeLonglong, 20, 0, nil))
-	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, 0, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_START", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_END", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "TIMER_WAIT", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WORK_COMPLETED", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "WORK_ESTIMATED", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
+	rfs = append(rfs, buildUsualResultField(tbName, "NESTING_EVENT_ID", mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil))
 	rfs = append(rfs, buildEnumResultField(tbName, "NESTING_EVENT_TYPE", []string{"TRANSACTION", "STATEMENT", "STAGE"}, 0, nil))
 	return rfs
 }
@@ -794,7 +794,7 @@ func buildSetupObjectsRecords() (records [][]interface{}) {
 	return records
 }
 
-func buildSetupInstrsRecords() (records [][]interface{}) {
+func buildSetupInstrumentsRecords() (records [][]interface{}) {
 	// TODO: add instrumentation points later
 	return records
 }
@@ -841,8 +841,8 @@ func (isp *PerfSchemaPlan) GetFields() []*field.ResultField {
 		return setupActorsFields
 	case tableSetupObjects:
 		return setupObjectsFields
-	case tableSetupInstrs:
-		return setupInstrsFields
+	case tableSetupInstruments:
+		return setupInstrumentsFields
 	case tableSetupConsumers:
 		return setupConsumersFields
 	case tableSetupTimers:
@@ -944,8 +944,8 @@ func (isp *PerfSchemaPlan) fetchAll(ctx context.Context) {
 		isp.fetchSetupActors()
 	case tableSetupObjects:
 		isp.fetchSetupObjects()
-	case tableSetupInstrs:
-		isp.fetchSetupInstrs()
+	case tableSetupInstruments:
+		isp.fetchSetupInstruments()
 	case tableSetupConsumers:
 		isp.fetchSetupConsumers()
 	case tableSetupTimers:
@@ -965,8 +965,8 @@ func (isp *PerfSchemaPlan) fetchSetupObjects() {
 	}
 }
 
-func (isp *PerfSchemaPlan) fetchSetupInstrs() {
-	for _, record := range setupInstrsRecords {
+func (isp *PerfSchemaPlan) fetchSetupInstruments() {
+	for _, record := range setupInstrumentsRecords {
 		isp.rows = append(isp.rows, &plan.Row{Data: record})
 	}
 }
@@ -993,7 +993,7 @@ func (isp *PerfSchemaPlan) Close() error {
 func init() {
 	setupActorsFields = buildResultFieldsForSetupActors()
 	setupObjectsFields = buildResultFieldsForSetupObjects()
-	setupInstrsFields = buildResultFieldsForSetupInstrs()
+	setupInstrumentsFields = buildResultFieldsForSetupInstruments()
 	setupConsumersFields = buildResultFieldsForSetupConsumers()
 	setupTimersFields = buildResultFieldsForSetupTimers()
 	stmtsCurrentFields = buildResultFieldsForStmtsCurrent()
@@ -1009,7 +1009,7 @@ func init() {
 
 	setupActorsRecords = buildSetupActorsRecords()
 	setupObjectsRecords = buildSetupObjectsRecords()
-	setupInstrsRecords = buildSetupInstrsRecords()
+	setupInstrumentsRecords = buildSetupInstrumentsRecords()
 	setupConsumersRecords = buildSetupConsumersRecords()
 	setupTimersRecords = buildSetupTimersRecords()
 }
