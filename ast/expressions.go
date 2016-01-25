@@ -16,6 +16,7 @@ package ast
 import (
 	"regexp"
 
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -228,11 +229,30 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SubQuery represents a subquery interface.
+// This interface is used in plan/executor/evaluator
+type SubQuery interface {
+	ExprNode
+
+	// UseOuterQuery returns if sub query use outer query.
+	UseOuterQuery() bool
+
+	// EvalRows executes the subquery and returns the multi rows with rowCount.
+	// rowCount < 0 means no limit.
+	// If the ColumnCount is 1, we will return a column result like {1, 2, 3},
+	// otherwise, we will return a table result like {{1, 1}, {2, 2}}.
+	EvalRows(ctx context.Context, rowCount int) ([]interface{}, error)
+
+	// ColumnCount returns column count for the sub query.
+	ColumnCount() (int, error)
+}
+
 // SubqueryExpr represents a subquery.
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query ResultSetNode
+	Query    ResultSetNode
+	SubQuery SubQuery
 }
 
 // Accept implements Node Accept interface.
@@ -242,11 +262,25 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SubqueryExpr)
+
+	if n.SubQuery != nil {
+		t, ok := n.SubQuery.Accept(v)
+		if !ok {
+			return n, false
+		}
+		sq, ok := t.(SubQuery)
+		if ok {
+			n.SubQuery = sq
+		}
+		return v.Leave(n)
+	}
+
 	node, ok := n.Query.Accept(v)
 	if !ok {
 		return n, false
 	}
 	n.Query = node.(ResultSetNode)
+
 	return v.Leave(n)
 }
 

@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
@@ -37,8 +39,8 @@ const (
 
 // BuildPlan builds a plan from a node.
 // It returns ErrUnsupportedType if ast.Node type is not supported yet.
-func BuildPlan(node ast.Node) (Plan, error) {
-	var builder planBuilder
+func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
+	builder := planBuilder{sb: sb}
 	p := builder.build(node)
 	return p, builder.err
 }
@@ -48,6 +50,7 @@ func BuildPlan(node ast.Node) (Plan, error) {
 type planBuilder struct {
 	err    error
 	hasAgg bool
+	sb     SubQueryBuilder
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -153,12 +156,26 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 	return extractor.AggFuncs
 }
 
+func (b *planBuilder) buildSubquery(n ast.Node) {
+	sv := &subqueryVisitor{
+		sb:      b.sb,
+		builder: b,
+	}
+	_, ok := n.Accept(sv)
+	if !ok {
+		fmt.Println("Extract subquery error")
+	}
+}
+
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
 		aggFuncs = b.extractSelectAgg(sel)
 	}
+	// Build subquery
+	// Convert subquery to expr with plan
+	b.buildSubquery(sel)
 	var p Plan
 	if sel.From != nil {
 		p = b.buildJoin(sel)
@@ -522,4 +539,31 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 		conditions = append(conditions, where)
 	}
 	return conditions
+}
+
+// SubQueryBuilder is the interface for building SubQuery executor.
+type SubQueryBuilder interface {
+	Build(p Plan) ast.SubQuery
+}
+
+type subqueryVisitor struct {
+	subqueries []ast.SubQuery
+	builder    *planBuilder
+	sb         SubQueryBuilder
+}
+
+func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.SubqueryExpr:
+		p := se.builder.build(x.Query)
+		x.SubQuery = se.sb.Build(p)
+		return in, true
+	case *ast.Join:
+		return in, true
+	}
+	return in, false
+}
+
+func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }

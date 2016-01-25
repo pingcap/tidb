@@ -413,6 +413,12 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// Clear clears aggregate computing context.
+func (n *AggregateFuncExpr) Clear() {
+	n.CurrentGroup = ""
+	n.contextPerGroupMap = nil
+}
+
 // Update is used for update aggregate context.
 func (n *AggregateFuncExpr) Update() error {
 	name := strings.ToLower(n.F)
