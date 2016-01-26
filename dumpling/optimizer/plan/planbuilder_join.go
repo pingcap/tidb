@@ -447,6 +447,7 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 			log.Errorf("Failed to attach where condtion.")
 		}
 	}
+	path.extractEquivs()
 	path.addIndexDependency()
 	p := b.buildPlanFromJoinPath(path)
 	p.SetFields(rfs)
@@ -689,17 +690,21 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 			equivFilterConditions = append(equivFilterConditions, condition)
 		}
 	}
+	var p Plan
 	if equivAccessIdx != nil {
-		return &IndexScan{
+		p = &IndexScan{
 			Table:            path.table.TableInfo,
 			Index:            equivAccessIdx,
 			AccessConditions: []ast.ExprNode{equivAccessCondition},
 			FilterConditions: append(path.conditions, equivFilterConditions...),
 		}
+	} else {
+		p = &TableScan{
+			Table:            path.table.TableInfo,
+			AccessConditions: []ast.ExprNode{equivAccessCondition},
+			FilterConditions: append(path.conditions, equivFilterConditions...),
+		}
 	}
-	return &TableScan{
-		Table:            path.table.TableInfo,
-		AccessConditions: []ast.ExprNode{equivAccessCondition},
-		FilterConditions: append(path.conditions, equivFilterConditions...),
-	}
+	p.SetFields(path.table.GetResultFields())
+	return p
 }
