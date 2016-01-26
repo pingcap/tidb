@@ -220,10 +220,11 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)
 		rfs[i] = &ast.ResultField{
-			Column: v,
-			Table:  tn.TableInfo,
-			DBName: tn.Schema,
-			Expr:   expr,
+			Column:    v,
+			Table:     tn.TableInfo,
+			DBName:    tn.Schema,
+			Expr:      expr,
+			TableName: tn,
 		}
 	}
 	tn.SetResultFields(rfs)
@@ -380,8 +381,14 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 				// different table name.
 				matchedTable = ts
 				break
+			} else if ts.AsName.L != "" {
+				// Table as name shadows table real name.
+				continue
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
+				if cn.Name.Schema.L != "" && cn.Name.Schema.L != tn.Schema.L {
+					continue
+				}
 				if tableNameL == tn.Name.L {
 					matchedTable = ts
 				}
