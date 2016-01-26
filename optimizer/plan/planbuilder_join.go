@@ -185,7 +185,7 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 		}
 		p.conditions = append(p.conditions, condition)
 		p.filterRate *= filterRate
-		return false
+		return true
 	}
 	// outer join
 	if p.outer.attachCondition(condition, availablePaths) {

@@ -468,7 +468,11 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 	for _, rf := range rfs {
 		if cn.Name.Table.L != "" {
 			// Check table name
-			if cn.Name.Table.L != rf.Table.Name.L && cn.Name.Table.L != rf.TableAsName.L {
+			if rf.TableAsName.L != "" {
+				if cn.Name.Table.L != rf.TableAsName.L {
+					continue
+				}
+			} else if cn.Name.Table.L != rf.Table.Name.L {
 				continue
 			}
 		}
