@@ -525,6 +525,147 @@ func (e *IndexScanExec) Close() error {
 	return nil
 }
 
+// JoinOuterExec represents a outer join executor.
+type JoinOuterExec struct {
+	OuterExec Executor
+	InnerPlan plan.Plan
+	innerExec Executor
+	fields    []*ast.ResultField
+	builder   *executorBuilder
+	gotRow    bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *JoinOuterExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+// If inner executor didn't get any row for a outer executor row,
+// A row with 0 len Data indicates there is no inner row matched for
+// an outer row.
+func (e *JoinOuterExec) Next() (*Row, error) {
+	for {
+		if e.innerExec == nil {
+			e.gotRow = false
+			outerRow, err := e.OuterExec.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if outerRow == nil {
+				return nil, nil
+			}
+			plan.Refine(e.InnerPlan)
+			e.innerExec = e.builder.build(e.InnerPlan)
+			if e.builder.err != nil {
+				return nil, errors.Trace(e.builder.err)
+			}
+		}
+		row, err := e.innerExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.innerExec = nil
+			if e.gotRow {
+				continue
+			}
+			e.setInnerNull()
+			return &Row{}, nil
+		}
+		if len(row.Data) != 0 {
+			e.gotRow = true
+			return row, nil
+		}
+	}
+}
+
+func (e *JoinOuterExec) setInnerNull() {
+	for _, rf := range e.InnerPlan.Fields() {
+		rf.Expr.SetValue(nil)
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *JoinOuterExec) Close() error {
+	err := e.OuterExec.Close()
+	if e.innerExec != nil {
+		return e.innerExec.Close()
+	}
+	return err
+}
+
+// JoinInnerExec represents a inner join executor.
+type JoinInnerExec struct {
+	InnerPlans []plan.Plan
+	innerExecs []Executor
+	Condition  ast.ExprNode
+	ctx        context.Context
+	fields     []*ast.ResultField
+	builder    *executorBuilder
+	done       bool
+	cursor     int
+}
+
+// Fields implements Executor Fields interface.
+func (e *JoinInnerExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+func (e *JoinInnerExec) Next() (*Row, error) {
+	if e.done {
+		return nil, nil
+	}
+	for {
+		exec := e.innerExecs[e.cursor]
+		if exec == nil {
+			exec = e.builder.build(e.InnerPlans[e.cursor])
+			if e.builder.err != nil {
+				return nil, errors.Trace(e.builder.err)
+			}
+			e.innerExecs[e.cursor] = exec
+		}
+		row, err := exec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.innerExecs[e.cursor] = nil
+			if e.cursor == 0 {
+				e.done = true
+				return nil, nil
+			}
+			e.cursor--
+			continue
+		}
+		if e.cursor < len(e.innerExecs)-1 {
+			e.cursor++
+			continue
+		}
+		var match = true
+		if e.Condition != nil {
+			match, err = evaluator.EvalBool(e.ctx, e.Condition)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if match {
+			return row, nil
+		}
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *JoinInnerExec) Close() error {
+	for _, inExec := range e.innerExecs {
+		if inExec != nil {
+			inExec.Close()
+		}
+	}
+	return nil
+}
+
 // SelectFieldsExec represents a select fields executor.
 type SelectFieldsExec struct {
 	Src          Executor

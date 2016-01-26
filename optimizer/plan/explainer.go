@@ -63,6 +63,10 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 		} else {
 			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
 		}
+	case *JoinOuter:
+		str = fmt.Sprintf("JoinOuter")
+	case *JoinInner:
+		str = fmt.Sprintf("JoinInner")
 	default:
 		e.err = ErrUnsupportedType.Gen("Unknown plan type %T", in)
 		return in, false

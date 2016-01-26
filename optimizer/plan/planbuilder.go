@@ -48,6 +48,7 @@ func BuildPlan(node ast.Node) (Plan, error) {
 type planBuilder struct {
 	err    error
 	hasAgg bool
+	obj    interface{}
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -181,8 +182,7 @@ func (b *planBuilder) buildFrom(sel *ast.SelectStmt) Plan {
 	if from.Right == nil {
 		return b.buildSingleTable(sel)
 	}
-	paths := b.buildJoinPaths(sel)
-	return b.buildPlanFromJoinPaths(paths)
+	return b.buildJoin(sel)
 }
 
 func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
@@ -458,6 +458,10 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 		if mysql.HasPriKeyFlag(refer.Column.Flag) {
 			return true
 		}
+		return false
+	case *JoinOuter:
+		return false
+	case *JoinInner:
 		return false
 	case *Sort:
 		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.
