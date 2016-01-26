@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
@@ -368,6 +370,12 @@ const (
 	AggFuncAvg = "avg"
 	// AggFuncFirstRow is the name of FirstRowColumn function.
 	AggFuncFirstRow = "firstrow"
+	// AggFuncMax is the name of max function.
+	AggFuncMax = "max"
+	// AggFuncMin is the name of min function.
+	AggFuncMin = "min"
+	// AggFuncGroupConcat is the name of group_concat function.
+	AggFuncGroupConcat = "group_concat"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
@@ -413,6 +421,14 @@ func (n *AggregateFuncExpr) Update() error {
 		return n.updateCount()
 	case AggFuncFirstRow:
 		return n.updateFirstRow()
+	case AggFuncGroupConcat:
+		return n.updateGroupConcat()
+	case AggFuncMax:
+		return n.updateMaxMin(true)
+	case AggFuncMin:
+		return n.updateMaxMin(false)
+	case AggFuncSum, AggFuncAvg:
+		return n.updateSum()
 	}
 	return nil
 }
@@ -469,6 +485,91 @@ func (n *AggregateFuncExpr) updateFirstRow() error {
 	return nil
 }
 
+func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
+	ctx := n.GetContext()
+	if len(n.Args) != 1 {
+		return errors.New("Wrong number of args for AggFuncFirstRow")
+	}
+	v := n.Args[0].GetValue()
+	if !ctx.evaluated {
+		ctx.Value = v
+		ctx.evaluated = true
+		return nil
+	}
+	c, err := types.Compare(ctx.Value, v)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if max {
+		if c == -1 {
+			ctx.Value = v
+		}
+	} else {
+		if c == 1 {
+			ctx.Value = v
+		}
+
+	}
+	return nil
+}
+
+func (n *AggregateFuncExpr) updateSum() error {
+	ctx := n.GetContext()
+	a := n.Args[0]
+	value := a.GetValue()
+	if value == nil {
+		return nil
+	}
+	if n.Distinct {
+		d, err := ctx.distinctChecker.Check([]interface{}{value})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !d {
+			return nil
+		}
+	}
+	var err error
+	ctx.Value, err = types.CalculateSum(ctx.Value, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.Count++
+	return nil
+}
+
+func (n *AggregateFuncExpr) updateGroupConcat() error {
+	ctx := n.GetContext()
+	vals := make([]interface{}, 0, len(n.Args))
+	for _, a := range n.Args {
+		value := a.GetValue()
+		if value == nil {
+			return nil
+		}
+		vals = append(vals, value)
+	}
+	if n.Distinct {
+		d, err := ctx.distinctChecker.Check(vals)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !d {
+			return nil
+		}
+	}
+	if ctx.Buffer == nil {
+		ctx.Buffer = &bytes.Buffer{}
+	} else {
+		// now use comma separator
+		ctx.Buffer.WriteString(",")
+	}
+	for _, val := range vals {
+		ctx.Buffer.WriteString(fmt.Sprintf("%v", val))
+	}
+	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	return nil
+}
+
 // AggregateFuncExtractor visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
@@ -522,5 +623,6 @@ type AggEvaluateContext struct {
 	distinctChecker *distinct.Checker
 	Count           int64
 	Value           interface{}
+	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 	evaluated       bool
 }

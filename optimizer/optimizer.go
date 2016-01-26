@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -65,28 +66,20 @@ type supportChecker struct {
 }
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
-	switch ti := in.(type) {
-	case *ast.SubqueryExpr, *ast.HavingClause:
+	switch x := in.(type) {
+	case *ast.SubqueryExpr:
 		c.unsupported = true
-	case *ast.GroupByClause:
-	case *ast.AggregateFuncExpr:
-		fn := strings.ToLower(ti.F)
-		switch fn {
-		case ast.AggFuncCount:
-		default:
+	case *ast.TableSource:
+		if _, ok := x.Source.(*ast.SelectStmt); ok {
 			c.unsupported = true
 		}
-	case *ast.TableSource:
-		switch x := ti.Source.(type) {
-		case *ast.SelectStmt:
+	case *ast.TableName:
+		if strings.EqualFold(x.Schema.O, infoschema.Name) {
 			c.unsupported = true
-		case *ast.TableName:
-			if strings.EqualFold(x.Schema.O, infoschema.Name) {
-				c.unsupported = true
-			}
+		} else if strings.EqualFold(x.Schema.O, perfschema.Name) {
+			c.unsupported = true
 		}
 	case *ast.SelectStmt:
-		x := in.(*ast.SelectStmt)
 		if x.Distinct {
 			c.unsupported = true
 		}
@@ -116,25 +109,31 @@ func IsSupported(node ast.Node) bool {
 
 // Optimizer error codes.
 const (
-	CodeOneColumn     terror.ErrCode = 1
-	CodeSameColumns                  = 2
-	CodeMultiWildCard                = 3
-	CodeUnsupported                  = 4
+	CodeOneColumn           terror.ErrCode = 1
+	CodeSameColumns         terror.ErrCode = 2
+	CodeMultiWildCard       terror.ErrCode = 3
+	CodeUnsupported         terror.ErrCode = 4
+	CodeInvalidGroupFuncUse terror.ErrCode = 5
+	CodeIllegalReference    terror.ErrCode = 6
 )
 
 // Optimizer base errors.
 var (
-	ErrOneColumn     = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
-	ErrSameColumns   = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
-	ErrMultiWildCard = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
-	ErrUnSupported   = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
+	ErrOneColumn           = terror.ClassOptimizer.New(CodeOneColumn, "Operand should contain 1 column(s)")
+	ErrSameColumns         = terror.ClassOptimizer.New(CodeSameColumns, "Operands should contain same columns")
+	ErrMultiWildCard       = terror.ClassOptimizer.New(CodeMultiWildCard, "wildcard field exist more than once")
+	ErrUnSupported         = terror.ClassOptimizer.New(CodeUnsupported, "unsupported")
+	ErrInvalidGroupFuncUse = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
+	ErrIllegalReference    = terror.ClassOptimizer.New(CodeIllegalReference, "Illegal reference")
 )
 
 func init() {
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOneColumn:     mysql.ErrOperandColumns,
-		CodeSameColumns:   mysql.ErrOperandColumns,
-		CodeMultiWildCard: mysql.ErrParse,
+		CodeOneColumn:           mysql.ErrOperandColumns,
+		CodeSameColumns:         mysql.ErrOperandColumns,
+		CodeMultiWildCard:       mysql.ErrParse,
+		CodeInvalidGroupFuncUse: mysql.ErrInvalidGroupFuncUse,
+		CodeIllegalReference:    mysql.ErrIllegalReference,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 }
