@@ -53,6 +53,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
+	case *plan.Having:
+		return b.buildHaving(v)
 	case *plan.IndexScan:
 		return b.buildIndexScan(v)
 	case *plan.JoinOuter:
@@ -238,6 +240,11 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		GroupByItems: v.GroupByItems,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildHaving(v *plan.Having) Executor {
+	src := b.build(v.Src())
+	return b.buildFilter(src, v.Conditions)
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {

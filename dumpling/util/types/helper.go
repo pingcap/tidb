@@ -15,6 +15,9 @@ package types
 
 import (
 	"math"
+
+	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like GNU rint function.
@@ -66,4 +69,45 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	}
 
 	return f, nil
+}
+
+// CalculateSum adds v to sum.
+func CalculateSum(sum interface{}, v interface{}) (interface{}, error) {
+	// for avg and sum calculation
+	// avg and sum use decimal for integer and decimal type, use float for others
+	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+	var (
+		data interface{}
+		err  error
+	)
+
+	v = RawData(v)
+	switch y := v.(type) {
+	case int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
+		data, err = mysql.ConvertToDecimal(v)
+	case mysql.Decimal:
+		data = y
+	case nil:
+		data = nil
+	default:
+		data, err = ToFloat64(v)
+	}
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if data == nil {
+		return sum, nil
+	}
+	data = RawData(data)
+	switch x := sum.(type) {
+	case nil:
+		return data, nil
+	case float64:
+		return x + data.(float64), nil
+	case mysql.Decimal:
+		return x.Add(data.(mysql.Decimal)), nil
+	default:
+		return nil, errors.Errorf("invalid value %v(%T) for aggregate", x, x)
+	}
 }
