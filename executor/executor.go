@@ -525,7 +525,7 @@ func (e *IndexScanExec) Close() error {
 	return nil
 }
 
-// JoinOuterExec represents a outer join executor.
+// JoinOuterExec represents an outer join executor.
 type JoinOuterExec struct {
 	OuterExec Executor
 	InnerPlan plan.Plan
@@ -541,7 +541,8 @@ func (e *JoinOuterExec) Fields() []*ast.ResultField {
 }
 
 // Next implements Executor Next interface.
-// If inner executor didn't get any row for a outer executor row,
+// The data in the returned row is not used by caller.
+// If inner executor didn't get any row for an outer executor row,
 // A row with 0 len Data indicates there is no inner row matched for
 // an outer row.
 func (e *JoinOuterExec) Next() (*Row, error) {
@@ -613,6 +614,7 @@ func (e *JoinInnerExec) Fields() []*ast.ResultField {
 }
 
 // Next implements Executor Next interface.
+// The data in the returned row is not used by caller.
 func (e *JoinInnerExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
@@ -620,6 +622,7 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 	for {
 		exec := e.innerExecs[e.cursor]
 		if exec == nil {
+			plan.Refine(e.InnerPlans[e.cursor])
 			exec = e.builder.build(e.InnerPlans[e.cursor])
 			if e.builder.err != nil {
 				return nil, errors.Trace(e.builder.err)

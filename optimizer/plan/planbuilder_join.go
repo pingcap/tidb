@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-// Equiv represents a equivalent join condition.
+// Equiv represents an equivalent join condition, like "t1.c1 = t2.c1".
 type Equiv struct {
 	Left     *ast.ResultField
 	LeftIdx  bool
@@ -55,8 +55,8 @@ type joinPath struct {
 	totalFilterRate float64
 
 	neighborCount int // number of neighbor table.
-	idxDepCount   int // number of tables this table depends on.
-	revDepCount   int // number of tables depends on this table.
+	idxDepCount   int // number of paths this table depends on.
+	revDepCount   int // number of paths depends on this table.
 	ordering      *ast.ResultField
 	orderingDesc  bool
 
@@ -87,7 +87,7 @@ func newTablePath(table *ast.TableName) *joinPath {
 }
 
 // newOuterJoinPath creates a new outer join path and pushes on condition to children paths.
-// the returned joinPath slice has one element.
+// The returned joinPath slice has one element.
 func newOuterJoinPath(isRightJoin bool, leftPath, rightPath *joinPath, on *ast.OnCondition) *joinPath {
 	outerJoin := &joinPath{rightJoin: isRightJoin, outer: leftPath, inner: rightPath, filterRate: 1}
 	leftPath.parent = outerJoin
@@ -461,7 +461,7 @@ type nullRejectFinder struct {
 func (n *nullRejectFinder) Enter(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
 	case *ast.BinaryOperationExpr:
-		if x.Op == opcode.NullEQ {
+		if x.Op == opcode.NullEQ || x.Op == opcode.OrOr {
 			return in, true
 		}
 	case *ast.IsNullExpr:
