@@ -14,9 +14,10 @@
 package plan
 
 import (
+	"strings"
+
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 )
@@ -56,7 +57,6 @@ type joinPath struct {
 
 	neighborCount int // number of neighbor table.
 	idxDepCount   int // number of paths this table depends on.
-	revDepCount   int // number of paths depends on this table.
 	ordering      *ast.ResultField
 	orderingDesc  bool
 
@@ -179,7 +179,8 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 				return true
 			}
 		}
-		attacher := conditionAttachChecker{targetPath: p, availablePaths: availablePaths}
+		attacher := &conditionAttachChecker{targetPath: p, availablePaths: availablePaths}
+		condition.Accept(attacher)
 		if attacher.invalid {
 			return false
 		}
@@ -187,6 +188,7 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 		p.filterRate *= filterRate
 		return true
 	}
+
 	// outer join
 	if p.outer.attachCondition(condition, availablePaths) {
 		p.filterRate *= filterRate
@@ -219,14 +221,20 @@ func (p *joinPath) attachEquiv(equiv *Equiv, availablePaths []*joinPath) (attach
 	// table
 	if p.table != nil {
 		var prevTable *ast.TableName
+		var needSwap bool
 		if equiv.Left.TableName == p.table {
 			prevTable = equiv.Right.TableName
 		} else if equiv.Right.TableName == p.table {
 			prevTable = equiv.Left.TableName
+			needSwap = true
 		}
 		if prevTable != nil {
 			for _, prev := range availablePaths {
 				if prev.containsTable(prevTable) {
+					if needSwap {
+						equiv.Left, equiv.Right = equiv.Right, equiv.Left
+						equiv.LeftIdx, equiv.RightIdx = equiv.RightIdx, equiv.LeftIdx
+					}
 					p.equivs = append(p.equivs, equiv)
 					return true
 				}
@@ -383,23 +391,155 @@ func (p *joinPath) removeIndexDepCycle(origin *joinPath) {
 	}
 }
 
-func (p *joinPath) updateIndexDepTotalFilterRate(rate float64) {
-	for dep := range p.idxDeps {
-		dep.totalFilterRate *= rate
-		dep.updateIndexDepTotalFilterRate(rate)
-	}
-}
-
-func (p *joinPath) totalScore() float64 {
-	return float64(p.revDepCount+1) / p.totalFilterRate
-}
-
-func (p *joinPath) partialScore() float64 {
+func (p *joinPath) score() float64 {
 	return 1 / p.filterRate
 }
 
 func (p *joinPath) String() string {
-	return p.table.TableInfo.Name.L
+	if p.table != nil {
+		return p.table.TableInfo.Name.L
+	}
+	if p.outer != nil {
+		return "outer{" + p.outer.String() + "," + p.inner.String() + "}"
+	}
+	var innerStrs []string
+	for _, in := range p.inners {
+		innerStrs = append(innerStrs, in.String())
+	}
+	return "inner{" + strings.Join(innerStrs, ",") + "}"
+}
+
+func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
+	if p.table != nil {
+		return
+	}
+	if p.outer != nil {
+		p.outer.optimizeJoinOrder(availablePaths)
+		p.inner.optimizeJoinOrder(append(availablePaths, p.outer))
+		return
+	}
+	var ordered []*joinPath
+	pathMap := map[*joinPath]bool{}
+	for _, in := range p.inners {
+		pathMap[in] = true
+	}
+	for len(pathMap) > 0 {
+		next := p.nextPath(pathMap, availablePaths)
+		ordered = append(ordered, next)
+		delete(pathMap, next)
+		availablePaths = append(availablePaths, next)
+		for path := range pathMap {
+			if path.idxDeps != nil {
+				delete(path.idxDeps, next)
+			}
+			if path.neighbors != nil {
+				delete(path.neighbors, next)
+			}
+		}
+		p.reattach(pathMap, availablePaths)
+	}
+	p.inners = ordered
+}
+
+func (p *joinPath) reattach(pathMap map[*joinPath]bool, availablePaths []*joinPath) {
+	if len(p.conditions) != 0 {
+		conMap := map[ast.ExprNode]bool{}
+		for _, con := range p.conditions {
+			conMap[con] = true
+		}
+		for con := range conMap {
+			for path := range pathMap {
+				if path.attachCondition(con, availablePaths) {
+					delete(conMap, con)
+					break
+				}
+			}
+		}
+		p.conditions = make([]ast.ExprNode, 0, len(conMap))
+		for con := range conMap {
+			p.conditions = append(p.conditions, con)
+		}
+	}
+	if len(p.equivs) != 0 {
+		equivMap := map[*Equiv]bool{}
+		for _, eq := range p.equivs {
+			equivMap[eq] = true
+		}
+		for eq := range equivMap {
+			for path := range pathMap {
+				if path.attachEquiv(eq, availablePaths) {
+					delete(equivMap, eq)
+					break
+				}
+			}
+		}
+		p.equivs = make([]*Equiv, 0, len(equivMap))
+		for eq := range equivMap {
+			p.equivs = append(p.equivs, eq)
+		}
+	}
+}
+
+func (p *joinPath) nextPath(pathMap map[*joinPath]bool, availablePaths []*joinPath) *joinPath {
+	cans := p.candidates(pathMap)
+	if len(cans) == 0 {
+		var v *joinPath
+		for v = range pathMap {
+			log.Errorf("index dep %v, prevs %v\n", v.idxDeps, len(availablePaths))
+		}
+		return v
+	}
+	indexPath := p.nextIndexPath(cans)
+	if indexPath != nil {
+		return indexPath
+	}
+	return p.pickPath(cans)
+}
+
+func (p *joinPath) candidates(pathMap map[*joinPath]bool) []*joinPath {
+	var cans []*joinPath
+	for t := range pathMap {
+		if len(t.idxDeps) > 0 {
+			continue
+		}
+		cans = append(cans, t)
+	}
+	return cans
+}
+
+func (p *joinPath) nextIndexPath(candidates []*joinPath) *joinPath {
+	var indexPaths []*joinPath
+	for _, t := range candidates {
+		if (len(t.neighbors) == 0 && t.neighborCount > 0) || t.idxDepCount > 0 {
+			indexPaths = append(indexPaths, t)
+		}
+	}
+	if len(indexPaths) == 0 {
+		return nil
+	}
+	var best *joinPath
+	for _, path := range indexPaths {
+		if best == nil {
+			best = path
+		}
+		if path.score() > best.score() {
+			best = path
+		}
+	}
+	return best
+}
+
+func (p *joinPath) pickPath(candidates []*joinPath) *joinPath {
+	var best *joinPath
+	for _, path := range candidates {
+		if best == nil {
+			best = path
+		}
+		if path.score() > best.score() {
+			best = path
+		}
+	}
+	return best
 }
 
 // conditionAttachChecker checks if an expression is valid to
@@ -434,11 +574,11 @@ func (c *conditionAttachChecker) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
-	nrfinder := &nullRejectFinder{nullRejectTalbes: map[*ast.TableName]bool{}}
+	nrfinder := &nullRejectFinder{nullRejectTables: map[*ast.TableName]bool{}}
 	if sel.Where != nil {
 		sel.Where.Accept(nrfinder)
 	}
-	path := b.buildBasicJoinPath(sel.From.TableRefs, nrfinder.nullRejectTalbes)
+	path := b.buildBasicJoinPath(sel.From.TableRefs, nrfinder.nullRejectTables)
 	rfs := path.resultFields()
 
 	whereConditions := splitWhere(sel.Where)
@@ -449,13 +589,14 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	}
 	path.extractEquivs()
 	path.addIndexDependency()
+	path.optimizeJoinOrder(nil)
 	p := b.buildPlanFromJoinPath(path)
 	p.SetFields(rfs)
 	return p
 }
 
 type nullRejectFinder struct {
-	nullRejectTalbes map[*ast.TableName]bool
+	nullRejectTables map[*ast.TableName]bool
 }
 
 func (n *nullRejectFinder) Enter(in ast.Node) (ast.Node, bool) {
@@ -469,7 +610,7 @@ func (n *nullRejectFinder) Enter(in ast.Node) (ast.Node, bool) {
 			return in, true
 		}
 	case *ast.IsTruthExpr:
-		if !x.Not {
+		if x.Not {
 			return in, true
 		}
 	}
@@ -479,7 +620,10 @@ func (n *nullRejectFinder) Enter(in ast.Node) (ast.Node, bool) {
 func (n *nullRejectFinder) Leave(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
 	case *ast.ColumnNameExpr:
-		n.nullRejectTalbes[x.Refer.TableName] = true
+		if x.Refer == nil {
+			panic(x.Name.Name)
+		}
+		n.nullRejectTables[x.Refer.TableName] = true
 	}
 	return in, true
 }
@@ -547,79 +691,6 @@ func equivFromExpr(expr ast.ExprNode) *Equiv {
 	return newEquiv(ln.Refer, rn.Refer)
 }
 
-// pathMap is the inner paths
-func (b *planBuilder) nextPath(pathMap map[*ast.TableName]*joinPath,
-	equivMap map[*Equiv]bool, prevs []*joinPath) *joinPath {
-	cans := b.candidatePaths(pathMap)
-	if len(cans) == 0 {
-		for _, v := range pathMap {
-			log.Errorf("index dep %v, prevs %v\n", v.idxDeps, len(prevs))
-		}
-		log.Errorf("%v\n", b.obj)
-		panic(b.obj)
-	}
-	indexPath := b.nextIndexPath(cans)
-	if indexPath != nil {
-		return indexPath
-	}
-	var cansWithEquiv []*joinPath
-	for _, can := range cans {
-		if len(can.equivs) > 0 {
-			cansWithEquiv = append(cansWithEquiv, can)
-		}
-	}
-	if len(cansWithEquiv) > 0 {
-		return b.pickPath(cansWithEquiv)
-	}
-	return b.pickPath(cans)
-}
-
-func (b *planBuilder) candidatePaths(pathMap map[*ast.TableName]*joinPath) []*joinPath {
-	var cans []*joinPath
-	for _, t := range pathMap {
-		if len(t.idxDeps) > 0 {
-			continue
-		}
-		cans = append(cans, t)
-	}
-	return cans
-}
-
-func (b *planBuilder) nextIndexPath(candidates []*joinPath) *joinPath {
-	var indexPaths []*joinPath
-	for _, t := range candidates {
-		if (len(t.neighbors) == 0 && t.neighborCount > 0) || t.idxDepCount > 0 {
-			indexPaths = append(indexPaths, t)
-		}
-	}
-	if len(indexPaths) == 0 {
-		return nil
-	}
-	var best *joinPath
-	for _, p := range indexPaths {
-		if best == nil {
-			best = p
-		}
-		if p.partialScore() > best.partialScore() {
-			best = p
-		}
-	}
-	return best
-}
-
-func (b *planBuilder) pickPath(candidates []*joinPath) *joinPath {
-	var best *joinPath
-	for _, p := range candidates {
-		if best == nil {
-			best = p
-		}
-		if p.totalScore() > best.totalScore() {
-			best = p
-		}
-	}
-	return best
-}
-
 func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 	if path.table != nil {
 		return b.buildTablePlanFromJoinPath(path)
@@ -650,28 +721,6 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 }
 
 func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
-	if len(path.equivs) == 0 {
-		candidates := b.buildAllAccessMethodsPlan(path.table, path.conditions)
-		var p Plan
-		var lowestCost float64
-		for _, can := range candidates {
-			cost := EstimateCost(can)
-			if p == nil {
-				p = can
-				lowestCost = cost
-			}
-			if cost < lowestCost {
-				p = can
-				lowestCost = cost
-			}
-		}
-		return p
-	}
-	var (
-		equivAccessCondition  ast.ExprNode
-		equivAccessIdx        *model.IndexInfo
-		equivFilterConditions []ast.ExprNode
-	)
 	for _, equiv := range path.equivs {
 		columnNameExpr := &ast.ColumnNameExpr{}
 		columnNameExpr.Name = &ast.ColumnName{}
@@ -679,32 +728,22 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Table = equiv.Left.Table.Name
 		columnNameExpr.Refer = equiv.Left
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.Right.Expr, Op: opcode.EQ}
-		if equiv.LeftIdx && equivAccessCondition == nil {
-			equivAccessCondition = condition
-			for _, idx := range path.table.TableInfo.Indices {
-				if len(idx.Columns) == 1 && idx.Columns[0].Name.L == equiv.Left.Column.Name.L {
-					equivAccessIdx = idx
-				}
-			}
-		} else {
-			equivFilterConditions = append(equivFilterConditions, condition)
-		}
+		ast.SetFlag(condition)
+		path.conditions = append(path.conditions, condition)
 	}
+	candidates := b.buildAllAccessMethodsPlan(path.table, path.conditions)
 	var p Plan
-	if equivAccessIdx != nil {
-		p = &IndexScan{
-			Table:            path.table.TableInfo,
-			Index:            equivAccessIdx,
-			AccessConditions: []ast.ExprNode{equivAccessCondition},
-			FilterConditions: append(path.conditions, equivFilterConditions...),
+	var lowestCost float64
+	for _, can := range candidates {
+		cost := EstimateCost(can)
+		if p == nil {
+			p = can
+			lowestCost = cost
 		}
-	} else {
-		p = &TableScan{
-			Table:            path.table.TableInfo,
-			AccessConditions: []ast.ExprNode{equivAccessCondition},
-			FilterConditions: append(path.conditions, equivFilterConditions...),
+		if cost < lowestCost {
+			p = can
+			lowestCost = cost
 		}
 	}
-	p.SetFields(path.table.GetResultFields())
 	return p
 }

@@ -29,9 +29,14 @@ func Explain(p Plan) (string, error) {
 type explainer struct {
 	strs []string
 	err  error
+	idxs []int
 }
 
 func (e *explainer) Enter(in Plan) (Plan, bool) {
+	switch in.(type) {
+	case *JoinOuter, *JoinInner:
+		e.idxs = append(e.idxs, len(e.strs))
+	}
 	return in, false
 }
 
@@ -64,9 +69,19 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
 		}
 	case *JoinOuter:
-		str = fmt.Sprintf("JoinOuter")
+		last := len(e.idxs) - 1
+		idx := e.idxs[last]
+		chilrden := e.strs[idx:]
+		e.strs = e.strs[:idx]
+		str = "OuterJoin{" + strings.Join(chilrden, "->") + "}"
+		e.idxs = e.idxs[:last]
 	case *JoinInner:
-		str = fmt.Sprintf("JoinInner")
+		last := len(e.idxs) - 1
+		idx := e.idxs[last]
+		chilrden := e.strs[idx:]
+		e.strs = e.strs[:idx]
+		str = "InnerJoin{" + strings.Join(chilrden, "->") + "}"
+		e.idxs = e.idxs[:last]
 	default:
 		e.err = ErrUnsupportedType.Gen("Unknown plan type %T", in)
 		return in, false
