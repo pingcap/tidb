@@ -16,7 +16,6 @@ package localstore
 import (
 	"net/url"
 	"path/filepath"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -190,13 +189,8 @@ func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
 	}
 }
 
-func (s *dbStore) tryLock(txn *dbTxn) (err error) {
-	// check conflict
+func (s *dbStore) checkCondition(txn *dbTxn) (err error) {
 	for k := range txn.lockedKeys {
-		if _, ok := s.keysLocked[k]; ok {
-			return errors.Trace(kv.ErrLockConflict)
-		}
-
 		lastVer, ok := s.recentUpdates.Get([]byte(k))
 		if !ok {
 			continue
@@ -205,11 +199,6 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 		if lastVer.(kv.Version).Cmp(kv.Version{Ver: txn.tid}) > 0 {
 			return errors.Trace(kv.ErrConditionNotMatch)
 		}
-	}
-
-	// record
-	for k := range txn.lockedKeys {
-		s.keysLocked[k] = txn.tid
 	}
 
 	return nil
@@ -221,7 +210,7 @@ func (s *dbStore) doCommit(cmd *command) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = s.tryLock(txn)
+	err = s.checkCondition(txn)
 	if err != nil {
 		cmd.done <- errors.Trace(err)
 		return
@@ -241,7 +230,9 @@ func (s *dbStore) doCommit(cmd *command) {
 		return nil
 	})
 	err = s.writeBatch(b)
-	s.unLockKeys(txn)
+	for k := range txn.lockedKeys {
+		s.recentUpdates.Set([]byte(k), txn.version, true)
+	}
 	cmd.done <- errors.Trace(err)
 }
 
@@ -269,8 +260,7 @@ func (s *dbStore) NewBatch() engine.Batch {
 type dbStore struct {
 	db engine.DB
 
-	txns       map[uint64]*dbTxn
-	keysLocked map[string]uint64
+	txns map[uint64]*dbTxn
 	// TODO: clean up recentUpdates
 	recentUpdates *segmentmap.SegmentMap
 	uuid          string
@@ -340,16 +330,15 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 	log.Info("[kv] New store", engineSchema)
 	s := &dbStore{
-		txns:       make(map[uint64]*dbTxn),
-		keysLocked: make(map[string]uint64),
-		uuid:       uuid.NewV4().String(),
-		path:       engineSchema,
-		db:         db,
-		compactor:  newLocalCompactor(localCompactDefaultPolicy, db),
-		commandCh:  make(chan *command, 1000),
-		closed:     false,
-		closeCh:    make(chan struct{}),
-		wg:         &sync.WaitGroup{},
+		txns:      make(map[uint64]*dbTxn),
+		uuid:      uuid.NewV4().String(),
+		path:      engineSchema,
+		db:        db,
+		compactor: newLocalCompactor(localCompactDefaultPolicy, db),
+		commandCh: make(chan *command, 1000),
+		closed:    false,
+		closeCh:   make(chan struct{}),
+		wg:        &sync.WaitGroup{},
 	}
 	s.recentUpdates, err = segmentmap.NewSegmentMap(100)
 	if err != nil {
@@ -450,17 +439,4 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 
 func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
-}
-func (s *dbStore) unLockKeys(txn *dbTxn) error {
-	for k := range txn.lockedKeys {
-		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
-			debug.PrintStack()
-			log.Fatalf("should never happend:%v, %v", tid, txn.tid)
-		}
-
-		delete(s.keysLocked, k)
-		s.recentUpdates.Set([]byte(k), txn.version, true)
-	}
-
-	return nil
 }
