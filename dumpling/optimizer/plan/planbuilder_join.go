@@ -82,7 +82,7 @@ type joinPath struct {
 func newTablePath(table *ast.TableName) *joinPath {
 	return &joinPath{
 		table:      table,
-		filterRate: 1,
+		filterRate: rateFull,
 	}
 }
 
