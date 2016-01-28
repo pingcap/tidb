@@ -57,14 +57,14 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildHaving(v)
 	case *plan.IndexScan:
 		return b.buildIndexScan(v)
+	case *plan.JoinInner:
+		return b.buildJoinInner(v)
 	case *plan.JoinOuter:
 		return b.buildJoinOuter(v)
 	case *plan.Limit:
 		return b.buildLimit(v)
 	case *plan.Prepare:
 		return b.buildPrepare(v)
-	case *plan.JoinInner:
-		return b.buildJoinInner(v)
 	case *plan.SelectFields:
 		return b.buildSelectFields(v)
 	case *plan.SelectLock:

@@ -543,7 +543,7 @@ func (e *JoinOuterExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 // The data in the returned row is not used by caller.
 // If inner executor didn't get any row for an outer executor row,
-// A row with 0 len Data indicates there is no inner row matched for
+// a row with 0 len Data indicates there is no inner row matched for
 // an outer row.
 func (e *JoinOuterExec) Next() (*Row, error) {
 	for {
@@ -591,12 +591,12 @@ func (e *JoinOuterExec) setInnerNull() {
 func (e *JoinOuterExec) Close() error {
 	err := e.OuterExec.Close()
 	if e.innerExec != nil {
-		return e.innerExec.Close()
+		return errors.Trace(e.innerExec.Close())
 	}
-	return err
+	return errors.Trace(err)
 }
 
-// JoinInnerExec represents a inner join executor.
+// JoinInnerExec represents an inner join executor.
 type JoinInnerExec struct {
 	InnerPlans []plan.Plan
 	innerExecs []Executor
@@ -622,8 +622,9 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 	for {
 		exec := e.innerExecs[e.cursor]
 		if exec == nil {
-			plan.Refine(e.InnerPlans[e.cursor])
-			exec = e.builder.build(e.InnerPlans[e.cursor])
+			innerPlan := e.InnerPlans[e.cursor]
+			plan.Refine(innerPlan)
+			exec = e.builder.build(innerPlan)
 			if e.builder.err != nil {
 				return nil, errors.Trace(e.builder.err)
 			}
@@ -661,12 +662,16 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *JoinInnerExec) Close() error {
+	var err error
 	for _, inExec := range e.innerExecs {
 		if inExec != nil {
-			inExec.Close()
+			e := inExec.Close()
+			if e != nil {
+				err = errors.Trace(e)
+			}
 		}
 	}
-	return nil
+	return err
 }
 
 // SelectFieldsExec represents a select fields executor.
