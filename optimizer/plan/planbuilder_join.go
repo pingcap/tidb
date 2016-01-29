@@ -517,7 +517,7 @@ func (p *joinPath) nextIndexPath(candidates []*joinPath) *joinPath {
 	for _, can := range candidates {
 		neighborIsAvailable := len(can.neighbors) == 0 && can.neighborCount > 0
 		idxDepIsAvailable := can.idxDepCount > 0
-		if  can.hasOuterIdxEqualCond() || neighborIsAvailable || idxDepIsAvailable {
+		if can.hasOuterIdxEqualCond() || neighborIsAvailable || idxDepIsAvailable {
 			indexPaths = append(indexPaths, can)
 		}
 	}
