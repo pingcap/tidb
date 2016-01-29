@@ -22,18 +22,18 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-// Equiv represents an equivalent join condition, like "t1.c1 = t2.c1".
-type Equiv struct {
-	Left     *ast.ResultField
-	LeftIdx  bool
-	Right    *ast.ResultField
-	RightIdx bool
+// equalCondition represents an equivalent join condition, like "t1.c1 = t2.c1".
+type equalCond struct {
+	left     *ast.ResultField
+	leftIdx  bool
+	right    *ast.ResultField
+	rightIdx bool
 }
 
-func newEquiv(left, right *ast.ResultField) *Equiv {
-	eq := &Equiv{Left: left, Right: right}
-	eq.LeftIdx = equivHasIndex(eq.Left)
-	eq.RightIdx = equivHasIndex(eq.Right)
+func newEqualCond(left, right *ast.ResultField) *equalCond {
+	eq := &equalCond{left: left, right: right}
+	eq.leftIdx = equivHasIndex(eq.left)
+	eq.rightIdx = equivHasIndex(eq.right)
 	return eq
 }
 
@@ -72,7 +72,7 @@ type joinPath struct {
 	parent     *joinPath
 	filterRate float64
 	conditions []ast.ExprNode
-	equivs     []*Equiv
+	equivs     []*equalCond
 	// The joinPaths that this path's index depends on.
 	idxDeps   map[*joinPath]bool
 	neighbors map[*joinPath]bool
@@ -216,26 +216,26 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 	return p.outer.containsTable(table) || p.inner.containsTable(table)
 }
 
-// attachEquiv tries to attach a Equiv deep into a table path if applicable.
-func (p *joinPath) attachEquiv(equiv *Equiv, availablePaths []*joinPath) (attached bool) {
+// attachEqualCond tries to attach a equalCond deep into a table path if applicable.
+func (p *joinPath) attachEqualCond(eqCon *equalCond, availablePaths []*joinPath) (attached bool) {
 	// table
 	if p.table != nil {
 		var prevTable *ast.TableName
 		var needSwap bool
-		if equiv.Left.TableName == p.table {
-			prevTable = equiv.Right.TableName
-		} else if equiv.Right.TableName == p.table {
-			prevTable = equiv.Left.TableName
+		if eqCon.left.TableName == p.table {
+			prevTable = eqCon.right.TableName
+		} else if eqCon.right.TableName == p.table {
+			prevTable = eqCon.left.TableName
 			needSwap = true
 		}
 		if prevTable != nil {
 			for _, prev := range availablePaths {
 				if prev.containsTable(prevTable) {
 					if needSwap {
-						equiv.Left, equiv.Right = equiv.Right, equiv.Left
-						equiv.LeftIdx, equiv.RightIdx = equiv.RightIdx, equiv.LeftIdx
+						eqCon.left, eqCon.right = eqCon.right, eqCon.left
+						eqCon.leftIdx, eqCon.rightIdx = eqCon.rightIdx, eqCon.leftIdx
 					}
-					p.equivs = append(p.equivs, equiv)
+					p.equivs = append(p.equivs, eqCon)
 					return true
 				}
 			}
@@ -246,7 +246,7 @@ func (p *joinPath) attachEquiv(equiv *Equiv, availablePaths []*joinPath) (attach
 	// inner join
 	if len(p.inners) > 0 {
 		for _, in := range p.inners {
-			if in.attachEquiv(equiv, availablePaths) {
+			if in.attachEqualCond(eqCon, availablePaths) {
 				p.filterRate *= rateEqual
 				return true
 			}
@@ -254,28 +254,28 @@ func (p *joinPath) attachEquiv(equiv *Equiv, availablePaths []*joinPath) (attach
 		return false
 	}
 	// outer join
-	if p.outer.attachEquiv(equiv, availablePaths) {
+	if p.outer.attachEqualCond(eqCon, availablePaths) {
 		p.filterRate *= rateEqual
 		return true
 	}
-	if p.inner.attachEquiv(equiv, append(availablePaths, p.outer)) {
+	if p.inner.attachEqualCond(eqCon, append(availablePaths, p.outer)) {
 		p.filterRate *= rateEqual
 		return true
 	}
 	return false
 }
 
-func (p *joinPath) extractEquivs() {
-	var equivs []*Equiv
+func (p *joinPath) extractEqualConditon() {
+	var equivs []*equalCond
 	var cons []ast.ExprNode
 	for _, con := range p.conditions {
 		eq := equivFromExpr(con)
 		if eq != nil {
 			equivs = append(equivs, eq)
 			if p.table != nil {
-				if eq.Right.TableName == p.table {
-					eq.Left, eq.Right = eq.Right, eq.Left
-					eq.LeftIdx, eq.RightIdx = eq.RightIdx, eq.LeftIdx
+				if eq.right.TableName == p.table {
+					eq.left, eq.right = eq.right, eq.left
+					eq.leftIdx, eq.rightIdx = eq.rightIdx, eq.leftIdx
 				}
 			}
 		} else {
@@ -285,11 +285,11 @@ func (p *joinPath) extractEquivs() {
 	p.equivs = equivs
 	p.conditions = cons
 	for _, in := range p.inners {
-		in.extractEquivs()
+		in.extractEqualConditon()
 	}
 	if p.outer != nil {
-		p.outer.extractEquivs()
-		p.inner.extractEquivs()
+		p.outer.extractEqualConditon()
+		p.inner.extractEqualConditon()
 	}
 }
 
@@ -303,26 +303,26 @@ func (p *joinPath) addIndexDependency() {
 		return
 	}
 	for _, eq := range p.equivs {
-		if !eq.LeftIdx && !eq.RightIdx {
+		if !eq.leftIdx && !eq.rightIdx {
 			continue
 		}
-		pathLeft := p.findInnerContains(eq.Left.TableName)
+		pathLeft := p.findInnerContains(eq.left.TableName)
 		if pathLeft == nil {
 			continue
 		}
-		pathRight := p.findInnerContains(eq.Right.TableName)
+		pathRight := p.findInnerContains(eq.right.TableName)
 		if pathRight == nil {
 			continue
 		}
-		if eq.LeftIdx && eq.RightIdx {
+		if eq.leftIdx && eq.rightIdx {
 			pathLeft.addNeighbor(pathRight)
 			pathRight.addNeighbor(pathLeft)
-		} else if eq.LeftIdx {
-			if !pathLeft.hasOuterIdxEquiv() {
+		} else if eq.leftIdx {
+			if !pathLeft.hasOuterIdxEqualCond() {
 				pathLeft.addIndexDep(pathRight)
 			}
-		} else if eq.RightIdx {
-			if !pathRight.hasOuterIdxEquiv() {
+		} else if eq.rightIdx {
+			if !pathRight.hasOuterIdxEqualCond() {
 				pathRight.addIndexDep(pathLeft)
 			}
 		}
@@ -333,20 +333,20 @@ func (p *joinPath) addIndexDependency() {
 	}
 }
 
-func (p *joinPath) hasOuterIdxEquiv() bool {
+func (p *joinPath) hasOuterIdxEqualCond() bool {
 	if p.table != nil {
 		for _, eq := range p.equivs {
-			if eq.LeftIdx {
+			if eq.leftIdx {
 				return true
 			}
 		}
 		return false
 	}
 	if p.outer != nil {
-		return p.outer.hasOuterIdxEquiv()
+		return p.outer.hasOuterIdxEqualCond()
 	}
 	for _, in := range p.inners {
-		if in.hasOuterIdxEquiv() {
+		if in.hasOuterIdxEqualCond() {
 			return true
 		}
 	}
@@ -466,19 +466,19 @@ func (p *joinPath) reattach(pathMap map[*joinPath]bool, availablePaths []*joinPa
 		}
 	}
 	if len(p.equivs) != 0 {
-		equivMap := map[*Equiv]bool{}
+		equivMap := map[*equalCond]bool{}
 		for _, eq := range p.equivs {
 			equivMap[eq] = true
 		}
 		for eq := range equivMap {
 			for path := range pathMap {
-				if path.attachEquiv(eq, availablePaths) {
+				if path.attachEqualCond(eq, availablePaths) {
 					delete(equivMap, eq)
 					break
 				}
 			}
 		}
-		p.equivs = make([]*Equiv, 0, len(equivMap))
+		p.equivs = make([]*equalCond, 0, len(equivMap))
 		for eq := range equivMap {
 			p.equivs = append(p.equivs, eq)
 		}
@@ -589,10 +589,10 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	whereConditions := splitWhere(sel.Where)
 	for _, whereCond := range whereConditions {
 		if !path.attachCondition(whereCond, nil) {
-			log.Errorf("Failed to attach where condtion.")
+			log.Errorf("Failed to attach where condition.")
 		}
 	}
-	path.extractEquivs()
+	path.extractEqualConditon()
 	path.addIndexDependency()
 	path.optimizeJoinOrder(nil)
 	p := b.buildPlanFromJoinPath(path)
@@ -677,7 +677,7 @@ func (b *planBuilder) isOuterJoin(tp ast.JoinType, leftPaths, rightPaths *joinPa
 	return true
 }
 
-func equivFromExpr(expr ast.ExprNode) *Equiv {
+func equivFromExpr(expr ast.ExprNode) *equalCond {
 	binop, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok || binop.Op != opcode.EQ {
 		return nil
@@ -693,7 +693,7 @@ func equivFromExpr(expr ast.ExprNode) *Equiv {
 	if ln.Name.Schema.L == rn.Name.Schema.L && ln.Name.Table.L == rn.Name.Table.L {
 		return nil
 	}
-	return newEquiv(ln.Refer, rn.Refer)
+	return newEqualCond(ln.Refer, rn.Refer)
 }
 
 func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
@@ -719,7 +719,7 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 	}
 	join.Conditions = path.conditions
 	for _, equiv := range path.equivs {
-		cond := &ast.BinaryOperationExpr{L: equiv.Left.Expr, R: equiv.Right.Expr, Op: opcode.EQ}
+		cond := &ast.BinaryOperationExpr{L: equiv.left.Expr, R: equiv.right.Expr, Op: opcode.EQ}
 		join.Conditions = append(join.Conditions, cond)
 	}
 	return join
@@ -729,10 +729,10 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 	for _, equiv := range path.equivs {
 		columnNameExpr := &ast.ColumnNameExpr{}
 		columnNameExpr.Name = &ast.ColumnName{}
-		columnNameExpr.Name.Name = equiv.Left.Column.Name
-		columnNameExpr.Name.Table = equiv.Left.Table.Name
-		columnNameExpr.Refer = equiv.Left
-		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.Right.Expr, Op: opcode.EQ}
+		columnNameExpr.Name.Name = equiv.left.Column.Name
+		columnNameExpr.Name.Table = equiv.left.Table.Name
+		columnNameExpr.Refer = equiv.left
+		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
 		ast.SetFlag(condition)
 		path.conditions = append(path.conditions, condition)
 	}
