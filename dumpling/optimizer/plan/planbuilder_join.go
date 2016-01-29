@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 )
 
-// equalCondition represents an equivalent join condition, like "t1.c1 = t2.c1".
+// equalCond represents an equivalent join condition, like "t1.c1 = t2.c1".
 type equalCond struct {
 	left     *ast.ResultField
 	leftIdx  bool
@@ -72,7 +72,7 @@ type joinPath struct {
 	parent     *joinPath
 	filterRate float64
 	conditions []ast.ExprNode
-	equivs     []*equalCond
+	eqConds    []*equalCond
 	// The joinPaths that this path's index depends on.
 	idxDeps   map[*joinPath]bool
 	neighbors map[*joinPath]bool
@@ -217,7 +217,7 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 	return p.outer.containsTable(table) || p.inner.containsTable(table)
 }
 
-// attachEqualCond tries to attach a equalCond deep into a table path if applicable.
+// attachEqualCond tries to attach an equalCond deep into a table path if applicable.
 func (p *joinPath) attachEqualCond(eqCon *equalCond, availablePaths []*joinPath) (attached bool) {
 	// table
 	if p.table != nil {
@@ -236,7 +236,7 @@ func (p *joinPath) attachEqualCond(eqCon *equalCond, availablePaths []*joinPath)
 						eqCon.left, eqCon.right = eqCon.right, eqCon.left
 						eqCon.leftIdx, eqCon.rightIdx = eqCon.rightIdx, eqCon.leftIdx
 					}
-					p.equivs = append(p.equivs, eqCon)
+					p.eqConds = append(p.eqConds, eqCon)
 					return true
 				}
 			}
@@ -283,7 +283,7 @@ func (p *joinPath) extractEqualConditon() {
 			cons = append(cons, con)
 		}
 	}
-	p.equivs = equivs
+	p.eqConds = equivs
 	p.conditions = cons
 	for _, in := range p.inners {
 		in.extractEqualConditon()
@@ -303,7 +303,7 @@ func (p *joinPath) addIndexDependency() {
 	if p.table != nil {
 		return
 	}
-	for _, eq := range p.equivs {
+	for _, eq := range p.eqConds {
 		if !eq.leftIdx && !eq.rightIdx {
 			continue
 		}
@@ -336,7 +336,7 @@ func (p *joinPath) addIndexDependency() {
 
 func (p *joinPath) hasOuterIdxEqualCond() bool {
 	if p.table != nil {
-		for _, eq := range p.equivs {
+		for _, eq := range p.eqConds {
 			if eq.leftIdx {
 				return true
 			}
@@ -449,40 +449,36 @@ func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
 // after an inner path has been added to available paths.
 func (p *joinPath) reattach(pathMap map[*joinPath]bool, availablePaths []*joinPath) {
 	if len(p.conditions) != 0 {
-		conMap := map[ast.ExprNode]bool{}
+		remainedConds := make([]ast.ExprNode, 0, len(p.conditions))
 		for _, con := range p.conditions {
-			conMap[con] = true
-		}
-		for con := range conMap {
+			var attached bool
 			for path := range pathMap {
 				if path.attachCondition(con, availablePaths) {
-					delete(conMap, con)
+					attached = true
 					break
 				}
 			}
+			if !attached {
+				remainedConds = append(remainedConds, con)
+			}
 		}
-		p.conditions = make([]ast.ExprNode, 0, len(conMap))
-		for con := range conMap {
-			p.conditions = append(p.conditions, con)
-		}
+		p.conditions = remainedConds
 	}
-	if len(p.equivs) != 0 {
-		equivMap := map[*equalCond]bool{}
-		for _, eq := range p.equivs {
-			equivMap[eq] = true
-		}
-		for eq := range equivMap {
+	if len(p.eqConds) != 0 {
+		remainedEqConds := make([]*equalCond, 0, len(p.eqConds))
+		for _, eq := range p.eqConds {
+			var attached bool
 			for path := range pathMap {
 				if path.attachEqualCond(eq, availablePaths) {
-					delete(equivMap, eq)
+					attached = true
 					break
 				}
 			}
+			if !attached {
+				remainedEqConds = append(remainedEqConds, eq)
+			}
 		}
-		p.equivs = make([]*equalCond, 0, len(equivMap))
-		for eq := range equivMap {
-			p.equivs = append(p.equivs, eq)
-		}
+		p.eqConds = remainedEqConds
 	}
 }
 
@@ -516,6 +512,9 @@ func (p *joinPath) candidates(pathMap map[*joinPath]bool) []*joinPath {
 func (p *joinPath) nextIndexPath(candidates []*joinPath) *joinPath {
 	var indexPaths []*joinPath
 	for _, can := range candidates {
+		// Since we may not have equal conditions attached on the path, we
+		// need to check neighborCount and idxDepCount to see if this path
+		// can be joined with index.
 		neighborIsAvailable := len(can.neighbors) == 0 && can.neighborCount > 0
 		idxDepIsAvailable := can.idxDepCount > 0
 		if can.hasOuterIdxEqualCond() || neighborIsAvailable || idxDepIsAvailable {
@@ -628,9 +627,6 @@ func (n *nullRejectFinder) Enter(in ast.Node) (ast.Node, bool) {
 func (n *nullRejectFinder) Leave(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
 	case *ast.ColumnNameExpr:
-		if x.Refer == nil {
-			panic(x.Name.Name)
-		}
 		n.nullRejectTables[x.Refer.TableName] = true
 	}
 	return in, true
@@ -721,7 +717,7 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 		join.fields = append(join.fields, in.resultFields()...)
 	}
 	join.Conditions = path.conditions
-	for _, equiv := range path.equivs {
+	for _, equiv := range path.eqConds {
 		cond := &ast.BinaryOperationExpr{L: equiv.left.Expr, R: equiv.right.Expr, Op: opcode.EQ}
 		join.Conditions = append(join.Conditions, cond)
 	}
@@ -729,7 +725,7 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 }
 
 func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
-	for _, equiv := range path.equivs {
+	for _, equiv := range path.eqConds {
 		columnNameExpr := &ast.ColumnNameExpr{}
 		columnNameExpr.Name = &ast.ColumnName{}
 		columnNameExpr.Name.Name = equiv.left.Column.Name
