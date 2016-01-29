@@ -97,9 +97,10 @@ func newOuterJoinPath(isRightJoin bool, leftPath, rightPath *joinPath, on *ast.O
 	}
 	if on != nil {
 		conditions := splitWhere(on.Expr)
+		availablePaths := []*joinPath{outerJoin.outer}
 		for _, con := range conditions {
-			if !outerJoin.attachCondition(con, nil) {
-				outerJoin.conditions = append(outerJoin.conditions, con)
+			if !outerJoin.inner.attachCondition(con, availablePaths) {
+				log.Errorf("Inner failed to attach ON condition")
 			}
 		}
 	}
