@@ -239,10 +239,11 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)
 		rfs[i] = &ast.ResultField{
-			Column: v,
-			Table:  tn.TableInfo,
-			DBName: tn.Schema,
-			Expr:   expr,
+			Column:    v,
+			Table:     tn.TableInfo,
+			DBName:    tn.Schema,
+			Expr:      expr,
+			TableName: tn,
 		}
 	}
 	tn.SetResultFields(rfs)
@@ -415,8 +416,14 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 				// different table name.
 				matchedTable = ts
 				break
+			} else if ts.AsName.L != "" {
+				// Table as name shadows table real name.
+				continue
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
+				if cn.Name.Schema.L != "" && cn.Name.Schema.L != tn.Schema.L {
+					continue
+				}
 				if tableNameL == tn.Name.L {
 					matchedTable = ts
 				}
@@ -461,7 +468,11 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 	for _, rf := range rfs {
 		if cn.Name.Table.L != "" {
 			// Check table name
-			if cn.Name.Table.L != rf.Table.Name.L && cn.Name.Table.L != rf.TableAsName.L {
+			if rf.TableAsName.L != "" {
+				if cn.Name.Table.L != rf.TableAsName.L {
+					continue
+				}
+			} else if cn.Name.Table.L != rf.Table.Name.L {
 				continue
 			}
 		}
@@ -481,7 +492,7 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 			if matched == nil {
 				matched = rf
 			} else {
-				sameColumn := matched.Table.Name.L == rf.Table.Name.L && matched.Column.Name.L == rf.Column.Name.L
+				sameColumn := matched.TableName == rf.TableName && matched.Column.Name.L == rf.Column.Name.L
 				if !sameColumn {
 					nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
 					return true
@@ -543,6 +554,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		rf.Column = v.Refer.Column
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
+		rf.TableName = v.Refer.TableName
 		rf.Expr = v.Refer.Expr
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.

@@ -48,6 +48,7 @@ func BuildPlan(node ast.Node) (Plan, error) {
 type planBuilder struct {
 	err    error
 	hasAgg bool
+	obj    interface{}
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -161,7 +162,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	}
 	var p Plan
 	if sel.From != nil {
-		p = b.buildJoin(sel)
+		p = b.buildFrom(sel)
 		if b.err != nil {
 			return nil
 		}
@@ -208,12 +209,16 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
+func (b *planBuilder) buildFrom(sel *ast.SelectStmt) Plan {
 	from := sel.From.TableRefs
-	if from.Right != nil {
-		b.err = ErrUnsupportedType.Gen("Only support single table for now.")
-		return nil
+	if from.Right == nil {
+		return b.buildSingleTable(sel)
 	}
+	return b.buildJoin(sel)
+}
+
+func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
+	from := sel.From.TableRefs
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", from.Left)
@@ -494,6 +499,10 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 		if mysql.HasPriKeyFlag(refer.Column.Flag) {
 			return true
 		}
+		return false
+	case *JoinOuter:
+		return false
+	case *JoinInner:
 		return false
 	case *Sort:
 		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.

@@ -69,23 +69,15 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
 	case *ast.SubqueryExpr:
 		c.unsupported = true
-	case *ast.Join:
-		if x.Right != nil {
+	case *ast.TableSource:
+		if _, ok := x.Source.(*ast.SelectStmt); ok {
 			c.unsupported = true
-		} else {
-			ts, tsok := x.Left.(*ast.TableSource)
-			if !tsok {
-				c.unsupported = true
-			} else {
-				tn, tnok := ts.Source.(*ast.TableName)
-				if !tnok {
-					c.unsupported = true
-				} else if strings.EqualFold(tn.Schema.O, infoschema.Name) {
-					c.unsupported = true
-				} else if strings.EqualFold(tn.Schema.O, perfschema.Name) {
-					c.unsupported = true
-				}
-			}
+		}
+	case *ast.TableName:
+		if strings.EqualFold(x.Schema.O, infoschema.Name) {
+			c.unsupported = true
+		} else if strings.EqualFold(x.Schema.O, perfschema.Name) {
+			c.unsupported = true
 		}
 	case *ast.SelectStmt:
 		if x.Distinct {
