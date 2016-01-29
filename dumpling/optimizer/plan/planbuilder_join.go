@@ -504,7 +504,7 @@ func (b *planBuilder) buildBasicJoinPath(node ast.ResultSetNode, nullRejectTable
 	case *ast.TableName:
 		return newTablePath(x)
 	default:
-		b.err = ErrUnsupportedType.Gen("unsupported table source type %")
+		b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
 		return nil
 	}
 }
