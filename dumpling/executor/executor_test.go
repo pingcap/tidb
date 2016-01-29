@@ -212,3 +212,28 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		result.Check(ca.result)
 	}
 }
+
+func (s *testSuite) TestJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int)")
+	tk.MustExec("insert t values (1)")
+	cases := []struct {
+		sql    string
+		result [][]interface{}
+	}{
+		{
+			"select 1 from t as a left join t as b on 0",
+			testkit.Rows("1"),
+		},
+		{
+			"select 1 from t as a join t as b on 1",
+			testkit.Rows("1"),
+		},
+	}
+	for _, ca := range cases {
+		result := tk.MustQuery(ca.sql)
+		result.Check(ca.result)
+	}
+}
