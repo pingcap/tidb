@@ -354,11 +354,12 @@ func (s *testPlanSuite) TestNullRejectFinder(c *C) {
 		{"a = 1", true},
 		{"a != 100 and a > 0", true},
 		{"a is null", false},
+		{"a is not null", true},
+		{"a is true", true},
 		{"a is not true", false},
+		{"a is false", true},
 		{"a is not false", false},
 		{"a != 0 and a is not false", true},
-		{"a is not true", false},
-		{"a is not false", false},
 		{"a > 0 or true", false},
 	}
 	for _, ca := range cases {
