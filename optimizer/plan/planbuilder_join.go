@@ -514,9 +514,11 @@ func (p *joinPath) candidates(pathMap map[*joinPath]bool) []*joinPath {
 
 func (p *joinPath) nextIndexPath(candidates []*joinPath) *joinPath {
 	var indexPaths []*joinPath
-	for _, t := range candidates {
-		if (len(t.neighbors) == 0 && t.neighborCount > 0) || t.idxDepCount > 0 {
-			indexPaths = append(indexPaths, t)
+	for _, can := range candidates {
+		neighborIsAvailable := len(can.neighbors) == 0 && can.neighborCount > 0
+		idxDepIsAvailable := can.idxDepCount > 0
+		if  can.hasOuterIdxEqualCond() || neighborIsAvailable || idxDepIsAvailable {
+			indexPaths = append(indexPaths, can)
 		}
 	}
 	if len(indexPaths) == 0 {
