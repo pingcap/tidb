@@ -542,12 +542,32 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 			"InnerJoin{Table(t2)->Index(t1.i1)}->Fields",
 		},
 		{
-			"select * from t1 left join (t2 join t3 on t2.i1 = t3.c1) on t1.c1 = t2.i2",
+			`select * from
+				t1 left join
+					(t2 join
+						t3
+					on t2.i1 = t3.c1)
+				on t1.c1 = t2.i2`,
 			"OuterJoin{Table(t1)->InnerJoin{Index(t2.i2)->Table(t3)}}->Fields",
 		},
 		{
-			"select * from (t1, t2) left join t3 on t2.c1 = t3.i1 where t2.i2 between 1 and 4 and t1.i1 = 3",
+			`select * from
+				(t1, t2) left join
+					t3
+				on t2.c1 = t3.i1
+			where t2.i2 between 1 and 4 and t1.i1 = 3`,
 			"OuterJoin{InnerJoin{Index(t1.i1)->Index(t2.i2)}->Index(t3.i1)}->Fields",
+		},
+		{
+			`select * from
+				t1 join (
+					(t2 join t3
+						on t2.i3 = t3.i3 and t2.c2 > t3.c3
+					) left join t4
+					on t3.c3 = t4.i4
+				)
+				on t1.i1 = 1 and t1.c1 = t2.i2`,
+			"InnerJoin{Index(t1.i1)->OuterJoin{InnerJoin{Index(t2.i2)->Index(t3.i3)}->Index(t4.i4)}}->Fields",
 		},
 	}
 	for _, ca := range cases {

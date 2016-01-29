@@ -437,10 +437,15 @@ func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
 			}
 		}
 		p.reattach(pathMap, availablePaths)
+		for path := range pathMap {
+			path.optimizeJoinOrder(availablePaths)
+		}
 	}
 	p.inners = ordered
 }
 
+// reattach is called by inner joinPath to retry attach conditions to inner paths
+// after an inner path has been added to available paths.
 func (p *joinPath) reattach(pathMap map[*joinPath]bool, availablePaths []*joinPath) {
 	if len(p.conditions) != 0 {
 		conMap := map[ast.ExprNode]bool{}
