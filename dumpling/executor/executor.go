@@ -567,6 +567,7 @@ func (e *JoinOuterExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
+			e.innerExec.Close()
 			e.innerExec = nil
 			if e.gotRow {
 				continue
@@ -635,6 +636,7 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if row == nil {
+			exec.Close()
 			e.innerExecs[e.cursor] = nil
 			if e.cursor == 0 {
 				e.done = true
