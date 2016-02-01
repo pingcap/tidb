@@ -230,7 +230,7 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 }
 
 // SubQuery represents a subquery interface.
-// This interface is used in plan/executor/evaluator
+// This interface is implemented in executor and used in plan/evaluator.
 type SubQuery interface {
 	ExprNode
 
@@ -268,9 +268,10 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		sq, ok := t.(SubQuery)
-		if ok {
-			n.SubQuery = sq
+		if !ok {
+			return n, false
 		}
+		n.SubQuery = sq
 		return v.Leave(n)
 	}
 

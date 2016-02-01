@@ -159,7 +159,6 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 
 func (b *planBuilder) buildSubquery(n ast.Node) {
 	sv := &subqueryVisitor{
-		sb:      b.sb,
 		builder: b,
 	}
 	_, ok := n.Accept(sv)
@@ -555,19 +554,23 @@ type SubQueryBuilder interface {
 	Build(p Plan) ast.SubQuery
 }
 
+// subqueryVisitor visits AST and handles SubqueryExpr.
 type subqueryVisitor struct {
 	subqueries []ast.SubQuery
 	builder    *planBuilder
-	sb         SubQueryBuilder
 }
 
 func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.SubqueryExpr:
 		p := se.builder.build(x.Query)
-		x.SubQuery = se.sb.Build(p)
+		// The expr pointor is copyed into ResultField when running name resolver.
+		// So we can not just replace the expr node in AST. We need to put SubQuery into the expr.
+		// See: optimizer.nameResolver.createResultFields()
+		x.SubQuery = se.builder.sb.Build(p)
 		return in, true
 	case *ast.Join:
+		// SubSelect in from clause will be handled in buildJoin().
 		return in, true
 	}
 	return in, false

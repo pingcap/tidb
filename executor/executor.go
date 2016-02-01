@@ -1080,31 +1080,3 @@ func (e *AggregateExec) Close() error {
 	}
 	return nil
 }
-
-// SubqueryExec represents a subquery executor.
-type SubqueryExec struct {
-	Src Executor
-	ctx context.Context
-}
-
-// Fields implements Executor Fields interface.
-func (e *SubqueryExec) Fields() []*ast.ResultField {
-	return e.Src.Fields()
-}
-
-// Next implements Executor Next interface.
-func (e *SubqueryExec) Next() (*Row, error) {
-	row, err := e.Src.Next()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if row == nil {
-		return nil, nil
-	}
-	return row, nil
-}
-
-// Close implements Executor Close interface.
-func (e *SubqueryExec) Close() error {
-	return e.Src.Close()
-}

@@ -160,9 +160,9 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.RowExpr:
 		ok = e.row(v)
 	case *ast.SubqueryExpr:
-		ok = e.subquery(v)
+		ok = e.subqueryExpr(v)
 	case ast.SubQuery:
-		ok = e.subqueryEval(v)
+		ok = e.subqueryExec(v)
 	case *ast.UnaryOperationExpr:
 		ok = e.unaryOperation(v)
 	case *ast.ValueExpr:
@@ -336,7 +336,9 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 	return true
 }
 
-func (e *Evaluator) subquery(v *ast.SubqueryExpr) bool {
+// Evaluate SubqueryExpr.
+// Get the value from v.SubQuery and set it to v.
+func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 	if v.SubQuery != nil {
 		v.SetValue(v.SubQuery.GetValue())
 	}
@@ -344,7 +346,8 @@ func (e *Evaluator) subquery(v *ast.SubqueryExpr) bool {
 	return true
 }
 
-func (e *Evaluator) subqueryEval(v ast.SubQuery) bool {
+// Do the real work to evaluate subquery.
+func (e *Evaluator) subqueryExec(v ast.SubQuery) bool {
 	rowCount := 2
 	if e.multipleRows {
 		rowCount = -1
