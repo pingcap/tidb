@@ -346,6 +346,39 @@ func (s *testPlanSuite) TestSplitWhere(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestNullRejectFinder(c *C) {
+	cases := []struct {
+		expr    string
+		notNull bool
+	}{
+		{"a = 1", true},
+		{"a != 100 and a > 0", true},
+		{"a is null", false},
+		{"a is not null", true},
+		{"a is true", true},
+		{"a is not true", false},
+		{"a is false", true},
+		{"a is not false", false},
+		{"a != 0 and a is not false", true},
+		{"a > 0 or true", false},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.expr
+		comment := Commentf("for expr %s", ca.expr)
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		finder := &nullRejectFinder{nullRejectTables: map[*ast.TableName]bool{}}
+		stmt := s.(*ast.SelectStmt)
+		mockResolve(stmt)
+		stmt.Where.Accept(finder)
+		if ca.notNull {
+			c.Assert(finder.nullRejectTables, HasLen, 1, comment)
+		} else {
+			c.Assert(finder.nullRejectTables, HasLen, 0, comment)
+		}
+	}
+}
+
 func mockResolve(node ast.Node) {
 	indices := []*model.IndexInfo{
 		{
@@ -381,12 +414,14 @@ func mockResolve(node ast.Node) {
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
 	}
-	resolver := mockResolver{table: table}
+	tableName := &ast.TableName{Name: table.Name}
+	resolver := mockResolver{table: table, tableName: tableName}
 	node.Accept(&resolver)
 }
 
 type mockResolver struct {
-	table *model.TableInfo
+	table     *model.TableInfo
+	tableName *ast.TableName
 }
 
 func (b *mockResolver) Enter(in ast.Node) (ast.Node, bool) {
@@ -400,7 +435,8 @@ func (b *mockResolver) Leave(in ast.Node) (ast.Node, bool) {
 			Column: &model.ColumnInfo{
 				Name: x.Name.Name,
 			},
-			Table: b.table,
+			Table:     b.table,
+			TableName: b.tableName,
 		}
 		if x.Name.Name.L == "a" {
 			x.Refer.Column = b.table.Columns[0]
@@ -409,4 +445,143 @@ func (b *mockResolver) Leave(in ast.Node) (ast.Node, bool) {
 		x.TableInfo = b.table
 	}
 	return in, true
+}
+
+// mockJoinResolve resolves multi talbe and column name for join statement.
+func mockJoinResolve(c *C, node ast.Node) {
+	resolver := &mockJoinResolver{
+		c:      c,
+		tables: map[string]*ast.TableName{},
+		refers: map[*model.ColumnInfo]*ast.ResultField{},
+	}
+	node.Accept(resolver)
+}
+
+type mockJoinResolver struct {
+	tables map[string]*ast.TableName
+	refers map[*model.ColumnInfo]*ast.ResultField
+	c      *C
+}
+
+func (b *mockJoinResolver) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
+}
+
+func (b *mockJoinResolver) Leave(in ast.Node) (ast.Node, bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		if b.tables[x.Name.L] == nil {
+			b.tables[x.Name.L] = x
+			x.TableInfo = &model.TableInfo{
+				Name:       x.Name,
+				PKIsHandle: true,
+			}
+		}
+	case *ast.ColumnNameExpr:
+		tn := b.tables[x.Name.Table.L]
+		b.c.Assert(tn, NotNil)
+		for _, cn := range tn.TableInfo.Columns {
+			if cn.Name.L == x.Name.Name.L {
+				x.Refer = b.refers[cn]
+				return in, true
+			}
+		}
+		columnInfo := &model.ColumnInfo{Name: x.Name.Name}
+		tn.TableInfo.Columns = append(tn.TableInfo.Columns, columnInfo)
+		refer := &ast.ResultField{
+			Column:    columnInfo,
+			Table:     tn.TableInfo,
+			TableName: tn,
+			Expr:      ast.NewValueExpr(99),
+		}
+		b.refers[columnInfo] = refer
+		x.Refer = refer
+		if x.Name.Name.L == "id" {
+			columnInfo.Flag = mysql.PriKeyFlag
+		} else if x.Name.Name.L[0] == 'i' {
+			idxInfo := &model.IndexInfo{
+				Name: x.Name.Name,
+				Columns: []*model.IndexColumn{
+					{
+						Name: x.Name.Name,
+					},
+				},
+			}
+			tn.TableInfo.Indices = append(tn.TableInfo.Indices, idxInfo)
+		}
+	}
+	return in, true
+}
+
+func (s *testPlanSuite) TestJoinPath(c *C) {
+	cases := []struct {
+		sql     string
+		explain string
+	}{
+		{
+			"select * from t1, t2 where t1.c1 > 0",
+			"InnerJoin{Table(t1)->Table(t2)}->Fields",
+		},
+		{
+			"select * from t1 left join t2 on 1 where t2.c1 != 0",
+			"InnerJoin{Table(t2)->Table(t1)}->Fields",
+		},
+		{
+			"select * from t1 left join t2 on 1 where t2.c1 != 0 or t1.c1 != 0",
+			"OuterJoin{Table(t1)->Table(t2)}->Fields",
+		},
+		{
+			"select * from t1 left join t2 on t1.i1 = t2.i1 where t1.i1 = 1",
+			"OuterJoin{Index(t1.i1)->Index(t2.i1)}->Fields",
+		},
+		{
+			"select * from t1 join t2 on t2.c1 = t1.i1",
+			"InnerJoin{Table(t2)->Index(t1.i1)}->Fields",
+		},
+		{
+			"select * from t1, t2 where t2.c1 = t1.i1",
+			"InnerJoin{Table(t2)->Index(t1.i1)}->Fields",
+		},
+		{
+			`select * from
+				t1 left join
+					(t2 join
+						t3
+					on t2.i1 = t3.c1)
+				on t1.c1 = t2.i2`,
+			"OuterJoin{Table(t1)->InnerJoin{Index(t2.i2)->Table(t3)}}->Fields",
+		},
+		{
+			`select * from
+				(t1, t2) left join
+					t3
+				on t2.c1 = t3.i1
+			where t2.i2 between 1 and 4 and t1.i1 = 3`,
+			"OuterJoin{InnerJoin{Index(t1.i1)->Index(t2.i2)}->Index(t3.i1)}->Fields",
+		},
+		{
+			`select * from
+				t1 join (
+					(t2 join t3
+						on t2.i3 = t3.i3 and t2.c2 > t3.c3
+					) left join t4
+					on t3.c3 = t4.i4
+				)
+				on t1.i1 = 1 and t1.c1 = t2.i2`,
+			"InnerJoin{Index(t1.i1)->OuterJoin{InnerJoin{Index(t2.i2)->Index(t3.i3)}->Index(t4.i4)}}->Fields",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		mockJoinResolve(c, stmt)
+		ast.SetFlag(stmt)
+		p, err := BuildPlan(stmt, nil)
+		c.Assert(err, IsNil)
+		expl, err := Explain(p)
+		c.Assert(err, IsNil)
+		c.Assert(expl, Equals, ca.explain, comment)
+	}
 }
