@@ -510,27 +510,20 @@ func (p *joinPath) candidates(pathMap map[*joinPath]bool) []*joinPath {
 }
 
 func (p *joinPath) nextIndexPath(candidates []*joinPath) *joinPath {
-	var indexPaths []*joinPath
+	var best *joinPath
 	for _, can := range candidates {
 		// Since we may not have equal conditions attached on the path, we
 		// need to check neighborCount and idxDepCount to see if this path
 		// can be joined with index.
-		neighborIsAvailable := len(can.neighbors) == 0 && can.neighborCount > 0
+		neighborIsAvailable := len(can.neighbors) < can.neighborCount
 		idxDepIsAvailable := can.idxDepCount > 0
 		if can.hasOuterIdxEqualCond() || neighborIsAvailable || idxDepIsAvailable {
-			indexPaths = append(indexPaths, can)
-		}
-	}
-	if len(indexPaths) == 0 {
-		return nil
-	}
-	var best *joinPath
-	for _, path := range indexPaths {
-		if best == nil {
-			best = path
-		}
-		if path.score() > best.score() {
-			best = path
+			if best == nil {
+				best = can
+			}
+			if can.score() > best.score() {
+				best = can
+			}
 		}
 	}
 	return best
