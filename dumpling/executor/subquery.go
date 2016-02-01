@@ -24,7 +24,6 @@ import (
 
 // SubQuery is an exprNode with a plan.
 type subquery struct {
-	ast.ExprNode
 	types.DataItem
 	flag uint64
 	text string
@@ -89,9 +88,9 @@ func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, 
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
 	}
+	defer e.Close()
 	if len(e.Fields()) == 0 {
 		// No result fields means no Recordset.
-		defer e.Close()
 		for {
 			row, err := e.Next()
 			if err != nil || row == nil {
