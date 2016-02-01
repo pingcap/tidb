@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 )
@@ -136,6 +137,62 @@ type IndexScan struct {
 func (p *IndexScan) Accept(v Visitor) (Plan, bool) {
 	np, _ := v.Enter(p)
 	return v.Leave(np)
+}
+
+// JoinOuter represents outer join plan.
+type JoinOuter struct {
+	basePlan
+
+	Outer Plan
+	Inner Plan
+}
+
+// Accept implements Plan interface.
+func (p *JoinOuter) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*JoinOuter)
+	var ok bool
+	p.Outer, ok = p.Outer.Accept(v)
+	if !ok {
+		return p, false
+	}
+	p.Inner, ok = p.Inner.Accept(v)
+	if !ok {
+		return p, false
+	}
+	return v.Leave(p)
+}
+
+// JoinInner represents inner join plan.
+type JoinInner struct {
+	basePlan
+
+	Inners     []Plan
+	Conditions []ast.ExprNode
+}
+
+func (p *JoinInner) String() string {
+	return fmt.Sprintf("JoinInner()")
+}
+
+// Accept implements Plan interface.
+func (p *JoinInner) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*JoinInner)
+	for i, in := range p.Inners {
+		x, ok := in.Accept(v)
+		if !ok {
+			return p, false
+		}
+		p.Inners[i] = x
+	}
+	return v.Leave(p)
 }
 
 // SelectLock represents a select lock plan.
