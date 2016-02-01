@@ -129,10 +129,8 @@ func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) error {
 		dbInfo.State = model.StateDeleteOnly
 		err = t.UpdateDatabase(dbInfo)
 	case model.StateDeleteOnly:
-		// delete only -> reorganization
 		dbInfo.State = model.StateDeleteReorganization
 		err = t.UpdateDatabase(dbInfo)
-		// all reorganization jobs done, drop this database
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
 		}

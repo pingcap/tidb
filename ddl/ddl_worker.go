@@ -105,7 +105,7 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
+func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	var owner *model.Owner
 	var err error
 
@@ -115,7 +115,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 	case bgJobFlag:
 		owner, err = t.GetBgJobOwner()
 	default:
-		err = errors.Errorf("invalid ddl flag %v", flag)
+		err = errors.Errorf("invalid ddl flag %v", flag.String())
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -132,10 +132,6 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 	// the owner will update its owner status every 2 * lease time, so here we use
 	// 4 * lease to check its timeout.
 	maxTimeout := int64(4 * d.lease)
-	if flag == bgJobFlag {
-		// background job doesn't need to guarantee other servers update the schema.
-		maxTimeout = int64(2 * d.lease)
-	}
 	if owner.OwnerID == d.uuid || now-owner.LastUpdateTS > maxTimeout {
 		owner.OwnerID = d.uuid
 		owner.LastUpdateTS = now
@@ -149,11 +145,11 @@ func (d *ddl) checkOwner(t *meta.Meta, flag string) (*model.Owner, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[ddl] become %s job owner %s", flag, owner.OwnerID)
+		log.Debugf("[ddl] become %s job owner %s", flag.String(), owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not %s job owner, owner is %s", flag, owner.OwnerID)
+		log.Debugf("[ddl] not %s job owner, owner is %s", flag.String(), owner.OwnerID)
 		return nil, errors.Trace(ErrNotOwner)
 	}
 
@@ -195,10 +191,24 @@ var ErrNotOwner = errors.New("DDL: not owner")
 // ErrWorkerClosed means we have already closed the DDL worker.
 var ErrWorkerClosed = errors.New("DDL: worker is closed")
 
+// JobType is job type, including ddl/background.
+type JobType int
+
 const (
-	ddlJobFlag = "ddl"
-	bgJobFlag  = "background"
+	ddlJobFlag = iota + 1
+	bgJobFlag
 )
+
+func (j JobType) String() string {
+	switch j {
+	case ddlJobFlag:
+		return "ddl"
+	case bgJobFlag:
+		return "background"
+	}
+
+	return "unknown"
+}
 
 func (d *ddl) handleDDLJobQueue() error {
 	for {

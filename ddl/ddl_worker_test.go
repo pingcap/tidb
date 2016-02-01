@@ -50,7 +50,7 @@ func testCreateStore(c *C, name string) kv.Storage {
 type testDDLSuite struct {
 }
 
-func testCheckOwner(c *C, d *ddl, isOwner bool, flag string) {
+func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		_, err := d.checkOwner(t, flag)
