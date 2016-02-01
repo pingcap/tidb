@@ -86,7 +86,11 @@ type Evaluator struct {
 
 // Enter implements ast.Visitor interface.
 func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch in.(type) {
+	switch v := in.(type) {
+	case *ast.SubqueryExpr:
+		if v.Evaluated && !v.UseOuterContext {
+			return in, true
+		}
 	case *ast.PatternInExpr, *ast.CompareSubqueryExpr:
 		e.multipleRows = true
 	case *ast.ExistsSubqueryExpr:
@@ -336,6 +340,7 @@ func (e *Evaluator) subquery(v *ast.SubqueryExpr) bool {
 	if v.SubQuery != nil {
 		v.SetValue(v.SubQuery.GetValue())
 	}
+	v.Evaluated = true
 	return true
 }
 
@@ -405,7 +410,6 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		return true
 	}
 	if n.Sel == nil {
-		// TODO: do some check
 		values := make([]interface{}, 0, len(n.List))
 		for _, ei := range n.List {
 			values = append(values, ei.GetValue())
@@ -419,17 +423,8 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 	}
 	se := n.Sel.(*ast.SubqueryExpr)
 	sel := se.SubQuery
-	if !sel.UseOuterQuery() && sel.GetValue() != nil {
-		x, err := e.checkInList(n.Not, lhs, sel.GetValue().([]interface{}))
-		if err != nil {
-			return false
-		}
-		n.SetValue(x)
-	}
 
-	var res []interface{}
-
-	res = sel.GetValue().([]interface{})
+	res := sel.GetValue().([]interface{})
 	x, err := e.checkInList(n.Not, lhs, res)
 	if err != nil {
 		return false

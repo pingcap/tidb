@@ -41,10 +41,11 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 // information can overwrite outer query information. When we look up for a column reference,
 // we look up from top to bottom in the contextStack.
 type nameResolver struct {
-	Info          infoschema.InfoSchema
-	Ctx           context.Context
-	DefaultSchema model.CIStr
-	Err           error
+	Info            infoschema.InfoSchema
+	Ctx             context.Context
+	DefaultSchema   model.CIStr
+	Err             error
+	useOuterContext bool
 
 	contextStack []*resolverContext
 }
@@ -84,6 +85,8 @@ type resolverContext struct {
 	inOrderBy bool
 	// When visiting column name in ByItem, we should know if the column name is in an expression.
 	inByItemExpression bool
+	// If subquery use outer context.
+	useOuterContext bool
 }
 
 // currentContext gets the current resolverContext.
@@ -208,8 +211,20 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.PositionExpr:
 		nr.handlePosition(v)
 	case *ast.SelectStmt:
-		v.SetResultFields(nr.currentContext().fieldList)
+		ctx := nr.currentContext()
+		v.SetResultFields(ctx.fieldList)
+		if ctx.useOuterContext {
+			nr.useOuterContext = true
+			ctx.useOuterContext = false
+		}
 		nr.popContext()
+	case *ast.SubqueryExpr:
+		if nr.useOuterContext {
+			// TODO: check this
+			// If there is a deep nest of subquery, there may be something wrong.
+			v.UseOuterContext = true
+			nr.useOuterContext = false
+		}
 	case *ast.InsertStmt:
 		nr.popContext()
 	case *ast.DeleteStmt:
@@ -239,10 +254,11 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)
 		rfs[i] = &ast.ResultField{
-			Column: v,
-			Table:  tn.TableInfo,
-			DBName: tn.Schema,
-			Expr:   expr,
+			Column:    v,
+			Table:     tn.TableInfo,
+			DBName:    tn.Schema,
+			Expr:      expr,
+			TableName: tn,
 		}
 	}
 	tn.SetResultFields(rfs)
@@ -300,6 +316,10 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
 		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
 			// Column is already resolved or encountered an error.
+			if i < len(nr.contextStack)-1 {
+				// If in subselect, the query use outer query.
+				nr.currentContext().useOuterContext = true
+			}
 			return
 		}
 	}
@@ -415,8 +435,14 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 				// different table name.
 				matchedTable = ts
 				break
+			} else if ts.AsName.L != "" {
+				// Table as name shadows table real name.
+				continue
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
+				if cn.Name.Schema.L != "" && cn.Name.Schema.L != tn.Schema.L {
+					continue
+				}
 				if tableNameL == tn.Name.L {
 					matchedTable = ts
 				}
@@ -461,7 +487,11 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 	for _, rf := range rfs {
 		if cn.Name.Table.L != "" {
 			// Check table name
-			if cn.Name.Table.L != rf.Table.Name.L && cn.Name.Table.L != rf.TableAsName.L {
+			if rf.TableAsName.L != "" {
+				if cn.Name.Table.L != rf.TableAsName.L {
+					continue
+				}
+			} else if cn.Name.Table.L != rf.Table.Name.L {
 				continue
 			}
 		}
@@ -481,7 +511,7 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 			if matched == nil {
 				matched = rf
 			} else {
-				sameColumn := matched.Table.Name.L == rf.Table.Name.L && matched.Column.Name.L == rf.Column.Name.L
+				sameColumn := matched.TableName == rf.TableName && matched.Column.Name.L == rf.Column.Name.L
 				if !sameColumn {
 					nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
 					return true
@@ -543,6 +573,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		rf.Column = v.Refer.Column
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
+		rf.TableName = v.Refer.TableName
 		rf.Expr = v.Refer.Expr
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.

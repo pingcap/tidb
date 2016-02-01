@@ -82,10 +82,6 @@ func (sq *subquery) Accept(v ast.Visitor) (ast.Node, bool) {
 	return v.Leave(sq)
 }
 
-func (sq *subquery) UseOuterQuery() bool {
-	return true
-}
-
 func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, error) {
 	b := newExecutorBuilder(ctx, sq.is)
 	plan.Refine(sq.plan)

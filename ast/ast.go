@@ -113,7 +113,8 @@ type ResultField struct {
 	// The expression for the result field. If it is generated from a select field, it would
 	// be the expression of that select field, otherwise the type would be ValueExpr and value
 	// will be set for every retrieved row.
-	Expr ExprNode
+	Expr      ExprNode
+	TableName *TableName
 }
 
 // ResultSetNode interface has ResultFields property which is computed and set by

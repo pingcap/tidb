@@ -234,9 +234,6 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 type SubQuery interface {
 	ExprNode
 
-	// UseOuterQuery returns if sub query use outer query.
-	UseOuterQuery() bool
-
 	// EvalRows executes the subquery and returns the multi rows with rowCount.
 	// rowCount < 0 means no limit.
 	// If the ColumnCount is 1, we will return a column result like {1, 2, 3},
@@ -251,8 +248,10 @@ type SubQuery interface {
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query    ResultSetNode
-	SubQuery SubQuery
+	Query           ResultSetNode
+	SubQuery        SubQuery
+	Evaluated       bool
+	UseOuterContext bool
 }
 
 // Accept implements Node Accept interface.
