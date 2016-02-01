@@ -75,7 +75,7 @@ type ddl struct {
 	uuid         string
 	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
-	// drop database/table job runs in the background to preform.
+	// drop database/table job runs in the background.
 	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.

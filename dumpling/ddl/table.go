@@ -77,7 +77,6 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 }
 
 func (d *ddl) delReorgTable(t *meta.Meta, job *model.Job) error {
-	// reorganization -> absent
 	tblInfo := &model.TableInfo{}
 	err := job.DecodeArgs(tblInfo)
 	if err != nil {
@@ -137,10 +136,8 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		tblInfo.State = model.StateDeleteOnly
 		err = t.UpdateTable(schemaID, tblInfo)
 	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		tblInfo.State = model.StateDeleteReorganization
+		tblInfo.State = model.StateNone
 		err = t.UpdateTable(schemaID, tblInfo)
-		// all reorganization jobs done, drop this table.
 		if err = t.DropTable(job.SchemaID, job.TableID); err != nil {
 			break
 		}

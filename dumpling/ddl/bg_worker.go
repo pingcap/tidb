@@ -84,7 +84,6 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	case model.ActionDropTable:
 		err = d.delReorgTable(t, job)
 	default:
-
 		job.State = model.JobCancelled
 		err = errors.Errorf("invalid background job %v", job)
 
@@ -155,10 +154,9 @@ func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
 func (d *ddl) onBackgroundWorker() {
 	defer d.wait.Done()
 
-	// for a ddl drop job from start to end, the state of it will be pubilc -> write only -> delete only -> none.
-	// for every state changes, we will wait as lease 2 * lease time.
-	// so here the ticker check is 8 * lease to ensure that ddl job have converted to background job.
-	checkTime := chooseLeaseTime(8*d.lease, 10*time.Second)
+	// we use 4 * lease time to check owner's timeout, so here, we will update owner's status
+	// every 2 * lease time, if lease is 0, we will use default 10s.
+	checkTime := chooseLeaseTime(2*d.lease, 10*time.Second)
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
