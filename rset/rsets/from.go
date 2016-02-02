@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/sessionctx"
@@ -48,9 +47,6 @@ type TableRset struct {
 func (r *TableRset) Plan(ctx context.Context) (plan.Plan, error) {
 	if strings.EqualFold(r.Schema, infoschema.Name) {
 		return plans.NewInfoSchemaPlan(r.Name)
-	}
-	if strings.EqualFold(r.Schema, perfschema.Name) {
-		return plans.NewPerfSchemaPlan(r.Name)
 	}
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr(r.Schema), model.NewCIStr(r.Name))
