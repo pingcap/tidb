@@ -585,3 +585,31 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 		c.Assert(expl, Equals, ca.explain, comment)
 	}
 }
+
+func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
+	cases := []struct {
+		sql              string
+		accessEqualCount int
+		usedColumnCount  int
+	}{
+		{"select * from t where c = 0 and d = 0 and e = 0", 3, 3},
+		{"select * from t where c = 0 and d = 0 and e > 0", 2, 3},
+		{"select * from t where d > 0 and e = 0 and c = 0", 1, 2},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		ast.SetFlag(stmt)
+		mockResolve(stmt)
+		b := &planBuilder{}
+		p := b.buildFrom(stmt)
+		err = Refine(p)
+		c.Assert(err, IsNil)
+		idxScan, ok := p.(*IndexScan)
+		c.Assert(ok, IsTrue)
+		c.Assert(idxScan.AccessEqualCount, Equals, ca.accessEqualCount)
+		c.Assert(idxScan.Ranges[0].LowVal, HasLen, ca.usedColumnCount)
+	}
+}

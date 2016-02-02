@@ -56,12 +56,25 @@ var fullRange = []rangePoint{
 
 func (r *refiner) buildIndexRange(p *IndexScan) {
 	rb := rangeBuilder{}
-	rangePoints := fullRange
-	for _, cond := range p.AccessConditions {
-		rangePoints = rb.intersection(rangePoints, rb.build(cond))
+	if p.AccessEqualCount > 0 {
+		// Build ranges for equal access conditions.
+		point := rb.build(p.AccessConditions[0])
+		p.Ranges = rb.buildIndexRanges(point)
+		for i := 1; i < p.AccessEqualCount; i++ {
+			point = rb.build(p.AccessConditions[i])
+			p.Ranges = rb.appendIndexRanges(p.Ranges, point)
+		}
 	}
-	p.Ranges = rb.buildIndexRanges(rangePoints)
-	// TODO: build index range for second column.
+	rangePoints := fullRange
+	// Build rangePoints for non-equal access condtions.
+	for i := p.AccessEqualCount; i < len(p.AccessConditions); i++ {
+		rangePoints = rb.intersection(rangePoints, rb.build(p.AccessConditions[i]))
+	}
+	if p.AccessEqualCount == 0 {
+		p.Ranges = rb.buildIndexRanges(rangePoints)
+	} else if p.AccessEqualCount < len(p.AccessConditions) {
+		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
+	}
 	r.err = rb.err
 	return
 }

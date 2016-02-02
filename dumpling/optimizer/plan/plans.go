@@ -129,6 +129,12 @@ type IndexScan struct {
 	// AccessConditions can be used to build index range.
 	AccessConditions []ast.ExprNode
 
+	// Number of leading equal access condition.
+	// The offset of each equal condition correspond to the offset of index column.
+	// For example, an index has column (a, b, c), condition is 'a = 0 and b = 0 and c > 0'
+	// AccessEqualCount would be 2.
+	AccessEqualCount int
+
 	// FilterConditions can be used to filter result.
 	FilterConditions []ast.ExprNode
 }
