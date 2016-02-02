@@ -304,12 +304,48 @@ func (b *planBuilder) buildTableScanPlan(tn *ast.TableName, conditions []ast.Exp
 func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, tn *ast.TableName, conditions []ast.ExprNode) Plan {
 	ip := &IndexScan{Table: tn.TableInfo, Index: index}
 	ip.SetFields(tn.GetResultFields())
-	// Only use first column as access condition for cost estimation,
-	// In executor, we can try to use second index column to build index range.
-	checker := conditionChecker{tableName: tn.TableInfo.Name, idx: index, columnOffset: 0}
+
+	condMap := map[ast.ExprNode]bool{}
 	for _, con := range conditions {
-		if checker.check(con) {
+		condMap[con] = true
+	}
+out:
+	// Build equal access conditions first.
+	// Starts from the first index column, if equal condition is found, add it to access conditions,
+	// proceed to the next index column. until we can't find any equal condition for the column.
+	for ip.AccessEqualCount < len(index.Columns) {
+		for con := range condMap {
+			binop, ok := con.(*ast.BinaryOperationExpr)
+			if !ok || binop.Op != opcode.EQ {
+				continue
+			}
+			if ast.IsPreEvaluable(binop.L) {
+				binop.L, binop.R = binop.R, binop.L
+			}
+			if !ast.IsPreEvaluable(binop.R) {
+				continue
+			}
+			cn, ok2 := binop.L.(*ast.ColumnNameExpr)
+			if !ok2 || cn.Refer.Column.Name.L != index.Columns[ip.AccessEqualCount].Name.L {
+				continue
+			}
 			ip.AccessConditions = append(ip.AccessConditions, con)
+			delete(condMap, con)
+			ip.AccessEqualCount++
+			continue out
+		}
+		break
+	}
+
+	for con := range condMap {
+		if ip.AccessEqualCount < len(ip.Index.Columns) {
+			// Try to add non-equal access condition for index column at AccessEqualCount.
+			checker := conditionChecker{tableName: tn.TableInfo.Name, idx: index, columnOffset: ip.AccessEqualCount}
+			if checker.check(con) {
+				ip.AccessConditions = append(ip.AccessConditions, con)
+			} else {
+				ip.FilterConditions = append(ip.FilterConditions, con)
+			}
 		} else {
 			ip.FilterConditions = append(ip.FilterConditions, con)
 		}
