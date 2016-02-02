@@ -44,13 +44,13 @@ type TableRset struct {
 	Name   string
 }
 
-// Plan gets InfoSchemaPlan/TableDefaultPlan.
+// Plan gets InfoSchemaPlan/PerfSchemaPlan/TableDefaultPlan.
 func (r *TableRset) Plan(ctx context.Context) (plan.Plan, error) {
 	if strings.EqualFold(r.Schema, infoschema.Name) {
 		return plans.NewInfoSchemaPlan(r.Name)
 	}
 	if strings.EqualFold(r.Schema, perfschema.Name) {
-		return plans.NewPerfSchemaPlan(r.Name)
+		return perfschema.PerfHandle.NewPerfSchemaPlan(r.Name)
 	}
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr(r.Schema), model.NewCIStr(r.Name))
