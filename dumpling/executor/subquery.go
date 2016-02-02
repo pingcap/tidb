@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var _ ast.SubqueryExec = &subquery{}
+
 // SubQuery is an exprNode with a plan.
 type subquery struct {
 	types.DataItem
@@ -93,8 +95,11 @@ func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, 
 		// No result fields means no Recordset.
 		for {
 			row, err := e.Next()
-			if err != nil || row == nil {
+			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				return nil, nil
 			}
 		}
 	}
@@ -131,7 +136,7 @@ type subqueryBuilder struct {
 	is infoschema.InfoSchema
 }
 
-func (sb *subqueryBuilder) Build(p plan.Plan) ast.SubQuery {
+func (sb *subqueryBuilder) Build(p plan.Plan) ast.SubqueryExec {
 	return &subquery{
 		is:   sb.is,
 		plan: p,

@@ -14,9 +14,8 @@
 package plan
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -163,7 +162,7 @@ func (b *planBuilder) buildSubquery(n ast.Node) {
 	}
 	_, ok := n.Accept(sv)
 	if !ok {
-		fmt.Println("Extract subquery error")
+		log.Errorf("Extract subquery error")
 	}
 }
 
@@ -551,13 +550,12 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 
 // SubQueryBuilder is the interface for building SubQuery executor.
 type SubQueryBuilder interface {
-	Build(p Plan) ast.SubQuery
+	Build(p Plan) ast.SubqueryExec
 }
 
 // subqueryVisitor visits AST and handles SubqueryExpr.
 type subqueryVisitor struct {
-	subqueries []ast.SubQuery
-	builder    *planBuilder
+	builder *planBuilder
 }
 
 func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -567,7 +565,7 @@ func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 		// The expr pointor is copyed into ResultField when running name resolver.
 		// So we can not just replace the expr node in AST. We need to put SubQuery into the expr.
 		// See: optimizer.nameResolver.createResultFields()
-		x.SubQuery = se.builder.sb.Build(p)
+		x.SubqueryExec = se.builder.sb.Build(p)
 		return in, true
 	case *ast.Join:
 		// SubSelect in from clause will be handled in buildJoin().
