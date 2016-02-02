@@ -229,9 +229,10 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SubQuery represents a subquery interface.
+// SubqueryExec represents a subquery executor interface.
 // This interface is implemented in executor and used in plan/evaluator.
-type SubQuery interface {
+// It will execute the subselect and get the result.
+type SubqueryExec interface {
 	ExprNode
 
 	// EvalRows executes the subquery and returns the multi rows with rowCount.
@@ -249,7 +250,7 @@ type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
 	Query           ResultSetNode
-	SubQuery        SubQuery
+	SubqueryExec    SubqueryExec
 	Evaluated       bool
 	UseOuterContext bool
 }
@@ -262,16 +263,16 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*SubqueryExpr)
 
-	if n.SubQuery != nil {
-		t, ok := n.SubQuery.Accept(v)
+	if n.SubqueryExec != nil {
+		t, ok := n.SubqueryExec.Accept(v)
 		if !ok {
 			return n, false
 		}
-		sq, ok := t.(SubQuery)
+		sq, ok := t.(SubqueryExec)
 		if !ok {
 			return n, false
 		}
-		n.SubQuery = sq
+		n.SubqueryExec = sq
 		return v.Leave(n)
 	}
 

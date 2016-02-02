@@ -46,9 +46,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 		if err := optimizer.Validate(node, false); err != nil {
 			return nil, errors.Trace(err)
 		}
-		sb := &subqueryBuilder{
-			is: is,
-		}
+		sb := NewSubQueryBuilder(is)
 		p, err := optimizer.Optimize(ctx, node, sb)
 		if err != nil {
 			return nil, errors.Trace(err)
