@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer"
@@ -1471,7 +1472,7 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	err = optimizer.Prepare(is, ctx, stmt)
 	c.Assert(err, IsNil)
-	p, err := optimizer.Optimize(ctx, stmt)
+	p, err := optimizer.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is))
 	c.Assert(err, IsNil)
 	planStr, err := plan.Explain(p)
 	c.Assert(err, IsNil)

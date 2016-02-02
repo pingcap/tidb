@@ -78,12 +78,24 @@ func boolToInt64(v bool) int64 {
 
 // Evaluator is an ast Visitor that evaluates an expression.
 type Evaluator struct {
-	ctx context.Context
-	err error
+	ctx          context.Context
+	err          error
+	multipleRows bool
+	existRow     bool
 }
 
 // Enter implements ast.Visitor interface.
 func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *ast.SubqueryExpr:
+		if v.Evaluated && !v.UseOuterContext {
+			return in, true
+		}
+	case *ast.PatternInExpr, *ast.CompareSubqueryExpr:
+		e.multipleRows = true
+	case *ast.ExistsSubqueryExpr:
+		e.existRow = true
+	}
 	return in, false
 }
 
@@ -103,10 +115,12 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.ColumnNameExpr:
 		ok = e.columnName(v)
 	case *ast.CompareSubqueryExpr:
+		e.multipleRows = false
 		ok = e.compareSubquery(v)
 	case *ast.DefaultExpr:
 		ok = e.defaultExpr(v)
 	case *ast.ExistsSubqueryExpr:
+		e.existRow = false
 		ok = e.existsSubquery(v)
 	case *ast.FuncCallExpr:
 		ok = e.funcCall(v)
@@ -135,6 +149,7 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.ParenthesesExpr:
 		ok = e.parentheses(v)
 	case *ast.PatternInExpr:
+		e.multipleRows = false
 		ok = e.patternIn(v)
 	case *ast.PatternLikeExpr:
 		ok = e.patternLike(v)
@@ -145,7 +160,9 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.RowExpr:
 		ok = e.row(v)
 	case *ast.SubqueryExpr:
-		ok = e.subquery(v)
+		ok = e.subqueryExpr(v)
+	case ast.SubqueryExec:
+		ok = e.subqueryExec(v)
 	case *ast.UnaryOperationExpr:
 		ok = e.unaryOperation(v)
 	case *ast.ValueExpr:
@@ -211,14 +228,6 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 	return true
 }
 
-func (e *Evaluator) subquery(v *ast.SubqueryExpr) bool {
-	return true
-}
-
-func (e *Evaluator) compareSubquery(v *ast.CompareSubqueryExpr) bool {
-	return true
-}
-
 func (e *Evaluator) columnName(v *ast.ColumnNameExpr) bool {
 	v.SetValue(v.Refer.Expr.GetValue())
 	return true
@@ -228,11 +237,146 @@ func (e *Evaluator) defaultExpr(v *ast.DefaultExpr) bool {
 	return true
 }
 
-func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
+func (e *Evaluator) compareSubquery(cs *ast.CompareSubqueryExpr) bool {
+	lv := cs.L.GetValue()
+	if lv == nil {
+		cs.SetValue(nil)
+		return true
+	}
+	x, err := e.checkResult(cs, lv, cs.R.GetValue().([]interface{}))
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
+	cs.SetValue(x)
 	return true
 }
 
-func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) (interface{}, error) {
+func (e *Evaluator) checkResult(cs *ast.CompareSubqueryExpr, lv interface{}, result []interface{}) (interface{}, error) {
+	if cs.All {
+		return e.checkAllResult(cs, lv, result)
+	}
+	return e.checkAnyResult(cs, lv, result)
+}
+
+func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv interface{}, result []interface{}) (interface{}, error) {
+	hasNull := false
+	for _, v := range result {
+		if v == nil {
+			hasNull = true
+			continue
+		}
+
+		comRes, err := types.Compare(lv, v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		res, err := getCompResult(cs.Op, comRes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !res {
+			return false, nil
+		}
+	}
+	if hasNull {
+		// If no matched but we get null, return null.
+		// Like `insert t (c) values (1),(2),(null)`, then
+		// `select 3 > all (select c from t)`, returns null.
+		return nil, nil
+	}
+	return true, nil
+}
+
+func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv interface{}, result []interface{}) (interface{}, error) {
+	hasNull := false
+	for _, v := range result {
+		if v == nil {
+			hasNull = true
+			continue
+		}
+
+		comRes, err := types.Compare(lv, v)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		res, err := getCompResult(cs.Op, comRes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if res {
+			return true, nil
+		}
+	}
+
+	if hasNull {
+		// If no matched but we get null, return null.
+		// Like `insert t (c) values (1),(2),(null)`, then
+		// `select 0 > any (select c from t)`, returns null.
+		return nil, nil
+	}
+
+	return false, nil
+}
+
+func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
+	r := v.Sel.GetValue()
+	if r == nil {
+		v.SetValue(0)
+		return true
+	}
+	rows, _ := r.([]interface{})
+	if len(rows) > 0 {
+		v.SetValue(1)
+	} else {
+		v.SetValue(0)
+
+	}
+	return true
+}
+
+// Evaluate SubqueryExpr.
+// Get the value from v.SubQuery and set it to v.
+func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
+	if v.SubqueryExec != nil {
+		v.SetValue(v.SubqueryExec.GetValue())
+	}
+	v.Evaluated = true
+	return true
+}
+
+// Do the real work to evaluate subquery.
+func (e *Evaluator) subqueryExec(v ast.SubqueryExec) bool {
+	rowCount := 2
+	if e.multipleRows {
+		rowCount = -1
+	} else if e.existRow {
+		rowCount = 1
+	}
+	rows, err := v.EvalRows(e.ctx, rowCount)
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
+	if e.multipleRows || e.existRow {
+		v.SetValue(rows)
+		return true
+	}
+	switch len(rows) {
+	case 0:
+		v.SetValue(nil)
+	case 1:
+		v.SetValue(rows[0])
+	default:
+		e.err = errors.New("Subquery returns more than 1 row")
+		return false
+	}
+	return true
+}
+
+func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) interface{} {
 	hasNull := false
 	for _, v := range list {
 		if types.IsNil(v) {
@@ -242,21 +386,26 @@ func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) (i
 
 		r, err := types.Compare(in, v)
 		if err != nil {
-			return nil, errors.Trace(err)
+			e.err = errors.Trace(err)
+			return nil
 		}
-
 		if r == 0 {
-			return !not, nil
+			if !not {
+				return 1
+			}
+			return 0
 		}
 	}
 
 	if hasNull {
 		// if no matched but we got null in In, return null
 		// e.g 1 in (null, 2, 3) returns null
-		return nil, nil
+		return nil
 	}
-
-	return not, nil
+	if not {
+		return 1
+	}
+	return 0
 }
 
 func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
@@ -265,29 +414,27 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		n.SetValue(nil)
 		return true
 	}
-	hasNull := false
-	for _, v := range n.List {
-		if types.IsNil(v.GetValue()) {
-			hasNull = true
-			continue
+	if n.Sel == nil {
+		values := make([]interface{}, 0, len(n.List))
+		for _, ei := range n.List {
+			values = append(values, ei.GetValue())
 		}
-		r, err := types.Compare(n.Expr.GetValue(), v.GetValue())
-		if err != nil {
-			e.err = errors.Trace(err)
+		x := e.checkInList(n.Not, lhs, values)
+		if e.err != nil {
 			return false
 		}
-		if r == 0 {
-			n.SetValue(boolToInt64(!n.Not))
-			return true
-		}
-	}
-	if hasNull {
-		// if no matched but we got null in In, return null
-		// e.g 1 in (null, 2, 3) returns null
-		n.SetValue(nil)
+		n.SetValue(x)
 		return true
 	}
-	n.SetValue(boolToInt64(n.Not))
+	se := n.Sel.(*ast.SubqueryExpr)
+	sel := se.SubqueryExec
+
+	res := sel.GetValue().([]interface{})
+	x := e.checkInList(n.Not, lhs, res)
+	if e.err != nil {
+		return false
+	}
+	n.SetValue(x)
 	return true
 }
 
