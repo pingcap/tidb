@@ -115,7 +115,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	case bgJobFlag:
 		owner, err = t.GetBgJobOwner()
 	default:
-		err = errors.Errorf("invalid ddl flag %v", flag.String())
+		err = errors.Errorf("invalid ddl flag %v", flag)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -145,11 +145,11 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[ddl] become %s job owner %s", flag.String(), owner.OwnerID)
+		log.Debugf("[ddl] become %s job owner %s", flag, owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not %s job owner, owner is %s", flag.String(), owner.OwnerID)
+		log.Debugf("[ddl] not %s job owner, owner is %s", flag, owner.OwnerID)
 		return nil, errors.Trace(ErrNotOwner)
 	}
 
