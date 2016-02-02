@@ -610,7 +610,6 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 		idxScan, ok := p.(*IndexScan)
 		c.Assert(ok, IsTrue)
 		c.Assert(idxScan.AccessEqualCount, Equals, ca.accessEqualCount)
-		c.Log(idxScan.Ranges[0].LowVal)
-		c.Assert(len(idxScan.Ranges[0].LowVal), Equals, ca.usedColumnCount)
+		c.Assert(idxScan.Ranges[0].LowVal, HasLen, ca.usedColumnCount)
 	}
 }
