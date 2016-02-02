@@ -18,6 +18,7 @@ import (
 
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 )
@@ -55,6 +56,10 @@ type joinPath struct {
 	table           *ast.TableName
 	totalFilterRate float64
 
+	// for subquery
+	subquery ast.Node
+	asName   model.CIStr
+
 	neighborCount int // number of neighbor table.
 	idxDepCount   int // number of paths this table depends on.
 	ordering      *ast.ResultField
@@ -82,6 +87,15 @@ type joinPath struct {
 func newTablePath(table *ast.TableName) *joinPath {
 	return &joinPath{
 		table:      table,
+		filterRate: rateFull,
+	}
+}
+
+// newSubqueryPath creates a new subquery join path.
+func newSubqueryPath(node ast.Node, asName model.CIStr) *joinPath {
+	return &joinPath{
+		subquery:   node,
+		asName:     asName,
 		filterRate: rateFull,
 	}
 }
@@ -162,7 +176,7 @@ func (p *joinPath) resultFields() []*ast.ResultField {
 func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joinPath) (attached bool) {
 	filterRate := guesstimateFilterRate(condition)
 	// table
-	if p.table != nil {
+	if p.table != nil || p.subquery != nil {
 		attacher := conditionAttachChecker{targetPath: p, availablePaths: availablePaths}
 		condition.Accept(&attacher)
 		if attacher.invalid {
@@ -206,6 +220,9 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 	if p.table != nil {
 		return p.table == table
 	}
+	if p.subquery != nil {
+		return p.asName.L == table.Name.L
+	}
 	if len(p.inners) != 0 {
 		for _, in := range p.inners {
 			if in.containsTable(table) {
@@ -214,6 +231,7 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 		}
 		return false
 	}
+
 	return p.outer.containsTable(table) || p.inner.containsTable(table)
 }
 
@@ -643,9 +661,15 @@ func (b *planBuilder) buildBasicJoinPath(node ast.ResultSetNode, nullRejectTable
 		}
 		return newInnerJoinPath(leftPath, righPath, x.On)
 	case *ast.TableSource:
-		return b.buildBasicJoinPath(x.Source, nullRejectTables)
-	case *ast.TableName:
-		return newTablePath(x)
+		switch v := x.Source.(type) {
+		case *ast.TableName:
+			return newTablePath(v)
+		case *ast.SelectStmt, *ast.UnionStmt:
+			return newSubqueryPath(v, x.AsName)
+		default:
+			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
+			return nil
+		}
 	default:
 		b.err = ErrUnsupportedType.Gen("unsupported table source type %T", x)
 		return nil
@@ -693,6 +717,9 @@ func equivFromExpr(expr ast.ExprNode) *equalCond {
 func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 	if path.table != nil {
 		return b.buildTablePlanFromJoinPath(path)
+	}
+	if path.subquery != nil {
+		return b.buildSubqueryJoinPath(path)
 	}
 	if path.outer != nil {
 		join := &JoinOuter{
@@ -745,4 +772,23 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		}
 	}
 	return p
+}
+
+// Build subquery join path plan
+func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
+	for _, equiv := range path.eqConds {
+		columnNameExpr := &ast.ColumnNameExpr{}
+		columnNameExpr.Name = &ast.ColumnName{}
+		columnNameExpr.Name.Name = equiv.left.Column.Name
+		columnNameExpr.Name.Table = equiv.left.Table.Name
+		columnNameExpr.Refer = equiv.left
+		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
+		ast.SetFlag(condition)
+		path.conditions = append(path.conditions, condition)
+	}
+	p := b.build(path.subquery)
+	filterPlan := &Filter{Conditions: path.conditions}
+	filterPlan.SetSrc(p)
+	filterPlan.SetFields(p.Fields())
+	return filterPlan
 }

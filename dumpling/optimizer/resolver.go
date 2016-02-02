@@ -56,6 +56,8 @@ type resolverContext struct {
 	/* For Select Statement. */
 	// table map to lookup and check table name conflict.
 	tableMap map[string]int
+	// table map to lookup and check derived-table(subselect) name conflict.
+	derivedTableMap map[string]int
 	// tableSources collected in from clause.
 	tables []*ast.TableSource
 	// result fields collected in select field list.
@@ -101,7 +103,8 @@ func (nr *nameResolver) currentContext() *resolverContext {
 // pushContext is called when we enter a statement.
 func (nr *nameResolver) pushContext() {
 	nr.contextStack = append(nr.contextStack, &resolverContext{
-		tableMap: map[string]int{},
+		tableMap:        map[string]int{},
+		derivedTableMap: map[string]int{},
 	})
 }
 
@@ -267,23 +270,51 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 
 // handleTableSources checks name duplication
 // and puts the table source in current resolverContext.
+// Note:
+// "select * from t as a join (select 1) as a;" is not duplicate.
+// "select * from t as a join t as a;" is duplicate.
+// "select * from (select 1) as a join (select 1) as a;" is duplicate.
 func (nr *nameResolver) handleTableSource(ts *ast.TableSource) {
 	for _, v := range ts.GetResultFields() {
 		v.TableAsName = ts.AsName
 	}
-	var name string
-	if ts.AsName.L != "" {
-		name = ts.AsName.L
-	} else {
-		tableName := ts.Source.(*ast.TableName)
-		name = nr.tableUniqueName(tableName.Schema, tableName.Name)
-	}
 	ctx := nr.currentContext()
-	if _, ok := ctx.tableMap[name]; ok {
-		nr.Err = errors.Errorf("duplicated table/alias name %s", name)
-		return
+	switch ts.Source.(type) {
+	case *ast.TableName:
+		var name string
+		if ts.AsName.L != "" {
+			name = ts.AsName.L
+		} else {
+			tableName := ts.Source.(*ast.TableName)
+			name = nr.tableUniqueName(tableName.Schema, tableName.Name)
+		}
+		if _, ok := ctx.tableMap[name]; ok {
+			nr.Err = errors.Errorf("duplicated table/alias name %s", name)
+			return
+		}
+		ctx.tableMap[name] = len(ctx.tables)
+	case *ast.SelectStmt:
+		name := ts.AsName.L
+		if _, ok := ctx.derivedTableMap[name]; ok {
+			nr.Err = errors.Errorf("duplicated table/alias name %s", name)
+			return
+		}
+		ctx.derivedTableMap[name] = len(ctx.tables)
 	}
-	ctx.tableMap[name] = len(ctx.tables)
+	dupNames := make(map[string]struct{}, len(ts.GetResultFields()))
+	for _, f := range ts.GetResultFields() {
+		// duplicate column name in one table is not allowed.
+		// "select * from (select 1, 1) as a;" is duplicate.
+		name := f.ColumnAsName.L
+		if name == "" {
+			name = f.Column.Name.L
+		}
+		if _, ok := dupNames[name]; ok {
+			nr.Err = errors.Errorf("Duplicate column name '%s'", name)
+			return
+		}
+		dupNames[name] = struct{}{}
+	}
 	ctx.tables = append(ctx.tables, ts)
 	return
 }
@@ -520,6 +551,23 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 		}
 	}
 	if matched != nil {
+		// If in GroupBy, we clone the ResultField
+		if ctx.inGroupBy || ctx.inHaving || ctx.inOrderBy {
+			nf := &ast.ResultField{
+				ColumnAsName: matched.ColumnAsName,
+				Column:       matched.Column,
+				Table:        matched.Table,
+				DBName:       matched.DBName,
+				TableName:    matched.TableName,
+				TableAsName:  matched.TableAsName,
+			}
+			expr := matched.Expr
+			if cexpr, ok := expr.(*ast.ColumnNameExpr); ok {
+				expr = cexpr.Refer.Expr
+			}
+			nf.Expr = expr
+			matched = nf
+		}
 		// Bind column.
 		cn.Refer = matched
 		return true
@@ -551,17 +599,47 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 			nr.Err = errors.New("No table used.")
 			return
 		}
+		tableRfs := []*ast.ResultField{}
 		if field.WildCard.Table.L == "" {
 			for _, v := range ctx.tables {
-				rfs = append(rfs, v.GetResultFields()...)
+				tableRfs = append(tableRfs, v.GetResultFields()...)
 			}
 		} else {
 			name := nr.tableUniqueName(field.WildCard.Schema, field.WildCard.Table)
-			tableIdx, ok := ctx.tableMap[name]
-			if !ok {
+			tableIdx, ok1 := ctx.tableMap[name]
+			derivedTableIdx, ok2 := ctx.derivedTableMap[name]
+			if !ok1 && !ok2 {
 				nr.Err = errors.Errorf("unknown table %s.", field.WildCard.Table.O)
 			}
-			rfs = ctx.tables[tableIdx].GetResultFields()
+			if ok1 {
+				tableRfs = ctx.tables[tableIdx].GetResultFields()
+			}
+			if ok2 {
+				tableRfs = append(tableRfs, ctx.tables[derivedTableIdx].GetResultFields()...)
+			}
+
+		}
+		for _, trf := range tableRfs {
+			// Convert it to ColumnNameExpr
+			cn := &ast.ColumnName{
+				Schema: trf.DBName,
+				Table:  trf.Table.Name,
+				Name:   trf.ColumnAsName,
+			}
+			cnExpr := &ast.ColumnNameExpr{
+				Name:  cn,
+				Refer: trf,
+			}
+			rf := &ast.ResultField{
+				ColumnAsName: trf.ColumnAsName,
+				Column:       trf.Column,
+				Table:        trf.Table,
+				DBName:       trf.DBName,
+				TableName:    trf.TableName,
+				TableAsName:  trf.TableAsName,
+				Expr:         cnExpr,
+			}
+			rfs = append(rfs, rf)
 		}
 		return
 	}
@@ -574,7 +652,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
 		rf.TableName = v.Refer.TableName
-		rf.Expr = v.Refer.Expr
+		rf.Expr = v
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.
@@ -624,7 +702,21 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 		nr.Err = errors.Errorf("Unknown column '%d'", pos.N)
 		return
 	}
-	pos.Refer = ctx.fieldList[pos.N-1]
+	matched := ctx.fieldList[pos.N-1]
+	nf := &ast.ResultField{
+		ColumnAsName: matched.ColumnAsName,
+		Column:       matched.Column,
+		Table:        matched.Table,
+		DBName:       matched.DBName,
+		TableName:    matched.TableName,
+		TableAsName:  matched.TableAsName,
+	}
+	expr := matched.Expr
+	if cexpr, ok := expr.(*ast.ColumnNameExpr); ok {
+		expr = cexpr.Refer.Expr
+	}
+	nf.Expr = expr
+	pos.Refer = nf
 	if nr.currentContext().inGroupBy {
 		// make sure item is not aggregate function
 		if ast.HasAggFlag(pos.Refer.Expr) {
