@@ -58,6 +58,8 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkBinaryOperation(x)
 	case *ast.ByItem:
 		v.checkAllOneColumn(x.Expr)
+	case *ast.CompareSubqueryExpr:
+		v.checkSameColumns(x.L, x.R)
 	case *ast.FieldList:
 		v.checkFieldList(x)
 	case *ast.HavingClause:

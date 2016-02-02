@@ -1077,5 +1077,8 @@ func (e *AggregateExec) Close() error {
 	if e.Src != nil {
 		return e.Src.Close()
 	}
+	for _, af := range e.AggFuncs {
+		af.Clear()
+	}
 	return nil
 }

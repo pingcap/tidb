@@ -16,6 +16,7 @@ package ast
 import (
 	"regexp"
 
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -228,11 +229,30 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SubqueryExec represents a subquery executor interface.
+// This interface is implemented in executor and used in plan/evaluator.
+// It will execute the subselect and get the result.
+type SubqueryExec interface {
+	ExprNode
+
+	// EvalRows executes the subquery and returns the multi rows with rowCount.
+	// rowCount < 0 means no limit.
+	// If the ColumnCount is 1, we will return a column result like {1, 2, 3},
+	// otherwise, we will return a table result like {{1, 1}, {2, 2}}.
+	EvalRows(ctx context.Context, rowCount int) ([]interface{}, error)
+
+	// ColumnCount returns column count for the sub query.
+	ColumnCount() (int, error)
+}
+
 // SubqueryExpr represents a subquery.
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query ResultSetNode
+	Query           ResultSetNode
+	SubqueryExec    SubqueryExec
+	Evaluated       bool
+	UseOuterContext bool
 }
 
 // Accept implements Node Accept interface.
@@ -242,11 +262,26 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SubqueryExpr)
+
+	if n.SubqueryExec != nil {
+		t, ok := n.SubqueryExec.Accept(v)
+		if !ok {
+			return n, false
+		}
+		sq, ok := t.(SubqueryExec)
+		if !ok {
+			return n, false
+		}
+		n.SubqueryExec = sq
+		return v.Leave(n)
+	}
+
 	node, ok := n.Query.Accept(v)
 	if !ok {
 		return n, false
 	}
 	n.Query = node.(ResultSetNode)
+
 	return v.Leave(n)
 }
 

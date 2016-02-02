@@ -314,7 +314,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
 
-		p, err := BuildPlan(stmt)
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
 
 		err = Refine(p)
@@ -578,7 +578,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 		stmt := s.(*ast.SelectStmt)
 		mockJoinResolve(c, stmt)
 		ast.SetFlag(stmt)
-		p, err := BuildPlan(stmt)
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
 		expl, err := Explain(p)
 		c.Assert(err, IsNil)

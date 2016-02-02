@@ -41,10 +41,11 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 // information can overwrite outer query information. When we look up for a column reference,
 // we look up from top to bottom in the contextStack.
 type nameResolver struct {
-	Info          infoschema.InfoSchema
-	Ctx           context.Context
-	DefaultSchema model.CIStr
-	Err           error
+	Info            infoschema.InfoSchema
+	Ctx             context.Context
+	DefaultSchema   model.CIStr
+	Err             error
+	useOuterContext bool
 
 	contextStack []*resolverContext
 }
@@ -84,6 +85,8 @@ type resolverContext struct {
 	inOrderBy bool
 	// When visiting column name in ByItem, we should know if the column name is in an expression.
 	inByItemExpression bool
+	// If subquery use outer context.
+	useOuterContext bool
 }
 
 // currentContext gets the current resolverContext.
@@ -208,8 +211,20 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.PositionExpr:
 		nr.handlePosition(v)
 	case *ast.SelectStmt:
-		v.SetResultFields(nr.currentContext().fieldList)
+		ctx := nr.currentContext()
+		v.SetResultFields(ctx.fieldList)
+		if ctx.useOuterContext {
+			nr.useOuterContext = true
+			ctx.useOuterContext = false
+		}
 		nr.popContext()
+	case *ast.SubqueryExpr:
+		if nr.useOuterContext {
+			// TODO: check this
+			// If there is a deep nest of subquery, there may be something wrong.
+			v.UseOuterContext = true
+			nr.useOuterContext = false
+		}
 	case *ast.InsertStmt:
 		nr.popContext()
 	case *ast.DeleteStmt:
@@ -301,6 +316,10 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
 		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
 			// Column is already resolved or encountered an error.
+			if i < len(nr.contextStack)-1 {
+				// If in subselect, the query use outer query.
+				nr.currentContext().useOuterContext = true
+			}
 			return
 		}
 	}

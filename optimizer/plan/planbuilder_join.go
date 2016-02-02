@@ -584,7 +584,9 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	whereConditions := splitWhere(sel.Where)
 	for _, whereCond := range whereConditions {
 		if !path.attachCondition(whereCond, nil) {
-			log.Errorf("Failed to attach where condition.")
+			// TODO: Find a better way to handle this condition.
+			path.conditions = append(path.conditions, whereCond)
+			log.Errorf("Failed to attach where condtion.")
 		}
 	}
 	path.extractEqualConditon()

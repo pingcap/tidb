@@ -15,6 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -37,8 +38,8 @@ const (
 
 // BuildPlan builds a plan from a node.
 // It returns ErrUnsupportedType if ast.Node type is not supported yet.
-func BuildPlan(node ast.Node) (Plan, error) {
-	var builder planBuilder
+func BuildPlan(node ast.Node, sb SubQueryBuilder) (Plan, error) {
+	builder := planBuilder{sb: sb}
 	p := builder.build(node)
 	return p, builder.err
 }
@@ -48,6 +49,7 @@ func BuildPlan(node ast.Node) (Plan, error) {
 type planBuilder struct {
 	err    error
 	hasAgg bool
+	sb     SubQueryBuilder
 	obj    interface{}
 }
 
@@ -154,12 +156,25 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 	return extractor.AggFuncs
 }
 
+func (b *planBuilder) buildSubquery(n ast.Node) {
+	sv := &subqueryVisitor{
+		builder: b,
+	}
+	_, ok := n.Accept(sv)
+	if !ok {
+		log.Errorf("Extract subquery error")
+	}
+}
+
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
 		aggFuncs = b.extractSelectAgg(sel)
 	}
+	// Build subquery
+	// Convert subquery to expr with plan
+	b.buildSubquery(sel)
 	var p Plan
 	if sel.From != nil {
 		p = b.buildFrom(sel)
@@ -531,4 +546,34 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 		conditions = append(conditions, where)
 	}
 	return conditions
+}
+
+// SubQueryBuilder is the interface for building SubQuery executor.
+type SubQueryBuilder interface {
+	Build(p Plan) ast.SubqueryExec
+}
+
+// subqueryVisitor visits AST and handles SubqueryExpr.
+type subqueryVisitor struct {
+	builder *planBuilder
+}
+
+func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.SubqueryExpr:
+		p := se.builder.build(x.Query)
+		// The expr pointor is copyed into ResultField when running name resolver.
+		// So we can not just replace the expr node in AST. We need to put SubQuery into the expr.
+		// See: optimizer.nameResolver.createResultFields()
+		x.SubqueryExec = se.builder.sb.Build(p)
+		return in, true
+	case *ast.Join:
+		// SubSelect in from clause will be handled in buildJoin().
+		return in, true
+	}
+	return in, false
+}
+
+func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }

@@ -28,7 +28,7 @@ import (
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
+func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan.Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
@@ -36,7 +36,7 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	p, err := plan.BuildPlan(node)
+	p, err := plan.BuildPlan(node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -51,11 +51,11 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 // The statement must be prepared before it can be passed to optimize function.
 // We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
 func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	if err := Validate(node, true); err != nil {
-		return errors.Trace(err)
-	}
 	ast.SetFlag(node)
 	if err := Preprocess(node, is, ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err := Validate(node, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -67,8 +67,6 @@ type supportChecker struct {
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
-	case *ast.SubqueryExpr:
-		c.unsupported = true
 	case *ast.TableSource:
 		if _, ok := x.Source.(*ast.SelectStmt); ok {
 			c.unsupported = true
