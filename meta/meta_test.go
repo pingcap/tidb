@@ -184,7 +184,7 @@ func (s *testSuite) TestDDL(c *C) {
 	job := &model.Job{ID: 1}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
-	n, err := t.DDLJobLength()
+	n, err := t.DDLJobQueueLen()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
@@ -228,7 +228,7 @@ func (s *testSuite) TestDDL(c *C) {
 	bgJob := &model.Job{ID: 1}
 	err = t.EnQueueBgJob(bgJob)
 	c.Assert(err, IsNil)
-	n, err = t.BgJobLength()
+	n, err = t.BgJobQueueLen()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 

@@ -512,8 +512,8 @@ func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
 	return m.updateDDLJob(index, job, mDDLJobListKey)
 }
 
-// DDLJobLength returns the DDL job length.
-func (m *Meta) DDLJobLength() (int64, error) {
+// DDLJobQueueLen returns the DDL job queue length.
+func (m *Meta) DDLJobQueueLen() (int64, error) {
 	return m.txn.LLen(mDDLJobListKey)
 }
 
@@ -619,8 +619,8 @@ func (m *Meta) EnQueueBgJob(job *model.Job) error {
 	return m.enQueueDDLJob(mBgJobListKey, job)
 }
 
-// BgJobLength returns the background job length.
-func (m *Meta) BgJobLength() (int64, error) {
+// BgJobQueueLen returns the background job queue length.
+func (m *Meta) BgJobQueueLen() (int64, error) {
 	return m.txn.LLen(mBgJobListKey)
 }
 
