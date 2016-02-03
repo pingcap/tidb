@@ -152,6 +152,29 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSuite) TestGetDDLBgInfo(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+
+	owner := &model.Owner{OwnerID: "owner"}
+	err = t.SetBgJobOwner(owner)
+	c.Assert(err, IsNil)
+	job := &model.Job{
+		SchemaID: 1,
+		Type:     model.ActionDropTable,
+	}
+	err = t.EnQueueBgJob(job)
+	c.Assert(err, IsNil)
+	info, err := GetDDLBgInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(info.Owner, DeepEquals, owner)
+	c.Assert(info.Job, DeepEquals, job)
+	c.Assert(info.ReorgHandle, Equals, int64(0))
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite) TestScan(c *C) {
 	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
