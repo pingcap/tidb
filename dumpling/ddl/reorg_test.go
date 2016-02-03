@@ -121,7 +121,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	ctx := testNewContext(c, d1)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
