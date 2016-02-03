@@ -83,9 +83,6 @@ func GetDDLBgInfo(txn kv.Transaction) (*DDLInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if info.Job == nil {
-		return info, nil
-	}
 
 	return info, nil
 }

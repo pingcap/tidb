@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
@@ -21,6 +23,7 @@ import (
 )
 
 var (
+	ddlPrefix            = "ddl"
 	ddlServerID          = "ddl_server_id"
 	ddlSchemaVersion     = "ddl_schema_version"
 	ddlOwnerID           = "ddl_owner_id"
@@ -44,42 +47,70 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultScopeFlag
 }
 
-// Stat returns the DDL statistics.
-func (d *ddl) Stats() (map[string]interface{}, error) {
+func buildPrefix(str, old, new string) string {
+	return strings.Replace(str, old, new, 1)
+}
+
+func stats(store kv.Storage, m map[string]interface{}, flag JobType) error {
+	var prefix string
 	var info *inspectkv.DDLInfo
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		var err1 error
-		info, err1 = inspectkv.GetDDLInfo(txn)
+		switch flag {
+		case ddlJobFlag:
+			info, err1 = inspectkv.GetDDLInfo(txn)
+			prefix = flag.String()
+		case bgJobFlag:
+			info, err1 = inspectkv.GetDDLBgInfo(txn)
+			prefix = flag.String()
+		default:
+			err1 = errInvalidJobFlag
+		}
 
 		return errors.Trace(err1)
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
+	m[buildPrefix(ddlSchemaVersion, ddlPrefix, prefix)] = info.SchemaVer
+
+	if info.Owner != nil {
+		m[buildPrefix(ddlOwnerID, ddlPrefix, prefix)] = info.Owner.OwnerID
+		// LastUpdateTS uses nanosecond.
+		m[buildPrefix(ddlOwnerLastUpdateTS, ddlPrefix, prefix)] = info.Owner.LastUpdateTS / 1e9
+	}
+
+	if info.Job == nil {
+		return nil
+	}
+
+	m[buildPrefix(ddlJobID, ddlPrefix, prefix)] = info.Job.ID
+	m[buildPrefix(ddlJobAction, ddlPrefix, prefix)] = info.Job.Type.String()
+	m[buildPrefix(ddlJobLastUpdateTS, ddlPrefix, prefix)] = info.Job.LastUpdateTS / 1e9
+	m[buildPrefix(ddlJobState, ddlPrefix, prefix)] = info.Job.State.String()
+	m[buildPrefix(ddlJobError, ddlPrefix, prefix)] = info.Job.Error
+	m[buildPrefix(ddlJobSchemaState, ddlPrefix, prefix)] = info.Job.SchemaState.String()
+	m[buildPrefix(ddlJobSchemaID, ddlPrefix, prefix)] = info.Job.SchemaID
+	m[buildPrefix(ddlJobTableID, ddlPrefix, prefix)] = info.Job.TableID
+	m[buildPrefix(ddlJobSnapshotVer, ddlPrefix, prefix)] = info.Job.SnapshotVer
+	m[buildPrefix(ddlJobReorgHandle, ddlPrefix, prefix)] = info.ReorgHandle
+	m[buildPrefix(ddlJobArgs, ddlPrefix, prefix)] = info.Job.Args
+
+	return nil
+}
+
+// Stat returns the DDL statistics.
+func (d *ddl) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	m[ddlServerID] = d.uuid
 
-	m[ddlSchemaVersion] = info.SchemaVer
-
-	if info.Owner != nil {
-		m[ddlOwnerID] = info.Owner.OwnerID
-		// LastUpdateTS uses nanosecond.
-		m[ddlOwnerLastUpdateTS] = info.Owner.LastUpdateTS / 1e9
+	if err := stats(d.store, m, ddlJobFlag); err != nil {
+		return nil, errors.Trace(err)
 	}
-
-	if info.Job != nil {
-		m[ddlJobID] = info.Job.ID
-		m[ddlJobAction] = info.Job.Type.String()
-		m[ddlJobLastUpdateTS] = info.Job.LastUpdateTS / 1e9
-		m[ddlJobState] = info.Job.State.String()
-		m[ddlJobError] = info.Job.Error
-		m[ddlJobSchemaState] = info.Job.SchemaState.String()
-		m[ddlJobSchemaID] = info.Job.SchemaID
-		m[ddlJobTableID] = info.Job.TableID
-		m[ddlJobSnapshotVer] = info.Job.SnapshotVer
-		m[ddlJobReorgHandle] = info.ReorgHandle
-		m[ddlJobArgs] = info.Job.Args
+	if err := stats(d.store, m, bgJobFlag); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	return m, nil

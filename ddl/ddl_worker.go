@@ -115,7 +115,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 	case bgJobFlag:
 		owner, err = t.GetBgJobOwner()
 	default:
-		err = errors.Errorf("invalid ddl flag %v", flag)
+		err = errInvalidJobFlag
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -190,6 +190,8 @@ var ErrNotOwner = errors.New("DDL: not owner")
 
 // ErrWorkerClosed means we have already closed the DDL worker.
 var ErrWorkerClosed = errors.New("DDL: worker is closed")
+
+var errInvalidJobFlag = errors.New("DDL: invalid job flag")
 
 // JobType is job type, including ddl/background.
 type JobType int
