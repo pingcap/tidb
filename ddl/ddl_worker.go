@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
+func (d *ddl) startDDLJob(ctx context.Context, job *model.Job) error {
 	// for every DDL, we must commit current transaction.
 	if err := ctx.FinishTxn(false); err != nil {
 		return errors.Trace(err)
@@ -49,7 +49,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 
 	// notice worker that we push a new job and wait the job done.
-	asyncNotify(d.jobCh)
+	asyncNotify(d.ddlJobCh)
 
 	log.Warnf("[ddl] start DDL job %v", job)
 
@@ -58,21 +58,21 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	var historyJob *model.Job
 
 	// for a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
-	// for every state change, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	// for every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, 10*time.Second))
 	defer ticker.Stop()
 	for {
 		select {
-		case <-d.jobDoneCh:
+		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
 		}
 
-		historyJob, err = d.getHistoryJob(jobID)
+		historyJob, err = d.getHistoryDDLJob(jobID)
 		if err != nil {
-			log.Errorf("[ddl] get history job err %v, check again", err)
+			log.Errorf("[ddl] get history DDL job err %v, check again", err)
 			continue
 		} else if historyJob == nil {
-			log.Warnf("[ddl] job %d is not in history, maybe not run", jobID)
+			log.Warnf("[ddl] DDL job %d is not in history, maybe not run", jobID)
 			continue
 		}
 
@@ -85,7 +85,7 @@ func (d *ddl) startJob(ctx context.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) getHistoryJob(id int64) (*model.Job, error) {
+func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	var job *model.Job
 
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
@@ -105,8 +105,18 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
-	owner, err := t.GetDDLOwner()
+func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
+	var owner *model.Owner
+	var err error
+
+	switch flag {
+	case ddlJobFlag:
+		owner, err = t.GetDDLJobOwner()
+	case bgJobFlag:
+		owner, err = t.GetBgJobOwner()
+	default:
+		err = errors.Errorf("invalid ddl flag %v", flag)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -126,37 +136,49 @@ func (d *ddl) checkOwner(t *meta.Meta) (*model.Owner, error) {
 		owner.OwnerID = d.uuid
 		owner.LastUpdateTS = now
 		// update status.
-		if err = t.SetDDLOwner(owner); err != nil {
+		switch flag {
+		case ddlJobFlag:
+			err = t.SetDDLJobOwner(owner)
+		case bgJobFlag:
+			err = t.SetBgJobOwner(owner)
+		}
+		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Debugf("[ddl] become owner %s", owner.OwnerID)
+		log.Debugf("[ddl] become %s job owner %s", flag, owner.OwnerID)
 	}
 
 	if owner.OwnerID != d.uuid {
-		log.Debugf("[ddl] not owner, owner is %s", owner.OwnerID)
+		log.Debugf("[ddl] not %s job owner, owner is %s", flag, owner.OwnerID)
 		return nil, errors.Trace(ErrNotOwner)
 	}
 
 	return owner, nil
 }
 
-func (d *ddl) getFirstJob(t *meta.Meta) (*model.Job, error) {
+func (d *ddl) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJob(0)
 	return job, errors.Trace(err)
 }
 
 // every time we enter another state except final state, we must call this function.
-func (d *ddl) updateJob(t *meta.Meta, job *model.Job) error {
+func (d *ddl) updateDDLJob(t *meta.Meta, job *model.Job) error {
 	err := t.UpdateDDLJob(0, job)
 	return errors.Trace(err)
 }
 
-func (d *ddl) finishJob(t *meta.Meta, job *model.Job) error {
+func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 	log.Warnf("[ddl] finish DDL job %v", job)
 	// done, notice and run next job.
 	_, err := t.DeQueueDDLJob()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	switch job.Type {
+	case model.ActionDropSchema, model.ActionDropTable:
+		if err = d.prepareBgJob(job); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err = t.AddHistoryDDLJob(job)
@@ -169,7 +191,26 @@ var ErrNotOwner = errors.New("DDL: not owner")
 // ErrWorkerClosed means we have already closed the DDL worker.
 var ErrWorkerClosed = errors.New("DDL: worker is closed")
 
-func (d *ddl) handleJobQueue() error {
+// JobType is job type, including ddl/background.
+type JobType int
+
+const (
+	ddlJobFlag = iota + 1
+	bgJobFlag
+)
+
+func (j JobType) String() string {
+	switch j {
+	case ddlJobFlag:
+		return "ddl"
+	case bgJobFlag:
+		return "background"
+	}
+
+	return "unknown"
+}
+
+func (d *ddl) handleDDLJobQueue() error {
 	for {
 		if d.isClosed() {
 			return nil
@@ -180,7 +221,7 @@ func (d *ddl) handleJobQueue() error {
 		var job *model.Job
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
-			owner, err := d.checkOwner(t)
+			owner, err := d.checkOwner(t, ddlJobFlag)
 			if terror.ErrorEqual(err, ErrNotOwner) {
 				// we are not owner, return and retry checking later.
 				return nil
@@ -190,7 +231,7 @@ func (d *ddl) handleJobQueue() error {
 
 			// become the owner
 			// get the first job and run
-			job, err = d.getFirstJob(t)
+			job, err = d.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
@@ -215,14 +256,13 @@ func (d *ddl) handleJobQueue() error {
 
 			// if run job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			d.runJob(t, job)
+			d.runDDLJob(t, job)
 
 			if job.IsFinished() {
-				err = d.finishJob(t, job)
+				err = d.finishDDLJob(t, job)
 			} else {
-				err = d.updateJob(t, job)
+				err = d.updateDDLJob(t, job)
 			}
-
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -230,12 +270,10 @@ func (d *ddl) handleJobQueue() error {
 			// running job may cost some time, so here we must update owner status to
 			// prevent other become the owner.
 			owner.LastUpdateTS = time.Now().UnixNano()
-			if err = t.SetDDLOwner(owner); err != nil {
-				return errors.Trace(err)
-			}
+			err = t.SetDDLJobOwner(owner)
+
 			return errors.Trace(err)
 		})
-
 		if err != nil {
 			return errors.Trace(err)
 		} else if job == nil {
@@ -253,7 +291,8 @@ func (d *ddl) handleJobQueue() error {
 		}
 
 		if job.IsFinished() {
-			asyncNotify(d.jobDoneCh)
+			d.startBgJob(job.Type)
+			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
 }
@@ -266,9 +305,9 @@ func chooseLeaseTime(n1 time.Duration, n2 time.Duration) time.Duration {
 	return n2
 }
 
-// onWorker is for async online schema change, it will try to become the owner first,
+// onDDLWorker is for async online schema change, it will try to become the owner first,
 // then wait or pull the job queue to handle a schema change job.
-func (d *ddl) onWorker() {
+func (d *ddl) onDDLWorker() {
 	defer d.wait.Done()
 
 	// we use 4 * lease time to check owner's timeout, so here, we will update owner's status
@@ -282,19 +321,19 @@ func (d *ddl) onWorker() {
 		select {
 		case <-ticker.C:
 			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
-		case <-d.jobCh:
+		case <-d.ddlJobCh:
 		case <-d.quitCh:
 			return
 		}
 
-		err := d.handleJobQueue()
+		err := d.handleDDLJobQueue()
 		if err != nil {
-			log.Errorf("[ddl] handle job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] handle ddl job err %v", errors.ErrorStack(err))
 		}
 	}
 }
 
-func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
+func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 	if job.IsFinished() {
 		return
 	}
@@ -322,14 +361,14 @@ func (d *ddl) runJob(t *meta.Meta, job *model.Job) {
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled
-		err = errors.Errorf("invalid job %v", job)
+		err = errors.Errorf("invalid ddl job %v", job)
 	}
 
 	// saves error in job, so that others can know error happens.
 	if err != nil {
 		// if job is not cancelled, we should log this error.
 		if job.State != model.JobCancelled {
-			log.Errorf("run job err %v", errors.ErrorStack(err))
+			log.Errorf("run ddl job err %v", errors.ErrorStack(err))
 		}
 
 		job.Error = err.Error()

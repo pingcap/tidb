@@ -50,10 +50,10 @@ func testCreateStore(c *C, name string) kv.Storage {
 type testDDLSuite struct {
 }
 
-func testCheckOwner(c *C, d *ddl, isOwner bool) {
+func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		_, err := d.checkOwner(t)
+		_, err := d.checkOwner(t, flag)
 		return err
 	})
 	if isOwner {
@@ -64,7 +64,7 @@ func testCheckOwner(c *C, d *ddl, isOwner bool) {
 	c.Assert(terror.ErrorEqual(err, ErrNotOwner), IsTrue)
 }
 
-func (s *testDDLSuite) TestCheckOnwer(c *C) {
+func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
@@ -74,17 +74,20 @@ func (s *testDDLSuite) TestCheckOnwer(c *C) {
 
 	time.Sleep(lease)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true, bgJobFlag)
 
 	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
 
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
+	testCheckOwner(c, d2, false, bgJobFlag)
 	d1.close()
 
 	time.Sleep(6 * lease)
 
-	testCheckOwner(c, d2, true)
+	testCheckOwner(c, d2, true, ddlJobFlag)
+	testCheckOwner(c, d2, true, bgJobFlag)
 
 	d2.SetLease(1 * time.Second)
 
@@ -97,7 +100,8 @@ func (s *testDDLSuite) TestCheckOnwer(c *C) {
 	err = d1.Start()
 	c.Assert(err, IsNil)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
+	testCheckOwner(c, d1, true, bgJobFlag)
 
 	d2.SetLease(1 * time.Second)
 	d2.SetLease(2 * time.Second)
@@ -121,10 +125,9 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
-
 }
 
 func (s *testDDLSuite) TestTableError(c *C) {
@@ -145,7 +148,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -154,7 +157,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job.Args = []interface{}{tblInfo}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -164,7 +167,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -177,7 +180,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -214,7 +217,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -224,7 +227,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -240,7 +243,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{1},
 	}
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -250,7 +253,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("t"), []*coldef.IndexColName{{ColumnName: "c", Length: 256}}},
 	}
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -260,7 +263,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*coldef.IndexColName{{ColumnName: "c", Length: 256}}},
 	}
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -272,7 +275,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*coldef.IndexColName{{ColumnName: "c1", Length: 256}}},
 	}
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -282,7 +285,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{1},
 	}
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -294,7 +297,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{model.NewCIStr("c1_index")},
 	}
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }
@@ -316,7 +319,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Type:     model.ActionAddColumn,
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -326,7 +329,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Type:     model.ActionDropColumn,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -355,7 +358,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -366,7 +369,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Args:     []interface{}{1},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }
