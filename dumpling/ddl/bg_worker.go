@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-// handleBgJobQueue handles background job queue.
+// handleBgJobQueue handles the background job queue.
 func (d *ddl) handleBgJobQueue() error {
 	if d.isClosed() {
 		return nil
@@ -73,7 +73,7 @@ func (d *ddl) handleBgJobQueue() error {
 	return nil
 }
 
-// runBgJob runs background job.
+// runBgJob runs a background job.
 func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	job.State = model.JobRunning
 
@@ -99,7 +99,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 	}
 }
 
-// prepareBgJob prepares background job.
+// prepareBgJob prepares a background job.
 func (d *ddl) prepareBgJob(ddlJob *model.Job) error {
 	job := &model.Job{
 		ID:       ddlJob.ID,
@@ -119,7 +119,7 @@ func (d *ddl) prepareBgJob(ddlJob *model.Job) error {
 	return errors.Trace(err)
 }
 
-// startBgJob starts background job.
+// startBgJob starts a background job.
 func (d *ddl) startBgJob(tp model.ActionType) {
 	switch tp {
 	case model.ActionDropSchema, model.ActionDropTable:
@@ -133,13 +133,13 @@ func (d *ddl) getFirstBgJob(t *meta.Meta) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// updateBgJob updates background job.
+// updateBgJob updates a background job.
 func (d *ddl) updateBgJob(t *meta.Meta, job *model.Job) error {
 	err := t.UpdateBgJob(0, job)
 	return errors.Trace(err)
 }
 
-// finishBgJob finishs background job.
+// finishBgJob finishs a background job.
 func (d *ddl) finishBgJob(t *meta.Meta, job *model.Job) error {
 	log.Warnf("[ddl] finish background job %v", job)
 	if _, err := t.DeQueueBgJob(); err != nil {

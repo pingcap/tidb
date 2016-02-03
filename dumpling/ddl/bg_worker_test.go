@@ -43,10 +43,10 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	d.startBgJob(job.Type)
 
 	time.Sleep(lease)
-	testCheckBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone)
 }
 
-func testCheckBgJobState(c *C, d *ddl, job *model.Job, state model.JobState) {
+func verifyBgJobState(c *C, d *ddl, job *model.Job, state model.JobState) {
 	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyBgJob, err := t.GetHistoryBgJob(job.ID)
@@ -81,7 +81,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	d.startBgJob(job.Type)
 
 	time.Sleep(lease)
-	testCheckBgJobState(c, d, job, model.JobDone)
+	verifyBgJobState(c, d, job, model.JobDone)
 }
 
 func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
@@ -101,5 +101,5 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	d.startBgJob(model.ActionDropTable)
 
 	time.Sleep(lease)
-	testCheckBgJobState(c, d, job, model.JobCancelled)
+	verifyBgJobState(c, d, job, model.JobCancelled)
 }
