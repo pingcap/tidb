@@ -787,6 +787,9 @@ func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 		path.conditions = append(path.conditions, condition)
 	}
 	p := b.build(path.subquery)
+	if len(path.conditions) == 0 {
+		return p
+	}
 	filterPlan := &Filter{Conditions: path.conditions}
 	filterPlan.SetSrc(p)
 	filterPlan.SetFields(p.Fields())

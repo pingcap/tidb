@@ -553,20 +553,13 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 	if matched != nil {
 		// If in GroupBy, we clone the ResultField
 		if ctx.inGroupBy || ctx.inHaving || ctx.inOrderBy {
-			nf := &ast.ResultField{
-				ColumnAsName: matched.ColumnAsName,
-				Column:       matched.Column,
-				Table:        matched.Table,
-				DBName:       matched.DBName,
-				TableName:    matched.TableName,
-				TableAsName:  matched.TableAsName,
-			}
+			nf := *matched
 			expr := matched.Expr
 			if cexpr, ok := expr.(*ast.ColumnNameExpr); ok {
 				expr = cexpr.Refer.Expr
 			}
 			nf.Expr = expr
-			matched = nf
+			matched = &nf
 		}
 		// Bind column.
 		cn.Refer = matched
@@ -630,16 +623,11 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 				Name:  cn,
 				Refer: trf,
 			}
-			rf := &ast.ResultField{
-				ColumnAsName: trf.ColumnAsName,
-				Column:       trf.Column,
-				Table:        trf.Table,
-				DBName:       trf.DBName,
-				TableName:    trf.TableName,
-				TableAsName:  trf.TableAsName,
-				Expr:         cnExpr,
-			}
-			rfs = append(rfs, rf)
+			ast.SetFlag(cnExpr)
+			cnExpr.SetType(trf.Expr.GetType())
+			rf := *trf
+			rf.Expr = cnExpr
+			rfs = append(rfs, &rf)
 		}
 		return
 	}
@@ -703,20 +691,13 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 		return
 	}
 	matched := ctx.fieldList[pos.N-1]
-	nf := &ast.ResultField{
-		ColumnAsName: matched.ColumnAsName,
-		Column:       matched.Column,
-		Table:        matched.Table,
-		DBName:       matched.DBName,
-		TableName:    matched.TableName,
-		TableAsName:  matched.TableAsName,
-	}
+	nf := *matched
 	expr := matched.Expr
 	if cexpr, ok := expr.(*ast.ColumnNameExpr); ok {
 		expr = cexpr.Refer.Expr
 	}
 	nf.Expr = expr
-	pos.Refer = nf
+	pos.Refer = &nf
 	if nr.currentContext().inGroupBy {
 		// make sure item is not aggregate function
 		if ast.HasAggFlag(pos.Refer.Expr) {
