@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ var (
 	_ Executor = &UpdateExec{}
 )
 
-// UpdateExec represents a update executor.
+// UpdateExec represents an update executor.
 type UpdateExec struct {
 	SelectExec  Executor
 	OrderedList []*ast.Assignment
