@@ -641,18 +641,18 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.ResultField) []*ast.Assignment {
 	newList := make([]*ast.Assignment, len(fields))
 	for _, assign := range list {
-		idx, err := columnIndexInFields(assign.Column, fields)
+		offset, err := columnOffsetInFields(assign.Column, fields)
 		if err != nil {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		newList[idx] = assign
+		newList[offset] = assign
 	}
 	return newList
 }
 
-func columnIndexInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, error) {
-	idx := -1
+func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, error) {
+	offset := -1
 	tableNameL := cn.Table.L
 	columnNameL := cn.Name.L
 	if tableNameL != "" {
@@ -678,22 +678,22 @@ func columnIndexInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, er
 				}
 			}
 
-			idx = i
+			offset = i
 		}
 	} else {
 		for i, f := range fields {
 			matchAsName := f.ColumnAsName.L != "" && f.ColumnAsName.L == columnNameL
 			matchColumnName := f.ColumnAsName.L == "" && f.Column.Name.L == columnNameL
 			if matchAsName || matchColumnName {
-				if idx != -1 {
+				if offset != -1 {
 					return -1, errors.Errorf("column %s is ambiguous.", cn.Name.O)
 				}
-				idx = i
+				offset = i
 			}
 		}
 	}
-	if idx == -1 {
+	if offset == -1 {
 		return -1, errors.Errorf("column %s not found", cn.Name.O)
 	}
-	return idx, nil
+	return offset, nil
 }
