@@ -1074,11 +1074,11 @@ func (e *AggregateExec) innerNext() (bool, error) {
 
 // Close implements Executor Close interface.
 func (e *AggregateExec) Close() error {
-	if e.Src != nil {
-		return e.Src.Close()
-	}
 	for _, af := range e.AggFuncs {
 		af.Clear()
+	}
+	if e.Src != nil {
+		return e.Src.Close()
 	}
 	return nil
 }
