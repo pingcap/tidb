@@ -546,6 +546,7 @@ func (e *JoinOuterExec) Fields() []*ast.ResultField {
 // a row with 0 len Data indicates there is no inner row matched for
 // an outer row.
 func (e *JoinOuterExec) Next() (*Row, error) {
+	var rowKeys []*RowKeyEntry
 	for {
 		if e.innerExec == nil {
 			e.gotRow = false
@@ -556,6 +557,7 @@ func (e *JoinOuterExec) Next() (*Row, error) {
 			if outerRow == nil {
 				return nil, nil
 			}
+			rowKeys = outerRow.RowKeys
 			plan.Refine(e.InnerPlan)
 			e.innerExec = e.builder.build(e.InnerPlan)
 			if e.builder.err != nil {
@@ -573,10 +575,11 @@ func (e *JoinOuterExec) Next() (*Row, error) {
 				continue
 			}
 			e.setInnerNull()
-			return &Row{}, nil
+			return &Row{RowKeys: rowKeys}, nil
 		}
 		if len(row.Data) != 0 {
 			e.gotRow = true
+			row.RowKeys = append(rowKeys, row.RowKeys...)
 			return row, nil
 		}
 	}
@@ -620,6 +623,7 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
 	}
+	rowKeysSlice := make([][]*RowKeyEntry, len(e.InnerPlans))
 	for {
 		exec := e.innerExecs[e.cursor]
 		if exec == nil {
@@ -645,6 +649,7 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 			e.cursor--
 			continue
 		}
+		rowKeysSlice[e.cursor] = row.RowKeys
 		if e.cursor < len(e.innerExecs)-1 {
 			e.cursor++
 			continue
@@ -657,9 +662,24 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 			}
 		}
 		if match {
+			row.RowKeys = joinRowKeys(rowKeysSlice)
 			return row, nil
 		}
 	}
+}
+
+func joinRowKeys(rowKeysSlice [][]*RowKeyEntry) []*RowKeyEntry {
+	count := 0
+	for _, rowKeys := range rowKeysSlice {
+		count += len(rowKeys)
+	}
+	joined := make([]*RowKeyEntry, count)
+	offset := 0
+	for _, rowKeys := range rowKeysSlice {
+		copy(joined[offset:], rowKeys)
+		offset += len(rowKeys)
+	}
+	return joined
 }
 
 // Close implements Executor Close interface.
