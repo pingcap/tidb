@@ -14,10 +14,7 @@
 package rsets_test
 
 import (
-	"fmt"
-
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -67,39 +64,6 @@ func (s *testJoinRsetSuite) TestJoinTypeString(c *C) {
 	joinType = rsets.JoinType(0)
 	str = joinType.String()
 	c.Assert(str, Equals, "Unknown")
-}
-
-func (s *testJoinRsetSuite) TestJoinRsetPlan(c *C) {
-	p, err := s.r.Plan(s.ctx)
-	c.Assert(err, IsNil)
-
-	_, ok := p.(*plans.JoinPlan)
-	c.Assert(ok, IsTrue)
-
-	// check join right is statement.
-	querySql := fmt.Sprintf("select 1 from (select 1) as t")
-	stmtList, err := tidb.Compile(s.ctx, querySql)
-	c.Assert(err, IsNil)
-	c.Assert(len(stmtList), Greater, 0)
-
-	ts := &rsets.TableSource{Source: stmtList[0]}
-	s.r.Right = ts
-
-	_, err = s.r.Plan(s.ctx)
-	c.Assert(err, IsNil)
-
-	// check join right is join rset.
-	s.r.Right = &rsets.JoinRset{Left: ts}
-
-	_, err = s.r.Plan(s.ctx)
-	c.Assert(err, IsNil)
-
-	// check error.
-	s.r.Right = "xxx"
-	_, err = s.r.Plan(s.ctx)
-	c.Assert(err, NotNil)
-
-	s.r.Right = nil
 }
 
 func (s *testJoinRsetSuite) TestJoinRsetString(c *C) {
