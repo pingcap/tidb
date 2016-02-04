@@ -65,6 +65,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
+	case *ast.UpdateStmt:
+		return b.buildUpdate(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
@@ -612,4 +614,86 @@ func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 
 func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
+	sel := &ast.SelectStmt{From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
+	p := b.buildFrom(sel)
+	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
+		p = b.buildSort(p, sel.OrderBy.Items)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Limit != nil {
+		p = b.buildLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
+	}
+	orderedList := b.buildUpdateLists(update.List, p.Fields())
+	if b.err != nil {
+		return nil
+	}
+	return &Update{OrderedList: orderedList, SelectPlan: p}
+}
+
+func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.ResultField) []*ast.Assignment {
+	newList := make([]*ast.Assignment, len(fields))
+	for _, assign := range list {
+		idx, err := columnIndexInFields(assign.Column, fields)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		newList[idx] = assign
+	}
+	return newList
+}
+
+func columnIndexInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, error) {
+	idx := -1
+	tableNameL := cn.Table.L
+	columnNameL := cn.Name.L
+	if tableNameL != "" {
+		for i, f := range fields {
+			// Check table name.
+			if f.TableAsName.L != "" {
+				if tableNameL != f.TableAsName.L {
+					continue
+				}
+			} else {
+				if tableNameL != f.Table.Name.L {
+					continue
+				}
+			}
+			// Check column name.
+			if f.ColumnAsName.L != "" {
+				if columnNameL != f.ColumnAsName.L {
+					continue
+				}
+			} else {
+				if columnNameL != f.Column.Name.L {
+					continue
+				}
+			}
+
+			idx = i
+		}
+	} else {
+		for i, f := range fields {
+			matchAsName := f.ColumnAsName.L != "" && f.ColumnAsName.L == columnNameL
+			matchColumnName := f.ColumnAsName.L == "" && f.Column.Name.L == columnNameL
+			if matchAsName || matchColumnName {
+				if idx != -1 {
+					return -1, errors.Errorf("column %s is ambiguous.", cn.Name.O)
+				}
+				idx = i
+			}
+		}
+	}
+	if idx == -1 {
+		return -1, errors.Errorf("column %s not found", cn.Name.O)
+	}
+	return idx, nil
 }
