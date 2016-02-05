@@ -47,8 +47,7 @@ func (ps *perfSchema) NewPerfSchemaPlan(tableName string) (plan.Plan, error) {
 				schema:    ps,
 			}
 
-			var v interface{} = isp
-			return v.(plan.Plan), nil
+			return isp, nil
 		}
 	}
 
