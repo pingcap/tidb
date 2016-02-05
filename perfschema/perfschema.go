@@ -53,6 +53,5 @@ func init() {
 	schema := &perfSchema{}
 	_ = schema.initialize()
 
-	var v interface{} = schema
-	PerfHandle, _ = v.(PerfSchema)
+	PerfHandle = schema
 }

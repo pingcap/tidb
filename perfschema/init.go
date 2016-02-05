@@ -37,17 +37,17 @@ type columnInfo struct {
 }
 
 var setupActorsCols = []columnInfo{
-	{mysql.TypeString, 60, mysql.NotNullFlag, "%", nil},
-	{mysql.TypeString, 32, mysql.NotNullFlag, "%", nil},
-	{mysql.TypeString, 16, mysql.NotNullFlag, "%", nil},
+	{mysql.TypeString, 60, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeString, 32, mysql.NotNullFlag, `%`, nil},
+	{mysql.TypeString, 16, mysql.NotNullFlag, `%`, nil},
 	{mysql.TypeEnum, -1, mysql.NotNullFlag, "YES", []string{"YES", "NO"}},
 	{mysql.TypeEnum, -1, mysql.NotNullFlag, "YES", []string{"YES", "NO"}},
 }
 
 var setupObjectsCols = []columnInfo{
 	{mysql.TypeEnum, -1, mysql.NotNullFlag, "TABLE", []string{"EVENT", "FUNCTION", "TABLE"}},
-	{mysql.TypeVarchar, 64, 0, "%", nil},
-	{mysql.TypeVarchar, 64, mysql.NotNullFlag, "%", nil},
+	{mysql.TypeVarchar, 64, 0, `%`, nil},
+	{mysql.TypeVarchar, 64, mysql.NotNullFlag, `%`, nil},
 	{mysql.TypeEnum, -1, mysql.NotNullFlag, "YES", []string{"YES", "NO"}},
 	{mysql.TypeEnum, -1, mysql.NotNullFlag, "YES", []string{"YES", "NO"}},
 }
@@ -358,7 +358,7 @@ func (ps *perfSchema) initialize() (err error) {
 	}
 
 	setupActorsRecords := [][]interface{}{
-		{"%", "%", "%", mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
+		{`%`, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
 	}
 	err = ps.initRecords(TableSetupActors, setupActorsRecords)
 	if err != nil {
@@ -366,18 +366,18 @@ func (ps *perfSchema) initialize() (err error) {
 	}
 
 	setupObjectsRecords := [][]interface{}{
-		{mysql.Enum{Name: "EVENT", Value: 1}, "mysql", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "EVENT", Value: 1}, "performance_schema", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "EVENT", Value: 1}, "information_schema", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "EVENT", Value: 1}, "%", "%", mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "mysql", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "performance_schema", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "information_schema", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "%", "%", mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "mysql", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "performance_schema", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "information_schema", "%", mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "%", "%", mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
+		{mysql.Enum{Name: "EVENT", Value: 1}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "EVENT", Value: 1}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "EVENT", Value: 1}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "EVENT", Value: 1}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
+		{mysql.Enum{Name: "FUNCTION", Value: 2}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "FUNCTION", Value: 2}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "FUNCTION", Value: 2}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "FUNCTION", Value: 2}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
+		{mysql.Enum{Name: "TABLE", Value: 3}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "TABLE", Value: 3}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "TABLE", Value: 3}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
+		{mysql.Enum{Name: "TABLE", Value: 3}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
 	}
 	err = ps.initRecords(TableSetupObjects, setupObjectsRecords)
 	if err != nil {
