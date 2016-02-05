@@ -100,7 +100,6 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 // extractSelectAgg extracts aggregate functions and converts ColumnNameExpr to aggregate function.
 func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFuncExpr {
 	extractor := &ast.AggregateFuncExtractor{AggFuncs: make([]*ast.AggregateFuncExpr, 0)}
-	res := make([]*ast.ResultField, 0, len(sel.GetResultFields()))
 	for _, f := range sel.GetResultFields() {
 		n, ok := f.Expr.Accept(extractor)
 		if !ok {
@@ -116,19 +115,8 @@ func (b *planBuilder) extractSelectAgg(sel *ast.SelectStmt) []*ast.AggregateFunc
 			extractor.AggFuncs = append(extractor.AggFuncs, agg)
 			n = agg
 		}
-		// Clone the ResultField.
-		// For "select c from t group by c;" both "c"s in select field and grouby clause refer to the same ResultField.
-		// So we should not affact the "c" in groupby clause.
-		nf := &ast.ResultField{
-			ColumnAsName: f.ColumnAsName,
-			Column:       f.Column,
-			Table:        f.Table,
-			DBName:       f.DBName,
-			Expr:         n.(ast.ExprNode),
-		}
-		res = append(res, nf)
+		f.Expr = n.(ast.ExprNode)
 	}
-	sel.SetResultFields(res)
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
 		n, ok := sel.Having.Expr.Accept(extractor)
@@ -241,6 +229,15 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", from.Left)
 		return nil
 	}
+	var bestPlan Plan
+	switch v := ts.Source.(type) {
+	case *ast.TableName:
+	case *ast.SelectStmt:
+		bestPlan = b.buildSelect(v)
+	}
+	if bestPlan != nil {
+		return bestPlan
+	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", ts.Source)
@@ -248,7 +245,6 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 	}
 	conditions := splitWhere(sel.Where)
 	candidates := b.buildAllAccessMethodsPlan(tn, conditions)
-	var bestPlan Plan
 	var lowestCost float64
 	for _, v := range candidates {
 		cost := EstimateCost(b.buildPseudoSelectPlan(v, sel))

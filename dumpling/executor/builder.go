@@ -53,6 +53,9 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
+	case *plan.Filter:
+		src := b.build(v.Src())
+		return b.buildFilter(src, v.Conditions)
 	case *plan.Having:
 		return b.buildHaving(v)
 	case *plan.IndexScan:

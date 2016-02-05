@@ -67,10 +67,6 @@ type supportChecker struct {
 
 func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 	switch x := in.(type) {
-	case *ast.TableSource:
-		if _, ok := x.Source.(*ast.SelectStmt); ok {
-			c.unsupported = true
-		}
 	case *ast.TableName:
 		if strings.EqualFold(x.Schema.O, infoschema.Name) {
 			c.unsupported = true
