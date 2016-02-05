@@ -78,6 +78,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSort(v)
 	case *plan.TableScan:
 		return b.buildTableScan(v)
+	case *plan.Update:
+		return b.buildUpdate(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
@@ -287,4 +289,9 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 		UsingVars: v.UsingVars,
 		ID:        v.ID,
 	}
+}
+
+func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
+	selExec := b.build(v.SelectPlan)
+	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
 }
