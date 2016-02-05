@@ -438,6 +438,29 @@ func (p *Having) SetLimit(limit float64) {
 	p.src.SetLimit(limit * 2)
 }
 
+// Update represents an update plan.
+type Update struct {
+	basePlan
+
+	OrderedList []*ast.Assignment // OrderedList has the same offset as TablePlan's result fields.
+	SelectPlan  Plan
+}
+
+// Accept implements Plan Accept interface.
+func (p *Update) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Update)
+	var ok bool
+	p.SelectPlan, ok = p.SelectPlan.Accept(v)
+	if !ok {
+		return p, false
+	}
+	return v.Leave(p)
+}
+
 // Filter represents a plan that filter srcplan result.
 type Filter struct {
 	planWithSrc
