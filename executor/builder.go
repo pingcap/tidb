@@ -51,6 +51,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckTable(v)
 	case *plan.Deallocate:
 		return b.buildDeallocate(v)
+	case *plan.Delete:
+		return b.buildDelete(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
 	case *plan.Filter:
@@ -294,4 +296,14 @@ func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	selExec := b.build(v.SelectPlan)
 	return &UpdateExec{ctx: b.ctx, SelectExec: selExec, OrderedList: v.OrderedList}
+}
+
+func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
+	selExec := b.build(v.SelectPlan)
+	return &DeleteExec{
+		ctx:          b.ctx,
+		SelectExec:   selExec,
+		Tables:       v.Tables,
+		IsMultiTable: v.IsMultiTable,
+	}
 }

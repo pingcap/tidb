@@ -103,7 +103,7 @@ func convertDelete(converter *expressionConverter, v *ast.DeleteStmt) (*stmts.De
 		BeforeFrom:  v.BeforeFrom,
 		Ignore:      v.Ignore,
 		LowPriority: v.LowPriority,
-		MultiTable:  v.MultiTable,
+		MultiTable:  v.IsMultiTable,
 		Quick:       v.Quick,
 		Text:        v.Text(),
 	}
@@ -112,9 +112,11 @@ func convertDelete(converter *expressionConverter, v *ast.DeleteStmt) (*stmts.De
 		return nil, errors.Trace(err)
 	}
 	oldDelete.Refs = oldRefs
-	for _, val := range v.Tables {
-		tableIdent := table.Ident{Schema: val.Schema, Name: val.Name}
-		oldDelete.TableIdents = append(oldDelete.TableIdents, tableIdent)
+	if v.Tables != nil {
+		for _, val := range v.Tables.Tables {
+			tableIdent := table.Ident{Schema: val.Schema, Name: val.Name}
+			oldDelete.TableIdents = append(oldDelete.TableIdents, tableIdent)
+		}
 	}
 	if v.Where != nil {
 		oldDelete.Where, err = convertExpr(converter, v.Where)
