@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/evaluator"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -29,6 +30,7 @@ import (
 
 var (
 	_ Executor = &UpdateExec{}
+	_ Executor = &DeleteExec{}
 )
 
 // UpdateExec represents an update executor.
@@ -45,7 +47,7 @@ type UpdateExec struct {
 	cursor      int
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *UpdateExec) Next() (*Row, error) {
 	if !e.fetched {
 		err := e.fetchRows()
@@ -232,5 +234,111 @@ func (e *UpdateExec) Fields() []*ast.ResultField {
 
 // Close implements Executor Close interface.
 func (e *UpdateExec) Close() error {
+	return e.SelectExec.Close()
+}
+
+// DeleteExec represents a delete executor.
+// See: https://dev.mysql.com/doc/refman/5.7/en/delete.html
+type DeleteExec struct {
+	SelectExec Executor
+
+	ctx          context.Context
+	Tables       []*ast.TableName
+	IsMultiTable bool
+
+	finished bool
+}
+
+// Next implements Executor Next interface.
+func (e *DeleteExec) Next() (*Row, error) {
+	if e.finished {
+		return nil, nil
+	}
+	defer func() {
+		e.finished = true
+	}()
+	if e.IsMultiTable && len(e.Tables) == 0 {
+		return &Row{}, nil
+	}
+	tblIDMap := make(map[int64]bool, len(e.Tables))
+	// Get table alias map.
+	tblNames := make(map[string]string)
+	rowKeyMap := make(map[string]table.Table)
+	if e.IsMultiTable {
+		// Delete from multiple tables should consider table ident list.
+		fs := e.SelectExec.Fields()
+		for _, f := range fs {
+			if len(f.TableAsName.L) > 0 {
+				tblNames[f.TableAsName.L] = f.TableName.Name.L
+			} else {
+				tblNames[f.TableName.Name.L] = f.TableName.Name.L
+			}
+		}
+		for _, t := range e.Tables {
+			// Consider DBName.
+			_, ok := tblNames[t.Name.L]
+			if !ok {
+				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
+			}
+			tblIDMap[t.TableInfo.ID] = true
+		}
+	}
+	for {
+		row, err := e.SelectExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+
+		for _, entry := range row.RowKeys {
+			if e.IsMultiTable {
+				tid := entry.Tbl.TableID()
+				if _, ok := tblIDMap[tid]; !ok {
+					continue
+				}
+			}
+			rowKeyMap[entry.Key] = entry.Tbl
+		}
+	}
+	for k, t := range rowKeyMap {
+		handle, err := tables.DecodeRecordKeyHandle(kv.Key(k))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		data, err := t.Row(e.ctx, handle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = e.removeRow(e.ctx, t, handle, data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return nil, nil
+}
+
+func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (table.Table, error) {
+	return sessionctx.GetDomain(ctx).InfoSchema().TableByName(tableName.Schema, tableName.Name)
+}
+
+func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []interface{}) error {
+	err := t.RemoveRecord(ctx, h, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	variable.GetSessionVars(ctx).AddAffectedRows(1)
+	return nil
+}
+
+// Fields implements Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *DeleteExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements Executor Close interface.
+func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
 }

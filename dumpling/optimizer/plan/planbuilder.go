@@ -59,6 +59,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildAdmin(x)
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
+	case *ast.DeleteStmt:
+		return b.buildDelete(x)
 	case *ast.ExecuteStmt:
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.PrepareStmt:
@@ -645,6 +647,32 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.Res
 		newList[offset] = assign
 	}
 	return newList
+}
+
+func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
+	sel := &ast.SelectStmt{From: del.TableRefs, Where: del.Where, OrderBy: del.Order, Limit: del.Limit}
+	p := b.buildFrom(sel)
+	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
+		p = b.buildSort(p, sel.OrderBy.Items)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Limit != nil {
+		p = b.buildLimit(p, sel.Limit)
+		if b.err != nil {
+			return nil
+		}
+	}
+	var tables []*ast.TableName
+	if del.Tables != nil {
+		tables = del.Tables.Tables
+	}
+	return &Delete{
+		Tables:       tables,
+		IsMultiTable: del.IsMultiTable,
+		SelectPlan:   p,
+	}
 }
 
 func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, error) {
