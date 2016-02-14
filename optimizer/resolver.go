@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // ResolveName resolves table name and column name.
@@ -172,6 +173,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.pushContext()
 	case *ast.TableRefsClause:
 		nr.currentContext().inTableRefs = true
+	case *ast.UnionStmt:
+		nr.pushContext()
 	case *ast.UpdateStmt:
 		nr.pushContext()
 	}
@@ -238,6 +241,16 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 			v.UseOuterContext = true
 			nr.useOuterContext = false
 		}
+	case *ast.UnionStmt:
+		ctx := nr.currentContext()
+		v.SetResultFields(ctx.fieldList)
+		if ctx.useOuterContext {
+			nr.useOuterContext = true
+			ctx.useOuterContext = false
+		}
+		nr.popContext()
+	case *ast.UnionSelectList:
+		nr.handleUnionSelectList(v)
 	case *ast.InsertStmt:
 		nr.popContext()
 	case *ast.DeleteStmt:
@@ -728,4 +741,21 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 			nr.Err = errors.New("group by cannot contain aggregate function")
 		}
 	}
+}
+
+func (nr *nameResolver) handleUnionSelectList(u *ast.UnionSelectList) {
+	firstSelFields := u.Selects[0].GetResultFields()
+	unionFields := make([]*ast.ResultField, len(firstSelFields))
+	// Copy first result fields, because we may change the result field type.
+	for i, v := range firstSelFields {
+		rf := *v
+		col := *v.Column
+		rf.Column = &col
+		if rf.Column.Flen == 0 {
+			rf.Column.Flen = types.UnspecifiedLength
+		}
+		rf.Expr = &ast.ValueExpr{}
+		unionFields[i] = &rf
+	}
+	nr.currentContext().fieldList = unionFields
 }

@@ -18,30 +18,16 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/stmt/stmts"
 )
 
 func (s *testStmtSuite) TestUnion(c *C) {
 	testSQL := `select 1 union select 0;`
 	mustExec(c, s.testDB, testSQL)
 
-	stmtList, err := tidb.Compile(s.ctx, testSQL)
-	c.Assert(err, IsNil)
-	c.Assert(stmtList, HasLen, 1)
+	testSQL = `drop table if exists union_test; create table union_test(id int);`
+	mustExec(c, s.testDB, testSQL)
 
-	testStmt, ok := stmtList[0].(*stmts.UnionStmt)
-	c.Assert(ok, IsTrue)
-
-	c.Assert(testStmt.IsDDL(), IsFalse)
-	c.Assert(len(testStmt.OriginText()), Greater, 0)
-
-	mf := newMockFormatter()
-	testStmt.Explain(nil, mf)
-	c.Assert(mf.Len(), Greater, 0)
-
-	testSQL = `drop table if exists union_test; create table union_test(id int);
-    insert union_test values (1),(2); select id from union_test union select 1;`
+	testSQL = `insert union_test values (1),(2); select id from union_test union select 1;`
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = `select id from union_test union select id from union_test;`

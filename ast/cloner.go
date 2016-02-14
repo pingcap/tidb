@@ -153,13 +153,13 @@ func copyStruct(in Node) (out Node) {
 	case *SelectStmt:
 		nv := *v
 		out = &nv
-	case *UnionClause:
-		nv := *v
-		out = &nv
-	case *UnionStmt:
+	case *UnionSelectList:
 		nv := *v
 		nv.Selects = make([]*SelectStmt, len(v.Selects))
 		copy(nv.Selects, v.Selects)
+		out = &nv
+	case *UnionStmt:
+		nv := *v
 		out = &nv
 	default:
 		// We currently only handle expression and select statement.
