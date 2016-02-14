@@ -347,12 +347,12 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 	}
 
 	for _, t := range tbl {
-		storeDSN, dbName, err := parseDriverDSN(t.dsn)
+		params, err := parseDriverDSN(t.dsn)
 		if t.ok {
 			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
-			c.Assert(storeDSN, Equals, t.storeDSN, Commentf("dsn=%v", t.dsn))
-			c.Assert(dbName, Equals, t.dbName, Commentf("dsn=%v", t.dsn))
-			_, err = url.Parse(storeDSN)
+			c.Assert(params.storePath, Equals, t.storeDSN, Commentf("dsn=%v", t.dsn))
+			c.Assert(params.dbName, Equals, t.dbName, Commentf("dsn=%v", t.dsn))
+			_, err = url.Parse(params.storePath)
 			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
 		} else {
 			c.Assert(err, NotNil, Commentf("dsn=%v", t.dsn))
