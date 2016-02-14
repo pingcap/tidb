@@ -22,14 +22,14 @@ import (
 // SegmentMap is used for handle a big map slice by slice.
 // It's not thread safe.
 type SegmentMap struct {
-	size int
+	size int64
 	maps []map[string]interface{}
 
 	crcTable *crc32.Table
 }
 
 // NewSegmentMap create a new SegmentMap.
-func NewSegmentMap(size int) (*SegmentMap, error) {
+func NewSegmentMap(size int64) (*SegmentMap, error) {
 	if size <= 0 {
 		return nil, errors.Errorf("Invalid size: %d", size)
 	}
@@ -38,7 +38,7 @@ func NewSegmentMap(size int) (*SegmentMap, error) {
 		maps: make([]map[string]interface{}, size),
 		size: size,
 	}
-	for i := 0; i < size; i++ {
+	for i := int64(0); i < size; i++ {
 		sm.maps[i] = make(map[string]interface{})
 	}
 
@@ -48,13 +48,13 @@ func NewSegmentMap(size int) (*SegmentMap, error) {
 
 // Get is the same as map[k].
 func (sm *SegmentMap) Get(key []byte) (interface{}, bool) {
-	idx := int(crc32.Checksum(key, sm.crcTable)) % sm.size
+	idx := int64(crc32.Checksum(key, sm.crcTable)) % sm.size
 	val, ok := sm.maps[idx][string(key)]
 	return val, ok
 }
 
 // GetSegment gets the map specific by index.
-func (sm *SegmentMap) GetSegment(index int) (map[string]interface{}, error) {
+func (sm *SegmentMap) GetSegment(index int64) (map[string]interface{}, error) {
 	if index >= sm.size || index < 0 {
 		return nil, errors.Errorf("index out of bound: %d", index)
 	}
@@ -64,7 +64,7 @@ func (sm *SegmentMap) GetSegment(index int) (map[string]interface{}, error) {
 
 // Set if key not exists, returns whether already exists.
 func (sm *SegmentMap) Set(key []byte, value interface{}, force bool) bool {
-	idx := int(crc32.Checksum(key, sm.crcTable)) % sm.size
+	idx := int64(crc32.Checksum(key, sm.crcTable)) % sm.size
 	k := string(key)
 	_, exist := sm.maps[idx][k]
 	if exist && !force {
@@ -76,6 +76,6 @@ func (sm *SegmentMap) Set(key []byte, value interface{}, force bool) bool {
 }
 
 // SegmentCount returns how many inner segments.
-func (sm *SegmentMap) SegmentCount() int {
+func (sm *SegmentMap) SegmentCount() int64 {
 	return sm.size
 }
