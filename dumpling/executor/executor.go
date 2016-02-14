@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/optimizer/plan"
@@ -1101,4 +1102,109 @@ func (e *AggregateExec) Close() error {
 		return e.Src.Close()
 	}
 	return nil
+}
+
+// UnionExec represents union executor.
+type UnionExec struct {
+	fields []*ast.ResultField
+	Sels   []Executor
+	cursor int
+}
+
+// Fields implements Executor Fields interface.
+func (e *UnionExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+func (e *UnionExec) Next() (*Row, error) {
+	for {
+		if e.cursor >= len(e.Sels) {
+			return nil, nil
+		}
+		sel := e.Sels[e.cursor]
+		row, err := sel.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.cursor++
+			continue
+		}
+		if e.cursor != 0 {
+			for i := range row.Data {
+				// The column value should be casted as the same type of the first select statement in corresponding position
+				rf := e.fields[i]
+				row.Data[i], err = types.Convert(row.Data[i], &rf.Column.FieldType)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+		for i, v := range row.Data {
+			e.fields[i].Expr.SetValue(v)
+		}
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *UnionExec) Close() error {
+	var err error
+	for _, sel := range e.Sels {
+		er := sel.Close()
+		if er != nil {
+			err = errors.Trace(er)
+		}
+	}
+	return err
+}
+
+// DistinctExec represents Distinct executor.
+type DistinctExec struct {
+	Src  Executor
+	temp memkv.Temp
+}
+
+// Fields implements Executor Fields interface.
+func (e *DistinctExec) Fields() []*ast.ResultField {
+	return e.Src.Fields()
+}
+
+// Next implements Executor Next interface.
+func (e *DistinctExec) Next() (*Row, error) {
+	if e.temp == nil {
+		var err error
+		e.temp, err = memkv.CreateTemp(true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	for {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			return nil, nil
+		}
+		v, err := e.temp.Get(row.Data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(v) > 0 {
+			continue
+		}
+		e.temp.Set(row.Data, []interface{}{true})
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *DistinctExec) Close() error {
+	if e.temp != nil {
+		e.temp.Drop()
+		e.temp = nil
+	}
+	return e.Src.Close()
 }

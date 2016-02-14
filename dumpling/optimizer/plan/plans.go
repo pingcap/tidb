@@ -319,6 +319,58 @@ func (p *Limit) SetLimit(limit float64) {
 	p.src.SetLimit(p.limit)
 }
 
+// Union represents Union plan.
+type Union struct {
+	basePlan
+
+	Selects []Plan
+}
+
+// Accept implements Plan Accept interface.
+func (p *Union) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(p)
+	}
+	p = np.(*Union)
+	for i, sel := range p.Selects {
+		var ok bool
+		p.Selects[i], ok = sel.Accept(v)
+		if !ok {
+			return p, false
+		}
+	}
+	return v.Leave(p)
+}
+
+// Distinct represents Distinct plan.
+type Distinct struct {
+	planWithSrc
+}
+
+// Accept implements Plan Accept interface.
+func (p *Distinct) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(p)
+	}
+	p = np.(*Distinct)
+	var ok bool
+	p.src, ok = p.src.Accept(v)
+	if !ok {
+		return p, false
+	}
+	return v.Leave(p)
+}
+
+// SetLimit implements Plan SetLimit interface.
+func (p *Distinct) SetLimit(limit float64) {
+	p.limit = limit
+	if p.src != nil {
+		p.src.SetLimit(limit)
+	}
+}
+
 // Prepare represents prepare plan.
 type Prepare struct {
 	basePlan

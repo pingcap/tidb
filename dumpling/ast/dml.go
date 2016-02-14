@@ -38,7 +38,7 @@ var (
 	_ Node = &TableName{}
 	_ Node = &TableRefsClause{}
 	_ Node = &TableSource{}
-	_ Node = &UnionClause{}
+	_ Node = &UnionSelectList{}
 	_ Node = &WildCardField{}
 )
 
@@ -495,26 +495,27 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// UnionClause represents a single "UNION SELECT ..." or "UNION (SELECT ...)" clause.
-type UnionClause struct {
+// UnionSelectList represents the select list in a union statement.
+type UnionSelectList struct {
 	node
 
-	Distinct bool
-	Select   *SelectStmt
+	Selects []*SelectStmt
 }
 
 // Accept implements Node Accept interface.
-func (n *UnionClause) Accept(v Visitor) (Node, bool) {
+func (n *UnionSelectList) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*UnionClause)
-	node, ok := n.Select.Accept(v)
-	if !ok {
-		return n, false
+	n = newNode.(*UnionSelectList)
+	for i, sel := range n.Selects {
+		node, ok := sel.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Selects[i] = node.(*SelectStmt)
 	}
-	n.Select = node.(*SelectStmt)
 	return v.Leave(n)
 }
 
@@ -524,10 +525,10 @@ type UnionStmt struct {
 	dmlNode
 	resultSetNode
 
-	Distinct bool
-	Selects  []*SelectStmt
-	OrderBy  *OrderByClause
-	Limit    *Limit
+	Distinct   bool
+	SelectList *UnionSelectList
+	OrderBy    *OrderByClause
+	Limit      *Limit
 }
 
 // Accept implements Node Accept interface.
@@ -537,12 +538,12 @@ func (n *UnionStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UnionStmt)
-	for i, val := range n.Selects {
-		node, ok := val.Accept(v)
+	if n.SelectList != nil {
+		node, ok := n.SelectList.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Selects[i] = node.(*SelectStmt)
+		n.SelectList = node.(*UnionSelectList)
 	}
 	if n.OrderBy != nil {
 		node, ok := n.OrderBy.Accept(v)

@@ -67,6 +67,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
+	case *ast.UnionStmt:
+		return b.buildUnion(x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(x)
 	}
@@ -197,6 +199,12 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	}
 	if sel.Having != nil {
 		p = b.buildHaving(p, sel.Having)
+		if b.err != nil {
+			return nil
+		}
+	}
+	if sel.Distinct {
+		p = b.buildDistinct(p)
 		if b.err != nil {
 			return nil
 		}
@@ -612,6 +620,67 @@ func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 
 func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
+	sels := make([]Plan, len(union.SelectList.Selects))
+	for i, sel := range union.SelectList.Selects {
+		sels[i] = b.buildSelect(sel)
+	}
+	var p Plan
+	p = &Union{
+		Selects: sels,
+	}
+	unionFields := union.GetResultFields()
+	for _, sel := range sels {
+		for i, f := range sel.Fields() {
+			if i == len(unionFields) {
+				b.err = errors.New("The used SELECT statements have a different number of columns")
+				return nil
+			}
+			uField := unionFields[i]
+			/*
+			 * The lengths of the columns in the UNION result take into account the values retrieved by all of the SELECT statements
+			 * SELECT REPEAT('a',1) UNION SELECT REPEAT('b',10);
+			 * +---------------+
+			 * | REPEAT('a',1) |
+			 * +---------------+
+			 * | a             |
+			 * | bbbbbbbbbb    |
+			 * +---------------+
+			 */
+			if f.Column.Flen > uField.Column.Flen {
+				uField.Column.Flen = f.Column.Flen
+			}
+			// For select nul union select "abc", we should not convert "abc" to nil.
+			// And the result field type should be VARCHAR.
+			if uField.Column.Tp == 0 || uField.Column.Tp == mysql.TypeNull {
+				uField.Column.Tp = f.Column.Tp
+			}
+		}
+	}
+	for _, v := range unionFields {
+		v.Expr.SetType(&v.Column.FieldType)
+	}
+
+	p.SetFields(unionFields)
+	if union.Distinct {
+		p = b.buildDistinct(p)
+	}
+	if union.OrderBy != nil {
+		p = b.buildSort(p, union.OrderBy.Items)
+	}
+	if union.Limit != nil {
+		p = b.buildLimit(p, union.Limit)
+	}
+	return p
+}
+
+func (b *planBuilder) buildDistinct(src Plan) Plan {
+	d := &Distinct{}
+	d.src = src
+	d.SetFields(src.Fields())
+	return d
 }
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {

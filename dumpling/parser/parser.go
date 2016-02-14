@@ -7887,25 +7887,25 @@ yynewstate:
 		{
 			union := yyS[yypt-3].item.(*ast.UnionStmt)
 			union.Distinct = union.Distinct || yyS[yypt-1].item.(bool)
-			lastSelect := union.Selects[len(union.Selects)-1]
+			lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 			l := yylex.(*lexer)
 			endOffset := l.endOffset(yyS[yypt-2].offset)
 			l.SetLastSelectFieldText(lastSelect, endOffset)
-			union.Selects = append(union.Selects, yyS[yypt-0].item.(*ast.SelectStmt))
+			union.SelectList.Selects = append(union.SelectList.Selects, yyS[yypt-0].item.(*ast.SelectStmt))
 			yyVAL.item = union
 		}
 	case 585:
 		{
 			union := yyS[yypt-7].item.(*ast.UnionStmt)
 			union.Distinct = union.Distinct || yyS[yypt-5].item.(bool)
-			lastSelect := union.Selects[len(union.Selects)-1]
+			lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 			l := yylex.(*lexer)
 			endOffset := l.endOffset(yyS[yypt-6].offset)
 			l.SetLastSelectFieldText(lastSelect, endOffset)
 			st := yyS[yypt-3].item.(*ast.SelectStmt)
 			endOffset = l.endOffset(yyS[yypt-2].offset)
 			l.SetLastSelectFieldText(st, endOffset)
-			union.Selects = append(union.Selects, st)
+			union.SelectList.Selects = append(union.SelectList.Selects, st)
 			if yyS[yypt-1].item != nil {
 				union.OrderBy = yyS[yypt-1].item.(*ast.OrderByClause)
 			}
@@ -7916,20 +7916,20 @@ yynewstate:
 		}
 	case 586:
 		{
-			selects := []*ast.SelectStmt{yyS[yypt-0].item.(*ast.SelectStmt)}
+			selectList := &ast.UnionSelectList{Selects: []*ast.SelectStmt{yyS[yypt-0].item.(*ast.SelectStmt)}}
 			yyVAL.item = &ast.UnionStmt{
-				Selects: selects,
+				SelectList: selectList,
 			}
 		}
 	case 587:
 		{
 			union := yyS[yypt-3].item.(*ast.UnionStmt)
 			union.Distinct = union.Distinct || yyS[yypt-1].item.(bool)
-			lastSelect := union.Selects[len(union.Selects)-1]
+			lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 			l := yylex.(*lexer)
 			endOffset := l.endOffset(yyS[yypt-2].offset)
 			l.SetLastSelectFieldText(lastSelect, endOffset)
-			union.Selects = append(union.Selects, yyS[yypt-0].item.(*ast.SelectStmt))
+			union.SelectList.Selects = append(union.SelectList.Selects, yyS[yypt-0].item.(*ast.SelectStmt))
 			yyVAL.item = union
 		}
 	case 589:
