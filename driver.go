@@ -62,6 +62,15 @@ var (
 
 type errList []error
 
+type driverParams struct {
+	storePath string
+	dbName    string
+	// when set to true `mysql.Time` isn't encoded as string but passed as `time.Time`
+	// this option is named for compatibility the same as in the mysql driver
+	// while we actually do not have additional parsing to do
+	parseTime bool
+}
+
 func (e *errList) append(err error) {
 	if err != nil {
 		*e = append(*e, err)
@@ -125,23 +134,33 @@ func (d *sqlDriver) unlock() {
 
 // parseDriverDSN cuts off DB name from dsn. It returns error if the dsn is not
 // valid.
-func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
+func parseDriverDSN(dsn string) (params *driverParams, err error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return "", "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	path := filepath.Join(u.Host, u.Path)
-	dbName = filepath.Clean(filepath.Base(path))
+	dbName := filepath.Clean(filepath.Base(path))
 	if dbName == "" || dbName == "." || dbName == string(filepath.Separator) {
-		return "", "", errors.Errorf("invalid DB name %q", dbName)
+		return nil, errors.Errorf("invalid DB name %q", dbName)
 	}
 	// cut off dbName
 	path = filepath.Clean(filepath.Dir(path))
 	if path == "" || path == "." || path == string(filepath.Separator) {
-		return "", "", errors.Errorf("invalid dsn %q", dsn)
+		return nil, errors.Errorf("invalid dsn %q", dsn)
 	}
 	u.Path, u.Host = path, ""
-	return u.String(), dbName, nil
+	params = &driverParams{
+		storePath: u.String(),
+		dbName:    dbName,
+	}
+	// parse additional driver params
+	query := u.Query()
+	if parseTime := query.Get("parseTime"); parseTime == "true" {
+		params.parseTime = true
+	}
+
+	return params, nil
 }
 
 // Open returns a new connection to the database.
@@ -159,13 +178,16 @@ func parseDriverDSN(dsn string) (storePath, dbName string, err error) {
 // unnecessary; the sql package maintains a pool of idle connections for
 // efficient re-use.
 //
+// The behavior of the mysql driver regarding time parsing can also be imitated
+// by passing ?parseTime
+//
 // The returned connection is only used by one goroutine at a time.
 func (d *sqlDriver) Open(dsn string) (driver.Conn, error) {
-	storePath, dbName, err := parseDriverDSN(dsn)
+	params, err := parseDriverDSN(dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	store, err := NewStore(storePath)
+	store, err := NewStore(params.storePath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -179,7 +201,7 @@ func (d *sqlDriver) Open(dsn string) (driver.Conn, error) {
 	d.lock()
 	defer d.unlock()
 
-	DBName := model.NewCIStr(dbName)
+	DBName := model.NewCIStr(params.dbName)
 	domain := sessionctx.GetDomain(s)
 	cs := &coldef.CharsetOpt{
 		Chs: "utf8",
@@ -192,7 +214,7 @@ func (d *sqlDriver) Open(dsn string) (driver.Conn, error) {
 		}
 	}
 	driver := &sqlDriver{}
-	return newDriverConn(s, driver, DBName.O)
+	return newDriverConn(s, driver, DBName.O, params)
 }
 
 // driverConn is a connection to a database. It is not used concurrently by
@@ -203,13 +225,15 @@ type driverConn struct {
 	s      Session
 	driver *sqlDriver
 	stmts  map[string]driver.Stmt
+	params *driverParams
 }
 
-func newDriverConn(sess *session, d *sqlDriver, schema string) (driver.Conn, error) {
+func newDriverConn(sess *session, d *sqlDriver, schema string, params *driverParams) (driver.Conn, error) {
 	r := &driverConn{
 		driver: d,
 		stmts:  map[string]driver.Stmt{},
 		s:      sess,
+		params: params,
 	}
 
 	_, err := r.s.Execute("use " + schema)
@@ -351,7 +375,7 @@ func (c *driverConn) driverQuery(query string, args []driver.Value) (driver.Rows
 		if len(rss) == 0 {
 			return nil, errors.Trace(errNoResult)
 		}
-		return &driverRows{rs: rss[0]}, nil
+		return &driverRows{params: c.params, rs: rss[0]}, nil
 	}
 	stmt, err := c.getStmt(query)
 	if err != nil {
@@ -379,7 +403,8 @@ func (r *driverResult) RowsAffected() (int64, error) {
 
 // driverRows is an iterator over an executed query's results.
 type driverRows struct {
-	rs rset.Recordset
+	rs     rset.Recordset
+	params *driverParams
 }
 
 // Columns returns the names of the columns. The number of columns of the
@@ -451,7 +476,11 @@ func (r *driverRows) Next(dest []driver.Value) error {
 		case mysql.Duration:
 			dest[i] = v.String()
 		case mysql.Time:
-			dest[i] = v.String()
+			if !r.params.parseTime {
+				dest[i] = v.String()
+			} else {
+				dest[i] = v.Time
+			}
 		case mysql.Decimal:
 			dest[i] = v.String()
 		case mysql.Hex:
@@ -529,7 +558,7 @@ func (s *driverStmt) Query(args []driver.Value) (driver.Rows, error) {
 		// The statement is not a query.
 		return &driverRows{}, nil
 	}
-	return &driverRows{rs: rs}, nil
+	return &driverRows{params: s.conn.params, rs: rs}, nil
 }
 
 func init() {
