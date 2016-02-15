@@ -120,6 +120,31 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// DeleteTableList is the tablelist used in delete statement multi-table mode.
+type DeleteTableList struct {
+	node
+	Tables []*TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *DeleteTableList) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DeleteTableList)
+	if n != nil {
+		for i, t := range n.Tables {
+			node, ok := t.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Tables[i] = node.(*TableName)
+		}
+	}
+	return v.Leave(n)
+}
+
 // OnCondition represetns JOIN on condition.
 type OnCondition struct {
 	node
@@ -652,15 +677,15 @@ type DeleteStmt struct {
 	// Used in both single table and multiple table delete statement.
 	TableRefs *TableRefsClause
 	// Only used in multiple table delete statement.
-	Tables      []*TableName
-	Where       ExprNode
-	Order       *OrderByClause
-	Limit       *Limit
-	LowPriority bool
-	Ignore      bool
-	Quick       bool
-	MultiTable  bool
-	BeforeFrom  bool
+	Tables       *DeleteTableList
+	Where        ExprNode
+	Order        *OrderByClause
+	Limit        *Limit
+	LowPriority  bool
+	Ignore       bool
+	Quick        bool
+	IsMultiTable bool
+	BeforeFrom   bool
 }
 
 // Accept implements Node Accept interface.
@@ -677,13 +702,11 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.TableRefs = node.(*TableRefsClause)
 
-	for i, val := range n.Tables {
-		node, ok = val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Tables[i] = node.(*TableName)
+	node, ok = n.Tables.Accept(v)
+	if !ok {
+		return n, false
 	}
+	n.Tables = node.(*DeleteTableList)
 
 	if n.Where != nil {
 		node, ok = n.Where.Accept(v)

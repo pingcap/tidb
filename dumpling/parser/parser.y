@@ -1224,9 +1224,9 @@ DeleteFromStmt:
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
-			MultiTable:	true,
+			IsMultiTable:	true,
 			BeforeFrom:	true,
-			Tables:		$5.([]*ast.TableName),
+			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $7.(*ast.Join)},
 		}
 		if $8 != nil {
@@ -1244,8 +1244,8 @@ DeleteFromStmt:
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
-			MultiTable:	true,
-			Tables:		$6.([]*ast.TableName),
+			IsMultiTable:	true,
+			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
 		}
 		if $9 != nil {

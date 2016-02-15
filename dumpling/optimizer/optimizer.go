@@ -91,7 +91,7 @@ func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
 func IsSupported(node ast.Node) bool {
 	switch node.(type) {
 	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
-		*ast.AdminStmt, *ast.UpdateStmt:
+		*ast.AdminStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 	default:
 		return false
 	}
