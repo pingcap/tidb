@@ -464,7 +464,7 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
 		if startPoint.value == nil || startPoint.value == MinNotNullVal {
-			startPoint.value = math.MinInt64
+			startPoint.value = int64(math.MinInt64)
 		}
 		startInt, err := types.ToInt64(startPoint.value)
 		if err != nil {
@@ -481,9 +481,9 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		}
 		endPoint := rangePoints[i+1]
 		if endPoint.value == nil {
-			endPoint.value = math.MinInt64
+			endPoint.value = int64(math.MinInt64)
 		} else if endPoint.value == MaxVal {
-			endPoint.value = math.MaxInt64
+			endPoint.value = int64(math.MaxInt64)
 		}
 		endInt, err := types.ToInt64(endPoint.value)
 		if err != nil {
