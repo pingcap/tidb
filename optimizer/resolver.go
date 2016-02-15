@@ -171,6 +171,14 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inOrderBy = true
 	case *ast.SelectStmt:
 		nr.pushContext()
+	case *ast.SetStmt:
+		for _, assign := range v.Variables {
+			if cn, ok := assign.Value.(*ast.ColumnNameExpr); ok && cn.Name.Table.L == "" {
+				// Convert column name expression to string value expression.
+				assign.Value = ast.NewValueExpr(cn.Name.Name.O)
+			}
+		}
+		nr.pushContext()
 	case *ast.TableRefsClause:
 		nr.currentContext().inTableRefs = true
 	case *ast.UnionStmt:
@@ -232,6 +240,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		if ctx.useOuterContext {
 			nr.useOuterContext = true
 		}
+		nr.popContext()
+	case *ast.SetStmt:
 		nr.popContext()
 	case *ast.SubqueryExpr:
 		if nr.useOuterContext {
