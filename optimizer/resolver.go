@@ -231,7 +231,6 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		v.SetResultFields(ctx.fieldList)
 		if ctx.useOuterContext {
 			nr.useOuterContext = true
-			ctx.useOuterContext = false
 		}
 		nr.popContext()
 	case *ast.SubqueryExpr:
@@ -246,7 +245,6 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		v.SetResultFields(ctx.fieldList)
 		if ctx.useOuterContext {
 			nr.useOuterContext = true
-			ctx.useOuterContext = false
 		}
 		nr.popContext()
 	case *ast.UnionSelectList:
