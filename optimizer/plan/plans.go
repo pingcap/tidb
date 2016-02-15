@@ -461,6 +461,30 @@ func (p *Update) Accept(v Visitor) (Plan, bool) {
 	return v.Leave(p)
 }
 
+// Delete represents a delete plan.
+type Delete struct {
+	basePlan
+
+	SelectPlan   Plan
+	Tables       []*ast.TableName
+	IsMultiTable bool
+}
+
+// Accept implements Plan Accept interface.
+func (p *Delete) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Delete)
+	var ok bool
+	p.SelectPlan, ok = p.SelectPlan.Accept(v)
+	if !ok {
+		return p, false
+	}
+	return v.Leave(p)
+}
+
 // Filter represents a plan that filter srcplan result.
 type Filter struct {
 	planWithSrc

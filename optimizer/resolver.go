@@ -89,6 +89,8 @@ type resolverContext struct {
 	inByItemExpression bool
 	// If subquery use outer context.
 	useOuterContext bool
+	// When visiting multi-table delete stmt table list.
+	inDeleteTableList bool
 }
 
 // currentContext gets the current resolverContext.
@@ -128,6 +130,8 @@ func (nr *nameResolver) popJoin() {
 // Enter implements ast.Visitor interface.
 func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
+	case *ast.AdminStmt:
+		nr.pushContext()
 	case *ast.AggregateFuncExpr:
 		ctx := nr.currentContext()
 		if ctx.inHaving {
@@ -148,6 +152,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		}
 	case *ast.DeleteStmt:
 		nr.pushContext()
+	case *ast.DeleteTableList:
+		nr.currentContext().inDeleteTableList = true
 	case *ast.FieldList:
 		nr.currentContext().inFieldList = true
 	case *ast.GroupByClause:
@@ -175,6 +181,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
+	case *ast.AdminStmt:
+		nr.popContext()
 	case *ast.AggregateFuncExpr:
 		ctx := nr.currentContext()
 		if ctx.inHaving {
@@ -184,6 +192,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.handleTableName(v)
 	case *ast.ColumnNameExpr:
 		nr.handleColumnName(v)
+	case *ast.DeleteTableList:
+		nr.currentContext().inDeleteTableList = false
 	case *ast.TableSource:
 		nr.handleTableSource(v)
 	case *ast.OnCondition:
@@ -243,9 +253,23 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		tn.Schema = nr.DefaultSchema
 	}
+	ctx := nr.currentContext()
+	if ctx.inDeleteTableList {
+		idx, ok := ctx.tableMap[nr.tableUniqueName(tn.Schema, tn.Name)]
+		if !ok {
+			nr.Err = errors.Errorf("Unknown table %s", tn.Name.O)
+			return
+		}
+		ts := ctx.tables[idx]
+		tableName := ts.Source.(*ast.TableName)
+		tn.DBInfo = tableName.DBInfo
+		tn.TableInfo = tableName.TableInfo
+		tn.SetResultFields(tableName.GetResultFields())
+		return
+	}
 	table, err := nr.Info.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		nr.Err = err
+		nr.Err = errors.Trace(err)
 		return
 	}
 	tn.TableInfo = table.Meta()

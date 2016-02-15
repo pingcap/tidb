@@ -6317,13 +6317,13 @@ yynewstate:
 		{
 			// Multiple Table
 			x := &ast.DeleteStmt{
-				LowPriority: yyS[yypt-6].item.(bool),
-				Quick:       yyS[yypt-5].item.(bool),
-				Ignore:      yyS[yypt-4].item.(bool),
-				MultiTable:  true,
-				BeforeFrom:  true,
-				Tables:      yyS[yypt-3].item.([]*ast.TableName),
-				TableRefs:   &ast.TableRefsClause{TableRefs: yyS[yypt-1].item.(*ast.Join)},
+				LowPriority:  yyS[yypt-6].item.(bool),
+				Quick:        yyS[yypt-5].item.(bool),
+				Ignore:       yyS[yypt-4].item.(bool),
+				IsMultiTable: true,
+				BeforeFrom:   true,
+				Tables:       &ast.DeleteTableList{Tables: yyS[yypt-3].item.([]*ast.TableName)},
+				TableRefs:    &ast.TableRefsClause{TableRefs: yyS[yypt-1].item.(*ast.Join)},
 			}
 			if yyS[yypt-0].item != nil {
 				x.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -6337,12 +6337,12 @@ yynewstate:
 		{
 			// Multiple Table
 			x := &ast.DeleteStmt{
-				LowPriority: yyS[yypt-7].item.(bool),
-				Quick:       yyS[yypt-6].item.(bool),
-				Ignore:      yyS[yypt-5].item.(bool),
-				MultiTable:  true,
-				Tables:      yyS[yypt-3].item.([]*ast.TableName),
-				TableRefs:   &ast.TableRefsClause{TableRefs: yyS[yypt-1].item.(*ast.Join)},
+				LowPriority:  yyS[yypt-7].item.(bool),
+				Quick:        yyS[yypt-6].item.(bool),
+				Ignore:       yyS[yypt-5].item.(bool),
+				IsMultiTable: true,
+				Tables:       &ast.DeleteTableList{Tables: yyS[yypt-3].item.([]*ast.TableName)},
+				TableRefs:    &ast.TableRefsClause{TableRefs: yyS[yypt-1].item.(*ast.Join)},
 			}
 			if yyS[yypt-0].item != nil {
 				x.Where = yyS[yypt-0].item.(ast.ExprNode)
