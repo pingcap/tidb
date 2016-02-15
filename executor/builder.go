@@ -53,6 +53,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDeallocate(v)
 	case *plan.Delete:
 		return b.buildDelete(v)
+	case *plan.Distinct:
+		return b.buildDistinct(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
 	case *plan.Filter:
@@ -80,6 +82,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSort(v)
 	case *plan.TableScan:
 		return b.buildTableScan(v)
+	case *plan.Union:
+		return b.buildUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
 	default:
@@ -272,6 +276,22 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 		Count:  v.Count,
 	}
 	return e
+}
+
+func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
+	e := &UnionExec{
+		fields: v.Fields(),
+		Sels:   make([]Executor, len(v.Selects)),
+	}
+	for i, sel := range v.Selects {
+		selExec := b.build(sel)
+		e.Sels[i] = selExec
+	}
+	return e
+}
+
+func (b *executorBuilder) buildDistinct(v *plan.Distinct) Executor {
+	return &DistinctExec{Src: b.build(v.Src())}
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {

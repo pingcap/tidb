@@ -282,14 +282,14 @@ func convertUnion(converter *expressionConverter, u *ast.UnionStmt) (*stmts.Unio
 	oldUnion := &stmts.UnionStmt{
 		Text: u.Text(),
 	}
-	oldUnion.Selects = make([]*stmts.SelectStmt, len(u.Selects))
-	oldUnion.Distincts = make([]bool, len(u.Selects)-1)
+	oldUnion.Selects = make([]*stmts.SelectStmt, len(u.SelectList.Selects))
+	oldUnion.Distincts = make([]bool, len(u.SelectList.Selects)-1)
 	if u.Distinct {
 		for i := range oldUnion.Distincts {
 			oldUnion.Distincts[i] = true
 		}
 	}
-	for i, val := range u.Selects {
+	for i, val := range u.SelectList.Selects {
 		oldSelect, err := convertSelect(converter, val)
 		if err != nil {
 			return nil, errors.Trace(err)
