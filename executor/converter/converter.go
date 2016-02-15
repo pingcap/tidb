@@ -76,8 +76,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertUnion(c, v)
 	case *ast.UpdateStmt:
 		return convertUpdate(c, v)
-	case *ast.UseStmt:
-		return convertUse(c, v)
 	}
 	return nil, nil
 }

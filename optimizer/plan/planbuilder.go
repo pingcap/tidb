@@ -71,6 +71,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildUnion(x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(x)
+	case *ast.UseStmt:
+		return b.buildSimple(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
@@ -789,4 +791,8 @@ func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, e
 		return -1, errors.Errorf("column %s not found", cn.Name.O)
 	}
 	return offset, nil
+}
+
+func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
+	return &Simple{Statement: node}
 }

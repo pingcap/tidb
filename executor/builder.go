@@ -78,6 +78,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
+	case *plan.Simple:
+		return b.buildSimple(v)
 	case *plan.Sort:
 		return b.buildSort(v)
 	case *plan.TableScan:
@@ -326,4 +328,8 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 	}
+}
+
+func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
+	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
 }

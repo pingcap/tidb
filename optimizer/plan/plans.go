@@ -568,3 +568,20 @@ func (p *Filter) SetLimit(limit float64) {
 	// We assume 50% of the src row is filtered out.
 	p.src.SetLimit(limit * 2)
 }
+
+// Simple represents a simple statement plan which doesn't need any optimization.
+type Simple struct {
+	basePlan
+
+	Statement ast.StmtNode
+}
+
+// Accept implements Plan Accept interface.
+func (p *Simple) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Simple)
+	return v.Leave(p)
+}
