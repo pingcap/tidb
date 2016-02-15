@@ -132,3 +132,19 @@ func (p *testPerfSchemaSuit) TestSelect(c *C) {
 
 	mustFailQuery(c, testDB, "select * from performance_schema.unknown_table")
 }
+
+func (p *testPerfSchemaSuit) TestInsert(c *C) {
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
+	defer testDB.Close()
+	c.Assert(err, IsNil)
+
+	r := mustExec(c, testDB, `insert into performance_schema.setup_actors values("localhost", "nieyy", "contributor", "NO", "NO");`)
+	checkResult(c, r, 1, 0)
+	cnt := mustQuery(c, testDB, "select * from performance_schema.setup_actors")
+	c.Assert(cnt, Equals, 2)
+
+	r = mustExec(c, testDB, `insert into performance_schema.setup_objects values("EVENT", "test", "%", "NO", "NO")`)
+	checkResult(c, r, 1, 0)
+	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_objects")
+	c.Assert(cnt, Equals, 13)
+}
