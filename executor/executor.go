@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/optimizer/plan"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1162,8 +1162,8 @@ func (e *UnionExec) Close() error {
 
 // DistinctExec represents Distinct executor.
 type DistinctExec struct {
-	Src  Executor
-	temp memkv.Temp
+	Src     Executor
+	checker *distinct.Checker
 }
 
 // Fields implements Executor Fields interface.
@@ -1173,12 +1173,8 @@ func (e *DistinctExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *DistinctExec) Next() (*Row, error) {
-	if e.temp == nil {
-		var err error
-		e.temp, err = memkv.CreateTemp(true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if e.checker == nil {
+		e.checker = distinct.CreateDistinctChecker()
 	}
 	for {
 		row, err := e.Src.Next()
@@ -1188,23 +1184,18 @@ func (e *DistinctExec) Next() (*Row, error) {
 		if row == nil {
 			return nil, nil
 		}
-		v, err := e.temp.Get(row.Data)
+		ok, err := e.checker.Check(row.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if len(v) > 0 {
+		if !ok {
 			continue
 		}
-		e.temp.Set(row.Data, []interface{}{true})
 		return row, nil
 	}
 }
 
 // Close implements Executor Close interface.
 func (e *DistinctExec) Close() error {
-	if e.temp != nil {
-		e.temp.Drop()
-		e.temp = nil
-	}
 	return e.Src.Close()
 }
