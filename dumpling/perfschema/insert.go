@@ -58,7 +58,8 @@ func (ps *perfSchema) addRecords(tableIdent table.Ident, rows [][]interface{}) e
 	var lastLsn uint64
 
 	// Same as MySQL, we only support INSERT operations for setup_actors & setup_objects.
-	switch strings.ToUpper(tableIdent.Name.O) {
+	name := strings.ToUpper(tableIdent.Name.O)
+	switch name {
 	case TableSetupActors:
 		store = ps.stores[TableSetupActors]
 		lastLsn = atomic.AddUint64(ps.lsns[TableSetupActors], uint64(len(rows)))
@@ -76,7 +77,6 @@ func (ps *perfSchema) addRecords(tableIdent table.Ident, rows [][]interface{}) e
 	}()
 
 	for i, row := range rows {
-		// dumpValue("addRecords", row)
 		lsn := lastLsn - uint64(len(rows)) + uint64(i)
 		rawKey := []interface{}{uint64(lsn)}
 		key, err := codec.EncodeKey(nil, rawKey...)
@@ -121,20 +121,16 @@ func fillRowData(t *model.TableInfo, cols []*model.ColumnInfo, vals []interface{
 		row[offset] = v
 		marked[offset] = struct{}{}
 	}
-	// dumpValue("fillRowData", row)
 	err := initDefaultValues(t, row, marked)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// dumpValue("initDefaultValues", row)
 	if err = castValues(row, cols); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// dumpValue("castValues", row)
 	if err = checkNotNulls(t.Columns, row); err != nil {
 		return nil, errors.Trace(err)
 	}
-	// dumpValue("checkNotNulls", row)
 	return row, nil
 }
 
@@ -237,7 +233,6 @@ func (ps *perfSchema) getRows(insertVals *InsertValues, t *model.TableInfo, cols
 			}
 		}
 
-		// dumpValue("getRows", vals)
 		rows[i], err = fillRowData(t, cols, vals)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -266,7 +261,6 @@ func initDefaultValues(t *model.TableInfo, row []interface{}, marked map[int]str
 			// Column value is not nil, continue.
 			continue
 		}
-
 		// If the nil value is evaluated in insert list, we will use nil.
 		if _, ok := marked[i]; ok {
 			continue
@@ -277,15 +271,12 @@ func initDefaultValues(t *model.TableInfo, row []interface{}, marked map[int]str
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		row[i] = value
-
 		defaultValueCols = append(defaultValueCols, c)
 	}
 
 	if err := castValues(row, defaultValueCols); err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }

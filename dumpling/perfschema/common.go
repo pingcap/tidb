@@ -84,44 +84,7 @@ func decodeValue(data []byte, cols []*model.ColumnInfo) ([]interface{}, error) {
 // dumpValue is used for debugging purposes only.
 func dumpValue(funcName string, vals []interface{}) {
 	for _, val := range vals {
-		switch v := val.(type) {
-		case bool:
-			log.Debug("[%s] bool: %t", funcName, bool(v))
-		case int:
-			log.Debugf("[%s] int: %d", funcName, int64(v))
-		case int8:
-			log.Debugf("[%s] int8: %d", funcName, int64(v))
-		case int16:
-			log.Debugf("[%s] int16: %d", funcName, int64(v))
-		case int32:
-			log.Debugf("[%s] int32: %d", funcName, int64(v))
-		case int64:
-			log.Debugf("[%s] int64: %d", funcName, int64(v))
-		case uint:
-			log.Debugf("[%s] uint: %d", funcName, uint64(v))
-		case uint8:
-			log.Debugf("[%s] uint8: %d", funcName, uint64(v))
-		case uint16:
-			log.Debugf("[%s] uint16: %d", funcName, uint64(v))
-		case uint32:
-			log.Debugf("[%s] uint32: %d", funcName, uint64(v))
-		case uint64:
-			log.Debugf("[%s] uint64: %d", funcName, uint64(v))
-		case float32:
-			log.Debugf("[%s] float32: %f", funcName, float64(v))
-		case float64:
-			log.Debugf("[%s] float64: %f", funcName, float64(v))
-		case string:
-			log.Debugf("[%s] string: %s", funcName, v)
-		case []byte:
-			log.Debugf("[%s] []byte: %X", funcName, v)
-		case mysql.Enum:
-			log.Debugf("[%s] enum: %s", funcName, v)
-		case nil:
-			log.Debugf("[%s] nil", funcName)
-		default:
-			log.Debugf("[%s] unknown", funcName)
-		}
+		log.Debugf("[%s] %T: %v", funcName, val, val)
 	}
 }
 
