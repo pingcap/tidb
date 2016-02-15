@@ -26,6 +26,9 @@ import (
 type PerfSchema interface {
 	// For SELECT statement only.
 	NewPerfSchemaPlan(tableName string) (plan.Plan, error)
+
+	// For INSERT statement only.
+	ExecInsert(insertVals *InsertValues) error
 }
 
 type perfSchema struct {

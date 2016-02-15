@@ -199,9 +199,9 @@ func (ps *perfSchema) buildModel(tbName string, colNames []string, cols []column
 		var ci *model.ColumnInfo
 
 		if col.elems == nil {
-			ci = buildUsualColumnInfo(colNames[i], col.tp, col.size, col.flag, col.deflt)
+			ci = buildUsualColumnInfo(i, colNames[i], col.tp, col.size, col.flag, col.deflt)
 		} else {
-			ci = buildEnumColumnInfo(colNames[i], col.elems, col.flag, col.deflt)
+			ci = buildEnumColumnInfo(i, colNames[i], col.elems, col.flag, col.deflt)
 		}
 
 		rcols[i] = ci
@@ -217,7 +217,7 @@ func (ps *perfSchema) buildModel(tbName string, colNames []string, cols []column
 	ps.fields[tbName] = fields
 }
 
-func buildUsualColumnInfo(name string, tp byte, size int, flag uint, def interface{}) *model.ColumnInfo {
+func buildUsualColumnInfo(offset int, name string, tp byte, size int, flag uint, def interface{}) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	if tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeBlob || tp == mysql.TypeLongBlob {
@@ -237,13 +237,14 @@ func buildUsualColumnInfo(name string, tp byte, size int, flag uint, def interfa
 	}
 	colInfo := &model.ColumnInfo{
 		Name:         model.NewCIStr(name),
+		Offset:       offset,
 		FieldType:    fieldType,
 		DefaultValue: def,
 	}
 	return colInfo
 }
 
-func buildEnumColumnInfo(name string, elems []string, flag uint, def interface{}) *model.ColumnInfo {
+func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def interface{}) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	if def == nil {
@@ -258,6 +259,7 @@ func buildEnumColumnInfo(name string, elems []string, flag uint, def interface{}
 	}
 	colInfo := &model.ColumnInfo{
 		Name:         model.NewCIStr(name),
+		Offset:       offset,
 		FieldType:    fieldType,
 		DefaultValue: def,
 	}
