@@ -283,7 +283,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "commit", 0)
 	checkInTrans(c, se, "insert t values ()", 0)
 
-	checkInTrans(c, se, "set autocommit=O;", 0)
+	checkInTrans(c, se, "set autocommit=0;", 0)
 	checkInTrans(c, se, "begin", 1)
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "commit", 0)
