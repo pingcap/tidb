@@ -3129,25 +3129,25 @@ UnionStmt:
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		lastSelect := union.Selects[len(union.Selects)-1]
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-2].offset)
 		l.SetLastSelectFieldText(lastSelect, endOffset)
-		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		lastSelect := union.Selects[len(union.Selects)-1]
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-6].offset)
 		l.SetLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
 		endOffset = l.endOffset(yyS[yypt-2].offset)
 		l.SetLastSelectFieldText(st, endOffset)
-		union.Selects = append(union.Selects, st)
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
 		}
@@ -3160,20 +3160,20 @@ UnionStmt:
 UnionClauseList:
 	UnionSelect
 	{
-		selects := []*ast.SelectStmt{$1.(*ast.SelectStmt)}
+		selectList := &ast.UnionSelectList{Selects: []*ast.SelectStmt{$1.(*ast.SelectStmt)}}
 		$$ = &ast.UnionStmt{
-			Selects: selects,
+			SelectList: selectList,
 		}
 	}
 |	UnionClauseList "UNION" UnionOpt UnionSelect
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		lastSelect := union.Selects[len(union.Selects)-1]
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-2].offset)
 		l.SetLastSelectFieldText(lastSelect, endOffset)
-		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
 

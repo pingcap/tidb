@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -1101,4 +1102,100 @@ func (e *AggregateExec) Close() error {
 		return e.Src.Close()
 	}
 	return nil
+}
+
+// UnionExec represents union executor.
+type UnionExec struct {
+	fields []*ast.ResultField
+	Sels   []Executor
+	cursor int
+}
+
+// Fields implements Executor Fields interface.
+func (e *UnionExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+func (e *UnionExec) Next() (*Row, error) {
+	for {
+		if e.cursor >= len(e.Sels) {
+			return nil, nil
+		}
+		sel := e.Sels[e.cursor]
+		row, err := sel.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.cursor++
+			continue
+		}
+		if e.cursor != 0 {
+			for i := range row.Data {
+				// The column value should be casted as the same type of the first select statement in corresponding position
+				rf := e.fields[i]
+				row.Data[i], err = types.Convert(row.Data[i], &rf.Column.FieldType)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+		for i, v := range row.Data {
+			e.fields[i].Expr.SetValue(v)
+		}
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *UnionExec) Close() error {
+	var err error
+	for _, sel := range e.Sels {
+		er := sel.Close()
+		if er != nil {
+			err = errors.Trace(er)
+		}
+	}
+	return err
+}
+
+// DistinctExec represents Distinct executor.
+type DistinctExec struct {
+	Src     Executor
+	checker *distinct.Checker
+}
+
+// Fields implements Executor Fields interface.
+func (e *DistinctExec) Fields() []*ast.ResultField {
+	return e.Src.Fields()
+}
+
+// Next implements Executor Next interface.
+func (e *DistinctExec) Next() (*Row, error) {
+	if e.checker == nil {
+		e.checker = distinct.CreateDistinctChecker()
+	}
+	for {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			return nil, nil
+		}
+		ok, err := e.checker.Check(row.Data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ok {
+			continue
+		}
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *DistinctExec) Close() error {
+	return e.Src.Close()
 }
