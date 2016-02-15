@@ -868,13 +868,6 @@ func convertRollback(converter *expressionConverter, v *ast.RollbackStmt) (*stmt
 	}, nil
 }
 
-func convertUse(converter *expressionConverter, v *ast.UseStmt) (*stmts.UseStmt, error) {
-	return &stmts.UseStmt{
-		DBName: v.DBName,
-		Text:   v.Text(),
-	}, nil
-}
-
 func convertVariableAssignment(converter *expressionConverter, v *ast.VariableAssignment) (*stmts.VariableAssignment, error) {
 	oldValue, err := convertExpr(converter, v.Value)
 	if err != nil {

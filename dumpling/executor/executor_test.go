@@ -237,3 +237,22 @@ func (s *testSuite) TestJoin(c *C) {
 		result.Check(ca.result)
 	}
 }
+
+func (s *testSuite) TestCharsetDatabase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
+	tk.MustExec(testSQL)
+
+	testSQL = `create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
+	tk.MustExec(testSQL)
+
+	testSQL = `use cd_test_utf8;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_bin"))
+
+	testSQL = `use cd_test_latin1;`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
+}
