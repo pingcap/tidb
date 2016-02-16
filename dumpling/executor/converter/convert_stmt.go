@@ -868,51 +868,6 @@ func convertRollback(converter *expressionConverter, v *ast.RollbackStmt) (*stmt
 	}, nil
 }
 
-func convertUse(converter *expressionConverter, v *ast.UseStmt) (*stmts.UseStmt, error) {
-	return &stmts.UseStmt{
-		DBName: v.DBName,
-		Text:   v.Text(),
-	}, nil
-}
-
-func convertVariableAssignment(converter *expressionConverter, v *ast.VariableAssignment) (*stmts.VariableAssignment, error) {
-	oldValue, err := convertExpr(converter, v.Value)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return &stmts.VariableAssignment{
-		IsGlobal: v.IsGlobal,
-		IsSystem: v.IsSystem,
-		Name:     v.Name,
-		Value:    oldValue,
-		Text:     v.Text(),
-	}, nil
-}
-
-func convertSet(converter *expressionConverter, v *ast.SetStmt) (*stmts.SetStmt, error) {
-	oldSet := &stmts.SetStmt{
-		Text:      v.Text(),
-		Variables: make([]*stmts.VariableAssignment, len(v.Variables)),
-	}
-	for i, val := range v.Variables {
-		oldAssign, err := convertVariableAssignment(converter, val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		oldSet.Variables[i] = oldAssign
-	}
-	return oldSet, nil
-}
-
-func convertSetCharset(converter *expressionConverter, v *ast.SetCharsetStmt) (*stmts.SetCharsetStmt, error) {
-	return &stmts.SetCharsetStmt{
-		Charset: v.Charset,
-		Collate: v.Collate,
-		Text:    v.Text(),
-	}, nil
-}
-
 func convertSetPwd(converter *expressionConverter, v *ast.SetPwdStmt) (*stmts.SetPwdStmt, error) {
 	return &stmts.SetPwdStmt{
 		User:     v.User,
