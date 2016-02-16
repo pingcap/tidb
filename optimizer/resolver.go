@@ -155,6 +155,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.pushContext()
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = true
+	case *ast.DoStmt:
+		nr.pushContext()
 	case *ast.FieldList:
 		nr.currentContext().inFieldList = true
 	case *ast.GroupByClause:
@@ -205,6 +207,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		nr.handleColumnName(v)
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = false
+	case *ast.DoStmt:
+		nr.popContext()
 	case *ast.TableSource:
 		nr.handleTableSource(v)
 	case *ast.OnCondition:
