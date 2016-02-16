@@ -706,7 +706,7 @@ func (n *UnaryOperationExpr) Accept(v Visitor) (Node, bool) {
 type ValuesExpr struct {
 	exprNode
 	// model.CIStr is column name.
-	Column *ColumnName
+	Column *ColumnNameExpr
 }
 
 // Accept implements Node Accept interface.
@@ -720,7 +720,7 @@ func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Column = node.(*ColumnName)
+	n.Column = node.(*ColumnNameExpr)
 	return v.Leave(n)
 }
 

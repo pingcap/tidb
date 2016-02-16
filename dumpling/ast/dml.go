@@ -605,7 +605,7 @@ const (
 type InsertStmt struct {
 	dmlNode
 
-	Replace     bool
+	IsReplace   bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
