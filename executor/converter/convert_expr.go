@@ -306,7 +306,7 @@ func (c *expressionConverter) unaryOperation(v *ast.UnaryOperationExpr) {
 }
 
 func (c *expressionConverter) values(v *ast.ValuesExpr) {
-	nameStr := joinColumnName(v.Column)
+	nameStr := joinColumnName(v.Column.Name)
 	c.exprMap[v] = &expression.Values{CIStr: model.NewCIStr(nameStr)}
 }
 

@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -64,6 +65,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildHaving(v)
 	case *plan.IndexScan:
 		return b.buildIndexScan(v)
+	case *plan.Insert:
+		return b.buildInsert(v)
 	case *plan.JoinInner:
 		return b.buildJoinInner(v)
 	case *plan.JoinOuter:
@@ -332,4 +335,40 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 
 func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
+}
+
+func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
+	insert := &InsertExec{
+		ctx:         b.ctx,
+		Columns:     v.Columns,
+		Lists:       v.Lists,
+		Setlist:     v.Setlist,
+		OnDuplicate: v.OnDuplicate,
+		IsReplace:   v.IsReplace,
+		Priority:    v.Priority,
+	}
+	if v.SelectPlan != nil {
+		insert.SelectExec = b.build(v.SelectPlan)
+	}
+	// Get Table
+	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		b.err = errors.New("Can not get table")
+		return nil
+	}
+	// fields is used to evaluate values expr.
+	insert.fields = ts.GetResultFields()
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		b.err = errors.New("Can not get table")
+		return nil
+	}
+	tableInfo := tn.TableInfo
+	tbl, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		b.err = errors.Errorf("Can not get table %d", tableInfo.ID)
+		return nil
+	}
+	insert.Table = tbl
+	return insert
 }

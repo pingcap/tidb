@@ -73,6 +73,10 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 		} else if strings.EqualFold(x.Schema.O, perfschema.Name) {
 			c.unsupported = true
 		}
+	case *ast.InsertStmt:
+		if x.IsReplace {
+			c.unsupported = true
+		}
 	}
 	return in, c.unsupported
 }
@@ -87,7 +91,7 @@ func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
 func IsSupported(node ast.Node) bool {
 	switch node.(type) {
 	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
-		*ast.AdminStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.UnionStmt:
+		*ast.AdminStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.UnionStmt, *ast.InsertStmt:
 	case *ast.UseStmt, *ast.SetStmt, *ast.SetCharsetStmt:
 	default:
 		return false

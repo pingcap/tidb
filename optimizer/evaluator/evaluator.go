@@ -642,6 +642,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 }
 
 func (e *Evaluator) values(v *ast.ValuesExpr) bool {
+	v.SetValue(v.Column.GetValue())
 	return true
 }
 

@@ -100,6 +100,8 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.unaryOperation(x)
 	case *ast.ValueExpr:
 		v.handleValueExpr(x)
+	case *ast.ValuesExpr:
+		v.handleValuesExpr(x)
 	case *ast.VariableExpr:
 		x.SetType(types.NewFieldType(mysql.TypeVarString))
 		x.Type.Charset = v.defaultCharset
@@ -228,6 +230,10 @@ func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
 	tp := types.DefaultTypeForValue(x.GetValue())
 	// Set charset and collation
 	x.SetType(tp)
+}
+
+func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
+	x.SetType(x.Column.GetType())
 }
 
 func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
