@@ -15,14 +15,12 @@ package stmts_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/stmt/stmts"
 )
 
 func (s *testStmtSuite) TestInsert(c *C) {
-	testSQL := `drop table if exists insert_test;
-    create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
-    insert insert_test (c1) values (1),(2),(NULL);`
+	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `insert insert_test (c1) values (1),(2),(NULL);`
 	mustExec(c, s.testDB, testSQL)
 
 	errInsertSelectSQL := `insert insert_test (c1) values ();`
@@ -52,16 +50,6 @@ func (s *testStmtSuite) TestInsert(c *C) {
 	insertSetSQL := `insert insert_test set c1 = 3;`
 	mustExec(c, s.testDB, insertSetSQL)
 
-	stmtList, err := tidb.Compile(s.ctx, insertSetSQL)
-	c.Assert(err, IsNil)
-	c.Assert(stmtList, HasLen, 1)
-
-	testStmt, ok := stmtList[0].(*stmts.InsertIntoStmt)
-	c.Assert(ok, IsTrue)
-
-	c.Assert(testStmt.IsDDL(), IsFalse)
-	c.Assert(len(testStmt.OriginText()), Greater, 0)
-
 	errInsertSelectSQL = `insert insert_test set c1 = 4, c1 = 5;`
 	tx = mustBegin(c, s.testDB)
 	_, err = tx.Exec(errInsertSelectSQL)
@@ -74,11 +62,14 @@ func (s *testStmtSuite) TestInsert(c *C) {
 	c.Assert(err, NotNil)
 	tx.Rollback()
 
-	insertSelectSQL := `create table insert_test_1 (id int, c1 int); insert insert_test_1 select id, c1 from insert_test;`
+	insertSelectSQL := `create table insert_test_1 (id int, c1 int);`
+	mustExec(c, s.testDB, insertSelectSQL)
+	insertSelectSQL = `insert insert_test_1 select id, c1 from insert_test;`
 	mustExec(c, s.testDB, insertSelectSQL)
 
-	insertSelectSQL = `create table insert_test_2 (id int, c1 int); 
-	insert insert_test_1 select id, c1 from insert_test union select id * 10, c1 * 10 from insert_test;`
+	insertSelectSQL = `create table insert_test_2 (id int, c1 int);`
+	mustExec(c, s.testDB, insertSelectSQL)
+	insertSelectSQL = `insert insert_test_1 select id, c1 from insert_test union select id * 10, c1 * 10 from insert_test;`
 	mustExec(c, s.testDB, insertSelectSQL)
 
 	errInsertSelectSQL = `insert insert_test_1 select c1 from insert_test;`

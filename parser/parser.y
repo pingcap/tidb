@@ -1831,7 +1831,7 @@ ReplaceIntoStmt:
 	"REPLACE" ReplacePriority IntoOpt TableName InsertValues
 	{
 		x := $5.(*ast.InsertStmt)
-		x.Replace = true
+		x.IsReplace = true
 		x.Priority = $2.(int)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
@@ -2127,7 +2127,7 @@ FunctionCallKeyword:
 |	"VALUES" '(' ColumnName ')' %prec lowerThanInsertValues
 	{
 		// TODO: support qualified identifier for column_name
-		$$ = &ast.ValuesExpr{Column: $3.(*ast.ColumnName)}
+		$$ = &ast.ValuesExpr{Column: &ast.ColumnNameExpr{Name: $3.(*ast.ColumnName)}}
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{

@@ -585,3 +585,35 @@ func (p *Simple) Accept(v Visitor) (Plan, bool) {
 	p = np.(*Simple)
 	return v.Leave(p)
 }
+
+// Insert represents an insert plan.
+type Insert struct {
+	basePlan
+
+	Table       *ast.TableRefsClause
+	Columns     []*ast.ColumnName
+	Lists       [][]ast.ExprNode
+	Setlist     []*ast.Assignment
+	OnDuplicate []*ast.Assignment
+	SelectPlan  Plan
+
+	IsReplace bool
+	Priority  int
+}
+
+// Accept implements Plan Accept interface.
+func (p *Insert) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Insert)
+	if p.SelectPlan != nil {
+		var ok bool
+		p.SelectPlan, ok = p.SelectPlan.Accept(v)
+		if !ok {
+			return p, false
+		}
+	}
+	return v.Leave(p)
+}

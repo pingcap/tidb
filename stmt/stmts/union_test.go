@@ -27,6 +27,10 @@ func (s *testStmtSuite) TestUnion(c *C) {
 	testSQL = `drop table if exists union_test; create table union_test(id int);`
 	mustExec(c, s.testDB, testSQL)
 
+	testSQL = `drop table if exists union_test;`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `create table union_test(id int);`
+	mustExec(c, s.testDB, testSQL)
 	testSQL = `insert union_test values (1),(2); select id from union_test union select 1;`
 	mustExec(c, s.testDB, testSQL)
 

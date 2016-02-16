@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/evaluator"
@@ -25,12 +26,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
 	_ Executor = &UpdateExec{}
 	_ Executor = &DeleteExec{}
+	_ Executor = &InsertExec{}
 )
 
 // UpdateExec represents an update executor.
@@ -55,6 +58,11 @@ func (e *UpdateExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		e.fetched = true
+	}
+
+	columns, err := getUpdateColumns(e.OrderedList)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
@@ -83,7 +91,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 			return nil, errors.Trace(err1)
 		}
 
-		err1 = e.updateRecord(handle, oldData, newTableData, tbl, offset, false)
+		err1 = updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -91,6 +99,14 @@ func (e *UpdateExec) Next() (*Row, error) {
 	}
 	e.cursor++
 	return &Row{}, nil
+}
+
+func getUpdateColumns(assignList []*ast.Assignment) (map[int]*ast.Assignment, error) {
+	m := make(map[int]*ast.Assignment, len(assignList))
+	for i, v := range assignList {
+		m[i] = v
+	}
+	return m, nil
 }
 
 func (e *UpdateExec) fetchRows() error {
@@ -134,8 +150,8 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 	return 0
 }
 
-func (e *UpdateExec) updateRecord(h int64, oldData, newData []interface{}, t table.Table, offset int, onDuplicateUpdate bool) error {
-	if err := t.LockRow(e.ctx, h); err != nil {
+func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
+	if err := t.LockRow(ctx, h); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -144,7 +160,7 @@ func (e *UpdateExec) updateRecord(h int64, oldData, newData []interface{}, t tab
 
 	assignExists := false
 	var newHandle interface{}
-	for i, asgn := range e.OrderedList {
+	for i, asgn := range updateColumns {
 		if asgn == nil {
 			continue
 		}
@@ -169,7 +185,7 @@ func (e *UpdateExec) updateRecord(h int64, oldData, newData []interface{}, t tab
 	}
 
 	// Check whether new value is valid.
-	if err := column.CastValues(e.ctx, newData, cols); err != nil {
+	if err := column.CastValues(ctx, newData, cols); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -196,22 +212,22 @@ func (e *UpdateExec) updateRecord(h int64, oldData, newData []interface{}, t tab
 
 	if !rowChanged {
 		// See: https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if variable.GetSessionVars(e.ctx).ClientCapability&mysql.ClientFoundRows > 0 {
-			variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+		if variable.GetSessionVars(ctx).ClientCapability&mysql.ClientFoundRows > 0 {
+			variable.GetSessionVars(ctx).AddAffectedRows(1)
 		}
 		return nil
 	}
 
 	var err error
 	if newHandle != nil {
-		err = t.RemoveRecord(e.ctx, h, oldData)
+		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = t.AddRecord(e.ctx, newData)
+		_, err = t.AddRecord(ctx, newData)
 	} else {
 		// Update record to new value and update index.
-		err = t.UpdateRecord(e.ctx, h, oldData, newData, touched)
+		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -219,9 +235,9 @@ func (e *UpdateExec) updateRecord(h int64, oldData, newData []interface{}, t tab
 
 	// Record affected rows.
 	if !onDuplicateUpdate {
-		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+		variable.GetSessionVars(ctx).AddAffectedRows(1)
 	} else {
-		variable.GetSessionVars(e.ctx).AddAffectedRows(2)
+		variable.GetSessionVars(ctx).AddAffectedRows(2)
 	}
 	return nil
 }
@@ -341,4 +357,377 @@ func (e *DeleteExec) Fields() []*ast.ResultField {
 // Close implements Executor Close interface.
 func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
+}
+
+// InsertExec represents an insert executor.
+type InsertExec struct {
+	ctx        context.Context
+	SelectExec Executor
+
+	Table       table.Table
+	Columns     []*ast.ColumnName
+	Lists       [][]ast.ExprNode
+	Setlist     []*ast.Assignment
+	OnDuplicate []*ast.Assignment
+	fields      []*ast.ResultField
+
+	IsReplace bool
+	Priority  int
+
+	finished bool
+}
+
+// Next implements Executor Next interface.
+func (e *InsertExec) Next() (*Row, error) {
+	if e.finished {
+		return nil, nil
+	}
+	cols, err := e.getColumns(e.Table.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	toUpdateColumns, err := getOnDuplicateUpdateColumns(e.OnDuplicate, e.Table)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rows [][]interface{}
+	if e.SelectExec != nil {
+		rows, err = e.getRowsSelect(cols)
+	} else {
+		rows, err = e.getRows(cols)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, row := range rows {
+		if len(e.OnDuplicate) == 0 {
+			txn.SetOption(kv.PresumeKeyNotExists, nil)
+		}
+		h, err := e.Table.AddRecord(e.ctx, row)
+		txn.DelOption(kv.PresumeKeyNotExists)
+		if err == nil {
+			continue
+		}
+
+		if len(e.OnDuplicate) == 0 || !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			return nil, errors.Trace(err)
+		}
+		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	e.finished = true
+	return nil, nil
+}
+
+// Fields implements Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *InsertExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements Executor Close interface.
+func (e *InsertExec) Close() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Close()
+	}
+	return nil
+}
+
+// There are three types of insert statements:
+// 1 insert ... values(...)  --> name type column
+// 2 insert ... set x=y...   --> set type column
+// 3 insert ... (select ..)  --> name type column
+// See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
+func (e *InsertExec) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
+	var cols []*column.Col
+	var err error
+
+	if len(e.Setlist) > 0 {
+		// Process `set` type column.
+		columns := make([]string, 0, len(e.Setlist))
+		for _, v := range e.Setlist {
+			columns = append(columns, v.Column.Name.O)
+		}
+
+		cols, err = column.FindCols(tableCols, columns)
+		if err != nil {
+			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.TableName().O, err)
+		}
+
+		if len(cols) == 0 {
+			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.TableName().O)
+		}
+	} else {
+		// Process `name` type column.
+		columns := make([]string, 0, len(e.Columns))
+		for _, v := range e.Columns {
+			columns = append(columns, v.Name.O)
+		}
+		cols, err = column.FindCols(tableCols, columns)
+		if err != nil {
+			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.TableName().O, err)
+		}
+
+		// If cols are empty, use all columns instead.
+		if len(cols) == 0 {
+			cols = tableCols
+		}
+	}
+
+	// Check column whether is specified only once.
+	err = column.CheckOnce(cols)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return cols, nil
+}
+
+func (e *InsertExec) fillValueList() error {
+	if len(e.Setlist) > 0 {
+		if len(e.Lists) > 0 {
+			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
+		}
+		var l []ast.ExprNode
+		for _, v := range e.Setlist {
+			l = append(l, v.Expr)
+		}
+		e.Lists = append(e.Lists, l)
+	}
+	return nil
+}
+
+func (e *InsertExec) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
+	if insertValueCount != valueCount {
+		// "insert into t values (), ()" is valid.
+		// "insert into t values (), (1)" is not valid.
+		// "insert into t values (1), ()" is not valid.
+		// "insert into t values (1,2), (1)" is not valid.
+		// So the value count must be same for all insert list.
+		return errors.Errorf("Column count doesn't match value count at row %d", num+1)
+	}
+	if valueCount == 0 && len(e.Columns) > 0 {
+		// "insert into t (c1) values ()" is not valid.
+		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.TableName().O, len(e.Columns), 0)
+	} else if valueCount > 0 && valueCount != len(cols) {
+		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.TableName().O, len(cols), valueCount)
+	}
+	return nil
+}
+
+func (e *InsertExec) getColumnDefaultValues(cols []*column.Col) (map[string]interface{}, error) {
+	defaultValMap := map[string]interface{}{}
+	for _, col := range cols {
+		if value, ok, err := tables.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			defaultValMap[col.Name.L] = value
+		}
+	}
+	return defaultValMap, nil
+}
+
+func (e *InsertExec) getRows(cols []*column.Col) (rows [][]interface{}, err error) {
+	// process `insert|replace ... set x=y...`
+	if err = e.fillValueList(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	defaultVals, err := e.getColumnDefaultValues(e.Table.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	rows = make([][]interface{}, len(e.Lists))
+	for i, list := range e.Lists {
+		if err = e.checkValueCount(len(e.Lists[0]), len(list), i, cols); err != nil {
+			return nil, errors.Trace(err)
+		}
+		rows[i], err = e.getRow(cols, list, defaultVals)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return
+}
+
+func (e *InsertExec) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals map[string]interface{}) ([]interface{}, error) {
+	vals := make([]interface{}, len(list))
+	var err error
+	for i, expr := range list {
+		if d, ok := expr.(*ast.DefaultExpr); ok {
+			cn := d.Name
+			if cn != nil {
+				var found bool
+				vals[i], found = defaultVals[cn.Name.L]
+				if !found {
+					return nil, errors.Errorf("default column not found - %s", cn.Name.O)
+				}
+			} else {
+				vals[i] = defaultVals[cols[i].Name.L]
+			}
+		} else {
+			vals[i], err = evaluator.Eval(e.ctx, expr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	return e.fillRowData(cols, vals)
+}
+
+func (e *InsertExec) getRowsSelect(cols []*column.Col) ([][]interface{}, error) {
+	// process `insert|replace into ... select ... from ...`
+	if len(e.SelectExec.Fields()) != len(cols) {
+		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
+	}
+	var rows [][]interface{}
+	for {
+		innerRow, err := e.SelectExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if innerRow == nil {
+			break
+		}
+		row, err := e.fillRowData(cols, innerRow.Data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func (e *InsertExec) fillRowData(cols []*column.Col, vals []interface{}) ([]interface{}, error) {
+	row := make([]interface{}, len(e.Table.Cols()))
+	marked := make(map[int]struct{}, len(vals))
+	for i, v := range vals {
+		offset := cols[i].Offset
+		row[offset] = v
+		marked[offset] = struct{}{}
+	}
+	err := e.initDefaultValues(row, marked)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = column.CastValues(e.ctx, row, cols); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = column.CheckNotNull(e.Table.Cols(), row); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return row, nil
+}
+
+func (e *InsertExec) initDefaultValues(row []interface{}, marked map[int]struct{}) error {
+	var defaultValueCols []*column.Col
+	for i, c := range e.Table.Cols() {
+		if row[i] != nil {
+			// Column value is not nil, continue.
+			continue
+		}
+
+		// If the nil value is evaluated in insert list, we will use nil except auto increment column.
+		if _, ok := marked[i]; ok && !mysql.HasAutoIncrementFlag(c.Flag) && !mysql.HasTimestampFlag(c.Flag) {
+			continue
+		}
+
+		if mysql.HasAutoIncrementFlag(c.Flag) {
+			recordID, err := e.Table.AllocAutoID()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			row[i] = recordID
+			if c.IsPKHandleColumn(e.Table.Meta()) {
+				// Notes: incompatible with mysql
+				// MySQL will set last insert id to the first row, as follows:
+				// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
+				// `insert t (c1) values(1),(2),(3);`
+				// Last insert id will be 1, not 3.
+				variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+			}
+		} else {
+			var value interface{}
+			value, _, err := tables.GetColDefaultValue(e.ctx, &c.ColumnInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			row[i] = value
+		}
+
+		defaultValueCols = append(defaultValueCols, c)
+	}
+	if err := column.CastValues(e.ctx, row, defaultValueCols); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *InsertExec) onDuplicateUpdate(row []interface{}, h int64, cols map[int]*ast.Assignment) error {
+	// On duplicate key update the duplicate row.
+	// Evaluate the updated value.
+	// TODO: report rows affected and last insert id.
+	data, err := e.Table.Row(e.ctx, h)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// For evaluate ValuesExpr
+	// http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+	for i, rf := range e.fields {
+		rf.Expr.SetValue(row[i])
+	}
+	// Evaluate assignment
+	newData := make([]interface{}, len(data))
+	for i, c := range row {
+		asgn, ok := cols[i]
+		if !ok {
+			newData[i] = c
+			continue
+		}
+		newData[i], err = evaluator.Eval(e.ctx, asgn.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func findColumnByName(t table.Table, name string) (*column.Col, error) {
+	_, tableName, colName := field.SplitQualifiedName(name)
+	if len(tableName) > 0 && tableName != t.TableName().O {
+		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
+	}
+
+	c := column.FindCol(t.Cols(), colName)
+	if c == nil {
+		return nil, errors.Errorf("unknown field %s", colName)
+	}
+	return c, nil
+}
+
+func getOnDuplicateUpdateColumns(assignList []*ast.Assignment, t table.Table) (map[int]*ast.Assignment, error) {
+	m := make(map[int]*ast.Assignment, len(assignList))
+
+	for _, v := range assignList {
+		col := v.Column
+		c, err := findColumnByName(t, field.JoinQualifiedName("", col.Table.L, col.Name.L))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m[c.Offset] = v
+	}
+	return m, nil
 }
