@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
-	"github.com/pingcap/tidb/stmt/stmts"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -196,15 +195,6 @@ func (s *session) String() string {
 	return string(b)
 }
 
-func needRetry(st stmt.Statement) bool {
-	switch st.(type) {
-	case *stmts.ShowStmt, *stmts.DoStmt, *stmts.CommitStmt:
-		return false
-	default:
-		return true
-	}
-}
-
 func (s *session) Retry() error {
 	s.retrying = true
 	nh := s.history.clone()
@@ -230,10 +220,6 @@ func (s *session) Retry() error {
 		success := true
 		for _, sr := range nh.history {
 			st := sr.st
-			// Skip prepare statement
-			if !needRetry(st) {
-				continue
-			}
 			log.Warnf("Retry %s", st.OriginText())
 			_, err = runStmt(s, st)
 			if err != nil {

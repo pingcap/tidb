@@ -77,6 +77,20 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildSimple(x)
 	case *ast.SetStmt:
 		return b.buildSimple(x)
+	case *ast.DoStmt:
+		return b.buildSimple(x)
+	case *ast.BeginStmt:
+		return b.buildSimple(x)
+	case *ast.CommitStmt:
+		return b.buildSimple(x)
+	case *ast.RollbackStmt:
+		return b.buildSimple(x)
+	case *ast.CreateUserStmt:
+		return b.buildSimple(x)
+	case *ast.SetPwdStmt:
+		return b.buildSimple(x)
+	case *ast.GrantStmt:
+		return b.buildSimple(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil

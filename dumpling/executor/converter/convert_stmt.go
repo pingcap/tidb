@@ -850,32 +850,6 @@ func convertShow(converter *expressionConverter, v *ast.ShowStmt) (*stmts.ShowSt
 	return oldShow, nil
 }
 
-func convertBegin(converter *expressionConverter, v *ast.BeginStmt) (*stmts.BeginStmt, error) {
-	return &stmts.BeginStmt{
-		Text: v.Text(),
-	}, nil
-}
-
-func convertCommit(converter *expressionConverter, v *ast.CommitStmt) (*stmts.CommitStmt, error) {
-	return &stmts.CommitStmt{
-		Text: v.Text(),
-	}, nil
-}
-
-func convertRollback(converter *expressionConverter, v *ast.RollbackStmt) (*stmts.RollbackStmt, error) {
-	return &stmts.RollbackStmt{
-		Text: v.Text(),
-	}, nil
-}
-
-func convertSetPwd(converter *expressionConverter, v *ast.SetPwdStmt) (*stmts.SetPwdStmt, error) {
-	return &stmts.SetPwdStmt{
-		User:     v.User,
-		Password: v.Password,
-		Text:     v.Text(),
-	}, nil
-}
-
 func convertUserSpec(converter *expressionConverter, v *ast.UserSpec) (*coldef.UserSpecification, error) {
 	oldSpec := &coldef.UserSpecification{
 		User: v.User,
@@ -889,36 +863,6 @@ func convertUserSpec(converter *expressionConverter, v *ast.UserSpec) (*coldef.U
 		oldSpec.AuthOpt = oldAuthOpt
 	}
 	return oldSpec, nil
-}
-
-func convertCreateUser(converter *expressionConverter, v *ast.CreateUserStmt) (*stmts.CreateUserStmt, error) {
-	oldCreateUser := &stmts.CreateUserStmt{
-		IfNotExists: v.IfNotExists,
-		Text:        v.Text(),
-	}
-	for _, val := range v.Specs {
-		oldSpec, err := convertUserSpec(converter, val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		oldCreateUser.Specs = append(oldCreateUser.Specs, oldSpec)
-	}
-	return oldCreateUser, nil
-}
-
-func convertDo(converter *expressionConverter, v *ast.DoStmt) (*stmts.DoStmt, error) {
-	oldDo := &stmts.DoStmt{
-		Text:  v.Text(),
-		Exprs: make([]expression.Expression, len(v.Exprs)),
-	}
-	for i, val := range v.Exprs {
-		oldExpr, err := convertExpr(converter, val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		oldDo.Exprs[i] = oldExpr
-	}
-	return oldDo, nil
 }
 
 func convertPrivElem(converter *expressionConverter, v *ast.PrivElem) (*coldef.PrivElem, error) {
