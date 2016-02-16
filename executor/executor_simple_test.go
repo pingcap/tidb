@@ -14,10 +14,13 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -120,4 +123,42 @@ func (s *testSuite) TestTransaction(c *C) {
 
 func inTxn(ctx context.Context) bool {
 	return (variable.GetSessionVars(ctx).Status & mysql.ServerStatusInTrans) > 0
+}
+
+func (s *testSuite) TestCreateUser(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Make sure user test not in mysql.User.
+	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	result.Check(nil)
+	// Create user test.
+	createUserSQL := `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
+	tk.MustExec(createUserSQL)
+	// Make sure user test in mysql.User.
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
+	rowStr := fmt.Sprintf("%v", []byte(util.EncodePassword("123")))
+	result.Check(testkit.Rows(rowStr))
+	// Create duplicate user with IfNotExists will be success.
+	createUserSQL = `CREATE USER IF NOT EXISTS 'test'@'localhost' IDENTIFIED BY '123';`
+	tk.MustExec(createUserSQL)
+
+	// Create duplicate user without IfNotExists will cause error.
+	createUserSQL = `CREATE USER 'test'@'localhost' IDENTIFIED BY '123';`
+	_, err := tk.Exec(createUserSQL)
+	c.Check(err, NotNil)
+}
+
+func (s *testSuite) TestSetPwd(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
+	tk.MustExec(createUserSQL)
+
+	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	rowStr := fmt.Sprintf("%v", []byte(""))
+	result.Check(testkit.Rows(rowStr))
+
+	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
+
+	result = tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
+	rowStr = fmt.Sprintf("%v", []byte(util.EncodePassword("password")))
+	result.Check(testkit.Rows(rowStr))
 }
