@@ -743,16 +743,6 @@ func convertAlterTable(converter *expressionConverter, v *ast.AlterTableStmt) (*
 	return oldAlterTable, nil
 }
 
-func convertTruncateTable(converter *expressionConverter, v *ast.TruncateTableStmt) (*stmts.TruncateTableStmt, error) {
-	return &stmts.TruncateTableStmt{
-		TableIdent: table.Ident{
-			Schema: v.Table.Schema,
-			Name:   v.Table.Name,
-		},
-		Text: v.Text(),
-	}, nil
-}
-
 func convertExplain(converter *expressionConverter, v *ast.ExplainStmt) (*stmts.ExplainStmt, error) {
 	oldExplain := &stmts.ExplainStmt{
 		Text: v.Text(),
