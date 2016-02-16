@@ -538,3 +538,24 @@ func (s *GrantStmt) getTargetSchemaAndTable(ctx context.Context) (*model.DBInfo,
 	}
 	return db, tbl, nil
 }
+
+func userExists(ctx context.Context, name string, host string) (bool, error) {
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, name, host)
+	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer rs.Close()
+	row, err := rs.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return row != nil, nil
+}
+
+// parse user string into username and host
+// root@localhost -> roor, localhost
+func parseUser(user string) (string, string) {
+	strs := strings.Split(user, "@")
+	return strs[0], strs[1]
+}

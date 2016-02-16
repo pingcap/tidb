@@ -36,8 +36,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertCreateIndex(c, v)
 	case *ast.CreateTableStmt:
 		return convertCreateTable(c, v)
-	case *ast.CreateUserStmt:
-		return convertCreateUser(c, v)
 	case *ast.DeleteStmt:
 		return convertDelete(c, v)
 	case *ast.DropDatabaseStmt:
@@ -54,8 +52,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertInsert(c, v)
 	case *ast.SelectStmt:
 		return convertSelect(c, v)
-	case *ast.SetPwdStmt:
-		return convertSetPwd(c, v)
 	case *ast.ShowStmt:
 		return convertShow(c, v)
 	case *ast.TruncateTableStmt:

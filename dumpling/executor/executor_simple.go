@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -68,6 +70,10 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeCommit(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
+	case *ast.CreateUserStmt:
+		err = e.executeCreateUser(x)
+	case *ast.SetPwdStmt:
+		err = e.executeSetPwd(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -205,5 +211,69 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	err := e.ctx.FinishTxn(true)
 	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
+	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
+	users := make([]string, 0, len(s.Specs))
+	for _, spec := range s.Specs {
+		userName, host := parseUser(spec.User)
+		exists, err1 := userExists(e.ctx, userName, host)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if exists {
+			if !s.IfNotExists {
+				return errors.New("Duplicate user")
+			}
+			continue
+		}
+		pwd := ""
+		if spec.AuthOpt.ByAuthString {
+			pwd = util.EncodePassword(spec.AuthOpt.AuthString)
+		} else {
+			pwd = util.EncodePassword(spec.AuthOpt.HashString)
+		}
+		user := fmt.Sprintf(`("%s", "%s", "%s")`, host, userName, pwd)
+		users = append(users, user)
+	}
+	if len(users) == 0 {
+		return nil
+	}
+	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
+	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// parse user string into username and host
+// root@localhost -> roor, localhost
+func parseUser(user string) (string, string) {
+	strs := strings.Split(user, "@")
+	return strs[0], strs[1]
+}
+
+func userExists(ctx context.Context, name string, host string) (bool, error) {
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, name, host)
+	rs, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer rs.Close()
+	row, err := rs.Next()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return row != nil, nil
+}
+
+func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
+	// TODO: If len(s.User) == 0, use CURRENT_USER()
+	userName, host := parseUser(s.User)
+	// Update mysql.user
+	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, util.EncodePassword(s.Password), userName, host)
+	_, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	return errors.Trace(err)
 }
