@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
@@ -78,6 +79,13 @@ func decodeValue(data []byte, cols []*model.ColumnInfo) ([]interface{}, error) {
 		}
 	}
 	return rvalues, nil
+}
+
+// dumpValue is used for debugging purposes only.
+func dumpValue(funcName string, vals []interface{}) {
+	for _, val := range vals {
+		log.Debugf("[%s] %T: %v", funcName, val, val)
+	}
 }
 
 // findCol finds column in cols by name.
