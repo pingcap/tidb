@@ -62,12 +62,8 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertRollback(c, v)
 	case *ast.SelectStmt:
 		return convertSelect(c, v)
-	case *ast.SetCharsetStmt:
-		return convertSetCharset(c, v)
 	case *ast.SetPwdStmt:
 		return convertSetPwd(c, v)
-	case *ast.SetStmt:
-		return convertSet(c, v)
 	case *ast.ShowStmt:
 		return convertShow(c, v)
 	case *ast.TruncateTableStmt:
@@ -76,8 +72,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertUnion(c, v)
 	case *ast.UpdateStmt:
 		return convertUpdate(c, v)
-	case *ast.UseStmt:
-		return convertUse(c, v)
 	}
 	return nil, nil
 }

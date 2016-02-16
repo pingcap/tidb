@@ -88,6 +88,7 @@ func IsSupported(node ast.Node) bool {
 	switch node.(type) {
 	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
 		*ast.AdminStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.UnionStmt:
+	case *ast.UseStmt, *ast.SetStmt, *ast.SetCharsetStmt:
 	default:
 		return false
 	}
