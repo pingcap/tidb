@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
@@ -33,6 +34,7 @@ import (
 // SimpleExec represents simple statement executor.
 // For statements do simple execution.
 // includes `UseStmt`, 'SetStmt`, `SetCharsetStmt`.
+// `DoStmt`, `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
 	Statement ast.StmtNode
@@ -58,6 +60,14 @@ func (e *SimpleExec) Next() (*Row, error) {
 		err = e.executeSet(x)
 	case *ast.SetCharsetStmt:
 		err = e.executeSetCharset(x)
+	case *ast.DoStmt:
+		err = e.executeDo(x)
+	case *ast.BeginStmt:
+		err = e.executeBegin(x)
+	case *ast.CommitStmt:
+		err = e.executeCommit(x)
+	case *ast.RollbackStmt:
+		err = e.executeRollback(x)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -162,4 +172,38 @@ func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
 	}
 	sessionVars.Systems[variable.CollationConnection] = collation
 	return nil
+}
+
+func (e *SimpleExec) executeDo(s *ast.DoStmt) error {
+	for _, expr := range s.Exprs {
+		_, err := evaluator.Eval(e.ctx, expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
+	_, err := e.ctx.GetTxn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// With START TRANSACTION, autocommit remains disabled until you end
+	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+	// reverts to its previous state.
+	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, true)
+	return nil
+}
+
+func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
+	err := e.ctx.FinishTxn(false)
+	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
+	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
+	err := e.ctx.FinishTxn(true)
+	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
+	return errors.Trace(err)
 }

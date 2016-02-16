@@ -16,6 +16,7 @@ package executor_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -97,4 +98,26 @@ func (s *testSuite) TestSetCharset(c *C) {
 		c.Assert(sessionVars.Systems[v], Equals, "utf8")
 	}
 	c.Assert(sessionVars.Systems[variable.CollationConnection], Equals, "utf8_general_ci")
+}
+
+func (s *testSuite) TestDo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("do 1, 2")
+}
+
+func (s *testSuite) TestTransaction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("begin")
+	ctx := tk.Se.(context.Context)
+	c.Assert(inTxn(ctx), IsTrue)
+	tk.MustExec("commit")
+	c.Assert(inTxn(ctx), IsFalse)
+	tk.MustExec("begin")
+	c.Assert(inTxn(ctx), IsTrue)
+	tk.MustExec("rollback")
+	c.Assert(inTxn(ctx), IsFalse)
+}
+
+func inTxn(ctx context.Context) bool {
+	return (variable.GetSessionVars(ctx).Status & mysql.ServerStatusInTrans) > 0
 }

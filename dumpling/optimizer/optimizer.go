@@ -89,6 +89,8 @@ func IsSupported(node ast.Node) bool {
 	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
 		*ast.AdminStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.UnionStmt:
 	case *ast.UseStmt, *ast.SetStmt, *ast.SetCharsetStmt:
+	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt:
+	case *ast.DoStmt:
 	default:
 		return false
 	}
