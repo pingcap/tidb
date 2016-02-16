@@ -35,7 +35,8 @@ type InsertValues struct {
 
 // Simulate the behavior of an INSERT statement.
 func (ps *perfSchema) ExecInsert(insertVals *InsertValues) error {
-	t := ps.getTable(insertVals.TableIdent)
+	name := strings.ToUpper(insertVals.TableIdent.Name.O)
+	t := ps.getTable(name)
 	if t == nil {
 		return errors.Errorf("INSERT INTO %s: operation not permitted", insertVals.TableIdent)
 	}
@@ -50,16 +51,15 @@ func (ps *perfSchema) ExecInsert(insertVals *InsertValues) error {
 		return errors.Trace(err)
 	}
 
-	return ps.addRecords(insertVals.TableIdent, rows)
+	return ps.addRecords(name, rows)
 }
 
-func (ps *perfSchema) addRecords(tableIdent table.Ident, rows [][]interface{}) error {
+func (ps *perfSchema) addRecords(tbName string, rows [][]interface{}) error {
 	var store *leveldb.DB
 	var lastLsn uint64
 
 	// Same as MySQL, we only support INSERT operations for setup_actors & setup_objects.
-	name := strings.ToUpper(tableIdent.Name.O)
-	switch name {
+	switch tbName {
 	case TableSetupActors:
 		store = ps.stores[TableSetupActors]
 		lastLsn = atomic.AddUint64(ps.lsns[TableSetupActors], uint64(len(rows)))
@@ -67,7 +67,7 @@ func (ps *perfSchema) addRecords(tableIdent table.Ident, rows [][]interface{}) e
 		store = ps.stores[TableSetupObjects]
 		lastLsn = atomic.AddUint64(ps.lsns[TableSetupObjects], uint64(len(rows)))
 	default:
-		return errors.Errorf("INSERT INTO %s: operation not permitted", tableIdent)
+		return errors.Errorf("INSERT INTO %s.%s: operation not permitted", Name, tbName)
 	}
 
 	batch := pool.Get().(*leveldb.Batch)
@@ -241,9 +241,7 @@ func (ps *perfSchema) getRows(insertVals *InsertValues, t *model.TableInfo, cols
 	return
 }
 
-func (ps *perfSchema) getTable(tableIdent table.Ident) *model.TableInfo {
-	tbName := strings.ToUpper(tableIdent.Name.O)
-
+func (ps *perfSchema) getTable(tbName string) *model.TableInfo {
 	// Same as MySQL, we only support INSERT operations for setup_actors & setup_objects.
 	switch tbName {
 	case TableSetupActors:
