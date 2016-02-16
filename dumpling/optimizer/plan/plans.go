@@ -617,3 +617,20 @@ func (p *Insert) Accept(v Visitor) (Plan, bool) {
 	}
 	return v.Leave(p)
 }
+
+// DDL represents a DDL statement plan.
+type DDL struct {
+	basePlan
+
+	Statement ast.DDLNode
+}
+
+// Accept implements Plan Accept interface.
+func (p *DDL) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*DDL)
+	return v.Leave(p)
+}

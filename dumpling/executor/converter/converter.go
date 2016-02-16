@@ -52,8 +52,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertSelect(c, v)
 	case *ast.ShowStmt:
 		return convertShow(c, v)
-	case *ast.TruncateTableStmt:
-		return convertTruncateTable(c, v)
 	case *ast.UnionStmt:
 		return convertUnion(c, v)
 	case *ast.UpdateStmt:
