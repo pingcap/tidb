@@ -30,22 +30,14 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		return convertAlterTable(c, v)
-	case *ast.BeginStmt:
-		return convertBegin(c, v)
-	case *ast.CommitStmt:
-		return convertCommit(c, v)
 	case *ast.CreateDatabaseStmt:
 		return convertCreateDatabase(c, v)
 	case *ast.CreateIndexStmt:
 		return convertCreateIndex(c, v)
 	case *ast.CreateTableStmt:
 		return convertCreateTable(c, v)
-	case *ast.CreateUserStmt:
-		return convertCreateUser(c, v)
 	case *ast.DeleteStmt:
 		return convertDelete(c, v)
-	case *ast.DoStmt:
-		return convertDo(c, v)
 	case *ast.DropDatabaseStmt:
 		return convertDropDatabase(c, v)
 	case *ast.DropIndexStmt:
@@ -58,12 +50,8 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertGrant(c, v)
 	case *ast.InsertStmt:
 		return convertInsert(c, v)
-	case *ast.RollbackStmt:
-		return convertRollback(c, v)
 	case *ast.SelectStmt:
 		return convertSelect(c, v)
-	case *ast.SetPwdStmt:
-		return convertSetPwd(c, v)
 	case *ast.ShowStmt:
 		return convertShow(c, v)
 	case *ast.TruncateTableStmt:
