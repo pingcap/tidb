@@ -459,7 +459,8 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	mustExecSQL(c, se, "drop table if exists t1, t2")
 	mustExecSQL(c, se, `
 			create table t1 (c1 int, primary key(c1));
-			create table t2 (c2 int, primary key(c2));
+			create table t2 (c2 int, primary key(c2));`)
+	mustExecSQL(c, se, `
 			insert into t1 values (1), (2);
 			insert into t2 values (2);`)
 
@@ -593,7 +594,8 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	mustExecSQL(c, se, `
 		create table t1 (c1 int);
 		create table t2 (c2 int);
-		create table t3 (c3 int);
+		create table t3 (c3 int);`)
+	mustExecSQL(c, se, `
 		insert into t1 values (1), (2);
 		insert into t2 values (2);
 		insert into t3 values (3);`)
@@ -1285,8 +1287,10 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 	mustExecSQL(c, se, "drop table if exists t2")
 	mustExecSQL(c, se, "drop table if exists t3")
 	mustExecSQL(c, se, "create table t1(id int primary key auto_increment, c int);")
-	mustExecSQL(c, se, "create table t2(c int); insert into t2 values (1);")
-	mustExecSQL(c, se, "create table t3(id int, c int); insert into t3 values (2,2);")
+	mustExecSQL(c, se, "create table t2(c int);")
+	mustExecSQL(c, se, "insert into t2 values (1);")
+	mustExecSQL(c, se, "create table t3(id int, c int);")
+	mustExecSQL(c, se, "insert into t3 values (2,2);")
 	mustExecSQL(c, se, "insert into t1(c) select * from t2; insert into t1 select * from t3;")
 	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1, 1}, {2, 2}})
 }

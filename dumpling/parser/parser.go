@@ -6769,7 +6769,7 @@ yynewstate:
 	case 328:
 		{
 			x := yyS[yypt-0].item.(*ast.InsertStmt)
-			x.Replace = true
+			x.IsReplace = true
 			x.Priority = yyS[yypt-3].item.(int)
 			ts := &ast.TableSource{Source: yyS[yypt-1].item.(*ast.TableName)}
 			x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
@@ -7025,7 +7025,7 @@ yynewstate:
 	case 394:
 		{
 			// TODO: support qualified identifier for column_name
-			yyVAL.item = &ast.ValuesExpr{Column: yyS[yypt-1].item.(*ast.ColumnName)}
+			yyVAL.item = &ast.ValuesExpr{Column: &ast.ColumnNameExpr{Name: yyS[yypt-1].item.(*ast.ColumnName)}}
 		}
 	case 395:
 		{

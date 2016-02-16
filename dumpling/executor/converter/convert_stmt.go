@@ -78,7 +78,7 @@ func convertInsert(converter *expressionConverter, v *ast.InsertStmt) (stmt.Stat
 			return nil, errors.Trace(err)
 		}
 	}
-	if v.Replace {
+	if v.IsReplace {
 		return &stmts.ReplaceIntoStmt{
 			InsertValues: insertValues,
 			Text:         v.Text(),

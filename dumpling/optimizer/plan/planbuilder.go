@@ -63,6 +63,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildDelete(x)
 	case *ast.ExecuteStmt:
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+	case *ast.InsertStmt:
+		return b.buildInsert(x)
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
@@ -799,4 +801,23 @@ func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, e
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 	return &Simple{Statement: node}
+}
+
+func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
+	insertPlan := &Insert{
+		Table:       insert.Table,
+		Columns:     insert.Columns,
+		Lists:       insert.Lists,
+		Setlist:     insert.Setlist,
+		OnDuplicate: insert.OnDuplicate,
+		IsReplace:   insert.IsReplace,
+		Priority:    insert.Priority,
+	}
+	if insert.Select != nil {
+		insertPlan.SelectPlan = b.build(insert.Select)
+		if b.err != nil {
+			return nil
+		}
+	}
+	return insertPlan
 }
