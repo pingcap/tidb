@@ -32,7 +32,6 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	defer d.close()
 
 	job := &model.Job{
-		ID:       1,
 		SchemaID: 1,
 		Type:     model.ActionDropSchema,
 		Args: []interface{}{&model.DBInfo{
@@ -69,7 +68,6 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	testCreateSchema(c, mock.NewContext(), d, dbInfo)
 
 	job := &model.Job{
-		ID:       1,
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropTable,
 		Args: []interface{}{&model.TableInfo{
