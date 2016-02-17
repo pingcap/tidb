@@ -32,10 +32,12 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
 
@@ -345,11 +347,12 @@ func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *coldef.TableC
 	}
 }
 
-func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraints []*coldef.TableConstraint) ([]*column.Col, []*coldef.TableConstraint, error) {
+func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*coldef.ColumnDef,
+	constraints []*coldef.TableConstraint) ([]*column.Col, []*coldef.TableConstraint, error) {
 	var cols []*column.Col
 	colMap := map[string]*column.Col{}
 	for i, colDef := range colDefs {
-		col, cts, err := d.buildColumnAndConstraint(i, colDef)
+		col, cts, err := d.buildColumnAndConstraint(ctx, i, colDef)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -365,7 +368,8 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 	return cols, constraints, nil
 }
 
-func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
+func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
+	colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
 	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
@@ -377,7 +381,7 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 		}
 	}
 
-	col, cts, err := coldef.ColumnDefToCol(offset, colDef)
+	col, cts, err := columnDefToCol(ctx, offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -388,6 +392,192 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 	}
 
 	return col, cts, nil
+}
+
+// columnDefToCol converts ColumnDef to Col and TableConstraints.
+func columnDefToCol(ctx context.Context, offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
+	constraints := []*coldef.TableConstraint{}
+	col := &column.Col{
+		ColumnInfo: model.ColumnInfo{
+			Offset:    offset,
+			Name:      model.NewCIStr(colDef.Name),
+			FieldType: *colDef.Tp,
+		},
+	}
+
+	// Check and set TimestampFlag and OnUpdateNowFlag.
+	if col.Tp == mysql.TypeTimestamp {
+		col.Flag |= mysql.TimestampFlag
+		col.Flag |= mysql.OnUpdateNowFlag
+		col.Flag |= mysql.NotNullFlag
+	}
+
+	// If flen is not assigned, assigned it by type.
+	if col.Flen == types.UnspecifiedLength {
+		col.Flen = mysql.GetDefaultFieldLength(col.Tp)
+	}
+	if col.Decimal == types.UnspecifiedLength {
+		col.Decimal = mysql.GetDefaultDecimal(col.Tp)
+	}
+
+	setOnUpdateNow := false
+	hasDefaultValue := false
+	if colDef.Constraints != nil {
+		keys := []*coldef.IndexColName{
+			{
+				colDef.Name,
+				colDef.Tp.Flen,
+			},
+		}
+		for _, v := range colDef.Constraints {
+			switch v.Tp {
+			case coldef.ConstrNotNull:
+				col.Flag |= mysql.NotNullFlag
+			case coldef.ConstrNull:
+				col.Flag &= ^uint(mysql.NotNullFlag)
+				removeOnUpdateNowFlag(col)
+			case coldef.ConstrAutoIncrement:
+				col.Flag |= mysql.AutoIncrementFlag
+			case coldef.ConstrPrimaryKey:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrPrimaryKey, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.PriKeyFlag
+			case coldef.ConstrUniq:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrUniq, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.UniqueKeyFlag
+			case coldef.ConstrIndex:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrIndex, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+			case coldef.ConstrUniqIndex:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrUniqIndex, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.UniqueKeyFlag
+			case coldef.ConstrKey:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrKey, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+			case coldef.ConstrUniqKey:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrUniqKey, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.UniqueKeyFlag
+			case coldef.ConstrDefaultValue:
+				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				if err != nil {
+					return nil, nil, errors.Errorf("invalid default value - %s", errors.Trace(err))
+				}
+				col.DefaultValue = value
+				hasDefaultValue = true
+				removeOnUpdateNowFlag(col)
+			case coldef.ConstrOnUpdate:
+				if !evaluator.IsCurrentTimeExpr(v.Evalue) {
+					return nil, nil, errors.Errorf("invalid ON UPDATE for - %s", col.Name)
+				}
+
+				col.Flag |= mysql.OnUpdateNowFlag
+				setOnUpdateNow = true
+			case coldef.ConstrFulltext:
+			// Do nothing.
+			case coldef.ConstrComment:
+				// Do nothing.
+			}
+		}
+	}
+
+	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+
+	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
+	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	setNoDefaultValueFlag(col, hasDefaultValue)
+
+	err := checkDefaultValue(col, hasDefaultValue)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if col.Charset == charset.CharsetBin {
+		col.Flag |= mysql.BinaryFlag
+	}
+	return col, constraints, nil
+}
+
+func getDefaultValue(ctx context.Context, c *coldef.ConstraintOpt, tp byte, fsp int) (interface{}, error) {
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		value, err := evaluator.GetTimeValue(ctx, c.Evalue, tp, fsp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// Value is nil means `default null`.
+		if value == nil {
+			return nil, nil
+		}
+
+		// If value is mysql.Time, convert it to string.
+		if vv, ok := value.(mysql.Time); ok {
+			return vv.String(), nil
+		}
+
+		return value, nil
+	}
+	v, err := evaluator.Eval(ctx, c.Evalue)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return types.RawData(v), nil
+}
+
+func removeOnUpdateNowFlag(c *column.Col) {
+	// For timestamp Col, if it is set null or default value,
+	// OnUpdateNowFlag should be removed.
+	if mysql.HasTimestampFlag(c.Flag) {
+		c.Flag &= ^uint(mysql.OnUpdateNowFlag)
+	}
+}
+
+func setTimestampDefaultValue(c *column.Col, hasDefaultValue bool, setOnUpdateNow bool) {
+	if hasDefaultValue {
+		return
+	}
+
+	// For timestamp Col, if is not set default value or not set null, use current timestamp.
+	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
+		if setOnUpdateNow {
+			c.DefaultValue = evaluator.ZeroTimestamp
+		} else {
+			c.DefaultValue = evaluator.CurrentTimestamp
+		}
+	}
+}
+
+func setNoDefaultValueFlag(c *column.Col, hasDefaultValue bool) {
+	if hasDefaultValue {
+		return
+	}
+
+	if !mysql.HasNotNullFlag(c.Flag) {
+		return
+	}
+
+	// Check if it is an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	if !mysql.HasAutoIncrementFlag(c.Flag) && !mysql.HasTimestampFlag(c.Flag) {
+		c.Flag |= mysql.NoDefaultValueFlag
+	}
+}
+
+func checkDefaultValue(c *column.Col, hasDefaultValue bool) error {
+	if !hasDefaultValue {
+		return nil
+	}
+
+	if c.DefaultValue != nil {
+		return nil
+	}
+
+	// Set not null but default null is invalid.
+	if mysql.HasNotNullFlag(c.Flag) {
+		return errors.Errorf("invalid default value for %s", c.Name)
+	}
+
+	return nil
 }
 
 func checkDuplicateColumn(colDefs []*coldef.ColumnDef) error {
@@ -511,7 +701,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 		return errors.Trace(err)
 	}
 
-	cols, newConstraints, err := d.buildColumnsAndConstraints(colDefs, constraints)
+	cols, newConstraints, err := d.buildColumnsAndConstraints(ctx, colDefs, constraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -614,7 +804,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 	// ingore table constraints now, maybe return error later
 	// we use length(t.Cols()) as the default offset first, later we will change the
 	// column's offset later.
-	col, _, err = d.buildColumnAndConstraint(len(t.Cols()), spec.Column)
+	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -486,13 +486,7 @@ func convertColumnOption(converter *expressionConverter, v *ast.ColumnOption) (*
 	case ast.ColumnOptionUniqKey:
 		oldColumnOpt.Tp = coldef.ConstrUniqKey
 	}
-	if v.Expr != nil {
-		oldExpr, err := convertExpr(converter, v.Expr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		oldColumnOpt.Evalue = oldExpr
-	}
+	oldColumnOpt.Evalue = v.Expr
 	return oldColumnOpt, nil
 }
 

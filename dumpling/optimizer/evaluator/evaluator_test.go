@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/types"
@@ -1090,4 +1091,94 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 	v, ok := result.(mysql.Decimal)
 	c.Assert(ok, IsTrue)
 	c.Assert(v.Equals(expect), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
+	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	c.Assert(err, IsNil)
+
+	timeValue, ok := v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	sessionVars := variable.GetSessionVars(ctx)
+
+	sessionVars.Systems["timestamp"] = ""
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	c.Assert(err, IsNil)
+
+	timeValue, ok = v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+
+	sessionVars.Systems["timestamp"] = "0"
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	c.Assert(err, IsNil)
+
+	timeValue, ok = v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+
+	delete(sessionVars.Systems, "timestamp")
+	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
+	c.Assert(err, IsNil)
+
+	timeValue, ok = v.(mysql.Time)
+	c.Assert(ok, IsTrue)
+	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
+
+	sessionVars.Systems["timestamp"] = "1234"
+
+	tbl := []struct {
+		Expr interface{}
+		Ret  interface{}
+	}{
+		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
+		{CurrentTimestamp, time.Unix(1234, 0).Format(mysql.TimeFormat)},
+		{ZeroTimestamp, "0000-00-00 00:00:00"},
+		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
+		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},
+		{ast.NewValueExpr(nil), nil},
+		{&ast.FuncCallExpr{FnName: model.NewCIStr(CurrentTimestamp)}, CurrentTimestamp},
+		{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
+	}
+
+	for i, t := range tbl {
+		comment := Commentf("expr: %d", i)
+		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, mysql.MinFsp)
+		c.Assert(err, IsNil)
+
+		switch x := v.(type) {
+		case mysql.Time:
+			c.Assert(x.String(), DeepEquals, t.Ret, comment)
+		default:
+			c.Assert(x, DeepEquals, t.Ret, comment)
+		}
+	}
+
+	errTbl := []struct {
+		Expr interface{}
+	}{
+		{"2012-13-12 00:00:00"},
+		{ast.NewValueExpr("2012-13-12 00:00:00")},
+		{ast.NewValueExpr(0)},
+		{ast.NewValueExpr(int64(1))},
+		{&ast.FuncCallExpr{FnName: model.NewCIStr("xxx")}},
+		{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
+	}
+
+	for _, t := range errTbl {
+		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, mysql.MinFsp)
+		c.Assert(err, NotNil)
+	}
+}
+
+func (s *testEvaluatorSuite) TestIsCurrentTimeExpr(c *C) {
+	v := IsCurrentTimeExpr(ast.NewValueExpr("abc"))
+	c.Assert(v, IsFalse)
+
+	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
+	c.Assert(v, IsTrue)
 }

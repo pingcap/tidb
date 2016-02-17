@@ -34,8 +34,9 @@ func (f *mockFormatter) Format(format string, args ...interface{}) (n int, errno
 }
 
 func (s *testStmtSuite) TestGetColDefaultValue(c *C) {
-	testSQL := `drop table if exists helper_test;
-    create table helper_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int not null, c2 timestamp, c3 int default 1);`
+	testSQL := `drop table if exists helper_test;`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `create table helper_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int not null, c2 timestamp, c3 int default 1);`
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = " insert helper_test (c1) values (1);"
@@ -47,15 +48,17 @@ func (s *testStmtSuite) TestGetColDefaultValue(c *C) {
 	c.Assert(err, NotNil)
 	tx.Rollback()
 
-	testSQL = `drop table if exists helper_test;
-    create table helper_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 datetime, c3 int default 1);`
+	testSQL = `drop table if exists helper_test;`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `create table helper_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 datetime, c3 int default 1);`
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = " insert helper_test (c1) values (1);"
 	mustExec(c, s.testDB, testSQL)
 
-	testSQL = `drop table if exists helper_test;
-    create table helper_test (c1 enum("a"), c2 enum("b", "e") not null, c3 enum("c") default "c", c4 enum("d") default "d" not null);`
+	testSQL = `drop table if exists helper_test;`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `create table helper_test (c1 enum("a"), c2 enum("b", "e") not null, c3 enum("c") default "c", c4 enum("d") default "d" not null);`
 	mustExec(c, s.testDB, testSQL)
 
 	testSQL = "insert into helper_test values();"
