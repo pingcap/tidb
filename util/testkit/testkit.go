@@ -37,6 +37,18 @@ type Result struct {
 	c       *check.C
 }
 
+// Check asserts the result equals the expected results.
+func (res *Result) Check(expected [][]interface{}) {
+	got := fmt.Sprintf("%v", res.rows)
+	need := fmt.Sprintf("%v", expected)
+	res.c.Assert(got, check.Equals, need, res.comment)
+}
+
+// Rows returns the result data.
+func (res *Result) Rows() [][]interface{} {
+	return res.rows
+}
+
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	return &TestKit{
@@ -91,13 +103,6 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rows, err := rs.Rows(-1, 0)
 	tk.c.Assert(err, check.IsNil, comment)
 	return &Result{rows: rows, c: tk.c, comment: comment}
-}
-
-// Check asserts the result equals the expected results.
-func (res *Result) Check(expected [][]interface{}) {
-	got := fmt.Sprintf("%v", res.rows)
-	need := fmt.Sprintf("%v", expected)
-	res.c.Assert(got, check.Equals, need, res.comment)
 }
 
 // Rows is a convenient function to wrap args to a slice of []interface.

@@ -334,6 +334,10 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 }
 
 func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
+	switch s := v.Statement.(type) {
+	case *ast.GrantStmt:
+		return b.buildGrant(s)
+	}
 	return &SimpleExec{Statement: v.Statement, ctx: b.ctx}
 }
 
@@ -381,5 +385,15 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	return &ReplaceExec{
 		InsertValues: vals,
+	}
+}
+
+func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
+	return &GrantExec{
+		ctx:        b.ctx,
+		Privs:      grant.Privs,
+		ObjectType: grant.ObjectType,
+		Level:      grant.Level,
+		Users:      grant.Users,
 	}
 }
