@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
@@ -23,8 +21,7 @@ import (
 )
 
 var (
-	ddlPrefix            = "ddl"
-	ddlServerID          = "ddl_server_id"
+	serverID             = "server_id"
 	ddlSchemaVersion     = "ddl_schema_version"
 	ddlOwnerID           = "ddl_owner_id"
 	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
@@ -39,6 +36,20 @@ var (
 	ddlJobSnapshotVer    = "ddl_job_snapshot_ver"
 	ddlJobReorgHandle    = "ddl_job_reorg_handle"
 	ddlJobArgs           = "ddl_job_args"
+	bgSchemaVersion      = "bg_schema_version"
+	bgOwnerID            = "bg_owner_id"
+	bgOwnerLastUpdateTS  = "bg_owner_last_update_ts"
+	bgJobID              = "bg_job_id"
+	bgJobAction          = "bg_job_action"
+	bgJobLastUpdateTS    = "bg_job_last_update_ts"
+	bgJobState           = "bg_job_state"
+	bgJobError           = "bg_job_error"
+	bgJobSchemaState     = "bg_job_schema_state"
+	bgJobSchemaID        = "bg_job_schema_id"
+	bgJobTableID         = "bg_job_table_id"
+	bgJobSnapshotVer     = "bg_job_snapshot_ver"
+	bgJobReorgHandle     = "bg_job_reorg_handle"
+	bgJobArgs            = "bg_job_args"
 )
 
 // GetScope gets the status variables scope.
@@ -47,70 +58,65 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 	return variable.DefaultScopeFlag
 }
 
-func buildPrefix(str, old, new string) string {
-	return strings.Replace(str, old, new, 1)
-}
+// Stat returns the DDL statistics.
+func (d *ddl) Stats() (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	m[serverID] = d.uuid
+	var ddlInfo, bgInfo *inspectkv.DDLInfo
 
-func stats(store kv.Storage, m map[string]interface{}, flag JobType) error {
-	var prefix string
-	var info *inspectkv.DDLInfo
-
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		var err1 error
-		switch flag {
-		case ddlJobFlag:
-			info, err1 = inspectkv.GetDDLInfo(txn)
-			prefix = flag.String()
-		case bgJobFlag:
-			info, err1 = inspectkv.GetDDLBgInfo(txn)
-			prefix = flag.String()
-		default:
-			err1 = errInvalidJobFlag
+		ddlInfo, err1 = inspectkv.GetDDLInfo(txn)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
+		bgInfo, err1 = inspectkv.GetDDLBgInfo(txn)
 
 		return errors.Trace(err1)
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	m[buildPrefix(ddlSchemaVersion, ddlPrefix, prefix)] = info.SchemaVer
-
-	if info.Owner != nil {
-		m[buildPrefix(ddlOwnerID, ddlPrefix, prefix)] = info.Owner.OwnerID
+	m[ddlSchemaVersion] = ddlInfo.SchemaVer
+	if ddlInfo.Owner != nil {
+		m[ddlOwnerID] = ddlInfo.Owner.OwnerID
 		// LastUpdateTS uses nanosecond.
-		m[buildPrefix(ddlOwnerLastUpdateTS, ddlPrefix, prefix)] = info.Owner.LastUpdateTS / 1e9
+		m[ddlOwnerLastUpdateTS] = ddlInfo.Owner.LastUpdateTS / 1e9
+	}
+	if ddlInfo.Job != nil {
+		m[ddlJobID] = ddlInfo.Job.ID
+		m[ddlJobAction] = ddlInfo.Job.Type.String()
+		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
+		m[ddlJobState] = ddlInfo.Job.State.String()
+		m[ddlJobError] = ddlInfo.Job.Error
+		m[ddlJobSchemaState] = ddlInfo.Job.SchemaState.String()
+		m[ddlJobSchemaID] = ddlInfo.Job.SchemaID
+		m[ddlJobTableID] = ddlInfo.Job.TableID
+		m[ddlJobSnapshotVer] = ddlInfo.Job.SnapshotVer
+		m[ddlJobReorgHandle] = ddlInfo.ReorgHandle
+		m[ddlJobArgs] = ddlInfo.Job.Args
 	}
 
-	if info.Job == nil {
-		return nil
+	// background DDL info
+	m[bgSchemaVersion] = bgInfo.SchemaVer
+	if bgInfo.Owner != nil {
+		m[bgOwnerID] = bgInfo.Owner.OwnerID
+		// LastUpdateTS uses nanosecond.
+		m[bgOwnerLastUpdateTS] = bgInfo.Owner.LastUpdateTS / 1e9
 	}
-
-	m[buildPrefix(ddlJobID, ddlPrefix, prefix)] = info.Job.ID
-	m[buildPrefix(ddlJobAction, ddlPrefix, prefix)] = info.Job.Type.String()
-	m[buildPrefix(ddlJobLastUpdateTS, ddlPrefix, prefix)] = info.Job.LastUpdateTS / 1e9
-	m[buildPrefix(ddlJobState, ddlPrefix, prefix)] = info.Job.State.String()
-	m[buildPrefix(ddlJobError, ddlPrefix, prefix)] = info.Job.Error
-	m[buildPrefix(ddlJobSchemaState, ddlPrefix, prefix)] = info.Job.SchemaState.String()
-	m[buildPrefix(ddlJobSchemaID, ddlPrefix, prefix)] = info.Job.SchemaID
-	m[buildPrefix(ddlJobTableID, ddlPrefix, prefix)] = info.Job.TableID
-	m[buildPrefix(ddlJobSnapshotVer, ddlPrefix, prefix)] = info.Job.SnapshotVer
-	m[buildPrefix(ddlJobReorgHandle, ddlPrefix, prefix)] = info.ReorgHandle
-	m[buildPrefix(ddlJobArgs, ddlPrefix, prefix)] = info.Job.Args
-
-	return nil
-}
-
-// Stat returns the DDL statistics.
-func (d *ddl) Stats() (map[string]interface{}, error) {
-	m := make(map[string]interface{})
-	m[ddlServerID] = d.uuid
-
-	if err := stats(d.store, m, ddlJobFlag); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := stats(d.store, m, bgJobFlag); err != nil {
-		return nil, errors.Trace(err)
+	if bgInfo.Job != nil {
+		m[bgJobID] = bgInfo.Job.ID
+		m[bgJobAction] = bgInfo.Job.Type.String()
+		m[bgJobLastUpdateTS] = bgInfo.Job.LastUpdateTS / 1e9
+		m[bgJobState] = bgInfo.Job.State.String()
+		m[bgJobError] = bgInfo.Job.Error
+		m[bgJobSchemaState] = bgInfo.Job.SchemaState.String()
+		m[bgJobSchemaID] = bgInfo.Job.SchemaID
+		m[bgJobTableID] = bgInfo.Job.TableID
+		m[bgJobSnapshotVer] = bgInfo.Job.SnapshotVer
+		m[bgJobReorgHandle] = bgInfo.ReorgHandle
+		m[bgJobArgs] = bgInfo.Job.Args
 	}
 
 	return m, nil
