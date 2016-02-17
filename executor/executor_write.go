@@ -359,20 +359,25 @@ func (e *DeleteExec) Close() error {
 	return e.SelectExec.Close()
 }
 
-// InsertExec represents an insert executor.
-type InsertExec struct {
+// InsertValues is the data to insert.
+type InsertValues struct {
 	ctx        context.Context
 	SelectExec Executor
 
-	Table       table.Table
-	Columns     []*ast.ColumnName
-	Lists       [][]ast.ExprNode
-	Setlist     []*ast.Assignment
+	Table   table.Table
+	Columns []*ast.ColumnName
+	Lists   [][]ast.ExprNode
+	Setlist []*ast.Assignment
+}
+
+// InsertExec represents an insert executor.
+type InsertExec struct {
+	*InsertValues
+
 	OnDuplicate []*ast.Assignment
 	fields      []*ast.ResultField
 
-	IsReplace bool
-	Priority  int
+	Priority int
 
 	finished bool
 }
@@ -445,7 +450,7 @@ func (e *InsertExec) Close() error {
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
-func (e *InsertExec) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
+func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
 	var cols []*column.Col
 	var err error
 
@@ -490,7 +495,7 @@ func (e *InsertExec) getColumns(tableCols []*column.Col) ([]*column.Col, error) 
 	return cols, nil
 }
 
-func (e *InsertExec) fillValueList() error {
+func (e *InsertValues) fillValueList() error {
 	if len(e.Setlist) > 0 {
 		if len(e.Lists) > 0 {
 			return errors.Errorf("INSERT INTO %s: set type should not use values", e.Table)
@@ -504,7 +509,7 @@ func (e *InsertExec) fillValueList() error {
 	return nil
 }
 
-func (e *InsertExec) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
+func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
@@ -522,7 +527,7 @@ func (e *InsertExec) checkValueCount(insertValueCount, valueCount, num int, cols
 	return nil
 }
 
-func (e *InsertExec) getColumnDefaultValues(cols []*column.Col) (map[string]interface{}, error) {
+func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]interface{}, error) {
 	defaultValMap := map[string]interface{}{}
 	for _, col := range cols {
 		if value, ok, err := tables.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
@@ -535,7 +540,7 @@ func (e *InsertExec) getColumnDefaultValues(cols []*column.Col) (map[string]inte
 	return defaultValMap, nil
 }
 
-func (e *InsertExec) getRows(cols []*column.Col) (rows [][]interface{}, err error) {
+func (e *InsertValues) getRows(cols []*column.Col) (rows [][]interface{}, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
@@ -559,7 +564,7 @@ func (e *InsertExec) getRows(cols []*column.Col) (rows [][]interface{}, err erro
 	return
 }
 
-func (e *InsertExec) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals map[string]interface{}) ([]interface{}, error) {
+func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals map[string]interface{}) ([]interface{}, error) {
 	vals := make([]interface{}, len(list))
 	var err error
 	for i, expr := range list {
@@ -584,7 +589,7 @@ func (e *InsertExec) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals
 	return e.fillRowData(cols, vals)
 }
 
-func (e *InsertExec) getRowsSelect(cols []*column.Col) ([][]interface{}, error) {
+func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]interface{}, error) {
 	// process `insert|replace into ... select ... from ...`
 	if len(e.SelectExec.Fields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
@@ -607,7 +612,7 @@ func (e *InsertExec) getRowsSelect(cols []*column.Col) ([][]interface{}, error) 
 	return rows, nil
 }
 
-func (e *InsertExec) fillRowData(cols []*column.Col, vals []interface{}) ([]interface{}, error) {
+func (e *InsertValues) fillRowData(cols []*column.Col, vals []interface{}) ([]interface{}, error) {
 	row := make([]interface{}, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
@@ -628,7 +633,7 @@ func (e *InsertExec) fillRowData(cols []*column.Col, vals []interface{}) ([]inte
 	return row, nil
 }
 
-func (e *InsertExec) initDefaultValues(row []interface{}, marked map[int]struct{}) error {
+func (e *InsertValues) initDefaultValues(row []interface{}, marked map[int]struct{}) error {
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
 		if row[i] != nil {
@@ -730,4 +735,93 @@ func getOnDuplicateUpdateColumns(assignList []*ast.Assignment, t table.Table) (m
 		m[c.Offset] = v
 	}
 	return m, nil
+}
+
+// ReplaceExec represents a replace executor.
+type ReplaceExec struct {
+	*InsertValues
+	Priority int
+	finished bool
+}
+
+// Fields implements Executor Fields interface.
+// Returns nil to indicate there is no output.
+func (e *ReplaceExec) Fields() []*ast.ResultField {
+	return nil
+}
+
+// Close implements Executor Close interface.
+func (e *ReplaceExec) Close() error {
+	if e.SelectExec != nil {
+		return e.SelectExec.Close()
+	}
+	return nil
+}
+
+// Next implements Executor Next interface.
+func (e *ReplaceExec) Next() (*Row, error) {
+	if e.finished {
+		return nil, nil
+	}
+	cols, err := e.getColumns(e.Table.Cols())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rows [][]interface{}
+	if e.SelectExec != nil {
+		rows, err = e.getRowsSelect(cols)
+	} else {
+		rows, err = e.getRows(cols)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, row := range rows {
+		h, err := e.Table.AddRecord(e.ctx, row)
+		if err == nil {
+			continue
+		}
+		if err != nil && !terror.ErrorEqual(err, kv.ErrKeyExists) {
+			return nil, errors.Trace(err)
+		}
+
+		// While the insertion fails because a duplicate-key error occurs for a primary key or unique index,
+		// a storage engine may perform the REPLACE as an update rather than a delete plus insert.
+		// See: http://dev.mysql.com/doc/refman/5.7/en/replace.html.
+		if err = e.replaceRow(h, row); err != nil {
+			return nil, errors.Trace(err)
+		}
+		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+	}
+	e.finished = true
+	return nil, nil
+}
+
+func (e *ReplaceExec) replaceRow(handle int64, replaceRow []interface{}) error {
+	row, err := e.Table.Row(e.ctx, handle)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	isReplace := false
+	touched := make(map[int]bool, len(row))
+	for i, val := range row {
+		v, err1 := types.Compare(val, replaceRow[i])
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if v != 0 {
+			touched[i] = true
+			isReplace = true
+		}
+	}
+	if isReplace {
+		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+		if err = e.Table.UpdateRecord(e.ctx, handle, row, replaceRow, touched); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }

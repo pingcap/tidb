@@ -15,14 +15,13 @@ package stmts_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/stmt/stmts"
 )
 
 func (s *testStmtSuite) TestReplace(c *C) {
 	testSQL := `drop table if exists replace_test;
-    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
-    replace replace_test (c1) values (1),(2),(NULL);`
+    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	mustExec(c, s.testDB, testSQL)
+	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
 	mustExec(c, s.testDB, testSQL)
 
 	errReplaceSQL := `replace replace_test (c1) values ();`
@@ -51,14 +50,6 @@ func (s *testStmtSuite) TestReplace(c *C) {
 
 	replaceSetSQL := `replace replace_test set c1 = 3;`
 	mustExec(c, s.testDB, replaceSetSQL)
-	stmtList, err := tidb.Compile(s.ctx, replaceSetSQL)
-	c.Assert(err, IsNil)
-	c.Assert(stmtList, HasLen, 1)
-
-	testStmt, ok := stmtList[0].(*stmts.ReplaceIntoStmt)
-	c.Assert(ok, IsTrue)
-	c.Assert(testStmt.IsDDL(), IsFalse)
-	c.Assert(len(testStmt.OriginText()), Greater, 0)
 
 	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
 	tx = mustBegin(c, s.testDB)
@@ -72,12 +63,14 @@ func (s *testStmtSuite) TestReplace(c *C) {
 	c.Assert(err, NotNil)
 	tx.Rollback()
 
-	replaceSelectSQL := `create table replace_test_1 (id int, c1 int); 
-	replace replace_test_1 select id, c1 from replace_test;`
+	replaceSelectSQL := `create table replace_test_1 (id int, c1 int);`
+	mustExec(c, s.testDB, replaceSelectSQL)
+	replaceSelectSQL = `replace replace_test_1 select id, c1 from replace_test;`
 	mustExec(c, s.testDB, replaceSelectSQL)
 
-	replaceSelectSQL = `create table replace_test_2 (id int, c1 int); 
-	replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`
+	replaceSelectSQL = `create table replace_test_2 (id int, c1 int);`
+	mustExec(c, s.testDB, replaceSelectSQL)
+	replaceSelectSQL = `replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`
 	mustExec(c, s.testDB, replaceSelectSQL)
 
 	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
@@ -86,8 +79,9 @@ func (s *testStmtSuite) TestReplace(c *C) {
 	c.Assert(err, NotNil)
 	tx.Rollback()
 
-	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)); 
-	replace into replace_test_3 set c2=1;`
+	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2));`
+	mustExec(c, s.testDB, replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=1;`
 	mustExec(c, s.testDB, replaceUniqueIndexSQL)
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=1;`
 	ret := mustExec(c, s.testDB, replaceUniqueIndexSQL)
@@ -108,8 +102,9 @@ func (s *testStmtSuite) TestReplace(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, Equals, int64(1))
 
-	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)); 
-	replace into replace_test_4 set c2=NULL;`
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2));`
+	mustExec(c, s.testDB, replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
 	mustExec(c, s.testDB, replaceUniqueIndexSQL)
 	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
 	ret = mustExec(c, s.testDB, replaceUniqueIndexSQL)
@@ -117,8 +112,9 @@ func (s *testStmtSuite) TestReplace(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(rows, Equals, int64(1))
 
-	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)); 
-	replace into replace_test_5 set c1=1, c2=2;`
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2));`
+	mustExec(c, s.testDB, replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
 	mustExec(c, s.testDB, replacePrimaryKeySQL)
 	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
 	ret = mustExec(c, s.testDB, replacePrimaryKeySQL)

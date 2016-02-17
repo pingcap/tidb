@@ -338,17 +338,14 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
-	insert := &InsertExec{
-		ctx:         b.ctx,
-		Columns:     v.Columns,
-		Lists:       v.Lists,
-		Setlist:     v.Setlist,
-		OnDuplicate: v.OnDuplicate,
-		IsReplace:   v.IsReplace,
-		Priority:    v.Priority,
+	ivs := &InsertValues{
+		ctx:     b.ctx,
+		Columns: v.Columns,
+		Lists:   v.Lists,
+		Setlist: v.Setlist,
 	}
 	if v.SelectPlan != nil {
-		insert.SelectExec = b.build(v.SelectPlan)
+		ivs.SelectExec = b.build(v.SelectPlan)
 	}
 	// Get Table
 	ts, ok := v.Table.TableRefs.Left.(*ast.TableSource)
@@ -356,8 +353,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		b.err = errors.New("Can not get table")
 		return nil
 	}
-	// fields is used to evaluate values expr.
-	insert.fields = ts.GetResultFields()
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
 		b.err = errors.New("Can not get table")
@@ -369,6 +364,22 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		b.err = errors.Errorf("Can not get table %d", tableInfo.ID)
 		return nil
 	}
-	insert.Table = tbl
+	ivs.Table = tbl
+	if v.IsReplace {
+		return b.buildReplace(ivs)
+	}
+	insert := &InsertExec{
+		InsertValues: ivs,
+		OnDuplicate:  v.OnDuplicate,
+		Priority:     v.Priority,
+	}
+	// fields is used to evaluate values expr.
+	insert.fields = ts.GetResultFields()
 	return insert
+}
+
+func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
+	return &ReplaceExec{
+		InsertValues: vals,
+	}
 }
