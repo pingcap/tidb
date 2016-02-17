@@ -46,8 +46,6 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertDropTable(c, v)
 	case *ast.ExplainStmt:
 		return convertExplain(c, v)
-	case *ast.GrantStmt:
-		return convertGrant(c, v)
 	case *ast.InsertStmt:
 		return convertInsert(c, v)
 	case *ast.SelectStmt:
