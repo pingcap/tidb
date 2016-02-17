@@ -57,10 +57,24 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	switch x := node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(x)
+	case *ast.AlterTableStmt:
+		return b.buildDDL(x)
+	case *ast.CreateDatabaseStmt:
+		return b.buildDDL(x)
+	case *ast.CreateIndexStmt:
+		return b.buildDDL(x)
+	case *ast.CreateTableStmt:
+		return b.buildDDL(x)
 	case *ast.DeallocateStmt:
 		return &Deallocate{Name: x.Name}
 	case *ast.DeleteStmt:
 		return b.buildDelete(x)
+	case *ast.DropDatabaseStmt:
+		return b.buildDDL(x)
+	case *ast.DropIndexStmt:
+		return b.buildDDL(x)
+	case *ast.DropTableStmt:
+		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
 	case *ast.InsertStmt:
@@ -93,6 +107,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildSimple(x)
 	case *ast.GrantStmt:
 		return b.buildSimple(x)
+	case *ast.TruncateTableStmt:
+		return b.buildDDL(x)
 	}
 	b.err = ErrUnsupportedType.Gen("Unsupported type %T", node)
 	return nil
@@ -834,4 +850,8 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 	}
 	return insertPlan
+}
+
+func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
+	return &DDL{Statement: node}
 }
