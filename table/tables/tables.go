@@ -26,11 +26,11 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -314,7 +314,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	ucols := column.FindOnUpdateCols(t.writableCols())
 	for _, col := range ucols {
 		if !touched[col.Offset] {
-			value, err := expression.GetTimeValue(ctx, expression.CurrentTimestamp, col.Tp, col.Decimal)
+			value, err := evaluator.GetTimeValue(ctx, evaluator.CurrentTimestamp, col.Tp, col.Decimal)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -762,11 +762,10 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}
 			return nil, true, nil
 		}
 
-		value, err := expression.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		value, err := evaluator.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
 		if err != nil {
 			return nil, true, errors.Errorf("Field '%s' get default value fail - %s", col.Name, errors.Trace(err))
 		}
-
 		return value, true, nil
 	} else if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
