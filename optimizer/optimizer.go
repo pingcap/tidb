@@ -91,7 +91,7 @@ func IsSupported(node ast.Node) bool {
 	case *ast.UseStmt, *ast.SetStmt, *ast.SetCharsetStmt:
 	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt:
 	case *ast.DoStmt:
-	case *ast.CreateUserStmt, *ast.SetPwdStmt:
+	case *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt:
 	default:
 		return false
 	}
