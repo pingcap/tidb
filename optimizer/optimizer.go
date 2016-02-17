@@ -73,10 +73,6 @@ func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
 		} else if strings.EqualFold(x.Schema.O, perfschema.Name) {
 			c.unsupported = true
 		}
-	case *ast.InsertStmt:
-		if x.IsReplace {
-			c.unsupported = true
-		}
 	}
 	return in, c.unsupported
 }
