@@ -194,7 +194,7 @@ func mustCommit(c *C, tx *sql.Tx) {
 
 func mustExecuteSql(c *C, tx *sql.Tx, sql string) sql.Result {
 	r, err := tx.Exec(sql)
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf(sql))
 	return r
 }
 

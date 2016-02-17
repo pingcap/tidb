@@ -2,13 +2,10 @@ package expression
 
 import (
 	"errors"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 var _ = Suite(&testHelperSuite{})
@@ -162,96 +159,6 @@ func (s *testHelperSuite) TestBase(c *C) {
 		err = hasSameColumnCount(nil, t.rhs, t.lhs)
 		c.Assert(err, t.checker)
 	}
-}
-
-func (s *testHelperSuite) TestGetTimeValue(c *C) {
-	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
-	c.Assert(err, IsNil)
-
-	timeValue, ok := v.(mysql.Time)
-	c.Assert(ok, IsTrue)
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	ctx := newMockCtx()
-	variable.BindSessionVars(ctx)
-	sessionVars := variable.GetSessionVars(ctx)
-
-	sessionVars.Systems["timestamp"] = ""
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
-	c.Assert(err, IsNil)
-
-	timeValue, ok = v.(mysql.Time)
-	c.Assert(ok, IsTrue)
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	sessionVars.Systems["timestamp"] = "0"
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
-	c.Assert(err, IsNil)
-
-	timeValue, ok = v.(mysql.Time)
-	c.Assert(ok, IsTrue)
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	delete(sessionVars.Systems, "timestamp")
-	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
-	c.Assert(err, IsNil)
-
-	timeValue, ok = v.(mysql.Time)
-	c.Assert(ok, IsTrue)
-	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
-
-	sessionVars.Systems["timestamp"] = "1234"
-
-	tbl := []struct {
-		Expr interface{}
-		Ret  interface{}
-	}{
-		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
-		{CurrentTimestamp, time.Unix(1234, 0).Format(mysql.TimeFormat)},
-		{ZeroTimestamp, "0000-00-00 00:00:00"},
-		{Value{"2012-12-12 00:00:00"}, "2012-12-12 00:00:00"},
-		{Value{int64(0)}, "0000-00-00 00:00:00"},
-		{Value{}, nil},
-		{CurrentTimeExpr, CurrentTimestamp},
-		{NewUnaryOperation(opcode.Minus, Value{int64(0)}), "0000-00-00 00:00:00"},
-		{mockExpr{}, nil},
-	}
-
-	for _, t := range tbl {
-		v, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, mysql.MinFsp)
-		c.Assert(err, IsNil)
-
-		switch x := v.(type) {
-		case mysql.Time:
-			c.Assert(x.String(), DeepEquals, t.Ret)
-		default:
-			c.Assert(x, DeepEquals, t.Ret)
-		}
-	}
-
-	errTbl := []struct {
-		Expr interface{}
-	}{
-		{"2012-13-12 00:00:00"},
-		{Value{"2012-13-12 00:00:00"}},
-		{Value{0}},
-		{Value{int64(1)}},
-		{&Call{F: "xxx"}},
-		{NewUnaryOperation(opcode.Minus, Value{int64(1)})},
-	}
-
-	for _, t := range errTbl {
-		_, err := GetTimeValue(ctx, t.Expr, mysql.TypeTimestamp, mysql.MinFsp)
-		c.Assert(err, NotNil)
-	}
-}
-
-func (s *testHelperSuite) TestIsCurrentTimeExpr(c *C) {
-	v := IsCurrentTimeExpr(mockExpr{})
-	c.Assert(v, IsFalse)
-
-	v = IsCurrentTimeExpr(CurrentTimeExpr)
-	c.Assert(v, IsTrue)
 }
 
 func convert(v interface{}) interface{} {
