@@ -92,6 +92,9 @@ func IsSupported(node ast.Node) bool {
 	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt:
 	case *ast.DoStmt:
 	case *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt:
+	case *ast.TruncateTableStmt, *ast.AlterTableStmt:
+	case *ast.CreateDatabaseStmt, *ast.CreateTableStmt, *ast.CreateIndexStmt:
+	case *ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt:
 	default:
 		return false
 	}

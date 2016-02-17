@@ -50,6 +50,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildAggregate(v)
 	case *plan.CheckTable:
 		return b.buildCheckTable(v)
+	case *plan.DDL:
+		return b.buildDDL(v)
 	case *plan.Deallocate:
 		return b.buildDeallocate(v)
 	case *plan.Delete:
@@ -396,4 +398,8 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		Level:      grant.Level,
 		Users:      grant.Users,
 	}
+}
+
+func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
+	return &DDLExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
 }

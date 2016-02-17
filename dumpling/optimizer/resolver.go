@@ -92,6 +92,8 @@ type resolverContext struct {
 	useOuterContext bool
 	// When visiting multi-table delete stmt table list.
 	inDeleteTableList bool
+	// When visiting create/drop table statement.
+	inCreateOrDropTable bool
 }
 
 // currentContext gets the current resolverContext.
@@ -138,6 +140,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		if ctx.inHaving {
 			ctx.inHavingAgg = true
 		}
+	case *ast.AlterTableStmt:
+		nr.pushContext()
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
@@ -151,11 +155,21 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 				return inNode, true
 			}
 		}
+	case *ast.CreateIndexStmt:
+		nr.pushContext()
+	case *ast.CreateTableStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.DeleteStmt:
 		nr.pushContext()
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = true
 	case *ast.DoStmt:
+		nr.pushContext()
+	case *ast.DropTableStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
+	case *ast.DropIndexStmt:
 		nr.pushContext()
 	case *ast.FieldList:
 		nr.currentContext().inFieldList = true
@@ -183,6 +197,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.pushContext()
 	case *ast.TableRefsClause:
 		nr.currentContext().inTableRefs = true
+	case *ast.TruncateTableStmt:
+		nr.pushContext()
 	case *ast.UnionStmt:
 		nr.pushContext()
 	case *ast.UpdateStmt:
@@ -201,13 +217,23 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		if ctx.inHaving {
 			ctx.inHavingAgg = false
 		}
+	case *ast.AlterTableStmt:
+		nr.popContext()
 	case *ast.TableName:
 		nr.handleTableName(v)
 	case *ast.ColumnNameExpr:
 		nr.handleColumnName(v)
+	case *ast.CreateIndexStmt:
+		nr.popContext()
+	case *ast.CreateTableStmt:
+		nr.popContext()
 	case *ast.DeleteTableList:
 		nr.currentContext().inDeleteTableList = false
 	case *ast.DoStmt:
+		nr.popContext()
+	case *ast.DropIndexStmt:
+		nr.popContext()
+	case *ast.DropTableStmt:
 		nr.popContext()
 	case *ast.TableSource:
 		nr.handleTableSource(v)
@@ -254,6 +280,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 			v.UseOuterContext = true
 			nr.useOuterContext = false
 		}
+	case *ast.TruncateTableStmt:
+		nr.popContext()
 	case *ast.UnionStmt:
 		ctx := nr.currentContext()
 		v.SetResultFields(ctx.fieldList)
@@ -279,6 +307,11 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		tn.Schema = nr.DefaultSchema
 	}
 	ctx := nr.currentContext()
+	if ctx.inCreateOrDropTable {
+		// The table may not exist in create table or drop table statement.
+		// Skip resolving the table to avoid error.
+		return
+	}
 	if ctx.inDeleteTableList {
 		idx, ok := ctx.tableMap[nr.tableUniqueName(tn.Schema, tn.Name)]
 		if !ok {
