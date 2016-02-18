@@ -14,8 +14,6 @@
 package stmts_test
 
 import (
-	"strings"
-
 	. "github.com/pingcap/check"
 )
 
@@ -39,16 +37,6 @@ func (s *testStmtSuite) TestSelectWithoutFrom(c *C) {
 	matchRows(c, rows, [][]interface{}{{"string"}})
 	rows.Close()
 	mustCommit(c, tx)
-}
-
-func (s *testStmtSuite) TestSelectExplain(c *C) {
-	s.fillData(s.testDB, c)
-
-	strs := s.queryStrings(s.testDB, "explain select * from test where id = 1;", c)
-	// Must use index
-	if strings.Index(strs[0], "Range") < 0 {
-		c.Fatalf("Should use index")
-	}
 }
 
 func (s *testStmtSuite) TestSelectOrderBy(c *C) {

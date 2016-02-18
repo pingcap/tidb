@@ -77,6 +77,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
 		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+	case *ast.ExplainStmt:
+		return b.buildExplain(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.PrepareStmt:
@@ -294,7 +296,8 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 		return nil
 	}
 	conditions := splitWhere(sel.Where)
-	candidates := b.buildAllAccessMethodsPlan(tn, conditions)
+	path := &joinPath{table: tn, conditions: conditions}
+	candidates := b.buildAllAccessMethodsPlan(path)
 	var lowestCost float64
 	for _, v := range candidates {
 		cost := EstimateCost(b.buildPseudoSelectPlan(v, sel))
@@ -310,21 +313,24 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 	return bestPlan
 }
 
-func (b *planBuilder) buildAllAccessMethodsPlan(tn *ast.TableName, conditions []ast.ExprNode) []Plan {
+func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
 	var candidates []Plan
-	p := b.buildTableScanPlan(tn, conditions)
+	p := b.buildTableScanPlan(path)
 	candidates = append(candidates, p)
-	for _, index := range tn.TableInfo.Indices {
-		ip := b.buildIndexScanPlan(index, tn, conditions)
+	for _, index := range path.table.TableInfo.Indices {
+		ip := b.buildIndexScanPlan(index, path)
 		candidates = append(candidates, ip)
 	}
 	return candidates
 }
 
-func (b *planBuilder) buildTableScanPlan(tn *ast.TableName, conditions []ast.ExprNode) Plan {
+func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
+	tn := path.table
 	p := &TableScan{
 		Table: tn.TableInfo,
 	}
+	// Equal condition contains a column from previous joined table.
+	p.RefAccess = len(path.eqConds) > 0
 	p.SetFields(tn.GetResultFields())
 	var pkName model.CIStr
 	if p.Table.PKIsHandle {
@@ -334,7 +340,7 @@ func (b *planBuilder) buildTableScanPlan(tn *ast.TableName, conditions []ast.Exp
 			}
 		}
 	}
-	for _, con := range conditions {
+	for _, con := range path.conditions {
 		if pkName.L != "" {
 			checker := conditionChecker{tableName: tn.TableInfo.Name, pkName: pkName}
 			if checker.check(con) {
@@ -349,12 +355,14 @@ func (b *planBuilder) buildTableScanPlan(tn *ast.TableName, conditions []ast.Exp
 	return p
 }
 
-func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, tn *ast.TableName, conditions []ast.ExprNode) Plan {
+func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath) Plan {
+	tn := path.table
 	ip := &IndexScan{Table: tn.TableInfo, Index: index}
+	ip.RefAccess = len(path.eqConds) > 0
 	ip.SetFields(tn.GetResultFields())
 
 	condMap := map[ast.ExprNode]bool{}
-	for _, con := range conditions {
+	for _, con := range path.conditions {
 		condMap[con] = true
 	}
 out:
@@ -886,4 +894,32 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	return &DDL{Statement: node}
+}
+
+func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
+	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
+		return b.buildShow(show)
+	}
+	targetPlan := b.build(explain.Stmt)
+	if b.err != nil {
+		return nil
+	}
+	p := &Explain{StmtPlan: targetPlan}
+	p.SetFields(buildExplainFields())
+	return p
+}
+
+func buildExplainFields() []*ast.ResultField {
+	rfs := make([]*ast.ResultField, 0, 6)
+	rfs = append(rfs, buildResultField("", "id", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField("", "select_type", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "table", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "type", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "possible_keys", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "key", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "key_len", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "ref", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "row", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "Extra", mysql.TypeVarchar, 128))
+	return rfs
 }

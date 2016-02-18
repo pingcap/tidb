@@ -757,7 +757,7 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		ast.SetFlag(condition)
 		path.conditions = append(path.conditions, condition)
 	}
-	candidates := b.buildAllAccessMethodsPlan(path.table, path.conditions)
+	candidates := b.buildAllAccessMethodsPlan(path)
 	var p Plan
 	var lowestCost float64
 	for _, can := range candidates {

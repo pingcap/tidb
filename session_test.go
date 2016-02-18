@@ -1478,7 +1478,5 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	c.Assert(err, IsNil)
 	p, err := optimizer.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is))
 	c.Assert(err, IsNil)
-	planStr, err := plan.Explain(p)
-	c.Assert(err, IsNil)
-	c.Assert(planStr, Equals, explain)
+	c.Assert(plan.ToString(p), Equals, explain)
 }

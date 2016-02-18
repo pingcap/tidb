@@ -19,20 +19,19 @@ import (
 	"strings"
 )
 
-// Explain explains a Plan, returns description string.
-func Explain(p Plan) (string, error) {
-	var e explainer
+// ToString explains a Plan, returns description string.
+func ToString(p Plan) string {
+	var e stringer
 	p.Accept(&e)
-	return strings.Join(e.strs, "->"), e.err
+	return strings.Join(e.strs, "->")
 }
 
-type explainer struct {
+type stringer struct {
 	strs []string
-	err  error
 	idxs []int
 }
 
-func (e *explainer) Enter(in Plan) (Plan, bool) {
+func (e *stringer) Enter(in Plan) (Plan, bool) {
 	switch in.(type) {
 	case *JoinOuter, *JoinInner:
 		e.idxs = append(e.idxs, len(e.strs))
@@ -40,7 +39,7 @@ func (e *explainer) Enter(in Plan) (Plan, bool) {
 	return in, false
 }
 
-func (e *explainer) Leave(in Plan) (Plan, bool) {
+func (e *stringer) Leave(in Plan) (Plan, bool) {
 	var str string
 	switch x := in.(type) {
 	case *CheckTable:
@@ -83,8 +82,7 @@ func (e *explainer) Leave(in Plan) (Plan, bool) {
 		str = "InnerJoin{" + strings.Join(chilrden, "->") + "}"
 		e.idxs = e.idxs[:last]
 	default:
-		e.err = ErrUnsupportedType.Gen("Unknown plan type %T", in)
-		return in, false
+		str = fmt.Sprintf("%T", in)
 	}
 	e.strs = append(e.strs, str)
 	return in, true

@@ -15,7 +15,6 @@ package stmts_test
 
 import (
 	"database/sql"
-	"strings"
 
 	. "github.com/pingcap/check"
 )
@@ -101,32 +100,6 @@ func (s *testStmtSuite) TestDelete(c *C) {
 
 	r = mustExec(c, s.testDB, `DELETE from test;`)
 	checkResult(c, r, 1, 0)
-
-	// Should use index
-	strs := s.queryStrings(s.testDB, `explain DELETE from test where id = 2;`, c)
-	var useIndex bool
-	for _, str := range strs {
-		if strings.Index(str, "Range") > 0 {
-			useIndex = true
-		}
-	}
-
-	if !useIndex {
-		c.Fatal(strs)
-	}
-
-	// Should not use index
-	strs = s.queryStrings(s.testDB, `explain DELETE from test;`, c)
-	useIndex = false
-	for _, str := range strs {
-		if strings.Index(str, "index") > 0 {
-			useIndex = true
-		}
-	}
-
-	if useIndex {
-		c.Fatal(strs)
-	}
 }
 
 func (s *testStmtSuite) TestMultiTableDelete(c *C) {
