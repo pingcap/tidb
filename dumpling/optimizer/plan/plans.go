@@ -569,6 +569,32 @@ func (p *Filter) SetLimit(limit float64) {
 	p.src.SetLimit(limit * 2)
 }
 
+// Show represents a show plan.
+type Show struct {
+	basePlan
+
+	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName string
+	Table  *ast.TableName  // Used for showing columns.
+	Column *ast.ColumnName // Used for `desc table column`.
+	Flag   int             // Some flag parsed from sql, such as FULL.
+	Full   bool
+	User   string // Used for show grants.
+
+	// Used by show variables
+	GlobalScope bool
+}
+
+// Accept implements Plan Accept interface.
+func (p *Show) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Show)
+	return v.Leave(p)
+}
+
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
 	basePlan

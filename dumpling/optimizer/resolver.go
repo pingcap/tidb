@@ -14,11 +14,15 @@
 package optimizer
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -94,6 +98,8 @@ type resolverContext struct {
 	inDeleteTableList bool
 	// When visiting create/drop table statement.
 	inCreateOrDropTable bool
+	// When visiting show statement.
+	inShow bool
 }
 
 // currentContext gets the current resolverContext.
@@ -195,6 +201,10 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 			}
 		}
 		nr.pushContext()
+	case *ast.ShowStmt:
+		nr.pushContext()
+		nr.currentContext().inShow = true
+		nr.fillShowFields(v)
 	case *ast.TableRefsClause:
 		nr.currentContext().inTableRefs = true
 	case *ast.TruncateTableStmt:
@@ -272,6 +282,8 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		}
 		nr.popContext()
 	case *ast.SetStmt:
+		nr.popContext()
+	case *ast.ShowStmt:
 		nr.popContext()
 	case *ast.SubqueryExpr:
 		if nr.useOuterContext {
@@ -522,6 +534,9 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 			return true
 		}
 		return nr.resolveColumnInTableSources(cn, ctx.tables)
+	}
+	if ctx.inShow {
+		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
 	}
 	// In where clause.
 	return nr.resolveColumnInTableSources(cn, ctx.tables)
@@ -803,4 +818,103 @@ func (nr *nameResolver) handleUnionSelectList(u *ast.UnionSelectList) {
 		unionFields[i] = &rf
 	}
 	nr.currentContext().fieldList = unionFields
+}
+
+func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
+	if s.DBName == "" {
+		if s.Table != nil && s.Table.Schema.L != "" {
+			s.DBName = s.Table.Schema.O
+		} else {
+			s.DBName = nr.DefaultSchema.O
+		}
+	} else if s.Table != nil && s.Table.Schema.L == "" {
+		s.Table.Schema = model.NewCIStr(s.DBName)
+	}
+	var fields []*ast.ResultField
+	var (
+		names  []string
+		ftypes []byte
+	)
+	switch s.Tp {
+	case ast.ShowEngines:
+		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
+	case ast.ShowDatabases:
+		names = []string{"Database"}
+	case ast.ShowTables:
+		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
+		if s.Full {
+			names = append(names, "Table_type")
+		}
+	case ast.ShowTableStatus:
+		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
+			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
+			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
+			"Create_options", "Comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowColumns:
+		names = column.ColDescFieldNames(s.Full)
+	case ast.ShowWarnings:
+		names = []string{"Level", "Code", "Message"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
+	case ast.ShowCharset:
+		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowVariables:
+		names = []string{"Variable_name", "Value"}
+	case ast.ShowStatus:
+		names = []string{"Variable_name", "Value"}
+	case ast.ShowCollation:
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowCreateTable:
+		names = []string{"Table", "Create Table"}
+	case ast.ShowGrants:
+		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+	case ast.ShowTriggers:
+		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
+			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProcedureStatus:
+		names = []string{}
+		ftypes = []byte{}
+	case ast.ShowIndex:
+		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
+			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
+			"Null", "Index_type", "Comment", "Index_comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	}
+	for i, name := range names {
+		f := &ast.ResultField{
+			ColumnAsName: model.NewCIStr(name),
+			Column:       &model.ColumnInfo{}, // Empty column info.
+			Table:        &model.TableInfo{},  // Empty table info.
+		}
+		if ftypes == nil || ftypes[i] == 0 {
+			// use varchar as the default return column type
+			f.Column.Tp = mysql.TypeVarchar
+		} else {
+			f.Column.Tp = ftypes[i]
+		}
+		f.Column.Charset, f.Column.Collate = types.DefaultCharsetForType(f.Column.Tp)
+		f.Expr = &ast.ValueExpr{}
+		f.Expr.SetType(&f.Column.FieldType)
+		fields = append(fields, f)
+	}
+
+	if s.Pattern != nil && s.Pattern.Expr == nil {
+		rf := fields[0]
+		s.Pattern.Expr = &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{Name: rf.ColumnAsName},
+		}
+		ast.SetFlag(s.Pattern)
+	}
+	s.SetResultFields(fields)
+	nr.currentContext().fieldList = fields
 }
