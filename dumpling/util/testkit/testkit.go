@@ -105,13 +105,12 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return &Result{rows: rows, c: tk.c, comment: comment}
 }
 
-// Rows is a convenient function to wrap args to a slice of []interface.
-// The arg represents a row, split by white space, only applicable for
-// values that have no white spaces.
-func Rows(args ...string) [][]interface{} {
+// RowsWithSep is a convenient function to wrap args to a slice of []interface.
+// The arg represents a row, split by sep.
+func RowsWithSep(sep string, args ...string) [][]interface{} {
 	rows := make([][]interface{}, len(args))
 	for i, v := range args {
-		strs := strings.Split(v, " ")
+		strs := strings.Split(v, sep)
 		row := make([]interface{}, len(strs))
 		for j, s := range strs {
 			row[j] = s
@@ -119,4 +118,9 @@ func Rows(args ...string) [][]interface{} {
 		rows[i] = row
 	}
 	return rows
+}
+
+// Rows is similar to RowsWithSep, use white space as seperator string.
+func Rows(args ...string) [][]interface{} {
+	return RowsWithSep(" ", args...)
 }

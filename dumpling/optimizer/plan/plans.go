@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // TableRange represents a range of row handle.
@@ -32,6 +33,9 @@ type TableScan struct {
 	Table  *model.TableInfo
 	Desc   bool
 	Ranges []TableRange
+
+	// RefAccess indicates it references a previous joined table, used in explain.
+	RefAccess bool
 
 	// AccessConditions can be used to build index range.
 	AccessConditions []ast.ExprNode
@@ -103,7 +107,19 @@ func (ir *IndexRange) IsPoint() bool {
 		return false
 	}
 	for i := range ir.LowVal {
-		if ir.LowVal[i] != ir.HighVal[i] {
+		a := ir.LowVal[i]
+		b := ir.HighVal[i]
+		if a == nil || b == nil {
+			return false
+		}
+		if a == MinNotNullVal || b == MaxVal {
+			return false
+		}
+		cmp, err := types.Compare(ir.LowVal[i], ir.HighVal[i])
+		if err != nil {
+			return false
+		}
+		if cmp != 0 {
 			return false
 		}
 	}
@@ -125,6 +141,9 @@ type IndexScan struct {
 
 	// Desc indicates whether the index should be scanned in descending order.
 	Desc bool
+
+	// RefAccess indicates it references a previous joined table, used in explain.
+	RefAccess bool
 
 	// AccessConditions can be used to build index range.
 	AccessConditions []ast.ExprNode
@@ -658,5 +677,22 @@ func (p *DDL) Accept(v Visitor) (Plan, bool) {
 		return v.Leave(np)
 	}
 	p = np.(*DDL)
+	return v.Leave(p)
+}
+
+// Explain represents a explain plan.
+type Explain struct {
+	basePlan
+
+	StmtPlan Plan
+}
+
+// Accept implements Plan Accept interface.
+func (p *Explain) Accept(v Visitor) (Plan, bool) {
+	np, skip := v.Enter(p)
+	if skip {
+		v.Leave(np)
+	}
+	p = np.(*Explain)
 	return v.Leave(p)
 }
