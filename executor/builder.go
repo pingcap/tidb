@@ -21,9 +21,11 @@ import (
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -83,6 +85,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
+	case *plan.Show:
+		return b.buildShow(v)
 	case *plan.Simple:
 		return b.buildSimple(v)
 	case *plan.Sort:
@@ -333,6 +337,26 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
 	}
+}
+
+func (b *executorBuilder) buildShow(v *plan.Show) Executor {
+	e := &ShowExec{
+		Tp:          v.Tp,
+		DBName:      model.NewCIStr(v.DBName),
+		Table:       v.Table,
+		Column:      v.Column,
+		User:        v.User,
+		Flag:        v.Flag,
+		Full:        v.Full,
+		GlobalScope: v.GlobalScope,
+		ctx:         b.ctx,
+		is:          b.is,
+		fields:      v.Fields(),
+	}
+	if e.Tp == ast.ShowGrants && len(e.User) == 0 {
+		e.User = variable.GetSessionVars(e.ctx).User
+	}
+	return e
 }
 
 func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {

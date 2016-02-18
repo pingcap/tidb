@@ -836,6 +836,7 @@ const (
 // See: https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
 	dmlNode
+	resultSetNode
 
 	Tp     ShowStmtType // Databases/Tables/Columns/....
 	DBName string
