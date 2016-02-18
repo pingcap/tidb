@@ -20,12 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/plan/plans"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -125,84 +122,6 @@ func (p *testFromSuit) TestTableNilPlan(c *C) {
 		return true, nil
 	})
 	c.Assert(reflect.DeepEqual(ids, []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}), Equals, true)
-}
-
-func (p *testFromSuit) TestTableDefaultPlan(c *C) {
-	pln := &plans.TableDefaultPlan{
-		T: p.tbl,
-		Fields: []*field.ResultField{
-			field.ColToResultField(p.tbl.Cols()[0], "t"),
-			field.ColToResultField(p.tbl.Cols()[1], "t"),
-		},
-	}
-
-	ret := map[int64][]byte{}
-	rset := rsets.Recordset{Ctx: p, Plan: pln}
-	rset.Do(func(data []interface{}) (bool, error) {
-		ret[data[0].(int64)] = data[1].([]byte)
-		return true, nil
-	})
-	excepted := map[int64][]byte{}
-	for i := 0; i < 10; i++ {
-		excepted[int64(i*10)] = []byte("hello")
-	}
-	//c.Assert(reflect.DeepEqual(ret, excepted), Equals, true)
-	c.Assert(ret, DeepEquals, excepted)
-
-	// expr: id > 0
-	expr := &expression.BinaryOperation{
-		Op: opcode.GE,
-		L: &expression.Ident{
-			CIStr: model.NewCIStr("id"),
-		},
-		R: &expression.Value{
-			Val: 5,
-		},
-	}
-	_, filtered, err := pln.FilterForUpdateAndDelete(p, expr)
-	c.Assert(err, IsNil)
-	c.Assert(filtered, IsFalse)
-	// with no index
-
-	idxCol := &column.IndexedCol{
-		IndexInfo: model.IndexInfo{
-			Name:  model.NewCIStr("id"),
-			Table: model.NewCIStr("t"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("id"),
-					Offset: 0,
-					Length: 0,
-				},
-			},
-			Unique:  false,
-			Primary: false,
-			State:   model.StatePublic,
-		},
-	}
-
-	idxCol.X = kv.NewKVIndex([]byte("i"), "id", 0, false)
-
-	p.tbl.AddIndex(idxCol)
-
-	expr4 := &expression.Ident{
-		CIStr: model.NewCIStr("id"),
-	}
-	_, filtered, err = pln.FilterForUpdateAndDelete(p, expr4)
-	c.Assert(err, IsNil)
-	// with no index
-	c.Assert(filtered, IsTrue)
-
-	expr5 := &expression.IsNull{
-		Expr: &expression.Ident{
-			CIStr: model.NewCIStr("id"),
-		},
-		Not: true,
-	}
-	_, filtered, err = pln.FilterForUpdateAndDelete(p, expr5)
-	c.Assert(err, IsNil)
-	// with no index
-	c.Assert(filtered, IsTrue)
 }
 
 func (p *testFromSuit) TestTableIndexPlan(c *C) {

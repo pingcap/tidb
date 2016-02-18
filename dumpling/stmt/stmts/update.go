@@ -86,7 +86,7 @@ func (s *UpdateStmt) SetText(text string) {
 
 func findColumnByName(t table.Table, name string) (*column.Col, error) {
 	_, tableName, colName := field.SplitQualifiedName(name)
-	if len(tableName) > 0 && tableName != t.TableName().O {
+	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
 

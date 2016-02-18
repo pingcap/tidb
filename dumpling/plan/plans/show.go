@@ -352,7 +352,7 @@ func (s *ShowPlan) fetchShowTables(ctx context.Context) error {
 	// sort for tables
 	var tableNames []string
 	for _, v := range is.SchemaTables(dbName) {
-		tableNames = append(tableNames, v.TableName().L)
+		tableNames = append(tableNames, v.Meta().Name.L)
 	}
 
 	sort.Strings(tableNames)
@@ -404,7 +404,7 @@ func (s *ShowPlan) fetchShowTableStatus(ctx context.Context) error {
 	// sort for tables
 	var tableNames []string
 	for _, v := range is.SchemaTables(dbName) {
-		tableNames = append(tableNames, v.TableName().L)
+		tableNames = append(tableNames, v.Meta().Name.L)
 	}
 
 	sort.Strings(tableNames)
@@ -591,7 +591,7 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.TableName().O))
+	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if mysql.HasAutoIncrementFlag(col.Flag) {
@@ -651,7 +651,7 @@ func (s *ShowPlan) fetchShowCreateTable(ctx context.Context) error {
 	}
 
 	data := []interface{}{
-		tb.TableName().O,
+		tb.Meta().Name.O,
 		buf.String(),
 	}
 
@@ -702,7 +702,7 @@ func (s *ShowPlan) fetchShowIndex(ctx context.Context) error {
 				subPart = col.Length
 			}
 			data := []interface{}{
-				tb.TableName().O, // Table
+				tb.Meta().Name.O, // Table
 				nonUniq,          // Non_unique
 				idx.Name.O,       // Key_name
 				i + 1,            // Seq_in_index

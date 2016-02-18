@@ -60,7 +60,7 @@ func (r *TableRset) Plan(ctx context.Context) (plan.Plan, error) {
 	tdp := &plans.TableDefaultPlan{T: t}
 	tdp.Fields = make([]*field.ResultField, 0, len(t.Cols()))
 	for _, col := range t.Cols() {
-		f := field.ColToResultField(col, t.TableName().O)
+		f := field.ColToResultField(col, t.Meta().Name.O)
 		f.DBName = r.Schema
 		tdp.Fields = append(tdp.Fields, f)
 	}

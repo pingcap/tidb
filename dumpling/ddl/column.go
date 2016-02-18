@@ -377,7 +377,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			err = t.SetColValue(txn, backfillKey, v)
+			err = tables.SetColValue(txn, backfillKey, v)
 			if err != nil {
 				return errors.Trace(err)
 			}

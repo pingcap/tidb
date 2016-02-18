@@ -48,7 +48,7 @@ type TableNilPlan struct {
 
 // Explain implements the plan.Plan interface.
 func (r *TableNilPlan) Explain(w format.Formatter) {
-	w.Format("┌Iterate all rows of table %q\n└Output field names %v\n", r.T.TableName(), field.RFQNames(r.GetFields()))
+	w.Format("┌Iterate all rows of table %q\n└Output field names %v\n", r.T.Meta().Name, field.RFQNames(r.GetFields()))
 }
 
 // GetFields implements the plan.Plan interface.
@@ -120,7 +120,7 @@ func (r *TableDefaultPlan) Explain(w format.Formatter) {
 	if r.rangeScan {
 		fmtStr = "┌Range scan rows of table %q\n└Output field names %v\n"
 	}
-	w.Format(fmtStr, r.T.TableName(), field.RFQNames(r.Fields))
+	w.Format(fmtStr, r.T.Meta().Name, field.RFQNames(r.Fields))
 }
 
 func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.BinaryOperation) (plan.Plan, bool, error) {
@@ -140,7 +140,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 
 	_, tn, cn := field.SplitQualifiedName(name)
 	t := r.T
-	if tn != "" && tn != t.TableName().L {
+	if tn != "" && tn != t.Meta().Name.L {
 		return r, false, nil
 	}
 	c := column.FindCol(t.Cols(), cn)
@@ -167,7 +167,7 @@ func (r *TableDefaultPlan) filterBinOp(ctx context.Context, x *expression.Binary
 		return r, false, nil
 	}
 
-	ix := t.FindIndexByColName(cn)
+	ix := tables.FindIndexByColName(t, cn)
 	if ix == nil { // Column cn has no index.
 		return r, false, nil
 	}
@@ -266,7 +266,7 @@ func (r *TableDefaultPlan) filterIsNull(ctx context.Context, x *expression.IsNul
 		spans = toSpans(opcode.EQ, nil, nil)
 	}
 
-	ix := t.FindIndexByColName(cn)
+	ix := tables.FindIndexByColName(t, cn)
 	if ix == nil { // Column cn has no index.
 		return r, false, nil
 	}
@@ -463,7 +463,7 @@ func (r *TableDefaultPlan) toSeekKey(seekVal interface{}) (kv.Key, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	return tables.EncodeRecordKey(r.T.TableID(), handle, 0), nil
+	return tables.EncodeRecordKey(r.T.Meta().ID, handle, 0), nil
 }
 
 // Close implements plan.Plan Close interface.
