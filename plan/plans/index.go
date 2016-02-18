@@ -173,7 +173,7 @@ func indexCompare(a interface{}, b interface{}) int {
 
 // Explain implements plan.Plan Explain interface.
 func (r *indexPlan) Explain(w format.Formatter) {
-	w.Format("┌Iterate rows of table %q using index %q where %s in ", r.src.TableName(), r.idxName, r.col.Name.L)
+	w.Format("┌Iterate rows of table %q using index %q where %s in ", r.src.Meta().Name, r.idxName, r.col.Name.L)
 	for _, span := range r.spans {
 		open := "["
 		close := "]"
@@ -190,7 +190,7 @@ func (r *indexPlan) Explain(w format.Formatter) {
 
 // GetFields implements plan.Plan GetFields interface.
 func (r *indexPlan) GetFields() []*field.ResultField {
-	return field.ColsToResultFields(r.src.Cols(), r.src.TableName().O)
+	return field.ColsToResultFields(r.src.Cols(), r.src.Meta().Name.O)
 }
 
 // Filter implements plan.Plan Filter interface.
@@ -207,7 +207,7 @@ func (r *indexPlan) Filter(ctx context.Context, expr expression.Expression) (pla
 			break
 		}
 		_, tname, cname := field.SplitQualifiedName(name)
-		if tname != "" && r.src.TableName().L != tname {
+		if tname != "" && r.src.Meta().Name.L != tname {
 			break
 		}
 		if r.col.ColumnInfo.Name.L != cname {

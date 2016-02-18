@@ -84,11 +84,7 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	if !ok {
 		return errors.New("table not found, should never happen")
 	}
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return table.Truncate(txn)
+	return table.Truncate(e.ctx)
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {

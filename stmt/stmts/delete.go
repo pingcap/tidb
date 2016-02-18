@@ -151,7 +151,7 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			tblIDMap[tbl.TableID()] = true
+			tblIDMap[tbl.Meta().ID] = true
 		}
 	}
 	rowKeyMap := make(map[string]table.Table)
@@ -166,7 +166,7 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 
 		for _, entry := range row.RowKeys {
 			if s.MultiTable {
-				tid := entry.Tbl.TableID()
+				tid := entry.Tbl.Meta().ID
 				if _, ok := tblIDMap[tid]; !ok {
 					continue
 				}
