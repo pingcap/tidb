@@ -115,22 +115,37 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	info, err := inspectkv.GetDDLInfo(txn)
+	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bgInfo, err := inspectkv.GetDDLBgInfo(txn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	rowData := []interface{}{
-		info.SchemaVer,
+		ddlInfo.SchemaVer,
+		"",
+		"",
+		bgInfo.SchemaVer,
 		"",
 		"",
 	}
-	if info.Owner != nil {
-		rowData[1] = info.Owner.String()
+	if ddlInfo.Owner != nil {
+		rowData[1] = ddlInfo.Owner.String()
 	}
-	if info.Job != nil {
-		rowData[2] = info.Job.String()
+	if ddlInfo.Job != nil {
+		rowData[2] = ddlInfo.Job.String()
 	}
+	if bgInfo.Owner != nil {
+		rowData[4] = bgInfo.Owner.String()
+	}
+	if bgInfo.Job != nil {
+		rowData[5] = bgInfo.Job.String()
+	}
+
 	row := &Row{}
 	row.Data = rowData
 	for i, f := range e.fields {
