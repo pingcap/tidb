@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -41,7 +40,7 @@ type UpdateExec struct {
 	SelectExec  Executor
 	OrderedList []*ast.Assignment
 
-	updatedRowKeys map[string]bool
+	updatedRowKeys map[table.Table]map[int64]bool
 	ctx            context.Context
 
 	rows        []*Row          // The rows fetched from TableExec.
@@ -68,34 +67,32 @@ func (e *UpdateExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = map[string]bool{}
+		e.updatedRowKeys = make(map[table.Table]map[int64]bool)
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
 	for _, entry := range row.RowKeys {
 		tbl := entry.Tbl
+		if e.updatedRowKeys[tbl] == nil {
+			e.updatedRowKeys[tbl] = make(map[int64]bool)
+		}
 		offset := e.getTableOffset(tbl)
-		k := entry.Key
+		handle := entry.Handle
 		oldData := row.Data[offset : offset+len(tbl.Cols())]
 		newTableData := newData[offset : offset+len(tbl.Cols())]
 
-		_, ok := e.updatedRowKeys[k]
+		_, ok := e.updatedRowKeys[tbl][handle]
 		if ok {
 			// Each matching row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
 
 		// Update row
-		handle, err1 := tables.DecodeRecordKeyHandle(kv.Key(k))
+		err1 := updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-
-		err1 = updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		e.updatedRowKeys[k] = true
+		e.updatedRowKeys[tbl][handle] = true
 	}
 	e.cursor++
 	return &Row{}, nil
@@ -151,7 +148,7 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 }
 
 func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
-	if err := t.LockRow(ctx, h); err != nil {
+	if err := t.LockRow(ctx, h, false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -279,7 +276,7 @@ func (e *DeleteExec) Next() (*Row, error) {
 	tblIDMap := make(map[int64]bool, len(e.Tables))
 	// Get table alias map.
 	tblNames := make(map[string]string)
-	rowKeyMap := make(map[string]table.Table)
+	rowKeyMap := make(map[table.Table]map[int64]bool)
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
 		fs := e.SelectExec.Fields()
@@ -315,21 +312,22 @@ func (e *DeleteExec) Next() (*Row, error) {
 					continue
 				}
 			}
-			rowKeyMap[entry.Key] = entry.Tbl
+			if rowKeyMap[entry.Tbl] == nil {
+				rowKeyMap[entry.Tbl] = make(map[int64]bool)
+			}
+			rowKeyMap[entry.Tbl][entry.Handle] = true
 		}
 	}
-	for k, t := range rowKeyMap {
-		handle, err := tables.DecodeRecordKeyHandle(kv.Key(k))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		data, err := t.Row(e.ctx, handle)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = e.removeRow(e.ctx, t, handle, data)
-		if err != nil {
-			return nil, errors.Trace(err)
+	for t, handleMap := range rowKeyMap {
+		for handle := range handleMap {
+			data, err := t.Row(e.ctx, handle)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = e.removeRow(e.ctx, t, handle, data)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 	return nil, nil
@@ -530,7 +528,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]interface{}, error) {
 	defaultValMap := map[string]interface{}{}
 	for _, col := range cols {
-		if value, ok, err := tables.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
+		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -662,7 +660,7 @@ func (e *InsertValues) initDefaultValues(row []interface{}, marked map[int]struc
 			}
 		} else {
 			var value interface{}
-			value, _, err := tables.GetColDefaultValue(e.ctx, &c.ColumnInfo)
+			value, _, err := table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}

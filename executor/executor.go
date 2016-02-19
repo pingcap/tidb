@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/distinct"
@@ -82,7 +81,7 @@ type RowKeyEntry struct {
 	// The table which this row come from.
 	Tbl table.Table
 	// Row key.
-	Key string
+	Handle int64
 }
 
 // Executor executes a query.
@@ -223,12 +222,8 @@ func (e *TableScanExec) Next() (*Row, error) {
 			e.cursor++
 			continue
 		}
-		rowKey, err := e.seek()
-		if err != nil || rowKey == nil {
-			return nil, errors.Trace(err)
-		}
-		handle, err := tables.DecodeRecordKeyHandle(rowKey)
-		if err != nil {
+		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
+		if err != nil || !found {
 			return nil, errors.Trace(err)
 		}
 		if handle > ran.HighVal {
@@ -242,34 +237,13 @@ func (e *TableScanExec) Next() (*Row, error) {
 				continue
 			}
 		}
-		row, err := e.getRow(handle, rowKey)
+		row, err := e.getRow(handle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.seekHandle = handle + 1
 		return row, nil
 	}
-}
-
-func (e *TableScanExec) seek() (kv.Key, error) {
-	seekKey := tables.EncodeRecordKey(e.t.Meta().ID, e.seekHandle, 0)
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if e.iter != nil {
-		e.iter.Close()
-	}
-	e.iter, err = txn.Seek(seekKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
-		// No more records in the table, skip to the end.
-		e.cursor = len(e.ranges)
-		return nil, nil
-	}
-	return e.iter.Key(), nil
 }
 
 // seekRange increments the range cursor to the range
@@ -291,7 +265,7 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 	}
 }
 
-func (e *TableScanExec) getRow(handle int64, rowKey kv.Key) (*Row, error) {
+func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
 	var err error
 	row.Data, err = e.t.Row(e.ctx, handle)
@@ -305,8 +279,8 @@ func (e *TableScanExec) getRow(handle int64, rowKey kv.Key) (*Row, error) {
 
 	// Put rowKey to the tail of record row
 	rke := &RowKeyEntry{
-		Tbl: e.t,
-		Key: string(rowKey),
+		Tbl:    e.t,
+		Handle: handle,
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
@@ -462,8 +436,8 @@ func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 	rowKey := &RowKeyEntry{
-		Tbl: e.scan.tbl,
-		Key: string(e.scan.tbl.RecordKey(h, nil)),
+		Tbl:    e.scan.tbl,
+		Handle: h,
 	}
 	row.RowKeys = append(row.RowKeys, rowKey)
 	return row, nil
@@ -811,12 +785,8 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	}
 	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
 		forupdate.SetForUpdate(e.ctx)
-		txn, err := e.ctx.GetTxn(false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		for _, k := range row.RowKeys {
-			err = txn.LockKeys([]byte(k.Key))
+			err = k.Tbl.LockRow(e.ctx, k.Handle, true)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

@@ -71,5 +71,5 @@ type RowKeyEntry struct {
 	// The table which this row come from.
 	Tbl table.Table
 	// Row handle.
-	Key string
+	Handle int64
 }

@@ -321,7 +321,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		return h, errors.Trace(err)
 	}
 
-	if err = t.LockRow(ctx, recordID); err != nil {
+	if err = t.LockRow(ctx, recordID, false); err != nil {
 		return 0, errors.Trace(err)
 	}
 
@@ -333,7 +333,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		var value interface{}
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
-			value, _, err = GetColDefaultValue(ctx, &col.ColumnInfo)
+			value, _, err = table.GetColDefaultValue(ctx, &col.ColumnInfo)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -478,15 +478,19 @@ func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 }
 
 // LockRow implements table.Table LockRow interface.
-func (t *Table) LockRow(ctx context.Context, h int64) error {
+func (t *Table) LockRow(ctx context.Context, h int64, forRead bool) error {
 	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Get row lock key
 	lockKey := t.RecordKey(h, nil)
-	// set row lock key to current txn
-	err = txn.Set(lockKey, []byte(txn.String()))
+	if forRead {
+		err = txn.LockKeys(lockKey)
+	} else {
+		// set row lock key to current txn
+		err = txn.Set(lockKey, []byte(txn.String()))
+	}
 	return errors.Trace(err)
 }
 
@@ -506,7 +510,7 @@ func (t *Table) RemoveRecord(ctx context.Context, h int64, r []interface{}) erro
 }
 
 func (t *Table) removeRowData(ctx context.Context, h int64) error {
-	if err := t.LockRow(ctx, h); err != nil {
+	if err := t.LockRow(ctx, h, false); err != nil {
 		return errors.Trace(err)
 	}
 	txn, err := ctx.GetTxn(false)
@@ -634,33 +638,23 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
-// GetColDefaultValue gets default value of the column.
-func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}, bool, error) {
-	// Check no default value flag.
-	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
-		return nil, false, errors.Errorf("Field '%s' doesn't have a default value", col.Name)
+// Seek implements table.Table Seek interface.
+func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
+	seekKey := EncodeRecordKey(t.ID, h, 0)
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return 0, false, errors.Trace(err)
 	}
-
-	// Check and get timestamp/datetime default value.
-	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
-		if col.DefaultValue == nil {
-			return nil, true, nil
-		}
-
-		value, err := evaluator.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
-		if err != nil {
-			return nil, true, errors.Errorf("Field '%s' get default value fail - %s", col.Name, errors.Trace(err))
-		}
-		return value, true, nil
-	} else if col.Tp == mysql.TypeEnum {
-		// For enum type, if no default value and not null is set,
-		// the default value is the first element of the enum list
-		if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-			return col.FieldType.Elems[0], true, nil
-		}
+	iter, err := txn.Seek(seekKey)
+	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
+		// No more records in the table, skip to the end.
+		return 0, false, nil
 	}
-
-	return col.DefaultValue, true, nil
+	handle, err := DecodeRecordKeyHandle(iter.Key())
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	return handle, true, nil
 }
 
 var (

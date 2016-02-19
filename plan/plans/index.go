@@ -413,8 +413,8 @@ func (r *indexPlan) lookupRow(ctx context.Context, h int64) (*plan.Row, error) {
 		return nil, errors.Trace(err)
 	}
 	rowKey := &plan.RowKeyEntry{
-		Tbl: r.src,
-		Key: string(r.src.RecordKey(h, nil)),
+		Tbl:    r.src,
+		Handle: h,
 	}
 	row.RowKeys = append(row.RowKeys, rowKey)
 	return row, nil
