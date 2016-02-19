@@ -57,14 +57,14 @@ func (ts *testSuite) TestBasic(c *C) {
 	dom := sessionctx.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(tb.TableID(), Greater, int64(0))
-	c.Assert(tb.TableName().L, Equals, "t")
+	c.Assert(tb.Meta().ID, Greater, int64(0))
+	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
-	c.Assert(tb.FindIndexByColName("b"), NotNil)
+	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
@@ -85,9 +85,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, map[int]bool{0: false, 1: true}), IsNil)
 
-	txn, err := ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	tb.IterRecords(txn, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
 		return true, nil
 	})
 
@@ -98,12 +96,12 @@ func (ts *testSuite) TestBasic(c *C) {
 	}
 
 	// RowWithCols test
-	vals, err := tb.RowWithCols(txn, 1, tb.Cols())
+	vals, err := tb.RowWithCols(ctx, 1, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0], Equals, int64(1))
 	cols := []*column.Col{tb.Cols()[1]}
-	vals, err = tb.RowWithCols(txn, 1, cols)
+	vals, err = tb.RowWithCols(ctx, 1, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
 	c.Assert(vals[0], DeepEquals, []byte("cba"))
@@ -117,7 +115,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	// Make sure index data is also removed after tb.Truncate().
-	c.Assert(tb.Truncate(txn), IsNil)
+	c.Assert(tb.Truncate(ctx), IsNil)
 	c.Assert(indexCnt(), Equals, 0)
 
 	_, err = ts.se.Execute("drop table test.t")
@@ -188,14 +186,14 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	dom := sessionctx.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(tb.TableID(), Greater, int64(0))
-	c.Assert(tb.TableName().L, Equals, "t")
+	c.Assert(tb.Meta().ID, Greater, int64(0))
+	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
-	c.Assert(tb.FindIndexByColName("b"), NotNil)
+	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)

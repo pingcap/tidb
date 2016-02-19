@@ -142,7 +142,7 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 	i := 0
 	for i < len(fields) {
 		field := fields[i]
-		if field.Table.Name.L == t.TableName().L {
+		if field.Table.Name.L == t.Meta().Name.L {
 			return i
 		}
 		i += len(field.Table.Columns)
@@ -310,7 +310,7 @@ func (e *DeleteExec) Next() (*Row, error) {
 
 		for _, entry := range row.RowKeys {
 			if e.IsMultiTable {
-				tid := entry.Tbl.TableID()
+				tid := entry.Tbl.Meta().ID
 				if _, ok := tblIDMap[tid]; !ok {
 					continue
 				}
@@ -463,11 +463,11 @@ func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 
 		cols, err = column.FindCols(tableCols, columns)
 		if err != nil {
-			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.TableName().O, err)
+			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
 
 		if len(cols) == 0 {
-			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.TableName().O)
+			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
 		}
 	} else {
 		// Process `name` type column.
@@ -477,7 +477,7 @@ func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 		}
 		cols, err = column.FindCols(tableCols, columns)
 		if err != nil {
-			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.TableName().O, err)
+			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
 
 		// If cols are empty, use all columns instead.
@@ -520,9 +520,9 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	}
 	if valueCount == 0 && len(e.Columns) > 0 {
 		// "insert into t (c1) values ()" is not valid.
-		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.TableName().O, len(e.Columns), 0)
+		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.Meta().Name.O, len(e.Columns), 0)
 	} else if valueCount > 0 && valueCount != len(cols) {
-		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.TableName().O, len(cols), valueCount)
+		return errors.Errorf("INSERT INTO %s: expected %d value(s), have %d", e.Table.Meta().Name.O, len(cols), valueCount)
 	}
 	return nil
 }
@@ -712,7 +712,7 @@ func (e *InsertExec) onDuplicateUpdate(row []interface{}, h int64, cols map[int]
 
 func findColumnByName(t table.Table, name string) (*column.Col, error) {
 	_, tableName, colName := field.SplitQualifiedName(name)
-	if len(tableName) > 0 && tableName != t.TableName().O {
+	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
 

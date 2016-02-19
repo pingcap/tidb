@@ -166,10 +166,6 @@ func (e *CheckTableExec) Next() (*Row, error) {
 
 	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
 	is := sessionctx.GetDomain(e.ctx).InfoSchema()
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
 	for _, t := range e.tables {
 		tb, err := is.TableByName(dbName, t.Name)
@@ -177,6 +173,10 @@ func (e *CheckTableExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
+			txn, err := e.ctx.GetTxn(false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			err = inspectkv.CompareIndexData(txn, tb, idx)
 			if err != nil {
 				return nil, errors.Errorf("%v err:%v", t.Name, err)
@@ -252,7 +252,7 @@ func (e *TableScanExec) Next() (*Row, error) {
 }
 
 func (e *TableScanExec) seek() (kv.Key, error) {
-	seekKey := tables.EncodeRecordKey(e.t.TableID(), e.seekHandle, 0)
+	seekKey := tables.EncodeRecordKey(e.t.Meta().ID, e.seekHandle, 0)
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -18,9 +18,7 @@
 package tables
 
 import (
-	"reflect"
 	"strings"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -37,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
+	"reflect"
+	"time"
 )
 
 // TablePrefix is the prefix for table record and index key.
@@ -73,7 +73,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		columns = append(columns, col)
 	}
 
-	t := newTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
+	t := newTable(tblInfo.ID, columns, alloc)
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
@@ -86,18 +86,16 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		idx.X = kv.NewKVIndex(t.IndexPrefix(), idxInfo.Name.L, idxInfo.ID, idxInfo.Unique)
 
-		t.AddIndex(idx)
+		t.indices = append(t.indices, idx)
 	}
 	t.meta = tblInfo
 	return t, nil
 }
 
 // NewTable constructs a Table instance.
-func newTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *Table {
-	name := model.NewCIStr(tableName)
+func newTable(tableID int64, cols []*column.Col, alloc autoid.Allocator) *Table {
 	t := &Table{
 		ID:           tableID,
-		Name:         name,
 		recordPrefix: genTableRecordPrefix(tableID),
 		indexPrefix:  genTableIndexPrefix(tableID),
 		alloc:        alloc,
@@ -109,24 +107,9 @@ func newTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.
 	return t
 }
 
-// TableID implements table.Table TableID interface.
-func (t *Table) TableID() int64 {
-	return t.ID
-}
-
 // Indices implements table.Table Indices interface.
 func (t *Table) Indices() []*column.IndexedCol {
 	return t.indices
-}
-
-// AddIndex implements table.Table AddIndex interface.
-func (t *Table) AddIndex(idxCol *column.IndexedCol) {
-	t.indices = append(t.indices, idxCol)
-}
-
-// TableName implements table.Table TableName interface.
-func (t *Table) TableName() model.CIStr {
-	return t.Name
 }
 
 // Meta implements table.Table Meta interface.
@@ -167,62 +150,6 @@ func (t *Table) writableCols() []*column.Col {
 	return t.writableColumns
 }
 
-func (t *Table) unflatten(rec interface{}, col *column.Col) (interface{}, error) {
-	if rec == nil {
-		return nil, nil
-	}
-	switch col.Tp {
-	case mysql.TypeFloat:
-		return float32(rec.(float64)), nil
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob,
-		mysql.TypeVarchar, mysql.TypeString:
-		return rec, nil
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		var t mysql.Time
-		t.Type = col.Tp
-		t.Fsp = col.Decimal
-		err := t.Unmarshal(rec.([]byte))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return t, nil
-	case mysql.TypeDuration:
-		return mysql.Duration{Duration: time.Duration(rec.(int64)), Fsp: col.Decimal}, nil
-	case mysql.TypeNewDecimal, mysql.TypeDecimal:
-		return mysql.ParseDecimal(string(rec.([]byte)))
-	case mysql.TypeEnum:
-		return mysql.ParseEnumValue(col.Elems, rec.(uint64))
-	case mysql.TypeSet:
-		return mysql.ParseSetValue(col.Elems, rec.(uint64))
-	case mysql.TypeBit:
-		return mysql.Bit{Value: rec.(uint64), Width: col.Flen}, nil
-	}
-	log.Error(col.Tp, rec, reflect.TypeOf(rec))
-	return nil, nil
-}
-
-func (t *Table) flatten(data interface{}) (interface{}, error) {
-	switch x := data.(type) {
-	case mysql.Time:
-		// for mysql datetime, timestamp and date type
-		return x.Marshal()
-	case mysql.Duration:
-		// for mysql time type
-		return int64(x.Duration), nil
-	case mysql.Decimal:
-		return x.String(), nil
-	case mysql.Enum:
-		return x.Value, nil
-	case mysql.Set:
-		return x.Value, nil
-	case mysql.Bit:
-		return x.Value, nil
-	default:
-		return data, nil
-	}
-}
-
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (t *Table) RecordPrefix() kv.Key {
 	return t.recordPrefix
@@ -247,29 +174,17 @@ func (t *Table) FirstKey() kv.Key {
 	return t.RecordKey(0, nil)
 }
 
-// FindIndexByColName implements table.Table FindIndexByColName interface.
-func (t *Table) FindIndexByColName(name string) *column.IndexedCol {
-	for _, idx := range t.indices {
-		// only public index can be read.
-		if idx.State != model.StatePublic {
-			continue
-		}
-
-		if len(idx.Columns) == 1 && strings.EqualFold(idx.Columns[0].Name.L, name) {
-			return idx
-		}
-	}
-
-	return nil
-}
-
 // Truncate implements table.Table Truncate interface.
-func (t *Table) Truncate(rm kv.RetrieverMutator) error {
-	err := util.DelKeyWithPrefix(rm, t.RecordPrefix())
+func (t *Table) Truncate(ctx context.Context) error {
+	txn, err := ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return util.DelKeyWithPrefix(rm, t.IndexPrefix())
+	err = util.DelKeyWithPrefix(txn, t.RecordPrefix())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return util.DelKeyWithPrefix(txn, t.IndexPrefix())
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
@@ -325,19 +240,6 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 	}
 	return nil
 }
-
-// SetColValue implements table.Table SetColValue interface.
-func (t *Table) SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error {
-	v, err := t.EncodeValue(data)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := rm.Set(key, v); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 func (t *Table) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool, data []interface{}) error {
 	for _, col := range t.Cols() {
 		if !touched[col.Offset] {
@@ -345,7 +247,7 @@ func (t *Table) setNewData(rm kv.RetrieverMutator, h int64, touched map[int]bool
 		}
 
 		k := t.RecordKey(h, col)
-		if err := t.SetColValue(rm, k, data[col.Offset]); err != nil {
+		if err := SetColValue(rm, k, data[col.Offset]); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -371,7 +273,7 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]
 			return errors.Trace(err)
 		}
 
-		if t.RemoveRowIndex(rm, h, oldVs, idx); err != nil {
+		if t.removeRowIndex(rm, h, oldVs, idx); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -380,7 +282,7 @@ func (t *Table) rebuildIndices(rm kv.RetrieverMutator, h int64, touched map[int]
 			return errors.Trace(err)
 		}
 
-		if err := t.BuildIndexForRow(rm, h, newVs, idx); err != nil {
+		if err := t.buildIndexForRow(rm, h, newVs, idx); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -444,7 +346,7 @@ func (t *Table) AddRecord(ctx context.Context, r []interface{}) (recordID int64,
 		}
 
 		key := t.RecordKey(recordID, col)
-		err = t.SetColValue(txn, key, value)
+		err = SetColValue(txn, key, value)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -534,28 +436,12 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []interface{},
 	return 0, nil
 }
 
-// EncodeValue implements table.Table EncodeValue interface.
-func (t *Table) EncodeValue(raw interface{}) ([]byte, error) {
-	v, err := t.flatten(raw)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	b, err := codec.EncodeValue(nil, v)
-	return b, errors.Trace(err)
-}
-
-// DecodeValue implements table.Table DecodeValue interface.
-func (t *Table) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	values, err := codec.Decode(data)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return t.unflatten(values[0], col)
-}
-
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col) ([]interface{}, error) {
+func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	v := make([]interface{}, len(cols))
 	for i, col := range cols {
 		if col.State != model.StatePublic {
@@ -567,12 +453,12 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 		}
 
 		k := t.RecordKey(h, col)
-		data, err := retriever.Get(k)
+		data, err := txn.Get(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		val, err := t.DecodeValue(data, col)
+		val, err := DecodeValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -584,12 +470,7 @@ func (t *Table) RowWithCols(retriever kv.Retriever, h int64, cols []*column.Col)
 // Row implements table.Table Row interface.
 func (t *Table) Row(ctx context.Context, h int64) ([]interface{}, error) {
 	// TODO: we only interested in mentioned cols
-	txn, err := ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	r, err := t.RowWithCols(txn, h, t.Cols())
+	r, err := t.RowWithCols(ctx, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -680,7 +561,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []interface{}
 }
 
 // RemoveRowIndex implements table.Table RemoveRowIndex interface.
-func (t *Table) RemoveRowIndex(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
+func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	if err := idx.X.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
@@ -688,7 +569,7 @@ func (t *Table) RemoveRowIndex(rm kv.RetrieverMutator, h int64, vals []interface
 }
 
 // BuildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
+func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
 		// If the index is in delete only or write reorganization state, we can not add index.
 		return nil
@@ -701,9 +582,13 @@ func (t *Table) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interfa
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *Table) IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*column.Col,
+func (t *Table) IterRecords(ctx context.Context, startKey kv.Key, cols []*column.Col,
 	fn table.RecordIterFunc) error {
-	it, err := retriever.Seek(startKey)
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	it, err := txn.Seek(startKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -725,7 +610,7 @@ func (t *Table) IterRecords(retriever kv.Retriever, startKey kv.Key, cols []*col
 			return errors.Trace(err)
 		}
 
-		data, err := t.RowWithCols(retriever, handle, cols)
+		data, err := t.RowWithCols(ctx, handle, cols)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -853,10 +738,112 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, e
 	return
 }
 
+// EncodeValue encodes a go value to bytes.
+func EncodeValue(raw interface{}) ([]byte, error) {
+	v, err := flatten(raw)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b, err := codec.EncodeValue(nil, v)
+	return b, errors.Trace(err)
+}
+
+// DecodeValue implements table.Table DecodeValue interface.
+func DecodeValue(data []byte, tp *types.FieldType) (interface{}, error) {
+	values, err := codec.Decode(data)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return unflatten(values[0], tp)
+}
+
+func flatten(data interface{}) (interface{}, error) {
+	switch x := data.(type) {
+	case mysql.Time:
+		// for mysql datetime, timestamp and date type
+		return x.Marshal()
+	case mysql.Duration:
+		// for mysql time type
+		return int64(x.Duration), nil
+	case mysql.Decimal:
+		return x.String(), nil
+	case mysql.Enum:
+		return x.Value, nil
+	case mysql.Set:
+		return x.Value, nil
+	case mysql.Bit:
+		return x.Value, nil
+	default:
+		return data, nil
+	}
+}
+
+func unflatten(rec interface{}, tp *types.FieldType) (interface{}, error) {
+	if rec == nil {
+		return nil, nil
+	}
+	switch tp.Tp {
+	case mysql.TypeFloat:
+		return float32(rec.(float64)), nil
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob,
+		mysql.TypeVarchar, mysql.TypeString:
+		return rec, nil
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		var t mysql.Time
+		t.Type = tp.Tp
+		t.Fsp = tp.Decimal
+		err := t.Unmarshal(rec.([]byte))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return t, nil
+	case mysql.TypeDuration:
+		return mysql.Duration{Duration: time.Duration(rec.(int64)), Fsp: tp.Decimal}, nil
+	case mysql.TypeNewDecimal, mysql.TypeDecimal:
+		return mysql.ParseDecimal(string(rec.([]byte)))
+	case mysql.TypeEnum:
+		return mysql.ParseEnumValue(tp.Elems, rec.(uint64))
+	case mysql.TypeSet:
+		return mysql.ParseSetValue(tp.Elems, rec.(uint64))
+	case mysql.TypeBit:
+		return mysql.Bit{Value: rec.(uint64), Width: tp.Flen}, nil
+	}
+	log.Error(tp.Tp, rec, reflect.TypeOf(rec))
+	return nil, nil
+}
+
+// SetColValue implements table.Table SetColValue interface.
+func SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error {
+	v, err := EncodeValue(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := rm.Set(key, v); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DecodeRecordKeyHandle decodes the key and gets the record handle.
 func DecodeRecordKeyHandle(key kv.Key) (int64, error) {
 	_, handle, _, err := DecodeRecordKey(key)
 	return handle, errors.Trace(err)
+}
+
+// FindIndexByColName implements table.Table FindIndexByColName interface.
+func FindIndexByColName(t table.Table, name string) *column.IndexedCol {
+	for _, idx := range t.Indices() {
+		// only public index can be read.
+		if idx.State != model.StatePublic {
+			continue
+		}
+
+		if len(idx.Columns) == 1 && strings.EqualFold(idx.Columns[0].Name.L, name) {
+			return idx
+		}
+	}
+	return nil
 }
 
 func init() {
