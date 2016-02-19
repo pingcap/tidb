@@ -334,17 +334,21 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	dbInfo, _ := nr.Info.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
 
-	rfs := make([]*ast.ResultField, len(tn.TableInfo.Columns))
-	for i, v := range tn.TableInfo.Columns {
+	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
+	for _, v := range tn.TableInfo.Columns {
+		if v.State != model.StatePublic {
+			continue
+		}
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)
-		rfs[i] = &ast.ResultField{
+		rf := &ast.ResultField{
 			Column:    v,
 			Table:     tn.TableInfo,
 			DBName:    tn.Schema,
 			Expr:      expr,
 			TableName: tn,
 		}
+		rfs = append(rfs, rf)
 	}
 	tn.SetResultFields(rfs)
 	return
