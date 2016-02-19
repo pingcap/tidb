@@ -40,7 +40,8 @@ type UpdateExec struct {
 	SelectExec  Executor
 	OrderedList []*ast.Assignment
 
-	updatedRowKeys map[table.Table]map[int64]bool
+	// Map for unique (Table, handle) pair.
+	updatedRowKeys map[table.Table]map[int64]struct{}
 	ctx            context.Context
 
 	rows        []*Row          // The rows fetched from TableExec.
@@ -67,14 +68,14 @@ func (e *UpdateExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[table.Table]map[int64]bool)
+		e.updatedRowKeys = make(map[table.Table]map[int64]struct{})
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
 	for _, entry := range row.RowKeys {
 		tbl := entry.Tbl
 		if e.updatedRowKeys[tbl] == nil {
-			e.updatedRowKeys[tbl] = make(map[int64]bool)
+			e.updatedRowKeys[tbl] = make(map[int64]struct{})
 		}
 		offset := e.getTableOffset(tbl)
 		handle := entry.Handle
@@ -92,7 +93,7 @@ func (e *UpdateExec) Next() (*Row, error) {
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.updatedRowKeys[tbl][handle] = true
+		e.updatedRowKeys[tbl][handle] = struct{}{}
 	}
 	e.cursor++
 	return &Row{}, nil
@@ -276,7 +277,9 @@ func (e *DeleteExec) Next() (*Row, error) {
 	tblIDMap := make(map[int64]bool, len(e.Tables))
 	// Get table alias map.
 	tblNames := make(map[string]string)
-	rowKeyMap := make(map[table.Table]map[int64]bool)
+
+	// Map for unique (Table, handle) pair.
+	rowKeyMap := make(map[table.Table]map[int64]struct{})
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
 		fs := e.SelectExec.Fields()
@@ -313,9 +316,9 @@ func (e *DeleteExec) Next() (*Row, error) {
 				}
 			}
 			if rowKeyMap[entry.Tbl] == nil {
-				rowKeyMap[entry.Tbl] = make(map[int64]bool)
+				rowKeyMap[entry.Tbl] = make(map[int64]struct{})
 			}
-			rowKeyMap[entry.Tbl][entry.Handle] = true
+			rowKeyMap[entry.Tbl][entry.Handle] = struct{}{}
 		}
 	}
 	for t, handleMap := range rowKeyMap {
