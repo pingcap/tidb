@@ -93,6 +93,8 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildSimple(x)
 	case *ast.SetStmt:
 		return b.buildSimple(x)
+	case *ast.ShowStmt:
+		return b.buildShow(x)
 	case *ast.DoStmt:
 		return b.buildSimple(x)
 	case *ast.BeginStmt:
@@ -827,6 +829,33 @@ func columnOffsetInFields(cn *ast.ColumnName, fields []*ast.ResultField) (int, e
 		return -1, errors.Errorf("column %s not found", cn.Name.O)
 	}
 	return offset, nil
+}
+
+func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
+	var p Plan
+	p = &Show{
+		Tp:     show.Tp,
+		DBName: show.DBName,
+		Table:  show.Table,
+		Column: show.Column,
+		Flag:   show.Flag,
+		Full:   show.Full,
+		User:   show.User,
+	}
+	p.SetFields(show.GetResultFields())
+	var conditions []ast.ExprNode
+	if show.Pattern != nil {
+		conditions = append(conditions, show.Pattern)
+	}
+	if show.Where != nil {
+		conditions = append(conditions, show.Where)
+	}
+	if len(conditions) != 0 {
+		filter := &Filter{Conditions: conditions}
+		filter.SetSrc(p)
+		p = filter
+	}
+	return p
 }
 
 func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {

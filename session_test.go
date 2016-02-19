@@ -651,7 +651,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	r := mustExecSQL(c, se, "show global variables where variable_name = 'autocommit'")
 	row, err := r.FirstRow()
 	c.Assert(err, IsNil)
-	match(c, row, "autocommit", 1)
+	match(c, row, "autocommit", "ON")
 
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table if not exists t (c int)")
