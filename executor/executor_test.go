@@ -65,7 +65,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Data[0], Equals, ddlInfo.SchemaVer)
 	c.Assert(row.Data[1], DeepEquals, ddlInfo.Owner.String())
 	c.Assert(row.Data[2], DeepEquals, "")
-	bgInfo, err := inspectkv.GetDDLBgInfo(txn)
+	bgInfo, err := inspectkv.GetBgDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[3], Equals, bgInfo.SchemaVer)
 	c.Assert(row.Data[4], DeepEquals, bgInfo.Owner.String())

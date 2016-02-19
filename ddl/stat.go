@@ -70,7 +70,7 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		bgInfo, err1 = inspectkv.GetDDLBgInfo(txn)
+		bgInfo, err1 = inspectkv.GetBgDDLInfo(txn)
 
 		return errors.Trace(err1)
 	})
