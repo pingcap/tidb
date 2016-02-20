@@ -91,13 +91,13 @@ func (*testSuite) TestT(c *C) {
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
-	c.Assert(len(schemaNames), Equals, 1)
+	c.Assert(len(schemaNames), Equals, 2)
 	c.Assert(schemaNames[0], Equals, "Test")
 
 	schemas := is.AllSchemas()
-	c.Assert(len(schemas), Equals, 1)
+	c.Assert(len(schemas), Equals, 2)
 	schemas = is.Clone()
-	c.Assert(len(schemas), Equals, 1)
+	c.Assert(len(schemas), Equals, 2)
 
 	c.Assert(is.SchemaExists(dbName), IsTrue)
 	c.Assert(is.SchemaExists(noexist), IsFalse)
@@ -125,7 +125,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(tb, NotNil)
 
-	tb, ok = is.TableByID(3)
+	tb, ok = is.TableByID(100)
 	c.Assert(ok, IsFalse)
 	c.Assert(tb, IsNil)
 
@@ -142,10 +142,6 @@ func (*testSuite) TestT(c *C) {
 	col, ok := is.ColumnByID(3)
 	c.Assert(ok, IsTrue)
 	c.Assert(col, NotNil)
-
-	col, ok = is.ColumnByID(5)
-	c.Assert(ok, IsFalse)
-	c.Assert(col, IsNil)
 
 	col, ok = is.ColumnByName(dbName, tbName, colName)
 	c.Assert(ok, IsTrue)

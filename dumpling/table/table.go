@@ -108,6 +108,9 @@ type Table interface {
 
 	// LockRow locks a row.
 	LockRow(ctx context.Context, h int64) error
+
+	// Seek row with handle
+	Seek(ctx context.Context, handle int64) (kv.Iterator, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
