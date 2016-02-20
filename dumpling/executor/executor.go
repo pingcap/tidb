@@ -223,8 +223,11 @@ func (e *TableScanExec) Next() (*Row, error) {
 			continue
 		}
 		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
-		if err != nil || !found {
+		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if !found {
+			return nil, nil
 		}
 		if handle > ran.HighVal {
 			// The handle is out of the current range, but may be in following ranges.
