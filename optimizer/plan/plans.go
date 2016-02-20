@@ -157,7 +157,7 @@ type JoinOuter struct {
 func (p *JoinOuter) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*JoinOuter)
 	var ok bool
@@ -188,7 +188,7 @@ func (p *JoinInner) String() string {
 func (p *JoinInner) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*JoinInner)
 	for i, in := range p.Inners {
@@ -212,7 +212,7 @@ type SelectLock struct {
 func (p *SelectLock) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*SelectLock)
 	var ok bool
@@ -238,7 +238,7 @@ type SelectFields struct {
 func (p *SelectFields) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*SelectFields)
 	if p.src != nil {
@@ -270,7 +270,7 @@ type Sort struct {
 func (p *Sort) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Sort)
 	var ok bool
@@ -300,7 +300,7 @@ type Limit struct {
 func (p *Limit) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Limit)
 	var ok bool
@@ -330,7 +330,7 @@ type Union struct {
 func (p *Union) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(p)
+		return v.Leave(p)
 	}
 	p = np.(*Union)
 	for i, sel := range p.Selects {
@@ -352,7 +352,7 @@ type Distinct struct {
 func (p *Distinct) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(p)
+		return v.Leave(p)
 	}
 	p = np.(*Distinct)
 	var ok bool
@@ -383,7 +383,7 @@ type Prepare struct {
 func (p *Prepare) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Prepare)
 	return v.Leave(p)
@@ -402,7 +402,7 @@ type Execute struct {
 func (p *Execute) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Execute)
 	return v.Leave(p)
@@ -419,7 +419,7 @@ type Deallocate struct {
 func (p *Deallocate) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Deallocate)
 	return v.Leave(p)
@@ -436,7 +436,7 @@ type Aggregate struct {
 func (p *Aggregate) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Aggregate)
 	if p.src != nil {
@@ -472,7 +472,7 @@ type Having struct {
 func (p *Having) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Having)
 	var ok bool
@@ -502,7 +502,7 @@ type Update struct {
 func (p *Update) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Update)
 	var ok bool
@@ -526,7 +526,7 @@ type Delete struct {
 func (p *Delete) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Delete)
 	var ok bool
@@ -551,7 +551,7 @@ type Filter struct {
 func (p *Filter) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Filter)
 	var ok bool
@@ -589,7 +589,7 @@ type Show struct {
 func (p *Show) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Show)
 	return v.Leave(p)
@@ -606,7 +606,7 @@ type Simple struct {
 func (p *Simple) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Simple)
 	return v.Leave(p)
@@ -631,7 +631,7 @@ type Insert struct {
 func (p *Insert) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*Insert)
 	if p.SelectPlan != nil {
@@ -655,7 +655,7 @@ type DDL struct {
 func (p *DDL) Accept(v Visitor) (Plan, bool) {
 	np, skip := v.Enter(p)
 	if skip {
-		v.Leave(np)
+		return v.Leave(np)
 	}
 	p = np.(*DDL)
 	return v.Leave(p)
