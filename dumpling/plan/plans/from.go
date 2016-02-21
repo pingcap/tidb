@@ -367,8 +367,8 @@ func (r *TableDefaultPlan) Next(ctx context.Context) (row *plan.Row, err error) 
 	}
 	// Put rowKey to the tail of record row
 	rke := &plan.RowKeyEntry{
-		Tbl: r.T,
-		Key: string(rowKey),
+		Tbl:    r.T,
+		Handle: handle,
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 
@@ -444,8 +444,8 @@ func (r *TableDefaultPlan) rangeNext(ctx context.Context) (*plan.Row, error) {
 		}
 		// Put rowKey to the tail of record row
 		rke := &plan.RowKeyEntry{
-			Tbl: r.T,
-			Key: string(rowKey),
+			Tbl:    r.T,
+			Handle: handle,
 		}
 		row.RowKeys = append(row.RowKeys, rke)
 		return row, nil
