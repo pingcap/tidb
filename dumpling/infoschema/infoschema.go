@@ -14,6 +14,7 @@
 package infoschema
 
 import (
+	"strings"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -247,143 +248,44 @@ func setColumnID(meta *model.TableInfo, store kv.Storage) error {
 	}
 	return err
 }
+
 func initMemoryTables(store kv.Storage) error {
 	// build data
 	dbID := int64(0)
 	alloc := autoid.NewMemoryAllocator(dbID)
 	nameToTable = make(map[string]table.Table)
 
-	// initTable For each data
 	// Schemata
 	isTables := make([]*model.TableInfo, 0, 8)
-	meta := metaForSchemata()
-	isTables = append(isTables, meta)
-	var err error
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
+	// initTable For each data
+	var (
+		err error
+		tbl table.Table
+	)
+	for name, cols := range tableNameToColumns {
+		meta := buildTableMeta(name, cols)
+		isTables = append(isTables, meta)
+		meta.ID, err = genGlobalID(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = setColumnID(meta, store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbl, err = createMemoryTable(meta, alloc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		nameToTable[meta.Name.L] = tbl
 	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	schemataTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = schemataTbl
-	// Tables
-	meta = metaForTables()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tablesTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = tablesTbl
-	// Columns
-	meta = metaForColumns()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	columnsTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = columnsTbl
-	// Statistics
-	meta = metaForStatistics()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	statisticsTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = statisticsTbl
-	// charset
-	meta = metaForCharacterSets()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	charsetTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = charsetTbl
-	// collation
-	meta = metaForCollations()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	collationsTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = collationsTbl
-	// files
-	meta = metaForFiles()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	filesTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = filesTbl
-	// profiling
-	meta = metaForProfiling()
-	isTables = append(isTables, meta)
-	meta.ID, err = genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = setColumnID(meta, store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	profilingTbl, err = createMemoryTable(meta, alloc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	nameToTable[meta.Name.L] = profilingTbl
+	// Set global variables
+	schemataTbl = nameToTable[strings.ToLower(tableSchemata)]
+	tablesTbl = nameToTable[strings.ToLower(tableTables)]
+	columnsTbl = nameToTable[strings.ToLower(tableColumns)]
+	statisticsTbl = nameToTable[strings.ToLower(tableStatistics)]
+	charsetTbl = nameToTable[strings.ToLower(tableCharacterSets)]
+	collationsTbl = nameToTable[strings.ToLower(tableCollations)]
 
 	// Some tables have static data. Init them now.
 	// charset
@@ -395,7 +297,6 @@ func initMemoryTables(store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	// create db
 	isDB = &model.DBInfo{
 		Name:    model.NewCIStr(Name),

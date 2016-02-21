@@ -43,11 +43,21 @@ const (
 	tableProfiling     = "PROFILING"
 )
 
-func buildColumnInfo(tableName, name string, tp byte, size int) *model.ColumnInfo {
+type columnInfo struct {
+	name  string
+	tp    byte
+	size  int
+	flag  uint
+	deflt interface{}
+	elems []string
+}
+
+//func buildColumnInfo(tableName, name string, tp byte, size int) *model.ColumnInfo {
+func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
 	mFlag := mysql.UnsignedFlag
-	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
 		mCharset = mysql.DefaultCharset
 		mCollation = mysql.DefaultCollationName
 		mFlag = 0
@@ -55,177 +65,141 @@ func buildColumnInfo(tableName, name string, tp byte, size int) *model.ColumnInf
 	fieldType := types.FieldType{
 		Charset: mCharset,
 		Collate: mCollation,
-		Tp:      tp,
-		Flen:    size,
+		Tp:      col.tp,
+		Flen:    col.size,
 		Flag:    uint(mFlag),
 	}
 	return &model.ColumnInfo{
-		Name:      model.NewCIStr(name),
+		Name:      model.NewCIStr(col.name),
 		FieldType: fieldType,
 		State:     model.StatePublic,
 	}
 }
 
-func metaForSchemata() *model.TableInfo {
+func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, 5)
-	tbName := tableSchemata
-	cols = append(cols, buildColumnInfo(tbName, "CATALOG_NAME", mysql.TypeVarchar, 512))
-	cols = append(cols, buildColumnInfo(tbName, "SCHEMA_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "DEFAULT_CHARACTER_SET_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "DEFAULT_COLLATION_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "SQL_PATH", mysql.TypeVarchar, 512))
+	for _, c := range cs {
+		cols = append(cols, buildColumnInfo(tableName, c))
+	}
 	for i, col := range cols {
 		col.Offset = i
 	}
 	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
+		Name:    model.NewCIStr(tableName),
 		Columns: cols,
 		State:   model.StatePublic,
 	}
 }
 
-func metaForTables() *model.TableInfo {
-	tbName := tableTables
-	cols := make([]*model.ColumnInfo, 0, 22)
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 512))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_TYPE", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "ENGINE", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "VERSION", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "ROW_FORMAT", mysql.TypeVarchar, 10))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_ROWS", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "AVG_ROW_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "DATA_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "MAX_DATA_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "INDEX_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "DATA_FREE", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "AUTO_INCREMENT", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "CREATE_TIME", mysql.TypeDatetime, 19))
-	cols = append(cols, buildColumnInfo(tbName, "UPDATE_TIME", mysql.TypeDatetime, 19))
-	cols = append(cols, buildColumnInfo(tbName, "CHECK_TIME", mysql.TypeDatetime, 19))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_COLLATION", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "CHECK_SUM", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "CREATE_OPTIONS", mysql.TypeVarchar, 255))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_COMMENT", mysql.TypeVarchar, 2048))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
+var schemataCols = []columnInfo{
+	{"CATALOG_NAME", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"SCHEMA_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEFAULT_CHARACTER_SET_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DEFAULT_COLLATION_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"SQL_PATH", mysql.TypeVarchar, 512, 0, nil, nil},
 }
 
-func metaForColumns() *model.TableInfo {
-	tbName := tableColumns
-	cols := make([]*model.ColumnInfo, 0, 21)
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 512))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "COLUMN_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "ORIGINAL_POSITION", mysql.TypeLonglong, 64))
-	cols = append(cols, buildColumnInfo(tbName, "COLUMN_DEFAULT", mysql.TypeBlob, 196606))
-	cols = append(cols, buildColumnInfo(tbName, "IS_NULLABLE", mysql.TypeVarchar, 3))
-	cols = append(cols, buildColumnInfo(tbName, "DATA_TYPE", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "CHARACTER_MAXIMUM_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "CHARACTOR_OCTET_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "NUMERIC_PRECISION", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "NUMERIC_SCALE", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "DATETIME_PRECISION", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "COLLATION_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "COLUMN_TYPE", mysql.TypeBlob, 196606))
-	cols = append(cols, buildColumnInfo(tbName, "COLUMN_KEY", mysql.TypeVarchar, 3))
-	cols = append(cols, buildColumnInfo(tbName, "EXTRA", mysql.TypeVarchar, 30))
-	cols = append(cols, buildColumnInfo(tbName, "PRIVILEGES", mysql.TypeVarchar, 80))
-	cols = append(cols, buildColumnInfo(tbName, "COLUMN_COMMENT", mysql.TypeVarchar, 1024))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
+var tablesCols = []columnInfo{
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"ROW_FORMAT", mysql.TypeVarchar, 10, 0, nil, nil},
+	{"TABLE_ROWS", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"AVG_ROW_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MAX_DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_FREE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"AUTO_INCREMENT", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CREATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
+	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
+	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
+	{"TABLE_COLLATION", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
+	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 }
 
-func metaForStatistics() *model.TableInfo {
-	tbName := tableStatistics
-	cols := make([]*model.ColumnInfo, 0, 16)
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 512))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "NON_UNIQUE", mysql.TypeVarchar, 1))
-	cols = append(cols, buildColumnInfo(tbName, "INDEX_SCHEMA", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "INDEX_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "SEQ_IN_INDEX", mysql.TypeLonglong, 2))
-	cols = append(cols, buildColumnInfo(tbName, "COLUMN_NAME", mysql.TypeVarchar, 21))
-	cols = append(cols, buildColumnInfo(tbName, "COLLATION", mysql.TypeVarchar, 1))
-	cols = append(cols, buildColumnInfo(tbName, "CARDINALITY", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "SUB_PART", mysql.TypeLonglong, 3))
-	cols = append(cols, buildColumnInfo(tbName, "PACKED", mysql.TypeVarchar, 10))
-	cols = append(cols, buildColumnInfo(tbName, "NULLABLE", mysql.TypeVarchar, 3))
-	cols = append(cols, buildColumnInfo(tbName, "INDEX_TYPE", mysql.TypeVarchar, 16))
-	cols = append(cols, buildColumnInfo(tbName, "COMMENT", mysql.TypeVarchar, 16))
-	cols = append(cols, buildColumnInfo(tbName, "INDEX_COMMENT", mysql.TypeVarchar, 1024))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
+var columnsCols = []columnInfo{
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"ORIGINAL_POSITION", mysql.TypeLonglong, 64, 0, nil, nil},
+	{"COLUMN_DEFAULT", mysql.TypeBlob, 196606, 0, nil, nil},
+	{"IS_NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"DATA_TYPE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"CHARACTER_MAXIMUM_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHARACTOR_OCTET_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"NUMERIC_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"NUMERIC_SCALE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATETIME_PRECISION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"COLLATION_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"COLUMN_TYPE", mysql.TypeBlob, 196606, 0, nil, nil},
+	{"COLUMN_KEY", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"EXTRA", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"PRIVILEGES", mysql.TypeVarchar, 80, 0, nil, nil},
+	{"COLUMN_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 }
 
-func metaForProfiling() *model.TableInfo {
-	tbName := tableProfiling
-	cols := make([]*model.ColumnInfo, 0, 18)
-	cols = append(cols, buildColumnInfo(tbName, "QUERY_ID", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "SEQ", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "STATE", mysql.TypeVarchar, 30))
-	cols = append(cols, buildColumnInfo(tbName, "DURATION", mysql.TypeNewDecimal, 9))
-	cols = append(cols, buildColumnInfo(tbName, "CPU_USER", mysql.TypeNewDecimal, 9))
-	cols = append(cols, buildColumnInfo(tbName, "CPU_SYSTEM", mysql.TypeNewDecimal, 9))
-	cols = append(cols, buildColumnInfo(tbName, "CONTEXT_VOLUNTARY", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "CONTEXT_INVOLUNTARY", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "BLOCK_OPS_IN", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "BLOCK_OPS_OUT", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "MESSAGES_SENT", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "MESSAGES_RECEIVED", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "PAGE_FAULTS_MAJOR", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "PAGE_FAULTS_MINOR", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "SWAPS", mysql.TypeLong, 20))
-	cols = append(cols, buildColumnInfo(tbName, "SOURCE_FUNCTION", mysql.TypeVarchar, 30))
-	cols = append(cols, buildColumnInfo(tbName, "SOURCE_FILE", mysql.TypeVarchar, 20))
-	cols = append(cols, buildColumnInfo(tbName, "SOURCE_LINE", mysql.TypeLong, 20))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
+var statisticsCols = []columnInfo{
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NON_UNIQUE", mysql.TypeVarchar, 1, 0, nil, nil},
+	{"INDEX_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"INDEX_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SEQ_IN_INDEX", mysql.TypeLonglong, 2, 0, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 21, 0, nil, nil},
+	{"COLLATION", mysql.TypeVarchar, 1, 0, nil, nil},
+	{"CARDINALITY", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"SUB_PART", mysql.TypeLonglong, 3, 0, nil, nil},
+	{"PACKED", mysql.TypeVarchar, 10, 0, nil, nil},
+	{"NULLABLE", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"INDEX_TYPE", mysql.TypeVarchar, 16, 0, nil, nil},
+	{"COMMENT", mysql.TypeVarchar, 16, 0, nil, nil},
+	{"INDEX_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
 }
 
-func metaForCharacterSets() *model.TableInfo {
-	tbName := tableCharacterSets
-	cols := make([]*model.ColumnInfo, 0, 4)
-	cols = append(cols, buildColumnInfo(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "DEFAULT_COLLATE_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "DESCRIPTION", mysql.TypeVarchar, 60))
-	cols = append(cols, buildColumnInfo(tbName, "MAXLEN", mysql.TypeLonglong, 3))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
+var profilingCols = []columnInfo{
+	{"QUERY_ID", mysql.TypeLong, 20, 0, nil, nil},
+	{"SEQ", mysql.TypeLong, 20, 0, nil, nil},
+	{"STATE", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"DURATION", mysql.TypeNewDecimal, 9, 0, nil, nil},
+	{"CPU_USER", mysql.TypeNewDecimal, 9, 0, nil, nil},
+	{"CPU_SYSTEM", mysql.TypeNewDecimal, 9, 0, nil, nil},
+	{"CONTEXT_VOLUNTARY", mysql.TypeLong, 20, 0, nil, nil},
+	{"CONTEXT_INVOLUNTARY", mysql.TypeLong, 20, 0, nil, nil},
+	{"BLOCK_OPS_IN", mysql.TypeLong, 20, 0, nil, nil},
+	{"BLOCK_OPS_OUT", mysql.TypeLong, 20, 0, nil, nil},
+	{"MESSAGES_SENT", mysql.TypeLong, 20, 0, nil, nil},
+	{"MESSAGES_RECEIVED", mysql.TypeLong, 20, 0, nil, nil},
+	{"PAGE_FAULTS_MAJOR", mysql.TypeLong, 20, 0, nil, nil},
+	{"PAGE_FAULTS_MINOR", mysql.TypeLong, 20, 0, nil, nil},
+	{"SWAPS", mysql.TypeLong, 20, 0, nil, nil},
+	{"SOURCE_FUNCTION", mysql.TypeVarchar, 30, 0, nil, nil},
+	{"SOURCE_FILE", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"SOURCE_LINE", mysql.TypeLong, 20, 0, nil, nil},
+}
+
+var charsetCols = []columnInfo{
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"DEFAULT_COLLATE_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"DESCRIPTION", mysql.TypeVarchar, 60, 0, nil, nil},
+	{"MAXLEN", mysql.TypeLonglong, 3, 0, nil, nil},
+}
+
+var collationsCols = []columnInfo{
+	{"COLLATION_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, 0, nil, nil},
+	{"ID", mysql.TypeLonglong, 11, 0, nil, nil},
+	{"IS_DEFAULT", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"IS_COMPILED", mysql.TypeVarchar, 3, 0, nil, nil},
+	{"SORTLEN", mysql.TypeLonglong, 3, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]interface{}) {
@@ -239,25 +213,6 @@ func dataForCharacterSets() (records [][]interface{}) {
 	return records
 }
 
-func metaForCollations() *model.TableInfo {
-	tbName := tableCollations
-	cols := make([]*model.ColumnInfo, 0, 6)
-	cols = append(cols, buildColumnInfo(tbName, "COLLATION_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "CHARACTER_SET_NAME", mysql.TypeVarchar, 32))
-	cols = append(cols, buildColumnInfo(tbName, "ID", mysql.TypeLonglong, 11))
-	cols = append(cols, buildColumnInfo(tbName, "IS_DEFAULT", mysql.TypeVarchar, 3))
-	cols = append(cols, buildColumnInfo(tbName, "IS_COMPILED", mysql.TypeVarchar, 3))
-	cols = append(cols, buildColumnInfo(tbName, "SORTLEN", mysql.TypeLonglong, 3))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
-}
-
 func dataForColltions() (records [][]interface{}) {
 	records = append(records,
 		[]interface{}{"ascii_general_ci", "ascii", 1, "Yes", "Yes", 1},
@@ -269,56 +224,41 @@ func dataForColltions() (records [][]interface{}) {
 	return records
 }
 
-func dataForFiles() (records [][]interface{}) {
-	// We do not have files, so we return empty records.
-	return records
-}
-
-func metaForFiles() *model.TableInfo {
-	tbName := tableFiles
-	cols := make([]*model.ColumnInfo, 0, 34)
-	cols = append(cols, buildColumnInfo(tbName, "FILE_ID", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "FILE_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLESPACE_NAME", mysql.TypeVarchar, 20))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_CATALOG", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_SCHEMA", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "LOGFILE_GROUP_NAME", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "LOGFILE_GROUP_NUMBER", mysql.TypeLonglong, 32))
-	cols = append(cols, buildColumnInfo(tbName, "ENGINE", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "FULLTEXT_KEYS", mysql.TypeVarchar, 64))
-	cols = append(cols, buildColumnInfo(tbName, "DELETED_ROWS", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "UPDATE_COUNT", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "FREE_EXTENTS", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "TOTAL_EXTENTS", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "EXTENT_SIZE", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "INITIAL_SIZE", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "MAXIMUM_SIZE", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "AUTOEXTEND_SIZE", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "CREATION_TIME", mysql.TypeDatetime, -1))
-	cols = append(cols, buildColumnInfo(tbName, "LAST_UPDATE_TIME", mysql.TypeDatetime, -1))
-	cols = append(cols, buildColumnInfo(tbName, "LAST_ACCESS_TIME", mysql.TypeDatetime, -1))
-	cols = append(cols, buildColumnInfo(tbName, "RECOVER_TIME", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "TRANSACTION_COUNTER", mysql.TypeLonglong, 4))
-	cols = append(cols, buildColumnInfo(tbName, "VERSION", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "ROW_FORMAT", mysql.TypeVarchar, 21))
-	cols = append(cols, buildColumnInfo(tbName, "TABLE_ROWS", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "AVG_ROW_LENGTH", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "DATA_FREE", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "CREATE_TIME", mysql.TypeDatetime, -1))
-	cols = append(cols, buildColumnInfo(tbName, "UPDATE_TIME", mysql.TypeDatetime, -1))
-	cols = append(cols, buildColumnInfo(tbName, "CHECK_TIME", mysql.TypeDatetime, -1))
-	cols = append(cols, buildColumnInfo(tbName, "CHECKSUM", mysql.TypeLonglong, 21))
-	cols = append(cols, buildColumnInfo(tbName, "STATUS", mysql.TypeVarchar, 20))
-	cols = append(cols, buildColumnInfo(tbName, "EXTRA", mysql.TypeVarchar, 255))
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
-		Name:    model.NewCIStr(tbName),
-		Columns: cols,
-		State:   model.StatePublic,
-	}
+var filesCols = []columnInfo{
+	{"FILE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"FILE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLESPACE_NAME", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"TABLE_CATALOG", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LOGFILE_GROUP_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"LOGFILE_GROUP_NUMBER", mysql.TypeLonglong, 32, 0, nil, nil},
+	{"ENGINE", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"FULLTEXT_KEYS", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"DELETED_ROWS", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"UPDATE_COUNT", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"FREE_EXTENTS", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"TOTAL_EXTENTS", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"EXTENT_SIZE", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"INITIAL_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MAXIMUM_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"AUTOEXTEND_SIZE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CREATION_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"LAST_UPDATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"LAST_ACCESS_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"RECOVER_TIME", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"TRANSACTION_COUNTER", mysql.TypeLonglong, 4, 0, nil, nil},
+	{"VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"ROW_FORMAT", mysql.TypeVarchar, 21, 0, nil, nil},
+	{"TABLE_ROWS", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"AVG_ROW_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_FREE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CREATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"UPDATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"CHECK_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
+	{"CHECKSUM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"STATUS", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"EXTRA", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
 func dataForSchemata(schemas []string) [][]interface{} {
@@ -505,6 +445,17 @@ func fetchStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]in
 		}
 	}
 	return rows
+}
+
+var tableNameToColumns = map[string]([]columnInfo){
+	tableSchemata:      schemataCols,
+	tableTables:        tablesCols,
+	tableColumns:       columnsCols,
+	tableStatistics:    statisticsCols,
+	tableCharacterSets: charsetCols,
+	tableCollations:    collationsCols,
+	tableFiles:         filesCols,
+	tableProfiling:     profilingCols,
 }
 
 func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
