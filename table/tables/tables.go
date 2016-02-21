@@ -107,6 +107,22 @@ func newTable(tableID int64, cols []*column.Col, alloc autoid.Allocator) *Table 
 	return t
 }
 
+// Seek seeks row with least recordID greater than handle.
+func (t *Table) Seek(ctx context.Context, handle int64) (kv.Iterator, error) {
+	seekKey := EncodeRecordKey(t.TableID(), handle, 0)
+	txn, err := ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	iter, err := txn.Seek(seekKey)
+	return iter, errors.Trace(err)
+}
+
+// TableID implements table.Table TableID interface.
+func (t *Table) TableID() int64 {
+	return t.ID
+}
+
 // Indices implements table.Table Indices interface.
 func (t *Table) Indices() []*column.IndexedCol {
 	return t.indices
@@ -848,4 +864,6 @@ func FindIndexByColName(t table.Table, name string) *column.IndexedCol {
 
 func init() {
 	table.TableFromMeta = TableFromMeta
+	//driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+	//store, _ = driver.Open("TiDBMemoryTable")
 }
