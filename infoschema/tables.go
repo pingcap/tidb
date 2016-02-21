@@ -27,10 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-/*
- * 1. Create tables for Information_Schema
- * 2. Fill data for each table.
- */
 const (
 	tableSchemata      = "SCHEMATA"
 	tableTables        = "TABLES"
@@ -52,7 +48,6 @@ type columnInfo struct {
 	elems []string
 }
 
-//func buildColumnInfo(tableName, name string, tp byte, size int) *model.ColumnInfo {
 func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
@@ -417,7 +412,6 @@ func fetchStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]in
 			nonUnique = "0"
 		}
 		for i, key := range index.Columns {
-			//col, _ := is.ColumnByName(schema.Name, table.Name, key.Name)
 			col := nameToCol[key.Name.L]
 			nullable := "YES"
 			if mysql.HasNotNullFlag(col.Flag) {

@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-var store kv.Storage
-
 // MemoryTable implements table.Table interface.
 type MemoryTable struct {
 	ID      int64
@@ -39,7 +37,6 @@ type MemoryTable struct {
 	alloc        autoid.Allocator
 	meta         *model.TableInfo
 
-	//store kv.Storage
 	rows [][]interface{}
 }
 
@@ -69,39 +66,6 @@ func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc a
 	return t
 }
 
-/*
-type iterator struct {
-	rows   [][]interface{}
-	cursor int
-	tid    int64
-}
-
-func (it *iterator) Valid() bool {
-	if it.cursor < 0 || it.cursor >= len(it.rows) {
-		return false
-	}
-	return true
-}
-
-func (it *iterator) Key() kv.Key {
-	return EncodeRecordKey(it.tid, int64(it.cursor), 0)
-}
-
-func (it *iterator) Value() []byte {
-	return nil
-}
-
-func (it *iterator) Next() error {
-	it.cursor++
-	return nil
-}
-
-func (it *iterator) Close() {
-	it.cursor = -1
-	return
-}
-*/
-
 // Seek seeks the handle
 func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, error) {
 	if handle < 0 {
@@ -111,11 +75,6 @@ func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, erro
 		return 0, false, nil
 	}
 	return handle, true, nil
-}
-
-// TableID implements table.Table TableID interface.
-func (t *MemoryTable) TableID() int64 {
-	return t.ID
 }
 
 // Indices implements table.Table Indices interface.

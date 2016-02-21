@@ -69,10 +69,6 @@ type infoSchema struct {
 
 	// We should check version when change schema.
 	schemaMetaVersion int64
-
-	// memory tables
-	isDB map[string]table.Table // Information_Schema tables
-	psDB map[string]table.Table // Performance_Schema tables
 }
 
 var _ InfoSchema = (*infoSchema)(nil)
@@ -222,7 +218,6 @@ func genGlobalID(store kv.Storage) (int64, error) {
 }
 
 var (
-	// memory tables
 	// Information_Schema
 	isDB          *model.DBInfo
 	schemataTbl   table.Table
@@ -235,7 +230,6 @@ var (
 	defTbl        table.Table
 	profilingTbl  table.Table
 	nameToTable   map[string]table.Table
-	// TODO: Performance_Schema
 )
 
 func setColumnID(meta *model.TableInfo, store kv.Storage) error {
@@ -250,18 +244,18 @@ func setColumnID(meta *model.TableInfo, store kv.Storage) error {
 }
 
 func initMemoryTables(store kv.Storage) error {
-	// build data
-	dbID := int64(0)
-	alloc := autoid.NewMemoryAllocator(dbID)
-	nameToTable = make(map[string]table.Table)
-
-	// Schemata
-	isTables := make([]*model.TableInfo, 0, 8)
-	// initTable For each data
+	// Init Information_Schema
 	var (
 		err error
 		tbl table.Table
 	)
+	dbID, err := genGlobalID(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	alloc := autoid.NewMemoryAllocator(dbID)
+	nameToTable = make(map[string]table.Table)
+	isTables := make([]*model.TableInfo, 0, 8)
 	for name, cols := range tableNameToColumns {
 		meta := buildTableMeta(name, cols)
 		isTables = append(isTables, meta)
@@ -279,7 +273,6 @@ func initMemoryTables(store kv.Storage) error {
 		}
 		nameToTable[meta.Name.L] = tbl
 	}
-	// Set global variables
 	schemataTbl = nameToTable[strings.ToLower(tableSchemata)]
 	tablesTbl = nameToTable[strings.ToLower(tableTables)]
 	columnsTbl = nameToTable[strings.ToLower(tableColumns)]
@@ -287,8 +280,7 @@ func initMemoryTables(store kv.Storage) error {
 	charsetTbl = nameToTable[strings.ToLower(tableCharacterSets)]
 	collationsTbl = nameToTable[strings.ToLower(tableCollations)]
 
-	// Some tables have static data. Init them now.
-	// charset
+	// CharacterSets/Collations contain static data. Init them now.
 	err = insertData(charsetTbl, dataForCharacterSets())
 	if err != nil {
 		return errors.Trace(err)
@@ -299,13 +291,13 @@ func initMemoryTables(store kv.Storage) error {
 	}
 	// create db
 	isDB = &model.DBInfo{
+		ID:      dbID,
 		Name:    model.NewCIStr(Name),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 		Tables:  isTables,
 	}
-	isDB.ID, err = genGlobalID(store)
-	return errors.Trace(err)
+	return nil
 }
 
 func insertData(tbl table.Table, rows [][]interface{}) error {
@@ -365,7 +357,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 			}
 		}
 	}
-	// add Information_Schema
+	// Build Information_Schema
 	info.schemaNameToID[isDB.Name.L] = isDB.ID
 	info.schemas[isDB.ID] = isDB
 	for _, t := range isDB.Tables {
@@ -381,29 +373,26 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 			info.columnNameToID[columnName{tname, c.Name.L}] = c.ID
 		}
 	}
-	// Should refill some tables in Information_Schema
+	// Should refill some tables in Information_Schema.
+	// schemata/tables/columns/statistics
 	dbNames := make([]string, 0, len(info.schemas))
 	dbInfos := make([]*model.DBInfo, 0, len(info.schemas))
 	for _, v := range info.schemas {
 		dbNames = append(dbNames, v.Name.L)
 		dbInfos = append(dbInfos, v)
 	}
-	// Refill schemata
 	err = refillTable(schemataTbl, dataForSchemata(dbNames))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Refill tables
 	err = refillTable(tablesTbl, dataForTables(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Refill columns
 	err = refillTable(columnsTbl, dataForColumns(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Refill statistics
 	err = refillTable(statisticsTbl, dataForStatistics(dbInfos))
 	if err != nil {
 		return errors.Trace(err)

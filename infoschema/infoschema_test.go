@@ -80,7 +80,7 @@ func (*testSuite) TestT(c *C) {
 	}
 
 	dbInfo := &model.DBInfo{
-		ID:     1,
+		ID:     100,
 		Name:   dbName,
 		Tables: []*model.TableInfo{tblInfo},
 		State:  model.StatePublic,
@@ -103,7 +103,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(is.SchemaExists(dbName), IsTrue)
 	c.Assert(is.SchemaExists(noexist), IsFalse)
 
-	schema, ok := is.SchemaByID(1)
+	schema, ok := is.SchemaByID(100)
 	c.Assert(ok, IsTrue)
 	c.Assert(schema, NotNil)
 
