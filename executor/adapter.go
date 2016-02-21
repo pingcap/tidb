@@ -103,8 +103,8 @@ func (a *recordsetAdapter) Next() (*oplan.Row, error) {
 	}
 	for _, v := range row.RowKeys {
 		oldRowKey := &oplan.RowKeyEntry{
-			Key: v.Key,
-			Tbl: v.Tbl,
+			Handle: v.Handle,
+			Tbl:    v.Tbl,
 		}
 		oRow.RowKeys = append(oRow.RowKeys, oldRowKey)
 	}
