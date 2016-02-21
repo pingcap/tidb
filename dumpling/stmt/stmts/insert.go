@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/format"
 )
@@ -137,7 +136,7 @@ func (s *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 func (s *InsertValues) getColumnDefaultValues(ctx context.Context, cols []*column.Col) (map[interface{}]interface{}, error) {
 	defaultValMap := map[interface{}]interface{}{}
 	for _, col := range cols {
-		if value, ok, err := tables.GetColDefaultValue(ctx, &col.ColumnInfo); ok {
+		if value, ok, err := table.GetColDefaultValue(ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -404,7 +403,7 @@ func (s *InsertValues) initDefaultValues(ctx context.Context, t table.Table, row
 			}
 		} else {
 			var value interface{}
-			value, _, err := tables.GetColDefaultValue(ctx, &c.ColumnInfo)
+			value, _, err := table.GetColDefaultValue(ctx, &c.ColumnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -122,7 +120,7 @@ func getUpdateColumns(assignList []*expression.Assignment, fields []*field.Resul
 func updateRecord(ctx context.Context, h int64, data []interface{}, t table.Table,
 	updateColumns map[int]*expression.Assignment, evalMap map[interface{}]interface{},
 	offset int, onDuplicateUpdate bool) error {
-	if err := t.LockRow(ctx, h); err != nil {
+	if err := t.LockRow(ctx, h, false); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -297,7 +295,7 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 	}
 
 	evalMap := map[interface{}]interface{}{}
-	updatedRowKeys := make(map[string]bool)
+	updatedRowKeys := make(map[int64]bool)
 	for _, row := range records {
 		rowData := row.Data
 
@@ -310,29 +308,24 @@ func (s *UpdateStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 		offset := 0
 		for _, entry := range row.RowKeys {
 			tbl := entry.Tbl
-			k := entry.Key
+			handle := entry.Handle
 			lastOffset := offset
 			offset += len(tbl.Cols())
 			data := rowData[lastOffset:offset]
 
-			_, ok := updatedRowKeys[k]
+			_, ok := updatedRowKeys[handle]
 			if ok {
 				// Each matching row is updated once, even if it matches the conditions multiple times.
 				continue
 			}
 
 			// Update row
-			handle, err1 := tables.DecodeRecordKeyHandle(kv.Key(k))
+			err1 := updateRecord(ctx, handle, data, tbl, columns, evalMap, lastOffset, false)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
 
-			err1 = updateRecord(ctx, handle, data, tbl, columns, evalMap, lastOffset, false)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-
-			updatedRowKeys[k] = true
+			updatedRowKeys[handle] = true
 		}
 	}
 	return nil, nil

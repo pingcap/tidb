@@ -361,7 +361,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return nil
 			}
 
-			value, _, err := tables.GetColDefaultValue(nil, columnInfo)
+			value, _, err := table.GetColDefaultValue(nil, columnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -20,11 +20,14 @@ package table
 import (
 	"fmt"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/sessionctx/db"
 )
 
@@ -79,10 +82,10 @@ type Table interface {
 	Meta() *model.TableInfo
 
 	// LockRow locks a row.
-	LockRow(ctx context.Context, h int64) error
+	LockRow(ctx context.Context, h int64, forRead bool) error
 
-	// Seek row with handle
-	Seek(ctx context.Context, handle int64) (kv.Iterator, error)
+	// Seek returns the handle greater or equal to h.
+	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -114,4 +117,33 @@ func (i Ident) String() string {
 		return i.Name.O
 	}
 	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
+}
+
+// GetColDefaultValue gets default value of the column.
+func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (interface{}, bool, error) {
+	// Check no default value flag.
+	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
+		return nil, false, errors.Errorf("Field '%s' doesn't have a default value", col.Name)
+	}
+
+	// Check and get timestamp/datetime default value.
+	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+		if col.DefaultValue == nil {
+			return nil, true, nil
+		}
+
+		value, err := evaluator.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		if err != nil {
+			return nil, true, errors.Errorf("Field '%s' get default value fail - %s", col.Name, errors.Trace(err))
+		}
+		return value, true, nil
+	} else if col.Tp == mysql.TypeEnum {
+		// For enum type, if no default value and not null is set,
+		// the default value is the first element of the enum list
+		if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+			return col.FieldType.Elems[0], true, nil
+		}
+	}
+
+	return col.DefaultValue, true, nil
 }

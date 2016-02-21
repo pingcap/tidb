@@ -69,6 +69,7 @@ func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc a
 	return t
 }
 
+/*
 type iterator struct {
 	rows   [][]interface{}
 	cursor int
@@ -99,24 +100,17 @@ func (it *iterator) Close() {
 	it.cursor = -1
 	return
 }
+*/
 
 // Seek seeks the handle
-func (t *MemoryTable) Seek(ctx context.Context, handle int64) (kv.Iterator, error) {
-	it := &iterator{
-		rows:   t.rows,
-		cursor: 0,
-		tid:    t.TableID(),
-	}
+func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, error) {
 	if handle < 0 {
 		handle = 0
 	}
 	if handle >= int64(len(t.rows)) {
-		it.cursor = -1
-		return it, nil
+		return 0, false, nil
 	}
-	it.cursor = int(handle)
-
-	return it, nil
+	return handle, true, nil
 }
 
 // TableID implements table.Table TableID interface.
@@ -238,7 +232,7 @@ func (t *MemoryTable) Row(ctx context.Context, h int64) ([]interface{}, error) {
 }
 
 // LockRow implements table.Table LockRow interface.
-func (t *MemoryTable) LockRow(ctx context.Context, h int64) error {
+func (t *MemoryTable) LockRow(ctx context.Context, h int64, forRead bool) error {
 	return nil
 }
 

@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/field"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
@@ -65,12 +64,8 @@ func (r *SelectLockPlan) Next(ctx context.Context) (row *plan.Row, err error) {
 	}
 	if len(row.RowKeys) != 0 && r.Lock == coldef.SelectLockForUpdate {
 		forupdate.SetForUpdate(ctx)
-		txn, err := ctx.GetTxn(false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		for _, k := range row.RowKeys {
-			err = txn.LockKeys(kv.Key(k.Key))
+			err = k.Tbl.LockRow(ctx, k.Handle, true)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
