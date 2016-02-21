@@ -24,14 +24,12 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/rset/rsets"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/format"
 )
 
@@ -154,7 +152,7 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 			tblIDMap[tbl.Meta().ID] = true
 		}
 	}
-	rowKeyMap := make(map[string]table.Table)
+	rowKeyMap := make(map[int64]table.Table)
 	for {
 		row, err1 := p.Next(ctx)
 		if err1 != nil {
@@ -171,15 +169,11 @@ func (s *DeleteStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
 					continue
 				}
 			}
-			rowKeyMap[entry.Key] = entry.Tbl
+			rowKeyMap[entry.Handle] = entry.Tbl
 		}
 	}
 
-	for k, t := range rowKeyMap {
-		handle, err := tables.DecodeRecordKeyHandle(kv.Key(k))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	for handle, t := range rowKeyMap {
 		data, err := t.Row(ctx, handle)
 		if err != nil {
 			return nil, errors.Trace(err)

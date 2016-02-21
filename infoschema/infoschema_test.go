@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -92,7 +93,7 @@ func (*testSuite) TestT(c *C) {
 
 	schemaNames := is.AllSchemaNames()
 	c.Assert(len(schemaNames), Equals, 2)
-	c.Assert(schemaNames[0], Equals, "Test")
+	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, "Test"}), IsTrue)
 
 	schemas := is.AllSchemas()
 	c.Assert(len(schemas), Equals, 2)
