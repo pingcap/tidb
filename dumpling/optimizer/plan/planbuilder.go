@@ -511,10 +511,13 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 }
 
 func buildShowDDLFields() []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, 3)
+	rfs := make([]*ast.ResultField, 0, 6)
 	rfs = append(rfs, buildResultField("", "SCHEMA_VER", mysql.TypeLonglong, 4))
 	rfs = append(rfs, buildResultField("", "OWNER", mysql.TypeVarchar, 64))
-	rfs = append(rfs, buildResultField("", "Job", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "JOB", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "BG_SCHEMA_VER", mysql.TypeLonglong, 4))
+	rfs = append(rfs, buildResultField("", "BG_OWNER", mysql.TypeVarchar, 64))
+	rfs = append(rfs, buildResultField("", "BG_JOB", mysql.TypeVarchar, 128))
 
 	return rfs
 }

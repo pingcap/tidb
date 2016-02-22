@@ -152,7 +152,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestGetDDLBgInfo(c *C) {
+func (s *testSuite) TestGetBgDDLInfo(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -166,7 +166,7 @@ func (s *testSuite) TestGetDDLBgInfo(c *C) {
 	}
 	err = t.EnQueueBgJob(job)
 	c.Assert(err, IsNil)
-	info, err := GetDDLBgInfo(txn)
+	info, err := GetBgDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(info.Owner, DeepEquals, owner)
 	c.Assert(info.Job, DeepEquals, job)
