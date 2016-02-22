@@ -67,8 +67,8 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-// GetDDLBgInfo returns DDL background information.
-func GetDDLBgInfo(txn kv.Transaction) (*DDLInfo, error) {
+// GetBgDDLInfo returns background DDL information.
+func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	var err error
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
