@@ -22,6 +22,15 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
+// StatementInstrument defines the methods for statement instrumentation points
+type StatementInstrument interface {
+	RegisterStatement(category, name string, elem interface{})
+
+	StartStatement(sql string, connID uint64, callerName EnumCallerName, elem interface{}) *StatementState
+
+	EndStatement(state *StatementState)
+}
+
 // PerfSchema defines the methods to be invoked by the executor
 type PerfSchema interface {
 	// For SELECT statement only.
@@ -29,6 +38,9 @@ type PerfSchema interface {
 
 	// For INSERT statement only.
 	ExecInsert(insertVals *InsertValues) error
+
+	// For statement instrumentation only.
+	StatementInstrument
 }
 
 type perfSchema struct {

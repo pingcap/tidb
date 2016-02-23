@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/rset"
@@ -122,6 +123,9 @@ type session struct {
 	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
+
+	// For performance_schema only.
+	stmtState *perfschema.StatementState
 }
 
 func (s *session) Status() uint16 {
@@ -254,7 +258,11 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 		// TODO: Maybe we should remove this restriction latter.
 		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
 	}
-	statements, err := Compile(ctx, sql)
+	rawStmts, err := Parse(ctx, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	statements, err := Compile(ctx, rawStmts)
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
@@ -364,7 +372,11 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 }
 
 func (s *session) Execute(sql string) ([]rset.Recordset, error) {
-	statements, err := Compile(s, sql)
+	rawStmts, err := Parse(s, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	statements, err := Compile(s, rawStmts)
 	if err != nil {
 		log.Errorf("Syntax error: %s", sql)
 		log.Errorf("Error occurs at %s.", err)
@@ -372,9 +384,11 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 	}
 
 	var rs []rset.Recordset
-
-	for _, st := range statements {
+	for i, st := range statements {
+		id := variable.GetSessionVars(s).ConnectionID
+		s.stmtState = perfschema.PerfHandle.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
 		r, err := runStmt(s, st)
+		perfschema.PerfHandle.EndStatement(s.stmtState)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
