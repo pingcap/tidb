@@ -109,9 +109,6 @@ func (ir *IndexRange) IsPoint() bool {
 	for i := range ir.LowVal {
 		a := ir.LowVal[i]
 		b := ir.HighVal[i]
-		if a == nil || b == nil {
-			return false
-		}
 		if a == MinNotNullVal || b == MaxVal {
 			return false
 		}

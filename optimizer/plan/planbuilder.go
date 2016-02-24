@@ -909,8 +909,9 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	return p
 }
 
+// See: https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 func buildExplainFields() []*ast.ResultField {
-	rfs := make([]*ast.ResultField, 0, 6)
+	rfs := make([]*ast.ResultField, 0, 10)
 	rfs = append(rfs, buildResultField("", "id", mysql.TypeLonglong, 4))
 	rfs = append(rfs, buildResultField("", "select_type", mysql.TypeVarchar, 128))
 	rfs = append(rfs, buildResultField("", "table", mysql.TypeVarchar, 128))
@@ -919,7 +920,7 @@ func buildExplainFields() []*ast.ResultField {
 	rfs = append(rfs, buildResultField("", "key", mysql.TypeVarchar, 128))
 	rfs = append(rfs, buildResultField("", "key_len", mysql.TypeVarchar, 128))
 	rfs = append(rfs, buildResultField("", "ref", mysql.TypeVarchar, 128))
-	rfs = append(rfs, buildResultField("", "row", mysql.TypeVarchar, 128))
+	rfs = append(rfs, buildResultField("", "rows", mysql.TypeVarchar, 128))
 	rfs = append(rfs, buildResultField("", "Extra", mysql.TypeVarchar, 128))
 	return rfs
 }

@@ -80,6 +80,7 @@ func (e *explainEntry) setJoinTypeForIndexScan(p *plan.IndexScan) {
 }
 
 // ExplainExec represents an explain executor.
+// See: https://dev.mysql.com/doc/refman/5.7/en/explain-output.html
 type ExplainExec struct {
 	StmtPlan plan.Plan
 	fields   []*ast.ResultField
@@ -172,7 +173,7 @@ func (v *explainVisitor) newEntryForTableScan(p *plan.TableScan) *explainEntry {
 		entry.keyLen = "8"
 	}
 	if len(p.AccessConditions)+len(p.FilterConditions) > 0 {
-		entry.extra = append(entry.extra, "Using Where")
+		entry.extra = append(entry.extra, "Using where")
 	}
 
 	v.setSortExtra(entry)
@@ -200,7 +201,7 @@ func (v *explainVisitor) newEntryForIndexScan(p *plan.IndexScan) *explainEntry {
 	}
 	entry.setJoinTypeForIndexScan(p)
 	if len(p.AccessConditions)+len(p.FilterConditions) > 0 {
-		entry.extra = append(entry.extra, "Using Where")
+		entry.extra = append(entry.extra, "Using where")
 	}
 
 	v.setSortExtra(entry)
@@ -209,7 +210,7 @@ func (v *explainVisitor) newEntryForIndexScan(p *plan.IndexScan) *explainEntry {
 
 func (v *explainVisitor) setSortExtra(entry *explainEntry) {
 	if v.sort {
-		entry.extra = append(entry.extra, "Using Filesort")
+		entry.extra = append(entry.extra, "Using filesort")
 		v.sort = false
 	}
 }
