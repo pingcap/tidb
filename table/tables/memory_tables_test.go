@@ -87,7 +87,6 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 
 	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
-	c.Assert(rid, Equals, int64(0))
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
