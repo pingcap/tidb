@@ -255,7 +255,7 @@ func initMemoryTables(store kv.Storage) error {
 	}
 	alloc := autoid.NewMemoryAllocator(dbID)
 	nameToTable = make(map[string]table.Table)
-	isTables := make([]*model.TableInfo, 0, 8)
+	isTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		meta := buildTableMeta(name, cols)
 		isTables = append(isTables, meta)
@@ -363,7 +363,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	for _, t := range isDB.Tables {
 		tbl, ok := nameToTable[t.Name.L]
 		if !ok {
-			return errors.New("Miss table")
+			return errors.Errorf("table `%s` is missing.", t.Name)
 		}
 		info.tables[t.ID] = tbl
 		tname := tableName{isDB.Name.L, t.Name.L}

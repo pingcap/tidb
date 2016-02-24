@@ -27,6 +27,10 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
+var (
+	errRowNotFound = errors.New("Can not find the row")
+)
+
 // MemoryTable implements table.Table interface.
 type MemoryTable struct {
 	ID      int64
@@ -82,16 +86,6 @@ func (t *MemoryTable) Indices() []*column.IndexedCol {
 	return nil
 }
 
-// AddIndex implements table.Table AddIndex interface.
-func (t *MemoryTable) AddIndex(idxCol *column.IndexedCol) {
-	return
-}
-
-// TableName implements table.Table TableName interface.
-func (t *MemoryTable) TableName() model.CIStr {
-	return t.Name
-}
-
 // Meta implements table.Table Meta interface.
 func (t *MemoryTable) Meta() *model.TableInfo {
 	return t.meta
@@ -126,11 +120,6 @@ func (t *MemoryTable) FirstKey() kv.Key {
 	return t.RecordKey(0, nil)
 }
 
-// FindIndexByColName implements table.Table FindIndexByColName interface.
-func (t *MemoryTable) FindIndexByColName(name string) *column.IndexedCol {
-	return nil
-}
-
 // Truncate implements table.Table Truncate interface.
 func (t *MemoryTable) Truncate(ctx context.Context) error {
 	t.rows = [][]interface{}{}
@@ -143,11 +132,6 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []inter
 	return nil
 }
 
-// SetColValue implements table.Table SetColValue interface.
-func (t *MemoryTable) SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error {
-	return nil
-}
-
 // AddRecord implements table.Table AddRecord interface.
 func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
 	recordID = int64(len(t.rows))
@@ -155,24 +139,14 @@ func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID 
 	return
 }
 
-// EncodeValue implements table.Table EncodeValue interface.
-func (t *MemoryTable) EncodeValue(raw interface{}) ([]byte, error) {
-	return nil, nil
-}
-
-// DecodeValue implements table.Table DecodeValue interface.
-func (t *MemoryTable) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	return nil, nil
-}
-
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
 	if h >= int64(len(t.rows)) || h < 0 {
-		return nil, errors.New("Can not find the row")
+		return nil, errRowNotFound
 	}
 	row := t.rows[h]
 	if row == nil {
-		return nil, errors.New("Can not find row")
+		return nil, errRowNotFound
 	}
 	v := make([]interface{}, len(cols))
 	for i, col := range cols {
@@ -198,19 +172,9 @@ func (t *MemoryTable) LockRow(ctx context.Context, h int64, forRead bool) error 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []interface{}) error {
 	if h >= int64(len(t.rows)) || h < 0 {
-		return errors.New("Can not find the row")
+		return errRowNotFound
 	}
 	t.rows[h] = nil
-	return nil
-}
-
-// RemoveRowIndex implements table.Table RemoveRowIndex interface.
-func (t *MemoryTable) RemoveRowIndex(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
-	return nil
-}
-
-// BuildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *MemoryTable) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
 	return nil
 }
 
