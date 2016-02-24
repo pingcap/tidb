@@ -44,44 +44,44 @@ func (s *testSuite) TestExplain(c *C) {
 		{
 			"select * from t2 order by c2",
 			[]string{
-				"1 | SIMPLE | t2 | ALL | <nil> | <nil> | <nil> | <nil> | 0 | Using Filesort",
+				"1 | SIMPLE | t2 | ALL | <nil> | <nil> | <nil> | <nil> | 0 | Using filesort",
 			},
 		},
 		{
 			"select * from t1 where t1.c1 > 0",
 			[]string{
-				"1 | SIMPLE | t1 | range | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using Where",
+				"1 | SIMPLE | t1 | range | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
 			},
 		},
 		{
 			"select * from t1 where t1.c1 = 1",
 			[]string{
-				"1 | SIMPLE | t1 | const | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using Where",
+				"1 | SIMPLE | t1 | const | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
 			},
 		},
 		{
 			"select * from t1 where t1.c2 = 1",
 			[]string{
-				"1 | SIMPLE | t1 | range | c2 | c2 | -1 | <nil> | 0 | Using Where",
+				"1 | SIMPLE | t1 | range | c2 | c2 | -1 | <nil> | 0 | Using where",
 			},
 		},
 		{
 			"select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1",
 			[]string{
-				"1 | SIMPLE | t1 | range | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using Where",
-				"1 | SIMPLE | t2 | eq_ref | c1 | c1 | -1 | <nil> | 0 | Using Where",
+				"1 | SIMPLE | t1 | range | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
+				"1 | SIMPLE | t2 | eq_ref | c1 | c1 | -1 | <nil> | 0 | Using where",
 			},
 		},
 		{
 			"update t1 set t1.c2 = 2 where t1.c1 = 1",
 			[]string{
-				"1 | SIMPLE | t1 | const | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using Where",
+				"1 | SIMPLE | t1 | const | PRIMARY | PRIMARY | 8 | <nil> | 0 | Using where",
 			},
 		},
 		{
 			"delete from t1 where t1.c2 = 1",
 			[]string{
-				"1 | SIMPLE | t1 | range | c2 | c2 | -1 | <nil> | 0 | Using Where",
+				"1 | SIMPLE | t1 | range | c2 | c2 | -1 | <nil> | 0 | Using where",
 			},
 		},
 	}
