@@ -171,3 +171,18 @@ func (p *testPerfSchemaSuit) TestInsert(c *C) {
 	mustFailExec(c, testDB, `insert into performance_schema.setup_consumers values("events_stages_current", "YES");`)
 	mustFailExec(c, testDB, `insert into performance_schema.setup_timers values("timer1", "NANOSECOND");`)
 }
+
+func (p *testPerfSchemaSuit) TestInstrument(c *C) {
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
+	c.Assert(err, IsNil)
+	defer testDB.Close()
+
+	cnt := mustQuery(c, testDB, "select * from performance_schema.setup_instruments")
+	c.Assert(cnt, Greater, 0)
+
+	mustExec(c, testDB, "show tables")
+	cnt = mustQuery(c, testDB, "select * from performance_schema.events_statements_current")
+	c.Assert(cnt, Equals, 1)
+	cnt = mustQuery(c, testDB, "select * from performance_schema.events_statements_history")
+	c.Assert(cnt, Greater, 0)
+}

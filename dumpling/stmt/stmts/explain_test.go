@@ -24,7 +24,10 @@ import (
 func (s *testStmtSuite) TestExplain(c *C) {
 	testSQL := "explain select 1"
 
-	stmtList, err := tidb.Compile(s.ctx, testSQL)
+	rawStmtList, err := tidb.Parse(s.ctx, testSQL)
+	c.Assert(err, IsNil)
+	c.Assert(rawStmtList, HasLen, 1)
+	stmtList, err := tidb.Compile(s.ctx, rawStmtList)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
@@ -48,7 +51,10 @@ func (s *testStmtSuite) TestExplain(c *C) {
 
 	showColumnSQL := "desc t;"
 
-	stmtList, err = tidb.Compile(s.ctx, showColumnSQL)
+	rawStmtList, err = tidb.Parse(s.ctx, showColumnSQL)
+	c.Assert(err, IsNil)
+	c.Assert(rawStmtList, HasLen, 1)
+	stmtList, err = tidb.Compile(s.ctx, rawStmtList)
 	c.Assert(err, IsNil)
 	c.Assert(stmtList, HasLen, 1)
 
