@@ -65,9 +65,19 @@ func decodeValue(data []byte, cols []*model.ColumnInfo) ([]interface{}, error) {
 
 	var rvalues []interface{}
 	for i, col := range cols {
+		if values[i] == nil {
+			rvalues = append(rvalues, nil)
+			continue
+		}
 		// TODO: support more types if we really need.
 		switch col.Tp {
-		case mysql.TypeString, mysql.TypeVarchar:
+		case mysql.TypeLong:
+			val := values[i].(int64)
+			rvalues = append(rvalues, val)
+		case mysql.TypeLonglong:
+			val := values[i].(uint64)
+			rvalues = append(rvalues, val)
+		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeLongBlob:
 			val := string(values[i].([]byte))
 			rvalues = append(rvalues, val)
 		case mysql.TypeEnum:
