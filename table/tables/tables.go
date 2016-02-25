@@ -18,7 +18,9 @@
 package tables
 
 import (
+	"reflect"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -35,8 +37,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"reflect"
-	"time"
 )
 
 // TablePrefix is the prefix for table record and index key.
