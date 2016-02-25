@@ -46,7 +46,7 @@ godep:
 	go get github.com/tools/godep
 	go get github.com/pingcap/go-hbase
 	go get github.com/pingcap/go-themis
-	go get github.com/ngaut/tso/client
+	go get github.com/pingcap/tso/client
 
 build:
 	$(GO) build
@@ -57,7 +57,7 @@ install:
 update:
 	go get -u github.com/pingcap/go-hbase
 	go get -u github.com/pingcap/go-themis
-	go get -u github.com/ngaut/tso/client
+	go get -u github.com/pingcap/tso/client
 
 TEMP_FILE = temp_parser_file
 
