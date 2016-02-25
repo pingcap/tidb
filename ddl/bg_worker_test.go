@@ -27,7 +27,7 @@ func (s *testDDLSuite) TestDropSchemaError(c *C) {
 	store := testCreateStore(c, "test_drop_schema")
 	defer store.Close()
 
-	lease := 10 * time.Millisecond
+	lease := 50 * time.Millisecond
 	d := newDDL(store, nil, nil, lease)
 	defer d.close()
 
@@ -50,6 +50,7 @@ func verifyBgJobState(c *C, d *ddl, job *model.Job, state model.JobState) {
 		t := meta.NewMeta(txn)
 		historyBgJob, err := t.GetHistoryBgJob(job.ID)
 		c.Assert(err, IsNil)
+		c.Assert(historyBgJob, NotNil)
 		c.Assert(historyBgJob.State, Equals, state)
 
 		return nil
@@ -60,7 +61,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 	store := testCreateStore(c, "test_drop_table")
 	defer store.Close()
 
-	lease := 10 * time.Millisecond
+	lease := 50 * time.Millisecond
 	d := newDDL(store, nil, nil, lease)
 	defer d.close()
 
@@ -86,7 +87,7 @@ func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
 	store := testCreateStore(c, "test_invalid_bg_job_type")
 	defer store.Close()
 
-	lease := 10 * time.Millisecond
+	lease := 50 * time.Millisecond
 	d := newDDL(store, nil, nil, lease)
 	defer d.close()
 
