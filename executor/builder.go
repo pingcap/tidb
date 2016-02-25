@@ -62,6 +62,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDistinct(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
+	case *plan.Explain:
+		return b.buildExplain(v)
 	case *plan.Filter:
 		src := b.build(v.Src())
 		return b.buildFilter(src, v.Conditions)
@@ -426,4 +428,11 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 
 func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 	return &DDLExec{Statement: v.Statement, ctx: b.ctx, is: b.is}
+}
+
+func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
+	return &ExplainExec{
+		StmtPlan: v.StmtPlan,
+		fields:   v.Fields(),
+	}
 }
