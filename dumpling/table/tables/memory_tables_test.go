@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -74,9 +74,9 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	ctx := ts.se.(context.Context)
 	tb := ts.tbl
+	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
 	c.Assert(tb.Meta().Name.L, Equals, "t")
-	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), IsNil)
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
@@ -87,7 +87,6 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 
 	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
 	c.Assert(err, IsNil)
-	c.Assert(rid, Equals, int64(0))
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)

@@ -78,11 +78,10 @@ var (
 )
 
 type memoryAllocator struct {
-	mu    sync.Mutex
-	store kv.Storage
-	base  int64
-	end   int64
-	dbID  int64
+	mu   sync.Mutex
+	base int64
+	end  int64
+	dbID int64
 }
 
 // Alloc allocs the next autoID for table with tableID.
@@ -101,7 +100,6 @@ func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 		memIDLock.Unlock()
 	}
 	alloc.base++
-	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
 	return alloc.base, nil
 }
 

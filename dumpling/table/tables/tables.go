@@ -107,11 +107,6 @@ func newTable(tableID int64, cols []*column.Col, alloc autoid.Allocator) *Table 
 	return t
 }
 
-// TableID implements table.Table TableID interface.
-func (t *Table) TableID() int64 {
-	return t.ID
-}
-
 // Indices implements table.Table Indices interface.
 func (t *Table) Indices() []*column.IndexedCol {
 	return t.indices
