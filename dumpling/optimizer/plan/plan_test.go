@@ -318,9 +318,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		c.Assert(err, IsNil)
 
 		err = Refine(p)
-		explainStr, err := Explain(p)
-		c.Assert(err, IsNil)
-		c.Assert(explainStr, Equals, ca.best, Commentf("for %s cost %v", ca.sql, EstimateCost(p)))
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s cost %v", ca.sql, EstimateCost(p)))
 	}
 }
 
@@ -580,9 +578,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 		ast.SetFlag(stmt)
 		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
-		expl, err := Explain(p)
-		c.Assert(err, IsNil)
-		c.Assert(expl, Equals, ca.explain, comment)
+		c.Assert(ToString(p), Equals, ca.explain, comment)
 	}
 }
 

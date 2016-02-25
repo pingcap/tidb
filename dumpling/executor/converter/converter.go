@@ -44,14 +44,10 @@ func (con *Converter) Convert(node ast.Node) (stmt.Statement, error) {
 		return convertDropIndex(c, v)
 	case *ast.DropTableStmt:
 		return convertDropTable(c, v)
-	case *ast.ExplainStmt:
-		return convertExplain(c, v)
 	case *ast.InsertStmt:
 		return convertInsert(c, v)
 	case *ast.SelectStmt:
 		return convertSelect(c, v)
-	case *ast.ShowStmt:
-		return convertShow(c, v)
 	case *ast.UnionStmt:
 		return convertUnion(c, v)
 	case *ast.UpdateStmt:

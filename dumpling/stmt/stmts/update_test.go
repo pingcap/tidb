@@ -15,7 +15,6 @@ package stmts_test
 
 import (
 	"database/sql"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
@@ -46,35 +45,6 @@ func (s *testStmtSuite) TestUpdate(c *C) {
 
 	rows.Close()
 	mustCommit(c, tx)
-
-	// Should use index
-	strs := s.queryStrings(testDB, `explain `+updateStr, c)
-	var useIndex bool
-	for _, str := range strs {
-		if strings.Index(str, "Range") > 0 {
-			useIndex = true
-		}
-	}
-
-	if !useIndex {
-		c.Fatal(strs)
-	}
-	// Should not use index
-	strs = s.queryStrings(testDB, `explain UPDATE test SET name = "abc"`, c)
-	useIndex = false
-	for _, str := range strs {
-		if strings.Index(str, "index") > 0 {
-			useIndex = true
-		}
-	}
-
-	if useIndex {
-		c.Fatal(strs)
-	}
-
-	// Test update without index
-	r = mustExec(c, testDB, `explain UPDATE test SET name = "abc"`)
-	checkResult(c, r, 0, 0)
 
 	r = mustExec(c, testDB, `UPDATE test SET name = "foo"`)
 	checkResult(c, r, 2, 0)
