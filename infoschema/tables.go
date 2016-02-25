@@ -27,10 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-/*
- * 1. Create tables for Information_Schema
- * 2. Fill data for each table.
- */
 const (
 	tableSchemata      = "SCHEMATA"
 	tableTables        = "TABLES"
@@ -52,7 +48,6 @@ type columnInfo struct {
 	elems []string
 }
 
-//func buildColumnInfo(tableName, name string, tp byte, size int) *model.ColumnInfo {
 func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
@@ -77,7 +72,7 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 }
 
 func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
-	cols := make([]*model.ColumnInfo, 0, 5)
+	cols := make([]*model.ColumnInfo, 0, len(cs))
 	for _, c := range cs {
 		cols = append(cols, buildColumnInfo(tableName, c))
 	}
@@ -314,7 +309,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]interface{} {
 	rows := [][]interface{}{}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			rs := fetchColumnsInTable(schema, table)
+			rs := dataForColumnsInTable(schema, table)
 			for _, r := range rs {
 				rows = append(rows, r)
 			}
@@ -323,7 +318,7 @@ func dataForColumns(schemas []*model.DBInfo) [][]interface{} {
 	return rows
 }
 
-func fetchColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]interface{} {
+func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]interface{} {
 	rows := [][]interface{}{}
 	for i, col := range table.Columns {
 		colLen := col.Flen
@@ -371,7 +366,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]interface{} {
 	rows := [][]interface{}{}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			rs := fetchStatisticsInTable(schema, table)
+			rs := dataForStatisticsInTable(schema, table)
 			for _, r := range rs {
 				rows = append(rows, r)
 			}
@@ -380,7 +375,7 @@ func dataForStatistics(schemas []*model.DBInfo) [][]interface{} {
 	return rows
 }
 
-func fetchStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]interface{} {
+func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]interface{} {
 	rows := [][]interface{}{}
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
@@ -417,7 +412,6 @@ func fetchStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]in
 			nonUnique = "0"
 		}
 		for i, key := range index.Columns {
-			//col, _ := is.ColumnByName(schema.Name, table.Name, key.Name)
 			col := nameToCol[key.Name.L]
 			nullable := "YES"
 			if mysql.HasNotNullFlag(col.Flag) {

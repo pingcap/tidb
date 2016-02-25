@@ -36,6 +36,10 @@
 			"Rev": "1bb0d1c1a25ed393d8feb09bab039b2b1b1fbced"
 		},
 		{
+			"ImportPath": "github.com/petar/GoLLRB/llrb",
+			"Rev": "53be0d36a84c2a886ca057d34b6aa4468df9ccb4"
+		},
+		{
 			"ImportPath": "github.com/pingcap/check",
 			"Rev": "ce8a2f822ab1e245a4eefcef2996531c79c943f1"
 		},

@@ -18,39 +18,81 @@
 package tables
 
 import (
+	"sync"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
+	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/types"
 )
 
-var store kv.Storage
+var (
+	errRowNotFound = errors.New("Can not find the row")
+)
+
+type itemKey int64
+
+type itemPair struct {
+	handle itemKey
+	data   []interface{}
+}
+
+func (r *itemPair) Less(item llrb.Item) bool {
+	switch x := item.(type) {
+	case itemKey:
+		return r.handle < x
+	case *itemPair:
+		return r.handle < x.handle
+	}
+	log.Errorf("invalid type %T", item)
+	return true
+}
+
+func (k itemKey) Less(item llrb.Item) bool {
+	switch x := item.(type) {
+	case itemKey:
+		return k < x
+	case *itemPair:
+		return k < x.handle
+	}
+	log.Errorf("invalid type %T", item)
+	return true
+}
 
 // MemoryTable implements table.Table interface.
 type MemoryTable struct {
-	ID      int64
-	Name    model.CIStr
-	Columns []*column.Col
+	ID          int64
+	Name        model.CIStr
+	Columns     []*column.Col
+	pkHandleCol *column.Col
 
 	recordPrefix kv.Key
 	alloc        autoid.Allocator
 	meta         *model.TableInfo
 
-	//store kv.Storage
-	rows [][]interface{}
+	tree *llrb.LLRB
+	mu   sync.RWMutex
 }
 
 // MemoryTableFromMeta creates a Table instance from model.TableInfo.
 func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
 	columns := make([]*column.Col, 0, len(tblInfo.Columns))
+	var pkHandleColumn *column.Col
 	for _, colInfo := range tblInfo.Columns {
 		col := &column.Col{ColumnInfo: *colInfo}
 		columns = append(columns, col)
+		if col.IsPKHandleColumn(tblInfo) {
+			pkHandleColumn = col
+		}
 	}
 	t := newMemoryTable(tblInfo.ID, tblInfo.Name.O, columns, alloc)
+	t.pkHandleCol = pkHandleColumn
 	t.meta = tblInfo
 	return t, nil
 }
@@ -64,73 +106,28 @@ func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc a
 		alloc:        alloc,
 		Columns:      cols,
 		recordPrefix: genTableRecordPrefix(tableID),
-		rows:         [][]interface{}{},
+		tree:         llrb.New(),
 	}
 	return t
 }
 
-/*
-type iterator struct {
-	rows   [][]interface{}
-	cursor int
-	tid    int64
-}
-
-func (it *iterator) Valid() bool {
-	if it.cursor < 0 || it.cursor >= len(it.rows) {
-		return false
-	}
-	return true
-}
-
-func (it *iterator) Key() kv.Key {
-	return EncodeRecordKey(it.tid, int64(it.cursor), 0)
-}
-
-func (it *iterator) Value() []byte {
-	return nil
-}
-
-func (it *iterator) Next() error {
-	it.cursor++
-	return nil
-}
-
-func (it *iterator) Close() {
-	it.cursor = -1
-	return
-}
-*/
-
 // Seek seeks the handle
 func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, error) {
-	if handle < 0 {
-		handle = 0
-	}
-	if handle >= int64(len(t.rows)) {
-		return 0, false, nil
-	}
-	return handle, true, nil
-}
-
-// TableID implements table.Table TableID interface.
-func (t *MemoryTable) TableID() int64 {
-	return t.ID
+	var found bool
+	var result int64
+	t.mu.RLock()
+	t.tree.AscendGreaterOrEqual(itemKey(handle), func(item llrb.Item) bool {
+		found = true
+		result = int64(item.(*itemPair).handle)
+		return false
+	})
+	t.mu.RUnlock()
+	return result, found, nil
 }
 
 // Indices implements table.Table Indices interface.
 func (t *MemoryTable) Indices() []*column.IndexedCol {
 	return nil
-}
-
-// AddIndex implements table.Table AddIndex interface.
-func (t *MemoryTable) AddIndex(idxCol *column.IndexedCol) {
-	return
-}
-
-// TableName implements table.Table TableName interface.
-func (t *MemoryTable) TableName() model.CIStr {
-	return t.Name
 }
 
 // Meta implements table.Table Meta interface.
@@ -167,54 +164,60 @@ func (t *MemoryTable) FirstKey() kv.Key {
 	return t.RecordKey(0, nil)
 }
 
-// FindIndexByColName implements table.Table FindIndexByColName interface.
-func (t *MemoryTable) FindIndexByColName(name string) *column.IndexedCol {
-	return nil
-}
-
 // Truncate implements table.Table Truncate interface.
 func (t *MemoryTable) Truncate(ctx context.Context) error {
-	t.rows = [][]interface{}{}
+	t.tree = llrb.New()
 	return nil
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched map[int]bool) error {
-	// Unsupport
-	return nil
-}
-
-// SetColValue implements table.Table SetColValue interface.
-func (t *MemoryTable) SetColValue(rm kv.RetrieverMutator, key []byte, data interface{}) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	item := t.tree.Get(itemKey(h))
+	if item == nil {
+		return errRowNotFound
+	}
+	pair := item.(*itemPair)
+	pair.data = newData
 	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
-	recordID = int64(len(t.rows))
-	t.rows = append(t.rows, r)
+	if t.pkHandleCol != nil {
+		recordID, err = types.ToInt64(r[t.pkHandleCol.Offset])
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	} else {
+		recordID, err = t.alloc.Alloc(t.ID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	item := &itemPair{
+		handle: itemKey(recordID),
+		data:   r,
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.tree.Get(itemKey(recordID)) != nil {
+		return 0, kv.ErrKeyExists
+	}
+	t.tree.ReplaceOrInsert(item)
 	return
-}
-
-// EncodeValue implements table.Table EncodeValue interface.
-func (t *MemoryTable) EncodeValue(raw interface{}) ([]byte, error) {
-	return nil, nil
-}
-
-// DecodeValue implements table.Table DecodeValue interface.
-func (t *MemoryTable) DecodeValue(data []byte, col *column.Col) (interface{}, error) {
-	return nil, nil
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
-	if h >= int64(len(t.rows)) || h < 0 {
-		return nil, errors.New("Can not find the row")
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	item := t.tree.Get(itemKey(h))
+	if item == nil {
+		return nil, errRowNotFound
 	}
-	row := t.rows[h]
-	if row == nil {
-		return nil, errors.New("Can not find row")
-	}
+	row := item.(*itemPair).data
 	v := make([]interface{}, len(cols))
 	for i, col := range cols {
 		v[i] = row[col.Offset]
@@ -238,20 +241,9 @@ func (t *MemoryTable) LockRow(ctx context.Context, h int64, forRead bool) error 
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []interface{}) error {
-	if h >= int64(len(t.rows)) || h < 0 {
-		return errors.New("Can not find the row")
-	}
-	t.rows[h] = nil
-	return nil
-}
-
-// RemoveRowIndex implements table.Table RemoveRowIndex interface.
-func (t *MemoryTable) RemoveRowIndex(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
-	return nil
-}
-
-// BuildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *MemoryTable) BuildIndexForRow(rm kv.RetrieverMutator, h int64, vals []interface{}, idx *column.IndexedCol) error {
+	t.mu.Lock()
+	t.tree.Delete(itemKey(h))
+	t.mu.Unlock()
 	return nil
 }
 
