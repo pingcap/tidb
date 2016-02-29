@@ -167,6 +167,33 @@ func (s *testBuiltinSuite) TestLowerAndUpper(c *C) {
 	}
 }
 
+func (s *testBuiltinSuite) TestStrcmp(c *C) {
+	tbl := []struct {
+		Input  []interface{}
+		Expect interface{}
+	}{
+		{[]interface{}{"1", "2"}, -1},
+		{[]interface{}{"2", "1"}, 1},
+		{[]interface{}{"123", "2"}, -1},
+		{[]interface{}{"1", "213"}, -1},
+		{[]interface{}{"123", "123"}, 0},
+		{[]interface{}{"", "123"}, -1},
+		{[]interface{}{"123", ""}, 1},
+		{[]interface{}{"", ""}, 0},
+		{[]interface{}{nil, "123"}, nil},
+		{[]interface{}{"123", nil}, nil},
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{"", nil}, nil},
+		{[]interface{}{nil, ""}, nil},
+	}
+
+	for _, t := range tbl {
+		v, err := builtinStrcmp(t.Input, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, Equals, t.Expect)
+	}
+}
+
 func (s *testBuiltinSuite) TestReplace(c *C) {
 	tbl := []struct {
 		Input  []interface{}

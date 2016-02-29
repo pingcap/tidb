@@ -147,6 +147,23 @@ func builtinUpper(args []interface{}, ctx map[interface{}]interface{}) (interfac
 	}
 }
 
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
+func builtinStrcmp(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+	if args[0] == nil || args[1] == nil {
+		return nil, nil
+	}
+	left, err := types.ToString(args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	right, err := types.ToString(args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	res := types.CompareString(left, right)
+	return res, nil
+}
+
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func builtinReplace(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	for _, arg := range args {
