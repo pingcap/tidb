@@ -74,26 +74,15 @@ func (s *testTableRsetSuite) TestTableRsetPlan(c *C) {
 	ctx, ok := se.(context.Context)
 	c.Assert(ok, IsTrue)
 
-	schema := "INFORMATION_SCHEMA"
-	name := "tables"
-	r := &rsets.TableRset{Schema: schema, Name: name}
-
-	// check InfoSchemaPlan
-	p, err := r.Plan(ctx)
-	c.Assert(err, IsNil)
-
-	pl, ok := p.(*plans.InfoSchemaPlan)
-	c.Assert(ok, IsTrue)
-	c.Assert(pl.TableName, Equals, "TABLES")
-
+	r := &rsets.TableRset{}
 	// check exists table
-	_, err = sessionExec(c, se, s.createTableSql)
+	_, err := sessionExec(c, se, s.createTableSql)
 	c.Assert(err, IsNil)
 
 	r.Schema = s.dbName
 	r.Name = s.tableName
 
-	p, err = r.Plan(ctx)
+	p, err := r.Plan(ctx)
 	c.Assert(err, IsNil)
 
 	tdp, ok := p.(*plans.TableDefaultPlan)

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/testutil"
@@ -101,13 +102,13 @@ func (*testSuite) TestT(c *C) {
 	is := handle.Get()
 
 	schemaNames := is.AllSchemaNames()
-	c.Assert(len(schemaNames), Equals, 2)
-	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, "Test"}), IsTrue)
+	c.Assert(schemaNames, HasLen, 3)
+	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, perfschema.Name, "Test"}), IsTrue)
 
 	schemas := is.AllSchemas()
-	c.Assert(len(schemas), Equals, 2)
+	c.Assert(schemas, HasLen, 3)
 	schemas = is.Clone()
-	c.Assert(len(schemas), Equals, 2)
+	c.Assert(schemas, HasLen, 3)
 
 	c.Assert(is.SchemaExists(dbName), IsTrue)
 	c.Assert(is.SchemaExists(noexist), IsFalse)
@@ -167,13 +168,13 @@ func (*testSuite) TestT(c *C) {
 
 	indices, ok := is.ColumnIndicesByID(colID)
 	c.Assert(ok, IsTrue)
-	c.Assert(len(indices), Equals, 1)
+	c.Assert(indices, HasLen, 1)
 
 	tbs := is.SchemaTables(dbName)
-	c.Assert(len(tbs), Equals, 1)
+	c.Assert(tbs, HasLen, 1)
 
 	tbs = is.SchemaTables(noexist)
-	c.Assert(len(tbs), Equals, 0)
+	c.Assert(tbs, HasLen, 0)
 
 	idx, ok := is.IndexByName(dbName, tbName, idxName)
 	c.Assert(ok, IsTrue)
