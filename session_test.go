@@ -1322,6 +1322,13 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	match(c, row, 21)
 }
 
+func (s *testSessionSuite) TestIssue893(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
+	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1}})
+}
+
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
 	store := newStore(c, s.dbName)
