@@ -187,7 +187,6 @@ func (s *testStmtSuite) TestIssue345(c *C) {
 }
 
 func (s *testStmtSuite) TestMultiUpdate(c *C) {
-	c.Skip("Need to change `tidb.Compile` function")
 	// fix https://github.com/pingcap/tidb/issues/369
 	testSQL := `
 		DROP TABLE IF EXISTS t1, t2;
