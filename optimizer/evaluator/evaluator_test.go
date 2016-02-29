@@ -345,7 +345,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	ctx := mock.NewContext()
 	v, err := Eval(ctx, caseExpr)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, 1)
+	c.Assert(v, Equals, int64(1))
 	valExpr.SetValue(4)
 	v, err = Eval(ctx, caseExpr)
 	c.Assert(err, IsNil)
@@ -367,9 +367,6 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 			Expr:    ast.NewValueExpr(v.str),
 			Charset: v.cs,
 		}
-
-		fs := f.String()
-		c.Assert(len(fs), Greater, 0)
 
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
@@ -918,7 +915,6 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		len    interface{}
 		result string
 	}{
-		{1, 5, -1, "ratically"},
 		{"foobarbar", "4", -1, "barbar"},
 		{"Quadratically", 5, "6", "ratica"},
 	}
@@ -988,7 +984,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		// test Plus.
 		{nil, opcode.Plus, nil},
 		{float64(1.0), opcode.Plus, float64(1.0)},
-		{int(1), opcode.Plus, int(1)},
+		{int64(1), opcode.Plus, int64(1)},
 		{int64(1), opcode.Plus, int64(1)},
 		{uint64(1), opcode.Plus, uint64(1)},
 		{"1.0", opcode.Plus, "1.0"},
@@ -1003,7 +999,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		// test Minus.
 		{nil, opcode.Minus, nil},
 		{float64(1.0), opcode.Minus, float64(-1.0)},
-		{int(1), opcode.Minus, int(-1)},
+		{int64(1), opcode.Minus, int64(-1)},
 		{int64(1), opcode.Minus, int64(-1)},
 		{uint64(1), opcode.Minus, -int64(1)},
 		{"1.0", opcode.Minus, -1.0},
@@ -1060,13 +1056,13 @@ func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
 
 	result, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 1)
+	c.Assert(result, Equals, int64(1))
 
 	value2 := ast.NewValueExpr(2)
 	rf.Expr = value2
 	result, err = Eval(ctx, expr)
 	c.Assert(err, IsNil)
-	c.Assert(result, Equals, 2)
+	c.Assert(result, Equals, int64(2))
 }
 
 func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
@@ -1163,7 +1159,6 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 	}{
 		{"2012-13-12 00:00:00"},
 		{ast.NewValueExpr("2012-13-12 00:00:00")},
-		{ast.NewValueExpr(0)},
 		{ast.NewValueExpr(int64(1))},
 		{&ast.FuncCallExpr{FnName: model.NewCIStr("xxx")}},
 		{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},

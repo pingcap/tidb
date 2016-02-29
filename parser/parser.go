@@ -6812,16 +6812,6 @@ yynewstate:
 		{
 			yyVAL.item = int64(1)
 		}
-	case 337:
-		{
-			tp := types.NewFieldType(mysql.TypeString)
-			l := yylex.(*lexer)
-			tp.Charset, tp.Collate = l.GetCharsetInfo()
-			yyVAL.item = &types.DataItem{
-				Type: tp,
-				Data: yyS[yypt-0].item.(string),
-			}
-		}
 	case 338:
 		{
 			// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
@@ -6834,10 +6824,9 @@ yynewstate:
 				return 1
 			}
 			tp.Collate = co
-			yyVAL.item = &types.DataItem{
-				Type: tp,
-				Data: yyS[yypt-0].item.(string),
-			}
+			expr := ast.NewValueExpr(yyS[yypt-0].item)
+			expr.SetType(tp)
+			yyVAL.item = expr
 		}
 	case 341:
 		{

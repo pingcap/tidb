@@ -55,18 +55,18 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 			}
 		}
 	case *ast.ValueExpr:
-		switch xval := x.Data.(type) {
-		case string:
-			value, err = mysql.ParseTime(xval, tp, fsp)
+		switch x.Kind() {
+		case ast.KindString:
+			value, err = mysql.ParseTime(x.GetString(), tp, fsp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case int64:
-			value, err = mysql.ParseTimeFromNum(int64(xval), tp, fsp)
+		case ast.KindInt64:
+			value, err = mysql.ParseTimeFromNum(x.GetInt64(), tp, fsp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-		case nil:
+		case ast.KindNull:
 			return nil, nil
 		default:
 			return nil, errors.Trace(errDefaultValue)

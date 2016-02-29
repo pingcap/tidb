@@ -19,7 +19,6 @@ package builtin
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -125,7 +124,7 @@ func invArg(arg interface{}, s string) error {
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 func builtinCoalesce(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
 	for _, v := range args {
-		if !types.IsNil(v) {
+		if v != nil {
 			return v, nil
 		}
 	}

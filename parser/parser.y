@@ -1867,15 +1867,6 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
-	{
-		tp := types.NewFieldType(mysql.TypeString)
-		l := yylex.(*lexer)
-		tp.Charset, tp.Collate = l.GetCharsetInfo()
-		$$ = &types.DataItem{
-			Type: tp,
-			Data: $1.(string),
-		}
-	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
@@ -1888,10 +1879,9 @@ Literal:
 			return 1
 		}
 		tp.Collate = co
-		$$ = &types.DataItem{
-			Type: tp,
-			Data: $2.(string),
-		}
+		expr := ast.NewValueExpr($2)
+		expr.SetType(tp)
+		$$ = expr
 	}
 |	hexLit
 |	bitLit
