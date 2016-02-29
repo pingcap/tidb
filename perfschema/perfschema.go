@@ -14,12 +14,9 @@
 package perfschema
 
 import (
-	"sync"
-
-	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan"
-	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/pingcap/tidb/table"
 )
 
 // StatementInstrument defines the methods for statement instrumentation points
@@ -33,40 +30,45 @@ type StatementInstrument interface {
 
 // PerfSchema defines the methods to be invoked by the executor
 type PerfSchema interface {
-	// For SELECT statement only.
-	NewPerfSchemaPlan(tableName string) (plan.Plan, error)
-
-	// For INSERT statement only.
-	ExecInsert(insertVals *InsertValues) error
 
 	// For statement instrumentation only.
 	StatementInstrument
+
+	// GetDBMeta returns db info for PerformanceSchema.
+	GetDBMeta() *model.DBInfo
+	// GetTable returns table instance for name.
+	GetTable(name string) (table.Table, bool)
 }
 
 type perfSchema struct {
-	tables map[string]*model.TableInfo
-	fields map[string][]*field.ResultField
-	stores map[string]*leveldb.DB
-	lsns   map[string]*uint64
+	store   kv.Storage
+	dbInfo  *model.DBInfo
+	tables  map[string]*model.TableInfo
+	mTables map[string]table.Table // MemoryTables for perfSchema
+
+	// Used for TableStmtsHistory
+	historyHandles []int64
+	historyCursor  int
 }
 
 var _ PerfSchema = (*perfSchema)(nil)
 
+// PerfHandle is the only access point for the in-memory performance schema information
 var (
-	pool = sync.Pool{
-		New: func() interface{} {
-			return &leveldb.Batch{}
-		},
-	}
+	PerfHandle PerfSchema
 )
 
-// PerfHandle is the only access point for the in-memory performance schema information
-var PerfHandle PerfSchema
+// NewPerfHandle creates a new perfSchema on store.
+func NewPerfHandle(store kv.Storage) PerfSchema {
+	schema := PerfHandle.(*perfSchema)
+	schema.store = store
+	schema.historyHandles = make([]int64, 0, stmtsHistoryElemMax)
+	_ = schema.initialize()
+	registerStatements()
+	return PerfHandle
+}
 
 func init() {
-	// TODO: need error handling later
 	schema := &perfSchema{}
-	_ = schema.initialize()
-
 	PerfHandle = schema
 }

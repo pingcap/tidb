@@ -35,34 +35,26 @@ type Compiler struct {
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
 func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
-	if optimizer.IsSupported(node) {
-		ast.SetFlag(node)
+	ast.SetFlag(node)
 
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		if err := optimizer.Preprocess(node, is, ctx); err != nil {
-			return nil, errors.Trace(err)
-		}
-		// Validate should be after NameResolve.
-		if err := optimizer.Validate(node, false); err != nil {
-			return nil, errors.Trace(err)
-		}
-		sb := NewSubQueryBuilder(is)
-		p, err := optimizer.Optimize(ctx, node, sb)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		sa := &statementAdapter{
-			is:   is,
-			plan: p,
-		}
-		return sa, nil
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	if err := optimizer.Preprocess(node, is, ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
-	c.converter = &converter.Converter{}
-	s, err := c.converter.Convert(node)
+	// Validate should be after NameResolve.
+	if err := optimizer.Validate(node, false); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sb := NewSubQueryBuilder(is)
+	p, err := optimizer.Optimize(ctx, node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return s, nil
+	sa := &statementAdapter{
+		is:   is,
+		plan: p,
+	}
+	return sa, nil
 }
 
 // NewSubQueryBuilder builds and returns a new SubQuery builder.
