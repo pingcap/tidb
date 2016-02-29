@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
@@ -204,7 +205,12 @@ func NewHandle(store kv.Storage) *Handle {
 	}
 	// init memory tables
 	initMemoryTables(store)
+	initPerfSchema(store)
 	return h
+}
+
+func initPerfSchema(store kv.Storage) {
+	perfHandle = perfschema.NewPerfHandle(store)
 }
 
 func genGlobalID(store kv.Storage) (int64, error) {
@@ -230,6 +236,8 @@ var (
 	defTbl        table.Table
 	profilingTbl  table.Table
 	nameToTable   map[string]table.Table
+
+	perfHandle perfschema.PerfSchema
 )
 
 func setColumnID(meta *model.TableInfo, store kv.Storage) error {
@@ -367,6 +375,24 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 		}
 		info.tables[t.ID] = tbl
 		tname := tableName{isDB.Name.L, t.Name.L}
+		info.tableNameToID[tname] = t.ID
+		for _, c := range t.Columns {
+			info.columns[c.ID] = c
+			info.columnNameToID[columnName{tname, c.Name.L}] = c.ID
+		}
+	}
+
+	// Add Performance_Schema
+	psDB := perfHandle.GetDBMeta()
+	info.schemaNameToID[psDB.Name.L] = psDB.ID
+	info.schemas[psDB.ID] = psDB
+	for _, t := range psDB.Tables {
+		tbl, ok := perfHandle.GetTable(t.Name.O)
+		if !ok {
+			return errors.Errorf("table `%s` is missing.", t.Name)
+		}
+		info.tables[t.ID] = tbl
+		tname := tableName{psDB.Name.L, t.Name.L}
 		info.tableNameToID[tname] = t.ID
 		for _, c := range t.Columns {
 			info.columns[c.ID] = c
