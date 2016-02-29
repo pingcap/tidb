@@ -17,27 +17,6 @@
 
 package field
 
-import (
-	"fmt"
-
-	"github.com/pingcap/tidb/expression"
-)
-
-// Field is used for parsing column name from SQL.
-type Field struct {
-	Expr   expression.Expression
-	AsName string
-}
-
-// String implements fmt.Stringer interface.
-func (f *Field) String() string {
-	if len(f.AsName) > 0 {
-		return fmt.Sprintf("%s AS %s", f.Expr, f.AsName)
-	}
-
-	return f.Expr.String()
-}
-
 // Opt is used for parsing data type option from SQL.
 type Opt struct {
 	IsUnsigned bool

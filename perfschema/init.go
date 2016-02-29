@@ -14,18 +14,16 @@
 package perfschema
 
 import (
-	"sync/atomic"
-
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/storage"
 )
 
 type columnInfo struct {
@@ -192,20 +190,83 @@ var stagesCurrentCols = []columnInfo{
 	{mysql.TypeEnum, -1, 0, nil, []string{"TRANSACTION", "STATEMENT", "STAGE"}},
 }
 
+func setColumnID(meta *model.TableInfo, store kv.Storage) error {
+	var err error
+	for _, c := range meta.Columns {
+		c.ID, err = genGlobalID(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func genGlobalID(store kv.Storage) (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+	return globalID, errors.Trace(err)
+}
+
+func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
+	tbl, _ := tables.MemoryTableFromMeta(alloc, meta)
+	return tbl, nil
+}
+
+func (ps *perfSchema) buildTables() error {
+	tbls := make([]*model.TableInfo, 0, len(ps.tables))
+	ps.mTables = make(map[string]table.Table, len(ps.tables))
+	dbID, err := genGlobalID(ps.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Set PKIsHandle
+	// TableStmtsCurrent use THREAD_ID as PK and handle
+	tb := ps.tables[TableStmtsHistory]
+	tb.PKIsHandle = true
+	tb.Columns[0].Flag = tb.Columns[0].Flag | mysql.PriKeyFlag
+
+	var tbl table.Table
+	for name, meta := range ps.tables {
+		tbls = append(tbls, meta)
+		meta.ID, err = genGlobalID(ps.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = setColumnID(meta, ps.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		alloc := autoid.NewMemoryAllocator(dbID)
+		tbl, err = createMemoryTable(meta, alloc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ps.mTables[name] = tbl
+	}
+	ps.dbInfo = &model.DBInfo{
+		ID:      dbID,
+		Name:    model.NewCIStr(Name),
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+		Tables:  tbls,
+	}
+	return nil
+}
+
 func (ps *perfSchema) buildModel(tbName string, colNames []string, cols []columnInfo) {
 	rcols := make([]*model.ColumnInfo, len(cols))
-	fields := make([]*field.ResultField, len(cols))
 	for i, col := range cols {
 		var ci *model.ColumnInfo
-
 		if col.elems == nil {
 			ci = buildUsualColumnInfo(i, colNames[i], col.tp, col.size, col.flag, col.deflt)
 		} else {
 			ci = buildEnumColumnInfo(i, colNames[i], col.elems, col.flag, col.deflt)
 		}
-
 		rcols[i] = ci
-		fields[i] = buildResultField(tbName, ci)
 	}
 
 	ps.tables[tbName] = &model.TableInfo{
@@ -214,7 +275,6 @@ func (ps *perfSchema) buildModel(tbName string, colNames []string, cols []column
 		Collate: "utf8",
 		Columns: rcols,
 	}
-	ps.fields[tbName] = fields
 }
 
 func buildUsualColumnInfo(offset int, name string, tp byte, size int, flag uint, def interface{}) *model.ColumnInfo {
@@ -240,6 +300,7 @@ func buildUsualColumnInfo(offset int, name string, tp byte, size int, flag uint,
 		Offset:       offset,
 		FieldType:    fieldType,
 		DefaultValue: def,
+		State:        model.StatePublic,
 	}
 	return colInfo
 }
@@ -262,61 +323,29 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 		Offset:       offset,
 		FieldType:    fieldType,
 		DefaultValue: def,
+		State:        model.StatePublic,
 	}
 	return colInfo
 }
 
-func buildResultField(tableName string, colInfo *model.ColumnInfo) *field.ResultField {
-	field := &field.ResultField{
-		Col:       column.Col{ColumnInfo: *colInfo},
-		DBName:    Name,
-		TableName: tableName,
-		Name:      colInfo.Name.O,
-	}
-	return field
-}
-
 func (ps *perfSchema) initRecords(tbName string, records [][]interface{}) error {
-	lastLsn := atomic.AddUint64(ps.lsns[tbName], uint64(len(records)))
-
-	batch := pool.Get().(*leveldb.Batch)
-	defer func() {
-		batch.Reset()
-		pool.Put(batch)
-	}()
-
-	for i, rec := range records {
-		lsn := lastLsn - uint64(len(records)) + uint64(i)
-		rawKey := []interface{}{uint64(lsn)}
-		key, err := codec.EncodeKey(nil, rawKey...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		val, err := codec.EncodeValue(nil, rec...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		batch.Put(key, val)
+	tbl, ok := ps.mTables[tbName]
+	if !ok {
+		return errors.Errorf("Unknown PerformanceSchema table: %s", tbName)
 	}
-
-	err := ps.stores[tbName].Write(batch, nil)
-	return errors.Trace(err)
+	for _, rec := range records {
+		_, err := tbl.AddRecord(nil, rec)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
+
+var setupTimersRecords [][]interface{}
 
 func (ps *perfSchema) initialize() (err error) {
 	ps.tables = make(map[string]*model.TableInfo)
-	ps.fields = make(map[string][]*field.ResultField)
-	ps.stores = make(map[string]*leveldb.DB)
-	ps.lsns = make(map[string]*uint64)
-
-	for _, t := range PerfSchemaTables {
-		ps.stores[t], err = leveldb.Open(storage.NewMemStorage(), nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		ps.lsns[t] = new(uint64)
-		*ps.lsns[t] = 0
-	}
 
 	allColDefs := [][]columnInfo{
 		setupActorsCols,
@@ -357,6 +386,10 @@ func (ps *perfSchema) initialize() (err error) {
 	// initialize all table, column and result field definitions
 	for i, def := range allColDefs {
 		ps.buildModel(PerfSchemaTables[i], allColNames[i], def)
+	}
+	err = ps.buildTables()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	setupActorsRecords := [][]interface{}{
@@ -405,7 +438,7 @@ func (ps *perfSchema) initialize() (err error) {
 		return errors.Trace(err)
 	}
 
-	setupTimersRecords := [][]interface{}{
+	setupTimersRecords = [][]interface{}{
 		{"stage", mysql.Enum{Name: "NANOSECOND", Value: 1}},
 		{"statement", mysql.Enum{Name: "NANOSECOND", Value: 1}},
 		{"transaction", mysql.Enum{Name: "NANOSECOND", Value: 1}},
@@ -416,4 +449,13 @@ func (ps *perfSchema) initialize() (err error) {
 	}
 
 	return nil
+}
+
+func (ps *perfSchema) GetDBMeta() *model.DBInfo {
+	return ps.dbInfo
+}
+
+func (ps *perfSchema) GetTable(name string) (table.Table, bool) {
+	tbl, ok := ps.mTables[name]
+	return tbl, ok
 }

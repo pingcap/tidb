@@ -14,12 +14,10 @@
 package perfschema
 
 import (
-	"sync/atomic"
+	"fmt"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/syndtr/goleveldb/leveldb"
 )
 
 // EnumCallerName is used as a parameter to avoid calling runtime.Caller(1) since
@@ -63,55 +61,17 @@ var (
 
 // addInstrument is used to add an item to setup_instruments table.
 func (ps *perfSchema) addInstrument(name string) (uint64, error) {
-	store := ps.stores[TableSetupInstruments]
-	lastLsn := atomic.AddUint64(ps.lsns[TableSetupInstruments], 1)
-
-	batch := pool.Get().(*leveldb.Batch)
-	defer func() {
-		batch.Reset()
-		pool.Put(batch)
-	}()
-
 	record := []interface{}{name, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}}
-	lsn := lastLsn - 1
-	rawKey := []interface{}{uint64(lsn)}
-	key, err := codec.EncodeKey(nil, rawKey...)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	val, err := codec.EncodeValue(nil, record...)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	batch.Put(key, val)
-
-	err = store.Write(batch, nil)
-	return lsn, errors.Trace(err)
+	tbl := ps.mTables[TableSetupInstruments]
+	handle, err := tbl.AddRecord(nil, record)
+	return uint64(handle), errors.Trace(err)
 }
 
 func (ps *perfSchema) getTimerName(flag int) (enumTimerName, error) {
-	store := ps.stores[TableSetupTimers]
-
-	rawKey := []interface{}{uint64(flag)}
-	key, err := codec.EncodeKey(nil, rawKey...)
-	if err != nil {
-		return timerNameNone, errors.Trace(err)
+	if flag < 0 || flag >= len(setupTimersRecords) {
+		return timerNameNone, errors.Errorf("Unknown timerName flag %d", flag)
 	}
-
-	val, err := store.Get(key, nil)
-	if err != nil {
-		return timerNameNone, errors.Trace(err)
-	}
-
-	record, err := decodeValue(val, ps.tables[TableSetupTimers].Columns)
-	if err != nil {
-		return timerNameNone, errors.Trace(err)
-	}
-
-	timerName, ok := record[1].(string)
-	if !ok {
-		return timerNameNone, errors.New("Timer type does not match")
-	}
+	timerName := fmt.Sprintf("%s", setupTimersRecords[flag][1])
 	switch timerName {
 	case "NANOSECOND":
 		return timerNameNanosec, nil
