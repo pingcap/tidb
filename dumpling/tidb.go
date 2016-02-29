@@ -138,17 +138,13 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, rawStmt []ast.StmtNode) ([]stmt.Statement, error) {
-	stmts := make([]stmt.Statement, len(rawStmt))
-	for i, v := range rawStmt {
-		compiler := &executor.Compiler{}
-		stm, err := compiler.Compile(ctx, v)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		stmts[i] = stm
+func Compile(ctx context.Context, rawStmt ast.StmtNode) (stmt.Statement, error) {
+	compiler := &executor.Compiler{}
+	st, err := compiler.Compile(ctx, rawStmt)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return stmts, nil
+	return st, nil
 }
 
 func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.Recordset, error) {
