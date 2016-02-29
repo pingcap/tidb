@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/executor/converter"
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer"
@@ -143,15 +142,13 @@ func (e *PrepareExec) DoPrepare() {
 		SchemaVersion: e.IS.SchemaMetaVersion(),
 	}
 
-	if optimizer.IsSupported(stmt) {
-		err := optimizer.Prepare(e.IS, e.Ctx, stmt)
-		if err != nil {
-			e.Err = errors.Trace(err)
-			return
-		}
-		if resultSetNode, ok := stmt.(ast.ResultSetNode); ok {
-			e.ResultFields = convertResultFields(resultSetNode.GetResultFields())
-		}
+	err = optimizer.Prepare(e.IS, e.Ctx, stmt)
+	if err != nil {
+		e.Err = errors.Trace(err)
+		return
+	}
+	if resultSetNode, ok := stmt.(ast.ResultSetNode); ok {
+		e.ResultFields = convertResultFields(resultSetNode.GetResultFields())
 	}
 
 	if e.ID == 0 {
@@ -217,35 +214,26 @@ func (e *ExecuteExec) Build() error {
 		prepared.Params[i].SetValue(val)
 	}
 
-	if optimizer.IsSupported(prepared.Stmt) {
-		if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
-			// If the schema version has changed we need to prepare it again,
-			// if this time it failed, the real reason for the error is schema changed.
-			err := optimizer.Prepare(e.IS, e.Ctx, prepared.Stmt)
-			if err != nil {
-				return ErrSchemaChanged.Gen("Schema change casued error: %s", err.Error())
-			}
-			prepared.SchemaVersion = e.IS.SchemaMetaVersion()
-		}
-		sb := &subqueryBuilder{is: e.IS}
-		plan, err := optimizer.Optimize(e.Ctx, prepared.Stmt, sb)
+	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
+		// If the schema version has changed we need to prepare it again,
+		// if this time it failed, the real reason for the error is schema changed.
+		err := optimizer.Prepare(e.IS, e.Ctx, prepared.Stmt)
 		if err != nil {
-			return errors.Trace(err)
+			return ErrSchemaChanged.Gen("Schema change casued error: %s", err.Error())
 		}
-		b := newExecutorBuilder(e.Ctx, e.IS)
-		stmtExec := b.build(plan)
-		if b.err != nil {
-			return errors.Trace(b.err)
-		}
-		e.StmtExec = stmtExec
-	} else {
-		conv := converter.Converter{}
-		oStmt, err := conv.Convert(prepared.Stmt)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.OldStmt = oStmt
+		prepared.SchemaVersion = e.IS.SchemaMetaVersion()
 	}
+	sb := &subqueryBuilder{is: e.IS}
+	plan, err := optimizer.Optimize(e.Ctx, prepared.Stmt, sb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	b := newExecutorBuilder(e.Ctx, e.IS)
+	stmtExec := b.build(plan)
+	if b.err != nil {
+		return errors.Trace(b.err)
+	}
+	e.StmtExec = stmtExec
 	return nil
 }
 

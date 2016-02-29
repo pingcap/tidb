@@ -14,15 +14,12 @@
 package optimizer
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/terror"
 )
 
@@ -59,49 +56,6 @@ func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-type supportChecker struct {
-	unsupported bool
-}
-
-func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
-	switch x := in.(type) {
-	case *ast.TableName:
-		if strings.EqualFold(x.Schema.O, perfschema.Name) {
-			c.unsupported = true
-		}
-	}
-	return in, c.unsupported
-}
-
-func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, !c.unsupported
-}
-
-// IsSupported checks if the node is supported to use new plan.
-// We first support single table select statement without group by clause or aggregate functions.
-// TODO: 1. insert/update/delete. 2. join tables. 3. subquery. 4. group by and aggregate function.
-func IsSupported(node ast.Node) bool {
-	switch node.(type) {
-	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
-		*ast.AdminStmt, *ast.UpdateStmt, *ast.DeleteStmt, *ast.UnionStmt, *ast.InsertStmt:
-	case *ast.UseStmt, *ast.SetStmt, *ast.SetCharsetStmt:
-	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt:
-	case *ast.DoStmt:
-	case *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.GrantStmt:
-	case *ast.TruncateTableStmt, *ast.AlterTableStmt:
-	case *ast.CreateDatabaseStmt, *ast.CreateTableStmt, *ast.CreateIndexStmt:
-	case *ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt:
-	case *ast.ShowStmt:
-	case *ast.ExplainStmt:
-	default:
-		return false
-	}
-
-	var checker supportChecker
-	node.Accept(&checker)
-	return !checker.unsupported
 }
 
 // Optimizer error codes.
