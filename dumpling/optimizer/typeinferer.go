@@ -276,6 +276,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
+	case "strcmp":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag
