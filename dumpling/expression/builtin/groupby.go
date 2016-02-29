@@ -110,7 +110,6 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 		err  error
 	)
 
-	v = types.RawData(v)
 	switch y := v.(type) {
 	case int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
 		data, err = mysql.ConvertToDecimal(v)
@@ -128,7 +127,6 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	if data == nil {
 		return sum, nil
 	}
-	data = types.RawData(data)
 	switch x := sum.(type) {
 	case nil:
 		return data, nil
@@ -178,7 +176,7 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	data, _ := ctx[fn].(avg)
 	y := args[0]
-	if types.IsNil(y) {
+	if y == nil {
 		return
 	}
 
@@ -188,7 +186,7 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 		return nil, err
 	}
 
-	if types.IsNil(data.sum) {
+	if data.sum == nil {
 		data.n = 0
 	}
 
@@ -217,7 +215,7 @@ func builtinCount(args []interface{}, ctx map[interface{}]interface{}) (v interf
 
 	n, _ := ctx[fn].(int64)
 
-	if !types.IsNil(args[0]) {
+	if args[0] != nil {
 		ok, err := distinct.isDistinct(args...)
 		if err != nil || !ok {
 			// if err or not distinct, return
@@ -246,12 +244,12 @@ func builtinMax(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	max := ctx[fn]
 	y := args[0]
-	if types.IsNil(y) {
+	if y == nil {
 		return
 	}
 
 	// Notice: for max, `nil < non nil`
-	if types.IsNil(max) {
+	if max == nil {
 		max = y
 	} else {
 		n, err := types.Compare(max, y)
@@ -283,12 +281,12 @@ func builtinMin(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	min := ctx[fn]
 	y := args[0]
-	if types.IsNil(y) {
+	if y == nil {
 		return
 	}
 
 	// Notice: for min, `nil > non nil`
-	if types.IsNil(min) {
+	if min == nil {
 		min = y
 	} else {
 		n, err := types.Compare(min, y)
@@ -323,7 +321,7 @@ func builtinSum(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 
 	sum := ctx[fn]
 	y := args[0]
-	if types.IsNil(y) {
+	if y == nil {
 		return
 	}
 
@@ -352,14 +350,14 @@ func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v 
 	distinct := getDistinct(ctx, fn)
 	if _, ok := ctx[ExprAggDone]; ok {
 		distinct.clear()
-		if v, _ := ctx[fn]; !types.IsNil(v) {
+		if v, _ := ctx[fn]; v != nil {
 			return v.(string), nil
 		}
 		return nil, nil
 	}
 
 	var buf bytes.Buffer
-	if v := ctx[fn]; !types.IsNil(v) {
+	if v := ctx[fn]; v != nil {
 		s := v.(string)
 		// now use comma separator
 		buf.WriteString(s)
@@ -373,7 +371,7 @@ func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v 
 	}
 
 	for i := 0; i < len(args); i++ {
-		if types.IsNil(args[i]) {
+		if args[i] == nil {
 			// if any is nil, we will not concat
 			return
 		}

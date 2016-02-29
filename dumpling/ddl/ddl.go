@@ -522,7 +522,7 @@ func getDefaultValue(ctx context.Context, c *coldef.ConstraintOpt, tp byte, fsp 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return types.RawData(v), nil
+	return v, nil
 }
 
 func removeOnUpdateNowFlag(c *column.Col) {

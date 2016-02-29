@@ -129,7 +129,7 @@ func doMatch(str string, patChars, patTypes []byte) bool {
 
 func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	expr := p.Expr.GetValue()
-	if types.IsNil(expr) {
+	if expr == nil {
 		p.SetValue(nil)
 		return true
 	}
@@ -144,7 +144,7 @@ func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	var needCompile = len(p.PatChars) == 0 || !ast.IsConstant(p.Pattern)
 	if needCompile {
 		pattern := p.Pattern.GetValue()
-		if types.IsNil(pattern) {
+		if pattern == nil {
 			p.SetValue(nil)
 			return true
 		}
@@ -169,7 +169,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 		sexpr = *p.Sexpr
 	} else {
 		expr := p.Expr.GetValue()
-		if types.IsNil(expr) {
+		if expr == nil {
 			p.SetValue(nil)
 			return true
 		}
@@ -189,7 +189,7 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 	re := p.Re
 	if re == nil {
 		pattern := p.Pattern.GetValue()
-		if types.IsNil(pattern) {
+		if pattern == nil {
 			p.SetValue(nil)
 			return true
 		}
