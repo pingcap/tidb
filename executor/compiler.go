@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/executor/converter"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/optimizer/plan"
@@ -27,7 +26,6 @@ import (
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
 type Compiler struct {
-	converter *converter.Converter
 }
 
 // Compile compiles an ast.StmtNode to a stmt.Statement.
