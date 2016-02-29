@@ -107,6 +107,7 @@ var Funcs = map[string]Func{
 	"repeat":    {builtinRepeat, 2, 2, true, false},
 	"replace":   {builtinReplace, 3, 3, true, false},
 	"upper":     {builtinUpper, 1, 1, true, false},
+	"strcmp":    {builtinStrcmp, 2, 2, true, false},
 
 	// information functions
 	"current_user":  {builtinCurrentUser, 0, 0, false, false},

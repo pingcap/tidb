@@ -249,6 +249,7 @@ import (
 	status		"STATUS"
 	stringType	"string"
 	subDate		"SUBDATE"
+	strcmp		"STRCMP"
 	substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
@@ -2315,10 +2316,14 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"STRCMP" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncSubstringExpr{
-			StrExpr: $3.(ast.ExprNode), 
+			StrExpr: $3.(ast.ExprNode),
 			Pos: $5.(ast.ExprNode),
 		}	
 	}
