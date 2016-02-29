@@ -262,16 +262,15 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	statements, err := Compile(ctx, rawStmts)
+	if len(rawStmts) != 1 {
+		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
+		return nil, errors.New("Wrong number of statement.")
+	}
+	st, err := Compile(s, rawStmts[0])
 	if err != nil {
 		log.Errorf("Compile %s with error: %v", sql, err)
 		return nil, errors.Trace(err)
 	}
-	if len(statements) != 1 {
-		log.Errorf("ExecRestrictedSQL only executes one statement. Too many/few statement in %s", sql)
-		return nil, errors.New("Wrong number of statement.")
-	}
-	st := statements[0]
 	// Check statement for some restriction
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
@@ -376,15 +375,14 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	statements, err := Compile(s, rawStmts)
-	if err != nil {
-		log.Errorf("Syntax error: %s", sql)
-		log.Errorf("Error occurs at %s.", err)
-		return nil, errors.Trace(err)
-	}
-
 	var rs []rset.Recordset
-	for i, st := range statements {
+	for i, rst := range rawStmts {
+		st, err1 := Compile(s, rst)
+		if err1 != nil {
+			log.Errorf("Syntax error: %s", sql)
+			log.Errorf("Error occurs at %s.", err1)
+			return nil, errors.Trace(err1)
+		}
 		id := variable.GetSessionVars(s).ConnectionID
 		s.stmtState = perfschema.PerfHandle.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
 		r, err := runStmt(s, st)
