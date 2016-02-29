@@ -15,8 +15,6 @@ package perfschema
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/column"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -328,16 +326,6 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 		State:        model.StatePublic,
 	}
 	return colInfo
-}
-
-func buildResultField(tableName string, colInfo *model.ColumnInfo) *field.ResultField {
-	field := &field.ResultField{
-		Col:       column.Col{ColumnInfo: *colInfo},
-		DBName:    Name,
-		TableName: tableName,
-		Name:      colInfo.Name.O,
-	}
-	return field
 }
 
 func (ps *perfSchema) initRecords(tbName string, records [][]interface{}) error {
