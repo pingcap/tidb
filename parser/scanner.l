@@ -450,6 +450,7 @@ some		{s}{o}{m}{e}
 start		{s}{t}{a}{r}{t}
 status          {s}{t}{a}{t}{u}{s}
 subdate		{s}{u}{b}{d}{a}{t}{e}
+strcmp		{s}{t}{r}{c}{m}{p}
 substr		{s}{u}{b}{s}{t}{r}
 substring	{s}{u}{b}{s}{t}{r}{i}{n}{g}
 substring_index	{s}{u}{b}{s}{t}{r}{i}{n}{g}_{i}{n}{d}{e}{x}
@@ -932,6 +933,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {show}			return show
 {subdate}		lval.item = string(l.val)
 			return subDate
+{strcmp}		lval.item = string(l.val)
+			return strcmp
 {substr}		lval.item = string(l.val)
 			return substring
 {substring}		lval.item = string(l.val)
