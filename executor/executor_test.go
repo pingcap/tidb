@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -63,12 +64,16 @@ func (s *testSuite) TestAdmin(c *C) {
 	ddlInfo, err := inspectkv.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[0], Equals, ddlInfo.SchemaVer)
-	c.Assert(row.Data[1], DeepEquals, ddlInfo.Owner.String())
+	rowOwnerInfos := strings.Split(row.Data[1].(string), ",")
+	ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
+	c.Assert(rowOwnerInfos[0], DeepEquals, ownerInfos[0])
 	c.Assert(row.Data[2], DeepEquals, "")
 	bgInfo, err := inspectkv.GetBgDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(row.Data[3], Equals, bgInfo.SchemaVer)
-	c.Assert(row.Data[4], DeepEquals, bgInfo.Owner.String())
+	rowOwnerInfos = strings.Split(row.Data[4].(string), ",")
+	ownerInfos = strings.Split(bgInfo.Owner.String(), ",")
+	c.Assert(rowOwnerInfos[0], DeepEquals, ownerInfos[0])
 	c.Assert(row.Data[5], DeepEquals, "")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
