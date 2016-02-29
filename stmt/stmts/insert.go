@@ -18,8 +18,6 @@
 package stmts
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -27,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -166,21 +163,6 @@ func (s *InsertValues) fillValueList() error {
 
 // Exec implements the stmt.Statement Exec interface.
 func (s *InsertIntoStmt) Exec(ctx context.Context) (_ rset.Recordset, err error) {
-	if strings.EqualFold(s.TableIdent.Schema.O, perfschema.Name) {
-		if s.Sel != nil {
-			return nil, errors.Errorf("INSERT|REPLACE INTO %s ... SELECT ... FROM ...: operation not permitted", s.TableIdent)
-		}
-		// Only support a subset of INSERT commands
-		insertVals := &perfschema.InsertValues{
-			ColNames:   s.ColNames,
-			Lists:      s.Lists,
-			TableIdent: s.TableIdent,
-			Setlist:    s.Setlist,
-		}
-		err := perfschema.PerfHandle.ExecInsert(insertVals)
-		return nil, errors.Trace(err)
-	}
-
 	t, err := getTable(ctx, s.TableIdent)
 	if err != nil {
 		return nil, errors.Trace(err)

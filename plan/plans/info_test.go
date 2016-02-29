@@ -95,7 +95,7 @@ func (p *testInfoSchemaSuit) TestInfoSchema(c *C) {
 	cnt = mustQuery(c, testDB, "select * from information_schema.columns")
 	c.Assert(cnt, Greater, 0)
 	cnt = mustQuery(c, testDB, "select * from information_schema.statistics")
-	c.Assert(cnt, Equals, 16)
+	c.Assert(cnt, Equals, 17)
 	cnt = mustQuery(c, testDB, "select * from information_schema.character_sets")
 	c.Assert(cnt, Greater, 0)
 	cnt = mustQuery(c, testDB, "select * from information_schema.collations")
