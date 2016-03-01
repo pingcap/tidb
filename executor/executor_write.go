@@ -14,11 +14,13 @@
 package executor
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/evaluator"
@@ -712,7 +714,7 @@ func (e *InsertExec) onDuplicateUpdate(row []interface{}, h int64, cols map[int]
 }
 
 func findColumnByName(t table.Table, name string) (*column.Col, error) {
-	_, tableName, colName := field.SplitQualifiedName(name)
+	_, tableName, colName := splitQualifiedName(name)
 	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
@@ -729,7 +731,7 @@ func getOnDuplicateUpdateColumns(assignList []*ast.Assignment, t table.Table) (m
 
 	for _, v := range assignList {
 		col := v.Column
-		c, err := findColumnByName(t, field.JoinQualifiedName("", col.Table.L, col.Name.L))
+		c, err := findColumnByName(t, joinQualifiedName("", col.Table.L, col.Name.L))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -825,4 +827,38 @@ func (e *ReplaceExec) replaceRow(handle int64, replaceRow []interface{}) error {
 		}
 	}
 	return nil
+}
+
+// SplitQualifiedName splits an identifier name to db, table and field name.
+func splitQualifiedName(name string) (db string, table string, field string) {
+	seps := strings.Split(name, ".")
+
+	l := len(seps)
+	switch l {
+	case 1:
+		// `name` is field.
+		field = seps[0]
+	case 2:
+		// `name` is `table.field`.
+		table, field = seps[0], seps[1]
+	case 3:
+		// `name` is `db.table.field`.
+		db, table, field = seps[0], seps[1], seps[2]
+	default:
+		// `name` is `db.table.field`.
+		db, table, field = seps[l-3], seps[l-2], seps[l-1]
+	}
+
+	return
+}
+
+// JoinQualifiedName converts db, table, field to a qualified name.
+func joinQualifiedName(db string, table string, field string) string {
+	if len(db) > 0 {
+		return fmt.Sprintf("%s.%s.%s", db, table, field)
+	} else if len(table) > 0 {
+		return fmt.Sprintf("%s.%s", table, field)
+	} else {
+		return field
+	}
 }

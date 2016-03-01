@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/optimizer/evaluator"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/stmt"
 )
 
 var (
@@ -82,7 +80,7 @@ type PrepareExec struct {
 	SQLText string
 
 	ID           uint32
-	ResultFields []*field.ResultField
+	ResultFields []*ast.ResultField
 	ParamCount   int
 	Err          error
 }
@@ -148,7 +146,7 @@ func (e *PrepareExec) DoPrepare() {
 		return
 	}
 	if resultSetNode, ok := stmt.(ast.ResultSetNode); ok {
-		e.ResultFields = convertResultFields(resultSetNode.GetResultFields())
+		e.ResultFields = resultSetNode.GetResultFields()
 	}
 
 	if e.ID == 0 {
@@ -169,7 +167,6 @@ type ExecuteExec struct {
 	UsingVars []ast.ExprNode
 	ID        uint32
 	StmtExec  Executor
-	OldStmt   stmt.Statement
 }
 
 // Fields implements Executor Fields interface.
@@ -266,13 +263,13 @@ func (e *DeallocateExec) Close() error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) stmt.Statement {
+func CompileExecutePreparedStmt(ctx context.Context, ID uint32, args ...interface{}) ast.Statement {
 	execPlan := &plan.Execute{ID: ID}
 	execPlan.UsingVars = make([]ast.ExprNode, len(args))
 	for i, val := range args {
 		execPlan.UsingVars[i] = ast.NewValueExpr(val)
 	}
-	sa := &statementAdapter{
+	sa := &statement{
 		is:   sessionctx.GetDomain(ctx).InfoSchema(),
 		plan: execPlan,
 	}

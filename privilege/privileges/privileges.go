@@ -268,7 +268,7 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 				continue
 			}
 			f := fs[i]
-			p, ok := mysql.Col2PrivType[f.Name]
+			p, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
 				return errors.New("Unknown Privilege Type!")
 			}
@@ -317,7 +317,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 				continue
 			}
 			f := fs[i]
-			p, ok := mysql.Col2PrivType[f.Name]
+			p, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
 				return errors.New("Unknown Privilege Type!")
 			}
