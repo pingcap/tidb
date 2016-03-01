@@ -150,7 +150,7 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	mustExecSQL(c, se, `INSERT INTO t VALUES (2);`)
 	r := mustExecSQL(c, se, `SELECT count(*) from t;`)
 	c.Assert(r, NotNil)
-	_, err := getRows(r)
+	_, err := GetRows(r)
 	c.Assert(err, IsNil)
 	fields, err := r.Fields()
 	c.Assert(err, IsNil)
@@ -327,7 +327,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	// Check the result is correct
 	se3 := newSession(c, store, s.dbName)
 	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	fmt.Println(rows)
 	matches(c, rows, [][]interface{}{{21}})
 
@@ -360,7 +360,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	mustExecSQL(c, se1, "begin")
 	rs, err := exec(c, se1, "select * from t where c1=11 for update")
 	c.Assert(err, IsNil)
-	_, err = getRows(rs)
+	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
@@ -375,7 +375,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	// not conflict
 	mustExecSQL(c, se1, "begin")
 	rs, err = exec(c, se1, "select * from t where c1=11 for update")
-	_, err = getRows(rs)
+	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=22 where c1=12")
@@ -386,7 +386,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	// not conflict, auto commit
 	mustExecSQL(c, se1, "set @@autocommit=1;")
 	rs, err = exec(c, se1, "select * from t where c1=11 for update")
-	_, err = getRows(rs)
+	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
@@ -451,7 +451,7 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	mustExecSQL(c, se, "create table if not exists test_index (c1 int, c double, index(c1), index(c))")
 	mustExecSQL(c, se, "insert into test_index values (1, 2), (3, null)")
 	r := mustExecSQL(c, se, "select c1 from test_index where c > 0")
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], 1)
@@ -465,12 +465,12 @@ func (s *testSessionSuite) TestIndex(c *C) {
 			insert into t2 values (2);`)
 
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 order by t1.c1")
-	rows, err = getRows(r)
+	rows, err = GetRows(r)
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil}, {2, 2}})
 
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 where t2.c2 < 10")
-	rows, err = getRows(r)
+	rows, err = GetRows(r)
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{2, 2}})
 }
@@ -574,7 +574,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	mustExecSQL(c, se, "insert into t3 values (1), (3)")
 
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1, t2.c2, t3.c3")
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 4)
 	match(c, rows[0], 1, 1, 1, 1)
@@ -606,7 +606,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 		insert into t2 values (2);
 		insert into t3 values (3);`)
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1")
-	rows, err = getRows(r)
+	rows, err = GetRows(r)
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
 
@@ -640,7 +640,7 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 	match(c, row.Data, 1)
 
 	r = mustExecSQL(c, se, `select (select count(c1) from t2 where t2.c1 != t1.c2) from t1`)
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 	match(c, rows[0], 0)
@@ -662,7 +662,7 @@ func (s *testSessionSuite) TestShow(c *C) {
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table if not exists t (c int)")
 	r = mustExecSQL(c, se, `show columns from t`)
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], "c", "int(11)", "YES", "", nil, "")
@@ -878,7 +878,7 @@ func (s *testSessionSuite) TestSet(c *C) {
 	match(c, row.Data, "a")
 
 	r = mustExecSQL(c, se, "select * from t where c = 'a,b'")
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 
@@ -929,7 +929,7 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	mustExecSQL(c, se, "insert into t values ()")
 
 	r := mustExecSQL(c, se, "select c from t where c like '%1%'")
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 6)
 
@@ -949,7 +949,7 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	// The data in the second src will be casted as the type of the first src.
 	// If use flen=0, it will be truncated.
 	r := mustExecSQL(c, se, "select c from t1 union select c from t2;")
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 	c.Assert(rows[1][0], Equals, float64(930))
