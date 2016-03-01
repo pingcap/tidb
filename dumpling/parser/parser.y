@@ -1871,10 +1871,9 @@ Literal:
 		tp := types.NewFieldType(mysql.TypeString)
 		l := yylex.(*lexer)
 		tp.Charset, tp.Collate = l.GetCharsetInfo()
-		$$ = &types.DataItem{
-			Type: tp,
-			Data: $1.(string),
-		}
+		expr := ast.NewValueExpr($1)
+		expr.SetType(tp)
+		$$ = expr
 	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
@@ -1888,10 +1887,9 @@ Literal:
 			return 1
 		}
 		tp.Collate = co
-		$$ = &types.DataItem{
-			Type: tp,
-			Data: $2.(string),
-		}
+		expr := ast.NewValueExpr($2)
+		expr.SetType(tp)
+		$$ = expr
 	}
 |	hexLit
 |	bitLit
