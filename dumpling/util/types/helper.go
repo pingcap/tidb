@@ -81,7 +81,6 @@ func CalculateSum(sum interface{}, v interface{}) (interface{}, error) {
 		err  error
 	)
 
-	v = RawData(v)
 	switch y := v.(type) {
 	case int, uint, int8, uint8, int16, uint16, int32, uint32, int64, uint64:
 		data, err = mysql.ConvertToDecimal(v)
@@ -99,7 +98,6 @@ func CalculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	if data == nil {
 		return sum, nil
 	}
-	data = RawData(data)
 	switch x := sum.(type) {
 	case nil:
 		return data, nil

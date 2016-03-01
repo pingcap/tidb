@@ -112,7 +112,7 @@ func (s *testAggFuncSuite) TestCount(c *C) {
 	ctx := mock.NewContext()
 	val, err := evaluator.Eval(ctx, fc1)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, 1)
+	c.Assert(val, Equals, int64(1))
 	val, err = evaluator.Eval(ctx, fc2)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, int64(2))

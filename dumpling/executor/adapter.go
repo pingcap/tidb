@@ -24,7 +24,6 @@ import (
 	oplan "github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // adapter wraps an executor, implements rset.Recordset interface
@@ -88,17 +87,16 @@ func (a *recordsetAdapter) Next() (*oplan.Row, error) {
 		RowKeys: make([]*oplan.RowKeyEntry, 0, len(row.RowKeys)),
 	}
 	for i, v := range row.Data {
-		d := types.RawData(v)
-		switch v := d.(type) {
+		switch x := v.(type) {
 		case bool:
 			// Convert bool field to int
-			if v {
+			if x {
 				oRow.Data[i] = uint8(1)
 			} else {
 				oRow.Data[i] = uint8(0)
 			}
 		default:
-			oRow.Data[i] = d
+			oRow.Data[i] = x
 		}
 	}
 	for _, v := range row.RowKeys {

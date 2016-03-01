@@ -103,8 +103,6 @@ func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
 		x = string(v)
 	case []interface{}:
 		rowTypeNum++
-	case *DataItem:
-		return coerceCompare(v.Data, b)
 	}
 
 	switch v := b.(type) {
@@ -112,8 +110,6 @@ func coerceCompare(a, b interface{}) (x interface{}, y interface{}, err error) {
 		y = string(v)
 	case []interface{}:
 		rowTypeNum++
-	case *DataItem:
-		return coerceCompare(a, v.Data)
 	}
 
 	if rowTypeNum == 1 {
