@@ -1869,9 +1869,9 @@ Literal:
 |	stringLit
 	{
 		tp := types.NewFieldType(mysql.TypeString)
-        l := yylex.(*lexer)
-        tp.Charset, tp.Collate = l.GetCharsetInfo()
-        expr := ast.NewValueExpr($1)
+		l := yylex.(*lexer)
+		tp.Charset, tp.Collate = l.GetCharsetInfo()
+		expr := ast.NewValueExpr($1)
 		expr.SetType(tp)
 		$$ = expr
 	}
