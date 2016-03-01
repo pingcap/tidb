@@ -1867,6 +1867,14 @@ Literal:
 |	floatLit
 |	intLit
 |	stringLit
+	{
+		tp := types.NewFieldType(mysql.TypeString)
+        l := yylex.(*lexer)
+        tp.Charset, tp.Collate = l.GetCharsetInfo()
+        expr := ast.NewValueExpr($1)
+		expr.SetType(tp)
+		$$ = expr
+	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
