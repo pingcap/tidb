@@ -171,6 +171,27 @@ func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.Rec
 	return rs, errors.Trace(err)
 }
 
+// GetRows gets all the rows from a RecordSet.
+func GetRows(rs ast.RecordSet) ([][]interface{}, error) {
+	if rs == nil {
+		return nil, nil
+	}
+	var rows [][]interface{}
+	defer rs.Close()
+	// Negative limit means no limit.
+	for {
+		row, err := rs.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row.Data)
+	}
+	return rows, nil
+}
+
 // RegisterStore registers a kv storage with unique name and its associated Driver.
 func RegisterStore(name string, driver kv.Driver) error {
 	name = strings.ToLower(name)

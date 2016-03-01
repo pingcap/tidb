@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
@@ -101,26 +100,9 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	rows, err := getRows(rs)
+	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(err, check.IsNil, comment)
 	return &Result{rows: rows, c: tk.c, comment: comment}
-}
-
-func getRows(rs ast.RecordSet) ([][]interface{}, error) {
-	var rows [][]interface{}
-	defer rs.Close()
-	// Negative limit means no limit.
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		rows = append(rows, row.Data)
-	}
-	return rows, nil
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.

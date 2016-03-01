@@ -15,7 +15,6 @@ package tidb
 
 import (
 	"database/sql"
-	"errors"
 	"flag"
 	"fmt"
 	"net/url"
@@ -25,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	jerrors "github.com/juju/errors"
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -221,7 +220,7 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	mustExecSQL(c, se, "update T set b = B + 1")
 	mustExecSQL(c, se, "update T set B = b + 1")
 	rs = mustExecSQL(c, se, "select b from T")
-	rows, err := getRows(rs)
+	rows, err := GetRows(rs)
 	c.Assert(err, IsNil)
 	match(c, rows[0], 3)
 	mustExecSQL(c, se, s.dropDBSQL)
@@ -429,26 +428,9 @@ func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
 	}
 }
 
-func getRows(rs ast.RecordSet) ([][]interface{}, error) {
-	var rows [][]interface{}
-	defer rs.Close()
-	// Negative limit means no limit.
-	for {
-		row, err := rs.Next()
-		if err != nil {
-			return nil, jerrors.Trace(err)
-		}
-		if row == nil {
-			break
-		}
-		rows = append(rows, row.Data)
-	}
-	return rows, nil
-}
-
 func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
 	r := mustExecSQL(c, se, sql)
-	rows, err := getRows(r)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	matches(c, rows, expected)
 }
