@@ -34,7 +34,7 @@ func convertToTime(arg interface{}, tp byte) (interface{}, error) {
 		return nil, err
 	}
 
-	if types.IsNil(v) {
+	if v == nil {
 		return nil, nil
 	}
 
@@ -55,7 +55,7 @@ func convertToDuration(arg interface{}, fsp int) (interface{}, error) {
 		return nil, err
 	}
 
-	if types.IsNil(v) {
+	if v == nil {
 		return nil, nil
 	}
 
@@ -80,7 +80,7 @@ func builtinDay(args []interface{}, ctx map[interface{}]interface{}) (interface{
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
 func builtinHour(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -92,7 +92,7 @@ func builtinHour(args []interface{}, ctx map[interface{}]interface{}) (interface
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
 func builtinMinute(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -104,7 +104,7 @@ func builtinMinute(args []interface{}, ctx map[interface{}]interface{}) (interfa
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
 func builtinSecond(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -116,7 +116,7 @@ func builtinSecond(args []interface{}, ctx map[interface{}]interface{}) (interfa
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
 func builtinMicroSecond(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -128,7 +128,7 @@ func builtinMicroSecond(args []interface{}, ctx map[interface{}]interface{}) (in
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
 func builtinMonth(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -168,7 +168,7 @@ func builtinDayName(args []interface{}, ctx map[interface{}]interface{}) (interf
 	if err != nil {
 		return nil, err
 	}
-	if types.IsNil(v) {
+	if v == nil {
 		return nil, nil
 	}
 	weekday := v.(int64)
@@ -182,7 +182,7 @@ func builtinDayName(args []interface{}, ctx map[interface{}]interface{}) (interf
 func builtinDayOfMonth(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	// TODO: some invalid format like 2000-00-00 will return 0 too.
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -198,7 +198,7 @@ func builtinDayOfMonth(args []interface{}, ctx map[interface{}]interface{}) (int
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofweek
 func builtinDayOfWeek(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -216,7 +216,7 @@ func builtinDayOfWeek(args []interface{}, ctx map[interface{}]interface{}) (inte
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
 func builtinDayOfYear(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -232,7 +232,7 @@ func builtinDayOfYear(args []interface{}, ctx map[interface{}]interface{}) (inte
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
 func builtinWeek(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -251,7 +251,7 @@ func builtinWeek(args []interface{}, ctx map[interface{}]interface{}) (interface
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
 func builtinWeekDay(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -278,7 +278,7 @@ func builtinWeekOfYear(args []interface{}, ctx map[interface{}]interface{}) (int
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_year
 func builtinYear(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 
@@ -294,7 +294,7 @@ func builtinYear(args []interface{}, ctx map[interface{}]interface{}) (interface
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 func builtinYearWeek(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
-	if err != nil || types.IsNil(v) {
+	if err != nil || v == nil {
 		return v, err
 	}
 

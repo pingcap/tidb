@@ -44,7 +44,7 @@ func builtinLength(args []interface{}, _ map[interface{}]interface{}) (v interfa
 func builtinConcat(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
 	var s []byte
 	for _, a := range args {
-		if types.IsNil(a) {
+		if a == nil {
 			return nil, nil
 		}
 		ss, err := types.ToString(a)
@@ -62,7 +62,7 @@ func builtinConcatWS(args []interface{}, ctx map[interface{}]interface{}) (v int
 	var sep string
 	s := make([]string, 0, len(args))
 	for i, a := range args {
-		if types.IsNil(a) {
+		if a == nil {
 			if i == 0 {
 				return nil, nil
 			}
@@ -167,7 +167,7 @@ func builtinStrcmp(args []interface{}, ctx map[interface{}]interface{}) (interfa
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func builtinReplace(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
 	for _, arg := range args {
-		if types.IsNil(arg) {
+		if arg == nil {
 			return nil, nil
 		}
 	}
