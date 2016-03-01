@@ -230,7 +230,7 @@ type tidbResultSet struct {
 	recordSet ast.RecordSet
 }
 
-func (trs *tidbResultSet) Next() ([]interface{}, error) {
+func (trs *tidbResultSet) Next() ([]types.Datum, error) {
 	row, err := trs.recordSet.Next()
 	if err != nil {
 		return nil, errors.Trace(err)

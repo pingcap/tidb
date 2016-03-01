@@ -161,7 +161,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[5], Equals, mysql.Bit{Value: 6, Width: 8})
+	c.Assert(row.Data[5].GetMysqlBit(), Equals, mysql.Bit{Value: 6, Width: 8})
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -174,7 +174,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, NotNil)
-	c.Assert(row.Data[0], DeepEquals, float64(2))
+	c.Assert(row.Data[0].GetFloat64(), DeepEquals, float64(2))
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 }

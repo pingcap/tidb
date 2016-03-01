@@ -108,7 +108,16 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.c.Assert(rs, check.NotNil, comment)
 	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(err, check.IsNil, comment)
-	return &Result{rows: rows, c: tk.c, comment: comment}
+	iRows := make([][]interface{}, len(rows))
+	for i := range rows {
+		row := rows[i]
+		iRow := make([]interface{}, len(row))
+		for j := range row {
+			iRow[j] = row[j].GetValue()
+		}
+		iRows[i] = iRow
+	}
+	return &Result{rows: iRows, c: tk.c, comment: comment}
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.

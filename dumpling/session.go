@@ -295,7 +295,7 @@ func (s *session) getExecRet(ctx context.Context, sql string) (string, error) {
 	if row == nil {
 		return "", terror.ExecResultIsEmpty
 	}
-	value, err := types.ToString(row.Data[0])
+	value, err := types.ToString(row.Data[0].GetValue())
 	if err != nil {
 		return "", errors.Trace(err)
 	}

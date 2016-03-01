@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Engine prefix name
@@ -172,11 +173,11 @@ func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.Rec
 }
 
 // GetRows gets all the rows from a RecordSet.
-func GetRows(rs ast.RecordSet) ([][]interface{}, error) {
+func GetRows(rs ast.RecordSet) ([][]types.Datum, error) {
 	if rs == nil {
 		return nil, nil
 	}
-	var rows [][]interface{}
+	var rows [][]types.Datum
 	defer rs.Close()
 	// Negative limit means no limit.
 	for {

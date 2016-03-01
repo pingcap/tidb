@@ -28,6 +28,7 @@ const (
 	KindNull  int = 0
 	KindInt64 int = iota + 1
 	KindUint64
+	KindFloat32
 	KindFloat64
 	KindString
 	KindBytes
@@ -87,6 +88,17 @@ func (d *Datum) GetFloat64() float64 {
 func (d *Datum) SetFloat64(f float64) {
 	d.k = KindFloat64
 	d.i = int64(math.Float64bits(f))
+}
+
+// GetFloat32 gets float32 value.
+func (d *Datum) GetFloat32() float32 {
+	return float32(math.Float64frombits(uint64(d.i)))
+}
+
+// SetFloat32 sets float32 value.
+func (d *Datum) SetFloat32(f float32) {
+	d.k = KindFloat32
+	d.i = int64(math.Float64bits(float64(f)))
 }
 
 // GetString gets string value.
@@ -176,6 +188,8 @@ func (d *Datum) GetValue() interface{} {
 		return d.GetInt64()
 	case KindUint64:
 		return d.GetUint64()
+	case KindFloat32:
+		return d.GetFloat32()
 	case KindFloat64:
 		return d.GetFloat64()
 	case KindString:
@@ -204,6 +218,8 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetInt64(x)
 	case uint64:
 		d.SetUint64(x)
+	case float32:
+		d.SetFloat32(x)
 	case float64:
 		d.SetFloat64(x)
 	case string:
@@ -250,7 +266,7 @@ func (d *Datum) compareDatum(ad Datum) int {
 		return d.compareInt64(ad.GetInt64())
 	case KindUint64:
 		return d.compareUint64(ad.GetUint64())
-	case KindFloat64:
+	case KindFloat32, KindFloat64:
 		return d.compareFloat64(ad.GetFloat64())
 	case KindString:
 		return d.compareString(ad.GetString())
@@ -313,7 +329,7 @@ func (d *Datum) compareFloat64(f float64) int {
 		return CompareFloat64(float64(d.i), f)
 	case KindUint64:
 		return CompareFloat64(float64(d.GetUint64()), f)
-	case KindFloat64:
+	case KindFloat32, KindFloat64:
 		return CompareFloat64(d.GetFloat64(), f)
 	case KindString, KindBytes:
 		fVal := parseFloatLoose(d.GetString())

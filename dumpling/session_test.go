@@ -686,13 +686,13 @@ func (s *testSessionSuite) TestShow(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, HasLen, 2)
-	c.Assert(row.Data[0], Equals, "t")
+	c.Assert(row.Data[0].GetString(), Equals, "t")
 
 	r = mustExecSQL(c, se, "show databases like 'test'")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0], Equals, "test")
+	c.Assert(row.Data[0].GetString(), Equals, "test")
 
 	r = mustExecSQL(c, se, "grant all on *.* to 'root'@'%'")
 	r = mustExecSQL(c, se, "show grants")
@@ -710,8 +710,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	row, err := r.Next()
 	c.Assert(err, IsNil)
 	for _, t := range row.Data {
-		n, ok := t.(mysql.Time)
-		c.Assert(ok, IsTrue)
+		n := t.GetMysqlTime()
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 
@@ -720,8 +719,7 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	for _, t := range row.Data {
-		n, ok := t.(mysql.Time)
-		c.Assert(ok, IsTrue)
+		n := t.GetMysqlTime()
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 }
@@ -738,7 +736,7 @@ func (s *testSessionSuite) TestBit(c *C) {
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
 	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0], Equals, mysql.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetMysqlBit(), Equals, mysql.Bit{Value: 2, Width: 2})
 }
 
 func (s *testSessionSuite) TestBootstrap(c *C) {
@@ -763,7 +761,7 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v.Data[0], Equals, int64(len(variable.SysVars)))
+	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExecSQL(c, se, "USE test;")
@@ -829,14 +827,14 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v.Data[0], Equals, int64(len(variable.SysVars)))
+	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0], BytesEquals, []byte("True"))
+	c.Assert(row.Data[0].GetBytes(), BytesEquals, []byte("True"))
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
@@ -952,7 +950,7 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
-	c.Assert(rows[1][0], Equals, float64(930))
+	c.Assert(rows[1][0].GetFloat64(), Equals, float64(930))
 }
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
@@ -1066,7 +1064,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(rs, NotNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0], IsNil)
+	c.Assert(row.Data[0].GetValue(), IsNil)
 	fs, err := rs.Fields()
 	c.Assert(err, IsNil)
 	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeString)

@@ -13,6 +13,8 @@
 
 package server
 
+import "github.com/pingcap/tidb/util/types"
+
 // IDriver opens IContext.
 type IDriver interface {
 	// OpenCtx opens an IContext with connection id, client capability, collation and dbname.
@@ -82,6 +84,6 @@ type IStatement interface {
 // ResultSet is the result set of an query.
 type ResultSet interface {
 	Columns() ([]*ColumnInfo, error)
-	Next() ([]interface{}, error)
+	Next() ([]types.Datum, error)
 	Close() error
 }
