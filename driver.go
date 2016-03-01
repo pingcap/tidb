@@ -31,10 +31,10 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -452,47 +452,42 @@ func (r *driverRows) Next(dest []driver.Value) error {
 		return errors.Errorf("field count mismatch: got %d, need %d", len(row.Data), len(dest))
 	}
 	for i, xi := range row.Data {
-		switch v := xi.(type) {
-		case nil, int64, float32, float64, bool, []byte, string:
-			dest[i] = v
-		case int8:
-			dest[i] = int64(v)
-		case int16:
-			dest[i] = int64(v)
-		case int32:
-			dest[i] = int64(v)
-		case int:
-			dest[i] = int64(v)
-		case uint8:
-			dest[i] = uint64(v)
-		case uint16:
-			dest[i] = uint64(v)
-		case uint32:
-			dest[i] = uint64(v)
-		case uint64:
-			dest[i] = uint64(v)
-		case uint:
-			dest[i] = uint64(v)
-		case mysql.Duration:
-			dest[i] = v.String()
-		case mysql.Time:
+		switch xi.Kind() {
+		case types.KindNull:
+			dest[i] = nil
+		case types.KindInt64:
+			dest[i] = xi.GetInt64()
+		case types.KindUint64:
+			dest[i] = xi.GetUint64()
+		case types.KindFloat32:
+			dest[i] = xi.GetFloat32()
+		case types.KindFloat64:
+			dest[i] = xi.GetFloat64()
+		case types.KindString:
+			dest[i] = xi.GetString()
+		case types.KindBytes:
+			dest[i] = xi.GetBytes()
+		case types.KindMysqlBit:
+			dest[i] = xi.GetMysqlBit().ToString()
+		case types.KindMysqlDecimal:
+			dest[i] = xi.GetMysqlDecimal().String()
+		case types.KindMysqlDuration:
+			dest[i] = xi.GetMysqlDuration().String()
+		case types.KindMysqlEnum:
+			dest[i] = xi.GetMysqlEnum().String()
+		case types.KindMysqlHex:
+			dest[i] = xi.GetMysqlHex().ToString()
+		case types.KindMysqlSet:
+			dest[i] = xi.GetMysqlSet().String()
+		case types.KindMysqlTime:
+			t := xi.GetMysqlTime()
 			if !r.params.parseTime {
-				dest[i] = v.String()
+				dest[i] = t.String()
 			} else {
-				dest[i] = v.Time
+				dest[i] = t.Time
 			}
-		case mysql.Decimal:
-			dest[i] = v.String()
-		case mysql.Hex:
-			dest[i] = v.ToString()
-		case mysql.Bit:
-			dest[i] = v.ToString()
-		case mysql.Enum:
-			dest[i] = v.String()
-		case mysql.Set:
-			dest[i] = v.String()
 		default:
-			return errors.Errorf("unable to handle type %T", xi)
+			return errors.Errorf("unable to handle type %T", xi.GetValue())
 		}
 	}
 	return nil

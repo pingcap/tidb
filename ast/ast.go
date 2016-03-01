@@ -120,7 +120,7 @@ type ResultField struct {
 
 // Row represents a single row from Recordset.
 type Row struct {
-	Data []interface{}
+	Data []types.Datum
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.
