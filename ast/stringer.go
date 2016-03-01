@@ -42,7 +42,7 @@ func (c *stringer) Leave(in Node) (out Node, ok bool) {
 		right := c.strMap[x.R]
 		c.strMap[x] = left + " " + x.Op.String() + " " + right
 	case *ValueExpr:
-		str, _ := types.ToString(x.Data)
+		str, _ := types.ToString(x.GetValue())
 		c.strMap[x] = str
 	case *ParenthesesExpr:
 		c.strMap[x] = "(" + c.strMap[x.Expr] + ")"
