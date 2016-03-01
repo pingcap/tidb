@@ -28,22 +28,20 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
@@ -53,16 +51,16 @@ import (
 
 // Session context
 type Session interface {
-	Status() uint16                               // Flag of current status, such as autocommit
-	LastInsertID() uint64                         // Last inserted auto_increment id
-	AffectedRows() uint64                         // Affected rows by lastest executed stmt
-	Execute(sql string) ([]rset.Recordset, error) // Execute a sql statement
-	String() string                               // For debug
+	Status() uint16                              // Flag of current status, such as autocommit
+	LastInsertID() uint64                        // Last inserted auto_increment id
+	AffectedRows() uint64                        // Affected rows by lastest executed stmt
+	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement
+	String() string                              // For debug
 	FinishTxn(rollback bool) error
 	// For execute prepare statement in binary protocol
-	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error)
+	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// Execute a prepared statement
-	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (rset.Recordset, error)
+	ExecutePreparedStmt(stmtID uint32, param ...interface{}) (ast.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags
 	SetConnectionID(uint64)
@@ -79,7 +77,7 @@ var (
 
 type stmtRecord struct {
 	stmtID uint32
-	st     stmt.Statement
+	st     ast.Statement
 	params []interface{}
 }
 
@@ -87,7 +85,7 @@ type stmtHistory struct {
 	history []*stmtRecord
 }
 
-func (h *stmtHistory) add(stmtID uint32, st stmt.Statement, params ...interface{}) {
+func (h *stmtHistory) add(stmtID uint32, st ast.Statement, params ...interface{}) {
 	s := &stmtRecord{
 		stmtID: stmtID,
 		st:     st,
@@ -252,7 +250,7 @@ func (s *session) Retry() error {
 
 // ExecRestrictedSQL implements SQLHelper interface.
 // This is used for executing some restricted sql statements.
-func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
 	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
 		// We do not support run this function concurrently.
 		// TODO: Maybe we should remove this restriction latter.
@@ -370,12 +368,12 @@ func (s *session) ShouldAutocommit(ctx context.Context) bool {
 	return false
 }
 
-func (s *session) Execute(sql string) ([]rset.Recordset, error) {
+func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 	rawStmts, err := Parse(s, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var rs []rset.Recordset
+	var rs []ast.RecordSet
 	for i, rst := range rawStmts {
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
@@ -399,7 +397,7 @@ func (s *session) Execute(sql string) ([]rset.Recordset, error) {
 }
 
 // For execute prepare statement in binary protocol
-func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*field.ResultField, err error) {
+func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error) {
 	prepareExec := &executor.PrepareExec{
 		IS:      sessionctx.GetDomain(s).InfoSchema(),
 		Ctx:     s,
@@ -456,7 +454,7 @@ func checkArgs(args ...interface{}) error {
 }
 
 // Execute a prepared statement
-func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (rset.Recordset, error) {
+func (s *session) ExecutePreparedStmt(stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
 		return nil, err

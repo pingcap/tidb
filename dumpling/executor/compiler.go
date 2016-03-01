@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/stmt"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
@@ -32,7 +31,7 @@ type Compiler struct {
 // If it is supported to use new plan and executer, it optimizes the node to
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
+func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
 	ast.SetFlag(node)
 
 	is := sessionctx.GetDomain(ctx).InfoSchema()
@@ -48,7 +47,7 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Stateme
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sa := &statementAdapter{
+	sa := &statement{
 		is:   is,
 		plan: p,
 	}
