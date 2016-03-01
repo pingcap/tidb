@@ -35,10 +35,8 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
@@ -138,7 +136,7 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, rawStmt ast.StmtNode) (stmt.Statement, error) {
+func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
 	compiler := &executor.Compiler{}
 	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
@@ -147,9 +145,9 @@ func Compile(ctx context.Context, rawStmt ast.StmtNode) (stmt.Statement, error) 
 	return st, nil
 }
 
-func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.Recordset, error) {
+func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.RecordSet, error) {
 	var err error
-	var rs rset.Recordset
+	var rs ast.RecordSet
 	// before every execution, we must clear affectedrows.
 	variable.GetSessionVars(ctx).SetAffectedRows(0)
 	if s.IsDDL() {
@@ -171,6 +169,27 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		}
 	}
 	return rs, errors.Trace(err)
+}
+
+// GetRows gets all the rows from a RecordSet.
+func GetRows(rs ast.RecordSet) ([][]interface{}, error) {
+	if rs == nil {
+		return nil, nil
+	}
+	var rows [][]interface{}
+	defer rs.Close()
+	// Negative limit means no limit.
+	for {
+		row, err := rs.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row.Data)
+	}
+	return rows, nil
 }
 
 // RegisterStore registers a kv storage with unique name and its associated Driver.

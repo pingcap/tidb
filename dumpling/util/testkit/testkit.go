@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/rset"
 )
 
 // TestKit is a utility to run sql test.
@@ -58,14 +58,14 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 }
 
 // Exec executes a sql statement.
-func (tk *TestKit) Exec(sql string, args ...interface{}) (rset.Recordset, error) {
+func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = tidb.CreateSession(tk.store)
 		tk.c.Assert(err, check.IsNil)
 	}
 	if len(args) == 0 {
-		var rss []rset.Recordset
+		var rss []ast.RecordSet
 		rss, err = tk.Se.Execute(sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
@@ -100,7 +100,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	rows, err := rs.Rows(-1, 0)
+	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(err, check.IsNil, comment)
 	return &Result{rows: rows, c: tk.c, comment: comment}
 }
