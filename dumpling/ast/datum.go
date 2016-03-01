@@ -31,7 +31,7 @@ const (
 )
 
 // Datum is a data box holds different kind of data.
-// It has better performance and easier to use than `interface{}`
+// It has better performance and easier to use than `interface{}`.
 type Datum struct {
 	k int         // datum kind.
 	i int64       // i can hold int64 uint64 float64 values.
