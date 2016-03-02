@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
-	"github.com/pingcap/tidb/util/types"
 )
 
 // recordSet wraps an executor, implements ast.RecordSet interface
@@ -37,11 +36,7 @@ func (a *recordSet) Next() (*ast.Row, error) {
 	if err != nil || row == nil {
 		return nil, errors.Trace(err)
 	}
-	datums := make([]types.Datum, len(row.Data))
-	for i, v := range row.Data {
-		datums[i] = types.NewDatum(v)
-	}
-	return &ast.Row{Data: datums}, nil
+	return &ast.Row{Data: row.Data}, nil
 }
 
 func (a *recordSet) Close() error {
