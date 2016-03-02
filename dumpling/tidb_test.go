@@ -29,6 +29,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -412,16 +413,16 @@ func mustExecSQL(c *C, se Session, sql string, args ...interface{}) ast.RecordSe
 	return rs
 }
 
-func match(c *C, row []interface{}, expected ...interface{}) {
+func match(c *C, row []types.Datum, expected ...interface{}) {
 	c.Assert(len(row), Equals, len(expected))
 	for i := range row {
-		got := fmt.Sprintf("%v", row[i])
+		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
 }
 
-func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
+func matches(c *C, rows [][]types.Datum, expected [][]interface{}) {
 	c.Assert(len(rows), Equals, len(expected))
 	for i := 0; i < len(rows); i++ {
 		match(c, rows[i], expected[i]...)

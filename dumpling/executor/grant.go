@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 /***
@@ -452,18 +453,12 @@ func getTablePriv(ctx context.Context, name string, host string, db string, tbl 
 		return "", "", errors.Trace(err)
 	}
 	var tPriv, cPriv string
-	if row.Data[0] != nil {
-		tablePriv, ok := row.Data[0].(mysql.Set)
-		if !ok {
-			return "", "", errors.Errorf("Table Priv should be mysql.Set but get %v with type %T", row.Data[0], row.Data[0])
-		}
+	if row.Data[0].Kind() == types.KindMysqlSet {
+		tablePriv := row.Data[0].GetMysqlSet()
 		tPriv = tablePriv.Name
 	}
-	if row.Data[1] != nil {
-		columnPriv, ok := row.Data[1].(mysql.Set)
-		if !ok {
-			return "", "", errors.Errorf("Column Priv should be mysql.Set but get %v with type %T", row.Data[1], row.Data[1])
-		}
+	if row.Data[1].Kind() == types.KindMysqlSet {
+		columnPriv := row.Data[1].GetMysqlSet()
 		cPriv = columnPriv.Name
 	}
 	return tPriv, cPriv, nil
@@ -483,12 +478,8 @@ func getColumnPriv(ctx context.Context, name string, host string, db string, tbl
 		return "", errors.Trace(err)
 	}
 	cPriv := ""
-	if row.Data[0] != nil {
-		columnPriv, ok := row.Data[0].(mysql.Set)
-		if !ok {
-			return "", errors.Errorf("Column Priv should be mysql.Set but get %v with type %T", row.Data[0], row.Data[0])
-		}
-		cPriv = columnPriv.Name
+	if row.Data[0].Kind() == types.KindMysqlSet {
+		cPriv = row.Data[0].GetMysqlSet().Name
 	}
 	return cPriv, nil
 }

@@ -153,7 +153,7 @@ func checkBootstrappedVar(s Session) (bool, error) {
 		return false, errors.Trace(err)
 	}
 
-	isBootstrapped := row.Data[0].(string) == bootstrappedVarTrue
+	isBootstrapped := row.Data[0].GetString() == bootstrappedVarTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
 
