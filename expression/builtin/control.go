@@ -13,10 +13,13 @@
 
 package builtin
 
-import "github.com/pingcap/tidb/util/types"
+import (
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
+)
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func builtinIf(args []interface{}, m map[interface{}]interface{}) (interface{}, error) {
+func builtinIf(args []interface{}, _ context.Context) (interface{}, error) {
 	// if(expr1, expr2, expr3)
 	// if expr1 is true, return expr2, otherwise, return expr3
 	v1 := args[0]
@@ -41,7 +44,7 @@ func builtinIf(args []interface{}, m map[interface{}]interface{}) (interface{}, 
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
-func builtinIfNull(args []interface{}, m map[interface{}]interface{}) (interface{}, error) {
+func builtinIfNull(args []interface{}, _ context.Context) (interface{}, error) {
 	// ifnull(expr1, expr2)
 	// if expr1 is not null, return expr1, otherwise, return expr2
 	v1 := args[0]
@@ -55,7 +58,7 @@ func builtinIfNull(args []interface{}, m map[interface{}]interface{}) (interface
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
-func builtinNullIf(args []interface{}, m map[interface{}]interface{}) (interface{}, error) {
+func builtinNullIf(args []interface{}, _ context.Context) (interface{}, error) {
 	// nullif(expr1, expr2)
 	// returns null if expr1 = expr2 is true, otherwise returns expr1
 	v1 := args[0]

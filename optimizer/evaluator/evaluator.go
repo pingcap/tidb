@@ -696,9 +696,7 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 	for i, arg := range v.Args {
 		a[i] = arg.GetValue()
 	}
-	argMap := make(map[interface{}]interface{})
-	argMap[builtin.ExprEvalArgCtx] = e.ctx
-	val, err := f.F(a, argMap)
+	val, err := f.F(a, e.ctx)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
