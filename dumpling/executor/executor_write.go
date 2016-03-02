@@ -47,7 +47,7 @@ type UpdateExec struct {
 	ctx            context.Context
 
 	rows        []*Row          // The rows fetched from TableExec.
-	newRowsData [][]interface{} // The new values to be set.
+	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
 }
@@ -89,7 +89,6 @@ func (e *UpdateExec) Next() (*Row, error) {
 			// Each matching row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
-
 		// Update row
 		err1 := updateRecord(e.ctx, handle, oldData, newTableData, columns, tbl, offset, false)
 		if err1 != nil {
@@ -118,17 +117,17 @@ func (e *UpdateExec) fetchRows() error {
 		if row == nil {
 			return nil
 		}
-		data := make([]interface{}, len(e.SelectExec.Fields()))
-		newData := make([]interface{}, len(e.SelectExec.Fields()))
+		data := make([]types.Datum, len(e.SelectExec.Fields()))
+		newData := make([]types.Datum, len(e.SelectExec.Fields()))
 		for i, f := range e.SelectExec.Fields() {
-			data[i] = f.Expr.GetValue()
+			data[i] = types.NewDatum(f.Expr.GetValue())
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
 				val, err := evaluator.Eval(e.ctx, e.OrderedList[i].Expr)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				newData[i] = val
+				newData[i] = types.NewDatum(val)
 			}
 		}
 		row.Data = data
@@ -150,7 +149,7 @@ func (e *UpdateExec) getTableOffset(t table.Table) int {
 	return 0
 }
 
-func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
+func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, updateColumns map[int]*ast.Assignment, t table.Table, offset int, onDuplicateUpdate bool) error {
 	if err := t.LockRow(ctx, h, false); err != nil {
 		return errors.Trace(err)
 	}
@@ -159,7 +158,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, 
 	touched := make(map[int]bool, len(cols))
 
 	assignExists := false
-	var newHandle interface{}
+	var newHandle types.Datum
 	for i, asgn := range updateColumns {
 		if asgn == nil {
 			continue
@@ -200,7 +199,7 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, 
 			continue
 		}
 
-		n, err := types.Compare(newData[i], oldData[i])
+		n, err := newData[i].CompareDatum(oldData[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -209,7 +208,6 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, 
 			break
 		}
 	}
-
 	if !rowChanged {
 		// See: https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if variable.GetSessionVars(ctx).ClientCapability&mysql.ClientFoundRows > 0 {
@@ -219,15 +217,15 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []interface{}, 
 	}
 
 	var err error
-	if newHandle != nil {
-		err = t.RemoveRecord(ctx, h, oldData)
+	if newHandle.Kind() != types.KindNull {
+		err = t.RemoveRecord(ctx, h, types.DatumsToInterfaces(oldData))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = t.AddRecord(ctx, newData)
+		_, err = t.AddRecord(ctx, types.DatumsToInterfaces(newData))
 	} else {
 		// Update record to new value and update index.
-		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
+		err = t.UpdateRecord(ctx, h, types.DatumsToInterfaces(oldData), types.DatumsToInterfaces(newData), touched)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -403,7 +401,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var rows [][]interface{}
+	var rows [][]types.Datum
 	if e.SelectExec != nil {
 		rows, err = e.getRowsSelect(cols)
 	} else {
@@ -417,7 +415,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		if len(e.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := e.Table.AddRecord(e.ctx, row)
+		h, err := e.Table.AddRecord(e.ctx, types.DatumsToInterfaces(row))
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			continue
@@ -530,20 +528,20 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]interface{}, error) {
-	defaultValMap := map[string]interface{}{}
+func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]types.Datum, error) {
+	defaultValMap := map[string]types.Datum{}
 	for _, col := range cols {
 		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			defaultValMap[col.Name.L] = value
+			defaultValMap[col.Name.L] = types.NewDatum(value)
 		}
 	}
 	return defaultValMap, nil
 }
 
-func (e *InsertValues) getRows(cols []*column.Col) (rows [][]interface{}, err error) {
+func (e *InsertValues) getRows(cols []*column.Col) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
@@ -554,7 +552,7 @@ func (e *InsertValues) getRows(cols []*column.Col) (rows [][]interface{}, err er
 		return nil, errors.Trace(err)
 	}
 
-	rows = make([][]interface{}, len(e.Lists))
+	rows = make([][]types.Datum, len(e.Lists))
 	for i, list := range e.Lists {
 		if err = e.checkValueCount(len(e.Lists[0]), len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
@@ -567,8 +565,8 @@ func (e *InsertValues) getRows(cols []*column.Col) (rows [][]interface{}, err er
 	return
 }
 
-func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals map[string]interface{}) ([]interface{}, error) {
-	vals := make([]interface{}, len(list))
+func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
+	vals := make([]types.Datum, len(list))
 	var err error
 	for i, expr := range list {
 		if d, ok := expr.(*ast.DefaultExpr); ok {
@@ -583,7 +581,9 @@ func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVa
 				vals[i] = defaultVals[cols[i].Name.L]
 			}
 		} else {
-			vals[i], err = evaluator.Eval(e.ctx, expr)
+			var val interface{}
+			val, err = evaluator.Eval(e.ctx, expr)
+			vals[i].SetValue(val)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -592,12 +592,12 @@ func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVa
 	return e.fillRowData(cols, vals)
 }
 
-func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]interface{}, error) {
+func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if len(e.SelectExec.Fields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
 	}
-	var rows [][]interface{}
+	var rows [][]types.Datum
 	for {
 		innerRow, err := e.SelectExec.Next()
 		if err != nil {
@@ -615,8 +615,8 @@ func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]interface{}, error
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*column.Col, vals []interface{}) ([]interface{}, error) {
-	row := make([]interface{}, len(e.Table.Cols()))
+func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]types.Datum, error) {
+	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
 		offset := cols[i].Offset
@@ -636,10 +636,10 @@ func (e *InsertValues) fillRowData(cols []*column.Col, vals []interface{}) ([]in
 	return row, nil
 }
 
-func (e *InsertValues) initDefaultValues(row []interface{}, marked map[int]struct{}) error {
+func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
-		if row[i] != nil {
+		if row[i].Kind() != types.KindNull {
 			// Column value is not nil, continue.
 			continue
 		}
@@ -654,7 +654,7 @@ func (e *InsertValues) initDefaultValues(row []interface{}, marked map[int]struc
 			if err != nil {
 				return errors.Trace(err)
 			}
-			row[i] = recordID
+			row[i].SetInt64(recordID)
 			if c.IsPKHandleColumn(e.Table.Meta()) {
 				// Notes: incompatible with mysql
 				// MySQL will set last insert id to the first row, as follows:
@@ -670,7 +670,7 @@ func (e *InsertValues) initDefaultValues(row []interface{}, marked map[int]struc
 				return errors.Trace(err)
 			}
 
-			row[i] = value
+			row[i].SetValue(value)
 		}
 
 		defaultValueCols = append(defaultValueCols, c)
@@ -681,7 +681,7 @@ func (e *InsertValues) initDefaultValues(row []interface{}, marked map[int]struc
 	return nil
 }
 
-func (e *InsertExec) onDuplicateUpdate(row []interface{}, h int64, cols map[int]*ast.Assignment) error {
+func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]*ast.Assignment) error {
 	// On duplicate key update the duplicate row.
 	// Evaluate the updated value.
 	// TODO: report rows affected and last insert id.
@@ -692,22 +692,24 @@ func (e *InsertExec) onDuplicateUpdate(row []interface{}, h int64, cols map[int]
 	// For evaluate ValuesExpr
 	// http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	for i, rf := range e.fields {
-		rf.Expr.SetValue(row[i])
+		rf.Expr.SetValue(row[i].GetValue())
 	}
 	// Evaluate assignment
-	newData := make([]interface{}, len(data))
+	newData := make([]types.Datum, len(data))
 	for i, c := range row {
 		asgn, ok := cols[i]
 		if !ok {
 			newData[i] = c
 			continue
 		}
-		newData[i], err = evaluator.Eval(e.ctx, asgn.Expr)
+		var val interface{}
+		val, err = evaluator.Eval(e.ctx, asgn.Expr)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		newData[i].SetValue(val)
 	}
-	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
+	if err = updateRecord(e.ctx, h, types.InterfacesToDatums(data), newData, cols, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -771,7 +773,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var rows [][]interface{}
+	var rows [][]types.Datum
 	if e.SelectExec != nil {
 		rows, err = e.getRowsSelect(cols)
 	} else {
@@ -782,7 +784,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		h, err := e.Table.AddRecord(e.ctx, row)
+		h, err := e.Table.AddRecord(e.ctx, types.DatumsToInterfaces(row))
 		if err == nil {
 			continue
 		}
@@ -802,16 +804,15 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	return nil, nil
 }
 
-func (e *ReplaceExec) replaceRow(handle int64, replaceRow []interface{}) error {
+func (e *ReplaceExec) replaceRow(handle int64, replaceRow []types.Datum) error {
 	row, err := e.Table.Row(e.ctx, handle)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	isReplace := false
 	touched := make(map[int]bool, len(row))
 	for i, val := range row {
-		v, err1 := types.Compare(val, replaceRow[i])
+		v, err1 := types.Compare(val, replaceRow[i].GetValue())
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -822,7 +823,7 @@ func (e *ReplaceExec) replaceRow(handle int64, replaceRow []interface{}) error {
 	}
 	if isReplace {
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
-		if err = e.Table.UpdateRecord(e.ctx, handle, row, replaceRow, touched); err != nil {
+		if err = e.Table.UpdateRecord(e.ctx, handle, row, types.DatumsToInterfaces(replaceRow), touched); err != nil {
 			return errors.Trace(err)
 		}
 	}

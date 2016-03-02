@@ -70,7 +70,7 @@ const (
 // Row represents a record row.
 type Row struct {
 	// Data is the output record data for current Plan.
-	Data []interface{}
+	Data []types.Datum
 
 	RowKeys []*RowKeyEntry
 }
@@ -140,16 +140,16 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	}
 
 	row := &Row{}
-	row.Data = []interface{}{
-		ddlInfo.SchemaVer,
-		ddlOwner,
-		ddlJob,
-		bgInfo.SchemaVer,
-		bgOwner,
-		bgJob,
+	row.Data = []types.Datum{
+		types.NewDatum(ddlInfo.SchemaVer),
+		types.NewDatum(ddlOwner),
+		types.NewDatum(ddlJob),
+		types.NewDatum(bgInfo.SchemaVer),
+		types.NewDatum(bgOwner),
+		types.NewDatum(bgJob),
 	}
 	for i, f := range e.fields {
-		f.Expr.SetValue(row.Data[i])
+		f.Expr.SetValue(row.Data[i].GetValue())
 	}
 	e.done = true
 
@@ -286,14 +286,14 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 
 func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
-	var err error
-	row.Data, err = e.t.Row(e.ctx, handle)
+	data, err := e.t.Row(e.ctx, handle)
+	row.Data = types.InterfacesToDatums(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set result fields value.
 	for i, v := range e.fields {
-		v.Expr.SetValue(row.Data[i])
+		v.Expr.SetValue(row.Data[i].GetValue())
 	}
 
 	// Put rowKey to the tail of record row
@@ -449,8 +449,8 @@ func indexColumnCompare(a interface{}, b interface{}) (int, error) {
 
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
-	var err error
-	row.Data, err = e.scan.tbl.Row(e.scan.ctx, h)
+	data, err := e.scan.tbl.Row(e.scan.ctx, h)
+	row.Data = types.InterfacesToDatums(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -500,7 +500,7 @@ func (e *IndexScanExec) Next() (*Row, error) {
 		}
 		if row != nil {
 			for i, val := range row.Data {
-				e.fields[i].Expr.SetValue(val)
+				e.fields[i].Expr.SetValue(val.GetValue())
 			}
 			return row, nil
 		}
@@ -724,14 +724,14 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 	e.executed = true
 	row := &Row{
 		RowKeys: rowKeys,
-		Data:    make([]interface{}, len(e.ResultFields)),
+		Data:    make([]types.Datum, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
 		val, err := evaluator.Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data[i] = val
+		row.Data[i] = types.NewDatum(val)
 	}
 	return row, nil
 }
@@ -1124,14 +1124,16 @@ func (e *UnionExec) Next() (*Row, error) {
 			for i := range row.Data {
 				// The column value should be casted as the same type of the first select statement in corresponding position
 				rf := e.fields[i]
-				row.Data[i], err = types.Convert(row.Data[i], &rf.Column.FieldType)
+				val := row.Data[i].GetValue()
+				val, err = types.Convert(val, &rf.Column.FieldType)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				row.Data[i].SetValue(val)
 			}
 		}
 		for i, v := range row.Data {
-			e.fields[i].Expr.SetValue(v)
+			e.fields[i].Expr.SetValue(v.GetValue())
 		}
 		return row, nil
 	}
@@ -1173,7 +1175,7 @@ func (e *DistinctExec) Next() (*Row, error) {
 		if row == nil {
 			return nil, nil
 		}
-		ok, err := e.checker.Check(row.Data)
+		ok, err := e.checker.Check(types.DatumsToInterfaces(row.Data))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
