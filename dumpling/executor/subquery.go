@@ -24,9 +24,9 @@ import (
 
 var _ ast.SubqueryExec = &subquery{}
 
-// SubQuery is an exprNode with a plan.
+// subquery is an exprNode with a plan.
 type subquery struct {
-	ast.Datum
+	types.Datum
 	Type *types.FieldType
 	flag uint64
 	text string
