@@ -27,7 +27,7 @@ import (
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 
-func builtinDatabase(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+func builtinDatabase(args []interface{}, data context.Context) (v interface{}, err error) {
 	c, ok := data[ExprEvalArgCtx]
 	if !ok {
 		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
@@ -40,7 +40,7 @@ func builtinDatabase(args []interface{}, data map[interface{}]interface{}) (v in
 	return d, nil
 }
 
-func builtinFoundRows(arg []interface{}, data map[interface{}]interface{}) (interface{}, error) {
+func builtinFoundRows(arg []interface{}, data context.Context) (interface{}, error) {
 	c, ok := data[ExprEvalArgCtx]
 	if !ok {
 		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
@@ -51,7 +51,7 @@ func builtinFoundRows(arg []interface{}, data map[interface{}]interface{}) (inte
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
-func builtinCurrentUser(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+func builtinCurrentUser(args []interface{}, data context.Context) (v interface{}, err error) {
 	c, ok := data[ExprEvalArgCtx]
 	if !ok {
 		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
@@ -60,7 +60,7 @@ func builtinCurrentUser(args []interface{}, data map[interface{}]interface{}) (v
 	return variable.GetSessionVars(ctx).User, nil
 }
 
-func builtinUser(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+func builtinUser(args []interface{}, data context.Context) (v interface{}, err error) {
 	c, ok := data[ExprEvalArgCtx]
 	if !ok {
 		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
@@ -69,7 +69,7 @@ func builtinUser(args []interface{}, data map[interface{}]interface{}) (v interf
 	return variable.GetSessionVars(ctx).User, nil
 }
 
-func builtinConnectionID(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+func builtinConnectionID(args []interface{}, data context.Context) (v interface{}, err error) {
 	c, ok := data[ExprEvalArgCtx]
 	if !ok {
 		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
@@ -78,6 +78,6 @@ func builtinConnectionID(args []interface{}, data map[interface{}]interface{}) (
 	return variable.GetSessionVars(ctx).ConnectionID, nil
 }
 
-func builtinVersion(args []interface{}, data map[interface{}]interface{}) (v interface{}, err error) {
+func builtinVersion(args []interface{}, data context.Context) (v interface{}, err error) {
 	return mysql.ServerVersion, nil
 }

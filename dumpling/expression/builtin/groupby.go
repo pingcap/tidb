@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv/memkv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
@@ -89,7 +90,7 @@ func (a *AggregateDistinct) clear() {
 	a.Distinct, _ = memkv.CreateTemp(true)
 }
 
-func getDistinct(ctx map[interface{}]interface{}, fn interface{}) *AggregateDistinct {
+func getDistinct(ctx context.Context, fn interface{}) *AggregateDistinct {
 	v, ok := ctx[ExprAggDistinct]
 	if !ok {
 		// here maybe an error, but now we just return a dummpy aggregate distinct
@@ -139,7 +140,7 @@ func calculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	}
 }
 
-func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinAvg(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	// avg use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 	type avg struct {
@@ -200,7 +201,7 @@ func builtinAvg(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	return
 }
 
-func builtinCount(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinCount(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	if _, ok := ctx[ExprEvalArgAggEmpty]; ok {
 		return int64(0), nil
 	}
@@ -228,7 +229,7 @@ func builtinCount(args []interface{}, ctx map[interface{}]interface{}) (v interf
 	return
 }
 
-func builtinMax(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinMax(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	if _, ok := ctx[ExprEvalArgAggEmpty]; ok {
 		return
 	}
@@ -265,7 +266,7 @@ func builtinMax(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	return
 }
 
-func builtinMin(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinMin(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	if _, ok := ctx[ExprEvalArgAggEmpty]; ok {
 		return
 	}
@@ -302,7 +303,7 @@ func builtinMin(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	return
 }
 
-func builtinSum(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinSum(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	if _, ok := ctx[ExprEvalArgAggEmpty]; ok {
 		return
 	}
@@ -340,7 +341,7 @@ func builtinSum(args []interface{}, ctx map[interface{}]interface{}) (v interfac
 	return
 }
 
-func builtinGroupConcat(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinGroupConcat(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	// TODO: the real group_concat is very complex, here we just support the simplest one.
 	if _, ok := ctx[ExprEvalArgAggEmpty]; ok {
 		return nil, nil
