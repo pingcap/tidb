@@ -19,17 +19,13 @@ package builtin
 
 import (
 	"github.com/juju/errors"
-)
-
-const (
-	// ExprEvalArgCtx is the key saving Context for a Call expression.
-	ExprEvalArgCtx = "$ctx"
+	"github.com/pingcap/tidb/context"
 )
 
 // Func is for a builtin function.
 type Func struct {
 	// F is the specific calling function.
-	F func([]interface{}, map[interface{}]interface{}) (interface{}, error)
+	F func([]interface{}, context.Context) (interface{}, error)
 	// MinArgs is the minimal arguments needed,
 	MinArgs int
 	// MaxArgs is the maximal arguments needed, -1 for infinity.
@@ -106,7 +102,7 @@ func invArg(arg interface{}, s string) error {
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
-func builtinCoalesce(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
+func builtinCoalesce(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	for _, v := range args {
 		if v != nil {
 			return v, nil
