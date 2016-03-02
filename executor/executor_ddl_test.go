@@ -58,7 +58,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		c.Assert(row.Data[1], Equals, "float")
+		c.Assert(row.Data[1].GetString(), Equals, "float")
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
@@ -68,7 +68,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 		if row == nil {
 			break
 		}
-		c.Assert(row.Data[1], Equals, "double")
+		c.Assert(row.Data[1].GetString(), Equals, "double")
 	}
 }
 

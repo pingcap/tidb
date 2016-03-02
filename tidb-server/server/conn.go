@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
@@ -443,7 +444,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 			data = append(data, rowData...)
 		} else {
 			for i, value := range row {
-				if value == nil {
+				if value.Kind() == types.KindNull {
 					data = append(data, 0xfb)
 					continue
 				}
