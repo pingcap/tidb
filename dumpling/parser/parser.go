@@ -33,7 +33,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -6817,10 +6816,9 @@ yynewstate:
 			tp := types.NewFieldType(mysql.TypeString)
 			l := yylex.(*lexer)
 			tp.Charset, tp.Collate = l.GetCharsetInfo()
-			yyVAL.item = &types.DataItem{
-				Type: tp,
-				Data: yyS[yypt-0].item.(string),
-			}
+			expr := ast.NewValueExpr(yyS[yypt-0].item)
+			expr.SetType(tp)
+			yyVAL.item = expr
 		}
 	case 338:
 		{
@@ -6834,10 +6832,9 @@ yynewstate:
 				return 1
 			}
 			tp.Collate = co
-			yyVAL.item = &types.DataItem{
-				Type: tp,
-				Data: yyS[yypt-0].item.(string),
-			}
+			expr := ast.NewValueExpr(yyS[yypt-0].item)
+			expr.SetType(tp)
+			yyVAL.item = expr
 		}
 	case 341:
 		{
@@ -8471,7 +8468,7 @@ yynewstate:
 			// TODO: check flen 0
 			x := types.NewFieldType(yyS[yypt-2].item.(byte))
 			x.Flen = yyS[yypt-1].item.(int)
-			for _, o := range yyS[yypt-0].item.([]*field.Opt) {
+			for _, o := range yyS[yypt-0].item.([]*ast.TypeOpt) {
 				if o.IsUnsigned {
 					x.Flag |= mysql.UnsignedFlag
 				}
@@ -8487,7 +8484,7 @@ yynewstate:
 			x := types.NewFieldType(yyS[yypt-2].item.(byte))
 			x.Flen = fopt.Flen
 			x.Decimal = fopt.Decimal
-			for _, o := range yyS[yypt-0].item.([]*field.Opt) {
+			for _, o := range yyS[yypt-0].item.([]*ast.TypeOpt) {
 				if o.IsUnsigned {
 					x.Flag |= mysql.UnsignedFlag
 				}
@@ -8513,7 +8510,7 @@ yynewstate:
 				}
 			}
 			x.Decimal = fopt.Decimal
-			for _, o := range yyS[yypt-0].item.([]*field.Opt) {
+			for _, o := range yyS[yypt-0].item.([]*ast.TypeOpt) {
 				if o.IsUnsigned {
 					x.Flag |= mysql.UnsignedFlag
 				}
@@ -8763,19 +8760,19 @@ yynewstate:
 		}
 	case 785:
 		{
-			yyVAL.item = &field.Opt{IsUnsigned: true}
+			yyVAL.item = &ast.TypeOpt{IsUnsigned: true}
 		}
 	case 786:
 		{
-			yyVAL.item = &field.Opt{IsZerofill: true, IsUnsigned: true}
+			yyVAL.item = &ast.TypeOpt{IsZerofill: true, IsUnsigned: true}
 		}
 	case 787:
 		{
-			yyVAL.item = []*field.Opt{}
+			yyVAL.item = []*ast.TypeOpt{}
 		}
 	case 788:
 		{
-			yyVAL.item = append(yyS[yypt-1].item.([]*field.Opt), yyS[yypt-0].item.(*field.Opt))
+			yyVAL.item = append(yyS[yypt-1].item.([]*ast.TypeOpt), yyS[yypt-0].item.(*ast.TypeOpt))
 		}
 	case 789:
 		{

@@ -1,8 +1,4 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +11,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package field
+package ast
 
-// Opt is used for parsing data type option from SQL.
-type Opt struct {
-	IsUnsigned bool
-	IsZerofill bool
+import (
+	. "github.com/pingcap/check"
+)
+
+var _ = Suite(&testDatumSuite{})
+
+type testDatumSuite struct {
+}
+
+func (ts *testDatumSuite) TestDatum(c *C) {
+	values := []interface{}{
+		int64(1),
+		uint64(1),
+		1.1,
+		"abc",
+		[]byte("abc"),
+		[]int{1},
+	}
+	for _, val := range values {
+		var d Datum
+		d.SetValue(val)
+		x := d.GetValue()
+		c.Assert(x, DeepEquals, val)
+	}
 }

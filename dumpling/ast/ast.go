@@ -16,6 +16,7 @@
 package ast
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -117,6 +118,25 @@ type ResultField struct {
 	TableName *TableName
 }
 
+// Row represents a single row from Recordset.
+type Row struct {
+	Data []interface{}
+}
+
+// RecordSet is an abstract result set interface to help get data from Plan.
+type RecordSet interface {
+
+	// Fields gets result fields.
+	Fields() (fields []*ResultField, err error)
+
+	// Next returns the next row, nil row means there is no more to return.
+	Next() (row *Row, err error)
+
+	// Close closes the underlying iterator, call Next after Close will
+	// restart the iteration.
+	Close() error
+}
+
 // ResultSetNode interface has ResultFields property which is computed and set by
 // optimizer.InfoBinder during binding process. Implementations include SelectStmt,
 // SubqueryExpr, TableSource, TableName and Join.
@@ -126,6 +146,28 @@ type ResultSetNode interface {
 	GetResultFields() []*ResultField
 	// SetResultFields sets result fields of the result set node.
 	SetResultFields(fields []*ResultField)
+}
+
+// Statement is an interface for SQL execution.
+// NOTE: all Statement implementations must be safe for
+// concurrent using by multiple goroutines.
+// If the Exec method requires any Execution domain local data,
+// they must be held out of the implementing instance.
+type Statement interface {
+	// Explain gets the execution plans.
+	//Explain(ctx context.Context, w format.Formatter)
+
+	// IsDDL shows whether the statement is an DDL operation.
+	IsDDL() bool
+
+	// OriginText gets the origin SQL text.
+	OriginText() string
+
+	// SetText sets the executive SQL text.
+	SetText(text string)
+
+	// Exec executes SQL and gets a Recordset.
+	Exec(ctx context.Context) (RecordSet, error)
 }
 
 // Visitor visits a Node.

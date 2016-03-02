@@ -379,7 +379,7 @@ func (e *Evaluator) subqueryExec(v ast.SubqueryExec) bool {
 func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) interface{} {
 	hasNull := false
 	for _, v := range list {
-		if types.IsNil(v) {
+		if v == nil {
 			hasNull = true
 			continue
 		}
@@ -410,7 +410,7 @@ func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) in
 
 func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 	lhs := n.Expr.GetValue()
-	if types.IsNil(lhs) {
+	if lhs == nil {
 		n.SetValue(nil)
 		return true
 	}
@@ -440,7 +440,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 
 func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 	var boolVal bool
-	if types.IsNil(v.Expr.GetValue()) {
+	if v.Expr.GetValue() == nil {
 		boolVal = true
 	}
 	if v.Not {
@@ -453,7 +453,7 @@ func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	var boolVal bool
 	val := v.Expr.GetValue()
-	if !types.IsNil(val) {
+	if val != nil {
 		ival, err := types.ToBool(val)
 		if err != nil {
 			e.err = errors.Trace(err)
@@ -500,7 +500,6 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		}
 	}()
 	a := u.V.GetValue()
-	a = types.RawData(a)
 	if a == nil {
 		u.SetValue(nil)
 		return true
@@ -891,7 +890,7 @@ func (e *Evaluator) funcSubstringIndex(v *ast.FuncSubstringIndexExpr) bool {
 func (e *Evaluator) funcLocate(v *ast.FuncLocateExpr) bool {
 	// eval str
 	fs := v.Str.GetValue()
-	if types.IsNil(fs) {
+	if fs == nil {
 		v.SetValue(nil)
 		return true
 	}
@@ -902,7 +901,7 @@ func (e *Evaluator) funcLocate(v *ast.FuncLocateExpr) bool {
 	}
 	// eval substr
 	fs = v.SubStr.GetValue()
-	if types.IsNil(fs) {
+	if fs == nil {
 		v.SetValue(nil)
 		return true
 	}
@@ -938,7 +937,7 @@ const spaceChars = "\n\t\r "
 func (e *Evaluator) funcTrim(v *ast.FuncTrimExpr) bool {
 	// eval str
 	fs := v.Str.GetValue()
-	if types.IsNil(fs) {
+	if fs == nil {
 		v.SetValue(nil)
 		return true
 	}
@@ -951,7 +950,7 @@ func (e *Evaluator) funcTrim(v *ast.FuncTrimExpr) bool {
 	// eval remstr
 	if v.RemStr != nil {
 		fs = v.RemStr.GetValue()
-		if types.IsNil(fs) {
+		if fs == nil {
 			v.SetValue(nil)
 			return true
 		}
@@ -1008,12 +1007,12 @@ func trimRight(str, remstr string) string {
 func (e *Evaluator) funcDateArith(v *ast.FuncDateArithExpr) bool {
 	// health check for date and interval
 	nodeDate := v.Date.GetValue()
-	if types.IsNil(nodeDate) {
+	if nodeDate == nil {
 		v.SetValue(nil)
 		return true
 	}
 	nodeInterval := v.Interval.GetValue()
-	if types.IsNil(nodeInterval) {
+	if nodeInterval == nil {
 		v.SetValue(nil)
 		return true
 	}
@@ -1046,7 +1045,7 @@ func (e *Evaluator) funcDateArith(v *ast.FuncDateArithExpr) bool {
 		e.err = ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
 		return false
 	}
-	if types.IsNil(value) {
+	if value == nil {
 		e.err = ErrInvalidOperation.Gen("DateArith invalid args, need date but get %v", value)
 		return false
 	}

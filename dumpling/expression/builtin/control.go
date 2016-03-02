@@ -23,7 +23,7 @@ func builtinIf(args []interface{}, m map[interface{}]interface{}) (interface{}, 
 	v2 := args[1]
 	v3 := args[2]
 
-	if types.IsNil(v1) {
+	if v1 == nil {
 		return v3, nil
 	}
 
@@ -47,7 +47,7 @@ func builtinIfNull(args []interface{}, m map[interface{}]interface{}) (interface
 	v1 := args[0]
 	v2 := args[1]
 
-	if !types.IsNil(v1) {
+	if v1 != nil {
 		return v1, nil
 	}
 
@@ -61,7 +61,7 @@ func builtinNullIf(args []interface{}, m map[interface{}]interface{}) (interface
 	v1 := args[0]
 	v2 := args[1]
 
-	if types.IsNil(v1) || types.IsNil(v2) {
+	if v1 == nil || v2 == nil {
 		return v1, nil
 	}
 

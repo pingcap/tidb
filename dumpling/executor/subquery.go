@@ -26,21 +26,12 @@ var _ ast.SubqueryExec = &subquery{}
 
 // SubQuery is an exprNode with a plan.
 type subquery struct {
-	types.DataItem
+	ast.Datum
+	Type *types.FieldType
 	flag uint64
 	text string
 	plan plan.Plan
 	is   infoschema.InfoSchema
-}
-
-// SetValue implements Expression interface.
-func (sq *subquery) SetValue(val interface{}) {
-	sq.Data = val
-}
-
-// GetValue implements Expression interface.
-func (sq *subquery) GetValue() interface{} {
-	return sq.Data
 }
 
 // SetFlag implements Expression interface.
