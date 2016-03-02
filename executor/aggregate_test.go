@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ = Suite(&testAggFuncSuite{})
@@ -48,7 +49,7 @@ func (m *mockExec) Next() (*Row, error) {
 	r := m.rows[m.curRowIdx]
 	m.curRowIdx++
 	for i, d := range r.Data {
-		m.fields[i].Expr.SetValue(d)
+		m.fields[i].Expr.SetValue(d.GetValue())
 	}
 	return r, nil
 }
@@ -77,10 +78,10 @@ func (s *testAggFuncSuite) TestCount(c *C) {
 		F:    ast.AggFuncCount,
 		Args: []ast.ExprNode{col2},
 	}
-	row1 := []interface{}{1, 1}
-	row2 := []interface{}{2, 1}
-	row3 := []interface{}{3, nil}
-	data := []([]interface{}){row1, row2, row3}
+	row1 := types.InterfacesToDatums([]interface{}{1, 1})
+	row2 := types.InterfacesToDatums([]interface{}{2, 1})
+	row3 := types.InterfacesToDatums([]interface{}{3, nil})
+	data := []([]types.Datum){row1, row2, row3}
 
 	rows := make([]*Row, 0, 3)
 	for _, d := range data {

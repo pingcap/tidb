@@ -255,13 +255,15 @@ func (d *Datum) SetValue(val interface{}) {
 	}
 }
 
-func (d *Datum) compareDatum(ad Datum) int {
+// CompareDatum compares datum to another datum.
+// TODO: return error properly.
+func (d *Datum) CompareDatum(ad Datum) (int, error) {
 	switch ad.k {
 	case KindNull:
 		if d.k == KindNull {
-			return 0
+			return 0, nil
 		}
-		return 1
+		return 1, nil
 	case KindInt64:
 		return d.compareInt64(ad.GetInt64())
 	case KindUint64:
@@ -289,74 +291,74 @@ func (d *Datum) compareDatum(ad Datum) int {
 	case KindRow:
 		return d.compareRow(ad.GetRow())
 	default:
-		return 0
+		return 0, nil
 	}
 }
 
-func (d *Datum) compareInt64(i int64) int {
+func (d *Datum) compareInt64(i int64) (int, error) {
 	switch d.k {
 	case KindInt64:
-		return CompareInt64(d.i, i)
+		return CompareInt64(d.i, i), nil
 	case KindUint64:
 		if i < 0 || d.GetUint64() > math.MaxInt64 {
-			return 1
+			return 1, nil
 		}
-		return CompareInt64(d.i, i)
+		return CompareInt64(d.i, i), nil
 	default:
 		return d.compareFloat64(float64(i))
 	}
 }
 
-func (d *Datum) compareUint64(u uint64) int {
+func (d *Datum) compareUint64(u uint64) (int, error) {
 	switch d.k {
 	case KindInt64:
 		if d.i < 0 || u > math.MaxInt64 {
-			return -1
+			return -1, nil
 		}
-		return CompareInt64(d.i, int64(u))
+		return CompareInt64(d.i, int64(u)), nil
 	case KindUint64:
-		return CompareUint64(d.GetUint64(), u)
+		return CompareUint64(d.GetUint64(), u), nil
 	default:
 		return d.compareFloat64(float64(u))
 	}
 }
 
-func (d *Datum) compareFloat64(f float64) int {
+func (d *Datum) compareFloat64(f float64) (int, error) {
 	switch d.k {
 	case KindNull:
-		return -1
+		return -1, nil
 	case KindInt64:
-		return CompareFloat64(float64(d.i), f)
+		return CompareFloat64(float64(d.i), f), nil
 	case KindUint64:
-		return CompareFloat64(float64(d.GetUint64()), f)
+		return CompareFloat64(float64(d.GetUint64()), f), nil
 	case KindFloat32, KindFloat64:
-		return CompareFloat64(d.GetFloat64(), f)
+		return CompareFloat64(d.GetFloat64(), f), nil
 	case KindString, KindBytes:
 		fVal := parseFloatLoose(d.GetString())
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlBit:
 		fVal := d.GetMysqlBit().ToNumber()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlDecimal:
 		fVal, _ := d.GetMysqlDecimal().Float64()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlDuration:
 		fVal := d.GetMysqlDuration().Seconds()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlEnum:
 		fVal := d.GetMysqlEnum().ToNumber()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlHex:
 		fVal := d.GetMysqlHex().ToNumber()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlSet:
 		fVal := d.GetMysqlSet().ToNumber()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	case KindMysqlTime:
 		fVal, _ := d.GetMysqlTime().ToNumber().Float64()
-		return CompareFloat64(fVal, f)
+		return CompareFloat64(fVal, f), nil
 	default:
-		return -1
+		return -1, nil
 	}
 }
 
@@ -391,119 +393,113 @@ func parseFloatLoose(s string) float64 {
 	return val
 }
 
-func (d *Datum) compareString(s string) int {
+func (d *Datum) compareString(s string) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), s)
+		return CompareString(d.GetString(), s), nil
 	case KindMysqlDecimal:
 		s = numPart(s)
 		dec, err := mysql.ParseDecimal(s)
-		if err != nil {
-			log.Errorf("should not happen!")
-		}
-		return d.GetMysqlDecimal().Cmp(dec)
+		return d.GetMysqlDecimal().Cmp(dec), err
 	case KindMysqlTime:
-		dt, _ := mysql.ParseDatetime(s)
-		return d.GetMysqlTime().Compare(dt)
+		dt, err := mysql.ParseDatetime(s)
+		return d.GetMysqlTime().Compare(dt), err
 	case KindMysqlDuration:
-		dur, _ := mysql.ParseDuration(s, mysql.MaxFsp)
-		return d.GetMysqlDuration().Compare(dur)
+		dur, err := mysql.ParseDuration(s, mysql.MaxFsp)
+		return d.GetMysqlDuration().Compare(dur), err
 	case KindMysqlBit:
-		return CompareString(d.GetMysqlBit().ToString(), s)
+		return CompareString(d.GetMysqlBit().ToString(), s), nil
 	case KindMysqlHex:
-		return CompareString(d.GetMysqlHex().ToString(), s)
+		return CompareString(d.GetMysqlHex().ToString(), s), nil
 	case KindMysqlSet:
-		return CompareString(d.GetMysqlSet().String(), s)
+		return CompareString(d.GetMysqlSet().String(), s), nil
 	case KindMysqlEnum:
-		return CompareString(d.GetMysqlEnum().String(), s)
+		return CompareString(d.GetMysqlEnum().String(), s), nil
 	default:
 		return d.compareFloat64(parseFloatLoose(s))
 	}
 }
 
-func (d *Datum) compareBytes(b []byte) int {
+func (d *Datum) compareBytes(b []byte) (int, error) {
 	return d.compareString(hack.String(b))
 }
 
-func (d *Datum) compareMysqlBit(bit mysql.Bit) int {
+func (d *Datum) compareMysqlBit(bit mysql.Bit) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), bit.ToString())
+		return CompareString(d.GetString(), bit.ToString()), nil
 	default:
 		return d.compareFloat64(bit.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlDecimal(dec mysql.Decimal) int {
+func (d *Datum) compareMysqlDecimal(dec mysql.Decimal) (int, error) {
 	switch d.k {
 	case KindMysqlDecimal:
-		return d.GetMysqlDecimal().Cmp(dec)
+		return d.GetMysqlDecimal().Cmp(dec), nil
 	case KindString, KindBytes:
 		s := numPart(d.GetString())
 		dDec, err := mysql.ParseDecimal(s)
-		if err != nil {
-			log.Errorf("should not happen!")
-		}
-		return dDec.Cmp(dec)
+		return dDec.Cmp(dec), err
 	default:
 		fVal, _ := dec.Float64()
 		return d.compareFloat64(fVal)
 	}
 }
 
-func (d *Datum) compareMysqlDuration(dur mysql.Duration) int {
+func (d *Datum) compareMysqlDuration(dur mysql.Duration) (int, error) {
 	switch d.k {
 	case KindMysqlDuration:
-		return d.GetMysqlDuration().Compare(dur)
+		return d.GetMysqlDuration().Compare(dur), nil
 	case KindString, KindBytes:
-		dDur, _ := mysql.ParseDuration(d.GetString(), mysql.MaxFsp)
-		return dDur.Compare(dur)
+		dDur, err := mysql.ParseDuration(d.GetString(), mysql.MaxFsp)
+		return dDur.Compare(dur), err
 	default:
 		return d.compareFloat64(dur.Seconds())
 	}
 }
 
-func (d *Datum) compareMysqlEnum(enum mysql.Enum) int {
+func (d *Datum) compareMysqlEnum(enum mysql.Enum) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), enum.String())
+		return CompareString(d.GetString(), enum.String()), nil
 	default:
 		return d.compareFloat64(enum.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlHex(e mysql.Hex) int {
+func (d *Datum) compareMysqlHex(e mysql.Hex) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), e.ToString())
+		return CompareString(d.GetString(), e.ToString()), nil
 	default:
 		return d.compareFloat64(e.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlSet(set mysql.Set) int {
+func (d *Datum) compareMysqlSet(set mysql.Set) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return CompareString(d.GetString(), set.String())
+		return CompareString(d.GetString(), set.String()), nil
 	default:
 		return d.compareFloat64(set.ToNumber())
 	}
 }
 
-func (d *Datum) compareMysqlTime(time mysql.Time) int {
+func (d *Datum) compareMysqlTime(time mysql.Time) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		dt, _ := mysql.ParseDatetime(d.GetString())
-		return dt.Compare(time)
+		dt, err := mysql.ParseDatetime(d.GetString())
+		return dt.Compare(time), err
 	case KindMysqlTime:
-		return d.GetMysqlTime().Compare(time)
+		return d.GetMysqlTime().Compare(time), nil
 	default:
 		fVal, _ := time.ToNumber().Float64()
 		return d.compareFloat64(fVal)
 	}
 }
 
-func (d *Datum) compareRow(row []Datum) int {
+func (d *Datum) compareRow(row []Datum) (int, error) {
 	var dRow []Datum
 	if d.k == KindRow {
 		dRow = d.GetRow()
@@ -511,25 +507,42 @@ func (d *Datum) compareRow(row []Datum) int {
 		dRow = []Datum{*d}
 	}
 	for i := 0; i < len(row) && i < len(dRow); i++ {
-		cmp := dRow[i].compareDatum(row[i])
+		cmp, err := dRow[i].CompareDatum(row[i])
+		if err != nil {
+			return 0, err
+		}
 		if cmp != 0 {
-			return cmp
+			return cmp, nil
 		}
 	}
-	return CompareInt64(int64(len(dRow)), int64(len(row)))
+	return CompareInt64(int64(len(dRow)), int64(len(row))), nil
 }
 
 // NewDatum creates a new Datum from an interface{}.
 func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {
 	case []interface{}:
-		var row []Datum
-		for _, v := range x {
-			row = append(row, NewDatum(v))
-		}
-		d.SetValue(row)
+		d.SetValue(InterfacesToDatums(x))
 	default:
 		d.SetValue(in)
 	}
 	return d
+}
+
+// InterfacesToDatums converts an interface slice to datum slice.
+func InterfacesToDatums(in []interface{}) []Datum {
+	datums := make([]Datum, len(in))
+	for i, v := range in {
+		datums[i] = NewDatum(v)
+	}
+	return datums
+}
+
+// DatumsToInterfaces converts a datum slice to interface slice.
+func DatumsToInterfaces(datums []Datum) []interface{} {
+	ins := make([]interface{}, len(datums))
+	for i, v := range datums {
+		ins[i] = v.GetValue()
+	}
+	return ins
 }

@@ -108,9 +108,9 @@ func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, 
 			break
 		}
 		if len(row.Data) == 1 {
-			rows = append(rows, row.Data[0])
+			rows = append(rows, row.Data[0].GetValue())
 		} else {
-			rows = append(rows, row.Data)
+			rows = append(rows, types.DatumsToInterfaces(row.Data))
 		}
 		if rowCount > 0 {
 			rowCount--
