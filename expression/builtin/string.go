@@ -42,7 +42,7 @@ func builtinLength(args []interface{}, _ context.Context) (v interface{}, err er
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func builtinConcat(args []interface{}, ctx context.Context) (v interface{}, err error) {
+func builtinConcat(args []interface{}, _ context.Context) (v interface{}, err error) {
 	var s []byte
 	for _, a := range args {
 		if a == nil {
@@ -59,7 +59,7 @@ func builtinConcat(args []interface{}, ctx context.Context) (v interface{}, err 
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func builtinConcatWS(args []interface{}, ctx context.Context) (v interface{}, err error) {
+func builtinConcatWS(args []interface{}, _ context.Context) (v interface{}, err error) {
 	var sep string
 	s := make([]string, 0, len(args))
 	for i, a := range args {
@@ -105,7 +105,7 @@ func builtinLeft(args []interface{}, _ context.Context) (v interface{}, err erro
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
-func builtinRepeat(args []interface{}, ctx context.Context) (v interface{}, err error) {
+func builtinRepeat(args []interface{}, _ context.Context) (v interface{}, err error) {
 	ch := fmt.Sprintf("%v", args[0])
 	num := 0
 	switch x := args[1].(type) {
@@ -121,7 +121,7 @@ func builtinRepeat(args []interface{}, ctx context.Context) (v interface{}, err 
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
-func builtinLower(args []interface{}, ctx context.Context) (interface{}, error) {
+func builtinLower(args []interface{}, _ context.Context) (interface{}, error) {
 	switch x := args[0].(type) {
 	case nil:
 		return nil, nil
@@ -135,7 +135,7 @@ func builtinLower(args []interface{}, ctx context.Context) (interface{}, error) 
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
-func builtinUpper(args []interface{}, ctx context.Context) (interface{}, error) {
+func builtinUpper(args []interface{}, _ context.Context) (interface{}, error) {
 	switch x := args[0].(type) {
 	case nil:
 		return nil, nil
@@ -149,7 +149,7 @@ func builtinUpper(args []interface{}, ctx context.Context) (interface{}, error) 
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
-func builtinStrcmp(args []interface{}, ctx context.Context) (interface{}, error) {
+func builtinStrcmp(args []interface{}, _ context.Context) (interface{}, error) {
 	if args[0] == nil || args[1] == nil {
 		return nil, nil
 	}
@@ -166,7 +166,7 @@ func builtinStrcmp(args []interface{}, ctx context.Context) (interface{}, error)
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
-func builtinReplace(args []interface{}, ctx context.Context) (interface{}, error) {
+func builtinReplace(args []interface{}, _ context.Context) (interface{}, error) {
 	for _, arg := range args {
 		if arg == nil {
 			return nil, nil
