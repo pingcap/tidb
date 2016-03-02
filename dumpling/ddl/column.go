@@ -367,7 +367,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 			}
 
 			// must convert to the column field type.
-			v, err := types.Convert(value, &columnInfo.FieldType)
+			v, err := types.Convert(value.GetValue(), &columnInfo.FieldType)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -377,7 +377,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			err = tables.SetColValue(txn, backfillKey, v)
+			err = tables.SetColValue(txn, backfillKey, types.NewDatum(v))
 			if err != nil {
 				return errors.Trace(err)
 			}

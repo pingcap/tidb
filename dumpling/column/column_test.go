@@ -92,9 +92,9 @@ func (s *testColumnSuite) TestCheck(c *C) {
 	cols := []*Col{col, col}
 	CheckOnce(cols)
 	cols = cols[:1]
-	CheckNotNull(cols, []types.Datum{types.NewDatum(nil)})
+	CheckNotNull(cols, types.MakeDatums(nil))
 	cols[0].Flag |= mysql.NotNullFlag
-	CheckNotNull(cols, []types.Datum{types.NewDatum(nil)})
+	CheckNotNull(cols, types.MakeDatums(nil))
 }
 
 func (s *testColumnSuite) TestDesc(c *C) {
