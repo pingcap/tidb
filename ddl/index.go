@@ -67,7 +67,6 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	} else {
 		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
 	}
-
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
@@ -171,7 +170,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		var tbl table.Table
-		tbl, err = d.getTable(t, schemaID, tblInfo)
+		tbl, err = d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -255,7 +254,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -321,7 +320,7 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = t.DecodeValue(data, col)
+		val, err = tables.DecodeValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

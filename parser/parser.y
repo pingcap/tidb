@@ -30,7 +30,6 @@ import (
 	
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/field"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/charset"
@@ -249,6 +248,7 @@ import (
 	status		"STATUS"
 	stringType	"string"
 	subDate		"SUBDATE"
+	strcmp		"STRCMP"
 	substring	"SUBSTRING"
 	substringIndex	"SUBSTRING_INDEX"
 	sum		"SUM"
@@ -1224,9 +1224,9 @@ DeleteFromStmt:
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
-			MultiTable:	true,
+			IsMultiTable:	true,
 			BeforeFrom:	true,
-			Tables:		$5.([]*ast.TableName),
+			Tables:		&ast.DeleteTableList{Tables: $5.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $7.(*ast.Join)},
 		}
 		if $8 != nil {
@@ -1244,8 +1244,8 @@ DeleteFromStmt:
 			LowPriority:	$2.(bool),
 			Quick:		$3.(bool),
 			Ignore:		$4.(bool),
-			MultiTable:	true,
-			Tables:		$6.([]*ast.TableName),
+			IsMultiTable:	true,
+			Tables:		&ast.DeleteTableList{Tables: $6.([]*ast.TableName)},
 			TableRefs:	&ast.TableRefsClause{TableRefs: $8.(*ast.Join)},
 		}
 		if $9 != nil {
@@ -1831,7 +1831,7 @@ ReplaceIntoStmt:
 	"REPLACE" ReplacePriority IntoOpt TableName InsertValues
 	{
 		x := $5.(*ast.InsertStmt)
-		x.Replace = true
+		x.IsReplace = true
 		x.Priority = $2.(int)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
@@ -1870,10 +1870,9 @@ Literal:
 		tp := types.NewFieldType(mysql.TypeString)
 		l := yylex.(*lexer)
 		tp.Charset, tp.Collate = l.GetCharsetInfo()
-		$$ = &types.DataItem{
-			Type: tp,
-			Data: $1.(string),
-		}
+		expr := ast.NewValueExpr($1)
+		expr.SetType(tp)
+		$$ = expr
 	}
 |	"UNDERSCORE_CHARSET" stringLit
 	{
@@ -1887,10 +1886,9 @@ Literal:
 			return 1
 		}
 		tp.Collate = co
-		$$ = &types.DataItem{
-			Type: tp,
-			Data: $2.(string),
-		}
+		expr := ast.NewValueExpr($2)
+		expr.SetType(tp)
+		$$ = expr
 	}
 |	hexLit
 |	bitLit
@@ -2127,7 +2125,7 @@ FunctionCallKeyword:
 |	"VALUES" '(' ColumnName ')' %prec lowerThanInsertValues
 	{
 		// TODO: support qualified identifier for column_name
-		$$ = &ast.ValuesExpr{Column: $3.(*ast.ColumnName)}
+		$$ = &ast.ValuesExpr{Column: &ast.ColumnNameExpr{Name: $3.(*ast.ColumnName)}}
 	}
 |	"WEEK" '(' ExpressionList ')'
 	{
@@ -2315,10 +2313,14 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"STRCMP" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)}}
+	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
 		$$ = &ast.FuncSubstringExpr{
-			StrExpr: $3.(ast.ExprNode), 
+			StrExpr: $3.(ast.ExprNode),
 			Pos: $5.(ast.ExprNode),
 		}	
 	}
@@ -3129,25 +3131,25 @@ UnionStmt:
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		lastSelect := union.Selects[len(union.Selects)-1]
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-2].offset)
 		l.SetLastSelectFieldText(lastSelect, endOffset)
-		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
 |	UnionClauseList "UNION" UnionOpt '(' SelectStmt ')' OrderByOptional SelectStmtLimit
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		lastSelect := union.Selects[len(union.Selects)-1]
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-6].offset)
 		l.SetLastSelectFieldText(lastSelect, endOffset)
 		st := $5.(*ast.SelectStmt)
 		endOffset = l.endOffset(yyS[yypt-2].offset)
 		l.SetLastSelectFieldText(st, endOffset)
-		union.Selects = append(union.Selects, st)
+		union.SelectList.Selects = append(union.SelectList.Selects, st)
 		if $7 != nil {
 			union.OrderBy = $7.(*ast.OrderByClause)
 		}
@@ -3160,20 +3162,20 @@ UnionStmt:
 UnionClauseList:
 	UnionSelect
 	{
-		selects := []*ast.SelectStmt{$1.(*ast.SelectStmt)}
+		selectList := &ast.UnionSelectList{Selects: []*ast.SelectStmt{$1.(*ast.SelectStmt)}}
 		$$ = &ast.UnionStmt{
-			Selects: selects,
+			SelectList: selectList,
 		}
 	}
 |	UnionClauseList "UNION" UnionOpt UnionSelect
 	{
 		union := $1.(*ast.UnionStmt)
 		union.Distinct = union.Distinct || $3.(bool)
-		lastSelect := union.Selects[len(union.Selects)-1]
+		lastSelect := union.SelectList.Selects[len(union.SelectList.Selects)-1]
 		l := yylex.(*lexer)
 		endOffset := l.endOffset(yyS[yypt-2].offset)
 		l.SetLastSelectFieldText(lastSelect, endOffset)
-		union.Selects = append(union.Selects, $4.(*ast.SelectStmt))
+		union.SelectList.Selects = append(union.SelectList.Selects, $4.(*ast.SelectStmt))
 		$$ = union
 	}
 
@@ -3810,7 +3812,7 @@ NumericType:
 		// TODO: check flen 0
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
-		for _, o := range $3.([]*field.Opt) {
+		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				x.Flag |= mysql.UnsignedFlag
 			}
@@ -3826,7 +3828,7 @@ NumericType:
 		x := types.NewFieldType($1.(byte))
 		x.Flen = fopt.Flen 
 		x.Decimal = fopt.Decimal
-		for _, o := range $3.([]*field.Opt) {
+		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				x.Flag |= mysql.UnsignedFlag
 			}
@@ -3852,7 +3854,7 @@ NumericType:
 			}
 		}
 		x.Decimal =fopt.Decimal
-		for _, o := range $3.([]*field.Opt) {
+		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				x.Flag |= mysql.UnsignedFlag
 			}
@@ -4136,20 +4138,20 @@ OptFieldLen:
 FieldOpt:
 	"UNSIGNED"
 	{
-		$$ = &field.Opt{IsUnsigned: true}
+		$$ = &ast.TypeOpt{IsUnsigned: true}
 	}
 |	"ZEROFILL"
 	{
-		$$ = &field.Opt{IsZerofill: true, IsUnsigned: true}
+		$$ = &ast.TypeOpt{IsZerofill: true, IsUnsigned: true}
 	}
 
 FieldOpts:
 	{
-		$$ = []*field.Opt{}
+		$$ = []*ast.TypeOpt{}
 	}
 |	FieldOpts FieldOpt
 	{
-		$$ = append($1.([]*field.Opt), $2.(*field.Opt)) 
+		$$ = append($1.([]*ast.TypeOpt), $2.(*ast.TypeOpt)) 
 	}
 
 FloatOpt:

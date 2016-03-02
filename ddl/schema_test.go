@@ -48,7 +48,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 		Args:     []interface{}{dbInfo},
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -59,26 +59,49 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 		Type:     model.ActionDropSchema,
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
 
+func checkDrop(c *C, t *meta.Meta) bool {
+	bgJob, err := t.GetBgJob(0)
+	c.Assert(err, IsNil)
+	if bgJob == nil {
+		return true
+	}
+
+	time.Sleep(5 * time.Millisecond)
+	return false
+}
+
 func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		info, err := t.GetDatabase(dbInfo.ID)
-		c.Assert(err, IsNil)
+	isDropped := true
 
-		if state == model.StateNone {
-			c.Assert(info, IsNil)
+	for {
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			info, err := t.GetDatabase(dbInfo.ID)
+			c.Assert(err, IsNil)
+
+			if state == model.StateNone {
+				isDropped = checkDrop(c, t)
+				if !isDropped {
+					return nil
+				}
+				c.Assert(info, IsNil)
+				return nil
+			}
+
+			c.Assert(info.Name, DeepEquals, dbInfo.Name)
+			c.Assert(info.State, Equals, state)
 			return nil
-		}
+		})
 
-		c.Assert(info.Name, DeepEquals, dbInfo.Name)
-		c.Assert(info.State, Equals, state)
-		return nil
-	})
+		if isDropped {
+			break
+		}
+	}
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
@@ -133,7 +156,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		Type:     model.ActionDropSchema,
 	}
 
-	err := d1.startJob(ctx, job)
+	err := d1.startDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.DatabaseNotExists), IsTrue)
 }
 
@@ -148,20 +171,20 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	d1 := newDDL(store, nil, nil, lease)
 	defer d1.close()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
 
 	dbInfo := testSchemaInfo(c, d2, "test")
 	job := testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
 
 	schemaID, err := d2.genGlobalID()
 	c.Assert(err, IsNil)
@@ -172,19 +195,19 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		Args:     []interface{}{dbInfo},
 	}
 
-	err = d2.startJob(ctx, job)
+	err = d2.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d2, job)
 
 	// d2 must not be owner.
-	testCheckOwner(c, d2, false)
+	testCheckOwner(c, d2, false, ddlJobFlag)
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
 	ctx := mock.NewContext()
 	done := make(chan error, 1)
 	go func() {
-		done <- d.startJob(ctx, job)
+		done <- d.startDDLJob(ctx, job)
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -212,7 +235,7 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 	d1 := newDDL(store, nil, nil, lease)
 	defer d1.close()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	dbInfo := testSchemaInfo(c, d1, "test")
 
@@ -224,7 +247,6 @@ func (s *testSchemaSuite) TestSchemaResume(c *C) {
 
 	testRunInterruptedJob(c, d1, job)
 	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
-
 	job = &model.Job{
 		SchemaID: dbInfo.ID,
 		Type:     model.ActionDropSchema,

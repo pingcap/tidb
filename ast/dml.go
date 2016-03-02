@@ -38,7 +38,7 @@ var (
 	_ Node = &TableName{}
 	_ Node = &TableRefsClause{}
 	_ Node = &TableSource{}
-	_ Node = &UnionClause{}
+	_ Node = &UnionSelectList{}
 	_ Node = &WildCardField{}
 )
 
@@ -117,6 +117,31 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*TableName)
+	return v.Leave(n)
+}
+
+// DeleteTableList is the tablelist used in delete statement multi-table mode.
+type DeleteTableList struct {
+	node
+	Tables []*TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *DeleteTableList) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DeleteTableList)
+	if n != nil {
+		for i, t := range n.Tables {
+			node, ok := t.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Tables[i] = node.(*TableName)
+		}
+	}
 	return v.Leave(n)
 }
 
@@ -470,26 +495,27 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// UnionClause represents a single "UNION SELECT ..." or "UNION (SELECT ...)" clause.
-type UnionClause struct {
+// UnionSelectList represents the select list in a union statement.
+type UnionSelectList struct {
 	node
 
-	Distinct bool
-	Select   *SelectStmt
+	Selects []*SelectStmt
 }
 
 // Accept implements Node Accept interface.
-func (n *UnionClause) Accept(v Visitor) (Node, bool) {
+func (n *UnionSelectList) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*UnionClause)
-	node, ok := n.Select.Accept(v)
-	if !ok {
-		return n, false
+	n = newNode.(*UnionSelectList)
+	for i, sel := range n.Selects {
+		node, ok := sel.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Selects[i] = node.(*SelectStmt)
 	}
-	n.Select = node.(*SelectStmt)
 	return v.Leave(n)
 }
 
@@ -499,10 +525,10 @@ type UnionStmt struct {
 	dmlNode
 	resultSetNode
 
-	Distinct bool
-	Selects  []*SelectStmt
-	OrderBy  *OrderByClause
-	Limit    *Limit
+	Distinct   bool
+	SelectList *UnionSelectList
+	OrderBy    *OrderByClause
+	Limit      *Limit
 }
 
 // Accept implements Node Accept interface.
@@ -512,12 +538,12 @@ func (n *UnionStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UnionStmt)
-	for i, val := range n.Selects {
-		node, ok := val.Accept(v)
+	if n.SelectList != nil {
+		node, ok := n.SelectList.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Selects[i] = node.(*SelectStmt)
+		n.SelectList = node.(*UnionSelectList)
 	}
 	if n.OrderBy != nil {
 		node, ok := n.OrderBy.Accept(v)
@@ -579,7 +605,7 @@ const (
 type InsertStmt struct {
 	dmlNode
 
-	Replace     bool
+	IsReplace   bool
 	Table       *TableRefsClause
 	Columns     []*ColumnName
 	Lists       [][]ExprNode
@@ -652,15 +678,15 @@ type DeleteStmt struct {
 	// Used in both single table and multiple table delete statement.
 	TableRefs *TableRefsClause
 	// Only used in multiple table delete statement.
-	Tables      []*TableName
-	Where       ExprNode
-	Order       *OrderByClause
-	Limit       *Limit
-	LowPriority bool
-	Ignore      bool
-	Quick       bool
-	MultiTable  bool
-	BeforeFrom  bool
+	Tables       *DeleteTableList
+	Where        ExprNode
+	Order        *OrderByClause
+	Limit        *Limit
+	LowPriority  bool
+	Ignore       bool
+	Quick        bool
+	IsMultiTable bool
+	BeforeFrom   bool
 }
 
 // Accept implements Node Accept interface.
@@ -677,13 +703,11 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.TableRefs = node.(*TableRefsClause)
 
-	for i, val := range n.Tables {
-		node, ok = val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Tables[i] = node.(*TableName)
+	node, ok = n.Tables.Accept(v)
+	if !ok {
+		return n, false
 	}
+	n.Tables = node.(*DeleteTableList)
 
 	if n.Where != nil {
 		node, ok = n.Where.Accept(v)
@@ -812,6 +836,7 @@ const (
 // See: https://dev.mysql.com/doc/refman/5.7/en/show.html
 type ShowStmt struct {
 	dmlNode
+	resultSetNode
 
 	Tp     ShowStmtType // Databases/Tables/Columns/....
 	DBName string

@@ -14,12 +14,17 @@
 package optimizer
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/db"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // ResolveName resolves table name and column name.
@@ -41,10 +46,11 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 // information can overwrite outer query information. When we look up for a column reference,
 // we look up from top to bottom in the contextStack.
 type nameResolver struct {
-	Info          infoschema.InfoSchema
-	Ctx           context.Context
-	DefaultSchema model.CIStr
-	Err           error
+	Info            infoschema.InfoSchema
+	Ctx             context.Context
+	DefaultSchema   model.CIStr
+	Err             error
+	useOuterContext bool
 
 	contextStack []*resolverContext
 }
@@ -55,6 +61,8 @@ type resolverContext struct {
 	/* For Select Statement. */
 	// table map to lookup and check table name conflict.
 	tableMap map[string]int
+	// table map to lookup and check derived-table(subselect) name conflict.
+	derivedTableMap map[string]int
 	// tableSources collected in from clause.
 	tables []*ast.TableSource
 	// result fields collected in select field list.
@@ -84,6 +92,14 @@ type resolverContext struct {
 	inOrderBy bool
 	// When visiting column name in ByItem, we should know if the column name is in an expression.
 	inByItemExpression bool
+	// If subquery use outer context.
+	useOuterContext bool
+	// When visiting multi-table delete stmt table list.
+	inDeleteTableList bool
+	// When visiting create/drop table statement.
+	inCreateOrDropTable bool
+	// When visiting show statement.
+	inShow bool
 }
 
 // currentContext gets the current resolverContext.
@@ -98,7 +114,8 @@ func (nr *nameResolver) currentContext() *resolverContext {
 // pushContext is called when we enter a statement.
 func (nr *nameResolver) pushContext() {
 	nr.contextStack = append(nr.contextStack, &resolverContext{
-		tableMap: map[string]int{},
+		tableMap:        map[string]int{},
+		derivedTableMap: map[string]int{},
 	})
 }
 
@@ -122,11 +139,15 @@ func (nr *nameResolver) popJoin() {
 // Enter implements ast.Visitor interface.
 func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
+	case *ast.AdminStmt:
+		nr.pushContext()
 	case *ast.AggregateFuncExpr:
 		ctx := nr.currentContext()
 		if ctx.inHaving {
 			ctx.inHavingAgg = true
 		}
+	case *ast.AlterTableStmt:
+		nr.pushContext()
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
@@ -140,7 +161,21 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 				return inNode, true
 			}
 		}
+	case *ast.CreateIndexStmt:
+		nr.pushContext()
+	case *ast.CreateTableStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
 	case *ast.DeleteStmt:
+		nr.pushContext()
+	case *ast.DeleteTableList:
+		nr.currentContext().inDeleteTableList = true
+	case *ast.DoStmt:
+		nr.pushContext()
+	case *ast.DropTableStmt:
+		nr.pushContext()
+		nr.currentContext().inCreateOrDropTable = true
+	case *ast.DropIndexStmt:
 		nr.pushContext()
 	case *ast.FieldList:
 		nr.currentContext().inFieldList = true
@@ -158,8 +193,24 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.currentContext().inOrderBy = true
 	case *ast.SelectStmt:
 		nr.pushContext()
+	case *ast.SetStmt:
+		for _, assign := range v.Variables {
+			if cn, ok := assign.Value.(*ast.ColumnNameExpr); ok && cn.Name.Table.L == "" {
+				// Convert column name expression to string value expression.
+				assign.Value = ast.NewValueExpr(cn.Name.Name.O)
+			}
+		}
+		nr.pushContext()
+	case *ast.ShowStmt:
+		nr.pushContext()
+		nr.currentContext().inShow = true
+		nr.fillShowFields(v)
 	case *ast.TableRefsClause:
 		nr.currentContext().inTableRefs = true
+	case *ast.TruncateTableStmt:
+		nr.pushContext()
+	case *ast.UnionStmt:
+		nr.pushContext()
 	case *ast.UpdateStmt:
 		nr.pushContext()
 	}
@@ -169,15 +220,31 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 // Leave implements ast.Visitor interface.
 func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
+	case *ast.AdminStmt:
+		nr.popContext()
 	case *ast.AggregateFuncExpr:
 		ctx := nr.currentContext()
 		if ctx.inHaving {
 			ctx.inHavingAgg = false
 		}
+	case *ast.AlterTableStmt:
+		nr.popContext()
 	case *ast.TableName:
 		nr.handleTableName(v)
 	case *ast.ColumnNameExpr:
 		nr.handleColumnName(v)
+	case *ast.CreateIndexStmt:
+		nr.popContext()
+	case *ast.CreateTableStmt:
+		nr.popContext()
+	case *ast.DeleteTableList:
+		nr.currentContext().inDeleteTableList = false
+	case *ast.DoStmt:
+		nr.popContext()
+	case *ast.DropIndexStmt:
+		nr.popContext()
+	case *ast.DropTableStmt:
+		nr.popContext()
 	case *ast.TableSource:
 		nr.handleTableSource(v)
 	case *ast.OnCondition:
@@ -208,8 +275,34 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.PositionExpr:
 		nr.handlePosition(v)
 	case *ast.SelectStmt:
-		v.SetResultFields(nr.currentContext().fieldList)
+		ctx := nr.currentContext()
+		v.SetResultFields(ctx.fieldList)
+		if ctx.useOuterContext {
+			nr.useOuterContext = true
+		}
 		nr.popContext()
+	case *ast.SetStmt:
+		nr.popContext()
+	case *ast.ShowStmt:
+		nr.popContext()
+	case *ast.SubqueryExpr:
+		if nr.useOuterContext {
+			// TODO: check this
+			// If there is a deep nest of subquery, there may be something wrong.
+			v.UseOuterContext = true
+			nr.useOuterContext = false
+		}
+	case *ast.TruncateTableStmt:
+		nr.popContext()
+	case *ast.UnionStmt:
+		ctx := nr.currentContext()
+		v.SetResultFields(ctx.fieldList)
+		if ctx.useOuterContext {
+			nr.useOuterContext = true
+		}
+		nr.popContext()
+	case *ast.UnionSelectList:
+		nr.handleUnionSelectList(v)
 	case *ast.InsertStmt:
 		nr.popContext()
 	case *ast.DeleteStmt:
@@ -225,25 +318,49 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		tn.Schema = nr.DefaultSchema
 	}
+	ctx := nr.currentContext()
+	if ctx.inCreateOrDropTable {
+		// The table may not exist in create table or drop table statement.
+		// Skip resolving the table to avoid error.
+		return
+	}
+	if ctx.inDeleteTableList {
+		idx, ok := ctx.tableMap[nr.tableUniqueName(tn.Schema, tn.Name)]
+		if !ok {
+			nr.Err = errors.Errorf("Unknown table %s", tn.Name.O)
+			return
+		}
+		ts := ctx.tables[idx]
+		tableName := ts.Source.(*ast.TableName)
+		tn.DBInfo = tableName.DBInfo
+		tn.TableInfo = tableName.TableInfo
+		tn.SetResultFields(tableName.GetResultFields())
+		return
+	}
 	table, err := nr.Info.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		nr.Err = err
+		nr.Err = errors.Trace(err)
 		return
 	}
 	tn.TableInfo = table.Meta()
 	dbInfo, _ := nr.Info.SchemaByName(tn.Schema)
 	tn.DBInfo = dbInfo
 
-	rfs := make([]*ast.ResultField, len(tn.TableInfo.Columns))
-	for i, v := range tn.TableInfo.Columns {
+	rfs := make([]*ast.ResultField, 0, len(tn.TableInfo.Columns))
+	for _, v := range tn.TableInfo.Columns {
+		if v.State != model.StatePublic {
+			continue
+		}
 		expr := &ast.ValueExpr{}
 		expr.SetType(&v.FieldType)
-		rfs[i] = &ast.ResultField{
-			Column: v,
-			Table:  tn.TableInfo,
-			DBName: tn.Schema,
-			Expr:   expr,
+		rf := &ast.ResultField{
+			Column:    v,
+			Table:     tn.TableInfo,
+			DBName:    tn.Schema,
+			Expr:      expr,
+			TableName: tn,
 		}
+		rfs = append(rfs, rf)
 	}
 	tn.SetResultFields(rfs)
 	return
@@ -251,23 +368,51 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 
 // handleTableSources checks name duplication
 // and puts the table source in current resolverContext.
+// Note:
+// "select * from t as a join (select 1) as a;" is not duplicate.
+// "select * from t as a join t as a;" is duplicate.
+// "select * from (select 1) as a join (select 1) as a;" is duplicate.
 func (nr *nameResolver) handleTableSource(ts *ast.TableSource) {
 	for _, v := range ts.GetResultFields() {
 		v.TableAsName = ts.AsName
 	}
-	var name string
-	if ts.AsName.L != "" {
-		name = ts.AsName.L
-	} else {
-		tableName := ts.Source.(*ast.TableName)
-		name = nr.tableUniqueName(tableName.Schema, tableName.Name)
-	}
 	ctx := nr.currentContext()
-	if _, ok := ctx.tableMap[name]; ok {
-		nr.Err = errors.Errorf("duplicated table/alias name %s", name)
-		return
+	switch ts.Source.(type) {
+	case *ast.TableName:
+		var name string
+		if ts.AsName.L != "" {
+			name = ts.AsName.L
+		} else {
+			tableName := ts.Source.(*ast.TableName)
+			name = nr.tableUniqueName(tableName.Schema, tableName.Name)
+		}
+		if _, ok := ctx.tableMap[name]; ok {
+			nr.Err = errors.Errorf("duplicated table/alias name %s", name)
+			return
+		}
+		ctx.tableMap[name] = len(ctx.tables)
+	case *ast.SelectStmt:
+		name := ts.AsName.L
+		if _, ok := ctx.derivedTableMap[name]; ok {
+			nr.Err = errors.Errorf("duplicated table/alias name %s", name)
+			return
+		}
+		ctx.derivedTableMap[name] = len(ctx.tables)
 	}
-	ctx.tableMap[name] = len(ctx.tables)
+	dupNames := make(map[string]struct{}, len(ts.GetResultFields()))
+	for _, f := range ts.GetResultFields() {
+		// duplicate column name in one table is not allowed.
+		// "select * from (select 1, 1) as a;" is duplicate.
+		name := f.ColumnAsName.L
+		if name == "" {
+			name = f.Column.Name.L
+		}
+		if _, ok := dupNames[name]; ok {
+			nr.Err = errors.Errorf("Duplicate column name '%s'", name)
+			return
+		}
+		dupNames[name] = struct{}{}
+	}
 	ctx.tables = append(ctx.tables, ts)
 	return
 }
@@ -300,6 +445,10 @@ func (nr *nameResolver) handleColumnName(cn *ast.ColumnNameExpr) {
 	for i := len(nr.contextStack) - 1; i >= 0; i-- {
 		if nr.resolveColumnNameInContext(nr.contextStack[i], cn) {
 			// Column is already resolved or encountered an error.
+			if i < len(nr.contextStack)-1 {
+				// If in subselect, the query use outer query.
+				nr.currentContext().useOuterContext = true
+			}
 			return
 		}
 	}
@@ -390,6 +539,9 @@ func (nr *nameResolver) resolveColumnNameInContext(ctx *resolverContext, cn *ast
 		}
 		return nr.resolveColumnInTableSources(cn, ctx.tables)
 	}
+	if ctx.inShow {
+		return nr.resolveColumnInResultFields(ctx, cn, ctx.fieldList)
+	}
 	// In where clause.
 	return nr.resolveColumnInTableSources(cn, ctx.tables)
 }
@@ -415,8 +567,14 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 				// different table name.
 				matchedTable = ts
 				break
+			} else if ts.AsName.L != "" {
+				// Table as name shadows table real name.
+				continue
 			}
 			if tn, ok := ts.Source.(*ast.TableName); ok {
+				if cn.Name.Schema.L != "" && cn.Name.Schema.L != tn.Schema.L {
+					continue
+				}
 				if tableNameL == tn.Name.L {
 					matchedTable = ts
 				}
@@ -461,7 +619,11 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 	for _, rf := range rfs {
 		if cn.Name.Table.L != "" {
 			// Check table name
-			if cn.Name.Table.L != rf.Table.Name.L && cn.Name.Table.L != rf.TableAsName.L {
+			if rf.TableAsName.L != "" {
+				if cn.Name.Table.L != rf.TableAsName.L {
+					continue
+				}
+			} else if cn.Name.Table.L != rf.Table.Name.L {
 				continue
 			}
 		}
@@ -481,7 +643,7 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 			if matched == nil {
 				matched = rf
 			} else {
-				sameColumn := matched.Table.Name.L == rf.Table.Name.L && matched.Column.Name.L == rf.Column.Name.L
+				sameColumn := matched.TableName == rf.TableName && matched.Column.Name.L == rf.Column.Name.L
 				if !sameColumn {
 					nr.Err = errors.Errorf("column %s is ambiguous.", cn.Name.Name.O)
 					return true
@@ -490,6 +652,16 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 		}
 	}
 	if matched != nil {
+		// If in GroupBy, we clone the ResultField
+		if ctx.inGroupBy || ctx.inHaving || ctx.inOrderBy {
+			nf := *matched
+			expr := matched.Expr
+			if cexpr, ok := expr.(*ast.ColumnNameExpr); ok {
+				expr = cexpr.Refer.Expr
+			}
+			nf.Expr = expr
+			matched = &nf
+		}
 		// Bind column.
 		cn.Refer = matched
 		return true
@@ -521,17 +693,42 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 			nr.Err = errors.New("No table used.")
 			return
 		}
+		tableRfs := []*ast.ResultField{}
 		if field.WildCard.Table.L == "" {
 			for _, v := range ctx.tables {
-				rfs = append(rfs, v.GetResultFields()...)
+				tableRfs = append(tableRfs, v.GetResultFields()...)
 			}
 		} else {
 			name := nr.tableUniqueName(field.WildCard.Schema, field.WildCard.Table)
-			tableIdx, ok := ctx.tableMap[name]
-			if !ok {
+			tableIdx, ok1 := ctx.tableMap[name]
+			derivedTableIdx, ok2 := ctx.derivedTableMap[name]
+			if !ok1 && !ok2 {
 				nr.Err = errors.Errorf("unknown table %s.", field.WildCard.Table.O)
 			}
-			rfs = ctx.tables[tableIdx].GetResultFields()
+			if ok1 {
+				tableRfs = ctx.tables[tableIdx].GetResultFields()
+			}
+			if ok2 {
+				tableRfs = append(tableRfs, ctx.tables[derivedTableIdx].GetResultFields()...)
+			}
+
+		}
+		for _, trf := range tableRfs {
+			// Convert it to ColumnNameExpr
+			cn := &ast.ColumnName{
+				Schema: trf.DBName,
+				Table:  trf.Table.Name,
+				Name:   trf.ColumnAsName,
+			}
+			cnExpr := &ast.ColumnNameExpr{
+				Name:  cn,
+				Refer: trf,
+			}
+			ast.SetFlag(cnExpr)
+			cnExpr.SetType(trf.Expr.GetType())
+			rf := *trf
+			rf.Expr = cnExpr
+			rfs = append(rfs, &rf)
 		}
 		return
 	}
@@ -543,7 +740,8 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		rf.Column = v.Refer.Column
 		rf.Table = v.Refer.Table
 		rf.DBName = v.Refer.DBName
-		rf.Expr = v.Refer.Expr
+		rf.TableName = v.Refer.TableName
+		rf.Expr = v
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.
@@ -593,11 +791,134 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 		nr.Err = errors.Errorf("Unknown column '%d'", pos.N)
 		return
 	}
-	pos.Refer = ctx.fieldList[pos.N-1]
+	matched := ctx.fieldList[pos.N-1]
+	nf := *matched
+	expr := matched.Expr
+	if cexpr, ok := expr.(*ast.ColumnNameExpr); ok {
+		expr = cexpr.Refer.Expr
+	}
+	nf.Expr = expr
+	pos.Refer = &nf
 	if nr.currentContext().inGroupBy {
 		// make sure item is not aggregate function
 		if ast.HasAggFlag(pos.Refer.Expr) {
 			nr.Err = errors.New("group by cannot contain aggregate function")
 		}
 	}
+}
+
+func (nr *nameResolver) handleUnionSelectList(u *ast.UnionSelectList) {
+	firstSelFields := u.Selects[0].GetResultFields()
+	unionFields := make([]*ast.ResultField, len(firstSelFields))
+	// Copy first result fields, because we may change the result field type.
+	for i, v := range firstSelFields {
+		rf := *v
+		col := *v.Column
+		rf.Column = &col
+		if rf.Column.Flen == 0 {
+			rf.Column.Flen = types.UnspecifiedLength
+		}
+		rf.Expr = &ast.ValueExpr{}
+		unionFields[i] = &rf
+	}
+	nr.currentContext().fieldList = unionFields
+}
+
+func (nr *nameResolver) fillShowFields(s *ast.ShowStmt) {
+	if s.DBName == "" {
+		if s.Table != nil && s.Table.Schema.L != "" {
+			s.DBName = s.Table.Schema.O
+		} else {
+			s.DBName = nr.DefaultSchema.O
+		}
+	} else if s.Table != nil && s.Table.Schema.L == "" {
+		s.Table.Schema = model.NewCIStr(s.DBName)
+	}
+	var fields []*ast.ResultField
+	var (
+		names  []string
+		ftypes []byte
+	)
+	switch s.Tp {
+	case ast.ShowEngines:
+		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
+	case ast.ShowDatabases:
+		names = []string{"Database"}
+	case ast.ShowTables:
+		names = []string{fmt.Sprintf("Tables_in_%s", s.DBName)}
+		if s.Full {
+			names = append(names, "Table_type")
+		}
+	case ast.ShowTableStatus:
+		names = []string{"Name", "Engine", "Version", "Row_format", "Rows", "Avg_row_length",
+			"Data_length", "Max_data_length", "Index_length", "Data_free", "Auto_increment",
+			"Create_time", "Update_time", "Check_time", "Collation", "Checksum",
+			"Create_options", "Comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowColumns:
+		names = column.ColDescFieldNames(s.Full)
+	case ast.ShowWarnings:
+		names = []string{"Level", "Code", "Message"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
+	case ast.ShowCharset:
+		names = []string{"Charset", "Description", "Default collation", "Maxlen"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowVariables:
+		names = []string{"Variable_name", "Value"}
+	case ast.ShowStatus:
+		names = []string{"Variable_name", "Value"}
+	case ast.ShowCollation:
+		names = []string{"Collation", "Charset", "Id", "Default", "Compiled", "Sortlen"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowCreateTable:
+		names = []string{"Table", "Create Table"}
+	case ast.ShowGrants:
+		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+	case ast.ShowTriggers:
+		names = []string{"Trigger", "Event", "Table", "Statement", "Timing", "Created",
+			"sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowProcedureStatus:
+		names = []string{}
+		ftypes = []byte{}
+	case ast.ShowIndex:
+		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
+			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
+			"Null", "Index_type", "Comment", "Index_comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	}
+	for i, name := range names {
+		f := &ast.ResultField{
+			ColumnAsName: model.NewCIStr(name),
+			Column:       &model.ColumnInfo{}, // Empty column info.
+			Table:        &model.TableInfo{},  // Empty table info.
+		}
+		if ftypes == nil || ftypes[i] == 0 {
+			// use varchar as the default return column type
+			f.Column.Tp = mysql.TypeVarchar
+		} else {
+			f.Column.Tp = ftypes[i]
+		}
+		f.Column.Charset, f.Column.Collate = types.DefaultCharsetForType(f.Column.Tp)
+		f.Expr = &ast.ValueExpr{}
+		f.Expr.SetType(&f.Column.FieldType)
+		fields = append(fields, f)
+	}
+
+	if s.Pattern != nil && s.Pattern.Expr == nil {
+		rf := fields[0]
+		s.Pattern.Expr = &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{Name: rf.ColumnAsName},
+		}
+		ast.SetFlag(s.Pattern)
+	}
+	s.SetResultFields(fields)
+	nr.currentContext().fieldList = fields
 }

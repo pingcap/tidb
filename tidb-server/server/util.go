@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
@@ -239,7 +240,7 @@ func uniformValue(value interface{}) interface{} {
 	}
 }
 
-func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []interface{}) (data []byte, err error) {
+func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []types.Datum) (data []byte, err error) {
 	if len(columns) != len(row) {
 		err = mysql.ErrMalformPacket
 		return
@@ -248,7 +249,7 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []int
 	nullsLen := ((len(columns) + 7 + 2) / 8)
 	nulls := make([]byte, nullsLen)
 	for i, val := range row {
-		if val == nil {
+		if val.Kind() == types.KindNull {
 			bytePos := (i + 2) / 8
 			bitPos := byte((i + 2) % 8)
 			nulls[bytePos] |= 1 << bitPos
@@ -256,9 +257,9 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []int
 	}
 	data = append(data, nulls...)
 	for i, val := range row {
-		val = uniformValue(val)
-		switch v := val.(type) {
-		case int64:
+		switch val.Kind() {
+		case types.KindInt64:
+			v := val.GetInt64()
 			switch columns[i].Type {
 			case mysql.TypeTiny:
 				data = append(data, byte(v))
@@ -269,7 +270,8 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []int
 			case mysql.TypeLonglong:
 				data = append(data, dumpUint64(uint64(v))...)
 			}
-		case uint64:
+		case types.KindUint64:
+			v := val.GetUint64()
 			switch columns[i].Type {
 			case mysql.TypeTiny:
 				data = append(data, byte(v))
@@ -280,80 +282,59 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []int
 			case mysql.TypeLonglong:
 				data = append(data, dumpUint64(uint64(v))...)
 			}
-		case float32:
-			floatBits := math.Float32bits(float32(val.(float64)))
+		case types.KindFloat32:
+			floatBits := math.Float32bits(val.GetFloat32())
 			data = append(data, dumpUint32(floatBits)...)
-		case float64:
-			floatBits := math.Float64bits(val.(float64))
+		case types.KindFloat64:
+			floatBits := math.Float64bits(val.GetFloat64())
 			data = append(data, dumpUint64(floatBits)...)
-		case string:
-			data = append(data, dumpLengthEncodedString(hack.Slice(v), alloc)...)
-		case []byte:
-			data = append(data, dumpLengthEncodedString(v, alloc)...)
-		case mysql.Time:
-			data = append(data, dumpBinaryDateTime(v, nil)...)
-		case time.Time:
-			myTime := mysql.Time{Time: v, Type: columns[i].Type, Fsp: mysql.DefaultFsp}
-			data = append(data, dumpBinaryDateTime(myTime, nil)...)
-		case mysql.Duration:
-			data = append(data, dumpBinaryTime(v.Duration)...)
-		case time.Duration:
-			data = append(data, dumpBinaryTime(v)...)
-		case mysql.Decimal:
-			data = append(data, dumpLengthEncodedString(hack.Slice(v.String()), alloc)...)
-		case mysql.Enum:
-			data = append(data, dumpLengthEncodedString(hack.Slice(v.String()), alloc)...)
-		case mysql.Set:
-			data = append(data, dumpLengthEncodedString(hack.Slice(v.String()), alloc)...)
-		case mysql.Bit:
-			data = append(data, dumpLengthEncodedString(hack.Slice(v.ToString()), alloc)...)
+		case types.KindString, types.KindBytes:
+			data = append(data, dumpLengthEncodedString(val.GetBytes(), alloc)...)
+		case types.KindMysqlDecimal:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlDecimal().String()), alloc)...)
+		case types.KindMysqlTime:
+			data = append(data, dumpBinaryDateTime(val.GetMysqlTime(), nil)...)
+		case types.KindMysqlDuration:
+			data = append(data, dumpBinaryTime(val.GetMysqlDuration().Duration)...)
+		case types.KindMysqlSet:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlSet().String()), alloc)...)
+		case types.KindMysqlHex:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlHex().ToString()), alloc)...)
+		case types.KindMysqlEnum:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlEnum().String()), alloc)...)
+		case types.KindMysqlBit:
+			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlBit().ToString()), alloc)...)
 		}
 	}
 	return
 }
 
-func dumpTextValue(mysqlType uint8, value interface{}) ([]byte, error) {
-	switch v := value.(type) {
-	case int8:
-		return strconv.AppendInt(nil, int64(v), 10), nil
-	case int16:
-		return strconv.AppendInt(nil, int64(v), 10), nil
-	case int32:
-		return strconv.AppendInt(nil, int64(v), 10), nil
-	case int64:
-		return strconv.AppendInt(nil, int64(v), 10), nil
-	case int:
-		return strconv.AppendInt(nil, int64(v), 10), nil
-	case uint8:
-		return strconv.AppendUint(nil, uint64(v), 10), nil
-	case uint16:
-		return strconv.AppendUint(nil, uint64(v), 10), nil
-	case uint32:
-		return strconv.AppendUint(nil, uint64(v), 10), nil
-	case uint64:
-		return strconv.AppendUint(nil, uint64(v), 10), nil
-	case uint:
-		return strconv.AppendUint(nil, uint64(v), 10), nil
-	case float32:
-		return strconv.AppendFloat(nil, float64(v), 'f', -1, 32), nil
-	case float64:
-		return strconv.AppendFloat(nil, float64(v), 'f', -1, 64), nil
-	case []byte:
-		return v, nil
-	case string:
-		return hack.Slice(v), nil
-	case mysql.Time:
-		return hack.Slice(v.String()), nil
-	case mysql.Duration:
-		return hack.Slice(v.String()), nil
-	case mysql.Decimal:
-		return hack.Slice(v.String()), nil
-	case mysql.Enum:
-		return hack.Slice(v.String()), nil
-	case mysql.Set:
-		return hack.Slice(v.String()), nil
-	case mysql.Bit:
-		return hack.Slice(v.ToString()), nil
+func dumpTextValue(mysqlType uint8, value types.Datum) ([]byte, error) {
+	switch value.Kind() {
+	case types.KindInt64:
+		return strconv.AppendInt(nil, value.GetInt64(), 10), nil
+	case types.KindUint64:
+		return strconv.AppendUint(nil, value.GetUint64(), 10), nil
+	case types.KindFloat32:
+		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', -1, 32), nil
+	case types.KindFloat64:
+		return strconv.AppendFloat(nil, value.GetFloat64(), 'f', -1, 64), nil
+	case types.KindString, types.KindBytes:
+		return value.GetBytes(), nil
+	case types.KindMysqlTime:
+		return hack.Slice(value.GetMysqlTime().String()), nil
+	case types.KindMysqlDuration:
+		return hack.Slice(value.GetMysqlDuration().String()), nil
+	case types.KindMysqlDecimal:
+		return hack.Slice(value.GetMysqlDecimal().String()), nil
+	case types.KindMysqlEnum:
+		return hack.Slice(value.GetMysqlEnum().String()), nil
+	case types.KindMysqlSet:
+		return hack.Slice(value.GetMysqlSet().String()), nil
+	case types.KindMysqlBit:
+		return hack.Slice(value.GetMysqlBit().ToString()), nil
+	case types.KindMysqlHex:
+		return hack.Slice(value.GetMysqlHex().ToString()), nil
 	default:
 		return nil, errors.Errorf("invalid type %T", value)
 	}

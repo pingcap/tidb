@@ -14,21 +14,18 @@
 package optimizer
 
 import (
-	"strings"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/terror"
 )
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
+func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan.Plan, error) {
 	// We have to infer type again because after parameter is set, the expression type may change.
 	if err := InferType(node); err != nil {
 		return nil, errors.Trace(err)
@@ -36,7 +33,7 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
-	p, err := plan.BuildPlan(node)
+	p, err := plan.BuildPlan(node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -51,68 +48,14 @@ func Optimize(ctx context.Context, node ast.Node) (plan.Plan, error) {
 // The statement must be prepared before it can be passed to optimize function.
 // We pass InfoSchema instead of getting from Context in case it is changed after resolving name.
 func Prepare(is infoschema.InfoSchema, ctx context.Context, node ast.Node) error {
-	if err := Validate(node, true); err != nil {
-		return errors.Trace(err)
-	}
 	ast.SetFlag(node)
 	if err := Preprocess(node, is, ctx); err != nil {
 		return errors.Trace(err)
 	}
+	if err := Validate(node, true); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
-}
-
-type supportChecker struct {
-	unsupported bool
-}
-
-func (c *supportChecker) Enter(in ast.Node) (ast.Node, bool) {
-	switch x := in.(type) {
-	case *ast.SubqueryExpr:
-		c.unsupported = true
-	case *ast.Join:
-		if x.Right != nil {
-			c.unsupported = true
-		} else {
-			ts, tsok := x.Left.(*ast.TableSource)
-			if !tsok {
-				c.unsupported = true
-			} else {
-				tn, tnok := ts.Source.(*ast.TableName)
-				if !tnok {
-					c.unsupported = true
-				} else if strings.EqualFold(tn.Schema.O, infoschema.Name) {
-					c.unsupported = true
-				} else if strings.EqualFold(tn.Schema.O, perfschema.Name) {
-					c.unsupported = true
-				}
-			}
-		}
-	case *ast.SelectStmt:
-		if x.Distinct {
-			c.unsupported = true
-		}
-	}
-	return in, c.unsupported
-}
-
-func (c *supportChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, !c.unsupported
-}
-
-// IsSupported checks if the node is supported to use new plan.
-// We first support single table select statement without group by clause or aggregate functions.
-// TODO: 1. insert/update/delete. 2. join tables. 3. subquery. 4. group by and aggregate function.
-func IsSupported(node ast.Node) bool {
-	switch node.(type) {
-	case *ast.SelectStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt,
-		*ast.AdminStmt:
-	default:
-		return false
-	}
-
-	var checker supportChecker
-	node.Accept(&checker)
-	return !checker.unsupported
 }
 
 // Optimizer error codes.

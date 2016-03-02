@@ -151,8 +151,6 @@ func convertToInt(val interface{}, target *FieldType) (int64, error) {
 		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
 	case mysql.Set:
 		return convertFloatToInt(v.ToNumber(), lowerBound, upperBound, tp)
-	case *DataItem:
-		return convertToInt(v.Data, target)
 	}
 	return 0, typeError(val, target)
 }
@@ -240,8 +238,6 @@ func convertToUint(val interface{}, target *FieldType) (uint64, error) {
 		return convertFloatToUint(v.ToNumber(), upperBound, tp)
 	case mysql.Set:
 		return convertFloatToUint(v.ToNumber(), upperBound, tp)
-	case *DataItem:
-		return convertToUint(v.Data, target)
 	}
 	return 0, typeError(val, target)
 }
@@ -275,10 +271,6 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	tp := target.Tp
 	if val == nil {
 		return nil, nil
-	}
-	vdi, ok := val.(*DataItem)
-	if ok {
-		return Convert(vdi.Data, target)
 	}
 	switch tp { // TODO: implement mysql types convert when "CAST() AS" syntax are supported.
 	case mysql.TypeFloat:
@@ -601,8 +593,6 @@ func ToFloat64(value interface{}) (float64, error) {
 		return v.ToNumber(), nil
 	case mysql.Set:
 		return v.ToNumber(), nil
-	case *DataItem:
-		return ToFloat64(v.Data)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", value, value)
 	}
@@ -622,8 +612,6 @@ func ToDecimal(value interface{}) (mysql.Decimal, error) {
 		return v.ToNumber(), nil
 	case mysql.Duration:
 		return v.ToNumber(), nil
-	case *DataItem:
-		return ToDecimal(v.Data)
 	default:
 		return mysql.ConvertToDecimal(value)
 	}
@@ -665,8 +653,6 @@ func ToString(value interface{}) (string, error) {
 		return v.String(), nil
 	case mysql.Set:
 		return v.String(), nil
-	case *DataItem:
-		return ToString(v.Data)
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", value, value)
 	}
@@ -724,8 +710,6 @@ func ToBool(value interface{}) (int64, error) {
 		isZero = (v.ToNumber() == 0)
 	case mysql.Set:
 		isZero = (v.ToNumber() == 0)
-	case *DataItem:
-		return ToBool(v.Data)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", value, value)
 	}

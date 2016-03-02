@@ -15,7 +15,6 @@ package tidb
 
 import (
 	"database/sql"
-	"errors"
 	"flag"
 	"fmt"
 	"net/url"
@@ -25,10 +24,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/rset"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var store = flag.String("store", "memory", "registered store name, [memory, goleveldb, boltdb]")
@@ -197,9 +198,9 @@ func (s *testMainSuite) TestInfoSchema(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	rs := mustExecSQL(c, se, "SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'")
-	row, err := rs.FirstRow()
+	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "utf8mb4")
+	match(c, row.Data, "utf8mb4")
 }
 
 func (s *testMainSuite) TestCaseInsensitive(c *C) {
@@ -210,17 +211,17 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	rs := mustExecSQL(c, se, "select * from t")
 	fields, err := rs.Fields()
 	c.Assert(err, IsNil)
-	c.Assert(fields[0].Name, Equals, "a")
-	c.Assert(fields[1].Name, Equals, "B")
+	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
+	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
 	rs = mustExecSQL(c, se, "select A, b from t")
 	fields, err = rs.Fields()
 	c.Assert(err, IsNil)
-	c.Assert(fields[0].Name, Equals, "A")
-	c.Assert(fields[1].Name, Equals, "b")
+	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
 	mustExecSQL(c, se, "update T set b = B + 1")
 	mustExecSQL(c, se, "update T set B = b + 1")
 	rs = mustExecSQL(c, se, "select b from T")
-	rows, err := rs.Rows(-1, 0)
+	rows, err := GetRows(rs)
 	c.Assert(err, IsNil)
 	match(c, rows[0], 3)
 	mustExecSQL(c, se, s.dropDBSQL)
@@ -347,12 +348,12 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 	}
 
 	for _, t := range tbl {
-		storeDSN, dbName, err := parseDriverDSN(t.dsn)
+		params, err := parseDriverDSN(t.dsn)
 		if t.ok {
 			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
-			c.Assert(storeDSN, Equals, t.storeDSN, Commentf("dsn=%v", t.dsn))
-			c.Assert(dbName, Equals, t.dbName, Commentf("dsn=%v", t.dsn))
-			_, err = url.Parse(storeDSN)
+			c.Assert(params.storePath, Equals, t.storeDSN, Commentf("dsn=%v", t.dsn))
+			c.Assert(params.dbName, Equals, t.dbName, Commentf("dsn=%v", t.dsn))
+			_, err = url.Parse(params.storePath)
 			c.Assert(err, IsNil, Commentf("dsn=%v", t.dsn))
 		} else {
 			c.Assert(err, NotNil, Commentf("dsn=%v", t.dsn))
@@ -360,7 +361,7 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 	}
 }
 
-func sessionExec(c *C, se Session, sql string) ([]rset.Recordset, error) {
+func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)
 	c.Assert(err, IsNil)
@@ -387,7 +388,7 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func exec(c *C, se Session, sql string, args ...interface{}) (rset.Recordset, error) {
+func exec(c *C, se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	if len(args) == 0 {
 		rs, err := se.Execute(sql)
 		if err == nil && len(rs) > 0 {
@@ -406,22 +407,22 @@ func exec(c *C, se Session, sql string, args ...interface{}) (rset.Recordset, er
 	return rs, nil
 }
 
-func mustExecSQL(c *C, se Session, sql string, args ...interface{}) rset.Recordset {
+func mustExecSQL(c *C, se Session, sql string, args ...interface{}) ast.RecordSet {
 	rs, err := exec(c, se, sql, args...)
 	c.Assert(err, IsNil)
 	return rs
 }
 
-func match(c *C, row []interface{}, expected ...interface{}) {
+func match(c *C, row []types.Datum, expected ...interface{}) {
 	c.Assert(len(row), Equals, len(expected))
 	for i := range row {
-		got := fmt.Sprintf("%v", row[i])
+		got := fmt.Sprintf("%v", row[i].GetValue())
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
 }
 
-func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
+func matches(c *C, rows [][]types.Datum, expected [][]interface{}) {
 	c.Assert(len(rows), Equals, len(expected))
 	for i := 0; i < len(rows); i++ {
 		match(c, rows[i], expected[i]...)
@@ -430,7 +431,7 @@ func matches(c *C, rows [][]interface{}, expected [][]interface{}) {
 
 func mustExecMatch(c *C, se Session, sql string, expected [][]interface{}) {
 	r := mustExecSQL(c, se, sql)
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	matches(c, rows, expected)
 }
@@ -439,7 +440,7 @@ func mustExecFailed(c *C, se Session, sql string, args ...interface{}) {
 	r, err := exec(c, se, sql, args...)
 	if err == nil && r != nil {
 		// sometimes we may meet error after executing first row.
-		_, err = r.FirstRow()
+		_, err = r.Next()
 	}
 	c.Assert(err, NotNil)
 }

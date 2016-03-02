@@ -35,15 +35,14 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/stmt"
 	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // Engine prefix name
@@ -127,6 +126,7 @@ func getCtxCharsetInfo(ctx context.Context) (string, string) {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
+	log.Debug("compiling", src)
 	charset, collation := getCtxCharsetInfo(ctx)
 	stmts, err := parser.Parse(src, charset, collation)
 	if err != nil {
@@ -137,27 +137,18 @@ func Parse(ctx context.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, src string) ([]stmt.Statement, error) {
-	log.Debug("compiling", src)
-	rawStmt, err := Parse(ctx, src)
+func Compile(ctx context.Context, rawStmt ast.StmtNode) (ast.Statement, error) {
+	compiler := &executor.Compiler{}
+	st, err := compiler.Compile(ctx, rawStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	stmts := make([]stmt.Statement, len(rawStmt))
-	for i, v := range rawStmt {
-		compiler := &executor.Compiler{}
-		stm, err := compiler.Compile(ctx, v)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		stmts[i] = stm
-	}
-	return stmts, nil
+	return st, nil
 }
 
-func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.Recordset, error) {
+func runStmt(ctx context.Context, s ast.Statement, args ...interface{}) (ast.RecordSet, error) {
 	var err error
-	var rs rset.Recordset
+	var rs ast.RecordSet
 	// before every execution, we must clear affectedrows.
 	variable.GetSessionVars(ctx).SetAffectedRows(0)
 	if s.IsDDL() {
@@ -179,6 +170,27 @@ func runStmt(ctx context.Context, s stmt.Statement, args ...interface{}) (rset.R
 		}
 	}
 	return rs, errors.Trace(err)
+}
+
+// GetRows gets all the rows from a RecordSet.
+func GetRows(rs ast.RecordSet) ([][]types.Datum, error) {
+	if rs == nil {
+		return nil, nil
+	}
+	var rows [][]types.Datum
+	defer rs.Close()
+	// Negative limit means no limit.
+	for {
+		row, err := rs.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			break
+		}
+		rows = append(rows, row.Data)
+	}
+	return rows, nil
 }
 
 // RegisterStore registers a kv storage with unique name and its associated Driver.

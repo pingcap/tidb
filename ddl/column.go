@@ -160,7 +160,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -270,7 +270,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 			return errors.Trace(err)
 		}
 
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -361,7 +361,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return nil
 			}
 
-			value, _, err := tables.GetColDefaultValue(nil, columnInfo)
+			value, _, err := table.GetColDefaultValue(nil, columnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -377,7 +377,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			err = t.SetColValue(txn, backfillKey, v)
+			err = tables.SetColValue(txn, backfillKey, v)
 			if err != nil {
 				return errors.Trace(err)
 			}

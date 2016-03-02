@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/rset"
 )
 
 // TestKit is a utility to run sql test.
@@ -37,6 +37,18 @@ type Result struct {
 	c       *check.C
 }
 
+// Check asserts the result equals the expected results.
+func (res *Result) Check(expected [][]interface{}) {
+	got := fmt.Sprintf("%v", res.rows)
+	need := fmt.Sprintf("%v", expected)
+	res.c.Assert(got, check.Equals, need, res.comment)
+}
+
+// Rows returns the result data.
+func (res *Result) Rows() [][]interface{} {
+	return res.rows
+}
+
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	return &TestKit{
@@ -46,14 +58,14 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 }
 
 // Exec executes a sql statement.
-func (tk *TestKit) Exec(sql string, args ...interface{}) (rset.Recordset, error) {
+func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = tidb.CreateSession(tk.store)
 		tk.c.Assert(err, check.IsNil)
 	}
 	if len(args) == 0 {
-		var rss []rset.Recordset
+		var rss []ast.RecordSet
 		rss, err = tk.Se.Execute(sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
@@ -75,6 +87,12 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (rset.Recordset, error)
 	return rs, nil
 }
 
+// CheckExecResult checks the affected rows and the insert id after executing MustExec.
+func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
+	tk.c.Assert(affectedRows, check.Equals, int64(tk.Se.AffectedRows()))
+	tk.c.Assert(insertID, check.Equals, int64(tk.Se.LastInsertID()))
+}
+
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	_, err := tk.Exec(sql, args...)
@@ -88,25 +106,26 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(rs, check.NotNil, comment)
-	rows, err := rs.Rows(-1, 0)
+	rows, err := tidb.GetRows(rs)
 	tk.c.Assert(err, check.IsNil, comment)
-	return &Result{rows: rows, c: tk.c, comment: comment}
+	iRows := make([][]interface{}, len(rows))
+	for i := range rows {
+		row := rows[i]
+		iRow := make([]interface{}, len(row))
+		for j := range row {
+			iRow[j] = row[j].GetValue()
+		}
+		iRows[i] = iRow
+	}
+	return &Result{rows: iRows, c: tk.c, comment: comment}
 }
 
-// Check asserts the result equals the expected results.
-func (res *Result) Check(expected [][]interface{}) {
-	got := fmt.Sprintf("%v", res.rows)
-	need := fmt.Sprintf("%v", expected)
-	res.c.Assert(got, check.Equals, need, res.comment)
-}
-
-// Rows is a convenient function to wrap args to a slice of []interface.
-// The arg represents a row, split by white space, only applicable for
-// values that have no white spaces.
-func Rows(args ...string) [][]interface{} {
+// RowsWithSep is a convenient function to wrap args to a slice of []interface.
+// The arg represents a row, split by sep.
+func RowsWithSep(sep string, args ...string) [][]interface{} {
 	rows := make([][]interface{}, len(args))
 	for i, v := range args {
-		strs := strings.Split(v, " ")
+		strs := strings.Split(v, sep)
 		row := make([]interface{}, len(strs))
 		for j, s := range strs {
 			row[j] = s
@@ -114,4 +133,9 @@ func Rows(args ...string) [][]interface{} {
 		rows[i] = row
 	}
 	return rows
+}
+
+// Rows is similar to RowsWithSep, use white space as seperator string.
+func Rows(args ...string) [][]interface{} {
+	return RowsWithSep(" ", args...)
 }

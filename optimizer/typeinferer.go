@@ -100,6 +100,8 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.unaryOperation(x)
 	case *ast.ValueExpr:
 		v.handleValueExpr(x)
+	case *ast.ValuesExpr:
+		v.handleValuesExpr(x)
 	case *ast.VariableExpr:
 		x.SetType(types.NewFieldType(mysql.TypeVarString))
 		x.Type.Charset = v.defaultCharset
@@ -230,6 +232,10 @@ func (v *typeInferrer) handleValueExpr(x *ast.ValueExpr) {
 	x.SetType(tp)
 }
 
+func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
+	x.SetType(x.Column.GetType())
+}
+
 func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 	if len(x.Args) == 1 {
 		a := x.Args[0].GetValue()
@@ -270,6 +276,8 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
+	case "strcmp":
+		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "connection_id":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 		tp.Flag |= mysql.UnsignedFlag

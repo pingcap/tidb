@@ -130,7 +130,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	t := meta.NewMeta(txn)
 
 	owner := &model.Owner{OwnerID: "owner"}
-	err = t.SetDDLOwner(owner)
+	err = t.SetDDLJobOwner(owner)
 	c.Assert(err, IsNil)
 	dbInfo2 := &model.DBInfo{
 		ID:    2,
@@ -144,6 +144,29 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(info.Owner, DeepEquals, owner)
+	c.Assert(info.Job, DeepEquals, job)
+	c.Assert(info.ReorgHandle, Equals, int64(0))
+	err = txn.Commit()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestGetBgDDLInfo(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
+
+	owner := &model.Owner{OwnerID: "owner"}
+	err = t.SetBgJobOwner(owner)
+	c.Assert(err, IsNil)
+	job := &model.Job{
+		SchemaID: 1,
+		Type:     model.ActionDropTable,
+	}
+	err = t.EnQueueBgJob(job)
+	c.Assert(err, IsNil)
+	info, err := GetBgDDLInfo(txn)
 	c.Assert(err, IsNil)
 	c.Assert(info.Owner, DeepEquals, owner)
 	c.Assert(info.Job, DeepEquals, job)
@@ -286,7 +309,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	c.Assert(err, IsNil)
 	col := tb.Cols()[idx.Columns[0].Offset]
 	key := tb.RecordKey(4, col)
-	err = tb.SetColValue(txn, key, int64(40))
+	err = tables.SetColValue(txn, key, int64(40))
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -305,7 +328,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	err = idx.X.Create(txn, []interface{}{int64(40)}, 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(3, col)
-	err = tb.SetColValue(txn, key, int64(31))
+	err = tables.SetColValue(txn, key, int64(31))
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -324,7 +347,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	key = tb.RecordKey(3, col)
 	txn.Delete(key)
 	key = tb.RecordKey(5, col)
-	err = tb.SetColValue(txn, key, int64(30))
+	err = tables.SetColValue(txn, key, int64(30))
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -343,7 +366,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	key = tb.RecordKey(4, col)
 	txn.Delete(key)
 	key = tb.RecordKey(3, col)
-	err = tb.SetColValue(txn, key, int64(30))
+	err = tables.SetColValue(txn, key, int64(30))
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
@@ -362,7 +385,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	err = idx.X.Delete(txn, []interface{}{int64(40)}, 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(4, col)
-	err = tb.SetColValue(txn, key, int64(40))
+	err = tables.SetColValue(txn, key, int64(40))
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)

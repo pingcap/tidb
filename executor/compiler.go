@@ -17,45 +17,44 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/executor/converter"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer"
+	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/stmt"
 )
 
 // Compiler compiles an ast.StmtNode to a stmt.Statement.
 type Compiler struct {
-	converter *converter.Converter
 }
 
 // Compile compiles an ast.StmtNode to a stmt.Statement.
 // If it is supported to use new plan and executer, it optimizes the node to
 // a plan, and we wrap the plan in an adapter as stmt.Statement.
 // If it is not supported, the node will be converted to old statement.
-func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (stmt.Statement, error) {
-	if optimizer.IsSupported(node) {
-		ast.SetFlag(node)
-		if err := optimizer.Validate(node, false); err != nil {
-			return nil, errors.Trace(err)
-		}
-		is := sessionctx.GetDomain(ctx).InfoSchema()
-		if err := optimizer.Preprocess(node, is, ctx); err != nil {
-			return nil, errors.Trace(err)
-		}
-		p, err := optimizer.Optimize(ctx, node)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		sa := &statementAdapter{
-			is:   is,
-			plan: p,
-		}
-		return sa, nil
+func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statement, error) {
+	ast.SetFlag(node)
+
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	if err := optimizer.Preprocess(node, is, ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
-	c.converter = &converter.Converter{}
-	s, err := c.converter.Convert(node)
+	// Validate should be after NameResolve.
+	if err := optimizer.Validate(node, false); err != nil {
+		return nil, errors.Trace(err)
+	}
+	sb := NewSubQueryBuilder(is)
+	p, err := optimizer.Optimize(ctx, node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return s, nil
+	sa := &statement{
+		is:   is,
+		plan: p,
+	}
+	return sa, nil
+}
+
+// NewSubQueryBuilder builds and returns a new SubQuery builder.
+func NewSubQueryBuilder(is infoschema.InfoSchema) plan.SubQueryBuilder {
+	return &subqueryBuilder{is: is}
 }

@@ -141,7 +141,7 @@ func (s *dbStore) scheduler() {
 		go s.seekWorker(wgSeekWorkers, seekCh)
 	}
 
-	segmentIndex := 0
+	segmentIndex := int64(0)
 
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -173,7 +173,7 @@ func (s *dbStore) scheduler() {
 	}
 }
 
-func (s *dbStore) cleanRecentUpdates(segmentIndex int) {
+func (s *dbStore) cleanRecentUpdates(segmentIndex int64) {
 	m, err := s.recentUpdates.GetSegment(segmentIndex)
 	if err != nil {
 		log.Error(err)

@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer"
@@ -149,12 +150,12 @@ func (s *testSessionSuite) TestResultField(c *C) {
 	mustExecSQL(c, se, `INSERT INTO t VALUES (2);`)
 	r := mustExecSQL(c, se, `SELECT count(*) from t;`)
 	c.Assert(r, NotNil)
-	_, err := r.Rows(-1, 0)
+	_, err := GetRows(r)
 	c.Assert(err, IsNil)
 	fields, err := r.Fields()
 	c.Assert(err, IsNil)
 	c.Assert(len(fields), Equals, 1)
-	field := fields[0]
+	field := fields[0].Column
 	c.Assert(field.Tp, Equals, mysql.TypeLonglong)
 	c.Assert(field.Flen, Equals, 21)
 	mustExecSQL(c, se, s.dropDBSQL)
@@ -172,25 +173,25 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	se2 := newSession(c, store, s.dbName)
 	rs := mustExecSQL(c, se2, "select * from t")
 	c.Assert(rs, NotNil)
-	row, err := rs.FirstRow()
+	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	match(c, row, id, []byte("abc"), nil)
+	match(c, row.Data, id, []byte("abc"), nil)
 
 	mustExecSQL(c, se, "update t set name = 'abc', status = 1 where id = ?", id)
 	rs = mustExecSQL(c, se2, "select * from t")
 	c.Assert(rs, NotNil)
-	row, err = rs.FirstRow()
+	row, err = rs.Next()
 	c.Assert(err, IsNil)
-	match(c, row, id, []byte("abc"), 1)
+	match(c, row.Data, id, []byte("abc"), 1)
 	// Check for pass bool param to tidb prepared statement
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (id tiny)")
 	mustExecSQL(c, se, "insert t values (?)", true)
 	rs = mustExecSQL(c, se, "select * from t")
 	c.Assert(rs, NotNil)
-	row, err = rs.FirstRow()
+	row, err = rs.Next()
 	c.Assert(err, IsNil)
-	match(c, row, int8(1))
+	match(c, row.Data, int8(1))
 
 	mustExecSQL(c, se, s.dropDBSQL)
 }
@@ -282,7 +283,7 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	checkInTrans(c, se, "commit", 0)
 	checkInTrans(c, se, "insert t values ()", 0)
 
-	checkInTrans(c, se, "set autocommit=O;", 0)
+	checkInTrans(c, se, "set autocommit=0;", 0)
 	checkInTrans(c, se, "begin", 1)
 	checkInTrans(c, se, "insert t values ()", 1)
 	checkInTrans(c, se, "commit", 0)
@@ -326,7 +327,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	// Check the result is correct
 	se3 := newSession(c, store, s.dbName)
 	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	fmt.Println(rows)
 	matches(c, rows, [][]interface{}{{21}})
 
@@ -359,7 +360,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	mustExecSQL(c, se1, "begin")
 	rs, err := exec(c, se1, "select * from t where c1=11 for update")
 	c.Assert(err, IsNil)
-	_, err = rs.Rows(-1, 0)
+	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
@@ -374,7 +375,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	// not conflict
 	mustExecSQL(c, se1, "begin")
 	rs, err = exec(c, se1, "select * from t where c1=11 for update")
-	_, err = rs.Rows(-1, 0)
+	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=22 where c1=12")
@@ -385,7 +386,7 @@ func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	// not conflict, auto commit
 	mustExecSQL(c, se1, "set @@autocommit=1;")
 	rs, err = exec(c, se1, "select * from t where c1=11 for update")
-	_, err = rs.Rows(-1, 0)
+	_, err = GetRows(rs)
 
 	mustExecSQL(c, se2, "begin")
 	mustExecSQL(c, se2, "update t set c2=211 where c1=11")
@@ -408,39 +409,39 @@ func (s *testSessionSuite) TestRow(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, "select row(1, 1) in (row(1, 1))")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1)
+	match(c, row.Data, 1)
 
 	r = mustExecSQL(c, se, "select row(1, 1) in (row(1, 0))")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 0)
+	match(c, row.Data, 0)
 
 	r = mustExecSQL(c, se, "select row(1, 1) in (select 1, 1)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1)
+	match(c, row.Data, 1)
 
 	r = mustExecSQL(c, se, "select row(1, 1) > row(1, 0)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1)
+	match(c, row.Data, 1)
 
 	r = mustExecSQL(c, se, "select row(1, 1) > (select 1, 0)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1)
+	match(c, row.Data, 1)
 
 	r = mustExecSQL(c, se, "select 1 > (select 1)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 0)
+	match(c, row.Data, 0)
 
 	r = mustExecSQL(c, se, "select (select 1)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1)
+	match(c, row.Data, 1)
 }
 
 func (s *testSessionSuite) TestIndex(c *C) {
@@ -450,7 +451,7 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	mustExecSQL(c, se, "create table if not exists test_index (c1 int, c double, index(c1), index(c))")
 	mustExecSQL(c, se, "insert into test_index values (1, 2), (3, null)")
 	r := mustExecSQL(c, se, "select c1 from test_index where c > 0")
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], 1)
@@ -458,16 +459,19 @@ func (s *testSessionSuite) TestIndex(c *C) {
 	mustExecSQL(c, se, "drop table if exists t1, t2")
 	mustExecSQL(c, se, `
 			create table t1 (c1 int, primary key(c1));
-			create table t2 (c2 int, primary key(c2));
+			create table t2 (c2 int, primary key(c2));`)
+	mustExecSQL(c, se, `
 			insert into t1 values (1), (2);
 			insert into t2 values (2);`)
 
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 order by t1.c1")
-	rows, err = r.Rows(-1, 0)
+	rows, err = GetRows(r)
+	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil}, {2, 2}})
 
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 where t2.c2 < 10")
-	rows, err = r.Rows(-1, 0)
+	rows, err = GetRows(r)
+	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{2, 2}})
 }
 
@@ -476,14 +480,16 @@ func (s *testSessionSuite) TestMySQLTypes(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, `select 0x01 + 1, x'4D7953514C' = "MySQL"`)
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 2, 1)
+	match(c, row.Data, 2, 1)
+	r.Close()
 
 	r = mustExecSQL(c, se, `select 0b01 + 1, 0b01000001 = "A"`)
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 2, 1)
+	match(c, row.Data, 2, 1)
+	r.Close()
 }
 
 func (s *testSessionSuite) TestExpression(c *C) {
@@ -491,14 +497,16 @@ func (s *testSessionSuite) TestExpression(c *C) {
 	se := newSession(c, store, s.dbName)
 
 	r := mustExecSQL(c, se, `select + (1 > 0), -(1 >0), + (1 < 0), - (1 < 0)`)
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1, -1, 0, 0)
+	match(c, row.Data, 1, -1, 0, 0)
+	r.Close()
 
 	r = mustExecSQL(c, se, "select 1 <=> 1, 1 <=> null, null <=> null, null <=> (select null)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1, 0, 1, 1)
+	match(c, row.Data, 1, 0, 1, 1)
+	r.Close()
 
 }
 
@@ -522,38 +530,38 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	c.Assert(err, IsNil)
 
 	r := mustExecSQL(c, se, "select 1, 2 from dual")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1, 2)
+	match(c, row.Data, 1, 2)
 
 	r = mustExecSQL(c, se, "select 1, 2 from dual where not exists (select * from t where c1=2)")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1, 2)
+	match(c, row.Data, 1, 2)
 
 	r = mustExecSQL(c, se, "select 1, 2")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1, 2)
+	match(c, row.Data, 1, 2)
 
 	r = mustExecSQL(c, se, `select '''a''', """a""", 'pingcap ''-->'' tidb'`)
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, `'a'`, `"a"`, `pingcap '-->' tidb`)
+	match(c, row.Data, `'a'`, `"a"`, `pingcap '-->' tidb`)
 
 	r = mustExecSQL(c, se, `select '\'a\'', "\"a\"";`)
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, `'a'`, `"a"`)
+	match(c, row.Data, `'a'`, `"a"`)
 
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (c varchar(20))")
 	mustExecSQL(c, se, `insert t values("pingcap '-->' tidb")`)
 
 	r = mustExecSQL(c, se, `select * from t where c like 'pingcap ''-->'' tidb'`)
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, []byte(`pingcap '-->' tidb`))
+	match(c, row.Data, []byte(`pingcap '-->' tidb`))
 
 	mustExecSQL(c, se, "drop table if exists t1")
 	mustExecSQL(c, se, "drop table if exists t2")
@@ -566,7 +574,7 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	mustExecSQL(c, se, "insert into t3 values (1), (3)")
 
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1, t2.c2, t3.c3")
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 4)
 	match(c, rows[0], 1, 1, 1, 1)
@@ -578,13 +586,13 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	mustExecSQL(c, se, "create table t (c float(8))")
 	mustExecSQL(c, se, "insert into t values (3.12)")
 	r = mustExecSQL(c, se, "select * from t")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 3.12)
+	match(c, row.Data, 3.12)
 
 	mustExecSQL(c, se, `drop table if exists t;create table t (c int);insert into t values (1);`)
 	r = mustExecSQL(c, se, "select a.c from t as a where c between null and 2")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, IsNil)
 
@@ -592,12 +600,13 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	mustExecSQL(c, se, `
 		create table t1 (c1 int);
 		create table t2 (c2 int);
-		create table t3 (c3 int);
+		create table t3 (c3 int);`)
+	mustExecSQL(c, se, `
 		insert into t1 values (1), (2);
 		insert into t2 values (2);
 		insert into t3 values (3);`)
 	r = mustExecSQL(c, se, "select * from t1 left join t2 on t1.c1 = t2.c2 left join t3 on t1.c1 = t3.c3 order by t1.c1")
-	rows, err = r.Rows(-1, 0)
+	rows, err = GetRows(r)
 	c.Assert(err, IsNil)
 	matches(c, rows, [][]interface{}{{1, nil, nil}, {2, 2, nil}})
 
@@ -609,9 +618,9 @@ func (s *testSessionSuite) TestSelect(c *C) {
 	mustExecSQL(c, se, `insert t values('\x01')`)
 
 	r = mustExecSQL(c, se, `select length(b) from t`)
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 3)
+	match(c, row.Data, 3)
 
 	mustExecSQL(c, se, `select * from t1, t2 where t1.c1 is null`)
 }
@@ -626,12 +635,12 @@ func (s *testSessionSuite) TestSubQuery(c *C) {
 	mustExecSQL(c, se, "insert into t2 values (1, 1), (1, 2)")
 
 	r := mustExecSQL(c, se, `select c1 from t1 where c1 = (select c2 from t2 where t1.c2 = t2.c2)`)
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 1)
+	match(c, row.Data, 1)
 
 	r = mustExecSQL(c, se, `select (select count(c1) from t2 where t2.c1 != t1.c2) from t1`)
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 	match(c, rows[0], 0)
@@ -646,50 +655,50 @@ func (s *testSessionSuite) TestShow(c *C) {
 
 	mustExecSQL(c, se, "set global autocommit=1")
 	r := mustExecSQL(c, se, "show global variables where variable_name = 'autocommit'")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "autocommit", 1)
+	match(c, row.Data, "autocommit", "ON")
 
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table if not exists t (c int)")
 	r = mustExecSQL(c, se, `show columns from t`)
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 1)
 	match(c, rows[0], "c", "int(11)", "YES", "", nil, "")
 
 	r = mustExecSQL(c, se, "show collation where Charset = 'utf8' and Collation = 'utf8_bin'")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "utf8_bin", "utf8", 83, "", "Yes", 1)
+	match(c, row.Data, "utf8_bin", "utf8", 83, "", "Yes", 1)
 
 	r = mustExecSQL(c, se, "show tables")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, HasLen, 1)
+	c.Assert(row.Data, HasLen, 1)
 
 	r = mustExecSQL(c, se, "show full tables")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, HasLen, 2)
+	c.Assert(row.Data, HasLen, 2)
 
 	r = mustExecSQL(c, se, "show create table t")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, HasLen, 2)
-	c.Assert(row[0], Equals, "t")
+	c.Assert(row.Data, HasLen, 2)
+	c.Assert(row.Data[0].GetString(), Equals, "t")
 
 	r = mustExecSQL(c, se, "show databases like 'test'")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, HasLen, 1)
-	c.Assert(row[0], Equals, "test")
+	c.Assert(row.Data, HasLen, 1)
+	c.Assert(row.Data[0].GetString(), Equals, "test")
 
 	r = mustExecSQL(c, se, "grant all on *.* to 'root'@'%'")
 	r = mustExecSQL(c, se, "show grants")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, HasLen, 1)
+	c.Assert(row.Data, HasLen, 1)
 }
 
 func (s *testSessionSuite) TestTimeFunc(c *C) {
@@ -698,21 +707,19 @@ func (s *testSessionSuite) TestTimeFunc(c *C) {
 
 	last := time.Now().Format(mysql.TimeFormat)
 	r := mustExecSQL(c, se, "select now(), now(6), current_timestamp, current_timestamp(), current_timestamp(6), sysdate(), sysdate(6)")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	for _, t := range row {
-		n, ok := t.(mysql.Time)
-		c.Assert(ok, IsTrue)
+	for _, t := range row.Data {
+		n := t.GetMysqlTime()
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 
 	last = time.Now().Format(mysql.DateFormat)
 	r = mustExecSQL(c, se, "select current_date, current_date(), curdate()")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	for _, t := range row {
-		n, ok := t.(mysql.Time)
-		c.Assert(ok, IsTrue)
+	for _, t := range row.Data {
+		n := t.GetMysqlTime()
 		c.Assert(n.String(), GreaterEqual, last)
 	}
 }
@@ -727,9 +734,9 @@ func (s *testSessionSuite) TestBit(c *C) {
 	_, err := exec(c, se, "insert into t values (4)")
 	c.Assert(err, NotNil)
 	r := mustExecSQL(c, se, "select * from t where c1 = 2")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row[0], Equals, mysql.Bit{Value: 2, Width: 2})
+	c.Assert(row.Data[0].GetMysqlBit(), Equals, mysql.Bit{Value: 2, Width: 2})
 }
 
 func (s *testSessionSuite) TestBootstrap(c *C) {
@@ -752,9 +759,9 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
-	v, err := r.FirstRow()
+	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
 
 	// Check a storage operations are default autocommit after the second start.
 	mustExecSQL(c, se, "USE test;")
@@ -771,9 +778,9 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE test;")
 	r = mustExecSQL(c, se, "select * from t")
 	c.Assert(r, NotNil)
-	v, err = r.FirstRow()
+	v, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, v, 3)
+	match(c, v.Data, 3)
 	mustExecSQL(c, se, "drop table if exists t")
 	se.Close()
 }
@@ -818,16 +825,16 @@ func (s *testSessionSuite) TestBootstrapWithError(c *C) {
 	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
 	// Check global variables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	v, err := r.FirstRow()
+	v, err := r.Next()
 	c.Assert(err, IsNil)
-	c.Assert(v[0], Equals, int64(len(variable.SysVars)))
+	c.Assert(v.Data[0].GetInt64(), Equals, int64(len(variable.SysVars)))
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	c.Assert(row, NotNil)
 	c.Assert(row.Data, HasLen, 1)
-	c.Assert(row.Data[0], BytesEquals, []byte("True"))
+	c.Assert(row.Data[0].GetBytes(), BytesEquals, []byte("True"))
 }
 
 func (s *testSessionSuite) TestEnum(c *C) {
@@ -838,22 +845,22 @@ func (s *testSessionSuite) TestEnum(c *C) {
 	mustExecSQL(c, se, "create table t (c enum('a', 'b', 'c'))")
 	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c')")
 	r := mustExecSQL(c, se, "select * from t where c = 'a'")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "a")
+	match(c, row.Data, "a")
 
 	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "3")
+	match(c, row.Data, "3")
 
 	mustExecSQL(c, se, "delete from t")
 	mustExecSQL(c, se, "insert into t values ()")
 	mustExecSQL(c, se, "insert into t values (null), ('1')")
 	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "2")
+	match(c, row.Data, "2")
 }
 
 func (s *testSessionSuite) TestSet(c *C) {
@@ -864,27 +871,27 @@ func (s *testSessionSuite) TestSet(c *C) {
 	mustExecSQL(c, se, "create table t (c set('a', 'b', 'c'))")
 	mustExecSQL(c, se, "insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
 	r := mustExecSQL(c, se, "select * from t where c = 'a'")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "a")
+	match(c, row.Data, "a")
 
 	r = mustExecSQL(c, se, "select * from t where c = 'a,b'")
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
 
 	r = mustExecSQL(c, se, "select c + 1 from t where c = 2")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "3")
+	match(c, row.Data, "3")
 
 	mustExecSQL(c, se, "delete from t")
 	mustExecSQL(c, se, "insert into t values ()")
 	mustExecSQL(c, se, "insert into t values (null), ('1')")
 	r = mustExecSQL(c, se, "select c + 1 from t where c = 1")
-	row, err = r.FirstRow()
+	row, err = r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, "2")
+	match(c, row.Data, "2")
 }
 
 func (s *testSessionSuite) TestDatabase(c *C) {
@@ -920,7 +927,7 @@ func (s *testSessionSuite) TestWhereLike(c *C) {
 	mustExecSQL(c, se, "insert into t values ()")
 
 	r := mustExecSQL(c, se, "select c from t where c like '%1%'")
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 6)
 
@@ -940,10 +947,10 @@ func (s *testSessionSuite) TestDefaultFlenBug(c *C) {
 	// The data in the second src will be casted as the type of the first src.
 	// If use flen=0, it will be truncated.
 	r := mustExecSQL(c, se, "select c from t1 union select c from t2;")
-	rows, err := r.Rows(-1, 0)
+	rows, err := GetRows(r)
 	c.Assert(err, IsNil)
 	c.Assert(rows, HasLen, 2)
-	c.Assert(rows[1][0], Equals, float64(930))
+	c.Assert(rows[1][0].GetFloat64(), Equals, float64(930))
 }
 
 func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
@@ -1057,10 +1064,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	c.Assert(rs, NotNil)
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
-	c.Assert(row.Data[0], IsNil)
+	c.Assert(row.Data[0].GetValue(), IsNil)
 	fs, err := rs.Fields()
 	c.Assert(err, IsNil)
-	c.Assert(fs[0].Col.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(fs[0].Column.FieldType.Tp, Equals, mysql.TypeString)
 }
 
 func (s *testSessionSuite) TestIssue461(c *C) {
@@ -1183,7 +1190,7 @@ func (s *testSessionSuite) TestFieldText(c *C) {
 		result := results[0]
 		fields, err := result.Fields()
 		c.Assert(err, IsNil)
-		c.Assert(fields[0].Name, Equals, v.field)
+		c.Assert(fields[0].ColumnAsName.O, Equals, v.field)
 	}
 }
 
@@ -1284,8 +1291,10 @@ func (s *testSessionSuite) TestIssue620(c *C) {
 	mustExecSQL(c, se, "drop table if exists t2")
 	mustExecSQL(c, se, "drop table if exists t3")
 	mustExecSQL(c, se, "create table t1(id int primary key auto_increment, c int);")
-	mustExecSQL(c, se, "create table t2(c int); insert into t2 values (1);")
-	mustExecSQL(c, se, "create table t3(id int, c int); insert into t3 values (2,2);")
+	mustExecSQL(c, se, "create table t2(c int);")
+	mustExecSQL(c, se, "insert into t2 values (1);")
+	mustExecSQL(c, se, "create table t3(id int, c int);")
+	mustExecSQL(c, se, "insert into t3 values (2,2);")
 	mustExecSQL(c, se, "insert into t1(c) select * from t2; insert into t1 select * from t3;")
 	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1, 1}, {2, 2}})
 }
@@ -1312,9 +1321,16 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 
 	se3 := newSession(c, store, s.dbName)
 	r := mustExecSQL(c, se3, "select c2 from t where c1=11")
-	row, err := r.FirstRow()
+	row, err := r.Next()
 	c.Assert(err, IsNil)
-	match(c, row, 21)
+	match(c, row.Data, 21)
+}
+
+func (s *testSessionSuite) TestIssue893(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "drop table if exists t1; create table t1(id int ); insert into t1 values (1);")
+	mustExecMatch(c, se, "select * from t1;", [][]interface{}{{1}})
 }
 
 // Testcase for session
@@ -1467,13 +1483,10 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	stmts, err := Parse(ctx, sql)
 	c.Assert(err, IsNil)
 	stmt := stmts[0]
-	c.Assert(optimizer.IsSupported(stmt), IsTrue)
 	is := sessionctx.GetDomain(ctx).InfoSchema()
 	err = optimizer.Prepare(is, ctx, stmt)
 	c.Assert(err, IsNil)
-	p, err := optimizer.Optimize(ctx, stmt)
+	p, err := optimizer.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is))
 	c.Assert(err, IsNil)
-	planStr, err := plan.Explain(p)
-	c.Assert(err, IsNil)
-	c.Assert(planStr, Equals, explain)
+	c.Assert(plan.ToString(p), Equals, explain)
 }

@@ -18,6 +18,7 @@ import (
 	"reflect"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -25,12 +26,13 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 )
 
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64
+	ReorgHandle int64 // it's only used for DDL information.
 	Owner       *model.Owner
 	Job         *model.Job
 }
@@ -41,7 +43,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	info.Owner, err = t.GetDDLOwner()
+	info.Owner, err = t.GetDDLJobOwner()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -58,6 +60,28 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	}
 
 	info.ReorgHandle, err = t.GetDDLReorgHandle(info.Job)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return info, nil
+}
+
+// GetBgDDLInfo returns background DDL information.
+func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
+	var err error
+	info := &DDLInfo{}
+	t := meta.NewMeta(txn)
+
+	info.Owner, err = t.GetBgJobOwner()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	info.Job, err = t.GetBgJob(0)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	info.SchemaVer, err = t.GetSchemaVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -168,7 +192,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedC
 			return errors.Trace(err)
 		}
 
-		vals2, err := t.RowWithCols(txn, h, cols)
+		vals2, err := rowWithCols(txn, t, h, cols)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			record := &RecordData{Handle: h, Values: vals1}
 			err = errors.Errorf("index:%v != record:%v", record, nil)
@@ -211,7 +235,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 
 		return true, nil
 	}
-	err := t.IterRecords(txn, startKey, cols, filterFunc)
+	err := iterRecords(txn, t, startKey, cols, filterFunc)
 
 	if err != nil {
 		return errors.Trace(err)
@@ -238,7 +262,7 @@ func scanTableData(retriever kv.Retriever, t table.Table, cols []*column.Col, st
 
 		return false, nil
 	}
-	err := t.IterRecords(retriever, startKey, cols, filterFunc)
+	err := iterRecords(retriever, t, startKey, cols, filterFunc)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -312,7 +336,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 
 		return true, nil
 	}
-	err := t.IterRecords(txn, startKey, t.Cols(), filterFunc)
+	err := iterRecords(txn, t, startKey, t.Cols(), filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -355,4 +379,73 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	it.Close()
 
 	return cnt, nil
+}
+
+func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) ([]interface{}, error) {
+	v := make([]interface{}, len(cols))
+	for i, col := range cols {
+		if col.State != model.StatePublic {
+			return nil, errors.Errorf("Cannot use none public column - %v", cols)
+		}
+		if col.IsPKHandleColumn(t.Meta()) {
+			v[i] = h
+			continue
+		}
+
+		k := t.RecordKey(h, col)
+		data, err := txn.Get(k)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		val, err := tables.DecodeValue(data, &col.FieldType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		v[i] = val
+	}
+	return v, nil
+}
+
+func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*column.Col,
+	fn table.RecordIterFunc) error {
+	it, err := retriever.Seek(startKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer it.Close()
+
+	if !it.Valid() {
+		return nil
+	}
+
+	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
+
+	prefix := t.RecordPrefix()
+	for it.Valid() && it.Key().HasPrefix(prefix) {
+		// first kv pair is row lock information.
+		// TODO: check valid lock
+		// get row handle
+		handle, err := tables.DecodeRecordKeyHandle(it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		data, err := rowWithCols(retriever, t, handle, cols)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		more, err := fn(handle, data, cols)
+		if !more || err != nil {
+			return errors.Trace(err)
+		}
+
+		rk := t.RecordKey(handle, nil)
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }

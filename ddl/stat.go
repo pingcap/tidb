@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	ddlServerID          = "ddl_server_id"
+	serverID             = "server_id"
 	ddlSchemaVersion     = "ddl_schema_version"
 	ddlOwnerID           = "ddl_owner_id"
 	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
@@ -36,6 +36,20 @@ var (
 	ddlJobSnapshotVer    = "ddl_job_snapshot_ver"
 	ddlJobReorgHandle    = "ddl_job_reorg_handle"
 	ddlJobArgs           = "ddl_job_args"
+	bgSchemaVersion      = "bg_schema_version"
+	bgOwnerID            = "bg_owner_id"
+	bgOwnerLastUpdateTS  = "bg_owner_last_update_ts"
+	bgJobID              = "bg_job_id"
+	bgJobAction          = "bg_job_action"
+	bgJobLastUpdateTS    = "bg_job_last_update_ts"
+	bgJobState           = "bg_job_state"
+	bgJobError           = "bg_job_error"
+	bgJobSchemaState     = "bg_job_schema_state"
+	bgJobSchemaID        = "bg_job_schema_id"
+	bgJobTableID         = "bg_job_table_id"
+	bgJobSnapshotVer     = "bg_job_snapshot_ver"
+	bgJobReorgHandle     = "bg_job_reorg_handle"
+	bgJobArgs            = "bg_job_args"
 )
 
 // GetScope gets the status variables scope.
@@ -46,10 +60,17 @@ func (d *ddl) GetScope(status string) variable.ScopeFlag {
 
 // Stat returns the DDL statistics.
 func (d *ddl) Stats() (map[string]interface{}, error) {
-	var info *inspectkv.DDLInfo
+	m := make(map[string]interface{})
+	m[serverID] = d.uuid
+	var ddlInfo, bgInfo *inspectkv.DDLInfo
+
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		var err1 error
-		info, err1 = inspectkv.GetDDLInfo(txn)
+		ddlInfo, err1 = inspectkv.GetDDLInfo(txn)
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		bgInfo, err1 = inspectkv.GetBgDDLInfo(txn)
 
 		return errors.Trace(err1)
 	})
@@ -57,29 +78,45 @@ func (d *ddl) Stats() (map[string]interface{}, error) {
 		return nil, errors.Trace(err)
 	}
 
-	m := make(map[string]interface{})
-	m[ddlServerID] = d.uuid
-
-	m[ddlSchemaVersion] = info.SchemaVer
-
-	if info.Owner != nil {
-		m[ddlOwnerID] = info.Owner.OwnerID
+	m[ddlSchemaVersion] = ddlInfo.SchemaVer
+	if ddlInfo.Owner != nil {
+		m[ddlOwnerID] = ddlInfo.Owner.OwnerID
 		// LastUpdateTS uses nanosecond.
-		m[ddlOwnerLastUpdateTS] = info.Owner.LastUpdateTS / 1e9
+		m[ddlOwnerLastUpdateTS] = ddlInfo.Owner.LastUpdateTS / 1e9
+	}
+	if ddlInfo.Job != nil {
+		m[ddlJobID] = ddlInfo.Job.ID
+		m[ddlJobAction] = ddlInfo.Job.Type.String()
+		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
+		m[ddlJobState] = ddlInfo.Job.State.String()
+		m[ddlJobError] = ddlInfo.Job.Error
+		m[ddlJobSchemaState] = ddlInfo.Job.SchemaState.String()
+		m[ddlJobSchemaID] = ddlInfo.Job.SchemaID
+		m[ddlJobTableID] = ddlInfo.Job.TableID
+		m[ddlJobSnapshotVer] = ddlInfo.Job.SnapshotVer
+		m[ddlJobReorgHandle] = ddlInfo.ReorgHandle
+		m[ddlJobArgs] = ddlInfo.Job.Args
 	}
 
-	if info.Job != nil {
-		m[ddlJobID] = info.Job.ID
-		m[ddlJobAction] = info.Job.Type.String()
-		m[ddlJobLastUpdateTS] = info.Job.LastUpdateTS / 1e9
-		m[ddlJobState] = info.Job.State.String()
-		m[ddlJobError] = info.Job.Error
-		m[ddlJobSchemaState] = info.Job.SchemaState.String()
-		m[ddlJobSchemaID] = info.Job.SchemaID
-		m[ddlJobTableID] = info.Job.TableID
-		m[ddlJobSnapshotVer] = info.Job.SnapshotVer
-		m[ddlJobReorgHandle] = info.ReorgHandle
-		m[ddlJobArgs] = info.Job.Args
+	// background DDL info
+	m[bgSchemaVersion] = bgInfo.SchemaVer
+	if bgInfo.Owner != nil {
+		m[bgOwnerID] = bgInfo.Owner.OwnerID
+		// LastUpdateTS uses nanosecond.
+		m[bgOwnerLastUpdateTS] = bgInfo.Owner.LastUpdateTS / 1e9
+	}
+	if bgInfo.Job != nil {
+		m[bgJobID] = bgInfo.Job.ID
+		m[bgJobAction] = bgInfo.Job.Type.String()
+		m[bgJobLastUpdateTS] = bgInfo.Job.LastUpdateTS / 1e9
+		m[bgJobState] = bgInfo.Job.State.String()
+		m[bgJobError] = bgInfo.Job.Error
+		m[bgJobSchemaState] = bgInfo.Job.SchemaState.String()
+		m[bgJobSchemaID] = bgInfo.Job.SchemaID
+		m[bgJobTableID] = bgInfo.Job.TableID
+		m[bgJobSnapshotVer] = bgInfo.Job.SnapshotVer
+		m[bgJobReorgHandle] = bgInfo.ReorgHandle
+		m[bgJobArgs] = bgInfo.Job.Args
 	}
 
 	return m, nil

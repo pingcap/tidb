@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 var _ privilege.Checker = (*UserPrivileges)(nil)
@@ -260,15 +261,15 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 		}
 		for i := userTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
-			ed, ok := d.(mysql.Enum)
-			if !ok {
+			if d.Kind() != types.KindMysqlEnum {
 				return errors.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
 			}
+			ed := d.GetMysqlEnum()
 			if ed.String() != "Y" {
 				continue
 			}
 			f := fs[i]
-			p, ok := mysql.Col2PrivType[f.Name]
+			p, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
 				return errors.New("Unknown Privilege Type!")
 			}
@@ -301,23 +302,19 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 			break
 		}
 		// DB
-		db, ok := row.Data[1].([]byte)
-		if !ok {
-			return errors.New("This should be never happened!")
-		}
-		dbStr := string(db)
+		dbStr := row.Data[1].GetString()
 		ps[dbStr] = &privileges{Level: coldef.GrantLevelDB}
 		for i := dbTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
-			ed, ok := d.(mysql.Enum)
-			if !ok {
+			if d.Kind() != types.KindMysqlEnum {
 				return errors.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
 			}
+			ed := d.GetMysqlEnum()
 			if ed.String() != "Y" {
 				continue
 			}
 			f := fs[i]
-			p, ok := mysql.Col2PrivType[f.Name]
+			p, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
 				return errors.New("Unknown Privilege Type!")
 			}
@@ -346,27 +343,16 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 			break
 		}
 		// DB
-		db, ok := row.Data[1].([]byte)
-		if !ok {
-			return errors.New("This should be never happened!")
-		}
-		dbStr := string(db)
+		dbStr := row.Data[1].GetString()
 		// Table_name
-		tbl, ok := row.Data[3].([]byte)
-		if !ok {
-			return errors.New("This should be never happened!")
-		}
-		tblStr := string(tbl)
-		_, ok = ps[dbStr]
+		tblStr := row.Data[3].GetString()
+		_, ok := ps[dbStr]
 		if !ok {
 			ps[dbStr] = make(map[string]*privileges)
 		}
 		ps[dbStr][tblStr] = &privileges{Level: coldef.GrantLevelTable}
 		// Table_priv
-		tblPrivs, ok := row.Data[6].(mysql.Set)
-		if !ok {
-			errors.New("This should be never happened!")
-		}
+		tblPrivs := row.Data[6].GetMysqlSet()
 		pvs := strings.Split(tblPrivs.Name, ",")
 		for _, d := range pvs {
 			p, ok := mysql.SetStr2Priv[d]

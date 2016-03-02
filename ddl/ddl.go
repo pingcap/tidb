@@ -27,6 +27,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
 )
 
@@ -71,10 +73,12 @@ type ddl struct {
 	hook       Callback
 	store      kv.Storage
 	// schema lease seconds.
-	lease     time.Duration
-	uuid      string
-	jobCh     chan struct{}
-	jobDoneCh chan struct{}
+	lease        time.Duration
+	uuid         string
+	ddlJobCh     chan struct{}
+	ddlJobDoneCh chan struct{}
+	// drop database/table job runs in the background.
+	bgJobCh chan struct{}
 	// reorgDoneCh is for reorganization, if the reorganization job is done,
 	// we will use this channel to notify outer.
 	// TODO: now we use goroutine to simulate reorganization jobs, later we may
@@ -96,13 +100,14 @@ func newDDL(store kv.Storage, infoHandle *infoschema.Handle, hook Callback, leas
 	}
 
 	d := &ddl{
-		infoHandle: infoHandle,
-		hook:       hook,
-		store:      store,
-		lease:      lease,
-		uuid:       uuid.NewV4().String(),
-		jobCh:      make(chan struct{}, 1),
-		jobDoneCh:  make(chan struct{}, 1),
+		infoHandle:   infoHandle,
+		hook:         hook,
+		store:        store,
+		lease:        lease,
+		uuid:         uuid.NewV4().String(),
+		ddlJobCh:     make(chan struct{}, 1),
+		ddlJobDoneCh: make(chan struct{}, 1),
+		bgJobCh:      make(chan struct{}, 1),
 	}
 
 	d.start()
@@ -120,18 +125,35 @@ func (d *ddl) Stop() error {
 
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		owner, err := t.GetDDLOwner()
-		if err != nil || owner == nil {
-			return errors.Trace(err)
+		owner, err1 := t.GetDDLJobOwner()
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
-
-		if owner.OwnerID != d.uuid {
+		if owner == nil || owner.OwnerID != d.uuid {
 			return nil
 		}
 
-		// owner is mine, clean it so other servers can compete for it quickly.
-		return errors.Trace(t.SetDDLOwner(&model.Owner{}))
+		// ddl job's owner is me, clean it so other servers can compete for it quickly.
+		return t.SetDDLJobOwner(&model.Owner{})
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		owner, err1 := t.GetBgJobOwner()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		if owner == nil || owner.OwnerID != d.uuid {
+			return nil
+		}
+
+		// background job's owner is me, clean it so other servers can compete for it quickly.
+		return t.SetBgJobOwner(&model.Owner{})
+	})
+
 	return errors.Trace(err)
 }
 
@@ -150,11 +172,13 @@ func (d *ddl) Start() error {
 
 func (d *ddl) start() {
 	d.quitCh = make(chan struct{})
-	d.wait.Add(1)
-	go d.onWorker()
+	d.wait.Add(2)
+	go d.onBackgroundWorker()
+	go d.onDDLWorker()
 	// for every start, we will send a fake job to let worker
 	// check owner first and try to find whether a job exists and run.
-	asyncNotify(d.jobCh)
+	asyncNotify(d.ddlJobCh)
+	asyncNotify(d.bgJobCh)
 }
 
 func (d *ddl) close() {
@@ -247,7 +271,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 		Args:     []interface{}{dbInfo},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -264,7 +288,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		Type:     model.ActionDropSchema,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -323,11 +347,12 @@ func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *coldef.TableC
 	}
 }
 
-func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraints []*coldef.TableConstraint) ([]*column.Col, []*coldef.TableConstraint, error) {
+func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*coldef.ColumnDef,
+	constraints []*coldef.TableConstraint) ([]*column.Col, []*coldef.TableConstraint, error) {
 	var cols []*column.Col
 	colMap := map[string]*column.Col{}
 	for i, colDef := range colDefs {
-		col, cts, err := d.buildColumnAndConstraint(i, colDef)
+		col, cts, err := d.buildColumnAndConstraint(ctx, i, colDef)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -343,7 +368,8 @@ func (d *ddl) buildColumnsAndConstraints(colDefs []*coldef.ColumnDef, constraint
 	return cols, constraints, nil
 }
 
-func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
+func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
+	colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
 	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
@@ -355,7 +381,7 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 		}
 	}
 
-	col, cts, err := coldef.ColumnDefToCol(offset, colDef)
+	col, cts, err := columnDefToCol(ctx, offset, colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -366,6 +392,192 @@ func (d *ddl) buildColumnAndConstraint(offset int, colDef *coldef.ColumnDef) (*c
 	}
 
 	return col, cts, nil
+}
+
+// columnDefToCol converts ColumnDef to Col and TableConstraints.
+func columnDefToCol(ctx context.Context, offset int, colDef *coldef.ColumnDef) (*column.Col, []*coldef.TableConstraint, error) {
+	constraints := []*coldef.TableConstraint{}
+	col := &column.Col{
+		ColumnInfo: model.ColumnInfo{
+			Offset:    offset,
+			Name:      model.NewCIStr(colDef.Name),
+			FieldType: *colDef.Tp,
+		},
+	}
+
+	// Check and set TimestampFlag and OnUpdateNowFlag.
+	if col.Tp == mysql.TypeTimestamp {
+		col.Flag |= mysql.TimestampFlag
+		col.Flag |= mysql.OnUpdateNowFlag
+		col.Flag |= mysql.NotNullFlag
+	}
+
+	// If flen is not assigned, assigned it by type.
+	if col.Flen == types.UnspecifiedLength {
+		col.Flen = mysql.GetDefaultFieldLength(col.Tp)
+	}
+	if col.Decimal == types.UnspecifiedLength {
+		col.Decimal = mysql.GetDefaultDecimal(col.Tp)
+	}
+
+	setOnUpdateNow := false
+	hasDefaultValue := false
+	if colDef.Constraints != nil {
+		keys := []*coldef.IndexColName{
+			{
+				colDef.Name,
+				colDef.Tp.Flen,
+			},
+		}
+		for _, v := range colDef.Constraints {
+			switch v.Tp {
+			case coldef.ConstrNotNull:
+				col.Flag |= mysql.NotNullFlag
+			case coldef.ConstrNull:
+				col.Flag &= ^uint(mysql.NotNullFlag)
+				removeOnUpdateNowFlag(col)
+			case coldef.ConstrAutoIncrement:
+				col.Flag |= mysql.AutoIncrementFlag
+			case coldef.ConstrPrimaryKey:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrPrimaryKey, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.PriKeyFlag
+			case coldef.ConstrUniq:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrUniq, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.UniqueKeyFlag
+			case coldef.ConstrIndex:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrIndex, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+			case coldef.ConstrUniqIndex:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrUniqIndex, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.UniqueKeyFlag
+			case coldef.ConstrKey:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrKey, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+			case coldef.ConstrUniqKey:
+				constraint := &coldef.TableConstraint{Tp: coldef.ConstrUniqKey, ConstrName: colDef.Name, Keys: keys}
+				constraints = append(constraints, constraint)
+				col.Flag |= mysql.UniqueKeyFlag
+			case coldef.ConstrDefaultValue:
+				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				if err != nil {
+					return nil, nil, errors.Errorf("invalid default value - %s", errors.Trace(err))
+				}
+				col.DefaultValue = value
+				hasDefaultValue = true
+				removeOnUpdateNowFlag(col)
+			case coldef.ConstrOnUpdate:
+				if !evaluator.IsCurrentTimeExpr(v.Evalue) {
+					return nil, nil, errors.Errorf("invalid ON UPDATE for - %s", col.Name)
+				}
+
+				col.Flag |= mysql.OnUpdateNowFlag
+				setOnUpdateNow = true
+			case coldef.ConstrFulltext:
+			// Do nothing.
+			case coldef.ConstrComment:
+				// Do nothing.
+			}
+		}
+	}
+
+	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+
+	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
+	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	setNoDefaultValueFlag(col, hasDefaultValue)
+
+	err := checkDefaultValue(col, hasDefaultValue)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if col.Charset == charset.CharsetBin {
+		col.Flag |= mysql.BinaryFlag
+	}
+	return col, constraints, nil
+}
+
+func getDefaultValue(ctx context.Context, c *coldef.ConstraintOpt, tp byte, fsp int) (interface{}, error) {
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		value, err := evaluator.GetTimeValue(ctx, c.Evalue, tp, fsp)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// Value is nil means `default null`.
+		if value == nil {
+			return nil, nil
+		}
+
+		// If value is mysql.Time, convert it to string.
+		if vv, ok := value.(mysql.Time); ok {
+			return vv.String(), nil
+		}
+
+		return value, nil
+	}
+	v, err := evaluator.Eval(ctx, c.Evalue)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+func removeOnUpdateNowFlag(c *column.Col) {
+	// For timestamp Col, if it is set null or default value,
+	// OnUpdateNowFlag should be removed.
+	if mysql.HasTimestampFlag(c.Flag) {
+		c.Flag &= ^uint(mysql.OnUpdateNowFlag)
+	}
+}
+
+func setTimestampDefaultValue(c *column.Col, hasDefaultValue bool, setOnUpdateNow bool) {
+	if hasDefaultValue {
+		return
+	}
+
+	// For timestamp Col, if is not set default value or not set null, use current timestamp.
+	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
+		if setOnUpdateNow {
+			c.DefaultValue = evaluator.ZeroTimestamp
+		} else {
+			c.DefaultValue = evaluator.CurrentTimestamp
+		}
+	}
+}
+
+func setNoDefaultValueFlag(c *column.Col, hasDefaultValue bool) {
+	if hasDefaultValue {
+		return
+	}
+
+	if !mysql.HasNotNullFlag(c.Flag) {
+		return
+	}
+
+	// Check if it is an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	if !mysql.HasAutoIncrementFlag(c.Flag) && !mysql.HasTimestampFlag(c.Flag) {
+		c.Flag |= mysql.NoDefaultValueFlag
+	}
+}
+
+func checkDefaultValue(c *column.Col, hasDefaultValue bool) error {
+	if !hasDefaultValue {
+		return nil
+	}
+
+	if c.DefaultValue != nil {
+		return nil
+	}
+
+	// Set not null but default null is invalid.
+	if mysql.HasNotNullFlag(c.Flag) {
+		return errors.Errorf("invalid default value for %s", c.Name)
+	}
+
+	return nil
 }
 
 func checkDuplicateColumn(colDefs []*coldef.ColumnDef) error {
@@ -489,7 +701,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 		return errors.Trace(err)
 	}
 
-	cols, newConstraints, err := d.buildColumnsAndConstraints(colDefs, constraints)
+	cols, newConstraints, err := d.buildColumnsAndConstraints(ctx, colDefs, constraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -511,7 +723,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident table.Ident, colDefs []*col
 		Args:     []interface{}{tbInfo},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -592,7 +804,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 	// ingore table constraints now, maybe return error later
 	// we use length(t.Cols()) as the default offset first, later we will change the
 	// column's offset later.
-	col, _, err = d.buildColumnAndConstraint(len(t.Cols()), spec.Column)
+	col, _, err = d.buildColumnAndConstraint(ctx, len(t.Cols()), spec.Column)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -604,7 +816,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti table.Ident, spec *AlterSpecific
 		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -635,7 +847,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti table.Ident, colName model.CISt
 		Args:     []interface{}{colName},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -659,7 +871,7 @@ func (d *ddl) DropTable(ctx context.Context, ti table.Ident) (err error) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -687,7 +899,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti table.Ident, unique bool, inde
 		Args:     []interface{}{unique, indexName, indexID, idxColNames},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -711,7 +923,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti table.Ident, indexName model.CIS
 		Args:     []interface{}{indexName},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }

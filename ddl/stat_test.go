@@ -26,7 +26,7 @@ var _ = Suite(&testStatSuite{})
 type testStatSuite struct {
 }
 
-func (s *testStatSuite) getSchemaVer(c *C, d *ddl) int64 {
+func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 	m, err := d.Stats()
 	c.Assert(err, IsNil)
 	v := m[ddlSchemaVersion]
@@ -45,6 +45,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	time.Sleep(lease)
 
 	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, mock.NewContext(), d, dbInfo)
 
 	m, err := d.Stats()
 	c.Assert(err, IsNil)
@@ -52,29 +53,32 @@ func (s *testStatSuite) TestStat(c *C) {
 
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
-		Type:     model.ActionCreateSchema,
+		Type:     model.ActionDropSchema,
 		Args:     []interface{}{dbInfo.Name},
 	}
 
 	ctx := mock.NewContext()
 	done := make(chan error, 1)
 	go func() {
-		done <- d.startJob(ctx, job)
+		done <- d.startDDLJob(ctx, job)
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
 
-	ver := s.getSchemaVer(c, d)
+	ver := s.getDDLSchemaVer(c, d)
 LOOP:
 	for {
 		select {
 		case <-ticker.C:
 			d.close()
-			c.Assert(s.getSchemaVer(c, d), GreaterEqual, ver)
+			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.start()
 		case err := <-done:
 			c.Assert(err, IsNil)
+			m, err := d.Stats()
+			c.Assert(err, IsNil)
+			c.Assert(m[bgOwnerID], Equals, d.uuid)
 			break LOOP
 		}
 	}

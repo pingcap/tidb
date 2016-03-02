@@ -175,27 +175,25 @@ func (s *testSuite) TestDDL(c *C) {
 	t := meta.NewMeta(txn)
 
 	owner := &model.Owner{OwnerID: "1"}
-	err = t.SetDDLOwner(owner)
+	err = t.SetDDLJobOwner(owner)
 	c.Assert(err, IsNil)
-	ov, err := t.GetDDLOwner()
+	ov, err := t.GetDDLJobOwner()
 	c.Assert(err, IsNil)
 	c.Assert(owner, DeepEquals, ov)
 
 	job := &model.Job{ID: 1}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
-	n, err := t.DDLJobLength()
+	n, err := t.DDLJobQueueLen()
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
 	v, err := t.GetDDLJob(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
-
 	v, err = t.GetDDLJob(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
-
 	job.ID = 2
 	err = t.UpdateDDLJob(0, job)
 	c.Assert(err, IsNil)
@@ -216,10 +214,43 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = t.AddHistoryDDLJob(job)
 	c.Assert(err, IsNil)
-
 	v, err = t.GetHistoryDDLJob(2)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
+
+	// DDL background job test
+	err = t.SetBgJobOwner(owner)
+	c.Assert(err, IsNil)
+	ov, err = t.GetBgJobOwner()
+	c.Assert(err, IsNil)
+	c.Assert(owner, DeepEquals, ov)
+
+	bgJob := &model.Job{ID: 1}
+	err = t.EnQueueBgJob(bgJob)
+	c.Assert(err, IsNil)
+	n, err = t.BgJobQueueLen()
+	c.Assert(err, IsNil)
+	c.Assert(n, Equals, int64(1))
+
+	v, err = t.GetBgJob(0)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, bgJob)
+	v, err = t.GetBgJob(1)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
+	bgJob.ID = 2
+	err = t.UpdateBgJob(0, bgJob)
+	c.Assert(err, IsNil)
+
+	v, err = t.DeQueueBgJob()
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, bgJob)
+
+	err = t.AddHistoryBgJob(bgJob)
+	c.Assert(err, IsNil)
+	v, err = t.GetHistoryBgJob(2)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, bgJob)
 
 	err = txn.Commit()
 	c.Assert(err, IsNil)

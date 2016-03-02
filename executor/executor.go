@@ -20,18 +20,18 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/forupdate"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -70,7 +70,7 @@ const (
 // Row represents a record row.
 type Row struct {
 	// Data is the output record data for current Plan.
-	Data []interface{}
+	Data []types.Datum
 
 	RowKeys []*RowKeyEntry
 }
@@ -81,7 +81,7 @@ type RowKeyEntry struct {
 	// The table which this row come from.
 	Tbl table.Table
 	// Row key.
-	Key string
+	Handle int64
 }
 
 // Executor executes a query.
@@ -114,26 +114,42 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	info, err := inspectkv.GetDDLInfo(txn)
+	ddlInfo, err := inspectkv.GetDDLInfo(txn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bgInfo, err := inspectkv.GetBgDDLInfo(txn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	rowData := []interface{}{
-		info.SchemaVer,
-		"",
-		"",
+	var ddlOwner, ddlJob string
+	if ddlInfo.Owner != nil {
+		ddlOwner = ddlInfo.Owner.String()
 	}
-	if info.Owner != nil {
-		rowData[1] = info.Owner.String()
+	if ddlInfo.Job != nil {
+		ddlJob = ddlInfo.Job.String()
 	}
-	if info.Job != nil {
-		rowData[2] = info.Job.String()
+
+	var bgOwner, bgJob string
+	if bgInfo.Owner != nil {
+		bgOwner = bgInfo.Owner.String()
 	}
+	if bgInfo.Job != nil {
+		bgJob = bgInfo.Job.String()
+	}
+
 	row := &Row{}
-	row.Data = rowData
+	row.Data = []types.Datum{
+		types.NewDatum(ddlInfo.SchemaVer),
+		types.NewDatum(ddlOwner),
+		types.NewDatum(ddlJob),
+		types.NewDatum(bgInfo.SchemaVer),
+		types.NewDatum(bgOwner),
+		types.NewDatum(bgJob),
+	}
 	for i, f := range e.fields {
-		f.Expr.SetValue(rowData[i])
+		f.Expr.SetValue(row.Data[i].GetValue())
 	}
 	e.done = true
 
@@ -165,10 +181,6 @@ func (e *CheckTableExec) Next() (*Row, error) {
 
 	dbName := model.NewCIStr(db.GetCurrentSchema(e.ctx))
 	is := sessionctx.GetDomain(e.ctx).InfoSchema()
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 
 	for _, t := range e.tables {
 		tb, err := is.TableByName(dbName, t.Name)
@@ -176,6 +188,10 @@ func (e *CheckTableExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
+			txn, err := e.ctx.GetTxn(false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			err = inspectkv.CompareIndexData(txn, tb, idx)
 			if err != nil {
 				return nil, errors.Errorf("%v err:%v", t.Name, err)
@@ -222,13 +238,12 @@ func (e *TableScanExec) Next() (*Row, error) {
 			e.cursor++
 			continue
 		}
-		rowKey, err := e.seek()
-		if err != nil || rowKey == nil {
-			return nil, errors.Trace(err)
-		}
-		handle, err := tables.DecodeRecordKeyHandle(rowKey)
+		handle, found, err := e.t.Seek(e.ctx, e.seekHandle)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if !found {
+			return nil, nil
 		}
 		if handle > ran.HighVal {
 			// The handle is out of the current range, but may be in following ranges.
@@ -241,34 +256,13 @@ func (e *TableScanExec) Next() (*Row, error) {
 				continue
 			}
 		}
-		row, err := e.getRow(handle, rowKey)
+		row, err := e.getRow(handle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.seekHandle = handle + 1
 		return row, nil
 	}
-}
-
-func (e *TableScanExec) seek() (kv.Key, error) {
-	seekKey := tables.EncodeRecordKey(e.t.TableID(), e.seekHandle, 0)
-	txn, err := e.ctx.GetTxn(false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if e.iter != nil {
-		e.iter.Close()
-	}
-	e.iter, err = txn.Seek(seekKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if !e.iter.Valid() || !e.iter.Key().HasPrefix(e.t.RecordPrefix()) {
-		// No more records in the table, skip to the end.
-		e.cursor = len(e.ranges)
-		return nil, nil
-	}
-	return e.iter.Key(), nil
 }
 
 // seekRange increments the range cursor to the range
@@ -290,22 +284,22 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 	}
 }
 
-func (e *TableScanExec) getRow(handle int64, rowKey kv.Key) (*Row, error) {
+func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
-	var err error
-	row.Data, err = e.t.Row(e.ctx, handle)
+	data, err := e.t.Row(e.ctx, handle)
+	row.Data = types.InterfacesToDatums(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set result fields value.
 	for i, v := range e.fields {
-		v.Expr.SetValue(row.Data[i])
+		v.Expr.SetValue(row.Data[i].GetValue())
 	}
 
 	// Put rowKey to the tail of record row
 	rke := &RowKeyEntry{
-		Tbl: e.t,
-		Key: string(rowKey),
+		Tbl:    e.t,
+		Handle: handle,
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
@@ -455,14 +449,14 @@ func indexColumnCompare(a interface{}, b interface{}) (int, error) {
 
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
-	var err error
-	row.Data, err = e.scan.tbl.Row(e.scan.ctx, h)
+	data, err := e.scan.tbl.Row(e.scan.ctx, h)
+	row.Data = types.InterfacesToDatums(data)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	rowKey := &RowKeyEntry{
-		Tbl: e.scan.tbl,
-		Key: string(e.scan.tbl.RecordKey(h, nil)),
+		Tbl:    e.scan.tbl,
+		Handle: h,
 	}
 	row.RowKeys = append(row.RowKeys, rowKey)
 	return row, nil
@@ -506,7 +500,7 @@ func (e *IndexScanExec) Next() (*Row, error) {
 		}
 		if row != nil {
 			for i, val := range row.Data {
-				e.fields[i].Expr.SetValue(val)
+				e.fields[i].Expr.SetValue(val.GetValue())
 			}
 			return row, nil
 		}
@@ -523,6 +517,177 @@ func (e *IndexScanExec) Close() error {
 		e.rangeIdx++
 	}
 	return nil
+}
+
+// JoinOuterExec represents an outer join executor.
+type JoinOuterExec struct {
+	OuterExec Executor
+	InnerPlan plan.Plan
+	innerExec Executor
+	fields    []*ast.ResultField
+	builder   *executorBuilder
+	gotRow    bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *JoinOuterExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+// The data in the returned row is not used by caller.
+// If inner executor didn't get any row for an outer executor row,
+// a row with 0 len Data indicates there is no inner row matched for
+// an outer row.
+func (e *JoinOuterExec) Next() (*Row, error) {
+	var rowKeys []*RowKeyEntry
+	for {
+		if e.innerExec == nil {
+			e.gotRow = false
+			outerRow, err := e.OuterExec.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if outerRow == nil {
+				return nil, nil
+			}
+			rowKeys = outerRow.RowKeys
+			plan.Refine(e.InnerPlan)
+			e.innerExec = e.builder.build(e.InnerPlan)
+			if e.builder.err != nil {
+				return nil, errors.Trace(e.builder.err)
+			}
+		}
+		row, err := e.innerExec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.innerExec.Close()
+			e.innerExec = nil
+			if e.gotRow {
+				continue
+			}
+			e.setInnerNull()
+			return &Row{RowKeys: rowKeys}, nil
+		}
+		if len(row.Data) != 0 {
+			e.gotRow = true
+			row.RowKeys = append(rowKeys, row.RowKeys...)
+			return row, nil
+		}
+	}
+}
+
+func (e *JoinOuterExec) setInnerNull() {
+	for _, rf := range e.InnerPlan.Fields() {
+		rf.Expr.SetValue(nil)
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *JoinOuterExec) Close() error {
+	err := e.OuterExec.Close()
+	if e.innerExec != nil {
+		return errors.Trace(e.innerExec.Close())
+	}
+	return errors.Trace(err)
+}
+
+// JoinInnerExec represents an inner join executor.
+type JoinInnerExec struct {
+	InnerPlans []plan.Plan
+	innerExecs []Executor
+	Condition  ast.ExprNode
+	ctx        context.Context
+	fields     []*ast.ResultField
+	builder    *executorBuilder
+	done       bool
+	cursor     int
+}
+
+// Fields implements Executor Fields interface.
+func (e *JoinInnerExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+// The data in the returned row is not used by caller.
+func (e *JoinInnerExec) Next() (*Row, error) {
+	if e.done {
+		return nil, nil
+	}
+	rowKeysSlice := make([][]*RowKeyEntry, len(e.InnerPlans))
+	for {
+		exec := e.innerExecs[e.cursor]
+		if exec == nil {
+			innerPlan := e.InnerPlans[e.cursor]
+			plan.Refine(innerPlan)
+			exec = e.builder.build(innerPlan)
+			if e.builder.err != nil {
+				return nil, errors.Trace(e.builder.err)
+			}
+			e.innerExecs[e.cursor] = exec
+		}
+		row, err := exec.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			exec.Close()
+			e.innerExecs[e.cursor] = nil
+			if e.cursor == 0 {
+				e.done = true
+				return nil, nil
+			}
+			e.cursor--
+			continue
+		}
+		rowKeysSlice[e.cursor] = row.RowKeys
+		if e.cursor < len(e.innerExecs)-1 {
+			e.cursor++
+			continue
+		}
+		var match = true
+		if e.Condition != nil {
+			match, err = evaluator.EvalBool(e.ctx, e.Condition)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		if match {
+			row.RowKeys = joinRowKeys(rowKeysSlice)
+			return row, nil
+		}
+	}
+}
+
+func joinRowKeys(rowKeysSlice [][]*RowKeyEntry) []*RowKeyEntry {
+	count := 0
+	for _, rowKeys := range rowKeysSlice {
+		count += len(rowKeys)
+	}
+	joined := make([]*RowKeyEntry, count)
+	offset := 0
+	for _, rowKeys := range rowKeysSlice {
+		copy(joined[offset:], rowKeys)
+		offset += len(rowKeys)
+	}
+	return joined
+}
+
+// Close implements Executor Close interface.
+func (e *JoinInnerExec) Close() error {
+	var err error
+	for _, inExec := range e.innerExecs {
+		if inExec != nil {
+			e := inExec.Close()
+			if e != nil {
+				err = errors.Trace(e)
+			}
+		}
+	}
+	return err
 }
 
 // SelectFieldsExec represents a select fields executor.
@@ -559,14 +724,14 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 	e.executed = true
 	row := &Row{
 		RowKeys: rowKeys,
-		Data:    make([]interface{}, len(e.ResultFields)),
+		Data:    make([]types.Datum, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
 		val, err := evaluator.Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data[i] = val
+		row.Data[i] = types.NewDatum(val)
 	}
 	return row, nil
 }
@@ -639,12 +804,8 @@ func (e *SelectLockExec) Next() (*Row, error) {
 	}
 	if len(row.RowKeys) != 0 && e.Lock == ast.SelectLockForUpdate {
 		forupdate.SetForUpdate(e.ctx)
-		txn, err := e.ctx.GetTxn(false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		for _, k := range row.RowKeys {
-			err = txn.LockKeys([]byte(k.Key))
+			err = k.Tbl.LockRow(e.ctx, k.Handle, true)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -923,8 +1084,109 @@ func (e *AggregateExec) innerNext() (bool, error) {
 
 // Close implements Executor Close interface.
 func (e *AggregateExec) Close() error {
+	for _, af := range e.AggFuncs {
+		af.Clear()
+	}
 	if e.Src != nil {
 		return e.Src.Close()
 	}
 	return nil
+}
+
+// UnionExec represents union executor.
+type UnionExec struct {
+	fields []*ast.ResultField
+	Sels   []Executor
+	cursor int
+}
+
+// Fields implements Executor Fields interface.
+func (e *UnionExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+func (e *UnionExec) Next() (*Row, error) {
+	for {
+		if e.cursor >= len(e.Sels) {
+			return nil, nil
+		}
+		sel := e.Sels[e.cursor]
+		row, err := sel.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			e.cursor++
+			continue
+		}
+		if e.cursor != 0 {
+			for i := range row.Data {
+				// The column value should be casted as the same type of the first select statement in corresponding position
+				rf := e.fields[i]
+				val := row.Data[i].GetValue()
+				val, err = types.Convert(val, &rf.Column.FieldType)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row.Data[i].SetValue(val)
+			}
+		}
+		for i, v := range row.Data {
+			e.fields[i].Expr.SetValue(v.GetValue())
+		}
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *UnionExec) Close() error {
+	var err error
+	for _, sel := range e.Sels {
+		er := sel.Close()
+		if er != nil {
+			err = errors.Trace(er)
+		}
+	}
+	return err
+}
+
+// DistinctExec represents Distinct executor.
+type DistinctExec struct {
+	Src     Executor
+	checker *distinct.Checker
+}
+
+// Fields implements Executor Fields interface.
+func (e *DistinctExec) Fields() []*ast.ResultField {
+	return e.Src.Fields()
+}
+
+// Next implements Executor Next interface.
+func (e *DistinctExec) Next() (*Row, error) {
+	if e.checker == nil {
+		e.checker = distinct.CreateDistinctChecker()
+	}
+	for {
+		row, err := e.Src.Next()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row == nil {
+			return nil, nil
+		}
+		ok, err := e.checker.Check(types.DatumsToInterfaces(row.Data))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ok {
+			continue
+		}
+		return row, nil
+	}
+}
+
+// Close implements Executor Close interface.
+func (e *DistinctExec) Close() error {
+	return e.Src.Close()
 }

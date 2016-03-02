@@ -14,8 +14,8 @@
 package sqlexec
 
 import (
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/rset"
 )
 
 // RestrictedSQLExecutorKeyType is a dummy type to avoid naming collision in session.
@@ -40,5 +40,5 @@ func (k *RestrictedSQLExecutorKeyType) String() string {
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
-	ExecRestrictedSQL(ctx context.Context, sql string) (rset.Recordset, error)
+	ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error)
 }
