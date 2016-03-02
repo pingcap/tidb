@@ -129,7 +129,7 @@ func (d *ddl) Stop() error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		if owner == nil && owner.OwnerID != d.uuid {
+		if owner == nil || owner.OwnerID != d.uuid {
 			return nil
 		}
 
