@@ -22,16 +22,8 @@ import (
 )
 
 const (
-	// ExprEvalFn is the key saving Call expression.
-	ExprEvalFn = "$fn"
 	// ExprEvalArgCtx is the key saving Context for a Call expression.
 	ExprEvalArgCtx = "$ctx"
-	// ExprAggDone is the key indicating that aggregate function is done.
-	ExprAggDone = "$aggDone"
-	// ExprEvalArgAggEmpty is the key to evaluate the aggregate function for empty table.
-	ExprEvalArgAggEmpty = "$agg0"
-	// ExprAggDistinct is the key saving a distinct aggregate.
-	ExprAggDistinct = "$aggDistinct"
 )
 
 // Func is for a builtin function.
@@ -58,14 +50,6 @@ var Funcs = map[string]Func{
 	"pow":   {builtinPow, 2, 2, true, false},
 	"power": {builtinPow, 2, 2, true, false},
 	"rand":  {builtinRand, 0, 1, true, false},
-
-	// group by functions
-	"avg":          {builtinAvg, 1, 1, false, true},
-	"count":        {builtinCount, 1, 1, false, true},
-	"group_concat": {builtinGroupConcat, 1, -1, false, true},
-	"max":          {builtinMax, 1, 1, false, true},
-	"min":          {builtinMin, 1, 1, false, true},
-	"sum":          {builtinSum, 1, 1, false, true},
 
 	// time functions
 	"curdate":           {builtinCurrentDate, 0, 0, false, false},
