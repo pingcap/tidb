@@ -62,7 +62,7 @@ func (dn *dmlNode) dmlStatement() {}
 // Expression implementations should embed it in.
 type exprNode struct {
 	node
-	Datum
+	types.Datum
 	Type *types.FieldType
 	flag uint64
 }
