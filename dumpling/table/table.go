@@ -23,11 +23,11 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/optimizer/evaluator"
 	"github.com/pingcap/tidb/sessionctx/db"
 )
 
