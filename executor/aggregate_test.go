@@ -16,7 +16,7 @@ package executor
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/optimizer/evaluator"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/util/mock"
 )
 

@@ -16,7 +16,7 @@ package optimizer
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/optimizer/evaluator"
+	"github.com/pingcap/tidb/evaluator"
 )
 
 // logicOptimize does logic optimization works on AST.
