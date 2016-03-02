@@ -1013,12 +1013,12 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 	}
 	ctx := mock.NewContext()
 	expr := &ast.UnaryOperationExpr{}
-	for _, t := range tbl {
+	for i, t := range tbl {
 		expr.Op = t.op
 		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
 		c.Assert(err, IsNil)
-		c.Assert(result, DeepEquals, t.result)
+		c.Assert(result, DeepEquals, t.result, Commentf("%d", i))
 	}
 
 	tbl = []struct {

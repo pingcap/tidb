@@ -28,77 +28,64 @@ type testBuiltinInfoSuite struct {
 
 func (s *testBuiltinSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
-	m := map[interface{}]interface{}{}
-	v, err := builtinDatabase(nil, m)
-	c.Assert(err, NotNil)
-
-	m[ExprEvalArgCtx] = ctx
-	v, err = builtinDatabase(nil, m)
+	v, err := builtinDatabase(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
 	db.BindCurrentSchema(ctx, "test")
-	v, err = builtinDatabase(nil, m)
+	v, err = builtinDatabase(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "test")
 }
 
 func (s *testBuiltinSuite) TestFoundRows(c *C) {
 	ctx := mock.NewContext()
-	m := map[interface{}]interface{}{}
-	v, err := builtinFoundRows(nil, m)
+	v, err := builtinFoundRows(nil, ctx)
 	c.Assert(err, NotNil)
 
 	variable.BindSessionVars(ctx)
 
-	m[ExprEvalArgCtx] = ctx
-	v, err = builtinFoundRows(nil, m)
+	v, err = builtinFoundRows(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(0))
 }
 
 func (s *testBuiltinSuite) TestUser(c *C) {
 	ctx := mock.NewContext()
-	m := map[interface{}]interface{}{}
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
 	sessionVars.User = "root@localhost"
 
-	m[ExprEvalArgCtx] = ctx
-	v, err := builtinUser(nil, m)
+	v, err := builtinUser(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "root@localhost")
 }
 
 func (s *testBuiltinSuite) TestCurrentUser(c *C) {
 	ctx := mock.NewContext()
-	m := map[interface{}]interface{}{}
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
 	sessionVars.User = "root@localhost"
 
-	m[ExprEvalArgCtx] = ctx
-	v, err := builtinCurrentUser(nil, m)
+	v, err := builtinCurrentUser(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "root@localhost")
 }
 
 func (s *testBuiltinSuite) TestConnectionID(c *C) {
 	ctx := mock.NewContext()
-	m := map[interface{}]interface{}{}
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
 	sessionVars.ConnectionID = uint64(1)
 
-	m[ExprEvalArgCtx] = ctx
-	v, err := builtinConnectionID(nil, m)
+	v, err := builtinConnectionID(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, uint64(1))
 }
 
 func (s *testBuiltinSuite) TestVersion(c *C) {
-	m := map[interface{}]interface{}{}
-	v, err := builtinVersion(nil, m)
+	ctx := mock.NewContext()
+	v, err := builtinVersion(nil, ctx)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, mysql.ServerVersion)
 }
