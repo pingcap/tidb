@@ -36,6 +36,12 @@ var (
 	_ Node = &VariableAssignment{}
 )
 
+// TypeOpt is used for parsing data type option from SQL.
+type TypeOpt struct {
+	IsUnsigned bool
+	IsZerofill bool
+}
+
 // FloatOpt is used for parsing floating-point type option from SQL.
 // See: http://dev.mysql.com/doc/refman/5.7/en/floating-point-types.html
 type FloatOpt struct {

@@ -28,7 +28,7 @@ import (
 // see https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
 
 func builtinAbs(args []interface{}, ctx map[interface{}]interface{}) (v interface{}, err error) {
-	d := types.RawData(args[0])
+	d := args[0]
 	switch x := d.(type) {
 	case nil:
 		return nil, nil

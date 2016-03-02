@@ -57,8 +57,11 @@ type ValueExpr struct {
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
 func NewValueExpr(value interface{}) *ValueExpr {
+	if ve, ok := value.(*ValueExpr); ok {
+		return ve
+	}
 	ve := &ValueExpr{}
-	ve.Data = types.RawData(value)
+	ve.SetValue(value)
 	if _, ok := value.(UnquoteString); ok {
 		ve.Type = types.NewFieldType(mysql.TypeVarchar)
 		ve.Type.Charset = mysql.DefaultCharset

@@ -29,10 +29,10 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/coldef"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 )
@@ -403,7 +403,7 @@ func (r *driverResult) RowsAffected() (int64, error) {
 
 // driverRows is an iterator over an executed query's results.
 type driverRows struct {
-	rs     rset.Recordset
+	rs     ast.RecordSet
 	params *driverParams
 }
 
@@ -417,7 +417,7 @@ func (r *driverRows) Columns() []string {
 	fs, _ := r.rs.Fields()
 	names := make([]string, len(fs))
 	for i, f := range fs {
-		names[i] = f.Name
+		names[i] = f.ColumnAsName.O
 	}
 	return names
 }
