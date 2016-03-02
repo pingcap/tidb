@@ -76,7 +76,4 @@ func (s *testBuiltinSuite) TestNullIf(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, DeepEquals, t.Ret)
 	}
-
-	_, err := builtinNullIf([]interface{}{errors.New("must error"), 1}, nil)
-	c.Assert(err, NotNil)
 }
