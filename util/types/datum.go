@@ -43,7 +43,7 @@ const (
 )
 
 // Datum is a data box holds different kind of data.
-// It has better performance and easier to use than `interface{}`.
+// It has better performance and is easier to use than `interface{}`.
 type Datum struct {
 	k int         // datum kind.
 	i int64       // i can hold int64 uint64 float64 values.
@@ -503,7 +503,7 @@ func (d *Datum) compareRow(row []Datum) int {
 	return CompareInt64(int64(len(dRow)), int64(len(row)))
 }
 
-// NewDatum create a new Datum from an interface{}.
+// NewDatum creates a new Datum from an interface{}.
 func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {
 	case []interface{}:
