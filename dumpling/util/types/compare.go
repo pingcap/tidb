@@ -68,5 +68,5 @@ func CompareString(x, y string) int {
 func Compare(a, b interface{}) (int, error) {
 	aDatum := NewDatum(a)
 	bDatum := NewDatum(b)
-	return aDatum.compareDatum(bDatum), nil
+	return aDatum.CompareDatum(bDatum)
 }
