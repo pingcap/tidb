@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -67,18 +68,18 @@ func convertToDuration(arg interface{}, fsp int) (interface{}, error) {
 	return t, nil
 }
 
-func builtinDate(args []interface{}, _ map[interface{}]interface{}) (interface{}, error) {
+func builtinDate(args []interface{}, _ context.Context) (interface{}, error) {
 	return convertToTime(args[0], mysql.TypeDate)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_day
 // day is a synonym for DayOfMonth
-func builtinDay(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinDay(args []interface{}, ctx context.Context) (interface{}, error) {
 	return builtinDayOfMonth(args, ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_hour
-func builtinHour(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinHour(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || v == nil {
 		return v, err
@@ -90,7 +91,7 @@ func builtinHour(args []interface{}, ctx map[interface{}]interface{}) (interface
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_minute
-func builtinMinute(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinMinute(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || v == nil {
 		return v, err
@@ -102,7 +103,7 @@ func builtinMinute(args []interface{}, ctx map[interface{}]interface{}) (interfa
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_second
-func builtinSecond(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinSecond(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || v == nil {
 		return v, err
@@ -114,7 +115,7 @@ func builtinSecond(args []interface{}, ctx map[interface{}]interface{}) (interfa
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_microsecond
-func builtinMicroSecond(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinMicroSecond(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || v == nil {
 		return v, err
@@ -126,7 +127,7 @@ func builtinMicroSecond(args []interface{}, ctx map[interface{}]interface{}) (in
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_month
-func builtinMonth(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinMonth(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -141,7 +142,7 @@ func builtinMonth(args []interface{}, ctx map[interface{}]interface{}) (interfac
 	return int64(t.Month()), nil
 }
 
-func builtinNow(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinNow(args []interface{}, ctx context.Context) (interface{}, error) {
 	// TODO: if NOW is used in stored function or trigger, NOW will return the beginning time
 	// of the execution.
 	fsp := 0
@@ -163,7 +164,7 @@ func builtinNow(args []interface{}, ctx map[interface{}]interface{}) (interface{
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayname
-func builtinDayName(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinDayName(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := builtinWeekDay(args, ctx)
 	if err != nil {
 		return nil, err
@@ -179,7 +180,7 @@ func builtinDayName(args []interface{}, ctx map[interface{}]interface{}) (interf
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofmonth
-func builtinDayOfMonth(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinDayOfMonth(args []interface{}, ctx context.Context) (interface{}, error) {
 	// TODO: some invalid format like 2000-00-00 will return 0 too.
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
@@ -196,7 +197,7 @@ func builtinDayOfMonth(args []interface{}, ctx map[interface{}]interface{}) (int
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofweek
-func builtinDayOfWeek(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinDayOfWeek(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -214,7 +215,7 @@ func builtinDayOfWeek(args []interface{}, ctx map[interface{}]interface{}) (inte
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_dayofyear
-func builtinDayOfYear(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinDayOfYear(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -230,7 +231,7 @@ func builtinDayOfYear(args []interface{}, ctx map[interface{}]interface{}) (inte
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_week
-func builtinWeek(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinWeek(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -249,7 +250,7 @@ func builtinWeek(args []interface{}, ctx map[interface{}]interface{}) (interface
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekday
-func builtinWeekDay(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinWeekDay(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -270,13 +271,13 @@ func builtinWeekDay(args []interface{}, ctx map[interface{}]interface{}) (interf
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_weekofyear
-func builtinWeekOfYear(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinWeekOfYear(args []interface{}, ctx context.Context) (interface{}, error) {
 	// WeekOfYear is equivalent to to Week(date, 3)
 	return builtinWeek([]interface{}{args[0], 3}, ctx)
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_year
-func builtinYear(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinYear(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -292,7 +293,7 @@ func builtinYear(args []interface{}, ctx map[interface{}]interface{}) (interface
 }
 
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
-func builtinYearWeek(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinYearWeek(args []interface{}, ctx context.Context) (interface{}, error) {
 	v, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || v == nil {
 		return v, err
@@ -310,7 +311,7 @@ func builtinYearWeek(args []interface{}, ctx map[interface{}]interface{}) (inter
 	return int64(year*100 + week), nil
 }
 
-func builtinSysDate(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinSysDate(args []interface{}, ctx context.Context) (interface{}, error) {
 	// SYSDATE is not the same as NOW if NOW is used in a stored function or trigger.
 	// But here we can just think they are the same because we don't support stored function
 	// and trigger now.
@@ -318,7 +319,7 @@ func builtinSysDate(args []interface{}, ctx map[interface{}]interface{}) (interf
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
-func builtinCurrentDate(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinCurrentDate(args []interface{}, ctx context.Context) (interface{}, error) {
 	year, month, day := time.Now().Date()
 	return mysql.Time{
 		Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
@@ -326,7 +327,7 @@ func builtinCurrentDate(args []interface{}, ctx map[interface{}]interface{}) (in
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curtime
-func builtinCurrentTime(args []interface{}, ctx map[interface{}]interface{}) (interface{}, error) {
+func builtinCurrentTime(args []interface{}, ctx context.Context) (interface{}, error) {
 	fsp := 0
 	if len(args) == 1 {
 		var err error
