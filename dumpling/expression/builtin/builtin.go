@@ -22,11 +22,6 @@ import (
 	"github.com/pingcap/tidb/context"
 )
 
-const (
-	// ExprEvalArgCtx is the key saving Context for a Call expression.
-	ExprEvalArgCtx = "$ctx"
-)
-
 // Func is for a builtin function.
 type Func struct {
 	// F is the specific calling function.

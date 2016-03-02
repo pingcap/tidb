@@ -28,7 +28,7 @@ import (
 
 // see https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
 
-func builtinAbs(args []interface{}, ctx context.Context) (v interface{}, err error) {
+func builtinAbs(args []interface{}, _ context.Context) (v interface{}, err error) {
 	d := args[0]
 	switch x := d.(type) {
 	case nil:
@@ -52,7 +52,7 @@ func builtinAbs(args []interface{}, ctx context.Context) (v interface{}, err err
 	}
 }
 
-func builtinRand(args []interface{}, ctx context.Context) (v interface{}, err error) {
+func builtinRand(args []interface{}, _ context.Context) (v interface{}, err error) {
 	if len(args) == 1 {
 		seed, err := types.ToInt64(args[0])
 		if err != nil {
@@ -65,7 +65,7 @@ func builtinRand(args []interface{}, ctx context.Context) (v interface{}, err er
 	return rand.Float64(), nil
 }
 
-func builtinPow(args []interface{}, ctx context.Context) (v interface{}, err error) {
+func builtinPow(args []interface{}, _ context.Context) (v interface{}, err error) {
 	x, err := types.ToFloat64(args[0])
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -38,7 +38,7 @@ func builtinDatabase(args []interface{}, ctx context.Context) (v interface{}, er
 func builtinFoundRows(arg []interface{}, ctx context.Context) (interface{}, error) {
 	data := variable.GetSessionVars(ctx)
 	if data == nil {
-		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
+		return nil, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
 	return data.FoundRows, nil
@@ -49,7 +49,7 @@ func builtinFoundRows(arg []interface{}, ctx context.Context) (interface{}, erro
 func builtinCurrentUser(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	data := variable.GetSessionVars(ctx)
 	if data == nil {
-		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
+		return nil, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
 	return data.User, nil
@@ -58,7 +58,7 @@ func builtinCurrentUser(args []interface{}, ctx context.Context) (v interface{},
 func builtinUser(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	data := variable.GetSessionVars(ctx)
 	if data == nil {
-		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
+		return nil, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
 	return data.User, nil
@@ -67,7 +67,7 @@ func builtinUser(args []interface{}, ctx context.Context) (v interface{}, err er
 func builtinConnectionID(args []interface{}, ctx context.Context) (v interface{}, err error) {
 	data := variable.GetSessionVars(ctx)
 	if data == nil {
-		return nil, errors.Errorf("Missing ExprEvalArgCtx when evalue builtin")
+		return nil, errors.Errorf("Missing session variable when evalue builtin")
 	}
 
 	return data.ConnectionID, nil
