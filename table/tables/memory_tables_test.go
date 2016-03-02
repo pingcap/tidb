@@ -85,19 +85,19 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
-	c.Assert(row[0], Equals, 1)
+	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		return true, nil
 	})
 
@@ -105,15 +105,15 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	vals, err := tb.RowWithCols(ctx, rid, tb.Cols())
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
-	c.Assert(vals[0], Equals, 1)
+	c.Assert(vals[0].GetInt64(), Equals, int64(1))
 	cols := []*column.Col{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)
-	c.Assert(vals[0], Equals, "abc")
+	c.Assert(vals[0].GetString(), Equals, "abc")
 
-	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
-	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"})
+	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Truncate(ctx), IsNil)
 	row, err = tb.Row(ctx, rid)

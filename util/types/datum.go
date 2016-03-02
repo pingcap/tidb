@@ -522,17 +522,17 @@ func (d *Datum) compareRow(row []Datum) (int, error) {
 func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {
 	case []interface{}:
-		d.SetValue(InterfacesToDatums(x))
+		d.SetValue(MakeDatums(x...))
 	default:
 		d.SetValue(in)
 	}
 	return d
 }
 
-// InterfacesToDatums converts an interface slice to datum slice.
-func InterfacesToDatums(in []interface{}) []Datum {
-	datums := make([]Datum, len(in))
-	for i, v := range in {
+// MakeDatums creates datum slice from interfaces.
+func MakeDatums(args ...interface{}) []Datum {
+	datums := make([]Datum, len(args))
+	for i, v := range args {
 		datums[i] = NewDatum(v)
 	}
 	return datums

@@ -78,9 +78,9 @@ func (s *testAggFuncSuite) TestCount(c *C) {
 		F:    ast.AggFuncCount,
 		Args: []ast.ExprNode{col2},
 	}
-	row1 := types.InterfacesToDatums([]interface{}{1, 1})
-	row2 := types.InterfacesToDatums([]interface{}{2, 1})
-	row3 := types.InterfacesToDatums([]interface{}{3, nil})
+	row1 := types.MakeDatums(1, 1)
+	row2 := types.MakeDatums(2, 1)
+	row3 := types.MakeDatums(3, nil)
 	data := []([]types.Datum){row1, row2, row3}
 
 	rows := make([]*Row, 0, 3)

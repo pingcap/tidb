@@ -112,18 +112,18 @@ func (e *ExplainExec) fetchRows() {
 	e.StmtPlan.Accept(visitor)
 	for _, entry := range visitor.entries {
 		row := &Row{}
-		row.Data = []types.Datum{
-			types.NewDatum(entry.ID),
-			types.NewDatum(entry.selectType),
-			types.NewDatum(entry.table),
-			types.NewDatum(entry.joinType),
-			types.NewDatum(entry.key),
-			types.NewDatum(entry.key),
-			types.NewDatum(entry.keyLen),
-			types.NewDatum(entry.ref),
-			types.NewDatum(entry.rows),
-			types.NewDatum(strings.Join(entry.extra, "; ")),
-		}
+		row.Data = types.MakeDatums(
+			entry.ID,
+			entry.selectType,
+			entry.table,
+			entry.joinType,
+			entry.key,
+			entry.key,
+			entry.keyLen,
+			entry.ref,
+			entry.rows,
+			strings.Join(entry.extra, "; "),
+		)
 		for i := range row.Data {
 			if row.Data[i].Kind() == types.KindString && row.Data[i].GetString() == "" {
 				row.Data[i].SetNull()

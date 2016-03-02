@@ -197,24 +197,24 @@ var collationsCols = []columnInfo{
 	{"SORTLEN", mysql.TypeLonglong, 3, 0, nil, nil},
 }
 
-func dataForCharacterSets() (records [][]interface{}) {
+func dataForCharacterSets() (records [][]types.Datum) {
 	records = append(records,
-		[]interface{}{"ascii", "ascii_general_ci", "US ASCII", 1},
-		[]interface{}{"binary", "binary", "Binary pseudo charset", 1},
-		[]interface{}{"latin1", "latin1_swedish_ci", "cp1252 West European", 1},
-		[]interface{}{"utf8", "utf8_general_ci", "UTF-8 Unicode", 3},
-		[]interface{}{"utf8mb4", "utf8mb4_general_ci", "UTF-8 Unicode", 4},
+		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
+		types.MakeDatums("binary", "binary", "Binary pseudo charset", 1),
+		types.MakeDatums("latin1", "latin1_swedish_ci", "cp1252 West European", 1),
+		types.MakeDatums("utf8", "utf8_general_ci", "UTF-8 Unicode", 3),
+		types.MakeDatums("utf8mb4", "utf8mb4_general_ci", "UTF-8 Unicode", 4),
 	)
 	return records
 }
 
-func dataForColltions() (records [][]interface{}) {
+func dataForColltions() (records [][]types.Datum) {
 	records = append(records,
-		[]interface{}{"ascii_general_ci", "ascii", 1, "Yes", "Yes", 1},
-		[]interface{}{"binary", "binary", 2, "Yes", "Yes", 1},
-		[]interface{}{"latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1},
-		[]interface{}{"utf8_general_ci", "utf8", 4, "Yes", "Yes", 1},
-		[]interface{}{"utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1},
+		types.MakeDatums("ascii_general_ci", "ascii", 1, "Yes", "Yes", 1),
+		types.MakeDatums("binary", "binary", 2, "Yes", "Yes", 1),
+		types.MakeDatums("latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1),
+		types.MakeDatums("utf8_general_ci", "utf8", 4, "Yes", "Yes", 1),
+		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
 	)
 	return records
 }
@@ -256,27 +256,27 @@ var filesCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 255, 0, nil, nil},
 }
 
-func dataForSchemata(schemas []string) [][]interface{} {
+func dataForSchemata(schemas []string) [][]types.Datum {
 	sort.Strings(schemas)
-	rows := [][]interface{}{}
+	rows := [][]types.Datum{}
 	for _, schema := range schemas {
-		record := []interface{}{
+		record := types.MakeDatums(
 			catalogVal,                 // CATALOG_NAME
 			schema,                     // SCHEMA_NAME
 			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
 			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
 			nil,
-		}
+		)
 		rows = append(rows, record)
 	}
 	return rows
 }
 
-func dataForTables(schemas []*model.DBInfo) [][]interface{} {
-	rows := [][]interface{}{}
+func dataForTables(schemas []*model.DBInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			record := []interface{}{
+			record := types.MakeDatums(
 				catalogVal,          // TABLE_CATALOG
 				schema.Name.O,       // TABLE_SCHEMA
 				table.Name.O,        // TABLE_NAME
@@ -298,15 +298,15 @@ func dataForTables(schemas []*model.DBInfo) [][]interface{} {
 				nil,                 // CHECKSUM
 				"",                  // CREATE_OPTIONS
 				"",                  // TABLE_COMMENT
-			}
+			)
 			rows = append(rows, record)
 		}
 	}
 	return rows
 }
 
-func dataForColumns(schemas []*model.DBInfo) [][]interface{} {
-	rows := [][]interface{}{}
+func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForColumnsInTable(schema, table)
@@ -318,8 +318,8 @@ func dataForColumns(schemas []*model.DBInfo) [][]interface{} {
 	return rows
 }
 
-func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]interface{} {
-	rows := [][]interface{}{}
+func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
 	for i, col := range table.Columns {
 		colLen := col.Flen
 		if colLen == types.UnspecifiedLength {
@@ -335,12 +335,12 @@ func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]int
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
 		}
-		record := []interface{}{
+		record := types.MakeDatums(
 			catalogVal,                           // TABLE_CATALOG
 			schema.Name.O,                        // TABLE_SCHEMA
 			table.Name.O,                         // TABLE_NAME
 			col.Name.O,                           // COLUMN_NAME
-			i + 1,                                // ORIGINAL_POSITION
+			i+1,                                  // ORIGINAL_POSITION
 			columnDefault,                        // COLUMN_DEFAULT
 			columnDesc.Null,                      // IS_NULLABLE
 			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
@@ -356,14 +356,14 @@ func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]int
 			columnDesc.Extra,                  // EXTRA
 			"select,insert,update,references", // PRIVILEGES
 			"", // COLUMN_COMMENT
-		}
+		)
 		rows = append(rows, record)
 	}
 	return rows
 }
 
-func dataForStatistics(schemas []*model.DBInfo) [][]interface{} {
-	rows := [][]interface{}{}
+func dataForStatistics(schemas []*model.DBInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			rs := dataForStatisticsInTable(schema, table)
@@ -375,12 +375,12 @@ func dataForStatistics(schemas []*model.DBInfo) [][]interface{} {
 	return rows
 }
 
-func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]interface{} {
-	rows := [][]interface{}{}
+func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
+	rows := [][]types.Datum{}
 	if table.PKIsHandle {
 		for _, col := range table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				record := []interface{}{
+				record := types.MakeDatums(
 					catalogVal,    // TABLE_CATALOG
 					schema.Name.O, // TABLE_SCHEMA
 					table.Name.O,  // TABLE_NAME
@@ -397,7 +397,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 					"BTREE",       // INDEX_TYPE
 					"",            // COMMENT
 					"",            // INDEX_COMMENT
-				}
+				)
 				rows = append(rows, record)
 			}
 		}
@@ -417,14 +417,14 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 			if mysql.HasNotNullFlag(col.Flag) {
 				nullable = ""
 			}
-			record := []interface{}{
+			record := types.MakeDatums(
 				catalogVal,    // TABLE_CATALOG
 				schema.Name.O, // TABLE_SCHEMA
 				table.Name.O,  // TABLE_NAME
 				nonUnique,     // NON_UNIQUE
 				schema.Name.O, // INDEX_SCHEMA
 				index.Name.O,  // INDEX_NAME
-				i + 1,         // SEQ_IN_INDEX
+				i+1,           // SEQ_IN_INDEX
 				key.Name.O,    // COLUMN_NAME
 				"A",           // COLLATION
 				0,             // CARDINALITY
@@ -434,7 +434,7 @@ func dataForStatisticsInTable(schema *model.DBInfo, table *model.TableInfo) [][]
 				"BTREE",       // INDEX_TYPE
 				"",            // COMMENT
 				"",            // INDEX_COMMENT
-			}
+			)
 			rows = append(rows, record)
 		}
 	}
