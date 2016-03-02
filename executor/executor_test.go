@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +160,584 @@ func (s *testSuite) TestPrepared(c *C) {
 	exec.Fields()
 	exec.Next()
 	exec.Close()
+}
+
+func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
+
+	// insert data
+	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
+	tk.CheckExecResult(1, 0)
+}
+
+func (s *testSuite) TestDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.fillData(tk, "delete_test")
+
+	tk.MustExec(`update delete_test set name = "abc" where id = 2;`)
+	tk.CheckExecResult(1, 0)
+
+	tk.MustExec(`delete from delete_test where id = 2 limit 1;`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete with false condition
+	tk.MustExec(`delete from delete_test where 0;`)
+	tk.CheckExecResult(0, 0)
+
+	tk.MustExec("insert into delete_test values (2, 'abc')")
+	tk.MustExec(`delete from delete_test where delete_test.id = 2 limit 1`)
+	tk.CheckExecResult(1, 0)
+
+	// Select data
+	tk.MustExec("begin")
+	rows := tk.MustQuery(`SELECT * from delete_test limit 2;`)
+	rowStr := fmt.Sprintf("%v %v", "1", []byte("hello"))
+	rows.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec(`delete from delete_test ;`)
+	tk.CheckExecResult(1, 0)
+}
+
+func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	// Create and fill table t1
+	tk.MustExec("create table t1 (id int, data int);")
+	tk.MustExec("insert into t1 values (11, 121), (12, 122), (13, 123);")
+	tk.CheckExecResult(3, 0)
+	// Create and fill table t2
+	tk.MustExec("create table t2 (id int, data int);")
+	tk.MustExec("insert into t2 values (11, 221), (22, 222), (23, 223);")
+	tk.CheckExecResult(3, 0)
+	// Create and fill table t3
+	tk.MustExec("create table t3 (id int, data int);")
+	tk.MustExec("insert into t3 values (11, 321), (22, 322), (23, 323);")
+	tk.CheckExecResult(3, 0)
+}
+
+func (s *testSuite) TestMultiTableDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.fillDataMultiTable(tk)
+
+	tk.MustExec(`delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;`)
+	tk.CheckExecResult(2, 0)
+
+	// Select data
+	r := tk.MustQuery("select * from t3")
+	c.Assert(r.Rows(), HasLen, 3)
+}
+
+func (s *testSuite) TestQualifedDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (c1 int, c2 int, index (c1))")
+	tk.MustExec("create table t2 (c1 int, c2 int)")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+
+	// delete with index
+	tk.MustExec("delete from t1 where t1.c1 = 1")
+	tk.CheckExecResult(1, 0)
+
+	// delete with no index
+	tk.MustExec("delete from t1 where t1.c2 = 2")
+	tk.CheckExecResult(1, 0)
+
+	r := tk.MustQuery("select * from t1")
+	c.Assert(r.Rows(), HasLen, 0)
+
+	_, err := tk.Exec("delete from t1 as a where a.c1 = 1")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("insert into t1 values (1, 1), (2, 2)")
+	tk.MustExec("insert into t2 values (2, 1), (3,1)")
+	tk.MustExec("delete t1, t2 from t1 join t2 where t1.c1 = t2.c2")
+	tk.CheckExecResult(3, 0)
+
+	tk.MustExec("insert into t2 values (2, 1), (3,1)")
+	tk.MustExec("delete a, b from t1 as a join t2 as b where a.c2 = b.c1")
+	tk.CheckExecResult(2, 0)
+
+	_, err = tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table t1, t2")
+}
+
+func (s *testSuite) TestInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	tk.MustExec(testSQL)
+	testSQL = `insert insert_test (c1) values (1),(2),(NULL);`
+	tk.MustExec(testSQL)
+
+	errInsertSelectSQL := `insert insert_test (c1) values ();`
+	tk.MustExec("begin")
+	_, err := tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errInsertSelectSQL = `insert insert_test (c1, c2) values (1,2),(1);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errInsertSelectSQL = `insert insert_test (xxx) values (3);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errInsertSelectSQL = `insert insert_test_xxx (c1) values ();`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	insertSetSQL := `insert insert_test set c1 = 3;`
+	tk.MustExec(insertSetSQL)
+
+	errInsertSelectSQL = `insert insert_test set c1 = 4, c1 = 5;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errInsertSelectSQL = `insert insert_test set xxx = 6;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	insertSelectSQL := `create table insert_test_1 (id int, c1 int);`
+	tk.MustExec(insertSelectSQL)
+	insertSelectSQL = `insert insert_test_1 select id, c1 from insert_test;`
+	tk.MustExec(insertSelectSQL)
+
+	insertSelectSQL = `create table insert_test_2 (id int, c1 int);`
+	tk.MustExec(insertSelectSQL)
+	insertSelectSQL = `insert insert_test_1 select id, c1 from insert_test union select id * 10, c1 * 10 from insert_test;`
+	tk.MustExec(insertSelectSQL)
+
+	errInsertSelectSQL = `insert insert_test_1 select c1 from insert_test;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	insertSQL := `insert into insert_test (id, c2) values (1, 1) on duplicate key update c2=10;`
+	tk.MustExec(insertSQL)
+
+	insertSQL = `insert into insert_test (id, c2) values (1, 1) on duplicate key update insert_test.c2=10;`
+	tk.MustExec(insertSQL)
+
+	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestInsertAutoInc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(createSQL)
+
+	insertSQL := `insert into insert_autoinc_test(c1) values (1), (2)`
+	tk.MustExec(insertSQL)
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr1 := fmt.Sprintf("%v %v", "1", "1")
+	rowStr2 := fmt.Sprintf("%v %v", "2", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite) TestReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists replace_test;
+    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	tk.MustExec(testSQL)
+	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
+	tk.MustExec(testSQL)
+
+	errReplaceSQL := `replace replace_test (c1) values ();`
+	tk.MustExec("begin")
+	_, err := tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (xxx) values (3);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	replaceSetSQL := `replace replace_test set c1 = 3;`
+	tk.MustExec(replaceSetSQL)
+
+	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSetSQL = `replace replace_test set xxx = 6;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	replaceSelectSQL := `create table replace_test_1 (id int, c1 int);`
+	tk.MustExec(replaceSelectSQL)
+	replaceSelectSQL = `replace replace_test_1 select id, c1 from replace_test;`
+	tk.MustExec(replaceSelectSQL)
+
+	replaceSelectSQL = `create table replace_test_2 (id int, c1 int);`
+	tk.MustExec(replaceSelectSQL)
+	replaceSelectSQL = `replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`
+	tk.MustExec(replaceSelectSQL)
+
+	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2));`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=1;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=1;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=1, c2=1;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
+
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2));`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2));`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+}
+
+func (s *testSuite) TestSelectWithoutFrom(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select 1 + 2*3")
+	r.Check(testkit.Rows("7"))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery(`select _utf8"string";`)
+	r.Check(testkit.Rows("string"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite) TestSelectOrderBy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "select_order_test")
+
+	tk.MustExec("begin")
+	// Test star field
+	r := tk.MustQuery("select * from select_order_test where id = 1 order by id limit 1 offset 0;")
+	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	// Test multiple field
+	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
+	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table select_order_test")
+}
+
+func (s *testSuite) TestSelectDistinct(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "select_distinct_test")
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select distinct name from select_distinct_test;")
+	rowStr := fmt.Sprintf("%v", []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table select_distinct_test")
+}
+
+func (s *testSuite) TestSelectHaving(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "select_having_test")
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select id, name from select_having_test where id in (1,3) having name like 'he%';")
+	rowStr := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("drop table select_having_test")
+}
+
+func (s *testSuite) TestSelectErrorRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("begin")
+	_, err := tk.Exec("select row(1, 1) from test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select * from test group by row(1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select * from test order by row(1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select * from test having row(1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select (select 1, 1) from test;")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select * from test group by (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select * from test order by (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("select * from test having (select 1, 1);")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("commit")
+}
+
+func (s *testSuite) TestUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "update_test")
+
+	updateStr := `UPDATE update_test SET name = "abc" where id > 0;`
+	tk.MustExec(updateStr)
+	tk.CheckExecResult(2, 0)
+
+	// select data
+	tk.MustExec("begin")
+	r := tk.MustQuery(`SELECT * from update_test limit 2;`)
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("abc"))
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("abc"))
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	tk.MustExec("commit")
+
+	tk.MustExec(`UPDATE update_test SET name = "foo"`)
+	tk.CheckExecResult(2, 0)
+
+	tk.MustExec("drop table update_test")
+}
+
+func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
+	// Create and fill table items
+	tk.MustExec("CREATE TABLE items (id int, price TEXT);")
+	tk.MustExec(`insert into items values (11, "items_price_11"), (12, "items_price_12"), (13, "items_price_13");`)
+	tk.CheckExecResult(3, 0)
+	// Create and fill table month
+	tk.MustExec("CREATE TABLE month (mid int, mprice TEXT);")
+	tk.MustExec(`insert into month values (11, "month_price_11"), (22, "month_price_22"), (13, "month_price_13");`)
+	tk.CheckExecResult(3, 0)
+}
+
+func (s *testSuite) TestMultipleTableUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillMultiTableForUpdate(tk)
+
+	tk.MustExec(`UPDATE items, month  SET items.price=month.mprice WHERE items.id=month.mid;`)
+	tk.MustExec("begin")
+	r := tk.MustQuery("SELECT * FROM items")
+	rowStr1 := fmt.Sprintf("%v %v", 11, []byte("month_price_11"))
+	rowStr2 := fmt.Sprintf("%v %v", 12, []byte("items_price_12"))
+	rowStr3 := fmt.Sprintf("%v %v", 13, []byte("month_price_13"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("commit")
+
+	// Single-table syntax but with multiple tables
+	tk.MustExec(`UPDATE items join month on items.id=month.mid SET items.price=month.mid;`)
+	tk.MustExec("begin")
+	r = tk.MustQuery("SELECT * FROM items")
+	rowStr1 = fmt.Sprintf("%v %v", 11, []byte("11"))
+	rowStr2 = fmt.Sprintf("%v %v", 12, []byte("items_price_12"))
+	rowStr3 = fmt.Sprintf("%v %v", 13, []byte("13"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("commit")
+
+	// JoinTable with alias table name.
+	tk.MustExec(`UPDATE items T0 join month T1 on T0.id=T1.mid SET T0.price=T1.mprice;`)
+	tk.MustExec("begin")
+	r = tk.MustQuery("SELECT * FROM items")
+	rowStr1 = fmt.Sprintf("%v %v", 11, []byte("month_price_11"))
+	rowStr2 = fmt.Sprintf("%v %v", 12, []byte("items_price_12"))
+	rowStr3 = fmt.Sprintf("%v %v", 13, []byte("month_price_13"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("commit")
+}
+
+// For https://github.com/pingcap/tidb/issues/345
+func (s *testSuite) TestIssue345(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1, t2`)
+	tk.MustExec(`create table t1 (c1 int);`)
+	tk.MustExec(`create table t2 (c2 int);`)
+	tk.MustExec(`insert into t1 values (1);`)
+	tk.MustExec(`insert into t2 values (2);`)
+	tk.MustExec(`update t1, t2 set t1.c1 = 2, t2.c2 = 1;`)
+	tk.MustExec(`update t1, t2 set c1 = 2, c2 = 1;`)
+	tk.MustExec(`update t1 as a, t2 as b set a.c1 = 2, b.c2 = 1;`)
+
+	// Check t1 content
+	tk.MustExec("begin")
+	r := tk.MustQuery("SELECT * FROM t1;")
+	r.Check(testkit.Rows("2"))
+	tk.MustExec("commit")
+	// Check t2 content
+	tk.MustExec("begin")
+	r = tk.MustQuery("SELECT * FROM t2;")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	tk.MustExec(`update t1 as a, t2 as t1 set a.c1 = 1, t1.c2 = 2;`)
+	// Check t1 content
+	tk.MustExec("begin")
+	r = tk.MustQuery("SELECT * FROM t1;")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+	// Check t2 content
+	tk.MustExec("begin")
+	r = tk.MustQuery("SELECT * FROM t2;")
+	r.Check(testkit.Rows("2"))
+
+	_, err := tk.Exec(`update t1 as a, t2 set t1.c1 = 10;`)
+	c.Assert(err, NotNil)
+
+	tk.MustExec("commit")
+}
+
+func (s *testSuite) TestMultiUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// fix https://github.com/pingcap/tidb/issues/369
+	testSQL := `
+		DROP TABLE IF EXISTS t1, t2;
+		create table t1 (c int);
+		create table t2 (c varchar(256));
+		insert into t1 values (1), (2);
+		insert into t2 values ("a"), ("b");
+		update t1, t2 set t1.c = 10, t2.c = "abc";`
+	tk.MustExec(testSQL)
+
+	// fix https://github.com/pingcap/tidb/issues/376
+	testSQL = `DROP TABLE IF EXISTS t1, t2;
+		create table t1 (c1 int);
+		create table t2 (c2 int);
+		insert into t1 values (1), (2);
+		insert into t2 values (1), (2);
+		update t1, t2 set t1.c1 = 10, t2.c2 = 2 where t2.c2 = 1;`
+	tk.MustExec(testSQL)
+
+	r := tk.MustQuery("select * from t1")
+	r.Check(testkit.Rows("10", "10"))
+}
+
+func (s *testSuite) TestUnion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	testSQL := `select 1 union select 0;`
+	tk.MustExec(testSQL)
+
+	testSQL = `drop table if exists union_test; create table union_test(id int);`
+	tk.MustExec(testSQL)
+
+	testSQL = `drop table if exists union_test;`
+	tk.MustExec(testSQL)
+	testSQL = `create table union_test(id int);`
+	tk.MustExec(testSQL)
+	testSQL = `insert union_test values (1),(2); select id from union_test union select 1;`
+	tk.MustExec(testSQL)
+
+	testSQL = `select id from union_test union select id from union_test;`
+	tk.MustExec("begin")
+	r := tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1", "2"))
+
+	r = tk.MustQuery("select 1 union all select 1")
+	r.Check(testkit.Rows("1", "1"))
+
+	r = tk.MustQuery("select 1 union all select 1 union select 1")
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select 1 union (select 2) limit 1")
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery("select 1 union (select 2) limit 1, 1")
+	r.Check(testkit.Rows("2"))
+
+	r = tk.MustQuery("select id from union_test union all (select 1) order by id desc")
+	r.Check(testkit.Rows("2", "1", "1"))
+
+	r = tk.MustQuery("select id as a from union_test union (select 1) order by a desc")
+	r.Check(testkit.Rows("2", "1"))
+
+	r = tk.MustQuery(`select null union select "abc"`)
+	rowStr1 := fmt.Sprintf("%v", nil)
+	r.Check(testkit.Rows(rowStr1, "abc"))
+
+	r = tk.MustQuery(`select "abc" union select 1`)
+	r.Check(testkit.Rows("abc", "1"))
+
+	tk.MustExec("commit")
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
