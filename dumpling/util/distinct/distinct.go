@@ -16,6 +16,7 @@ package distinct
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // CreateDistinctChecker creates a new distinct checker.
@@ -32,7 +33,7 @@ type Checker struct {
 
 // Check checks if values is distinct.
 func (d *Checker) Check(values []interface{}) (bool, error) {
-	bs, err := codec.EncodeValue([]byte{}, values...)
+	bs, err := codec.EncodeValue([]byte{}, types.MakeDatums(values...)...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
