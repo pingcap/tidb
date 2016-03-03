@@ -328,7 +328,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 	return colInfo
 }
 
-func (ps *perfSchema) initRecords(tbName string, records [][]interface{}) error {
+func (ps *perfSchema) initRecords(tbName string, records [][]types.Datum) error {
 	tbl, ok := ps.mTables[tbName]
 	if !ok {
 		return errors.Errorf("Unknown PerformanceSchema table: %s", tbName)
@@ -342,7 +342,7 @@ func (ps *perfSchema) initRecords(tbName string, records [][]interface{}) error 
 	return nil
 }
 
-var setupTimersRecords [][]interface{}
+var setupTimersRecords [][]types.Datum
 
 func (ps *perfSchema) initialize() (err error) {
 	ps.tables = make(map[string]*model.TableInfo)
@@ -392,56 +392,56 @@ func (ps *perfSchema) initialize() (err error) {
 		return errors.Trace(err)
 	}
 
-	setupActorsRecords := [][]interface{}{
-		{`%`, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
+	setupActorsRecords := [][]types.Datum{
+		types.MakeDatums(`%`, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}),
 	}
 	err = ps.initRecords(TableSetupActors, setupActorsRecords)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	setupObjectsRecords := [][]interface{}{
-		{mysql.Enum{Name: "EVENT", Value: 1}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "EVENT", Value: 1}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "EVENT", Value: 1}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "EVENT", Value: 1}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "FUNCTION", Value: 2}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}},
-		{mysql.Enum{Name: "TABLE", Value: 3}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}},
+	setupObjectsRecords := [][]types.Datum{
+		types.MakeDatums(mysql.Enum{Name: "EVENT", Value: 1}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "EVENT", Value: 1}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "EVENT", Value: 1}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "EVENT", Value: 1}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums(mysql.Enum{Name: "FUNCTION", Value: 2}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "FUNCTION", Value: 2}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "FUNCTION", Value: 2}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "FUNCTION", Value: 2}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums(mysql.Enum{Name: "TABLE", Value: 3}, "mysql", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "TABLE", Value: 3}, "performance_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "TABLE", Value: 3}, "information_schema", `%`, mysql.Enum{Name: "NO", Value: 2}, mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums(mysql.Enum{Name: "TABLE", Value: 3}, `%`, `%`, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}),
 	}
 	err = ps.initRecords(TableSetupObjects, setupObjectsRecords)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	setupConsumersRecords := [][]interface{}{
-		{"events_stages_current", mysql.Enum{Name: "NO", Value: 2}},
-		{"events_stages_history", mysql.Enum{Name: "NO", Value: 2}},
-		{"events_stages_history_long", mysql.Enum{Name: "NO", Value: 2}},
-		{"events_statements_current", mysql.Enum{Name: "YES", Value: 1}},
-		{"events_statements_history", mysql.Enum{Name: "YES", Value: 1}},
-		{"events_statements_history_long", mysql.Enum{Name: "NO", Value: 2}},
-		{"events_transactions_current", mysql.Enum{Name: "YES", Value: 1}},
-		{"events_transactions_history", mysql.Enum{Name: "YES", Value: 1}},
-		{"events_transactions_history_long", mysql.Enum{Name: "YES", Value: 1}},
-		{"global_instrumentation", mysql.Enum{Name: "YES", Value: 1}},
-		{"thread_instrumentation", mysql.Enum{Name: "YES", Value: 1}},
-		{"statements_digest", mysql.Enum{Name: "YES", Value: 1}},
+	setupConsumersRecords := [][]types.Datum{
+		types.MakeDatums("events_stages_current", mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums("events_stages_history", mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums("events_stages_history_long", mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums("events_statements_current", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("events_statements_history", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("events_statements_history_long", mysql.Enum{Name: "NO", Value: 2}),
+		types.MakeDatums("events_transactions_current", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("events_transactions_history", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("events_transactions_history_long", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("global_instrumentation", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("thread_instrumentation", mysql.Enum{Name: "YES", Value: 1}),
+		types.MakeDatums("statements_digest", mysql.Enum{Name: "YES", Value: 1}),
 	}
 	err = ps.initRecords(TableSetupConsumers, setupConsumersRecords)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	setupTimersRecords = [][]interface{}{
-		{"stage", mysql.Enum{Name: "NANOSECOND", Value: 1}},
-		{"statement", mysql.Enum{Name: "NANOSECOND", Value: 1}},
-		{"transaction", mysql.Enum{Name: "NANOSECOND", Value: 1}},
+	setupTimersRecords = [][]types.Datum{
+		types.MakeDatums("stage", mysql.Enum{Name: "NANOSECOND", Value: 1}),
+		types.MakeDatums("statement", mysql.Enum{Name: "NANOSECOND", Value: 1}),
+		types.MakeDatums("transaction", mysql.Enum{Name: "NANOSECOND", Value: 1}),
 	}
 	err = ps.initRecords(TableSetupTimers, setupTimersRecords)
 	if err != nil {

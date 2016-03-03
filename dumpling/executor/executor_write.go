@@ -218,14 +218,14 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 
 	var err error
 	if newHandle.Kind() != types.KindNull {
-		err = t.RemoveRecord(ctx, h, types.DatumsToInterfaces(oldData))
+		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = t.AddRecord(ctx, types.DatumsToInterfaces(newData))
+		_, err = t.AddRecord(ctx, newData)
 	} else {
 		// Update record to new value and update index.
-		err = t.UpdateRecord(ctx, h, types.DatumsToInterfaces(oldData), types.DatumsToInterfaces(newData), touched)
+		err = t.UpdateRecord(ctx, h, oldData, newData, touched)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -340,7 +340,7 @@ func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (ta
 	return sessionctx.GetDomain(ctx).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 }
 
-func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []interface{}) error {
+func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
@@ -415,7 +415,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		if len(e.OnDuplicate) == 0 {
 			txn.SetOption(kv.PresumeKeyNotExists, nil)
 		}
-		h, err := e.Table.AddRecord(e.ctx, types.DatumsToInterfaces(row))
+		h, err := e.Table.AddRecord(e.ctx, row)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
 			continue
@@ -535,7 +535,7 @@ func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]ty
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			defaultValMap[col.Name.L] = types.NewDatum(value)
+			defaultValMap[col.Name.L] = value
 		}
 	}
 	return defaultValMap, nil
@@ -664,13 +664,11 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
 			}
 		} else {
-			var value interface{}
-			value, _, err := table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
+			var err error
+			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
-
-			row[i].SetValue(value)
 		}
 
 		defaultValueCols = append(defaultValueCols, c)
@@ -709,7 +707,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 		}
 		newData[i].SetValue(val)
 	}
-	if err = updateRecord(e.ctx, h, types.InterfacesToDatums(data), newData, cols, e.Table, 0, true); err != nil {
+	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -784,7 +782,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 	}
 
 	for _, row := range rows {
-		h, err := e.Table.AddRecord(e.ctx, types.DatumsToInterfaces(row))
+		h, err := e.Table.AddRecord(e.ctx, row)
 		if err == nil {
 			continue
 		}
@@ -812,7 +810,7 @@ func (e *ReplaceExec) replaceRow(handle int64, replaceRow []types.Datum) error {
 	isReplace := false
 	touched := make(map[int]bool, len(row))
 	for i, val := range row {
-		v, err1 := types.Compare(val, replaceRow[i].GetValue())
+		v, err1 := val.CompareDatum(replaceRow[i])
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -823,7 +821,7 @@ func (e *ReplaceExec) replaceRow(handle int64, replaceRow []types.Datum) error {
 	}
 	if isReplace {
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
-		if err = e.Table.UpdateRecord(e.ctx, handle, row, types.DatumsToInterfaces(replaceRow), touched); err != nil {
+		if err = e.Table.UpdateRecord(e.ctx, handle, row, replaceRow, touched); err != nil {
 			return errors.Trace(err)
 		}
 	}

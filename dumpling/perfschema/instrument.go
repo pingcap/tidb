@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // EnumCallerName is used as a parameter to avoid calling runtime.Caller(1) since
@@ -61,7 +62,7 @@ var (
 
 // addInstrument is used to add an item to setup_instruments table.
 func (ps *perfSchema) addInstrument(name string) (uint64, error) {
-	record := []interface{}{name, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1}}
+	record := types.MakeDatums(name, mysql.Enum{Name: "YES", Value: 1}, mysql.Enum{Name: "YES", Value: 1})
 	tbl := ps.mTables[TableSetupInstruments]
 	handle, err := tbl.AddRecord(nil, record)
 	return uint64(handle), errors.Trace(err)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
 	_ "github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -308,7 +309,7 @@ func initMemoryTables(store kv.Storage) error {
 	return nil
 }
 
-func insertData(tbl table.Table, rows [][]interface{}) error {
+func insertData(tbl table.Table, rows [][]types.Datum) error {
 	for _, r := range rows {
 		_, err := tbl.AddRecord(nil, r)
 		if err != nil {
@@ -318,7 +319,7 @@ func insertData(tbl table.Table, rows [][]interface{}) error {
 	return nil
 }
 
-func refillTable(tbl table.Table, rows [][]interface{}) error {
+func refillTable(tbl table.Table, rows [][]types.Datum) error {
 	err := tbl.Truncate(nil)
 	if err != nil {
 		return errors.Trace(err)

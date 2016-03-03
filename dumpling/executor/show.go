@@ -117,14 +117,14 @@ func (e *ShowExec) fetchAll() error {
 
 func (e *ShowExec) fetchShowEngines() error {
 	row := &Row{
-		Data: []types.Datum{
-			types.NewDatum("InnoDB"),
-			types.NewDatum("DEFAULT"),
-			types.NewDatum("Supports transactions, row-level locking, and foreign keys"),
-			types.NewDatum("YES"),
-			types.NewDatum("YES"),
-			types.NewDatum("YES"),
-		},
+		Data: types.MakeDatums(
+			"InnoDB",
+			"DEFAULT",
+			"Supports transactions, row-level locking, and foreign keys",
+			"YES",
+			"YES",
+			"YES",
+		),
 	}
 	e.rows = append(e.rows, row)
 	return nil
@@ -135,7 +135,7 @@ func (e *ShowExec) fetchShowDatabases() error {
 	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
 	for _, d := range dbs {
-		e.rows = append(e.rows, &Row{Data: []types.Datum{types.NewDatum(d)}})
+		e.rows = append(e.rows, &Row{Data: types.MakeDatums(d)})
 	}
 	return nil
 }
@@ -151,7 +151,7 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
-		data := []types.Datum{types.NewDatum(v)}
+		data := types.MakeDatums(v)
 		if e.Full {
 			// TODO: support "VIEW" later if we have supported view feature.
 			// now, just use "BASE TABLE".
@@ -175,19 +175,9 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	sort.Strings(tableNames)
 
 	for _, v := range tableNames {
-		now := types.NewDatum(mysql.CurrentTime(mysql.TypeDatetime))
-		emptyStr := types.NewDatum("")
-		data := []types.Datum{
-			types.NewDatum(v),
-			types.NewDatum("InnoDB"),
-			types.NewDatum("10"),
-			types.NewDatum("Compact"),
-			types.NewDatum(100), types.NewDatum(100), types.NewDatum(100), types.NewDatum(100),
-			types.NewDatum(100), types.NewDatum(100), types.NewDatum(100),
-			now, now, now,
-			types.NewDatum("utf8_general_ci"),
-			emptyStr, emptyStr, emptyStr,
-		}
+		now := mysql.CurrentTime(mysql.TypeDatetime)
+		data := types.MakeDatums(v, "InnoDB", "10", "Compact", 100, 100, 100, 100, 100, 100, 100,
+			now, now, now, "utf8_general_ci", "", "", "")
 		e.rows = append(e.rows, &Row{Data: data})
 	}
 	return nil
@@ -210,26 +200,26 @@ func (e *ShowExec) fetchShowColumns() error {
 		// as well as the privileges you have for each column.
 		row := &Row{}
 		if e.Full {
-			row.Data = []types.Datum{
-				types.NewDatum(desc.Field),
-				types.NewDatum(desc.Type),
-				types.NewDatum(desc.Collation),
-				types.NewDatum(desc.Null),
-				types.NewDatum(desc.Key),
-				types.NewDatum(desc.DefaultValue),
-				types.NewDatum(desc.Extra),
-				types.NewDatum(desc.Privileges),
-				types.NewDatum(desc.Comment),
-			}
+			row.Data = types.MakeDatums(
+				desc.Field,
+				desc.Type,
+				desc.Collation,
+				desc.Null,
+				desc.Key,
+				desc.DefaultValue,
+				desc.Extra,
+				desc.Privileges,
+				desc.Comment,
+			)
 		} else {
-			row.Data = []types.Datum{
-				types.NewDatum(desc.Field),
-				types.NewDatum(desc.Type),
-				types.NewDatum(desc.Null),
-				types.NewDatum(desc.Key),
-				types.NewDatum(desc.DefaultValue),
-				types.NewDatum(desc.Extra),
-			}
+			row.Data = types.MakeDatums(
+				desc.Field,
+				desc.Type,
+				desc.Null,
+				desc.Key,
+				desc.DefaultValue,
+				desc.Extra,
+			)
 		}
 		e.rows = append(e.rows, row)
 	}
@@ -251,21 +241,21 @@ func (e *ShowExec) fetchShowIndex() error {
 			if col.Length != types.UnspecifiedLength {
 				subPart = col.Length
 			}
-			data := []types.Datum{
-				types.NewDatum(tb.Meta().Name.O), // Table
-				types.NewDatum(nonUniq),          // Non_unique
-				types.NewDatum(idx.Name.O),       // Key_name
-				types.NewDatum(i + 1),            // Seq_in_index
-				types.NewDatum(col.Name.O),       // Column_name
-				types.NewDatum("utf8_bin"),       // Colation
-				types.NewDatum(0),                // Cardinality
-				types.NewDatum(subPart),          // Sub_part
-				types.NewDatum(nil),              // Packed
-				types.NewDatum("YES"),            // Null
-				types.NewDatum("BTREE"),          // Index_type
-				types.NewDatum(""),               // Comment
-				types.NewDatum(""),               // Index_comment
-			}
+			data := types.MakeDatums(
+				tb.Meta().Name.O, // Table
+				nonUniq,          // Non_unique
+				idx.Name.O,       // Key_name
+				i+1,              // Seq_in_index
+				col.Name.O,       // Column_name
+				"utf8_bin",       // Colation
+				0,                // Cardinality
+				subPart,          // Sub_part
+				nil,              // Packed
+				"YES",            // Null
+				"BTREE",          // Index_type
+				"",               // Comment
+				"",               // Index_comment
+			)
 			e.rows = append(e.rows, &Row{Data: data})
 		}
 	}
@@ -277,12 +267,12 @@ func (e *ShowExec) fetchShowCharset() error {
 	descs := charset.GetAllCharsets()
 	for _, desc := range descs {
 		row := &Row{
-			Data: []types.Datum{
-				types.NewDatum(desc.Name),
-				types.NewDatum(desc.Desc),
-				types.NewDatum(desc.DefaultCollation),
-				types.NewDatum(desc.Maxlen),
-			},
+			Data: types.MakeDatums(
+				desc.Name,
+				desc.Desc,
+				desc.DefaultCollation,
+				desc.Maxlen,
+			),
 		}
 		e.rows = append(e.rows, row)
 	}
@@ -313,7 +303,7 @@ func (e *ShowExec) fetchShowVariables() error {
 				return errors.Trace(err)
 			}
 		}
-		row := &Row{Data: []types.Datum{types.NewDatum(v.Name), types.NewDatum(value)}}
+		row := &Row{Data: types.MakeDatums(v.Name, value)}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -332,7 +322,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		row := &Row{Data: []types.Datum{types.NewDatum(status), types.NewDatum(value)}}
+		row := &Row{Data: types.MakeDatums(status, value)}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -404,10 +394,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(" DEFAULT CHARSET=latin1")
 	}
 
-	data := []types.Datum{
-		types.NewDatum(tb.Meta().Name.O),
-		types.NewDatum(buf.String()),
-	}
+	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
 	e.rows = append(e.rows, &Row{Data: data})
 	return nil
 }
@@ -419,14 +406,14 @@ func (e *ShowExec) fetchShowCollation() error {
 		if v.IsDefault {
 			isDefault = "Yes"
 		}
-		row := &Row{Data: []types.Datum{
-			types.NewDatum(v.Name),
-			types.NewDatum(v.CharsetName),
-			types.NewDatum(v.ID),
-			types.NewDatum(isDefault),
-			types.NewDatum("Yes"),
-			types.NewDatum(1),
-		}}
+		row := &Row{Data: types.MakeDatums(
+			v.Name,
+			v.CharsetName,
+			v.ID,
+			isDefault,
+			"Yes",
+			1,
+		)}
 		e.rows = append(e.rows, row)
 	}
 	return nil
@@ -443,7 +430,7 @@ func (e *ShowExec) fetchShowGrants() error {
 		return errors.Trace(err)
 	}
 	for _, g := range gs {
-		data := []types.Datum{types.NewDatum(g)}
+		data := types.MakeDatums(g)
 		e.rows = append(e.rows, &Row{Data: data})
 	}
 	return nil
