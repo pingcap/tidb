@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -97,7 +98,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Indices(), HasLen, 1)
-	err = tb.Indices()[0].X.Create(txn, []interface{}{int64(10)}, 1)
+	err = tb.Indices()[0].X.Create(txn, types.MakeDatums(int64(10)), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)

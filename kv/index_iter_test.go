@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -54,7 +55,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
-	values := []interface{}{1, 2}
+	values := types.MakeDatums(1, 2)
 	err = index.Create(txn, values, 1)
 	c.Assert(err, IsNil)
 
@@ -64,8 +65,8 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	getValues, h, err := it.Next()
 	c.Assert(err, IsNil)
 	c.Assert(getValues, HasLen, 2)
-	c.Assert(getValues[0], Equals, int64(1))
-	c.Assert(getValues[1], Equals, int64(2))
+	c.Assert(getValues[0].GetInt64(), Equals, int64(1))
+	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
 	c.Assert(h, Equals, int64(1))
 	it.Close()
 
@@ -150,12 +151,12 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
-	values := []interface{}{"abc", "def"}
+	values := types.MakeDatums("abc", "def")
 	err = index.Create(txn, values, 1)
 	c.Assert(err, IsNil)
 
 	index2 := kv.NewKVIndex([]byte("i"), "test", 1, false)
-	iter, hit, err := index2.Seek(txn, []interface{}{"abc", nil})
+	iter, hit, err := index2.Seek(txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)
 	defer iter.Close()
 	c.Assert(hit, IsFalse)

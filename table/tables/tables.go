@@ -410,11 +410,11 @@ func (t *Table) addIndices(ctx context.Context, recordID int64, r []types.Datum,
 			dupKeyErr = kv.ErrKeyExists.Gen("Duplicate entry '%s' for key '%s'", entryKey, v.Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if err = v.X.Create(bs, types.DatumsToInterfaces(colVals), recordID); err != nil {
+		if err = v.X.Create(bs, colVals, recordID); err != nil {
 			if terror.ErrorEqual(err, kv.ErrKeyExists) {
 				// Get the duplicate row handle
 				// For insert on duplicate syntax, we should update the row
-				iter, _, err1 := v.X.Seek(bs, types.DatumsToInterfaces(colVals))
+				iter, _, err1 := v.X.Seek(bs, colVals)
 				if err1 != nil {
 					return 0, errors.Trace(err1)
 				}
@@ -545,7 +545,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = v.X.Delete(txn, types.DatumsToInterfaces(vals), h); err != nil {
+		if err = v.X.Delete(txn, vals, h); err != nil {
 			if v.State != model.StatePublic && terror.ErrorEqual(err, kv.ErrNotExist) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -560,7 +560,7 @@ func (t *Table) removeRowIndices(ctx context.Context, h int64, rec []types.Datum
 
 // RemoveRowIndex implements table.Table RemoveRowIndex interface.
 func (t *Table) removeRowIndex(rm kv.RetrieverMutator, h int64, vals []types.Datum, idx *column.IndexedCol) error {
-	if err := idx.X.Delete(rm, types.DatumsToInterfaces(vals), h); err != nil {
+	if err := idx.X.Delete(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -573,7 +573,7 @@ func (t *Table) buildIndexForRow(rm kv.RetrieverMutator, h int64, vals []types.D
 		return nil
 	}
 
-	if err := idx.X.Create(rm, types.DatumsToInterfaces(vals), h); err != nil {
+	if err := idx.X.Create(rm, vals, h); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
