@@ -213,10 +213,10 @@ func (s *testSuite) TestScan(c *C) {
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
 	kvIndex := kv.NewKVIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
-	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, types.DatumsToInterfaces(idxRow1.Values), 2)
+	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
-	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, types.DatumsToInterfaces(idxRow1.Values), 1)
+	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, idxRow1.Values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
@@ -224,7 +224,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow2})
 	idxRows, nextVals, err = ScanIndexData(txn, kvIndex, nextVals, 1)
 	c.Assert(idxRows, IsNil)
-	c.Assert(nextVals, DeepEquals, []interface{}{nil})
+	c.Assert(nextVals, DeepEquals, types.MakeDatums(nil))
 	c.Assert(err, IsNil)
 
 	s.testTableData(c, tb, []*RecordData{record1, record2})
@@ -305,7 +305,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40)
-	err = idx.X.Create(txn, []interface{}{int64(30)}, 3)
+	err = idx.X.Create(txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
 	col := tb.Cols()[idx.Columns[0].Offset]
 	key := tb.RecordKey(4, col)
@@ -325,7 +325,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// index col data (handle, data): (1, 10), (2, 20), (4, 40), (3, 31)
-	err = idx.X.Create(txn, []interface{}{int64(40)}, 4)
+	err = idx.X.Create(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(3, col)
 	err = tables.SetColValue(txn, key, types.NewDatum(int64(31)))
@@ -382,7 +382,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	// current index data:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// index col data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
-	err = idx.X.Delete(txn, []interface{}{int64(40)}, 4)
+	err = idx.X.Delete(txn, types.MakeDatums(int64(40)), 4)
 	c.Assert(err, IsNil)
 	key = tb.RecordKey(4, col)
 	err = tables.SetColValue(txn, key, types.NewDatum(int64(40)))
