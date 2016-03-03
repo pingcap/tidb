@@ -338,13 +338,15 @@ func (e *IndexRangeExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *IndexRangeExec) Next() (*Row, error) {
 	if e.iter == nil {
-		seekVals := make([]interface{}, len(e.scan.idx.Columns))
+		seekVals := make([]types.Datum, len(e.scan.idx.Columns))
 		for i := 0; i < len(e.lowVals); i++ {
 			var err error
 			if e.lowVals[i] == plan.MinNotNullVal {
-				seekVals[i] = []byte{}
+				seekVals[i].SetBytes([]byte{})
 			} else {
-				seekVals[i], err = types.Convert(e.lowVals[i], e.scan.valueTypes[i])
+				var val interface{}
+				val, err = types.Convert(e.lowVals[i], e.scan.valueTypes[i])
+				seekVals[i].SetValue(val)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -370,7 +372,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		}
 		if !e.skipLowCmp {
 			var cmp int
-			cmp, err = indexCompare(idxKey, e.lowVals)
+			cmp, err = indexCompare(types.DatumsToInterfaces(idxKey), e.lowVals)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -379,7 +381,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			}
 			e.skipLowCmp = true
 		}
-		cmp, err := indexCompare(idxKey, e.highVals)
+		cmp, err := indexCompare(types.DatumsToInterfaces(idxKey), e.highVals)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

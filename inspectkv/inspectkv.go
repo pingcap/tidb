@@ -90,9 +90,9 @@ func GetBgDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func nextIndexVals(data []interface{}) []interface{} {
+func nextIndexVals(data []types.Datum) []types.Datum {
 	// Add 0x0 to the end of data.
-	return append(data, nil)
+	return append(data, types.Datum{})
 }
 
 // RecordData is the record data composed of a handle and values.
@@ -103,7 +103,7 @@ type RecordData struct {
 
 // GetIndexRecordsCount returns the total number of the index records from startVals.
 // If startVals = nil, returns the total number of the index records.
-func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}) (int64, error) {
+func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum) (int64, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -128,8 +128,8 @@ func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []inte
 // It returns data and the next startVals until it doesn't have data, then returns data is nil and
 // the next startVals is the values which can't get data. If startVals = nil and limit = -1,
 // it returns the index data of the whole.
-func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}, limit int64) (
-	[]*RecordData, []interface{}, error) {
+func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum, limit int64) (
+	[]*RecordData, []types.Datum, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -137,7 +137,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 	defer it.Close()
 
 	var idxRows []*RecordData
-	var curVals []interface{}
+	var curVals []types.Datum
 	for limit != 0 {
 		val, h, err1 := it.Next()
 		if terror.ErrorEqual(err1, io.EOF) {
@@ -145,7 +145,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []interface{}
 		} else if err1 != nil {
 			return nil, nil, errors.Trace(err1)
 		}
-		idxRows = append(idxRows, &RecordData{Handle: h, Values: types.MakeDatums(val...)})
+		idxRows = append(idxRows, &RecordData{Handle: h, Values: val})
 		limit--
 		curVals = val
 	}
@@ -195,14 +195,14 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedC
 
 		vals2, err := rowWithCols(txn, t, h, cols)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			record := &RecordData{Handle: h, Values: types.MakeDatums(vals1...)}
+			record := &RecordData{Handle: h, Values: vals1}
 			err = errors.Errorf("index:%v != record:%v", record, nil)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !reflect.DeepEqual(types.MakeDatums(vals1...), vals2) {
-			record1 := &RecordData{Handle: h, Values: types.MakeDatums(vals1...)}
+		if !reflect.DeepEqual(vals1, vals2) {
+			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
 			return errors.Errorf("index:%v != record:%v", record1, record2)
 		}
@@ -220,7 +220,7 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 	startKey := t.RecordKey(0, nil)
 	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*column.Col) (bool, error) {
-		isExist, h2, err := kvIndex.Exist(txn, types.DatumsToInterfaces(vals1), h1)
+		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
