@@ -135,7 +135,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	exist, _, err := index.X.Exist(txn, []interface{}{1}, h)
+	exist, _, err := index.X.Exist(txn, types.MakeDatums(1), h)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
@@ -149,7 +149,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	txn, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	exist, _, err = index.X.Exist(txn, []interface{}{1}, h)
+	exist, _, err = index.X.Exist(txn, types.MakeDatums(1), h)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
@@ -177,7 +177,7 @@ func (s *testIndexSuite) testGetIndex(c *C, t table.Table, name string, isExist 
 	}
 }
 
-func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Table, handle int64, indexCol *column.IndexedCol, columnValues []interface{}, isExist bool) {
+func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Table, handle int64, indexCol *column.IndexedCol, columnValues []types.Datum, isExist bool) {
 	c.Assert(len(indexCol.Columns), Equals, len(columnValues))
 
 	txn, err := ctx.GetTxn(true)
@@ -194,9 +194,9 @@ func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Ta
 func (s *testIndexSuite) checkNoneIndex(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, indexCol *column.IndexedCol, row []types.Datum) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	columnValues := make([]interface{}, len(indexCol.Columns))
+	columnValues := make([]types.Datum, len(indexCol.Columns))
 	for i, column := range indexCol.Columns {
-		columnValues[i] = row[column.Offset].GetValue()
+		columnValues[i] = row[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
@@ -218,9 +218,9 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
 
-	columnValues := make([]interface{}, len(indexCol.Columns))
+	columnValues := make([]types.Datum, len(indexCol.Columns))
 	for i, column := range indexCol.Columns {
-		columnValues[i] = row[column.Offset].GetValue()
+		columnValues[i] = row[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, isDropped)
@@ -247,7 +247,7 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	c.Assert(i, Equals, int64(2))
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newRow[column.Offset].GetValue()
+		columnValues[i] = newRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
@@ -264,7 +264,7 @@ func (s *testIndexSuite) checkDeleteOnlyIndex(c *C, ctx context.Context, d *ddl,
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newUpdateRow[column.Offset].GetValue()
+		columnValues[i] = newUpdateRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
@@ -305,9 +305,9 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
 
-	columnValues := make([]interface{}, len(indexCol.Columns))
+	columnValues := make([]types.Datum, len(indexCol.Columns))
 	for i, column := range indexCol.Columns {
-		columnValues[i] = row[column.Offset].GetValue()
+		columnValues[i] = row[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, isDropped)
@@ -334,7 +334,7 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	c.Assert(i, Equals, int64(2))
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newRow[column.Offset].GetValue()
+		columnValues[i] = newRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
@@ -351,7 +351,7 @@ func (s *testIndexSuite) checkWriteOnlyIndex(c *C, ctx context.Context, d *ddl, 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newUpdateRow[column.Offset].GetValue()
+		columnValues[i] = newUpdateRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
@@ -413,9 +413,9 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	})
 	c.Assert(i, Equals, int64(2))
 
-	columnValues := make([]interface{}, len(indexCol.Columns))
+	columnValues := make([]types.Datum, len(indexCol.Columns))
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newRow[column.Offset].GetValue()
+		columnValues[i] = newRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, !isDropped)
@@ -432,7 +432,7 @@ func (s *testIndexSuite) checkReorganizationIndex(c *C, ctx context.Context, d *
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newUpdateRow[column.Offset].GetValue()
+		columnValues[i] = newUpdateRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, !isDropped)
@@ -472,9 +472,9 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(1))
 
-	columnValues := make([]interface{}, len(indexCol.Columns))
+	columnValues := make([]types.Datum, len(indexCol.Columns))
 	for i, column := range indexCol.Columns {
-		columnValues[i] = row[column.Offset].GetValue()
+		columnValues[i] = row[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
@@ -501,7 +501,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	c.Assert(i, Equals, int64(2))
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newRow[column.Offset].GetValue()
+		columnValues[i] = newRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)
@@ -518,7 +518,7 @@ func (s *testIndexSuite) checkPublicIndex(c *C, ctx context.Context, d *ddl, tbl
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, false)
 
 	for i, column := range indexCol.Columns {
-		columnValues[i] = newUpdateRow[column.Offset].GetValue()
+		columnValues[i] = newUpdateRow[column.Offset]
 	}
 
 	s.checkIndexKVExist(c, ctx, t, handle, indexCol, columnValues, true)

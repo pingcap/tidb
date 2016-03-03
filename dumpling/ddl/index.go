@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
@@ -307,20 +308,18 @@ func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error
 	return true, nil
 }
 
-func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]interface{}, error) {
+func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]types.Datum, error) {
 	// fetch datas
 	cols := t.Cols()
-	var vals []interface{}
+	vals := make([]types.Datum, 0, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
-		var val interface{}
-
 		col := cols[v.Offset]
 		k := t.RecordKey(handle, col)
 		data, err := txn.Get(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = tables.DecodeValue(data, &col.FieldType)
+		val, err := tables.DecodeValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -435,7 +434,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				return nil
 			}
 
-			var vals []interface{}
+			var vals []types.Datum
 			vals, err = fetchRowColVals(txn, t, handle, indexInfo)
 			if err != nil {
 				return errors.Trace(err)
