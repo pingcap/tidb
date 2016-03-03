@@ -732,7 +732,7 @@ func EncodeValue(raw types.Datum) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	b, err := codec.EncodeValue(nil, v.GetValue())
+	b, err := codec.EncodeValue(nil, v)
 	return b, errors.Trace(err)
 }
 
@@ -742,7 +742,7 @@ func DecodeValue(data []byte, tp *types.FieldType) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return unflatten(types.NewDatum(values[0]), tp)
+	return unflatten(values[0], tp)
 }
 
 func flatten(data types.Datum) (types.Datum, error) {

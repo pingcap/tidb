@@ -995,13 +995,13 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 	if len(e.GroupByItems) == 0 {
 		return singleGroup, nil
 	}
-	vals := make([]interface{}, 0, len(e.GroupByItems))
+	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
 		v, err := evaluator.Eval(e.ctx, item.Expr)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		vals = append(vals, v)
+		vals = append(vals, types.NewDatum(v))
 	}
 	bs, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {
