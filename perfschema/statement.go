@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // statementInfo defines statement instrument information.
@@ -205,12 +206,12 @@ func (ps *perfSchema) EndStatement(state *StatementState) {
 	}
 	err = ps.appendEventsStmtsHistory(record)
 	if err != nil {
-		log.Error("Unable to append to events_statements_history table")
+		log.Errorf("Unable to append to events_statements_history table %v", errors.ErrorStack(err))
 	}
 }
 
-func state2Record(state *StatementState) []interface{} {
-	return []interface{}{
+func state2Record(state *StatementState) []types.Datum {
+	return types.MakeDatums(
 		state.connID,             // THREAD_ID
 		state.info.key,           // EVENT_ID
 		nil,                      // END_EVENT_ID
@@ -252,10 +253,10 @@ func state2Record(state *StatementState) []interface{} {
 		nil, // NESTING_EVENT_ID
 		nil, // NESTING_EVENT_TYPE
 		nil, // NESTING_EVENT_LEVEL
-	}
+	)
 }
 
-func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []interface{}) error {
+func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []types.Datum) error {
 	// Try AddRecord
 	tbl := ps.mTables[TableStmtsCurrent]
 	_, err := tbl.AddRecord(nil, record)
@@ -271,7 +272,7 @@ func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []interface
 	return errors.Trace(err)
 }
 
-func (ps *perfSchema) appendEventsStmtsHistory(record []interface{}) error {
+func (ps *perfSchema) appendEventsStmtsHistory(record []types.Datum) error {
 	tbl := ps.mTables[TableStmtsHistory]
 	if len(ps.historyHandles) < stmtsHistoryElemMax {
 		h, err := tbl.AddRecord(nil, record)
@@ -283,7 +284,7 @@ func (ps *perfSchema) appendEventsStmtsHistory(record []interface{}) error {
 			return errors.Trace(err)
 		}
 		// THREAD_ID is PK
-		handle := int64(record[0].(uint64))
+		handle := int64(record[0].GetUint64())
 		err = tbl.UpdateRecord(nil, handle, nil, record, nil)
 		return errors.Trace(err)
 

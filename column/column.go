@@ -220,13 +220,13 @@ func CheckNotNull(cols []*Col, row []types.Datum) error {
 }
 
 // FetchValues fetches indexed values from a row.
-func (idx *IndexedCol) FetchValues(r []interface{}) ([]interface{}, error) {
-	var vals []interface{}
-	for _, ic := range idx.Columns {
+func (idx *IndexedCol) FetchValues(r []types.Datum) ([]types.Datum, error) {
+	vals := make([]types.Datum, len(idx.Columns))
+	for i, ic := range idx.Columns {
 		if ic.Offset < 0 || ic.Offset > len(r) {
 			return nil, errors.New("Index column offset out of bound")
 		}
-		vals = append(vals, r[ic.Offset])
+		vals[i] = r[ic.Offset]
 	}
 	return vals, nil
 }

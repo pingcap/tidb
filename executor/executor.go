@@ -140,14 +140,14 @@ func (e *ShowDDLExec) Next() (*Row, error) {
 	}
 
 	row := &Row{}
-	row.Data = []types.Datum{
-		types.NewDatum(ddlInfo.SchemaVer),
-		types.NewDatum(ddlOwner),
-		types.NewDatum(ddlJob),
-		types.NewDatum(bgInfo.SchemaVer),
-		types.NewDatum(bgOwner),
-		types.NewDatum(bgJob),
-	}
+	row.Data = types.MakeDatums(
+		ddlInfo.SchemaVer,
+		ddlOwner,
+		ddlJob,
+		bgInfo.SchemaVer,
+		bgOwner,
+		bgJob,
+	)
 	for i, f := range e.fields {
 		f.Expr.SetValue(row.Data[i].GetValue())
 	}
@@ -286,8 +286,8 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 
 func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
-	data, err := e.t.Row(e.ctx, handle)
-	row.Data = types.InterfacesToDatums(data)
+	var err error
+	row.Data, err = e.t.Row(e.ctx, handle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -449,8 +449,8 @@ func indexColumnCompare(a interface{}, b interface{}) (int, error) {
 
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
-	data, err := e.scan.tbl.Row(e.scan.ctx, h)
-	row.Data = types.InterfacesToDatums(data)
+	var err error
+	row.Data, err = e.scan.tbl.Row(e.scan.ctx, h)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

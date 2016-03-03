@@ -36,7 +36,7 @@ type itemKey int64
 
 type itemPair struct {
 	handle itemKey
-	data   []interface{}
+	data   []types.Datum
 }
 
 func (r *itemPair) Less(item llrb.Item) bool {
@@ -167,7 +167,7 @@ func (t *MemoryTable) Truncate(ctx context.Context) error {
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []interface{}, newData []interface{}, touched map[int]bool) error {
+func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	item := t.tree.Get(itemKey(h))
@@ -180,9 +180,9 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []inter
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID int64, err error) {
+func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
 	if t.pkHandleCol != nil {
-		recordID, err = types.ToInt64(r[t.pkHandleCol.Offset])
+		recordID, err = types.ToInt64(r[t.pkHandleCol.Offset].GetValue())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -206,7 +206,7 @@ func (t *MemoryTable) AddRecord(ctx context.Context, r []interface{}) (recordID 
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]interface{}, error) {
+func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]types.Datum, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	item := t.tree.Get(itemKey(h))
@@ -214,7 +214,7 @@ func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.C
 		return nil, errRowNotFound
 	}
 	row := item.(*itemPair).data
-	v := make([]interface{}, len(cols))
+	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		v[i] = row[col.Offset]
 	}
@@ -222,7 +222,7 @@ func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.C
 }
 
 // Row implements table.Table Row interface.
-func (t *MemoryTable) Row(ctx context.Context, h int64) ([]interface{}, error) {
+func (t *MemoryTable) Row(ctx context.Context, h int64) ([]types.Datum, error) {
 	r, err := t.RowWithCols(nil, h, t.Cols())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -236,7 +236,7 @@ func (t *MemoryTable) LockRow(ctx context.Context, h int64, forRead bool) error 
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []interface{}) error {
+func (t *MemoryTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
 	t.mu.Lock()
 	t.tree.Delete(itemKey(h))
 	t.mu.Unlock()
