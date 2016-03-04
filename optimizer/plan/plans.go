@@ -75,29 +75,11 @@ func (p *CheckTable) Accept(v Visitor) (Plan, bool) {
 
 }
 
-type bound int
-
-// Bound values.
-const (
-	MinNotNullVal bound = 0
-	MaxVal        bound = 1
-)
-
-// String implements fmt.Stringer interface.
-func (b bound) String() string {
-	if b == MinNotNullVal {
-		return "-inf"
-	} else if b == MaxVal {
-		return "+inf"
-	}
-	return ""
-}
-
 // IndexRange represents an index range to be scanned.
 type IndexRange struct {
-	LowVal      []interface{}
+	LowVal      []types.Datum
 	LowExclude  bool
-	HighVal     []interface{}
+	HighVal     []types.Datum
 	HighExclude bool
 }
 
@@ -109,10 +91,10 @@ func (ir *IndexRange) IsPoint() bool {
 	for i := range ir.LowVal {
 		a := ir.LowVal[i]
 		b := ir.HighVal[i]
-		if a == MinNotNullVal || b == MaxVal {
+		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
-		cmp, err := types.Compare(ir.LowVal[i], ir.HighVal[i])
+		cmp, err := a.CompareDatum(b)
 		if err != nil {
 			return false
 		}

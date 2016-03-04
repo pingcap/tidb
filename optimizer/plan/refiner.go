@@ -51,7 +51,7 @@ func (r *refiner) Leave(in Plan) (Plan, bool) {
 
 var fullRange = []rangePoint{
 	{start: true},
-	{value: MaxVal},
+	{value: types.MaxValueDatum()},
 }
 
 func (r *refiner) buildIndexRange(p *IndexScan) {
