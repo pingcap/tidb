@@ -320,9 +320,9 @@ type IndexRangeExec struct {
 
 	// seekVal is different from lowVal, it is casted from lowVal and
 	// must be less than or equal to lowVal, used to seek the index.
-	lowVals     []interface{}
+	lowVals     []types.Datum
 	lowExclude  bool
-	highVals    []interface{}
+	highVals    []types.Datum
 	highExclude bool
 
 	iter       kv.IndexIterator
@@ -341,11 +341,11 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		seekVals := make([]types.Datum, len(e.scan.idx.Columns))
 		for i := 0; i < len(e.lowVals); i++ {
 			var err error
-			if e.lowVals[i] == plan.MinNotNullVal {
+			if e.lowVals[i].Kind() == types.KindMinNotNull {
 				seekVals[i].SetBytes([]byte{})
 			} else {
 				var val interface{}
-				val, err = types.Convert(e.lowVals[i], e.scan.valueTypes[i])
+				val, err = types.Convert(e.lowVals[i].GetValue(), e.scan.valueTypes[i])
 				seekVals[i].SetValue(val)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -372,7 +372,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 		}
 		if !e.skipLowCmp {
 			var cmp int
-			cmp, err = indexCompare(types.DatumsToInterfaces(idxKey), e.lowVals)
+			cmp, err = indexCompare(idxKey, e.lowVals)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -381,7 +381,7 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 			}
 			e.skipLowCmp = true
 		}
-		cmp, err := indexCompare(types.DatumsToInterfaces(idxKey), e.highVals)
+		cmp, err := indexCompare(idxKey, e.highVals)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -401,9 +401,9 @@ func (e *IndexRangeExec) Next() (*Row, error) {
 
 // indexCompare compares multi column index.
 // The length of boundVals may be less than idxKey.
-func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
+func indexCompare(idxKey []types.Datum, boundVals []types.Datum) (int, error) {
 	for i := 0; i < len(boundVals); i++ {
-		cmp, err := indexColumnCompare(idxKey[i], boundVals[i])
+		cmp, err := idxKey[i].CompareDatum(boundVals[i])
 		if err != nil {
 			return -1, errors.Trace(err)
 		}
@@ -412,41 +412,6 @@ func indexCompare(idxKey []interface{}, boundVals []interface{}) (int, error) {
 		}
 	}
 	return 0, nil
-}
-
-// comparison function that takes minNotNullVal and maxVal into account.
-func indexColumnCompare(a interface{}, b interface{}) (int, error) {
-	if a == nil && b == nil {
-		return 0, nil
-	} else if b == nil {
-		return 1, nil
-	} else if a == nil {
-		return -1, nil
-	}
-
-	// a and b both not nil
-	if a == plan.MinNotNullVal && b == plan.MinNotNullVal {
-		return 0, nil
-	} else if b == plan.MinNotNullVal {
-		return 1, nil
-	} else if a == plan.MinNotNullVal {
-		return -1, nil
-	}
-
-	// a and b both not min value
-	if a == plan.MaxVal && b == plan.MaxVal {
-		return 0, nil
-	} else if a == plan.MaxVal {
-		return 1, nil
-	} else if b == plan.MaxVal {
-		return -1, nil
-	}
-
-	n, err := types.Compare(a, b)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return n, nil
 }
 
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {

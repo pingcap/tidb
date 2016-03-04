@@ -25,24 +25,30 @@ import (
 )
 
 type rangePoint struct {
-	value interface{}
+	value types.Datum
 	excl  bool // exclude
 	start bool
 }
 
 func (rp rangePoint) String() string {
+	val := rp.value.GetValue()
+	if rp.value.Kind() == types.KindMinNotNull {
+		val = "-inf"
+	} else if rp.value.Kind() == types.KindMaxValue {
+		val = "+inf"
+	}
 	if rp.start {
 		symbol := "["
 		if rp.excl {
 			symbol = "("
 		}
-		return fmt.Sprintf("%s%v", symbol, rp.value)
+		return fmt.Sprintf("%s%v", symbol, val)
 	}
 	symbol := "]"
 	if rp.excl {
 		symbol = ")"
 	}
-	return fmt.Sprintf("%v%s", rp.value, symbol)
+	return fmt.Sprintf("%v%s", val, symbol)
 }
 
 type rangePointSorter struct {
@@ -57,41 +63,15 @@ func (r *rangePointSorter) Len() int {
 func (r *rangePointSorter) Less(i, j int) bool {
 	a := r.points[i]
 	b := r.points[j]
-	if a.value == nil && b.value == nil {
-		return r.equalValueLess(a, b)
-	} else if b.value == nil {
-		return false
-	} else if a.value == nil {
-		return true
-	}
-
-	// a and b both not nil
-	if a.value == MinNotNullVal && b.value == MinNotNullVal {
-		return r.equalValueLess(a, b)
-	} else if b.value == MinNotNullVal {
-		return false
-	} else if a.value == MinNotNullVal {
-		return true
-	}
-
-	// a and b both not min value
-	if a.value == MaxVal && b.value == MaxVal {
-		return r.equalValueLess(a, b)
-	} else if a.value == MaxVal {
-		return false
-	} else if b.value == MaxVal {
-		return true
-	}
-
-	n, err := types.Compare(a.value, b.value)
+	cmp, err := a.value.CompareDatum(b.value)
 	if err != nil {
 		r.err = err
 		return true
 	}
-	if n == 0 {
+	if cmp == 0 {
 		return r.equalValueLess(a, b)
 	}
-	return n < 0
+	return cmp < 0
 }
 
 func (r *rangePointSorter) equalValueLess(a, b rangePoint) bool {
@@ -128,7 +108,8 @@ func (r *rangeBuilder) build(expr ast.ExprNode) []rangePoint {
 	case *ast.IsTruthExpr:
 		return r.buildFromIsTruth(x)
 	case *ast.PatternLikeExpr:
-		return r.buildFromPatternLike(x)
+		rans := r.buildFromPatternLike(x)
+		return rans
 	case *ast.ColumnNameExpr:
 		return r.buildFromColumnName(x)
 	}
@@ -143,10 +124,10 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 	}
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
-	var value interface{}
+	var value types.Datum
 	var op opcode.Op
 	if _, ok := x.L.(*ast.ValueExpr); ok {
-		value = x.L.GetValue()
+		value = types.NewDatum(x.L.GetValue())
 		switch x.Op {
 		case opcode.GE:
 			op = opcode.LE
@@ -160,10 +141,10 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 			op = x.Op
 		}
 	} else {
-		value = x.R.GetValue()
+		value = types.NewDatum(x.R.GetValue())
 		op = x.Op
 	}
-	if value == nil {
+	if value.Kind() == types.KindNull {
 		return nil
 	}
 	switch op {
@@ -172,26 +153,26 @@ func (r *rangeBuilder) buildFromBinop(x *ast.BinaryOperationExpr) []rangePoint {
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.NE:
-		startPoint1 := rangePoint{value: MinNotNullVal, start: true}
+		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := rangePoint{value: value, excl: true}
 		startPoint2 := rangePoint{value: value, start: true, excl: true}
-		endPoint2 := rangePoint{value: MaxVal}
+		endPoint2 := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	case opcode.LT:
-		startPoint := rangePoint{value: MinNotNullVal, start: true}
+		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
 		endPoint := rangePoint{value: value, excl: true}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.LE:
-		startPoint := rangePoint{value: MinNotNullVal, start: true}
+		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
 		endPoint := rangePoint{value: value}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.GT:
 		startPoint := rangePoint{value: value, start: true, excl: true}
-		endPoint := rangePoint{value: MaxVal}
+		endPoint := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint, endPoint}
 	case opcode.GE:
 		startPoint := rangePoint{value: value, start: true}
-		endPoint := rangePoint{value: MaxVal}
+		endPoint := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint, endPoint}
 	}
 	return nil
@@ -204,8 +185,8 @@ func (r *rangeBuilder) buildFromIn(x *ast.PatternInExpr) []rangePoint {
 	}
 	var rangePoints []rangePoint
 	for _, v := range x.List {
-		startPoint := rangePoint{value: v.GetValue(), start: true}
-		endPoint := rangePoint{value: v.GetValue()}
+		startPoint := rangePoint{value: types.NewDatum(v.GetValue()), start: true}
+		endPoint := rangePoint{value: types.NewDatum(v.GetValue())}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := rangePointSorter{points: rangePoints}
@@ -257,8 +238,8 @@ func (r *rangeBuilder) buildFromBetween(x *ast.BetweenExpr) []rangePoint {
 
 func (r *rangeBuilder) buildFromIsNull(x *ast.IsNullExpr) []rangePoint {
 	if x.Not {
-		startPoint := rangePoint{value: MinNotNullVal, start: true}
-		endPoint := rangePoint{value: MaxVal}
+		startPoint := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint, endPoint}
 	}
 	startPoint := rangePoint{start: true}
@@ -269,27 +250,37 @@ func (r *rangeBuilder) buildFromIsNull(x *ast.IsNullExpr) []rangePoint {
 func (r *rangeBuilder) buildFromIsTruth(x *ast.IsTruthExpr) []rangePoint {
 	if x.True != 0 {
 		if x.Not {
+			// NOT TRUE range is {[null null] [0, 0]}
 			startPoint1 := rangePoint{start: true}
 			endPoint1 := rangePoint{}
-			startPoint2 := rangePoint{value: int64(0), start: true}
-			endPoint2 := rangePoint{value: int64(0)}
+			startPoint2 := rangePoint{start: true}
+			startPoint2.value.SetInt64(0)
+			endPoint2 := rangePoint{}
+			endPoint2.value.SetInt64(0)
 			return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 		}
-		startPoint1 := rangePoint{value: MinNotNullVal, start: true}
-		endPoint1 := rangePoint{value: int64(0), excl: true}
-		startPoint2 := rangePoint{value: int64(0), excl: true, start: true}
-		endPoint2 := rangePoint{value: MaxVal}
+		// TRUE range is {[-inf 0) (0 +inf]}
+		startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
+		endPoint1 := rangePoint{excl: true}
+		endPoint1.value.SetInt64(0)
+		startPoint2 := rangePoint{excl: true, start: true}
+		startPoint2.value.SetInt64(0)
+		endPoint2 := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
 	if x.Not {
 		startPoint1 := rangePoint{start: true}
-		endPoint1 := rangePoint{value: int64(0), excl: true}
-		startPoint2 := rangePoint{value: int64(0), start: true, excl: true}
-		endPoint2 := rangePoint{value: MaxVal}
+		endPoint1 := rangePoint{excl: true}
+		endPoint1.value.SetInt64(0)
+		startPoint2 := rangePoint{start: true, excl: true}
+		startPoint2.value.SetInt64(0)
+		endPoint2 := rangePoint{value: types.MaxValueDatum()}
 		return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 	}
-	startPoint := rangePoint{value: int64(0), start: true}
-	endPoint := rangePoint{value: int64(0)}
+	startPoint := rangePoint{start: true}
+	startPoint.value.SetInt64(0)
+	endPoint := rangePoint{}
+	endPoint.value.SetInt64(0)
 	return []rangePoint{startPoint, endPoint}
 }
 
@@ -326,33 +317,38 @@ func (r *rangeBuilder) buildFromPatternLike(x *ast.PatternLikeExpr) []rangePoint
 		lowValue = append(lowValue, pattern[i])
 	}
 	if len(lowValue) == 0 {
-		return []rangePoint{{value: MinNotNullVal, start: true}, {value: MaxVal}}
+		return []rangePoint{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
-	startPoint := rangePoint{value: string(lowValue), start: true, excl: exclude}
+	startPoint := rangePoint{start: true, excl: exclude}
+	startPoint.value.SetBytesAsString(lowValue)
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
-
 	endPoint := rangePoint{excl: true}
 	for i := len(highValue) - 1; i >= 0; i-- {
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value = string(highValue)
+			endPoint.value.SetBytesAsString(highValue)
 			break
 		}
 		if i == 0 {
-			endPoint.value = MaxVal
+			endPoint.value = types.MaxValueDatum()
 			break
 		}
 	}
-	return []rangePoint{startPoint, endPoint}
+	ranges := make([]rangePoint, 2)
+	ranges[0] = startPoint
+	ranges[1] = endPoint
+	return ranges
 }
 
 func (r *rangeBuilder) buildFromColumnName(x *ast.ColumnNameExpr) []rangePoint {
 	// column name expression is equivalent to column name is true.
-	startPoint1 := rangePoint{value: MinNotNullVal, start: true}
-	endPoint1 := rangePoint{value: int64(0), excl: true}
-	startPoint2 := rangePoint{value: int64(0), excl: true, start: true}
-	endPoint2 := rangePoint{value: MaxVal}
+	startPoint1 := rangePoint{value: types.MinNotNullDatum(), start: true}
+	endPoint1 := rangePoint{excl: true}
+	endPoint1.value.SetInt64(0)
+	startPoint2 := rangePoint{excl: true, start: true}
+	startPoint2.value.SetInt64(0)
+	endPoint2 := rangePoint{value: types.MaxValueDatum()}
 	return []rangePoint{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
@@ -408,9 +404,9 @@ func (r *rangeBuilder) buildIndexRanges(rangePoints []rangePoint) []*IndexRange 
 		startPoint := rangePoints[i]
 		endPoint := rangePoints[i+1]
 		ir := &IndexRange{
-			LowVal:      []interface{}{startPoint.value},
+			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
-			HighVal:     []interface{}{endPoint.value},
+			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
 		}
 		indexRanges = append(indexRanges, ir)
@@ -439,12 +435,12 @@ func (r *rangeBuilder) appendIndexRange(origin *IndexRange, rangePoints []rangeP
 	newRanges := make([]*IndexRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
-		lowVal := make([]interface{}, len(origin.LowVal)+1)
+		lowVal := make([]types.Datum, len(origin.LowVal)+1)
 		copy(lowVal, origin.LowVal)
 		lowVal[len(origin.LowVal)] = startPoint.value
 
 		endPoint := rangePoints[i+1]
-		highVal := make([]interface{}, len(origin.HighVal)+1)
+		highVal := make([]types.Datum, len(origin.HighVal)+1)
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
@@ -463,15 +459,16 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 	tableRanges := make([]TableRange, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint := rangePoints[i]
-		if startPoint.value == nil || startPoint.value == MinNotNullVal {
-			startPoint.value = int64(math.MinInt64)
+		if startPoint.value.Kind() == types.KindNull || startPoint.value.Kind() == types.KindMinNotNull {
+			startPoint.value.SetInt64(math.MinInt64)
 		}
-		startInt, err := types.ToInt64(startPoint.value)
+		startInt, err := types.ToInt64(startPoint.value.GetValue())
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
-		cmp, err := types.Compare(startInt, startPoint.value)
+		startDatum := types.NewDatum(startInt)
+		cmp, err := startDatum.CompareDatum(startPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -480,17 +477,18 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 			startInt++
 		}
 		endPoint := rangePoints[i+1]
-		if endPoint.value == nil {
-			endPoint.value = int64(math.MinInt64)
-		} else if endPoint.value == MaxVal {
-			endPoint.value = int64(math.MaxInt64)
+		if endPoint.value.Kind() == types.KindNull {
+			endPoint.value.SetInt64(math.MinInt64)
+		} else if endPoint.value.Kind() == types.KindMaxValue {
+			endPoint.value.SetInt64(math.MaxInt64)
 		}
-		endInt, err := types.ToInt64(endPoint.value)
+		endInt, err := types.ToInt64(endPoint.value.GetValue())
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
 		}
-		cmp, err = types.Compare(endInt, endPoint.value)
+		endDatum := types.NewDatum(endInt)
+		cmp, err = endDatum.CompareDatum(endPoint.value)
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges

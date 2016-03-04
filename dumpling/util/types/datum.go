@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -41,6 +40,8 @@ const (
 	KindMysqlTime
 	KindRow
 	KindInterface
+	KindMinNotNull
+	KindMaxValue
 )
 
 // Datum is a data box holds different kind of data.
@@ -117,10 +118,15 @@ func (d *Datum) GetBytes() []byte {
 	return d.b
 }
 
-// SetBytes sets bytes value to datum, if copy is true,
-// creates a copy.
+// SetBytes sets bytes value to datum.
 func (d *Datum) SetBytes(b []byte) {
 	d.k = KindBytes
+	d.b = b
+}
+
+// SetBytesAsString sets bytes value to datum as string type.
+func (d *Datum) SetBytesAsString(b []byte) {
+	d.k = KindString
 	d.b = b
 }
 
@@ -264,6 +270,18 @@ func (d *Datum) CompareDatum(ad Datum) (int, error) {
 			return 0, nil
 		}
 		return 1, nil
+	case KindMinNotNull:
+		if d.k == KindNull {
+			return -1, nil
+		} else if d.k == KindMinNotNull {
+			return 0, nil
+		}
+		return 1, nil
+	case KindMaxValue:
+		if d.k == KindMaxValue {
+			return 0, nil
+		}
+		return -1, nil
 	case KindInt64:
 		return d.compareInt64(ad.GetInt64())
 	case KindUint64:
@@ -297,6 +315,8 @@ func (d *Datum) CompareDatum(ad Datum) (int, error) {
 
 func (d *Datum) compareInt64(i int64) (int, error) {
 	switch d.k {
+	case KindMaxValue:
+		return 1, nil
 	case KindInt64:
 		return CompareInt64(d.i, i), nil
 	case KindUint64:
@@ -311,6 +331,8 @@ func (d *Datum) compareInt64(i int64) (int, error) {
 
 func (d *Datum) compareUint64(u uint64) (int, error) {
 	switch d.k {
+	case KindMaxValue:
+		return 1, nil
 	case KindInt64:
 		if d.i < 0 || u > math.MaxInt64 {
 			return -1, nil
@@ -325,8 +347,10 @@ func (d *Datum) compareUint64(u uint64) (int, error) {
 
 func (d *Datum) compareFloat64(f float64) (int, error) {
 	switch d.k {
-	case KindNull:
+	case KindNull, KindMinNotNull:
 		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindInt64:
 		return CompareFloat64(float64(d.i), f), nil
 	case KindUint64:
@@ -334,8 +358,8 @@ func (d *Datum) compareFloat64(f float64) (int, error) {
 	case KindFloat32, KindFloat64:
 		return CompareFloat64(d.GetFloat64(), f), nil
 	case KindString, KindBytes:
-		fVal := parseFloatLoose(d.GetString())
-		return CompareFloat64(fVal, f), nil
+		fVal, err := parseFloat(d.GetString())
+		return CompareFloat64(fVal, f), err
 	case KindMysqlBit:
 		fVal := d.GetMysqlBit().ToNumber()
 		return CompareFloat64(fVal, f), nil
@@ -362,35 +386,12 @@ func (d *Datum) compareFloat64(f float64) (int, error) {
 	}
 }
 
-func numPart(s string) string {
+func parseFloat(s string) (float64, error) {
 	s = strings.TrimSpace(s)
-	var hasDot bool
-	var i int
-	for i = 0; i < len(s); i++ {
-		if s[i] == '.' {
-			if hasDot {
-				break
-			}
-			hasDot = true
-			continue
-		}
-		if s[i] < '0' && s[i] > '9' {
-			break
-		}
+	if s == "" {
+		return 0, nil
 	}
-	if i == 0 {
-		return "0"
-	}
-	return s[:i]
-}
-
-func parseFloatLoose(s string) float64 {
-	s = numPart(s)
-	val, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		log.Errorf("should not happen!")
-	}
-	return val
+	return strconv.ParseFloat(s, 64)
 }
 
 func (d *Datum) compareString(s string) (int, error) {
@@ -398,7 +399,6 @@ func (d *Datum) compareString(s string) (int, error) {
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), s), nil
 	case KindMysqlDecimal:
-		s = numPart(s)
 		dec, err := mysql.ParseDecimal(s)
 		return d.GetMysqlDecimal().Cmp(dec), err
 	case KindMysqlTime:
@@ -416,7 +416,11 @@ func (d *Datum) compareString(s string) (int, error) {
 	case KindMysqlEnum:
 		return CompareString(d.GetMysqlEnum().String(), s), nil
 	default:
-		return d.compareFloat64(parseFloatLoose(s))
+		fVal, err := parseFloat(s)
+		if err != nil {
+			return 0, err
+		}
+		return d.compareFloat64(fVal)
 	}
 }
 
@@ -438,8 +442,7 @@ func (d *Datum) compareMysqlDecimal(dec mysql.Decimal) (int, error) {
 	case KindMysqlDecimal:
 		return d.GetMysqlDecimal().Cmp(dec), nil
 	case KindString, KindBytes:
-		s := numPart(d.GetString())
-		dDec, err := mysql.ParseDecimal(s)
+		dDec, err := mysql.ParseDecimal(d.GetString())
 		return dDec.Cmp(dec), err
 	default:
 		fVal, _ := dec.Float64()
@@ -545,4 +548,14 @@ func DatumsToInterfaces(datums []Datum) []interface{} {
 		ins[i] = v.GetValue()
 	}
 	return ins
+}
+
+// MinNotNullDatum returns a datum represents minimum not null value.
+func MinNotNullDatum() Datum {
+	return Datum{k: KindMinNotNull}
+}
+
+// MaxValueDatum returns a datum represents max value.
+func MaxValueDatum() Datum {
+	return Datum{k: KindMaxValue}
 }
