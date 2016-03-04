@@ -92,12 +92,14 @@ func FindOnUpdateCols(cols []*Col) []*Col {
 }
 
 // CastValues casts values based on columns type.
-func CastValues(ctx context.Context, rec []interface{}, cols []*Col) (err error) {
+func CastValues(ctx context.Context, rec []types.Datum, cols []*Col) (err error) {
 	for _, c := range cols {
-		rec[c.Offset], err = types.Convert(rec[c.Offset], &c.FieldType)
+		var val interface{}
+		val, err = types.Convert(rec[c.Offset].GetValue(), &c.FieldType)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		rec[c.Offset].SetValue(val)
 	}
 	return nil
 }
@@ -195,8 +197,8 @@ func CheckOnce(cols []*Col) error {
 }
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
-func (c *Col) CheckNotNull(data interface{}) error {
-	if mysql.HasNotNullFlag(c.Flag) && data == nil {
+func (c *Col) CheckNotNull(data types.Datum) error {
+	if mysql.HasNotNullFlag(c.Flag) && data.Kind() == types.KindNull {
 		return errors.Errorf("Column %s can't be null.", c.Name)
 	}
 	return nil
@@ -208,7 +210,7 @@ func (c *Col) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 }
 
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
-func CheckNotNull(cols []*Col, row []interface{}) error {
+func CheckNotNull(cols []*Col, row []types.Datum) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
 			return errors.Trace(err)
@@ -218,13 +220,13 @@ func CheckNotNull(cols []*Col, row []interface{}) error {
 }
 
 // FetchValues fetches indexed values from a row.
-func (idx *IndexedCol) FetchValues(r []interface{}) ([]interface{}, error) {
-	var vals []interface{}
-	for _, ic := range idx.Columns {
+func (idx *IndexedCol) FetchValues(r []types.Datum) ([]types.Datum, error) {
+	vals := make([]types.Datum, len(idx.Columns))
+	for i, ic := range idx.Columns {
 		if ic.Offset < 0 || ic.Offset > len(r) {
 			return nil, errors.New("Index column offset out of bound")
 		}
-		vals = append(vals, r[ic.Offset])
+		vals[i] = r[ic.Offset]
 	}
 	return vals, nil
 }

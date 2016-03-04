@@ -16,6 +16,7 @@
 package ast
 
 import (
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -113,7 +114,27 @@ type ResultField struct {
 	// The expression for the result field. If it is generated from a select field, it would
 	// be the expression of that select field, otherwise the type would be ValueExpr and value
 	// will be set for every retrieved row.
-	Expr ExprNode
+	Expr      ExprNode
+	TableName *TableName
+}
+
+// Row represents a single row from Recordset.
+type Row struct {
+	Data []types.Datum
+}
+
+// RecordSet is an abstract result set interface to help get data from Plan.
+type RecordSet interface {
+
+	// Fields gets result fields.
+	Fields() (fields []*ResultField, err error)
+
+	// Next returns the next row, nil row means there is no more to return.
+	Next() (row *Row, err error)
+
+	// Close closes the underlying iterator, call Next after Close will
+	// restart the iteration.
+	Close() error
 }
 
 // ResultSetNode interface has ResultFields property which is computed and set by
@@ -125,6 +146,28 @@ type ResultSetNode interface {
 	GetResultFields() []*ResultField
 	// SetResultFields sets result fields of the result set node.
 	SetResultFields(fields []*ResultField)
+}
+
+// Statement is an interface for SQL execution.
+// NOTE: all Statement implementations must be safe for
+// concurrent using by multiple goroutines.
+// If the Exec method requires any Execution domain local data,
+// they must be held out of the implementing instance.
+type Statement interface {
+	// Explain gets the execution plans.
+	//Explain(ctx context.Context, w format.Formatter)
+
+	// IsDDL shows whether the statement is an DDL operation.
+	IsDDL() bool
+
+	// OriginText gets the origin SQL text.
+	OriginText() string
+
+	// SetText sets the executive SQL text.
+	SetText(text string)
+
+	// Exec executes SQL and gets a Recordset.
+	Exec(ctx context.Context) (RecordSet, error)
 }
 
 // Visitor visits a Node.

@@ -72,10 +72,48 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	return alloc.base, nil
 }
 
+var (
+	memID     int64
+	memIDLock sync.Mutex
+)
+
+type memoryAllocator struct {
+	mu   sync.Mutex
+	base int64
+	end  int64
+	dbID int64
+}
+
+// Alloc allocs the next autoID for table with tableID.
+// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
+func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
+	if tableID == 0 {
+		return 0, errors.New("Invalid tableID")
+	}
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if alloc.base == alloc.end { // step
+		memIDLock.Lock()
+		memID = memID + step
+		alloc.end = memID
+		alloc.base = alloc.end - step
+		memIDLock.Unlock()
+	}
+	alloc.base++
+	return alloc.base, nil
+}
+
 // NewAllocator returns a new auto increment id generator on the store.
 func NewAllocator(store kv.Storage, dbID int64) Allocator {
 	return &allocator{
 		store: store,
 		dbID:  dbID,
+	}
+}
+
+// NewMemoryAllocator returns a new auto increment id generator in memory.
+func NewMemoryAllocator(dbID int64) Allocator {
+	return &memoryAllocator{
+		dbID: dbID,
 	}
 }

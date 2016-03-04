@@ -79,7 +79,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.startJob(ctx, job)
+	err = d.startDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -92,7 +92,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 		Args:     []interface{}{model.NewCIStr(colName)},
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
 		return nil
@@ -113,7 +113,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, []interface{}{i, 10 * i, 100 * i})
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i))
 		c.Assert(err, IsNil)
 	}
 
@@ -121,13 +121,11 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	txn, err := ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, HasLen, 3)
-		c.Assert(data[0], Equals, i)
-		c.Assert(data[1], Equals, 10*i)
-		c.Assert(data[2], Equals, 100*i)
+		c.Assert(data[0].GetInt64(), Equals, i)
+		c.Assert(data[1].GetInt64(), Equals, 10*i)
+		c.Assert(data[2].GetInt64(), Equals, 100*i)
 		i++
 		return true, nil
 	})
@@ -142,67 +140,56 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(column.FindCol(t.Cols(), "c4"), NotNil)
 
 	i = int64(0)
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, HasLen, 4)
-		c.Assert(data[0], Equals, i)
-		c.Assert(data[1], Equals, 10*i)
-		c.Assert(data[2], Equals, 100*i)
-		c.Assert(data[3], Equals, int64(100))
+		c.Assert(data[0].GetInt64(), Equals, i)
+		c.Assert(data[1].GetInt64(), Equals, 10*i)
+		c.Assert(data[2].GetInt64(), Equals, 100*i)
+		c.Assert(data[3].GetInt64(), Equals, int64(100))
 		i++
 		return true, nil
 	})
 	c.Assert(i, Equals, int64(num))
 
-	h, err := t.AddRecord(ctx, []interface{}{11, 12, 13, 14})
+	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
 	c.Assert(err, IsNil)
 	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
-
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	values, err := t.RowWithCols(txn, h, t.Cols())
+	values, err := t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 4)
-	c.Assert(values[3], Equals, int64(14))
+	c.Assert(values[3].GetInt64(), Equals, int64(14))
 
 	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", false)
 	testCheckJobDone(c, s.d, job, false)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	values, err = t.RowWithCols(txn, h, t.Cols())
+	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 3)
-	c.Assert(values[2], Equals, int64(13))
+	c.Assert(values[2].GetInt64(), Equals, int64(13))
 
 	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c4", &ColumnPosition{Type: ColumnPositionNone}, 111)
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	values, err = t.RowWithCols(txn, h, t.Cols())
+	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 4)
-	c.Assert(values[3], Equals, int64(111))
+	c.Assert(values[3].GetInt64(), Equals, int64(111))
 
 	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c5", &ColumnPosition{Type: ColumnPositionNone}, 101)
 	testCheckJobDone(c, s.d, job, true)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	values, err = t.RowWithCols(txn, h, t.Cols())
+	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 5)
-	c.Assert(values[4], Equals, int64(101))
+	c.Assert(values[4].GetInt64(), Equals, int64(101))
 
 	job = testCreateColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c6", &ColumnPosition{Type: ColumnPositionFirst}, 202)
 	testCheckJobDone(c, s.d, job, true)
@@ -223,27 +210,24 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(cols[5].Offset, Equals, 5)
 	c.Assert(cols[5].Name.L, Equals, "c5")
 
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	values, err = t.RowWithCols(txn, h, cols)
+	values, err = t.RowWithCols(ctx, h, cols)
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 6)
-	c.Assert(values[0], Equals, int64(202))
-	c.Assert(values[5], Equals, int64(101))
+	c.Assert(values[0].GetInt64(), Equals, int64(202))
+	c.Assert(values[5].GetInt64(), Equals, int64(101))
 
 	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c2", false)
 	testCheckJobDone(c, s.d, job, false)
 
 	t = testGetTable(c, s.d, s.dbInfo.ID, tblInfo.ID)
-	txn, err = ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	values, err = t.RowWithCols(txn, h, t.Cols())
+
+	values, err = t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
 
 	c.Assert(values, HasLen, 5)
-	c.Assert(values[0], Equals, int64(202))
-	c.Assert(values[4], Equals, int64(101))
+	c.Assert(values[0].GetInt64(), Equals, int64(202))
+	c.Assert(values[4].GetInt64(), Equals, int64(101))
 
 	job = testDropColumn(c, ctx, s.d, s.dbInfo, tblInfo, "c1", false)
 	testCheckJobDone(c, s.d, job, false)
@@ -279,7 +263,7 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 
 	if isExist {
 		c.Assert(err, IsNil)
-		v, err1 := t.DecodeValue(data, col)
+		v, err1 := tables.DecodeValue(data, &col.FieldType)
 		c.Assert(err1, IsNil)
 		value, err1 := types.Convert(v, &col.FieldType)
 		c.Assert(err1, IsNil)
@@ -298,14 +282,14 @@ func (s *testColumnSuite) checkNoneColumn(c *C, ctx context.Context, d *ddl, tbl
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []types.Datum, columnValue interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	txn, err := ctx.GetTxn(true)
+	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -319,17 +303,17 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	rows := [][]interface{}{row, newRow}
+	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -345,11 +329,11 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -359,14 +343,14 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(c *C, ctx context.Context, d *dd
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []types.Datum, columnValue interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	txn, err := ctx.GetTxn(true)
+	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -380,17 +364,17 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	rows := [][]interface{}{row, newRow}
+	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -406,11 +390,11 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -420,14 +404,14 @@ func (s *testColumnSuite) checkWriteOnlyColumn(c *C, ctx context.Context, d *ddl
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []types.Datum, columnValue interface{}, isDropped bool) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	txn, err := ctx.GetTxn(true)
+	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, row)
 		i++
 		return true, nil
@@ -439,17 +423,17 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	newRow := []interface{}{int64(11), int64(22), int64(33)}
+	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	rows := [][]interface{}{row, newRow}
+	rows := [][]types.Datum{row, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -465,11 +449,11 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		i++
 		return true, nil
 	})
@@ -478,15 +462,15 @@ func (s *testColumnSuite) checkReorganizationColumn(c *C, ctx context.Context, d
 	s.testGetColumn(c, t, col.Name.L, false)
 }
 
-func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}) {
+func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []types.Datum, columnValue interface{}) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	txn, err := ctx.GetTxn(true)
+	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	oldRow := append(row, columnValue)
-	err = t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	oldRow := append(row, types.NewDatum(columnValue))
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, oldRow)
 		i++
 		return true, nil
@@ -498,17 +482,17 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	newRow := []interface{}{int64(11), int64(22), int64(33), int64(44)}
+	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
 	handle, err = t.AddRecord(ctx, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
-	rows := [][]interface{}{oldRow, newRow}
+	rows := [][]types.Datum{oldRow, newRow}
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, rows[i])
 		i++
 		return true, nil
@@ -522,11 +506,11 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	err = t.RemoveRecord(ctx, handle, newRow)
 	c.Assert(err, IsNil)
 
-	txn, err = ctx.GetTxn(true)
+	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
 	i = int64(0)
-	t.IterRecords(txn, t.FirstKey(), t.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		c.Assert(data, DeepEquals, oldRow)
 		i++
 		return true, nil
@@ -538,7 +522,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	s.testGetColumn(c, t, col.Name.L, true)
 }
 
-func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []interface{}, columnValue interface{}, isDropped bool) {
+func (s *testColumnSuite) checkAddOrDropColumn(c *C, state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle int64, col *column.Col, row []types.Datum, columnValue interface{}, isDropped bool) {
 	ctx := testNewContext(c, d)
 
 	switch state {
@@ -576,7 +560,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	row := []interface{}{int64(1), int64(2), int64(3)}
+	row := types.MakeDatums(int64(1), int64(2), int64(3))
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
@@ -644,8 +628,8 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	colName := "c4"
 	defaultColValue := int64(4)
-	row := []interface{}{int64(1), int64(2), int64(3)}
-	handle, err := t.AddRecord(ctx, append(row, defaultColValue))
+	row := types.MakeDatums(int64(1), int64(2), int64(3))
+	handle, err := t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
 	c.Assert(err, IsNil)
 
 	err = ctx.FinishTxn(false)

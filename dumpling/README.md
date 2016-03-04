@@ -46,7 +46,7 @@ Read the [Quick Start](./docs/QUICKSTART.md)
 ![architecture](./docs/architecture.png)
 
 ## Contributing
-Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](./docs/CONTRIBUTING.md)
+Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for details on submitting patches and the contribution workflow.
 
 ## Follow us

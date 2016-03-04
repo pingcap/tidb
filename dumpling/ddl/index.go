@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
@@ -61,7 +62,6 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	} else {
 		tblInfo.Columns[col.Offset].Flag |= mysql.MultipleKeyFlag
 	}
-
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
@@ -165,7 +165,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		}
 
 		var tbl table.Table
-		tbl, err = d.getTable(t, schemaID, tblInfo)
+		tbl, err = d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -249,7 +249,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		tbl, err := d.getTable(t, schemaID, tblInfo)
+		tbl, err := d.getTable(schemaID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -302,20 +302,18 @@ func checkRowExist(txn kv.Transaction, t table.Table, handle int64) (bool, error
 	return true, nil
 }
 
-func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]interface{}, error) {
+func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo *model.IndexInfo) ([]types.Datum, error) {
 	// fetch datas
 	cols := t.Cols()
-	var vals []interface{}
+	vals := make([]types.Datum, 0, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
-		var val interface{}
-
 		col := cols[v.Offset]
 		k := t.RecordKey(handle, col)
 		data, err := txn.Get(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = t.DecodeValue(data, col)
+		val, err := tables.DecodeValue(data, &col.FieldType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -388,7 +386,6 @@ func (d *ddl) getSnapshotRows(t table.Table, version uint64, seekHandle int64) (
 
 		handles = append(handles, handle)
 		if len(handles) == maxBatchSize {
-			seekHandle = handle + 1
 			break
 		}
 
@@ -431,7 +428,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 				return nil
 			}
 
-			var vals []interface{}
+			var vals []types.Datum
 			vals, err = fetchRowColVals(txn, t, handle, indexInfo)
 			if err != nil {
 				return errors.Trace(err)
@@ -470,54 +467,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
 	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
-	for {
-		keys := make([]kv.Key, 0, maxBatchSize)
-		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			iter, err := txn.Seek(prefix)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	err := d.delKeysWithPrefix(prefix)
 
-			defer iter.Close()
-			for i := 0; i < maxBatchSize; i++ {
-				if iter.Valid() && iter.Key().HasPrefix(prefix) {
-					keys = append(keys, iter.Key().Clone())
-					err = iter.Next()
-					if err != nil {
-						return errors.Trace(err)
-					}
-				} else {
-					break
-				}
-			}
-
-			return nil
-		})
-
-		// if err or delete no keys, return.
-		if err != nil || len(keys) == 0 {
-			return errors.Trace(err)
-		}
-
-		// delete index key one by one
-		for _, key := range keys {
-			err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-				if err1 := d.isReorgRunnable(txn); err1 != nil {
-					return errors.Trace(err1)
-				}
-
-				err1 := txn.Delete(key)
-				// if key doesn't exist, skip this error.
-				if err1 != nil && !terror.ErrorEqual(err1, kv.ErrNotExist) {
-					return errors.Trace(err1)
-				}
-
-				return nil
-			})
-
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
+	return errors.Trace(err)
 }

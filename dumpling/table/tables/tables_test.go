@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -57,37 +58,35 @@ func (ts *testSuite) TestBasic(c *C) {
 	dom := sessionctx.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(tb.TableID(), Greater, int64(0))
-	c.Assert(tb.TableName().L, Equals, "t")
+	c.Assert(tb.Meta().ID, Greater, int64(0))
+	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
-	c.Assert(tb.FindIndexByColName("b"), NotNil)
+	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	rid, err := tb.AddRecord(ctx, []interface{}{1, "abc"})
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
-	c.Assert(row[0].(int64), Equals, int64(1))
+	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, "aba"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, "abc"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, NotNil)
 
-	c.Assert(tb.UpdateRecord(ctx, rid, []interface{}{1, "abc"}, []interface{}{1, "cba"}, map[int]bool{0: false, 1: true}), IsNil)
+	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), map[int]bool{0: false, 1: true}), IsNil)
 
-	txn, err := ctx.GetTxn(false)
-	c.Assert(err, IsNil)
-	tb.IterRecords(txn, tb.FirstKey(), tb.Cols(), func(h int64, data []interface{}, cols []*column.Col) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
 		return true, nil
 	})
 
@@ -97,16 +96,27 @@ func (ts *testSuite) TestBasic(c *C) {
 		return cnt
 	}
 
+	// RowWithCols test
+	vals, err := tb.RowWithCols(ctx, 1, tb.Cols())
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 2)
+	c.Assert(vals[0].GetInt64(), Equals, int64(1))
+	cols := []*column.Col{tb.Cols()[1]}
+	vals, err = tb.RowWithCols(ctx, 1, cols)
+	c.Assert(err, IsNil)
+	c.Assert(vals, HasLen, 1)
+	c.Assert(vals[0].GetBytes(), DeepEquals, []byte("cba"))
+
 	// Make sure there is index data in the storage.
 	c.Assert(indexCnt(), Greater, 0)
-	c.Assert(tb.RemoveRecord(ctx, rid, []interface{}{1, "cba"}), IsNil)
+	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
 	// Make sure index data is also removed after tb.RemoveRecord().
 	c.Assert(indexCnt(), Equals, 0)
-	_, err = tb.AddRecord(ctx, []interface{}{1, "abc"})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	// Make sure index data is also removed after tb.Truncate().
-	c.Assert(tb.Truncate(txn), IsNil)
+	c.Assert(tb.Truncate(ctx), IsNil)
 	c.Assert(indexCnt(), Equals, 0)
 
 	_, err = ts.se.Execute("drop table test.t")
@@ -137,9 +147,9 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute("select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	row, err := rs[0].FirstRow()
+	row, err := rs[0].Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
+	c.Assert(row.Data, NotNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -149,10 +159,10 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute("select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	row, err = rs[0].FirstRow()
+	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	c.Assert(row[5], Equals, mysql.Bit{Value: 6, Width: 8})
+	c.Assert(row.Data, NotNil)
+	c.Assert(row.Data[5].GetMysqlBit(), Equals, mysql.Bit{Value: 6, Width: 8})
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 
@@ -162,10 +172,10 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute("select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	row, err = rs[0].FirstRow()
+	row, err = rs[0].Next()
 	c.Assert(err, IsNil)
-	c.Assert(row, NotNil)
-	c.Assert(row[0], DeepEquals, float64(2))
+	c.Assert(row.Data, NotNil)
+	c.Assert(row.Data[0].GetFloat64(), DeepEquals, float64(2))
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)
 }
@@ -177,22 +187,22 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	dom := sessionctx.GetDomain(ctx)
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(tb.TableID(), Greater, int64(0))
-	c.Assert(tb.TableName().L, Equals, "t")
+	c.Assert(tb.Meta().ID, Greater, int64(0))
+	c.Assert(tb.Meta().Name.L, Equals, "t")
 	c.Assert(tb.Meta(), NotNil)
 	c.Assert(tb.Indices(), NotNil)
 	c.Assert(string(tb.FirstKey()), Not(Equals), "")
 	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
-	c.Assert(tb.FindIndexByColName("b"), NotNil)
+	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
 
 	autoid, err := tb.AllocAutoID()
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
 
-	_, err = tb.AddRecord(ctx, []interface{}{1, nil})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, nil))
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ctx, []interface{}{2, nil})
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, nil))
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute("drop table test.t")
 	c.Assert(err, IsNil)

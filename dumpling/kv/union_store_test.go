@@ -91,7 +91,8 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("1"))
 
-	s.us.SetOption(PresumeKeyNotExists, 1)
+	s.us.SetOption(PresumeKeyNotExists, nil)
+	s.us.SetOption(PresumeKeyNotExistsError, ErrNotExist)
 	_, err = s.us.Get([]byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue)
 

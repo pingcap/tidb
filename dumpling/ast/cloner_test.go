@@ -1,15 +1,9 @@
 package ast
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/opcode"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testClonerSuite{})
 
@@ -35,6 +29,6 @@ func (ts *testClonerSuite) TestCloner(c *C) {
 	a3 := a2.(*ValueExpr)
 	b3 := b2.(*ValueExpr)
 	c.Assert(a3, Not(Equals), b3)
-	c.Assert(a3.GetValue(), Equals, true)
-	c.Assert(b3.GetValue(), Equals, true)
+	c.Assert(a3.GetValue(), Equals, int64(1))
+	c.Assert(b3.GetValue(), Equals, int64(1))
 }
