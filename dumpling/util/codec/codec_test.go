@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -33,58 +34,48 @@ type testCodecSuite struct {
 
 func (s *testCodecSuite) TestCodecKey(c *C) {
 	table := []struct {
-		Input  []interface{}
-		Expect []interface{}
+		Input  []types.Datum
+		Expect []types.Datum
 	}{
 		{
-			[]interface{}{int64(1)},
-			[]interface{}{int64(1)},
+			types.MakeDatums(int64(1)),
+			types.MakeDatums(int64(1)),
 		},
 
 		{
-			[]interface{}{float32(1), float64(3.15), []byte("123"), "123"},
-			[]interface{}{float64(1), float64(3.15), []byte("123"), []byte("123")},
+			types.MakeDatums(float32(1), float64(3.15), []byte("123"), "123"),
+			types.MakeDatums(float64(1), float64(3.15), []byte("123"), []byte("123")),
+		},
+		{
+			types.MakeDatums(uint64(1), float64(3.15), []byte("123"), int64(-1)),
+			types.MakeDatums(uint64(1), float64(3.15), []byte("123"), int64(-1)),
 		},
 
 		{
-			[]interface{}{uint64(1), float64(3.15), []byte("123"), int64(-1)},
-			[]interface{}{uint64(1), float64(3.15), []byte("123"), int64(-1)},
+			types.MakeDatums(true, false),
+			types.MakeDatums(int64(1), int64(0)),
 		},
 
 		{
-			[]interface{}{true, false},
-			[]interface{}{int64(1), int64(0)},
+			types.MakeDatums(nil),
+			types.MakeDatums(nil),
 		},
 
 		{
-			[]interface{}{int(1), int8(1), int16(1), int32(1), int64(1)},
-			[]interface{}{int64(1), int64(1), int64(1), int64(1), int64(1)},
+			types.MakeDatums(mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}),
+			types.MakeDatums(int64(100), uint64(100)),
 		},
 
 		{
-			[]interface{}{uint(1), uint8(1), uint16(1), uint32(1), uint64(1)},
-			[]interface{}{uint64(1), uint64(1), uint64(1), uint64(1), uint64(1)},
-		},
-
-		{
-			[]interface{}{nil},
-			[]interface{}{nil},
-		},
-
-		{
-			[]interface{}{mysql.Hex{Value: 100}, mysql.Bit{Value: 100, Width: 8}},
-			[]interface{}{int64(100), uint64(100)},
-		},
-
-		{
-			[]interface{}{mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}},
-			[]interface{}{uint64(1), uint64(1)},
+			types.MakeDatums(mysql.Enum{Name: "a", Value: 1}, mysql.Set{Name: "a", Value: 1}),
+			types.MakeDatums(uint64(1), uint64(1)),
 		},
 	}
 
-	for _, t := range table {
+	for i, t := range table {
+		comment := Commentf("%d %v", i, t)
 		b, err := EncodeKey(nil, t.Input...)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		args, err := Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
@@ -99,98 +90,98 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 
 func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 	table := []struct {
-		Left   []interface{}
-		Right  []interface{}
+		Left   []types.Datum
+		Right  []types.Datum
 		Expect int
 	}{
 		{
-			[]interface{}{1},
-			[]interface{}{1},
+			types.MakeDatums(1),
+			types.MakeDatums(1),
 			0,
 		},
 		{
-			[]interface{}{-1},
-			[]interface{}{1},
+			types.MakeDatums(-1),
+			types.MakeDatums(1),
 			-1,
 		},
 		{
-			[]interface{}{3.15},
-			[]interface{}{3.12},
+			types.MakeDatums(3.15),
+			types.MakeDatums(3.12),
 			1,
 		},
 		{
-			[]interface{}{"abc"},
-			[]interface{}{"abcd"},
+			types.MakeDatums("abc"),
+			types.MakeDatums("abcd"),
 			-1,
 		},
 		{
-			[]interface{}{"abcdefgh"},
-			[]interface{}{"abcdefghi"},
+			types.MakeDatums("abcdefgh"),
+			types.MakeDatums("abcdefghi"),
 			-1,
 		},
 		{
-			[]interface{}{1, "abc"},
-			[]interface{}{1, "abcd"},
+			types.MakeDatums(1, "abc"),
+			types.MakeDatums(1, "abcd"),
 			-1,
 		},
 		{
-			[]interface{}{1, "abc", "def"},
-			[]interface{}{1, "abcd", "af"},
+			types.MakeDatums(1, "abc", "def"),
+			types.MakeDatums(1, "abcd", "af"),
 			-1,
 		},
 		{
-			[]interface{}{3.12, "ebc", "def"},
-			[]interface{}{2.12, "abcd", "af"},
+			types.MakeDatums(3.12, "ebc", "def"),
+			types.MakeDatums(2.12, "abcd", "af"),
 			1,
 		},
 		{
-			[]interface{}{[]byte{0x01, 0x00}, []byte{0xFF}},
-			[]interface{}{[]byte{0x01, 0x00, 0xFF}},
+			types.MakeDatums([]byte{0x01, 0x00}, []byte{0xFF}),
+			types.MakeDatums([]byte{0x01, 0x00, 0xFF}),
 			-1,
 		},
 		{
-			[]interface{}{[]byte{0x01}, uint64(0xFFFFFFFFFFFFFFF)},
-			[]interface{}{[]byte{0x01, 0x10}, 0},
+			types.MakeDatums([]byte{0x01}, uint64(0xFFFFFFFFFFFFFFF)),
+			types.MakeDatums([]byte{0x01, 0x10}, 0),
 			-1,
 		},
 		{
-			[]interface{}{0},
-			[]interface{}{nil},
+			types.MakeDatums(0),
+			types.MakeDatums(nil),
 			1,
 		},
 		{
-			[]interface{}{[]byte{0x00}},
-			[]interface{}{nil},
+			types.MakeDatums([]byte{0x00}),
+			types.MakeDatums(nil),
 			1,
 		},
 		{
-			[]interface{}{math.SmallestNonzeroFloat64},
-			[]interface{}{nil},
+			types.MakeDatums(math.SmallestNonzeroFloat64),
+			types.MakeDatums(nil),
 			1,
 		},
 		{
-			[]interface{}{int64(math.MinInt64)},
-			[]interface{}{nil},
+			types.MakeDatums(int64(math.MinInt64)),
+			types.MakeDatums(nil),
 			1,
 		},
 		{
-			[]interface{}{1, int64(math.MinInt64), nil},
-			[]interface{}{1, nil, uint64(math.MaxUint64)},
+			types.MakeDatums(1, int64(math.MinInt64), nil),
+			types.MakeDatums(1, nil, uint64(math.MaxUint64)),
 			1,
 		},
 		{
-			[]interface{}{1, []byte{}, nil},
-			[]interface{}{1, nil, 123},
+			types.MakeDatums(1, []byte{}, nil),
+			types.MakeDatums(1, nil, 123),
 			1,
 		},
 		{
-			[]interface{}{parseTime(c, "2011-11-11 00:00:00"), 1},
-			[]interface{}{parseTime(c, "2011-11-11 00:00:00"), 0},
+			types.MakeDatums(parseTime(c, "2011-11-11 00:00:00"), 1),
+			types.MakeDatums(parseTime(c, "2011-11-11 00:00:00"), 0),
 			1,
 		},
 		{
-			[]interface{}{parseDuration(c, "00:00:00"), 1},
-			[]interface{}{parseDuration(c, "00:00:01"), 0},
+			types.MakeDatums(parseDuration(c, "00:00:00"), 1),
+			types.MakeDatums(parseDuration(c, "00:00:01"), 0),
 			-1,
 		},
 	}
@@ -489,13 +480,13 @@ func (s *testCodecSuite) TestTime(c *C) {
 	}
 
 	for _, t := range tbl {
-		m := parseTime(c, t)
+		m := types.NewDatum(parseTime(c, t))
 
 		b, err := EncodeKey(nil, m)
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, []interface{}{[]byte(t)})
+		c.Assert(v, DeepEquals, types.MakeDatums([]byte(t)))
 	}
 
 	tblCmp := []struct {
@@ -509,8 +500,8 @@ func (s *testCodecSuite) TestTime(c *C) {
 	}
 
 	for _, t := range tblCmp {
-		m1 := parseTime(c, t.Arg1)
-		m2 := parseTime(c, t.Arg2)
+		m1 := types.NewDatum(parseTime(c, t.Arg1))
+		m2 := types.NewDatum(parseTime(c, t.Arg2))
 
 		b1, err := EncodeKey(nil, m1)
 		c.Assert(err, IsNil)
@@ -532,12 +523,12 @@ func (s *testCodecSuite) TestDuration(c *C) {
 	for _, t := range tbl {
 		m := parseDuration(c, t)
 
-		b, err := EncodeKey(nil, m)
+		b, err := EncodeKey(nil, types.NewDatum(m))
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
 		m.Fsp = mysql.MaxFsp
-		c.Assert(v, DeepEquals, []interface{}{m})
+		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 
 	tblCmp := []struct {
@@ -554,9 +545,9 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		m1 := parseDuration(c, t.Arg1)
 		m2 := parseDuration(c, t.Arg2)
 
-		b1, err := EncodeKey(nil, m1)
+		b1, err := EncodeKey(nil, types.NewDatum(m1))
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(nil, m2)
+		b2, err := EncodeKey(nil, types.NewDatum(m2))
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
@@ -584,13 +575,12 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 	for _, t := range tbl {
 		m, err := mysql.ParseDecimal(t)
 		c.Assert(err, IsNil)
-		b, err := EncodeKey(nil, m)
+		b, err := EncodeKey(nil, types.NewDatum(m))
 		c.Assert(err, IsNil)
 		v, err := Decode(b)
 		c.Assert(err, IsNil)
 		c.Assert(v, HasLen, 1)
-		vv, ok := v[0].(mysql.Decimal)
-		c.Assert(ok, IsTrue)
+		vv := v[0].GetMysqlDecimal()
 		c.Assert(vv.Equals(m), IsTrue)
 	}
 
@@ -662,9 +652,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		m2, err := mysql.ConvertToDecimal(t.Arg2)
 		c.Assert(err, IsNil)
 
-		b1, err := EncodeKey(nil, m1)
+		b1, err := EncodeKey(nil, types.NewDatum(m1))
 		c.Assert(err, IsNil)
-		b2, err := EncodeKey(nil, m2)
+		b2, err := EncodeKey(nil, types.NewDatum(m2))
 		c.Assert(err, IsNil)
 
 		ret := bytes.Compare(b1, b2)
