@@ -156,3 +156,30 @@ func (s *testCompareSuite) TestCompare(c *check.C) {
 		c.Assert(ret, check.Equals, -t.ret, comment)
 	}
 }
+
+func (s *testCompareSuite) TestCompareDatum(c *check.C) {
+	cmpTbl := []struct {
+		lhs Datum
+		rhs Datum
+		ret int // 0, 1, -1
+	}{
+		{MaxValueDatum(), NewDatum("00:00:00"), 1},
+		{MinNotNullDatum(), NewDatum("00:00:00"), -1},
+		{Datum{}, NewDatum("00:00:00"), -1},
+		{Datum{}, Datum{}, 0},
+		{MinNotNullDatum(), MinNotNullDatum(), 0},
+		{MaxValueDatum(), MaxValueDatum(), 0},
+		{Datum{}, MinNotNullDatum(), -1},
+		{MinNotNullDatum(), MaxValueDatum(), -1},
+	}
+	for i, t := range cmpTbl {
+		comment := check.Commentf("%d %v %v", i, t.lhs, t.rhs)
+		ret, err := t.lhs.CompareDatum(t.rhs)
+		c.Assert(err, check.IsNil)
+		c.Assert(ret, check.Equals, t.ret, comment)
+
+		ret, err = t.rhs.CompareDatum(t.lhs)
+		c.Assert(err, check.IsNil)
+		c.Assert(ret, check.Equals, -t.ret, comment)
+	}
+}

@@ -396,6 +396,10 @@ func parseFloat(s string) (float64, error) {
 
 func (d *Datum) compareString(s string) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), s), nil
 	case KindMysqlDecimal:
