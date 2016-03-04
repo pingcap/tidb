@@ -99,15 +99,15 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 	}
 	// if index is *not* unique, the handle is in keybuf
 	if !c.idx.unique {
-		h = vv[len(vv)-1].(int64)
-		val = types.MakeDatums(vv[0 : len(vv)-1]...)
+		h = vv[len(vv)-1].GetInt64()
+		val = vv[0 : len(vv)-1]
 	} else {
 		// otherwise handle is value
 		h, err = decodeHandle(c.it.Value())
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
-		val = types.MakeDatums(vv...)
+		val = vv
 	}
 	// update new iter to next
 	err = c.it.Next()
@@ -164,9 +164,9 @@ func (c *kvIndex) GenIndexKey(indexedValues []types.Datum, h int64) (key []byte,
 
 	key = append(key, c.prefix...)
 	if distinct {
-		key, err = codec.EncodeKey(key, types.DatumsToInterfaces(indexedValues)...)
+		key, err = codec.EncodeKey(key, indexedValues...)
 	} else {
-		key, err = codec.EncodeKey(key, append(types.DatumsToInterfaces(indexedValues), h)...)
+		key, err = codec.EncodeKey(key, append(indexedValues, types.NewDatum(h))...)
 	}
 	if err != nil {
 		return nil, false, errors.Trace(err)

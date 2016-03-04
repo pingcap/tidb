@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 const (
@@ -31,81 +32,45 @@ const (
 	durationFlag
 )
 
-func encode(b []byte, vals []interface{}, comparable bool) ([]byte, error) {
+func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 	for _, val := range vals {
-		switch v := val.(type) {
-		case bool:
+		switch val.Kind() {
+		case types.KindInt64:
 			b = append(b, intFlag)
-			if v {
-				b = EncodeInt(b, int64(1))
-			} else {
-				b = EncodeInt(b, int64(0))
-			}
-		case int:
-			b = append(b, intFlag)
-			b = EncodeInt(b, int64(v))
-		case int8:
-			b = append(b, intFlag)
-			b = EncodeInt(b, int64(v))
-		case int16:
-			b = append(b, intFlag)
-			b = EncodeInt(b, int64(v))
-		case int32:
-			b = append(b, intFlag)
-			b = EncodeInt(b, int64(v))
-		case int64:
-			b = append(b, intFlag)
-			b = EncodeInt(b, int64(v))
-		case uint:
+			b = EncodeInt(b, val.GetInt64())
+		case types.KindUint64:
 			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v))
-		case uint8:
-			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v))
-		case uint16:
-			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v))
-		case uint32:
-			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v))
-		case uint64:
-			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v))
-		case float32:
+			b = EncodeUint(b, val.GetUint64())
+		case types.KindFloat32, types.KindFloat64:
 			b = append(b, floatFlag)
-			b = EncodeFloat(b, float64(v))
-		case float64:
-			b = append(b, floatFlag)
-			b = EncodeFloat(b, float64(v))
-		case string:
-			b = encodeBytes(b, []byte(v), comparable)
-		case []byte:
-			b = encodeBytes(b, v, comparable)
-		case mysql.Time:
-			b = encodeBytes(b, []byte(v.String()), comparable)
-		case mysql.Duration:
+			b = EncodeFloat(b, val.GetFloat64())
+		case types.KindString, types.KindBytes:
+			b = encodeBytes(b, val.GetBytes(), comparable)
+		case types.KindMysqlTime:
+			b = encodeBytes(b, []byte(val.GetMysqlTime().String()), comparable)
+		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
-			b = EncodeInt(b, int64(v.Duration))
-		case mysql.Decimal:
+			b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
+		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
-			b = EncodeDecimal(b, v)
-		case mysql.Hex:
+			b = EncodeDecimal(b, val.GetMysqlDecimal())
+		case types.KindMysqlHex:
 			b = append(b, intFlag)
-			b = EncodeInt(b, int64(v.ToNumber()))
-		case mysql.Bit:
+			b = EncodeInt(b, int64(val.GetMysqlHex().ToNumber()))
+		case types.KindMysqlBit:
 			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v.ToNumber()))
-		case mysql.Enum:
+			b = EncodeUint(b, uint64(val.GetMysqlBit().ToNumber()))
+		case types.KindMysqlEnum:
 			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v.ToNumber()))
-		case mysql.Set:
+			b = EncodeUint(b, uint64(val.GetMysqlEnum().ToNumber()))
+		case types.KindMysqlSet:
 			b = append(b, uintFlag)
-			b = EncodeUint(b, uint64(v.ToNumber()))
-		case nil:
+			b = EncodeUint(b, uint64(val.GetMysqlSet().ToNumber()))
+		case types.KindNull:
 			b = append(b, nilFlag)
 		default:
-			return nil, errors.Errorf("unsupport encode type %T", val)
+			return nil, errors.Errorf("unsupport encode type %d", val.Kind())
 		}
 	}
 
@@ -125,19 +90,19 @@ func encodeBytes(b []byte, v []byte, comparable bool) []byte {
 
 // EncodeKey appends the encoded values to byte slice b, returns the appended
 // slice. It guarantees the encoded value is in ascending order for comparison.
-func EncodeKey(b []byte, v ...interface{}) ([]byte, error) {
+func EncodeKey(b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(b, v, true)
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
-func EncodeValue(b []byte, v ...interface{}) ([]byte, error) {
+func EncodeValue(b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(b, v, false)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
 // before.
-func Decode(b []byte) ([]interface{}, error) {
+func Decode(b []byte) ([]types.Datum, error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
 	}
@@ -145,35 +110,47 @@ func Decode(b []byte) ([]interface{}, error) {
 	var (
 		flag   byte
 		err    error
-		v      interface{}
-		values = make([]interface{}, 0)
+		values = make([]types.Datum, 0, 1)
 	)
 
 	for len(b) > 0 {
 		flag = b[0]
 		b = b[1:]
+		var d types.Datum
 		switch flag {
 		case intFlag:
+			var v int64
 			b, v, err = DecodeInt(b)
+			d.SetInt64(v)
 		case uintFlag:
+			var v uint64
 			b, v, err = DecodeUint(b)
+			d.SetUint64(v)
 		case floatFlag:
+			var v float64
 			b, v, err = DecodeFloat(b)
+			d.SetFloat64(v)
 		case bytesFlag:
+			var v []byte
 			b, v, err = DecodeBytes(b)
+			d.SetBytes(v)
 		case compactBytesFlag:
+			var v []byte
 			b, v, err = DecodeCompactBytes(b)
+			d.SetBytes(v)
 		case decimalFlag:
+			var v mysql.Decimal
 			b, v, err = DecodeDecimal(b)
+			d.SetValue(v)
 		case durationFlag:
 			var r int64
 			b, r, err = DecodeInt(b)
 			if err == nil {
 				// use max fsp, let outer to do round manually.
-				v = mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+				v := mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+				d.SetValue(v)
 			}
 		case nilFlag:
-			v = nil
 		default:
 			return nil, errors.Errorf("invalid encoded key flag %v", flag)
 		}
@@ -181,7 +158,7 @@ func Decode(b []byte) ([]interface{}, error) {
 			return nil, errors.Trace(err)
 		}
 
-		values = append(values, v)
+		values = append(values, d)
 	}
 
 	return values, nil
