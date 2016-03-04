@@ -28,12 +28,6 @@ import (
 )
 
 func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
-	for _, col := range tblInfo.Columns {
-		if col.Name.L == indexName.L {
-			return nil, errors.Errorf("CREATE INDEX: index name collision with existing column: %s", indexName)
-		}
-	}
-
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 	for _, ic := range idxColNames {

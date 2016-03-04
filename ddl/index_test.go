@@ -612,6 +612,9 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
 	testCheckJobDone(c, d, job, true)
 
+	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c1", "c1")
+	testCheckJobDone(c, d, job, true)
+
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
 
