@@ -269,7 +269,7 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	valids := []struct {
-		Year   int
+		Year   int64
 		Expect bool
 	}{
 		{2000, true},
