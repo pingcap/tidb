@@ -266,7 +266,7 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 		c.Assert(err, IsNil)
 		v, err1 := tables.DecodeValue(data, &col.FieldType)
 		c.Assert(err1, IsNil)
-		value, err1 := types.Convert(v, &col.FieldType)
+		value, err1 := v.ConvertTo(&col.FieldType)
 		c.Assert(err1, IsNil)
 		c.Assert(value, Equals, columnValue)
 	} else {
