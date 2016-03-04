@@ -41,7 +41,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
-		"curtime", "variables",
+		"curtime", "variables", "dayname", "version",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -227,6 +227,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"show columns in t;", true},
 		{"show full columns in t;", true},
 
+		// For admin
+		{"admin show ddl;", true},
+		{"admin check table t1, t2;", true},
+
 		// For set names
 		{"set names utf8", true},
 		{"set names utf8 collate utf8_unicode_ci", true},
@@ -326,7 +330,6 @@ func (s *testParserSuite) TestExpression(c *C) {
 func (s *testParserSuite) TestBuiltin(c *C) {
 	table := []testCase{
 		// For buildin functions
-		{"SELECT DAYOFMONTH('2007-02-03');", true},
 		{"SELECT POW(1, 2)", true},
 		{"SELECT POW(1, 0.5)", true},
 		{"SELECT POW(1, -1)", true},
@@ -352,6 +355,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT CURRENT_USER();", true},
 		{"SELECT CURRENT_USER;", true},
 		{"SELECT CONNECTION_ID();", true},
+		{"SELECT VERSION();", true},
 
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
@@ -362,13 +366,6 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		{`SELECT LOCATE('bar', 'foobarbar');`, true},
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
-
-		{"select current_date, current_date(), curdate()", true},
-
-		// For delete statement
-		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
-		{"DELETE FROM t1, t2 USING t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true},
-		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id limit 10;", false},
 
 		// For time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
@@ -401,6 +398,31 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select current_time(6)", true},
 		{"select curtime()", true},
 		{"select curtime(6)", true},
+
+		// for microsecond, second, minute, hour
+		{"SELECT MICROSECOND('2009-12-31 23:59:59.000010');", true},
+		{"SELECT SECOND('10:05:03');", true},
+		{"SELECT MINUTE('2008-02-03 10:05:03');", true},
+		{"SELECT HOUR('10:05:03');", true},
+
+		// for date, day, weekday
+		{"SELECT DATE('2003-12-31 01:02:03');", true},
+		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE()", true},
+		{"SELECT DAY('2007-02-03');", true},
+		{"SELECT DAYOFMONTH('2007-02-03');", true},
+		{"SELECT DAYOFWEEK('2007-02-03');", true},
+		{"SELECT DAYOFYEAR('2007-02-03');", true},
+		{"SELECT DAYNAME('2007-02-03');", true},
+		{"SELECT WEEKDAY('2007-02-03');", true},
+
+		// for week, month, year
+		{"SELECT WEEK('2007-02-03');", true},
+		{"SELECT WEEK('2007-02-03', 0);", true},
+		{"SELECT WEEKOFYEAR('2007-02-03');", true},
+		{"SELECT MONTH('2007-02-03');", true},
+		{"SELECT YEAR('2007-02-03');", true},
+		{"SELECT YEARWEEK('2007-02-03');", true},
+		{"SELECT YEARWEEK('2007-02-03', 0);", true},
 
 		// For time extract
 		{`select extract(microsecond from "2011-11-11 10:10:10.123456")`, true},

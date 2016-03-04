@@ -16,10 +16,9 @@ package server
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/field"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/rset"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -228,10 +227,10 @@ func (tc *TiDBContext) Prepare(sql string) (statement IStatement, columns, param
 }
 
 type tidbResultSet struct {
-	recordSet rset.Recordset
+	recordSet ast.RecordSet
 }
 
-func (trs *tidbResultSet) Next() ([]interface{}, error) {
+func (trs *tidbResultSet) Next() ([]types.Datum, error) {
 	row, err := trs.recordSet.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -258,25 +257,32 @@ func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
 	return columns, nil
 }
 
-func convertColumnInfo(fld *field.ResultField) (ci *ColumnInfo) {
+func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
+
 	ci = new(ColumnInfo)
-	ci.Name = fld.Name
-	ci.OrgName = fld.ColumnInfo.Name.O
-	ci.Table = fld.TableName
-	ci.OrgTable = fld.OrgTableName
-	ci.Schema = fld.DBName
-	ci.Flag = uint16(fld.Flag)
-	ci.Charset = uint16(mysql.CharsetIDs[fld.Charset])
-	if fld.Flen == types.UnspecifiedLength {
+	ci.Name = fld.ColumnAsName.O
+	ci.OrgName = fld.Column.Name.O
+	ci.Table = fld.TableAsName.O
+	ci.OrgTable = fld.Table.Name.O
+	ci.Schema = fld.DBName.O
+	ci.Flag = uint16(fld.Column.Flag)
+	ci.Charset = uint16(mysql.CharsetIDs[fld.Column.Charset])
+	if fld.Column.Flen == types.UnspecifiedLength {
 		ci.ColumnLength = 0
 	} else {
-		ci.ColumnLength = uint32(fld.Flen)
+		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
-	if fld.Decimal == types.UnspecifiedLength {
+	if fld.Column.Decimal == types.UnspecifiedLength {
 		ci.Decimal = 0
 	} else {
-		ci.Decimal = uint8(fld.Decimal)
+		ci.Decimal = uint8(fld.Column.Decimal)
 	}
-	ci.Type = uint8(fld.Tp)
+	ci.Type = uint8(fld.Column.Tp)
+
+	// Keep things compatible for old clients.
+	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
+	if ci.Type == mysql.TypeVarchar {
+		ci.Type = mysql.TypeVarString
+	}
 	return
 }

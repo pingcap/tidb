@@ -20,10 +20,15 @@ func IsPreEvaluable(expr ExprNode) bool {
 	return expr.GetFlag()|preEvaluable == preEvaluable
 }
 
-// IsConstant check if the expression is constant.
+// IsConstant checks if the expression is constant.
 // A constant expression is safe to be rewritten to value expression.
 func IsConstant(expr ExprNode) bool {
 	return expr.GetFlag() == FlagConstant
+}
+
+// HasAggFlag checks if the expr contains FlagHasAggregateFunc.
+func HasAggFlag(expr ExprNode) bool {
+	return expr.GetFlag()&FlagHasAggregateFunc > 0
 }
 
 // SetFlag sets flag for expression.
@@ -41,67 +46,67 @@ func (f *flagSetter) Enter(in Node) (Node, bool) {
 
 func (f *flagSetter) Leave(in Node) (Node, bool) {
 	switch x := in.(type) {
-	case *ValueExpr:
+	case *AggregateFuncExpr:
+		f.aggregateFunc(x)
 	case *BetweenExpr:
 		x.SetFlag(x.Expr.GetFlag() | x.Left.GetFlag() | x.Right.GetFlag())
 	case *BinaryOperationExpr:
 		x.SetFlag(x.L.GetFlag() | x.R.GetFlag())
 	case *CaseExpr:
 		f.caseExpr(x)
-	case *SubqueryExpr:
-		x.SetFlag(FlagHasSubquery)
-	case *CompareSubqueryExpr:
-		x.SetFlag(x.L.GetFlag() | x.R.GetFlag())
 	case *ColumnNameExpr:
 		x.SetFlag(FlagHasReference)
+	case *CompareSubqueryExpr:
+		x.SetFlag(x.L.GetFlag() | x.R.GetFlag())
 	case *DefaultExpr:
 		x.SetFlag(FlagHasDefault)
 	case *ExistsSubqueryExpr:
 		x.SetFlag(x.Sel.GetFlag())
-	case *PatternInExpr:
-		f.patternIn(x)
-	case *IsNullExpr:
-		x.SetFlag(x.Expr.GetFlag())
-	case *IsTruthExpr:
-		x.SetFlag(x.Expr.GetFlag())
-	case *PatternLikeExpr:
-		f.patternLike(x)
-	case *ParamMarkerExpr:
-		x.SetFlag(FlagHasParamMarker)
-	case *ParenthesesExpr:
-		x.SetFlag(x.Expr.GetFlag())
-	case *PositionExpr:
-		x.SetFlag(FlagHasReference)
-	case *PatternRegexpExpr:
-		f.patternRegexp(x)
-	case *RowExpr:
-		f.row(x)
-	case *UnaryOperationExpr:
-		x.SetFlag(x.V.GetFlag())
-	case *ValuesExpr:
-		x.SetFlag(FlagHasReference)
-	case *VariableExpr:
-		x.SetFlag(FlagHasVariable)
 	case *FuncCallExpr:
 		f.funcCall(x)
-	case *FuncExtractExpr:
-		x.SetFlag(FlagHasFunc | x.Date.GetFlag())
-	case *FuncConvertExpr:
-		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
 	case *FuncCastExpr:
 		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
+	case *FuncConvertExpr:
+		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
+	case *FuncDateArithExpr:
+		f.funcDateArith(x)
+	case *FuncExtractExpr:
+		x.SetFlag(FlagHasFunc | x.Date.GetFlag())
+	case *FuncLocateExpr:
+		f.funcLocate(x)
 	case *FuncSubstringExpr:
 		f.funcSubstring(x)
 	case *FuncSubstringIndexExpr:
 		f.funcSubstringIndex(x)
-	case *FuncLocateExpr:
-		f.funcLocate(x)
 	case *FuncTrimExpr:
 		f.funcTrim(x)
-	case *FuncDateArithExpr:
-		f.funcDateArith(x)
-	case *AggregateFuncExpr:
-		f.aggregateFunc(x)
+	case *IsNullExpr:
+		x.SetFlag(x.Expr.GetFlag())
+	case *IsTruthExpr:
+		x.SetFlag(x.Expr.GetFlag())
+	case *ParamMarkerExpr:
+		x.SetFlag(FlagHasParamMarker)
+	case *ParenthesesExpr:
+		x.SetFlag(x.Expr.GetFlag())
+	case *PatternInExpr:
+		f.patternIn(x)
+	case *PatternLikeExpr:
+		f.patternLike(x)
+	case *PatternRegexpExpr:
+		f.patternRegexp(x)
+	case *PositionExpr:
+		x.SetFlag(FlagHasReference)
+	case *RowExpr:
+		f.row(x)
+	case *SubqueryExpr:
+		x.SetFlag(FlagHasSubquery)
+	case *UnaryOperationExpr:
+		x.SetFlag(x.V.GetFlag())
+	case *ValueExpr:
+	case *ValuesExpr:
+		x.SetFlag(FlagHasReference)
+	case *VariableExpr:
+		x.SetFlag(FlagHasVariable)
 	}
 
 	return in, true

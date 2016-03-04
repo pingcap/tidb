@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -50,7 +50,7 @@ func (o *CharsetOpt) String() string {
 type ConstraintOpt struct {
 	Tp     int
 	Bvalue bool
-	Evalue expression.Expression
+	Evalue ast.ExprNode
 }
 
 // String implements fmt.Stringer interface.
@@ -69,9 +69,9 @@ func (c *ConstraintOpt) String() string {
 	case ConstrUniqKey:
 		return "UNIQUE KEY"
 	case ConstrDefaultValue:
-		return "DEFAULT " + c.Evalue.String()
+		return "DEFAULT " + ast.ToString(c.Evalue)
 	case ConstrOnUpdate:
-		return "ON UPDATE " + c.Evalue.String()
+		return "ON UPDATE " + ast.ToString(c.Evalue)
 	default:
 		return ""
 	}

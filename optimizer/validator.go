@@ -32,38 +32,55 @@ type validator struct {
 	err           error
 	wildCardCount int
 	inPrepare     bool
+	inAggregate   bool
 }
 
 func (v *validator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch in.(type) {
+	case *ast.AggregateFuncExpr:
+		if v.inAggregate {
+			// Aggregate function can not contain aggregate function.
+			v.err = ErrInvalidGroupFuncUse
+			return in, true
+		}
+		v.inAggregate = true
+	}
 	return in, false
 }
 
 func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
-	case *ast.IsNullExpr:
-		v.checkAllOneColumn(x.Expr)
-	case *ast.IsTruthExpr:
-		v.checkAllOneColumn(x.Expr)
+	case *ast.AggregateFuncExpr:
+		v.inAggregate = false
 	case *ast.BetweenExpr:
 		v.checkAllOneColumn(x.Expr, x.Left, x.Right)
 	case *ast.BinaryOperationExpr:
 		v.checkBinaryOperation(x)
-	case *ast.PatternInExpr:
-		v.checkSameColumns(append(x.List, x.Expr)...)
+	case *ast.ByItem:
+		v.checkAllOneColumn(x.Expr)
+	case *ast.CompareSubqueryExpr:
+		v.checkSameColumns(x.L, x.R)
 	case *ast.FieldList:
 		v.checkFieldList(x)
-	case *ast.ByItem:
+	case *ast.HavingClause:
+		v.checkAllOneColumn(x.Expr)
+	case *ast.IsNullExpr:
+		v.checkAllOneColumn(x.Expr)
+	case *ast.IsTruthExpr:
 		v.checkAllOneColumn(x.Expr)
 	case *ast.ParamMarkerExpr:
 		if !v.inPrepare {
 			v.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
 		}
+	case *ast.PatternInExpr:
+		v.checkSameColumns(append(x.List, x.Expr)...)
 	}
+
 	return in, v.err == nil
 }
 
 // checkAllOneColumn checks that all expressions have one column.
-// Expression may has more than one column when it is a rowExpr or
+// Expression may have more than one column when it is a rowExpr or
 // a Subquery with more than one result fields.
 func (v *validator) checkAllOneColumn(exprs ...ast.ExprNode) {
 	for _, expr := range exprs {
@@ -113,7 +130,7 @@ func (v *validator) checkSameColumns(exprs ...ast.ExprNode) {
 	}
 }
 
-// checkFieldList checks there is only one '*" and each field has only one column,
+// checkFieldList checks if there is only one '*' and each field has only one column.
 func (v *validator) checkFieldList(x *ast.FieldList) {
 	var hasWildCard bool
 	for _, val := range x.Fields {

@@ -23,7 +23,7 @@ type testSegmentMapSuite struct {
 }
 
 func (s *testSegmentMapSuite) TestSegment(c *C) {
-	segs := 2
+	segs := int64(2)
 	m, err := NewSegmentMap(segs)
 	c.Assert(err, IsNil)
 	c.Assert(m.SegmentCount(), Equals, segs)

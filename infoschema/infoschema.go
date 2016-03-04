@@ -14,17 +14,21 @@
 package infoschema
 
 import (
+	"strings"
 	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	// import table implementation to init table.TableFromMeta
 	_ "github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -197,9 +201,130 @@ type Handle struct {
 
 // NewHandle creates a new Handle.
 func NewHandle(store kv.Storage) *Handle {
-	return &Handle{
+	h := &Handle{
 		store: store,
 	}
+	// init memory tables
+	initMemoryTables(store)
+	initPerfSchema(store)
+	return h
+}
+
+func initPerfSchema(store kv.Storage) {
+	perfHandle = perfschema.NewPerfHandle(store)
+}
+
+func genGlobalID(store kv.Storage) (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+	return globalID, errors.Trace(err)
+}
+
+var (
+	// Information_Schema
+	isDB          *model.DBInfo
+	schemataTbl   table.Table
+	tablesTbl     table.Table
+	columnsTbl    table.Table
+	statisticsTbl table.Table
+	charsetTbl    table.Table
+	collationsTbl table.Table
+	filesTbl      table.Table
+	defTbl        table.Table
+	profilingTbl  table.Table
+	nameToTable   map[string]table.Table
+
+	perfHandle perfschema.PerfSchema
+)
+
+func setColumnID(meta *model.TableInfo, store kv.Storage) error {
+	var err error
+	for _, c := range meta.Columns {
+		c.ID, err = genGlobalID(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func initMemoryTables(store kv.Storage) error {
+	// Init Information_Schema
+	var (
+		err error
+		tbl table.Table
+	)
+	dbID, err := genGlobalID(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	nameToTable = make(map[string]table.Table)
+	isTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
+	for name, cols := range tableNameToColumns {
+		meta := buildTableMeta(name, cols)
+		isTables = append(isTables, meta)
+		meta.ID, err = genGlobalID(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = setColumnID(meta, store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		alloc := autoid.NewMemoryAllocator(dbID)
+		tbl, err = createMemoryTable(meta, alloc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		nameToTable[meta.Name.L] = tbl
+	}
+	schemataTbl = nameToTable[strings.ToLower(tableSchemata)]
+	tablesTbl = nameToTable[strings.ToLower(tableTables)]
+	columnsTbl = nameToTable[strings.ToLower(tableColumns)]
+	statisticsTbl = nameToTable[strings.ToLower(tableStatistics)]
+	charsetTbl = nameToTable[strings.ToLower(tableCharacterSets)]
+	collationsTbl = nameToTable[strings.ToLower(tableCollations)]
+
+	// CharacterSets/Collations contain static data. Init them now.
+	err = insertData(charsetTbl, dataForCharacterSets())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = insertData(collationsTbl, dataForColltions())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// create db
+	isDB = &model.DBInfo{
+		ID:      dbID,
+		Name:    model.NewCIStr(Name),
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+		Tables:  isTables,
+	}
+	return nil
+}
+
+func insertData(tbl table.Table, rows [][]types.Datum) error {
+	for _, r := range rows {
+		_, err := tbl.AddRecord(nil, r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func refillTable(tbl table.Table, rows [][]types.Datum) error {
+	err := tbl.Truncate(nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return insertData(tbl, rows)
 }
 
 // Set sets DBInfo to information schema.
@@ -240,6 +365,64 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 				}
 			}
 		}
+	}
+	// Build Information_Schema
+	info.schemaNameToID[isDB.Name.L] = isDB.ID
+	info.schemas[isDB.ID] = isDB
+	for _, t := range isDB.Tables {
+		tbl, ok := nameToTable[t.Name.L]
+		if !ok {
+			return errors.Errorf("table `%s` is missing.", t.Name)
+		}
+		info.tables[t.ID] = tbl
+		tname := tableName{isDB.Name.L, t.Name.L}
+		info.tableNameToID[tname] = t.ID
+		for _, c := range t.Columns {
+			info.columns[c.ID] = c
+			info.columnNameToID[columnName{tname, c.Name.L}] = c.ID
+		}
+	}
+
+	// Add Performance_Schema
+	psDB := perfHandle.GetDBMeta()
+	info.schemaNameToID[psDB.Name.L] = psDB.ID
+	info.schemas[psDB.ID] = psDB
+	for _, t := range psDB.Tables {
+		tbl, ok := perfHandle.GetTable(t.Name.O)
+		if !ok {
+			return errors.Errorf("table `%s` is missing.", t.Name)
+		}
+		info.tables[t.ID] = tbl
+		tname := tableName{psDB.Name.L, t.Name.L}
+		info.tableNameToID[tname] = t.ID
+		for _, c := range t.Columns {
+			info.columns[c.ID] = c
+			info.columnNameToID[columnName{tname, c.Name.L}] = c.ID
+		}
+	}
+	// Should refill some tables in Information_Schema.
+	// schemata/tables/columns/statistics
+	dbNames := make([]string, 0, len(info.schemas))
+	dbInfos := make([]*model.DBInfo, 0, len(info.schemas))
+	for _, v := range info.schemas {
+		dbNames = append(dbNames, v.Name.L)
+		dbInfos = append(dbInfos, v)
+	}
+	err = refillTable(schemataTbl, dataForSchemata(dbNames))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = refillTable(tablesTbl, dataForTables(dbInfos))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = refillTable(columnsTbl, dataForColumns(dbInfos))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = refillTable(statisticsTbl, dataForStatistics(dbInfos))
+	if err != nil {
+		return errors.Trace(err)
 	}
 	h.value.Store(info)
 	return nil

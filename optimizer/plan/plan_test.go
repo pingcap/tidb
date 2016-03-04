@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 )
 
@@ -182,6 +183,14 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 			exprStr:   `(a < 0 OR a > 3) AND (a < 1 OR a > 4)`,
 			resultStr: `[[-inf 0) (4 +inf]]`,
 		},
+		{
+			exprStr:   `a > NULL`,
+			resultStr: `[]`,
+		},
+		{
+			exprStr:   `a IN (8,8,81,45)`,
+			resultStr: `[[8 8] [45 45] [81 81]]`,
+		},
 	}
 
 	for _, ca := range cases {
@@ -196,50 +205,35 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestBuilder(c *C) {
+func (s *testPlanSuite) TestFilterRate(c *C) {
 	cases := []struct {
-		sqlStr  string
-		planStr string
+		expr string
+		rate float64
 	}{
-		{
-			sqlStr:  "select 1",
-			planStr: "Fields",
-		},
-		{
-			sqlStr:  "select a from t",
-			planStr: "Table(t)->Fields",
-		},
-		{
-			sqlStr:  "select a from t where a = 1",
-			planStr: "Table(t)->Filter->Fields",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 order by a",
-			planStr: "Table(t)->Filter->Fields->Sort",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 order by a limit 1",
-			planStr: "Table(t)->Filter->Fields->Sort->Limit",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 limit 1",
-			planStr: "Table(t)->Filter->Fields->Limit",
-		},
-		{
-			sqlStr:  "select a from t where a = 1 limit 1 for update",
-			planStr: "Table(t)->Filter->Lock->Fields->Limit",
-		},
+		{expr: "a = 1", rate: rateEqual},
+		{expr: "a > 1", rate: rateGreaterOrLess},
+		{expr: "a between 1 and 100", rate: rateBetween},
+		{expr: "a is null", rate: rateIsNull},
+		{expr: "a is not null", rate: rateFull - rateIsNull},
+		{expr: "a is true", rate: rateFull - rateIsNull - rateIsFalse},
+		{expr: "a is not true", rate: rateIsNull + rateIsFalse},
+		{expr: "a is false", rate: rateIsFalse},
+		{expr: "a is not false", rate: rateFull - rateIsFalse},
+		{expr: "a like 'a'", rate: rateLike},
+		{expr: "a not like 'a'", rate: rateFull - rateLike},
+		{expr: "a in (1, 2, 3)", rate: rateEqual * 3},
+		{expr: "a not in (1, 2, 3)", rate: rateFull - rateEqual*3},
+		{expr: "a > 1 and a < 9", rate: float64(rateGreaterOrLess) * float64(rateGreaterOrLess)},
+		{expr: "a = 1 or a = 2", rate: rateEqual + rateEqual - rateEqual*rateEqual},
+		{expr: "a != 1", rate: rateNotEqual},
 	}
 	for _, ca := range cases {
-		s, err := parser.ParseOneStmt(ca.sqlStr, "", "")
-		c.Assert(err, IsNil, Commentf("for expr %s", ca.sqlStr))
+		sql := "select 1 from dual where " + ca.expr
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, Commentf("for expr %s", ca.expr))
 		stmt := s.(*ast.SelectStmt)
-		mockResolve(stmt)
-		p, err := BuildPlan(stmt)
-		c.Assert(err, IsNil)
-		explainStr, err := Explain(p)
-		c.Assert(err, IsNil)
-		c.Assert(ca.planStr, Equals, explainStr)
+		rate := guesstimateFilterRate(stmt.Where)
+		c.Assert(rate, Equals, ca.rate, Commentf("for expr %s", ca.expr))
 	}
 }
 
@@ -254,76 +248,137 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t order by a",
-			best: "Index(t.a)->Fields",
+			best: "Table(t)->Fields",
 		},
 		{
 			sql:  "select * from t where b = 1 order by a",
-			best: "Index(t.b)->Filter->Fields->Sort",
+			best: "Index(t.b)->Fields->Sort",
 		},
 		{
 			sql:  "select * from t where (a between 1 and 2) and (b = 3)",
-			best: "Index(t.b)->Filter->Fields",
+			best: "Index(t.b)->Fields",
 		},
 		{
 			sql:  "select * from t where a > 0 order by b limit 100",
-			best: "Index(t.b)->Filter->Fields->Limit",
+			best: "Index(t.b)->Fields->Limit",
 		},
 		{
 			sql:  "select * from t where d = 0",
-			best: "Table(t)->Filter->Fields",
+			best: "Table(t)->Fields",
 		},
 		{
 			sql:  "select * from t where c = 0 and d = 0",
-			best: "Index(t.c_d)->Filter->Fields",
+			best: "Index(t.c_d_e)->Fields",
 		},
 		{
-			sql:  "select * from t where a like 'abc%'",
-			best: "Index(t.a)->Filter->Fields",
+			sql:  "select * from t where c = 0 and d = 0 and e = 0",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where (d = 0 and e = 0) and c = 0",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where e = 0 and (d = 0 and c = 0)",
+			best: "Index(t.c_d_e)->Fields",
+		},
+		{
+			sql:  "select * from t where b like 'abc%'",
+			best: "Index(t.b)->Fields",
 		},
 		{
 			sql:  "select * from t where d",
-			best: "Table(t)->Filter->Fields",
+			best: "Table(t)->Fields",
 		},
 		{
 			sql:  "select * from t where a is null",
-			best: "Index(t.a)->Filter->Fields",
+			best: "Range(t)->Fields",
+		},
+		{
+			sql:  "select a from t where a = 1 limit 1 for update",
+			best: "Range(t)->Lock->Fields->Limit",
+		},
+		{
+			sql:  "admin show ddl",
+			best: "ShowDDL",
+		},
+		{
+			sql:  "admin check table t",
+			best: "CheckTable",
 		},
 	}
 	for _, ca := range cases {
-		s, err := parser.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil, Commentf("for expr %s", ca.sql))
-		stmt := s.(*ast.SelectStmt)
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
-		p, err := BuildPlan(stmt)
+
+		p, err := BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
-		bestCost := EstimateCost(p)
-		bestPlan := p
-		alts, err := Alternatives(p)
-		c.Assert(err, IsNil)
-		for _, alt := range alts {
-			cost := EstimateCost(alt)
-			if cost < bestCost {
-				bestCost = cost
-				bestPlan = alt
-			}
+
+		err = Refine(p)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s cost %v", ca.sql, EstimateCost(p)))
+	}
+}
+
+func (s *testPlanSuite) TestSplitWhere(c *C) {
+	cases := []struct {
+		expr  string
+		count int
+	}{
+		{"a = 1 and b = 2 and c = 3", 3},
+		{"(a = 1 and b = 2) and c = 3", 3},
+		{"a = 1 and (b = 2 and c = 3 or d = 4)", 2},
+		{"a = 1 and (b = 2 or c = 3) and d = 4", 3},
+		{"(a = 1 and b = 2) and (c = 3 and d = 4)", 4},
+	}
+	for _, ca := range cases {
+		sql := "select 1 from dual where " + ca.expr
+		comment := Commentf("for expr %s", ca.expr)
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		conditions := splitWhere(stmt.Where)
+		c.Assert(conditions, HasLen, ca.count, comment)
+	}
+}
+
+func (s *testPlanSuite) TestNullRejectFinder(c *C) {
+	cases := []struct {
+		expr    string
+		notNull bool
+	}{
+		{"a = 1", true},
+		{"a != 100 and a > 0", true},
+		{"a is null", false},
+		{"a is not null", true},
+		{"a is true", true},
+		{"a is not true", false},
+		{"a is false", true},
+		{"a is not false", false},
+		{"a != 0 and a is not false", true},
+		{"a > 0 or true", false},
+	}
+	for _, ca := range cases {
+		sql := "select * from t where " + ca.expr
+		comment := Commentf("for expr %s", ca.expr)
+		s, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, comment)
+		finder := &nullRejectFinder{nullRejectTables: map[*ast.TableName]bool{}}
+		stmt := s.(*ast.SelectStmt)
+		mockResolve(stmt)
+		stmt.Where.Accept(finder)
+		if ca.notNull {
+			c.Assert(finder.nullRejectTables, HasLen, 1, comment)
+		} else {
+			c.Assert(finder.nullRejectTables, HasLen, 0, comment)
 		}
-		explainStr, err := Explain(bestPlan)
-		c.Assert(err, IsNil)
-		c.Assert(explainStr, Equals, ca.best, Commentf("for %s cost %v", ca.sql, bestCost))
 	}
 }
 
 func mockResolve(node ast.Node) {
 	indices := []*model.IndexInfo{
-		{
-			Name: model.NewCIStr("a"),
-			Columns: []*model.IndexColumn{
-				{
-					Name: model.NewCIStr("a"),
-				},
-			},
-		},
 		{
 			Name: model.NewCIStr("b"),
 			Columns: []*model.IndexColumn{
@@ -333,7 +388,7 @@ func mockResolve(node ast.Node) {
 			},
 		},
 		{
-			Name: model.NewCIStr("c_d"),
+			Name: model.NewCIStr("c_d_e"),
 			Columns: []*model.IndexColumn{
 				{
 					Name: model.NewCIStr("c"),
@@ -341,19 +396,30 @@ func mockResolve(node ast.Node) {
 				{
 					Name: model.NewCIStr("d"),
 				},
+				{
+					Name: model.NewCIStr("e"),
+				},
 			},
 		},
 	}
-	table := &model.TableInfo{
-		Indices: indices,
-		Name:    model.NewCIStr("t"),
+	pkColumn := &model.ColumnInfo{
+		Name: model.NewCIStr("a"),
 	}
-	resolver := mockResolver{table: table}
+	pkColumn.Flag = mysql.PriKeyFlag
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{pkColumn},
+		Indices:    indices,
+		Name:       model.NewCIStr("t"),
+		PKIsHandle: true,
+	}
+	tableName := &ast.TableName{Name: table.Name}
+	resolver := mockResolver{table: table, tableName: tableName}
 	node.Accept(&resolver)
 }
 
 type mockResolver struct {
-	table *model.TableInfo
+	table     *model.TableInfo
+	tableName *ast.TableName
 }
 
 func (b *mockResolver) Enter(in ast.Node) (ast.Node, bool) {
@@ -367,10 +433,227 @@ func (b *mockResolver) Leave(in ast.Node) (ast.Node, bool) {
 			Column: &model.ColumnInfo{
 				Name: x.Name.Name,
 			},
-			Table: b.table,
+			Table:     b.table,
+			TableName: b.tableName,
+		}
+		if x.Name.Name.L == "a" {
+			x.Refer.Column = b.table.Columns[0]
 		}
 	case *ast.TableName:
 		x.TableInfo = b.table
 	}
+	return in, true
+}
+
+// mockJoinResolve resolves multi talbe and column name for join statement.
+func mockJoinResolve(c *C, node ast.Node) {
+	resolver := &mockJoinResolver{
+		c:      c,
+		tables: map[string]*ast.TableName{},
+		refers: map[*model.ColumnInfo]*ast.ResultField{},
+	}
+	node.Accept(resolver)
+}
+
+type mockJoinResolver struct {
+	tables map[string]*ast.TableName
+	refers map[*model.ColumnInfo]*ast.ResultField
+	c      *C
+}
+
+func (b *mockJoinResolver) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
+}
+
+func (b *mockJoinResolver) Leave(in ast.Node) (ast.Node, bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		if b.tables[x.Name.L] == nil {
+			b.tables[x.Name.L] = x
+			x.TableInfo = &model.TableInfo{
+				Name:       x.Name,
+				PKIsHandle: true,
+			}
+		}
+	case *ast.ColumnNameExpr:
+		tn := b.tables[x.Name.Table.L]
+		b.c.Assert(tn, NotNil)
+		for _, cn := range tn.TableInfo.Columns {
+			if cn.Name.L == x.Name.Name.L {
+				x.Refer = b.refers[cn]
+				return in, true
+			}
+		}
+		columnInfo := &model.ColumnInfo{Name: x.Name.Name}
+		tn.TableInfo.Columns = append(tn.TableInfo.Columns, columnInfo)
+		refer := &ast.ResultField{
+			Column:    columnInfo,
+			Table:     tn.TableInfo,
+			TableName: tn,
+			Expr:      ast.NewValueExpr(99),
+		}
+		b.refers[columnInfo] = refer
+		x.Refer = refer
+		if x.Name.Name.L == "id" {
+			columnInfo.Flag = mysql.PriKeyFlag
+		} else if x.Name.Name.L[0] == 'i' {
+			idxInfo := &model.IndexInfo{
+				Name: x.Name.Name,
+				Columns: []*model.IndexColumn{
+					{
+						Name: x.Name.Name,
+					},
+				},
+			}
+			tn.TableInfo.Indices = append(tn.TableInfo.Indices, idxInfo)
+		}
+	}
+	return in, true
+}
+
+func (s *testPlanSuite) TestJoinPath(c *C) {
+	cases := []struct {
+		sql     string
+		explain string
+	}{
+		{
+			"select * from t1, t2 where t1.c1 > 0",
+			"InnerJoin{Table(t1)->Table(t2)}->Fields",
+		},
+		{
+			"select * from t1 left join t2 on 1 where t2.c1 != 0",
+			"InnerJoin{Table(t2)->Table(t1)}->Fields",
+		},
+		{
+			"select * from t1 left join t2 on 1 where t2.c1 != 0 or t1.c1 != 0",
+			"OuterJoin{Table(t1)->Table(t2)}->Fields",
+		},
+		{
+			"select * from t1 left join t2 on t1.i1 = t2.i1 where t1.i1 = 1",
+			"OuterJoin{Index(t1.i1)->Index(t2.i1)}->Fields",
+		},
+		{
+			"select * from t1 join t2 on t2.c1 = t1.i1",
+			"InnerJoin{Table(t2)->Index(t1.i1)}->Fields",
+		},
+		{
+			"select * from t1, t2 where t2.c1 = t1.i1",
+			"InnerJoin{Table(t2)->Index(t1.i1)}->Fields",
+		},
+		{
+			`select * from
+				t1 left join
+					(t2 join
+						t3
+					on t2.i1 = t3.c1)
+				on t1.c1 = t2.i2`,
+			"OuterJoin{Table(t1)->InnerJoin{Index(t2.i2)->Table(t3)}}->Fields",
+		},
+		{
+			`select * from
+				(t1, t2) left join
+					t3
+				on t2.c1 = t3.i1
+			where t2.i2 between 1 and 4 and t1.i1 = 3`,
+			"OuterJoin{InnerJoin{Index(t1.i1)->Index(t2.i2)}->Index(t3.i1)}->Fields",
+		},
+		{
+			`select * from
+				t1 join (
+					(t2 join t3
+						on t2.i3 = t3.i3 and t2.c2 > t3.c3
+					) left join t4
+					on t3.c3 = t4.i4
+				)
+				on t1.i1 = 1 and t1.c1 = t2.i2`,
+			"InnerJoin{Index(t1.i1)->OuterJoin{InnerJoin{Index(t2.i2)->Index(t3.i3)}->Index(t4.i4)}}->Fields",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		mockJoinResolve(c, stmt)
+		ast.SetFlag(stmt)
+		p, err := BuildPlan(stmt, nil)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.explain, comment)
+	}
+}
+
+func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
+	cases := []struct {
+		sql              string
+		accessEqualCount int
+		usedColumnCount  int
+	}{
+		{"select * from t where c = 0 and d = 0 and e = 0", 3, 3},
+		{"select * from t where c = 0 and d = 0 and e > 0", 2, 3},
+		{"select * from t where d > 0 and e = 0 and c = 0", 1, 2},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		ast.SetFlag(stmt)
+		mockResolve(stmt)
+		b := &planBuilder{}
+		p := b.buildFrom(stmt)
+		err = Refine(p)
+		c.Assert(err, IsNil)
+		idxScan, ok := p.(*IndexScan)
+		c.Assert(ok, IsTrue)
+		c.Assert(idxScan.AccessEqualCount, Equals, ca.accessEqualCount)
+		c.Assert(idxScan.Ranges[0].LowVal, HasLen, ca.usedColumnCount)
+	}
+}
+
+func (s *testPlanSuite) TestVisitCount(c *C) {
+	sqls := []string{
+		"select t1.c1, t2.c2 from t1, t2",
+		"select * from t1 left join t2 on t1.c1 = t2.c1",
+		"select * from t1 group by t1.c1 having sum(t1.c2) = 1",
+		"select * from t1 where t1.c1 > 2 order by t1.c2 limit 100",
+		"insert t1 values (1), (2)",
+		"delete from t1 where false",
+		"truncate table t1",
+		"do 1",
+		"show databases",
+	}
+	for _, sql := range sqls {
+		stmt, err := parser.ParseOneStmt(sql, "", "")
+		c.Assert(err, IsNil, Commentf(sql))
+		ast.SetFlag(stmt)
+		mockJoinResolve(c, stmt)
+		b := &planBuilder{}
+		p := b.build(stmt)
+		c.Assert(b.err, IsNil)
+		visitor := &countVisitor{}
+		for i := 0; i < 5; i++ {
+			visitor.skipAt = i
+			visitor.enterCount = 0
+			visitor.leaveCount = 0
+			p.Accept(visitor)
+			c.Assert(visitor.enterCount, Equals, visitor.leaveCount, Commentf(sql))
+		}
+	}
+}
+
+type countVisitor struct {
+	skipAt     int
+	enterCount int
+	leaveCount int
+}
+
+func (s *countVisitor) Enter(in Plan) (Plan, bool) {
+	skip := s.skipAt == s.enterCount
+	s.enterCount++
+	return in, skip
+}
+
+func (s *countVisitor) Leave(in Plan) (Plan, bool) {
+	s.leaveCount++
 	return in, true
 }

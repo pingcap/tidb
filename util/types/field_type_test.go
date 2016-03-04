@@ -106,22 +106,7 @@ func (s *testFieldTypeSuite) TestFieldType(c *check.C) {
 	c.Assert(ft.String(), check.Equals, "date")
 }
 
-func (s *testFieldTypeSuite) TestDataItem(c *check.C) {
-	ft := NewFieldType(mysql.TypeBlob)
-	d := &DataItem{
-		Type: ft,
-	}
-	c.Assert(RawData(d), check.IsNil)
-	c.Assert(IsNil(d), check.IsTrue)
-
-	d.Data = "string"
-	c.Assert(RawData(d), check.Equals, "string")
-	c.Assert(IsNil(d), check.IsFalse)
-}
-
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
-	nullType := DefaultTypeForValue(nil)
-	di := &DataItem{Type: nullType}
 	cases := []struct {
 		value interface{}
 		tp    byte
@@ -129,7 +114,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
 		{nil, mysql.TypeNull},
 		{1, mysql.TypeLonglong},
 		{uint64(1), mysql.TypeLonglong},
-		{"abc", mysql.TypeVarchar},
+		{"abc", mysql.TypeVarString},
 		{1.1, mysql.TypeNewDecimal},
 		{[]byte("abc"), mysql.TypeBlob},
 		{mysql.Bit{}, mysql.TypeBit},
@@ -139,7 +124,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
 		{mysql.Decimal{}, mysql.TypeNewDecimal},
 		{mysql.Enum{}, mysql.TypeEnum},
 		{mysql.Set{}, mysql.TypeSet},
-		{di, mysql.TypeNull},
+		{nil, mysql.TypeNull},
 	}
 	for _, ca := range cases {
 		ft := DefaultTypeForValue(ca.value)

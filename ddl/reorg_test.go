@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/types"
 )
 
 type testCtxKeyType int
@@ -121,7 +122,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	ctx := testNewContext(c, d1)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(c, d1, true, ddlJobFlag)
 
 	d2 := newDDL(store, nil, nil, lease)
 	defer d2.close()
@@ -136,7 +137,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, []interface{}{i, i, i})
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 

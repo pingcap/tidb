@@ -34,6 +34,9 @@ const (
 	TypeBit
 )
 
+// TypeUnspecified is an uninitialized type. TypeDecimal is not used in MySQL.
+var TypeUnspecified = TypeDecimal
+
 // MySQL type informations.
 const (
 	TypeNewDecimal byte = iota + 0xf6

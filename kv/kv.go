@@ -19,6 +19,9 @@ const (
 	// transaction's commit.
 	// This option is an optimization for frequent checks during a transaction, e.g. batch inserts.
 	PresumeKeyNotExists Option = iota + 1
+	// PresumeKeyNotExistsError is the option key for error.
+	// When PresumeKeyNotExists is set and condition is not match, should throw the error.
+	PresumeKeyNotExistsError
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.

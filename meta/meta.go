@@ -406,7 +406,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	return tableInfo, errors.Trace(err)
 }
 
-// DDL structure
+// DDL job structure
 //	DDLOnwer: []byte
 //	DDLJobList: list jobs
 //	DDLJobHistory: hash
@@ -416,15 +416,14 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLOwnerKey      = []byte("DDLOwner")
+	mDDLJobOwnerKey   = []byte("DDLJobOwner")
 	mDDLJobListKey    = []byte("DDLJobList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
 )
 
-// GetDDLOwner gets the current owner for DDL.
-func (m *Meta) GetDDLOwner() (*model.Owner, error) {
-	value, err := m.txn.Get(mDDLOwnerKey)
+func (m *Meta) getJobOwner(key []byte) (*model.Owner, error) {
+	value, err := m.txn.Get(key)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
 	}
@@ -434,27 +433,55 @@ func (m *Meta) GetDDLOwner() (*model.Owner, error) {
 	return owner, errors.Trace(err)
 }
 
-// SetDDLOwner sets the current owner for DDL.
-func (m *Meta) SetDDLOwner(o *model.Owner) error {
+// GetDDLJobOwner gets the current owner for DDL.
+func (m *Meta) GetDDLJobOwner() (*model.Owner, error) {
+	return m.getJobOwner(mDDLJobOwnerKey)
+}
+
+func (m *Meta) setJobOwner(key []byte, o *model.Owner) error {
 	b, err := json.Marshal(o)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.Set(mDDLOwnerKey, b)
+	return m.txn.Set(key, b)
 }
 
-// EnQueueDDLJob adds a DDL job to the list.
-func (m *Meta) EnQueueDDLJob(job *model.Job) error {
+// SetDDLJobOwner sets the current owner for DDL.
+func (m *Meta) SetDDLJobOwner(o *model.Owner) error {
+	return m.setJobOwner(mDDLJobOwnerKey, o)
+}
+
+func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.RPush(mDDLJobListKey, b)
+	return m.txn.RPush(key, b)
+}
+
+// EnQueueDDLJob adds a DDL job to the list.
+func (m *Meta) EnQueueDDLJob(job *model.Job) error {
+	return m.enQueueDDLJob(mDDLJobListKey, job)
+}
+
+func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
+	value, err := m.txn.LPop(key)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	job := &model.Job{}
+	err = job.Decode(value)
+	return job, errors.Trace(err)
 }
 
 // DeQueueDDLJob pops a DDL job from the list.
 func (m *Meta) DeQueueDDLJob() (*model.Job, error) {
-	value, err := m.txn.LPop(mDDLJobListKey)
+	return m.deQueueDDLJob(mDDLJobListKey)
+}
+
+func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
+	value, err := m.txn.LIndex(key, index)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
 	}
@@ -466,29 +493,27 @@ func (m *Meta) DeQueueDDLJob() (*model.Job, error) {
 
 // GetDDLJob returns the DDL job with index.
 func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
-	value, err := m.txn.LIndex(mDDLJobListKey, index)
-	if err != nil || value == nil {
-		return nil, errors.Trace(err)
-	}
-
-	job := &model.Job{}
-	err = job.Decode(value)
+	job, err := m.getDDLJob(mDDLJobListKey, index)
 	return job, errors.Trace(err)
 }
 
-// UpdateDDLJob updates the DDL job with index.
-func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
+func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte) error {
 	// TODO: use timestamp allocated by TSO
 	job.LastUpdateTS = time.Now().UnixNano()
 	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.LSet(mDDLJobListKey, index, b)
+	return m.txn.LSet(key, index, b)
 }
 
-// DDLJobLength returns the DDL job length.
-func (m *Meta) DDLJobLength() (int64, error) {
+// UpdateDDLJob updates the DDL job with index.
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job) error {
+	return m.updateDDLJob(index, job, mDDLJobListKey)
+}
+
+// DDLJobQueueLen returns the DDL job queue length.
+func (m *Meta) DDLJobQueueLen() (int64, error) {
 	return m.txn.LLen(mDDLJobListKey)
 }
 
@@ -498,18 +523,22 @@ func (m *Meta) jobIDKey(id int64) []byte {
 	return b
 }
 
-// AddHistoryDDLJob adds DDL job to history.
-func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
+func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.HSet(mDDLJobHistoryKey, m.jobIDKey(job.ID), b)
+
+	return m.txn.HSet(key, m.jobIDKey(job.ID), b)
 }
 
-// GetHistoryDDLJob gets a history DDL job.
-func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
-	value, err := m.txn.HGet(mDDLJobHistoryKey, m.jobIDKey(id))
+// AddHistoryDDLJob adds DDL job to history.
+func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
+	return m.addHistoryDDLJob(mDDLJobHistoryKey, job)
+}
+
+func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
+	value, err := m.txn.HGet(key, m.jobIDKey(id))
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
 	}
@@ -517,6 +546,11 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	job := &model.Job{}
 	err = job.Decode(value)
 	return job, errors.Trace(err)
+}
+
+// GetHistoryDDLJob gets a history DDL job.
+func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
+	return m.getHistoryDDLJob(mDDLJobHistoryKey, id)
 }
 
 // IsBootstrapped returns whether we have already run bootstrap or not.
@@ -551,4 +585,66 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 	value, err := m.txn.HGetInt64(mDDLJobReorgKey, m.jobIDKey(job.ID))
 	return value, errors.Trace(err)
+}
+
+// DDL background job structure
+//	BgJobOnwer: []byte
+//	BgJobList: list jobs
+//	BgJobHistory: hash
+//	BgJobReorg: hash
+//
+// for multi background worker, only one can become the owner
+// to operate background job, and dispatch them to MR background job.
+
+var (
+	mBgJobOwnerKey   = []byte("BgJobOwner")
+	mBgJobListKey    = []byte("BgJobList")
+	mBgJobHistoryKey = []byte("BgJobHistory")
+)
+
+// UpdateBgJob updates the background job with index.
+func (m *Meta) UpdateBgJob(index int64, job *model.Job) error {
+	return m.updateDDLJob(index, job, mBgJobListKey)
+}
+
+// GetBgJob returns the background job with index.
+func (m *Meta) GetBgJob(index int64) (*model.Job, error) {
+	job, err := m.getDDLJob(mBgJobListKey, index)
+
+	return job, errors.Trace(err)
+}
+
+// EnQueueBgJob adds a background job to the list.
+func (m *Meta) EnQueueBgJob(job *model.Job) error {
+	return m.enQueueDDLJob(mBgJobListKey, job)
+}
+
+// BgJobQueueLen returns the background job queue length.
+func (m *Meta) BgJobQueueLen() (int64, error) {
+	return m.txn.LLen(mBgJobListKey)
+}
+
+// AddHistoryBgJob adds background job to history.
+func (m *Meta) AddHistoryBgJob(job *model.Job) error {
+	return m.addHistoryDDLJob(mBgJobHistoryKey, job)
+}
+
+// GetHistoryBgJob gets a history background job.
+func (m *Meta) GetHistoryBgJob(id int64) (*model.Job, error) {
+	return m.getHistoryDDLJob(mBgJobHistoryKey, id)
+}
+
+// DeQueueBgJob pops a background job from the list.
+func (m *Meta) DeQueueBgJob() (*model.Job, error) {
+	return m.deQueueDDLJob(mBgJobListKey)
+}
+
+// GetBgJobOwner gets the current background job owner.
+func (m *Meta) GetBgJobOwner() (*model.Owner, error) {
+	return m.getJobOwner(mBgJobOwnerKey)
+}
+
+// SetBgJobOwner sets the current background job owner.
+func (m *Meta) SetBgJobOwner(o *model.Owner) error {
+	return m.setJobOwner(mBgJobOwnerKey, o)
 }

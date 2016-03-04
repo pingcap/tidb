@@ -77,7 +77,7 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		Args:     []interface{}{tblInfo},
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -89,7 +89,7 @@ func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 		Type:     model.ActionDropTable,
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -168,16 +168,16 @@ func (s *testTableSuite) TestTable(c *C) {
 		Args:     []interface{}{newTblInfo},
 	}
 
-	err := d.startJob(ctx, job)
+	err := d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
-	_, err = tbl.AddRecord(ctx, []interface{}{1, 1, 1})
+	_, err = tbl.AddRecord(ctx, types.MakeDatums(1, 1, 1))
 	c.Assert(err, IsNil)
 
-	_, err = tbl.AddRecord(ctx, []interface{}{2, 2, 2})
+	_, err = tbl.AddRecord(ctx, types.MakeDatums(2, 2, 2))
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -187,7 +187,7 @@ func (s *testTableSuite) TestTable(c *C) {
 func (s *testTableSuite) TestTableResume(c *C) {
 	d := s.d
 
-	testCheckOwner(c, d, true)
+	testCheckOwner(c, d, true, ddlJobFlag)
 
 	tblInfo := testTableInfo(c, d, "t1", 3)
 

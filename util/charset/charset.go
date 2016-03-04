@@ -142,6 +142,8 @@ func GetCollations() []*Collation {
 const (
 	// CharsetBin is used for marking binary charset.
 	CharsetBin = "binary"
+	// CollationBin is the default collation for CharsetBin.
+	CollationBin = "binary"
 )
 
 var collations = []*Collation{
