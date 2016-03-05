@@ -19,8 +19,8 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/coldef"
 )
 
 func TestT(t *testing.T) {
@@ -31,14 +31,14 @@ var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store       kv.Storage
-	charsetInfo *coldef.CharsetOpt
+	charsetInfo *ast.CharsetOpt
 }
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	ts.store = store
-	ts.charsetInfo = &coldef.CharsetOpt{
+	ts.charsetInfo = &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
 	}
