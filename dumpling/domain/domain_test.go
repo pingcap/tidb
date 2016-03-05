@@ -19,8 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
@@ -49,7 +49,7 @@ func (*testSuite) TestT(c *C) {
 	store = dom.Store()
 	dd := dom.DDL()
 	c.Assert(dd, NotNil)
-	cs := &coldef.CharsetOpt{
+	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
 	}

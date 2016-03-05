@@ -18,10 +18,10 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -31,7 +31,7 @@ import (
 var _ privilege.Checker = (*UserPrivileges)(nil)
 
 type privileges struct {
-	Level int
+	Level ast.GrantLevelType
 	privs map[mysql.PrivilegeType]bool
 }
 
@@ -52,11 +52,11 @@ func (ps *privileges) add(p mysql.PrivilegeType) {
 
 func (ps *privileges) String() string {
 	switch ps.Level {
-	case coldef.GrantLevelGlobal:
+	case ast.GrantLevelGlobal:
 		return ps.globalPrivToString()
-	case coldef.GrantLevelDB:
+	case ast.GrantLevelDB:
 		return ps.dbPrivToString()
-	case coldef.GrantLevelTable:
+	case ast.GrantLevelTable:
 		return ps.tablePrivToString()
 	}
 	return ""
@@ -246,7 +246,7 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	defer rs.Close()
-	ps := &privileges{Level: coldef.GrantLevelGlobal}
+	ps := &privileges{Level: ast.GrantLevelGlobal}
 	fs, err := rs.Fields()
 	if err != nil {
 		return errors.Trace(err)
@@ -303,7 +303,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 		}
 		// DB
 		dbStr := row.Data[1].GetString()
-		ps[dbStr] = &privileges{Level: coldef.GrantLevelDB}
+		ps[dbStr] = &privileges{Level: ast.GrantLevelDB}
 		for i := dbTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			if d.Kind() != types.KindMysqlEnum {
@@ -350,7 +350,7 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 		if !ok {
 			ps[dbStr] = make(map[string]*privileges)
 		}
-		ps[dbStr][tblStr] = &privileges{Level: coldef.GrantLevelTable}
+		ps[dbStr][tblStr] = &privileges{Level: ast.GrantLevelTable}
 		// Table_priv
 		tblPrivs := row.Data[6].GetMysqlSet()
 		pvs := strings.Split(tblPrivs.Name, ",")

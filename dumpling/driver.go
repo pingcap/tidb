@@ -31,7 +31,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
@@ -203,7 +202,7 @@ func (d *sqlDriver) Open(dsn string) (driver.Conn, error) {
 
 	DBName := model.NewCIStr(params.dbName)
 	domain := sessionctx.GetDomain(s)
-	cs := &coldef.CharsetOpt{
+	cs := &ast.CharsetOpt{
 		Chs: "utf8",
 		Col: "utf8_bin",
 	}

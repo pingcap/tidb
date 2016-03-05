@@ -18,8 +18,6 @@
 package table
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -28,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -92,33 +89,6 @@ type Table interface {
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
 var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table, error)
-
-// Ident is the table identifier composed of schema name and table name.
-// TODO: Move out
-type Ident struct {
-	Schema model.CIStr
-	Name   model.CIStr
-}
-
-// Full returns an Ident which set schema to the current schema if it is empty.
-func (i Ident) Full(ctx context.Context) (full Ident) {
-	full.Name = i.Name
-	full.Schema = i.Schema
-	if i.Schema.O != "" {
-		full.Schema = i.Schema
-	} else {
-		full.Schema = model.NewCIStr(db.GetCurrentSchema(ctx))
-	}
-	return
-}
-
-// String implements fmt.Stringer interface
-func (i Ident) String() string {
-	if i.Schema.O == "" {
-		return i.Name.O
-	}
-	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
-}
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, bool, error) {

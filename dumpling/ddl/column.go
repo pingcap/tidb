@@ -16,6 +16,7 @@ package ddl
 import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -55,16 +56,16 @@ func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.I
 	}
 }
 
-func (d *ddl) addColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ColumnPosition) (*model.ColumnInfo, int, error) {
+func (d *ddl) addColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	position := len(cols)
 
 	// Get column position.
-	if pos.Type == ColumnPositionFirst {
+	if pos.Tp == ast.ColumnPositionFirst {
 		position = 0
-	} else if pos.Type == ColumnPositionAfter {
-		c := findCol(cols, pos.RelativeColumn)
+	} else if pos.Tp == ast.ColumnPositionAfter {
+		c := findCol(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
 			return nil, 0, errors.Errorf("No such column: %v", pos.RelativeColumn)
 		}
@@ -96,7 +97,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 	}
 
 	col := &model.ColumnInfo{}
-	pos := &ColumnPosition{}
+	pos := &ast.ColumnPosition{}
 	offset := 0
 	err = job.DecodeArgs(col, pos, &offset)
 	if err != nil {
