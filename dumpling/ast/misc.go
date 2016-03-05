@@ -13,7 +13,14 @@
 
 package ast
 
-import "github.com/pingcap/tidb/mysql"
+import (
+	"fmt"
+
+	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/db"
+)
 
 var (
 	_ StmtNode = &AdminStmt{}
@@ -472,4 +479,29 @@ func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 		n.Privs[i] = node.(*PrivElem)
 	}
 	return v.Leave(n)
+}
+
+// Ident is the table identifier composed of schema name and table name.
+type Ident struct {
+	Schema model.CIStr
+	Name   model.CIStr
+}
+
+// Full returns an Ident which set schema to the current schema if it is empty.
+func (i Ident) Full(ctx context.Context) (full Ident) {
+	full.Name = i.Name
+	if i.Schema.O != "" {
+		full.Schema = i.Schema
+	} else {
+		full.Schema = model.NewCIStr(db.GetCurrentSchema(ctx))
+	}
+	return
+}
+
+// String implements fmt.Stringer interface
+func (i Ident) String() string {
+	if i.Schema.O == "" {
+		return i.Name.O
+	}
+	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
 }
