@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
@@ -362,6 +363,7 @@ func (e *DeleteExec) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
+	currRow    int
 	ctx        context.Context
 	SelectExec Executor
 
@@ -554,9 +556,10 @@ func (e *InsertValues) getRows(cols []*column.Col) (rows [][]types.Datum, err er
 
 	rows = make([][]types.Datum, len(e.Lists))
 	for i, list := range e.Lists {
-		if err = e.checkValueCount(len(e.Lists[0]), len(list), i, cols); err != nil {
+		if err = e.checkValueCount(len(e.Lists[i]), len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.currRow = i
 		rows[i], err = e.getRow(cols, list, defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -606,6 +609,7 @@ func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]types.Datum, error
 		if innerRow == nil {
 			break
 		}
+		e.currRow = len(rows)
 		row, err := e.fillRowData(cols, innerRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -637,6 +641,7 @@ func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]ty
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
+	var retryInfo bool
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
 		if row[i].Kind() != types.KindNull {
@@ -662,6 +667,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				// `insert t (c1) values(1),(2),(3);`
 				// Last insert id will be 1, not 3.
 				variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+				// if column value is not nil and it's retried, the last insert ID sets to column value.
+				retryInfo = true
+				log.Warnf("row:%v, no.%d, col:%d, lastInsertID:%v", e.currRow, i, row[i], recordID)
 			}
 		} else {
 			var err error
@@ -676,6 +684,18 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	if err := column.CastValues(e.ctx, row, defaultValueCols); err != nil {
 		return errors.Trace(err)
 	}
+
+	if !retryInfo {
+		return nil
+	}
+	log.Warnf("row11111:%v", e.Lists[e.currRow][0])
+	cols := make([]ast.ExprNode, len(row))
+	for i, col := range row {
+		cols[i] = ast.NewValueExpr(col.GetValue())
+		log.Warnf("row==========:%v, no.%v", cols[i], i)
+	}
+	e.Lists[e.currRow] = cols
+	log.Warnf("row22222:%v, row1:%v, row2:%v", e.Lists[e.currRow][0], e.Lists[e.currRow][1], row)
 	return nil
 }
 
