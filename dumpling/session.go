@@ -222,6 +222,7 @@ func (s *session) Retry() error {
 		success := true
 		for _, sr := range nh.history {
 			st := sr.st
+			log.Warnf("Retry %s", st.OriginText())
 			_, err = runStmt(s, st)
 			if err != nil {
 				if kv.IsRetryableError(err) {
@@ -486,6 +487,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
+		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
 	if forceNew {
@@ -602,7 +604,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 	// session implements autocommit.Checker. Bind it to ctx
 	autocommit.BindAutocommitChecker(s, s)
-
 	sessionMu.Lock()
 	defer sessionMu.Unlock()
 
