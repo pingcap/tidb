@@ -18,12 +18,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
-	"github.com/pingcap/tidb/table"
 )
 
 func TestT(t *testing.T) {
@@ -36,7 +36,7 @@ type testSuite struct {
 }
 
 func (*testSuite) TestT(c *C) {
-	var ident = table.Ident{
+	var ident = ast.Ident{
 		Name: model.NewCIStr("t"),
 	}
 	c.Assert(ident.String(), Not(Equals), "")

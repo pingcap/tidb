@@ -16,11 +16,11 @@ package ddl
 import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*coldef.IndexColName) (*model.IndexInfo, error) {
+func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 	for _, ic := range idxColNames {
-		col := findCol(tblInfo.Columns, ic.ColumnName)
+		col := findCol(tblInfo.Columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errors.Errorf("CREATE INDEX: column does not exist: %s", ic.ColumnName)
+			return nil, errors.Errorf("CREATE INDEX: column does not exist: %s", ic.Column.Name.O)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
@@ -98,7 +98,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		unique      bool
 		indexName   model.CIStr
 		indexID     int64
-		idxColNames []*coldef.IndexColName
+		idxColNames []*ast.IndexColName
 	)
 
 	err = job.DecodeArgs(&unique, &indexName, &indexID, &idxColNames)

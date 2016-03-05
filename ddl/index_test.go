@@ -18,11 +18,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
@@ -66,7 +66,7 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*coldef.IndexColName{{ColumnName: colName, Length: 256}}},
+		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr(colName)}, Length: 256}}},
 	}
 
 	err = d.startDDLJob(ctx, job)

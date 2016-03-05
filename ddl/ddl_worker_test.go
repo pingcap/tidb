@@ -19,11 +19,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/coldef"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
@@ -251,7 +251,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{false, model.NewCIStr("t"), []*coldef.IndexColName{{ColumnName: "c", Length: 256}}},
+		Args:     []interface{}{false, model.NewCIStr("t"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
 	}
 	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
@@ -261,7 +261,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*coldef.IndexColName{{ColumnName: "c", Length: 256}}},
+		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
 	}
 	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
@@ -273,7 +273,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddIndex,
-		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*coldef.IndexColName{{ColumnName: "c1", Length: 256}}},
+		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}},
 	}
 	err = d.startDDLJob(ctx, job)
 	c.Assert(err, NotNil)
@@ -349,7 +349,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 	c.Assert(err, IsNil)
 
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
-	pos := &ColumnPosition{Type: ColumnPositionAfter, RelativeColumn: "c5"}
+	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
 	job = &model.Job{
 		SchemaID: dbInfo.ID,
