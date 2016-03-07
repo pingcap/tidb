@@ -331,12 +331,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			var inVal interface{}
-			inVal, err = types.Convert(value.GetValue(), &col.FieldType)
+			value, err = value.ConvertTo(&col.FieldType)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			value.SetValue(inVal)
 		} else {
 			value = r[col.Offset]
 		}

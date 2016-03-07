@@ -518,9 +518,9 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int) (int, error) {
-	y = adjustYear(y)
-	if y < int(MinYear) || y > int(MaxYear) {
+func AdjustYear(y int64) (int64, error) {
+	y = int64(adjustYear(int(y)))
+	if y < int64(MinYear) || y > int64(MaxYear) {
 		return 0, errors.Trace(ErrInvalidYear)
 	}
 
