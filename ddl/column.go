@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/types"
 )
 
 func (d *ddl) adjustColumnOffset(columns []*model.ColumnInfo, indices []*model.IndexInfo, offset int, added bool) {
@@ -368,7 +367,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 			}
 
 			// must convert to the column field type.
-			v, err := types.Convert(value.GetValue(), &columnInfo.FieldType)
+			v, err := value.ConvertTo(&columnInfo.FieldType)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -378,7 +377,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return errors.Trace(err)
 			}
 
-			err = tables.SetColValue(txn, backfillKey, types.NewDatum(v))
+			err = tables.SetColValue(txn, backfillKey, v)
 			if err != nil {
 				return errors.Trace(err)
 			}
