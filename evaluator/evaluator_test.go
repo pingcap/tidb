@@ -677,6 +677,10 @@ func (s *testEvaluatorSuite) TestPatternIn(c *C) {
 			exprStr:   "2 in (1, NULL)",
 			resultStr: "<nil>",
 		},
+		{
+			exprStr:   "(-(23)++46/51*+51) in (+23)",
+			resultStr: "0",
+		},
 	}
 	s.runTests(c, cases)
 }
