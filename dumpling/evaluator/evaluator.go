@@ -384,7 +384,7 @@ func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) in
 			continue
 		}
 
-		r, err := types.Compare(in, v)
+		r, err := types.Compare(types.Coerce(in, v))
 		if err != nil {
 			e.err = errors.Trace(err)
 			return nil
