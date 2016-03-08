@@ -125,10 +125,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.funcCast(v)
 	case *ast.FuncDateArithExpr:
 		ok = e.funcDateArith(v)
-	case *ast.FuncLocateExpr:
-		ok = e.funcLocate(v)
-	case *ast.FuncSubstringIndexExpr:
-		ok = e.funcSubstringIndex(v)
 	case *ast.FuncTrimExpr:
 		ok = e.funcTrim(v)
 	case *ast.IsNullExpr:
@@ -710,95 +706,6 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 		return false
 	}
 	v.SetValue(value)
-	return true
-}
-
-func (e *Evaluator) funcSubstringIndex(v *ast.FuncSubstringIndexExpr) bool {
-	fs := v.StrExpr.GetValue()
-	str, err := types.ToString(fs)
-	if err != nil {
-		e.err = ErrInvalidOperation.Gen("Substring_Index invalid args, need string but get %T", fs)
-		return false
-	}
-
-	t := v.Delim.GetValue()
-	delim, err := types.ToString(t)
-	if err != nil {
-		e.err = ErrInvalidOperation.Gen("Substring_Index invalid delim, need string but get %T", t)
-		return false
-	}
-
-	t = v.Count.GetValue()
-	c, err := types.ToInt64(t)
-	if err != nil {
-		e.err = errors.Trace(err)
-		return false
-	}
-	count := int(c)
-	strs := strings.Split(str, delim)
-	var (
-		start = 0
-		end   = len(strs)
-	)
-	if count > 0 {
-		// If count is positive, everything to the left of the final delimiter (counting from the left) is returned.
-		if count < end {
-			end = count
-		}
-	} else {
-		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
-		count = -count
-		if count < end {
-			start = end - count
-		}
-	}
-	substrs := strs[start:end]
-	v.SetValue(strings.Join(substrs, delim))
-	return true
-}
-
-func (e *Evaluator) funcLocate(v *ast.FuncLocateExpr) bool {
-	// eval str
-	fs := v.Str.GetValue()
-	if fs == nil {
-		v.SetValue(nil)
-		return true
-	}
-	str, err := types.ToString(fs)
-	if err != nil {
-		e.err = errors.Trace(err)
-		return false
-	}
-	// eval substr
-	fs = v.SubStr.GetValue()
-	if fs == nil {
-		v.SetValue(nil)
-		return true
-	}
-	substr, err := types.ToString(fs)
-	if err != nil {
-		e.err = errors.Trace(err)
-		return false
-	}
-	// eval pos
-	pos := 0
-	if v.Pos != nil {
-		t := v.Pos.GetValue()
-		p, err := types.ToInt64(t)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return false
-		}
-		pos = int(p)
-	}
-	// eval locate
-	if pos < 0 || pos > len(str) {
-		e.err = ErrInvalidOperation.Gen("Locate invalid pos args: %d", pos)
-		return false
-	}
-	str = str[pos:]
-	i := strings.Index(str, substr)
-	v.SetValue(i + 1 + pos)
 	return true
 }
 

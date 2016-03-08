@@ -2246,18 +2246,17 @@ FunctionCallNonKeyword:
 	}
 |	"LOCATE" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncLocateExpr{
-			SubStr: $3.(ast.ExprNode), 
-			Str: $5.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
 	}
 |	"LOCATE" '(' Expression ',' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncLocateExpr{
-			SubStr: $3.(ast.ExprNode), 
-			Str: $5.(ast.ExprNode),
-			Pos: $7.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
 	}
 |	"LOWER" '(' Expression ')'
 	{
@@ -2349,11 +2348,10 @@ FunctionCallNonKeyword:
 	}
 |	"SUBSTRING_INDEX" '(' Expression ',' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncSubstringIndexExpr{
-			StrExpr: $3.(ast.ExprNode), 
-			Delim: $5.(ast.ExprNode),
-			Count: $7.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
 	}
 |	"SYSDATE" '(' ExpressionOpt ')'
 	{
