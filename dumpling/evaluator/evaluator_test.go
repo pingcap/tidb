@@ -939,6 +939,158 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
+	tbl := []struct {
+		str    string
+		delim  string
+		count  int64
+		result string
+	}{
+		{"www.mysql.com", ".", 2, "www.mysql"},
+		{"www.mysql.com", ".", -2, "mysql.com"},
+		{"www.mysql.com", ".", 0, ""},
+		{"www.mysql.com", ".", 3, "www.mysql.com"},
+		{"www.mysql.com", ".", 4, "www.mysql.com"},
+		{"www.mysql.com", ".", -3, "www.mysql.com"},
+		{"www.mysql.com", ".", -4, "www.mysql.com"},
+
+		{"www.mysql.com", "d", 1, "www.mysql.com"},
+		{"www.mysql.com", "d", 0, ""},
+		{"www.mysql.com", "d", -1, "www.mysql.com"},
+
+		{"", ".", 2, ""},
+		{"", ".", -2, ""},
+		{"", ".", 0, ""},
+
+		{"www.mysql.com", "", 1, ""},
+		{"www.mysql.com", "", -1, ""},
+		{"www.mysql.com", "", 0, ""},
+	}
+	ctx := mock.NewContext()
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING_INDEX"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+	errTbl := []struct {
+		str   interface{}
+		delim interface{}
+		count interface{}
+	}{
+		{nil, ".", 2},
+		{nil, ".", -2},
+		{nil, ".", 0},
+		{"asdf", nil, 2},
+		{"asdf", nil, -2},
+		{"asdf", nil, 0},
+		{"www.mysql.com", ".", nil},
+	}
+	for _, v := range errTbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING_INDEX"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, NotNil)
+		c.Assert(r, IsNil)
+	}
+}
+
+func (s *testEvaluatorSuite) TestLocate(c *C) {
+	tbl := []struct {
+		subStr string
+		Str    string
+		result int64
+	}{
+		{"bar", "foobarbar", 4},
+		{"xbar", "foobar", 0},
+		{"", "foobar", 1},
+		{"foobar", "", 0},
+		{"", "", 1},
+	}
+	ctx := mock.NewContext()
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(int64)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+
+	tbl2 := []struct {
+		subStr string
+		Str    string
+		pos    int64
+		result int64
+	}{
+		{"bar", "foobarbar", 5, 7},
+		{"xbar", "foobar", 1, 0},
+		{"", "foobar", 2, 2},
+		{"foobar", "", 1, 0},
+		{"", "", 2, 0},
+	}
+	for _, v := range tbl2 {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(int64)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+
+	errTbl := []struct {
+		subStr interface{}
+		Str    interface{}
+	}{
+		{nil, nil},
+		{"", nil},
+		{nil, ""},
+		{"foo", nil},
+		{nil, "bar"},
+	}
+	for _, v := range errTbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
+		}
+		r, _ := Eval(ctx, f)
+		c.Assert(r, IsNil)
+	}
+
+	errTbl2 := []struct {
+		subStr interface{}
+		Str    interface{}
+		pos    interface{}
+	}{
+		{nil, nil, 1},
+		{"", nil, 1},
+		{nil, "", 1},
+		{"foo", nil, -1},
+		{nil, "bar", 0},
+	}
+	for _, v := range errTbl2 {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
+		}
+		r, _ := Eval(ctx, f)
+		c.Assert(r, IsNil)
+	}
+}
+
 func (s *testEvaluatorSuite) TestTrim(c *C) {
 	tbl := []struct {
 		str    interface{}
