@@ -29,8 +29,6 @@ var (
 	_ FuncNode = &FuncCallExpr{}
 	_ FuncNode = &FuncCastExpr{}
 	_ FuncNode = &FuncDateArithExpr{}
-	_ FuncNode = &FuncLocateExpr{}
-	_ FuncNode = &FuncSubstringIndexExpr{}
 	_ FuncNode = &FuncTrimExpr{}
 )
 
@@ -97,78 +95,6 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Expr = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FuncSubstringIndexExpr returns the substring as specified.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
-type FuncSubstringIndexExpr struct {
-	funcNode
-
-	StrExpr ExprNode
-	Delim   ExprNode
-	Count   ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncSubstringIndexExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncSubstringIndexExpr)
-	node, ok := n.StrExpr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.StrExpr = node.(ExprNode)
-	node, ok = n.Delim.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Delim = node.(ExprNode)
-	node, ok = n.Count.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Count = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FuncLocateExpr returns the position of the first occurrence of substring.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
-type FuncLocateExpr struct {
-	funcNode
-
-	Str    ExprNode
-	SubStr ExprNode
-	Pos    ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncLocateExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncLocateExpr)
-	node, ok := n.Str.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Str = node.(ExprNode)
-	node, ok = n.SubStr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.SubStr = node.(ExprNode)
-	if n.Pos != nil {
-		node, ok = n.Pos.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Pos = node.(ExprNode)
-	}
 	return v.Leave(n)
 }
 

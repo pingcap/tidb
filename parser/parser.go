@@ -7158,17 +7158,16 @@ yynewstate:
 		}
 	case 417:
 		{
-			yyVAL.item = &ast.FuncLocateExpr{
-				SubStr: yyS[yypt-3].item.(ast.ExprNode),
-				Str:    yyS[yypt-1].item.(ast.ExprNode),
+			yyVAL.item = &ast.FuncCallExpr{
+				FnName: model.NewCIStr(yyS[yypt-5].item.(string)),
+				Args:   []ast.ExprNode{yyS[yypt-3].item.(ast.ExprNode), yyS[yypt-1].item.(ast.ExprNode)},
 			}
 		}
 	case 418:
 		{
-			yyVAL.item = &ast.FuncLocateExpr{
-				SubStr: yyS[yypt-5].item.(ast.ExprNode),
-				Str:    yyS[yypt-3].item.(ast.ExprNode),
-				Pos:    yyS[yypt-1].item.(ast.ExprNode),
+			yyVAL.item = &ast.FuncCallExpr{
+				FnName: model.NewCIStr(yyS[yypt-7].item.(string)),
+				Args:   []ast.ExprNode{yyS[yypt-5].item.(ast.ExprNode), yyS[yypt-3].item.(ast.ExprNode), yyS[yypt-1].item.(ast.ExprNode)},
 			}
 		}
 	case 419:
@@ -7261,10 +7260,9 @@ yynewstate:
 		}
 	case 435:
 		{
-			yyVAL.item = &ast.FuncSubstringIndexExpr{
-				StrExpr: yyS[yypt-5].item.(ast.ExprNode),
-				Delim:   yyS[yypt-3].item.(ast.ExprNode),
-				Count:   yyS[yypt-1].item.(ast.ExprNode),
+			yyVAL.item = &ast.FuncCallExpr{
+				FnName: model.NewCIStr(yyS[yypt-7].item.(string)),
+				Args:   []ast.ExprNode{yyS[yypt-5].item.(ast.ExprNode), yyS[yypt-3].item.(ast.ExprNode), yyS[yypt-1].item.(ast.ExprNode)},
 			}
 		}
 	case 436:
