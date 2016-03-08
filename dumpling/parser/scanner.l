@@ -664,7 +664,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {both}			return both
 {by}			return by
 {case}			return caseKwd
-{cast}			return cast
+{cast}			lval.item = string(l.val)
+			return cast
 {character}		return character
 {charset}		lval.item = string(l.val)
 			return charsetKwd
@@ -696,7 +697,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {connection_id}		lval.item = string(l.val)
 			return connectionID
 {constraint}		return constraint
-{convert}		return convert
+{convert}		lval.item = string(l.val)
+			return convert
 {count}			lval.item = string(l.val)
 			return count
 {create}		return create

@@ -267,13 +267,13 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp = types.NewFieldType(mysql.TypeDatetime)
 	case "microsecond", "second", "minute", "hour", "day", "week", "month", "year",
 		"dayofweek", "dayofmonth", "dayofyear", "weekday", "weekofyear", "yearweek",
-		"found_rows", "length":
+		"found_rows", "length", "extract":
 		tp = types.NewFieldType(mysql.TypeLonglong)
 	case "now", "sysdate":
 		tp = types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = v.getFsp(x)
 	case "dayname", "version", "database", "user", "current_user",
-		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper":
+		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper", "convert", "substring":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp":

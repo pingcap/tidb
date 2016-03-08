@@ -2100,10 +2100,11 @@ FunctionCallKeyword:
 |	"CONVERT" '(' Expression "USING" StringName ')' 
 	{
 		// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-		$$ = &ast.FuncConvertExpr{
-			Expr: $3.(ast.ExprNode), 
-			Charset: $5.(string),
-		}	
+		charset := ast.NewValueExpr($5)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), charset},
+		}
 	}
 |	"CONVERT" '(' Expression ',' CastType ')'
 	{
@@ -2221,9 +2222,10 @@ FunctionCallNonKeyword:
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'
 	{
-		$$ = &ast.FuncExtractExpr{
-			Unit: $3.(string),
-			Date: $5.(ast.ExprNode),
+		timeUnit := ast.NewValueExpr($3)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{timeUnit, $5.(ast.ExprNode)},
 		}
 	}
 |	"FOUND_ROWS" '(' ')'
@@ -2319,33 +2321,31 @@ FunctionCallNonKeyword:
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncSubstringExpr{
-			StrExpr: $3.(ast.ExprNode),
-			Pos: $5.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression ')'
 	{
-		$$ = &ast.FuncSubstringExpr{
-			StrExpr: $3.(ast.ExprNode), 
-			Pos: $5.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode)},
+		}
 	}
 |	"SUBSTRING" '(' Expression ',' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncSubstringExpr{
-			StrExpr: $3.(ast.ExprNode), 
-			Pos: $5.(ast.ExprNode),
-			Len: $7.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
 	}
 |	"SUBSTRING" '(' Expression "FROM" Expression "FOR" Expression ')'
 	{
-		$$ = &ast.FuncSubstringExpr{
-			StrExpr: $3.(ast.ExprNode), 
-			Pos: $5.(ast.ExprNode),
-			Len: $7.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)},
+		}
 	}
 |	"SUBSTRING_INDEX" '(' Expression ',' Expression ',' Expression ')'
 	{
