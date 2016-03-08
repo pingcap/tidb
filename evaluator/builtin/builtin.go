@@ -71,6 +71,7 @@ var Funcs = map[string]Func{
 	"weekofyear":        {builtinWeekOfYear, 1, 1, true, false},
 	"year":              {builtinYear, 1, 1, true, false},
 	"yearweek":          {builtinYearWeek, 1, 2, true, false},
+	"extract":           {builtinExtract, 2, 2, true, false},
 
 	// control functions
 	"if":     {builtinIf, 3, 3, true, false},
@@ -87,6 +88,8 @@ var Funcs = map[string]Func{
 	"replace":   {builtinReplace, 3, 3, true, false},
 	"upper":     {builtinUpper, 1, 1, true, false},
 	"strcmp":    {builtinStrcmp, 2, 2, true, false},
+	"convert":   {builtinConvert, 2, 2, true, false},
+	"substring": {builtinSubstring, 2, 3, true, false},
 
 	// information functions
 	"current_user":  {builtinCurrentUser, 0, 0, false, false},

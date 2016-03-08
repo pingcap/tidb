@@ -363,9 +363,12 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		{"haha", "ascii", "haha"},
 	}
 	for _, v := range tbl {
-		f := &ast.FuncConvertExpr{
-			Expr:    ast.NewValueExpr(v.str),
-			Charset: v.cs,
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("CONVERT"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr(v.str),
+				ast.NewValueExpr(v.cs),
+			},
 		}
 
 		r, err := Eval(ctx, f)
@@ -384,9 +387,12 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		{"haha", "wrongcharset", "haha"},
 	}
 	for _, v := range errTbl {
-		f := &ast.FuncConvertExpr{
-			Expr:    ast.NewValueExpr(v.str),
-			Charset: v.cs,
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("CONVERT"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr(v.str),
+				ast.NewValueExpr(v.cs),
+			},
 		}
 
 		_, err := Eval(ctx, f)
@@ -622,20 +628,19 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	}
 	ctx := mock.NewContext()
 	for _, t := range tbl {
-		e := &ast.FuncExtractExpr{
-			Unit: t.Unit,
-			Date: ast.NewValueExpr(str),
+		e := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("EXTRACT"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(t.Unit), ast.NewValueExpr(str)},
 		}
-
 		v, err := Eval(ctx, e)
 		c.Assert(err, IsNil)
 		c.Assert(v, Equals, t.Expect)
 	}
 
 	// Test nil
-	e := &ast.FuncExtractExpr{
-		Unit: "SECOND",
-		Date: ast.NewValueExpr(nil),
+	e := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("EXTRACT"),
+		Args:   []ast.ExprNode{ast.NewValueExpr("SECOND"), ast.NewValueExpr(nil)},
 	}
 
 	v, err := Eval(ctx, e)
@@ -893,14 +898,13 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	}
 	ctx := mock.NewContext()
 	for _, v := range tbl {
-		f := &ast.FuncSubstringExpr{
-			StrExpr: ast.NewValueExpr(v.str),
-			Pos:     ast.NewValueExpr(v.pos),
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
 		}
 		if v.slen != -1 {
-			f.Len = ast.NewValueExpr(v.slen)
+			f.Args = append(f.Args, ast.NewValueExpr(v.slen))
 		}
-
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
 		s, ok := r.(string)
@@ -923,12 +927,12 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		{"Quadratically", 5, "6", "ratica"},
 	}
 	for _, v := range errTbl {
-		f := &ast.FuncSubstringExpr{
-			StrExpr: ast.NewValueExpr(v.str),
-			Pos:     ast.NewValueExpr(v.pos),
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
 		}
 		if v.len != -1 {
-			f.Len = ast.NewValueExpr(v.len)
+			f.Args = append(f.Args, ast.NewValueExpr(v.len))
 		}
 		_, err := Eval(ctx, f)
 		c.Assert(err, NotNil)

@@ -22,8 +22,11 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"golang.org/x/text/transform"
 )
 
 // https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
@@ -187,4 +190,85 @@ func builtinReplace(args []interface{}, _ context.Context) (interface{}, error) 
 	}
 
 	return strings.Replace(str, oldStr, newStr, -1), nil
+}
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+func builtinConvert(args []interface{}, _ context.Context) (interface{}, error) {
+	value := args[0]
+	Charset := args[1].(string)
+
+	// Casting nil to any type returns nil
+	if value == nil {
+		return nil, nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return nil, nil
+	}
+	if strings.ToLower(Charset) == "ascii" {
+		return value, nil
+	} else if strings.ToLower(Charset) == "utf8mb4" {
+		return value, nil
+	}
+
+	encoding, _ := charset.Lookup(Charset)
+	if encoding == nil {
+		return nil, errors.Errorf("unknown encoding: %s", Charset)
+	}
+
+	target, _, err := transform.String(encoding.NewDecoder(), str)
+	if err != nil {
+		log.Errorf("Convert %s to %s with error: %v", str, Charset, err)
+		return nil, errors.Trace(err)
+	}
+	return target, nil
+}
+
+func builtinSubstring(args []interface{}, _ context.Context) (interface{}, error) {
+	// The meaning of the elements of args.
+	// arg[0] -> StrExpr
+	// arg[1] -> Pos
+	// arg[2] -> Len (Optional)
+	str, err := types.ToString(args[0])
+	if err != nil {
+		return nil, errors.Errorf("Substring invalid args, need string but get %T", args[0])
+	}
+
+	t := args[1]
+	p, ok := t.(int64)
+	if !ok {
+		return nil, errors.Errorf("Substring invalid pos args, need int but get %T", t)
+	}
+	pos := int(p)
+
+	length := -1
+	if len(args) == 3 {
+		t = args[2]
+		p, ok = t.(int64)
+		if !ok {
+			return nil, errors.Errorf("Substring invalid pos args, need int but get %T", t)
+		}
+		length = int(p)
+	}
+	// The forms without a len argument return a substring from string str starting at position pos.
+	// The forms with a len argument return a substring len characters long from string str, starting at position pos.
+	// The forms that use FROM are standard SQL syntax. It is also possible to use a negative value for pos.
+	// In this case, the beginning of the substring is pos characters from the end of the string, rather than the beginning.
+	// A negative value may be used for pos in any of the forms of this function.
+	if pos < 0 {
+		pos = len(str) + pos
+	} else {
+		pos--
+	}
+	if pos > len(str) || pos <= 0 {
+		pos = len(str)
+	}
+	end := len(str)
+	if length != -1 {
+		end = pos + length
+	}
+	if end > len(str) {
+		end = len(str)
+	}
+	return str[pos:end], nil
 }
