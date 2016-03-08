@@ -338,6 +338,37 @@ func builtinCurrentTime(args []interface{}, _ context.Context) (interface{}, err
 	return convertToDuration(time.Now().Format("15:04:05.000000"), fsp)
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
+func builtinExtract(args []interface{}, _ context.Context) (interface{}, error) {
+	unit := args[0].(string)
+	val := args[1]
+
+	if val == nil {
+		return nil, nil
+	}
+
+	f := types.NewFieldType(mysql.TypeDatetime)
+	f.Decimal = mysql.MaxFsp
+	var err error
+	val, err = types.Convert(val, f)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if val == nil {
+		return nil, nil
+	}
+
+	t, ok := val.(mysql.Time)
+	if !ok {
+		return nil, errors.Errorf("need time type, but got %T", val)
+	}
+	n, err1 := mysql.ExtractTimeNum(unit, t)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
+	}
+	return n, nil
+}
+
 func checkFsp(arg interface{}) (int, error) {
 	fsp, err := types.ToInt64(arg)
 	if err != nil {

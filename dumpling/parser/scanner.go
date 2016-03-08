@@ -13966,6 +13966,7 @@ yyrule58: // {case}
 	}
 yyrule59: // {cast}
 	{
+		lval.item = string(l.val)
 		return cast
 	}
 yyrule60: // {character}
@@ -14055,6 +14056,7 @@ yyrule77: // {constraint}
 	}
 yyrule78: // {convert}
 	{
+		lval.item = string(l.val)
 		return convert
 	}
 yyrule79: // {count}

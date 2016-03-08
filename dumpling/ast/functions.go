@@ -28,11 +28,8 @@ var (
 	_ FuncNode = &AggregateFuncExpr{}
 	_ FuncNode = &FuncCallExpr{}
 	_ FuncNode = &FuncCastExpr{}
-	_ FuncNode = &FuncConvertExpr{}
 	_ FuncNode = &FuncDateArithExpr{}
-	_ FuncNode = &FuncExtractExpr{}
 	_ FuncNode = &FuncLocateExpr{}
-	_ FuncNode = &FuncSubstringExpr{}
 	_ FuncNode = &FuncSubstringIndexExpr{}
 	_ FuncNode = &FuncTrimExpr{}
 )
@@ -63,55 +60,6 @@ func (n *FuncCallExpr) Accept(v Visitor) (Node, bool) {
 		}
 		n.Args[i] = node.(ExprNode)
 	}
-	return v.Leave(n)
-}
-
-// FuncExtractExpr is for time extract function.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
-type FuncExtractExpr struct {
-	funcNode
-
-	Unit string
-	Date ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncExtractExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncExtractExpr)
-	node, ok := n.Date.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Date = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FuncConvertExpr provides a way to convert data between different character sets.
-// See: https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
-type FuncConvertExpr struct {
-	funcNode
-	// Expr is the expression to be converted.
-	Expr ExprNode
-	// Charset is the target character set to convert.
-	Charset string
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncConvertExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncConvertExpr)
-	node, ok := n.Expr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Expr = node.(ExprNode)
 	return v.Leave(n)
 }
 
@@ -149,43 +97,6 @@ func (n *FuncCastExpr) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Expr = node.(ExprNode)
-	return v.Leave(n)
-}
-
-// FuncSubstringExpr returns the substring as specified.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring
-type FuncSubstringExpr struct {
-	funcNode
-
-	StrExpr ExprNode
-	Pos     ExprNode
-	Len     ExprNode
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncSubstringExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncSubstringExpr)
-	node, ok := n.StrExpr.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.StrExpr = node.(ExprNode)
-	node, ok = n.Pos.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Pos = node.(ExprNode)
-	if n.Len != nil {
-		node, ok = n.Len.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Len = node.(ExprNode)
-	}
 	return v.Leave(n)
 }
 
