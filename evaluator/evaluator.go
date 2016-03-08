@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator/builtin"
@@ -27,9 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
-	"golang.org/x/text/transform"
 )
 
 // Error instances.
@@ -126,16 +123,10 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.funcCall(v)
 	case *ast.FuncCastExpr:
 		ok = e.funcCast(v)
-	case *ast.FuncConvertExpr:
-		ok = e.funcConvert(v)
 	case *ast.FuncDateArithExpr:
 		ok = e.funcDateArith(v)
-	case *ast.FuncExtractExpr:
-		ok = e.funcExtract(v)
 	case *ast.FuncLocateExpr:
 		ok = e.funcLocate(v)
-	case *ast.FuncSubstringExpr:
-		ok = e.funcSubstring(v)
 	case *ast.FuncSubstringIndexExpr:
 		ok = e.funcSubstringIndex(v)
 	case *ast.FuncTrimExpr:
@@ -705,76 +696,6 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 	return true
 }
 
-func (e *Evaluator) funcExtract(v *ast.FuncExtractExpr) bool {
-	val := v.Date.GetValue()
-	if val == nil {
-		v.SetValue(nil)
-		return true
-	}
-
-	f := types.NewFieldType(mysql.TypeDatetime)
-	f.Decimal = mysql.MaxFsp
-	var err error
-	val, err = types.Convert(val, f)
-	if err != nil {
-		e.err = errors.Trace(err)
-		return false
-	}
-	if val == nil {
-		v.SetValue(nil)
-		return true
-	}
-
-	t, ok := val.(mysql.Time)
-	if !ok {
-		e.err = ErrInvalidOperation.Gen("need time type, but got %T", val)
-		return false
-	}
-	n, err1 := mysql.ExtractTimeNum(v.Unit, t)
-	if err1 != nil {
-		e.err = errors.Trace(err1)
-		return false
-	}
-	v.SetValue(n)
-	return true
-}
-
-func (e *Evaluator) funcConvert(f *ast.FuncConvertExpr) bool {
-	value := f.Expr.GetValue()
-
-	// Casting nil to any type returns nil
-	if value == nil {
-		f.SetValue(nil)
-		return true
-	}
-	str, ok := value.(string)
-	if !ok {
-		return true
-	}
-	if strings.ToLower(f.Charset) == "ascii" {
-		f.SetValue(value)
-		return true
-	} else if strings.ToLower(f.Charset) == "utf8mb4" {
-		f.SetValue(value)
-		return true
-	}
-
-	encoding, _ := charset.Lookup(f.Charset)
-	if encoding == nil {
-		e.err = ErrInvalidOperation.Gen("unknown encoding: %s", f.Charset)
-		return false
-	}
-
-	target, _, err := transform.String(encoding.NewDecoder(), str)
-	if err != nil {
-		log.Errorf("Convert %s to %s with error: %v", str, f.Charset, err)
-		e.err = errors.Trace(err)
-		return false
-	}
-	f.SetValue(target)
-	return true
-}
-
 func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 	value := v.Expr.GetValue()
 	// Casting nil to any type returns null
@@ -789,55 +710,6 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 		return false
 	}
 	v.SetValue(value)
-	return true
-}
-
-func (e *Evaluator) funcSubstring(v *ast.FuncSubstringExpr) bool {
-	str, err := types.ToString(v.StrExpr.GetValue())
-	if err != nil {
-		e.err = ErrInvalidOperation.Gen("Substring invalid args, need string but get %T", v.StrExpr.GetValue())
-		return false
-	}
-
-	t := v.Pos.GetValue()
-	p, ok := t.(int64)
-	if !ok {
-		e.err = ErrInvalidOperation.Gen("Substring invalid pos args, need int but get %T", t)
-		return false
-	}
-	pos := int(p)
-
-	length := -1
-	if v.Len != nil {
-		t = v.Len.GetValue()
-		p, ok = t.(int64)
-		if !ok {
-			e.err = ErrInvalidOperation.Gen("Substring invalid pos args, need int but get %T", t)
-			return false
-		}
-		length = int(p)
-	}
-	// The forms without a len argument return a substring from string str starting at position pos.
-	// The forms with a len argument return a substring len characters long from string str, starting at position pos.
-	// The forms that use FROM are standard SQL syntax. It is also possible to use a negative value for pos.
-	// In this case, the beginning of the substring is pos characters from the end of the string, rather than the beginning.
-	// A negative value may be used for pos in any of the forms of this function.
-	if pos < 0 {
-		pos = len(str) + pos
-	} else {
-		pos--
-	}
-	if pos > len(str) || pos <= 0 {
-		pos = len(str)
-	}
-	end := len(str)
-	if length != -1 {
-		end = pos + length
-	}
-	if end > len(str) {
-		end = len(str)
-	}
-	v.SetValue(str[pos:end])
 	return true
 }
 
