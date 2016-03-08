@@ -68,10 +68,6 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
 	case *FuncDateArithExpr:
 		f.funcDateArith(x)
-	case *FuncLocateExpr:
-		f.funcLocate(x)
-	case *FuncSubstringIndexExpr:
-		f.funcSubstringIndex(x)
 	case *FuncTrimExpr:
 		f.funcTrim(x)
 	case *IsNullExpr:
@@ -160,28 +156,6 @@ func (f *flagSetter) funcCall(x *FuncCallExpr) {
 	flag := FlagHasFunc
 	for _, val := range x.Args {
 		flag |= val.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcSubstringIndex(x *FuncSubstringIndexExpr) {
-	flag := FlagHasFunc | x.StrExpr.GetFlag()
-	if x.Delim != nil {
-		flag |= x.Delim.GetFlag()
-	}
-	if x.Count != nil {
-		flag |= x.Count.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcLocate(x *FuncLocateExpr) {
-	flag := FlagHasFunc | x.Str.GetFlag()
-	if x.SubStr != nil {
-		flag |= x.SubStr.GetFlag()
-	}
-	if x.Pos != nil {
-		flag |= x.Pos.GetFlag()
 	}
 	x.SetFlag(flag)
 }

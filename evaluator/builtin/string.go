@@ -272,3 +272,101 @@ func builtinSubstring(args []interface{}, _ context.Context) (interface{}, error
 	}
 	return str[pos:end], nil
 }
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
+func builtinSubstringIndex(args []interface{}, _ context.Context) (interface{}, error) {
+	// The meaning of the elements of args.
+	//args[0] -> StrExpr
+	//args[1] -> Delim
+	//args[2] -> Count
+	fs := args[0]
+	str, err := types.ToString(fs)
+	if err != nil {
+		return nil, errors.Errorf("Substring_Index invalid args, need string but get %T", fs)
+	}
+
+	t := args[1]
+	delim, err := types.ToString(t)
+	if err != nil {
+		return nil, errors.Errorf("Substring_Index invalid delim, need string but get %T", t)
+	}
+	if len(delim) == 0 {
+		return "", nil
+	}
+
+	t = args[2]
+	c, err := types.ToInt64(t)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	count := int(c)
+	strs := strings.Split(str, delim)
+	var (
+		start = 0
+		end   = len(strs)
+	)
+	if count > 0 {
+		// If count is positive, everything to the left of the final delimiter (counting from the left) is returned.
+		if count < end {
+			end = count
+		}
+	} else {
+		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
+		count = -count
+		if count < end {
+			start = end - count
+		}
+	}
+	substrs := strs[start:end]
+	return strings.Join(substrs, delim), nil
+}
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
+func builtinLocate(args []interface{}, _ context.Context) (interface{}, error) {
+	// The meaning of the elements of args.
+	//args[0] -> SubStr
+	//args[1] -> Str
+	//args[2] -> Pos
+	// eval str
+	fs := args[1]
+	if fs == nil {
+		return nil, nil
+	}
+	str, err := types.ToString(fs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// eval substr
+	fs = args[0]
+	if fs == nil {
+		return nil, nil
+	}
+	subStr, err := types.ToString(fs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// eval pos
+	pos := int64(0)
+	if len(args) == 3 {
+		t := args[2]
+		p, err := types.ToInt64(t)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pos = p - 1
+		if pos < 0 || pos > int64(len(str)) {
+			return 0, nil
+		}
+		if pos > int64(len(str)-len(subStr)) {
+			return 0, nil
+		}
+	}
+	if len(subStr) == 0 {
+		return pos + 1, nil
+	}
+	i := strings.Index(str[pos:], subStr)
+	if i == -1 {
+		return 0, nil
+	}
+	return int64(i) + pos + 1, nil
+}
