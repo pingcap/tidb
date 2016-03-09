@@ -92,6 +92,7 @@ var Funcs = map[string]Func{
 	"substring":       {builtinSubstring, 2, 3, true, false},
 	"substring_index": {builtinSubstringIndex, 3, 3, true, false},
 	"locate":          {builtinLocate, 2, 3, true, false},
+	"trim":            {builtinTrim, 1, 3, true, false},
 
 	// information functions
 	"current_user":  {builtinCurrentUser, 0, 0, false, false},
