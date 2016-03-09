@@ -362,6 +362,7 @@ func (e *DeleteExec) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
+	currRow    int
 	ctx        context.Context
 	SelectExec Executor
 
@@ -553,10 +554,12 @@ func (e *InsertValues) getRows(cols []*column.Col) (rows [][]types.Datum, err er
 	}
 
 	rows = make([][]types.Datum, len(e.Lists))
+	length := len(e.Lists[0])
 	for i, list := range e.Lists {
-		if err = e.checkValueCount(len(e.Lists[0]), len(list), i, cols); err != nil {
+		if err = e.checkValueCount(length, len(list), i, cols); err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.currRow = i
 		rows[i], err = e.getRow(cols, list, defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -606,6 +609,7 @@ func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]types.Datum, error
 		if innerRow == nil {
 			break
 		}
+		e.currRow = len(rows)
 		row, err := e.fillRowData(cols, innerRow.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -637,6 +641,7 @@ func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]ty
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
+	var rewriteValueCol *column.Col
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
 		if row[i].Kind() != types.KindNull {
@@ -662,6 +667,8 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				// `insert t (c1) values(1),(2),(3);`
 				// Last insert id will be 1, not 3.
 				variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+				// It's used for retry.
+				rewriteValueCol = c
 			}
 		} else {
 			var err error
@@ -676,6 +683,50 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	if err := column.CastValues(e.ctx, row, defaultValueCols); err != nil {
 		return errors.Trace(err)
 	}
+
+	// It's used for retry.
+	if rewriteValueCol == nil {
+		return nil
+	}
+	if len(e.Setlist) > 0 {
+		val := &ast.Assignment{
+			Column: &ast.ColumnName{Name: rewriteValueCol.Name},
+			Expr:   ast.NewValueExpr(row[rewriteValueCol.Offset].GetValue())}
+		if len(e.Setlist) < rewriteValueCol.Offset+1 {
+			e.Setlist = append(e.Setlist, val)
+			return nil
+		}
+		setlist := make([]*ast.Assignment, 0, len(e.Setlist)+1)
+		setlist = append(setlist, e.Setlist[:rewriteValueCol.Offset]...)
+		setlist = append(setlist, val)
+		e.Setlist = append(setlist, e.Setlist[rewriteValueCol.Offset:]...)
+		return nil
+	}
+
+	// records the values of each row.
+	vals := make([]ast.ExprNode, len(row))
+	for i, col := range row {
+		vals[i] = ast.NewValueExpr(col.GetValue())
+	}
+	if len(e.Lists) <= e.currRow {
+		e.Lists = append(e.Lists, vals)
+	} else {
+		e.Lists[e.currRow] = vals
+	}
+
+	// records the column name only once.
+	if e.currRow != len(e.Lists)-1 {
+		return nil
+	}
+	if len(e.Columns) < rewriteValueCol.Offset+1 {
+		e.Columns = append(e.Columns, &ast.ColumnName{Name: rewriteValueCol.Name})
+		return nil
+	}
+	cols := make([]*ast.ColumnName, 0, len(e.Columns)+1)
+	cols = append(cols, e.Columns[:rewriteValueCol.Offset]...)
+	cols = append(cols, &ast.ColumnName{Name: rewriteValueCol.Name})
+	e.Columns = append(cols, e.Columns[rewriteValueCol.Offset:]...)
+
 	return nil
 }
 
