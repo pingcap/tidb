@@ -125,8 +125,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.funcCast(v)
 	case *ast.FuncDateArithExpr:
 		ok = e.funcDateArith(v)
-	case *ast.FuncTrimExpr:
-		ok = e.funcTrim(v)
 	case *ast.IsNullExpr:
 		ok = e.isNull(v)
 	case *ast.IsTruthExpr:
@@ -707,78 +705,6 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 	}
 	v.SetValue(value)
 	return true
-}
-
-const spaceChars = "\n\t\r "
-
-func (e *Evaluator) funcTrim(v *ast.FuncTrimExpr) bool {
-	// eval str
-	fs := v.Str.GetValue()
-	if fs == nil {
-		v.SetValue(nil)
-		return true
-	}
-	str, err := types.ToString(fs)
-	if err != nil {
-		e.err = errors.Trace(err)
-		return false
-	}
-	remstr := ""
-	// eval remstr
-	if v.RemStr != nil {
-		fs = v.RemStr.GetValue()
-		if fs == nil {
-			v.SetValue(nil)
-			return true
-		}
-		remstr, err = types.ToString(fs)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return false
-		}
-	}
-	// Do trim
-	var result string
-	if v.Direction == ast.TrimLeading {
-		if len(remstr) > 0 {
-			result = trimLeft(str, remstr)
-		} else {
-			result = strings.TrimLeft(str, spaceChars)
-		}
-	} else if v.Direction == ast.TrimTrailing {
-		if len(remstr) > 0 {
-			result = trimRight(str, remstr)
-		} else {
-			result = strings.TrimRight(str, spaceChars)
-		}
-	} else if len(remstr) > 0 {
-		x := trimLeft(str, remstr)
-		result = trimRight(x, remstr)
-	} else {
-		result = strings.Trim(str, spaceChars)
-	}
-	v.SetValue(result)
-	return true
-}
-
-func trimLeft(str, remstr string) string {
-	for {
-		x := strings.TrimPrefix(str, remstr)
-		if len(x) == len(str) {
-			return x
-		}
-		str = x
-	}
-}
-
-func trimRight(str, remstr string) string {
-	for {
-		x := strings.TrimSuffix(str, remstr)
-		if len(x) == len(str) {
-			return x
-		}
-		str = x
-	}
 }
 
 func (e *Evaluator) funcDateArith(v *ast.FuncDateArithExpr) bool {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
@@ -276,9 +277,9 @@ func builtinSubstring(args []interface{}, _ context.Context) (interface{}, error
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
 func builtinSubstringIndex(args []interface{}, _ context.Context) (interface{}, error) {
 	// The meaning of the elements of args.
-	//args[0] -> StrExpr
-	//args[1] -> Delim
-	//args[2] -> Count
+	// args[0] -> StrExpr
+	// args[1] -> Delim
+	// args[2] -> Count
 	fs := args[0]
 	str, err := types.ToString(fs)
 	if err != nil {
@@ -324,9 +325,9 @@ func builtinSubstringIndex(args []interface{}, _ context.Context) (interface{}, 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func builtinLocate(args []interface{}, _ context.Context) (interface{}, error) {
 	// The meaning of the elements of args.
-	//args[0] -> SubStr
-	//args[1] -> Str
-	//args[2] -> Pos
+	// args[0] -> SubStr
+	// args[1] -> Str
+	// args[2] -> Pos
 	// eval str
 	fs := args[1]
 	if fs == nil {
@@ -369,4 +370,80 @@ func builtinLocate(args []interface{}, _ context.Context) (interface{}, error) {
 		return 0, nil
 	}
 	return int64(i) + pos + 1, nil
+}
+
+const spaceChars = "\n\t\r "
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
+func builtinTrim(args []interface{}, _ context.Context) (interface{}, error) {
+	// args[0] -> Str
+	// args[1] -> RemStr
+	// args[2] -> Direction
+	// eval str
+	fs := args[0]
+	if fs == nil {
+		return nil, nil
+	}
+	str, err := types.ToString(fs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	remstr := ""
+	// eval remstr
+	if len(args) > 1 {
+		fs = args[1]
+		if fs != nil {
+			remstr, err = types.ToString(fs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+	// do trim
+	var result string
+	var direction ast.TrimDirectionType
+	if len(args) > 2 {
+		direction = args[2].(ast.TrimDirectionType)
+	} else {
+		direction = ast.TrimBothDefault
+	}
+	if direction == ast.TrimLeading {
+		if len(remstr) > 0 {
+			result = trimLeft(str, remstr)
+		} else {
+			result = strings.TrimLeft(str, spaceChars)
+		}
+	} else if direction == ast.TrimTrailing {
+		if len(remstr) > 0 {
+			result = trimRight(str, remstr)
+		} else {
+			result = strings.TrimRight(str, spaceChars)
+		}
+	} else if len(remstr) > 0 {
+		x := trimLeft(str, remstr)
+		result = trimRight(x, remstr)
+	} else {
+		result = strings.Trim(str, spaceChars)
+	}
+	return result, nil
+}
+
+func trimLeft(str, remstr string) string {
+	for {
+		x := strings.TrimPrefix(str, remstr)
+		if len(x) == len(str) {
+			return x
+		}
+		str = x
+	}
+}
+
+func trimRight(str, remstr string) string {
+	for {
+		x := strings.TrimSuffix(str, remstr)
+		if len(x) == len(str) {
+			return x
+		}
+		str = x
+	}
 }

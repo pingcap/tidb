@@ -1108,14 +1108,14 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 	}
 	ctx := mock.NewContext()
 	for _, v := range tbl {
-		f := &ast.FuncTrimExpr{
-			Str:       ast.NewValueExpr(v.str),
-			Direction: v.dir,
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("TRIM"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr(v.str),
+				ast.NewValueExpr(v.remstr),
+				ast.NewValueExpr(v.dir),
+			},
 		}
-		if v.remstr != nil {
-			f.RemStr = ast.NewValueExpr(v.remstr)
-		}
-
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
 		c.Assert(r, Equals, v.result)
