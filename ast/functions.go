@@ -29,7 +29,6 @@ var (
 	_ FuncNode = &FuncCallExpr{}
 	_ FuncNode = &FuncCastExpr{}
 	_ FuncNode = &FuncDateArithExpr{}
-	_ FuncNode = &FuncTrimExpr{}
 )
 
 // UnquoteString is not quoted when printed.
@@ -111,38 +110,6 @@ const (
 	// TrimTrailing trims from right.
 	TrimTrailing
 )
-
-// FuncTrimExpr remove leading/trailing/both remstr.
-// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
-type FuncTrimExpr struct {
-	funcNode
-
-	Str       ExprNode
-	RemStr    ExprNode
-	Direction TrimDirectionType
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncTrimExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncTrimExpr)
-	node, ok := n.Str.Accept(v)
-	if !ok {
-		return n, false
-	}
-	n.Str = node.(ExprNode)
-	if n.RemStr != nil {
-		node, ok = n.RemStr.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.RemStr = node.(ExprNode)
-	}
-	return v.Leave(n)
-}
 
 // DateArithType is type for DateArith type.
 type DateArithType byte

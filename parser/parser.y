@@ -2363,31 +2363,34 @@ FunctionCallNonKeyword:
 	}
 |	"TRIM" '(' Expression ')'
 	{
-		$$ = &ast.FuncTrimExpr{
-			Str: $3.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$3.(ast.ExprNode)},
+		}
 	}
 |	"TRIM" '(' Expression "FROM" Expression ')'
 	{
-		$$ = &ast.FuncTrimExpr{
-			Str: $5.(ast.ExprNode), 
-			RemStr: $3.(ast.ExprNode),
-		}	
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$5.(ast.ExprNode), $3.(ast.ExprNode)},
+		}
 	}
 |	"TRIM" '(' TrimDirection "FROM" Expression ')'
 	{
-		$$ = &ast.FuncTrimExpr{
-			Str: $5.(ast.ExprNode), 
-			Direction: $3.(ast.TrimDirectionType),
-		}	
+		nilVal := ast.NewValueExpr(nil)
+		direction := ast.NewValueExpr($3)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$5.(ast.ExprNode), nilVal, direction},
+		}
 	}
 |	"TRIM" '(' TrimDirection Expression "FROM" Expression ')'
 	{
-		$$ = &ast.FuncTrimExpr{
-			Str: $6.(ast.ExprNode), 
-			RemStr: $4.(ast.ExprNode), 
-			Direction: $3.(ast.TrimDirectionType),
-		}	
+		direction := ast.NewValueExpr($3)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1.(string)),
+			Args: []ast.ExprNode{$6.(ast.ExprNode),$4.(ast.ExprNode), direction},
+		}
 	}
 |	"UPPER" '(' Expression ')'
 	{
