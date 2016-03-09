@@ -274,7 +274,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 		tp.Decimal = v.getFsp(x)
 	case "dayname", "version", "database", "user", "current_user",
 		"concat", "concat_ws", "left", "lower", "repeat", "replace", "upper", "convert",
-		"substring", "substring_index":
+		"substring", "substring_index", "trim":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp":
