@@ -30,6 +30,7 @@ const (
 // Just keep id unique actually.
 type Allocator interface {
 	Alloc(tableID int64) (int64, error)
+	Rebase(tableID, newBase int64) error
 }
 
 type allocator struct {
@@ -38,6 +39,40 @@ type allocator struct {
 	end   int64
 	store kv.Storage
 	dbID  int64
+}
+
+// Rebase rebase the autoID base for table with tableID and the new base value.
+func (alloc *allocator) Rebase(tableID, newBase int64) error {
+	if tableID == 0 {
+		return errors.New("Invalid tableID")
+	}
+
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	if newBase <= alloc.base {
+		return nil
+	}
+	if newBase <= alloc.end {
+		alloc.base = newBase
+		return nil
+	}
+
+	return kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		end, err := m.GetAutoTableID(alloc.dbID, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newStep := newBase - end + step
+		end, err = m.GenAutoTableID(alloc.dbID, tableID, newStep)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		alloc.end = end
+		alloc.base = alloc.end - step
+		return nil
+	})
 }
 
 // Alloc allocs the next autoID for table with tableID.
@@ -82,6 +117,12 @@ type memoryAllocator struct {
 	base int64
 	end  int64
 	dbID int64
+}
+
+// Rebase rebase the autoID base for table with tableID and the new base value.
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64) error {
+	// TODO: implement it.
+	return nil
 }
 
 // Alloc allocs the next autoID for table with tableID.
