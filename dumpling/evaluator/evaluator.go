@@ -21,7 +21,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator/builtin"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -668,7 +667,7 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 }
 
 func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
-	f, ok := builtin.Funcs[v.FnName.L]
+	f, ok := Funcs[v.FnName.L]
 	if !ok {
 		e.err = ErrInvalidOperation.Gen("unknown function %s", v.FnName.O)
 		return false

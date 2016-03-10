@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package builtin
+package evaluator
 
 import (
 	"strings"
@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-func (s *testBuiltinSuite) TestDate(c *C) {
+func (s *testEvaluatorSuite) TestDate(c *C) {
 	tblDate := []struct {
 		Input  interface{}
 		Expect interface{}
@@ -167,7 +167,7 @@ func (s *testBuiltinSuite) TestDate(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestClock(c *C) {
+func (s *testEvaluatorSuite) TestClock(c *C) {
 	// test hour, minute, second, micro second
 
 	tbl := []struct {
@@ -237,7 +237,7 @@ func (s *testBuiltinSuite) TestClock(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestNow(c *C) {
+func (s *testEvaluatorSuite) TestNow(c *C) {
 	v, err := builtinNow(nil, nil)
 	c.Assert(err, IsNil)
 	t, ok := v.(mysql.Time)
@@ -259,7 +259,7 @@ func (s *testBuiltinSuite) TestNow(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testBuiltinSuite) TestSysDate(c *C) {
+func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	last := time.Now()
 	v, err := builtinSysDate(nil, nil)
 	c.Assert(err, IsNil)
@@ -277,7 +277,7 @@ func (s *testBuiltinSuite) TestSysDate(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testBuiltinSuite) TestCurrentDate(c *C) {
+func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	last := time.Now()
 	v, err := builtinCurrentDate(nil, nil)
 	c.Assert(err, IsNil)
@@ -286,7 +286,7 @@ func (s *testBuiltinSuite) TestCurrentDate(c *C) {
 	c.Assert(n.String(), GreaterEqual, last.Format(mysql.DateFormat))
 }
 
-func (s *testBuiltinSuite) TestCurrentTime(c *C) {
+func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	tfStr := "15:04:05"
 
 	last := time.Now()

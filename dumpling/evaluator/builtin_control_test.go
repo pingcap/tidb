@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package builtin
+package evaluator
 
 import (
 	"errors"
@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 )
 
-func (s *testBuiltinSuite) TestIf(c *C) {
+func (s *testEvaluatorSuite) TestIf(c *C) {
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -41,7 +41,7 @@ func (s *testBuiltinSuite) TestIf(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testBuiltinSuite) TestIfNull(c *C) {
+func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -59,7 +59,7 @@ func (s *testBuiltinSuite) TestIfNull(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestNullIf(c *C) {
+func (s *testEvaluatorSuite) TestNullIf(c *C) {
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}

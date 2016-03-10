@@ -11,24 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package builtin
+package evaluator
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testBuiltinSuite{})
-
-type testBuiltinSuite struct {
-}
-
-func (s *testBuiltinSuite) TestCoalesce(c *C) {
+func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	args := []interface{}{1, nil}
 	v, err := builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)
