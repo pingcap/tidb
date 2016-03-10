@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package builtin
+package evaluator
 
 import (
 	. "github.com/pingcap/check"
 )
 
-func (s *testBuiltinSuite) TestAbs(c *C) {
+func (s *testEvaluatorSuite) TestAbs(c *C) {
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -37,14 +37,14 @@ func (s *testBuiltinSuite) TestAbs(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestRand(c *C) {
+func (s *testEvaluatorSuite) TestRand(c *C) {
 	v, err := builtinRand([]interface{}{}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v, Less, float64(1))
 	c.Assert(v, GreaterEqual, float64(0))
 }
 
-func (s *testBuiltinSuite) TestPow(c *C) {
+func (s *testEvaluatorSuite) TestPow(c *C) {
 	tbl := []struct {
 		Arg []interface{}
 		Ret float64

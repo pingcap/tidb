@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package builtin
+package evaluator
 
 import (
 	"errors"
@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-func (s *testBuiltinSuite) TestLength(c *C) {
+func (s *testEvaluatorSuite) TestLength(c *C) {
 	v, err := builtinLength([]interface{}{nil}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
@@ -47,7 +47,7 @@ func (s *testBuiltinSuite) TestLength(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestConcat(c *C) {
+func (s *testEvaluatorSuite) TestConcat(c *C) {
 	args := []interface{}{nil}
 
 	v, err := builtinConcat(args, nil)
@@ -69,7 +69,7 @@ func (s *testBuiltinSuite) TestConcat(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testBuiltinSuite) TestConcatWS(c *C) {
+func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 	args := []interface{}{nil}
 
 	v, err := builtinConcatWS(args, nil)
@@ -86,7 +86,7 @@ func (s *testBuiltinSuite) TestConcatWS(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testBuiltinSuite) TestLeft(c *C) {
+func (s *testEvaluatorSuite) TestLeft(c *C) {
 	args := []interface{}{"abcdefg", int64(2)}
 	v, err := builtinLeft(args, nil)
 	c.Assert(err, IsNil)
@@ -111,7 +111,7 @@ func (s *testBuiltinSuite) TestLeft(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testBuiltinSuite) TestRepeat(c *C) {
+func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	args := []interface{}{"a", int64(2)}
 	v, err := builtinRepeat(args, nil)
 	c.Assert(err, IsNil)
@@ -138,7 +138,7 @@ func (s *testBuiltinSuite) TestRepeat(c *C) {
 	c.Assert(v, Equals, "")
 }
 
-func (s *testBuiltinSuite) TestLowerAndUpper(c *C) {
+func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	v, err := builtinLower([]interface{}{nil}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
@@ -167,7 +167,7 @@ func (s *testBuiltinSuite) TestLowerAndUpper(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestStrcmp(c *C) {
+func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	tbl := []struct {
 		Input  []interface{}
 		Expect interface{}
@@ -194,7 +194,7 @@ func (s *testBuiltinSuite) TestStrcmp(c *C) {
 	}
 }
 
-func (s *testBuiltinSuite) TestReplace(c *C) {
+func (s *testEvaluatorSuite) TestReplace(c *C) {
 	tbl := []struct {
 		Input  []interface{}
 		Expect interface{}
