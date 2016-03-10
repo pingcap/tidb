@@ -41,7 +41,7 @@ type allocator struct {
 	dbID  int64
 }
 
-// Rebase rebase the autoID base for table with tableID and the new base value.
+// Rebase rebases the autoID base for table with tableID and the new base value.
 func (alloc *allocator) Rebase(tableID, newBase int64) error {
 	if tableID == 0 {
 		return errors.New("Invalid tableID")
@@ -119,7 +119,7 @@ type memoryAllocator struct {
 	dbID int64
 }
 
-// Rebase rebase the autoID base for table with tableID and the new base value.
+// Rebase rebases the autoID base for table with tableID and the new base value.
 func (alloc *memoryAllocator) Rebase(tableID, newBase int64) error {
 	// TODO: implement it.
 	return nil
