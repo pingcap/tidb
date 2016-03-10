@@ -83,5 +83,4 @@ func (*testSuite) TestT(c *C) {
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
-
 }
