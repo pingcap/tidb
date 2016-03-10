@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package builtin
+package evaluator
 
 import (
 	. "github.com/pingcap/check"
@@ -21,12 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testBuiltinInfoSuite{})
-
-type testBuiltinInfoSuite struct {
-}
-
-func (s *testBuiltinSuite) TestDatabase(c *C) {
+func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinDatabase(nil, ctx)
 	c.Assert(err, IsNil)
@@ -38,7 +33,7 @@ func (s *testBuiltinSuite) TestDatabase(c *C) {
 	c.Assert(v, Equals, "test")
 }
 
-func (s *testBuiltinSuite) TestFoundRows(c *C) {
+func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinFoundRows(nil, ctx)
 	c.Assert(err, NotNil)
@@ -50,7 +45,7 @@ func (s *testBuiltinSuite) TestFoundRows(c *C) {
 	c.Assert(v, Equals, uint64(0))
 }
 
-func (s *testBuiltinSuite) TestUser(c *C) {
+func (s *testEvaluatorSuite) TestUser(c *C) {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -61,7 +56,7 @@ func (s *testBuiltinSuite) TestUser(c *C) {
 	c.Assert(v, Equals, "root@localhost")
 }
 
-func (s *testBuiltinSuite) TestCurrentUser(c *C) {
+func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -72,7 +67,7 @@ func (s *testBuiltinSuite) TestCurrentUser(c *C) {
 	c.Assert(v, Equals, "root@localhost")
 }
 
-func (s *testBuiltinSuite) TestConnectionID(c *C) {
+func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -83,7 +78,7 @@ func (s *testBuiltinSuite) TestConnectionID(c *C) {
 	c.Assert(v, Equals, uint64(1))
 }
 
-func (s *testBuiltinSuite) TestVersion(c *C) {
+func (s *testEvaluatorSuite) TestVersion(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinVersion(nil, ctx)
 	c.Assert(err, IsNil)
