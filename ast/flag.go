@@ -66,8 +66,6 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		f.funcCall(x)
 	case *FuncCastExpr:
 		x.SetFlag(FlagHasFunc | x.Expr.GetFlag())
-	case *FuncDateArithExpr:
-		f.funcDateArith(x)
 	case *IsNullExpr:
 		x.SetFlag(x.Expr.GetFlag())
 	case *IsTruthExpr:
@@ -154,14 +152,6 @@ func (f *flagSetter) funcCall(x *FuncCallExpr) {
 	flag := FlagHasFunc
 	for _, val := range x.Args {
 		flag |= val.GetFlag()
-	}
-	x.SetFlag(flag)
-}
-
-func (f *flagSetter) funcDateArith(x *FuncDateArithExpr) {
-	flag := FlagHasFunc | x.Date.GetFlag()
-	if x.Interval != nil {
-		flag |= x.Interval.GetFlag()
 	}
 	x.SetFlag(flag)
 }
