@@ -28,7 +28,6 @@ var (
 	_ FuncNode = &AggregateFuncExpr{}
 	_ FuncNode = &FuncCallExpr{}
 	_ FuncNode = &FuncCastExpr{}
-	_ FuncNode = &FuncDateArithExpr{}
 )
 
 // UnquoteString is not quoted when printed.
@@ -129,40 +128,6 @@ const (
 type DateArithInterval struct {
 	Unit     string
 	Interval ExprNode
-}
-
-// FuncDateArithExpr is the struct for date arithmetic functions.
-type FuncDateArithExpr struct {
-	funcNode
-
-	// Op is used for distinguishing date_add and date_sub.
-	Op   DateArithType
-	Date ExprNode
-	DateArithInterval
-}
-
-// Accept implements Node Accept interface.
-func (n *FuncDateArithExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*FuncDateArithExpr)
-	if n.Date != nil {
-		node, ok := n.Date.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Date = node.(ExprNode)
-	}
-	if n.Interval != nil {
-		node, ok := n.Interval.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Interval = node.(ExprNode)
-	}
-	return v.Leave(n)
 }
 
 const (
