@@ -630,6 +630,11 @@ func (t *Table) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
+// RebaseAutoID implements table.Table RebaseAutoID interface.
+func (t *Table) RebaseAutoID(newBase int64) error {
+	return t.alloc.Rebase(t.ID, newBase)
+}
+
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx context.Context, h int64) (int64, bool, error) {
 	seekKey := EncodeRecordKey(t.ID, h, 0)
