@@ -18,9 +18,13 @@
 package evaluator
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
@@ -380,4 +384,98 @@ func checkFsp(arg interface{}) (int, error) {
 		return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 	}
 	return int(fsp), nil
+}
+
+func builtinDateArith(args []interface{}, ctx context.Context) (interface{}, error) {
+	// Op is used for distinguishing date_add and date_sub.
+	// args[0] -> Op
+	// args[1] -> Date
+	// args[2] -> DateArithInterval
+	// health check for date and interval
+	if args[1] == nil {
+		return nil, nil
+	}
+	nodeDate := args[1]
+	nodeInterval := args[2].(ast.DateArithInterval)
+	nodeIntervalVal := nodeInterval.Interval.GetValue()
+	if nodeIntervalVal == nil {
+		return nil, nil
+	}
+	// parse date
+	fieldType := mysql.TypeDate
+	var resultField *types.FieldType
+	switch x := nodeDate.(type) {
+	case mysql.Time:
+		if (x.Type == mysql.TypeDatetime) || (x.Type == mysql.TypeTimestamp) {
+			fieldType = mysql.TypeDatetime
+		}
+	case string:
+		if !mysql.IsDateFormat(x) {
+			fieldType = mysql.TypeDatetime
+		}
+	case int64:
+		if t, err := mysql.ParseTimeFromInt64(x); err == nil {
+			if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
+				fieldType = mysql.TypeDatetime
+			}
+		}
+	}
+	if mysql.IsClockUnit(nodeInterval.Unit) {
+		fieldType = mysql.TypeDatetime
+	}
+	resultField = types.NewFieldType(fieldType)
+	resultField.Decimal = mysql.MaxFsp
+	value, err := types.Convert(nodeDate, resultField)
+	if err != nil {
+		return nil, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
+	}
+	if value == nil {
+		return nil, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %v", value)
+	}
+	result, ok := value.(mysql.Time)
+	if !ok {
+		return nil, ErrInvalidOperation.Gen("DateArith need time type, but got %T", value)
+	}
+	// parse interval
+	var interval string
+	if strings.ToLower(nodeInterval.Unit) == "day" {
+		day, err2 := parseDayInterval(nodeIntervalVal)
+		if err2 != nil {
+			return nil, ErrInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalVal)
+		}
+		interval = fmt.Sprintf("%d", day)
+	} else {
+		interval = fmt.Sprintf("%v", nodeIntervalVal)
+	}
+	year, month, day, duration, err := mysql.ExtractTimeValue(nodeInterval.Unit, interval)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	op := args[0].(ast.DateArithType)
+	if op == ast.DateSub {
+		year, month, day, duration = -year, -month, -day, -duration
+	}
+	result.Time = result.Time.Add(duration)
+	result.Time = result.Time.AddDate(int(year), int(month), int(day))
+	if result.Time.Nanosecond() == 0 {
+		result.Fsp = 0
+	}
+	return result, nil
+}
+
+var reg = regexp.MustCompile(`[\d]+`)
+
+func parseDayInterval(value interface{}) (int64, error) {
+	switch v := value.(type) {
+	case string:
+		s := strings.ToLower(v)
+		if s == "false" {
+			return 0, nil
+		} else if s == "true" {
+			return 1, nil
+		}
+		value = reg.FindString(v)
+	}
+
+	return types.ToInt64(value)
 }
