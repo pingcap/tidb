@@ -1031,7 +1031,7 @@ func (d *Datum) ToBool() (int64, error) {
 	return 1, nil
 }
 
-// ToInt64 converts to a bool.
+// ToInt64 converts to a int64.
 func (d *Datum) ToInt64() (int64, error) {
 	tp := mysql.TypeLonglong
 	lowerBound := signedLowerBound[tp]
