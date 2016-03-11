@@ -29,6 +29,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/ticlient"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
@@ -51,6 +52,7 @@ const (
 	EngineGoLevelDBPersistent = "goleveldb://"
 	EngineBoltDB              = "boltdb://"
 	EngineHBase               = "hbase://"
+	EngineTiKV                = "tikv://"
 	defaultMaxRetries         = 30
 	retrySleepInterval        = 500 * time.Millisecond
 )
@@ -288,6 +290,7 @@ func init() {
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
 	RegisterLocalStore("boltdb", boltdb.Driver{})
 	RegisterStore("hbase", hbasekv.Driver{})
+	RegisterStore("tikv", ticlient.Driver{})
 
 	// start pprof handlers
 	if EnablePprof {
