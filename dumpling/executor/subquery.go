@@ -35,8 +35,8 @@ type subquery struct {
 }
 
 // SetDatum implements Expression interface.
-func (sq *subquery) SetDatum(datum *types.Datum) {
-	sq.Datum = *datum
+func (sq *subquery) SetDatum(datum types.Datum) {
+	sq.Datum = datum
 }
 
 // GetDatum implements Expression interface.

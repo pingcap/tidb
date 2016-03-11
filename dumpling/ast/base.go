@@ -68,8 +68,8 @@ type exprNode struct {
 }
 
 // SetDatum implements Expression interface.
-func (en *exprNode) SetDatum(datum *types.Datum) {
-	en.Datum = *datum
+func (en *exprNode) SetDatum(datum types.Datum) {
+	en.Datum = datum
 }
 
 // GetDatum implements Expression interface.
