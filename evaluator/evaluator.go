@@ -178,7 +178,7 @@ func (e *Evaluator) between(v *ast.BetweenExpr) bool {
 	if e.err != nil {
 		return false
 	}
-	v.SetDatum(ret.GetDatum())
+	v.SetDatum(*ret.GetDatum())
 	return true
 }
 
@@ -196,13 +196,13 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 				return false
 			}
 			if cmp == 0 {
-				v.SetDatum(val.Result.GetDatum())
+				v.SetDatum(*val.Result.GetDatum())
 				return true
 			}
 		}
 	}
 	if v.ElseClause != nil {
-		v.SetDatum(v.ElseClause.GetDatum())
+		v.SetDatum(*v.ElseClause.GetDatum())
 	} else {
 		v.SetNull()
 	}
@@ -210,7 +210,7 @@ func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
 }
 
 func (e *Evaluator) columnName(v *ast.ColumnNameExpr) bool {
-	v.SetDatum(v.Refer.Expr.GetDatum())
+	v.SetDatum(*v.Refer.Expr.GetDatum())
 	return true
 }
 
@@ -323,7 +323,7 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 // Get the value from v.SubQuery and set it to v.
 func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 	if v.SubqueryExec != nil {
-		v.SetDatum(v.SubqueryExec.GetDatum())
+		v.SetDatum(*v.SubqueryExec.GetDatum())
 	}
 	v.Evaluated = true
 	return true
@@ -457,12 +457,12 @@ func (e *Evaluator) paramMarker(v *ast.ParamMarkerExpr) bool {
 }
 
 func (e *Evaluator) parentheses(v *ast.ParenthesesExpr) bool {
-	v.SetDatum(v.Expr.GetDatum())
+	v.SetDatum(*v.Expr.GetDatum())
 	return true
 }
 
 func (e *Evaluator) position(v *ast.PositionExpr) bool {
-	v.SetDatum(v.Refer.Expr.GetDatum())
+	v.SetDatum(*v.Refer.Expr.GetDatum())
 	return true
 }
 
@@ -519,7 +519,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 			types.KindMysqlBit,
 			types.KindMysqlEnum,
 			types.KindMysqlSet:
-			u.SetDatum(aDatum)
+			u.SetDatum(*aDatum)
 		default:
 			e.err = ErrInvalidOperation
 			return false
@@ -570,7 +570,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 }
 
 func (e *Evaluator) values(v *ast.ValuesExpr) bool {
-	v.SetDatum(v.Column.GetDatum())
+	v.SetDatum(*v.Column.GetDatum())
 	return true
 }
 
