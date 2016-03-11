@@ -560,12 +560,20 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 	}
 	// run the test cases
 	for _, t := range tests {
-		expr := &ast.FuncDateArithExpr{
-			Op:   ast.DateAdd,
-			Date: ast.NewValueExpr(t.Date),
-			DateArithInterval: ast.DateArithInterval{
-				Interval: ast.NewValueExpr(t.Interval),
+		op := ast.NewValueExpr(ast.DateAdd)
+		dateArithInterval := ast.NewValueExpr(
+			ast.DateArithInterval{
 				Unit:     t.Unit,
+				Interval: ast.NewValueExpr(t.Interval),
+			},
+		)
+		date := ast.NewValueExpr(t.Date)
+		expr := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ARITH"),
+			Args: []ast.ExprNode{
+				op,
+				date,
+				dateArithInterval,
 			},
 		}
 		v, err := Eval(ctx, expr)
@@ -582,7 +590,8 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 			}
 		}
 
-		expr.Op = ast.DateSub
+		op = ast.NewValueExpr(ast.DateSub)
+		expr.Args[0] = op
 		v, err = Eval(ctx, expr)
 		if t.error == true {
 			c.Assert(err, NotNil)

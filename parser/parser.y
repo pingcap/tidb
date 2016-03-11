@@ -2204,20 +2204,34 @@ FunctionCallNonKeyword:
 	}
 |	DateArithOpt '(' Expression ',' "INTERVAL" Expression TimeUnit ')'
 	{
-		$$ = &ast.FuncDateArithExpr{
-			Op: $1.(ast.DateArithType),
-			Date: $3.(ast.ExprNode),
-			DateArithInterval: ast.DateArithInterval{
-						Unit: $7.(string), 
-						Interval: $6.(ast.ExprNode)},
+		op := ast.NewValueExpr($1)
+		dateArithInterval := ast.NewValueExpr(
+			ast.DateArithInterval{
+				Unit: $7.(string),
+				Interval: $6.(ast.ExprNode),
+			},
+		)
+
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ARITH"),
+			Args: []ast.ExprNode{
+				op,
+				$3.(ast.ExprNode),
+				dateArithInterval,
+			},
 		}
 	}
 |	DateArithMultiFormsOpt '(' Expression ',' DateArithInterval')'
 	{
-		$$ = &ast.FuncDateArithExpr{
-			Op: $1.(ast.DateArithType),
-			Date: $3.(ast.ExprNode),
-			DateArithInterval: $5.(ast.DateArithInterval),
+		op := ast.NewValueExpr($1)
+		dateArithInterval := ast.NewValueExpr($5)
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ARITH"),
+			Args: []ast.ExprNode{
+				op,
+				$3.(ast.ExprNode),
+				dateArithInterval,
+			},
 		}
 	}
 |	"EXTRACT" '(' TimeUnit "FROM" Expression ')'

@@ -72,6 +72,7 @@ var Funcs = map[string]Func{
 	"year":              {builtinYear, 1, 1, true, false},
 	"yearweek":          {builtinYearWeek, 1, 2, true, false},
 	"extract":           {builtinExtract, 2, 2, true, false},
+	"date_arith":        {builtinDateArith, 3, 3, true, false},
 
 	// control functions
 	"if":     {builtinIf, 3, 3, true, false},
