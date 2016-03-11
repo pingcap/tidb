@@ -258,12 +258,13 @@ func (trs *tidbResultSet) Columns() ([]*ColumnInfo, error) {
 }
 
 func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-
 	ci = new(ColumnInfo)
 	ci.Name = fld.ColumnAsName.O
 	ci.OrgName = fld.Column.Name.O
 	ci.Table = fld.TableAsName.O
-	ci.OrgTable = fld.Table.Name.O
+	if fld.Table != nil {
+		ci.OrgTable = fld.Table.Name.O
+	}
 	ci.Schema = fld.DBName.O
 	ci.Flag = uint16(fld.Column.Flag)
 	ci.Charset = uint16(mysql.CharsetIDs[fld.Column.Charset])
