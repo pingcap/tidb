@@ -81,3 +81,7 @@ func (ts *TidbTestSuite) TestAuth(c *C) {
 func (ts *TidbTestSuite) TestIssues(c *C) {
 	runTestIssues(c)
 }
+
+func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
+	runTestResultFieldTableIsNull(c)
+}
