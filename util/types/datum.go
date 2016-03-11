@@ -973,6 +973,19 @@ func (d *Datum) convertToMysqlSet(target *FieldType) (Datum, error) {
 	return ret, nil
 }
 
+// ToBool converts to a bool.
+// We will use 1 for true, and 0 for false.
+func (d *Datum) ToBool() (int64, error) {
+	// TODO: Make it do not use GatValue
+	return ToBool(d.GetValue())
+}
+
+// ToInt64 converts to a bool.
+func (d *Datum) ToInt64() (int64, error) {
+	// TODO: Make it do not use GatValue
+	return ToInt64(d.GetValue())
+}
+
 func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert %v to type %s", d, TypeStr(tp))
 }

@@ -64,6 +64,10 @@ type ExprNode interface {
 	SetValue(val interface{})
 	// GetValue gets value of the expression.
 	GetValue() interface{}
+	// SetDatum set datum to the expression.
+	SetDatum(datum *types.Datum)
+	// GetDatum get datum of the expression.
+	GetDatum() *types.Datum
 	// SetFlag sets flag to the expression.
 	// Flag indicates whether the expression contains
 	// parameter marker, reference, aggregate function...
