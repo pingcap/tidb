@@ -34,6 +34,16 @@ type subquery struct {
 	is   infoschema.InfoSchema
 }
 
+// SetDatum implements Expression interface.
+func (sq *subquery) SetDatum(datum types.Datum) {
+	sq.Datum = datum
+}
+
+// GetDatum implements Expression interface.
+func (sq *subquery) GetDatum() *types.Datum {
+	return &sq.Datum
+}
+
 // SetFlag implements Expression interface.
 func (sq *subquery) SetFlag(flag uint64) {
 	sq.flag = flag
