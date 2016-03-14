@@ -838,7 +838,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 	}{
 		{
 			"select * from t",
-			testkit.Rows("-100", "0", "1", "2"),
+			testkit.Rows("-100", "1", "2", "3"),
 		},
 		{
 			"select * from t where a = 1",
@@ -846,37 +846,37 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		},
 		{
 			"select * from t where a != 1",
-			testkit.Rows("-100", "0", "2"),
+			testkit.Rows("-100", "2", "3"),
 		},
 		{
 			"select * from t where a >= '1.1'",
-			testkit.Rows("2"),
+			testkit.Rows("2", "3"),
 		},
 		{
 			"select * from t where a < '1.1'",
-			testkit.Rows("-100", "0", "1"),
+			testkit.Rows("-100", "1"),
 		},
 		{
 			"select * from t where a > '-100.1' and a < 2",
-			testkit.Rows("-100", "0", "1"),
+			testkit.Rows("-100", "1"),
 		},
 		{
 			"select * from t where a is null",
 			testkit.Rows(),
 		}, {
 			"select * from t where a is true",
-			testkit.Rows("-100", "1", "2"),
+			testkit.Rows("-100", "1", "2", "3"),
 		}, {
 			"select * from t where a is false",
-			testkit.Rows("0"),
+			testkit.Rows(),
 		},
 		{
-			"select * from t where a in (0, 2)",
-			testkit.Rows("0", "2"),
+			"select * from t where a in (1, 2)",
+			testkit.Rows("1", "2"),
 		},
 		{
-			"select * from t where a between 0 and 1",
-			testkit.Rows("0", "1"),
+			"select * from t where a between 1 and 2",
+			testkit.Rows("1", "2"),
 		},
 	}
 
