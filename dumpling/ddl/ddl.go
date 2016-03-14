@@ -32,9 +32,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/twinj/uuid"
@@ -44,14 +46,16 @@ import (
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx context.Context, schema model.CIStr) error
-	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef, constrs []*ast.Constraint) error
+	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef,
+		constrs []*ast.Constraint, options []*ast.TableOption) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
-	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr, columnNames []*ast.IndexColName) error
+	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
+		columnNames []*ast.IndexColName) error
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx context.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
-	// SetLease will reset the lease time for online DDL change, it is a very dangerous function and you must guarantee that
-	// all servers have the same lease time.
+	// SetLease will reset the lease time for online DDL change,
+	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(lease time.Duration)
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -689,7 +693,8 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 	return
 }
 
-func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef, constraints []*ast.Constraint) (err error) {
+func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef,
+	constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -725,8 +730,29 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 	}
 
 	err = d.startDDLJob(ctx, job)
+	if err == nil {
+		err = d.handleTableOptions(options, tbInfo, schema.ID)
+	}
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, schemaID int64) error {
+	for _, op := range options {
+		if op.Tp == ast.TableOptionAutoIncrement {
+			alloc := autoid.NewAllocator(d.store, schemaID)
+			tbInfo.State = model.StatePublic
+			tb, err := table.TableFromMeta(alloc, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = tb.RebaseAutoID(int64(op.UintValue), false); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {

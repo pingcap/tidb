@@ -30,7 +30,7 @@ const (
 // Just keep id unique actually.
 type Allocator interface {
 	Alloc(tableID int64) (int64, error)
-	Rebase(tableID, newBase int64) error
+	Rebase(tableID, newBase int64, isSetStep bool) error
 }
 
 type allocator struct {
@@ -42,7 +42,7 @@ type allocator struct {
 }
 
 // Rebase rebases the autoID base for table with tableID and the new base value.
-func (alloc *allocator) Rebase(tableID, newBase int64) error {
+func (alloc *allocator) Rebase(tableID, newBase int64, isSetStep bool) error {
 	if tableID == 0 {
 		return errors.New("Invalid tableID")
 	}
@@ -63,14 +63,24 @@ func (alloc *allocator) Rebase(tableID, newBase int64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		if newBase <= end {
+			return nil
+		}
 		newStep := newBase - end + step
+		if !isSetStep {
+			newStep = newBase - 1
+		}
 		end, err = m.GenAutoTableID(alloc.dbID, tableID, newStep)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		alloc.end = end
-		alloc.base = alloc.end - step
+		alloc.base = newBase
+		if !isSetStep {
+			alloc.base = alloc.end
+		}
 		return nil
 	})
 }
@@ -86,14 +96,21 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	if alloc.base == alloc.end { // step
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
-			// err1 is used for passing `go tool vet --shadow` check.
+			base, err1 := m.GetAutoTableID(alloc.dbID, tableID)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
 			end, err1 := m.GenAutoTableID(alloc.dbID, tableID, step)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
 
 			alloc.end = end
-			alloc.base = alloc.end - step
+			if end == step {
+				alloc.base = base
+			} else {
+				alloc.base = end - step
+			}
 			return nil
 		})
 
@@ -120,7 +137,7 @@ type memoryAllocator struct {
 }
 
 // Rebase rebases the autoID base for table with tableID and the new base value.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64) error {
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64, isSetStep bool) error {
 	// TODO: implement it.
 	return nil
 }

@@ -390,6 +390,40 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	rowStr6 := fmt.Sprintf("%v %v", "7", "7")
 	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr5, rowStr3, rowStr4, rowStr6))
 	tk.MustExec("commit")
+
+	// issue-962
+	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(createSQL)
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0.3, 1)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr1 = fmt.Sprintf("%v %v", "1", "1")
+	r.Check(testkit.Rows(rowStr1))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (-0.3, 2)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr2 = fmt.Sprintf("%v %v", "2", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (-3.3, 3)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr3 = fmt.Sprintf("%v %v", "-3", "3")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (4.3, 4)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr4 = fmt.Sprintf("%v %v", "4", "4")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4))
+	insertSQL = `insert into insert_autoinc_test(c1) values (5)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr5 = fmt.Sprintf("%v %v", "5", "5")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (null, 6)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -606,6 +640,23 @@ func (s *testSuite) TestUpdate(c *C) {
 
 	tk.MustExec(`UPDATE update_test SET name = "foo"`)
 	tk.CheckExecResult(2, 0)
+
+	// table option is auto-increment
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists update_test;")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("create table update_test(id int not null auto_increment, name varchar(255), primary key(id))")
+	tk.MustExec("insert into update_test(name) values ('aa')")
+	tk.MustExec("update update_test set id = 8 where name = 'aa'")
+	tk.MustExec("insert into update_test(name) values ('bb')")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from update_test;")
+	rowStr1 = fmt.Sprintf("%v %v", 8, []byte("aa"))
+	rowStr2 = fmt.Sprintf("%v %v", 9, []byte("bb"))
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	tk.MustExec("commit")
 
 	tk.MustExec("drop table update_test")
 }

@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -70,6 +72,34 @@ func (s *testSuite) TestCreateTable(c *C) {
 		}
 		c.Assert(row.Data[1].GetString(), Equals, "double")
 	}
+
+	// table option is auto-increment
+	tk.MustExec("drop table if exists create_auto_increment_test;")
+	tk.MustExec("create table create_auto_increment_test (id int not null auto_increment, name varchar(255), primary key(id)) auto_increment = 999;")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('bb')")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('cc')")
+	r := tk.MustQuery("select * from create_auto_increment_test;")
+	rowStr1 := fmt.Sprintf("%v %v", 999, []byte("aa"))
+	rowStr2 := fmt.Sprintf("%v %v", 1000, []byte("bb"))
+	rowStr3 := fmt.Sprintf("%v %v", 1001, []byte("cc"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("drop table create_auto_increment_test")
+	tk.MustExec("create table create_auto_increment_test (id int not null auto_increment, name varchar(255), primary key(id)) auto_increment = 1999;")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('bb')")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('cc')")
+	r = tk.MustQuery("select * from create_auto_increment_test;")
+	rowStr1 = fmt.Sprintf("%v %v", 1999, []byte("aa"))
+	rowStr2 = fmt.Sprintf("%v %v", 2000, []byte("bb"))
+	rowStr3 = fmt.Sprintf("%v %v", 2001, []byte("cc"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3))
+	tk.MustExec("drop table create_auto_increment_test")
+	tk.MustExec("create table create_auto_increment_test (id int not null auto_increment, name varchar(255), key(id)) auto_increment = 1000;")
+	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
+	r = tk.MustQuery("select * from create_auto_increment_test;")
+	rowStr1 = fmt.Sprintf("%v %v", 1000, []byte("aa"))
+	r.Check(testkit.Rows(rowStr1))
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
