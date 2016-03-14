@@ -631,8 +631,8 @@ func (t *Table) AllocAutoID() (int64, error) {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *Table) RebaseAutoID(newBase int64) error {
-	return t.alloc.Rebase(t.ID, newBase)
+func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
+	return t.alloc.Rebase(t.ID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.

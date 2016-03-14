@@ -173,6 +173,13 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if col.IsPKHandleColumn(t.Meta()) {
 			newHandle = newData[i]
 		}
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			val, err := newData[i].ToInt64()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			t.RebaseAutoID(val, true)
+		}
 
 		touched[colIndex] = true
 		assignExists = true
@@ -645,11 +652,19 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
 		if row[i].Kind() != types.KindNull {
-			if mysql.HasAutoIncrementFlag(c.Flag) {
-				e.Table.RebaseAutoID(row[i].GetValue().(int64))
+			// Column value isn't nil and column isn't auto-increment, continue.
+			if !mysql.HasAutoIncrementFlag(c.Flag) {
+				continue
 			}
-			// Column value is not nil, continue.
-			continue
+			// Column value isn't nil or 0, and column is auto-increment, continue.
+			val, err := row[i].ToInt64()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if val != 0 {
+				e.Table.RebaseAutoID(val, true)
+				continue
+			}
 		}
 
 		// If the nil value is evaluated in insert list, we will use nil except auto increment column.
@@ -663,16 +678,14 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(recordID)
-			if c.IsPKHandleColumn(e.Table.Meta()) {
-				// Notes: incompatible with mysql
-				// MySQL will set last insert id to the first row, as follows:
-				// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-				// `insert t (c1) values(1),(2),(3);`
-				// Last insert id will be 1, not 3.
-				variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
-				// It's used for retry.
-				rewriteValueCol = c
-			}
+			// Notes: incompatible with mysql
+			// MySQL will set last insert id to the first row, as follows:
+			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
+			// `insert t (c1) values(1),(2),(3);`
+			// Last insert id will be 1, not 3.
+			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+			// It's used for retry.
+			rewriteValueCol = c
 		} else {
 			var err error
 			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
