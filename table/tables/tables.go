@@ -91,7 +91,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	return t, nil
 }
 
-// NewTable constructs a Table instance.
+// newTable constructs a Table instance.
 func newTable(tableID int64, cols []*column.Col, alloc autoid.Allocator) *Table {
 	t := &Table{
 		ID:           tableID,
