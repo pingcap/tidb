@@ -14674,7 +14674,7 @@ yyrule211: // {repeatable}
 	}
 yyrule212: // {regexp}
 	{
-		return regexp
+		return regexpKwd
 	}
 yyrule213: // {replace}
 	{
