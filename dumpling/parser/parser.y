@@ -224,7 +224,7 @@ import (
 	rand		"RAND"
 	read		"READ"
 	references	"REFERENCES"
-	regexp		"REGEXP"
+	regexpKwd	"REGEXP"
 	repeat		"REPEAT"
 	repeatable	"REPEATABLE"
 	replace		"REPLACE"

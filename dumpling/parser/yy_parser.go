@@ -14,6 +14,9 @@
 package parser
 
 import (
+	"regexp"
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -30,6 +33,31 @@ const (
 	CodeSyntaxErr terror.ErrCode = 1
 )
 
+var (
+	specCodePattern = regexp.MustCompile(`\/\*!(M?[0-9]{5,6})?([^*]|\*+[^*/])*\*+\/`)
+	specCodeStart   = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6} )?[ \t]*`)
+	specCodeEnd     = regexp.MustCompile(`[ \t]*\*\/$`)
+)
+
+func trimComment(txt string) string {
+	txt = specCodeStart.ReplaceAllString(txt, "")
+	return specCodeEnd.ReplaceAllString(txt, "")
+}
+
+// See: http://dev.mysql.com/doc/refman/5.7/en/comments.html
+// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
+// TODO: Find a better way:
+// 1. RegExpr is slow.
+// 2. Handle nested comment.
+func handleMySQLSpecificCode(sql string) string {
+	if strings.Index(sql, "/*!") == -1 {
+		// Fast way to check if text contains MySQL-specific code.
+		return sql
+	}
+	// SQL text contains MySQL-specific code. We should convert it to normal SQL text.
+	return specCodePattern.ReplaceAllStringFunc(sql, trimComment)
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
 func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -39,6 +67,7 @@ func Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
 	if collation == "" {
 		collation = mysql.DefaultCollationName
 	}
+	sql = handleMySQLSpecificCode(sql)
 	l := NewLexer(sql)
 	l.SetCharsetInfo(charset, collation)
 	yyParse(l)

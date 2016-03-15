@@ -913,7 +913,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return repeat
 {repeatable}		lval.item = string(l.val)
 			return repeatable
-{regexp}		return regexp
+{regexp}		return regexpKwd
 {replace}		lval.item = string(l.val)
 			return replace
 {references}		return references
