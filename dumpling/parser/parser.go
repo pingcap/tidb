@@ -284,7 +284,7 @@ const (
 	read                   = 57518
 	realType               = 57604
 	references             = 57519
-	regexp                 = 57520
+	regexpKwd              = 57520
 	repeat                 = 57521
 	repeatable             = 57522
 	replace                = 57523
@@ -559,7 +559,7 @@ var (
 		57495: 179, // neqSynonym (312x)
 		57498: 180, // nulleq (312x)
 		57370: 181, // between (302x)
-		57520: 182, // regexp (302x)
+		57520: 182, // regexpKwd (302x)
 		57525: 183, // rlike (302x)
 		37:    184, // '%' (301x)
 		38:    185, // '&' (301x)
@@ -1127,7 +1127,7 @@ var (
 		"neqSynonym",
 		"nulleq",
 		"between",
-		"regexp",
+		"regexpKwd",
 		"rlike",
 		"'%'",
 		"'&'",

@@ -60,6 +60,17 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 2)
 
+	// Testcase for /*! xx */
+	// See: http://dev.mysql.com/doc/refman/5.7/en/comments.html
+	// Fix: https://github.com/pingcap/tidb/issues/971
+	src = "/*!40101 SET character_set_client = utf8 */;"
+	stmts, err = Parse(src, "", "")
+	c.Assert(err, IsNil)
+	c.Assert(stmts, HasLen, 1)
+	stmt := stmts[0]
+	_, ok := stmt.(*ast.SetStmt)
+	c.Assert(ok, IsTrue)
+
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
 	st, err := ParseOneStmt(src, "", "")
