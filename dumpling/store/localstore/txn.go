@@ -33,6 +33,7 @@ type dbTxn struct {
 	valid      bool
 	version    kv.Version          // commit version
 	lockedKeys map[string]struct{} // origin version in snapshot
+	dirty      bool
 }
 
 func newTxn(s *dbStore, ver kv.Version) *dbTxn {
@@ -57,6 +58,7 @@ func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
 	log.Debugf("[kv] set key:%q, txn:%d", k, txn.tid)
+	txn.dirty = true
 	return txn.us.Set(k, data)
 }
 
@@ -71,6 +73,7 @@ func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 
 func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("[kv] delete key:%q, txn:%d", k, txn.tid)
+	txn.dirty = true
 	return txn.us.Delete(k)
 }
 
@@ -131,4 +134,8 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 		txn.lockedKeys[string(key)] = struct{}{}
 	}
 	return nil
+}
+
+func (txn *dbTxn) IsReadOnly() bool {
+	return !txn.dirty
 }
