@@ -646,7 +646,11 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	for i, c := range e.Table.Cols() {
 		if row[i].Kind() != types.KindNull {
 			if mysql.HasAutoIncrementFlag(c.Flag) {
-				e.Table.RebaseAutoID(row[i].GetValue().(int64))
+				newBase, err := row[i].ToInt64()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.Table.RebaseAutoID(newBase)
 			}
 			// Column value is not nil, continue.
 			continue

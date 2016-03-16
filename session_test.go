@@ -1549,6 +1549,17 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 	mustExecSQL(c, se, sqlText)
 }
 
+func (s *testSessionSuite) TestIssue986(c *C) {
+	sqlText := `CREATE TABLE address (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		PRIMARY KEY (id));`
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, sqlText)
+	sqlText = `insert into address values ('10')`
+	mustExecSQL(c, se, sqlText)
+}
+
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 
 	varName := "max_allowed_packet"
