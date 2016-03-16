@@ -473,7 +473,7 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		}
 	case types.KindInt64:
 		x := nodeDate.GetInt64()
-		if t, err := mysql.ParseTimeFromInt64(x); err == nil {
+		if t, err1 := mysql.ParseTimeFromInt64(x); err1 == nil {
 			if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
 				fieldType = mysql.TypeDatetime
 			}
