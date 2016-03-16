@@ -18,12 +18,12 @@
 package evaluator
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/util/types"
 )
 
-// Func is for a builtin function.
-type Func struct {
+// OldFunc is for a old builtin function.
+type OldFunc struct {
 	// F is the specific calling function.
 	F func([]interface{}, context.Context) (interface{}, error)
 	// MinArgs is the minimal arguments needed,
@@ -36,44 +36,18 @@ type Func struct {
 	IsAggregate bool
 }
 
-// Funcs holds all registered builtin functions.
-var Funcs = map[string]Func{
-	// common functions
-	"coalesce": {builtinCoalesce, 1, -1, true, false},
+// Func is for a builtin function.
+type Func struct {
+	// F is the specific calling function.
+	F func([]types.Datum, context.Context) (types.Datum, error)
+	// MinArgs is the minimal arguments needed,
+	MinArgs int
+	// MaxArgs is the maximal arguments needed, -1 for infinity.
+	MaxArgs int
+}
 
-	// math functions
-	"abs":   {builtinAbs, 1, 1, true, false},
-	"pow":   {builtinPow, 2, 2, true, false},
-	"power": {builtinPow, 2, 2, true, false},
-	"rand":  {builtinRand, 0, 1, true, false},
-
-	// time functions
-	"curdate":           {builtinCurrentDate, 0, 0, false, false},
-	"current_date":      {builtinCurrentDate, 0, 0, false, false},
-	"current_time":      {builtinCurrentTime, 0, 1, false, false},
-	"current_timestamp": {builtinNow, 0, 1, false, false},
-	"curtime":           {builtinCurrentTime, 0, 1, false, false},
-	"date":              {builtinDate, 1, 1, true, false},
-	"day":               {builtinDay, 1, 1, true, false},
-	"dayname":           {builtinDayName, 1, 1, true, false},
-	"dayofmonth":        {builtinDayOfMonth, 1, 1, true, false},
-	"dayofweek":         {builtinDayOfWeek, 1, 1, true, false},
-	"dayofyear":         {builtinDayOfYear, 1, 1, true, false},
-	"hour":              {builtinHour, 1, 1, true, false},
-	"microsecond":       {builtinMicroSecond, 1, 1, true, false},
-	"minute":            {builtinMinute, 1, 1, true, false},
-	"month":             {builtinMonth, 1, 1, true, false},
-	"now":               {builtinNow, 0, 1, false, false},
-	"second":            {builtinSecond, 1, 1, true, false},
-	"sysdate":           {builtinSysDate, 0, 1, false, false},
-	"week":              {builtinWeek, 1, 2, true, false},
-	"weekday":           {builtinWeekDay, 1, 1, true, false},
-	"weekofyear":        {builtinWeekOfYear, 1, 1, true, false},
-	"year":              {builtinYear, 1, 1, true, false},
-	"yearweek":          {builtinYearWeek, 1, 2, true, false},
-	"extract":           {builtinExtract, 2, 2, true, false},
-	"date_arith":        {builtinDateArith, 3, 3, true, false},
-
+// OldFuncs holds all has old registered builtin functions.
+var OldFuncs = map[string]OldFunc{
 	// control functions
 	"if":     {builtinIf, 3, 3, true, false},
 	"ifnull": {builtinIfNull, 2, 2, true, false},
@@ -104,16 +78,51 @@ var Funcs = map[string]Func{
 	"version":       {builtinVersion, 0, 0, true, false},
 }
 
-func invArg(arg interface{}, s string) error {
-	return errors.Errorf("invalid argument %v (type %T) for %s", arg, arg, s)
+// Funcs holds all registered builtin functions.
+var Funcs = map[string]Func{
+	// common functions
+	"coalesce": {builtinCoalesce, 1, -1},
+
+	// math functions
+	"abs":   {builtinAbs, 1, 1},
+	"pow":   {builtinPow, 2, 2},
+	"power": {builtinPow, 2, 2},
+	"rand":  {builtinRand, 0, 1},
+
+	// time functions
+	"curdate":           {builtinCurrentDate, 0, 0},
+	"current_date":      {builtinCurrentDate, 0, 0},
+	"current_time":      {builtinCurrentTime, 0, 1},
+	"current_timestamp": {builtinNow, 0, 1},
+	"curtime":           {builtinCurrentTime, 0, 1},
+	"date":              {builtinDate, 1, 1},
+	"day":               {builtinDay, 1, 1},
+	"dayname":           {builtinDayName, 1, 1},
+	"dayofmonth":        {builtinDayOfMonth, 1, 1},
+	"dayofweek":         {builtinDayOfWeek, 1, 1},
+	"dayofyear":         {builtinDayOfYear, 1, 1},
+	"hour":              {builtinHour, 1, 1},
+	"microsecond":       {builtinMicroSecond, 1, 1},
+	"minute":            {builtinMinute, 1, 1},
+	"month":             {builtinMonth, 1, 1},
+	"now":               {builtinNow, 0, 1},
+	"second":            {builtinSecond, 1, 1},
+	"sysdate":           {builtinSysDate, 0, 1},
+	"week":              {builtinWeek, 1, 2},
+	"weekday":           {builtinWeekDay, 1, 1},
+	"weekofyear":        {builtinWeekOfYear, 1, 1},
+	"year":              {builtinYear, 1, 1},
+	"yearweek":          {builtinYearWeek, 1, 2},
+	"extract":           {builtinExtract, 2, 2},
+	"date_arith":        {builtinDateArith, 3, 3},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
-func builtinCoalesce(args []interface{}, ctx context.Context) (v interface{}, err error) {
-	for _, v := range args {
-		if v != nil {
-			return v, nil
+func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	for _, d = range args {
+		if d.Kind() != types.KindNull {
+			return d, nil
 		}
 	}
-	return nil, nil
+	return d, nil
 }

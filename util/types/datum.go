@@ -159,9 +159,21 @@ func (d *Datum) GetMysqlBit() mysql.Bit {
 	return d.x.(mysql.Bit)
 }
 
+// SetMysqlBit sets mysql.Bit value
+func (d *Datum) SetMysqlBit(b mysql.Bit) {
+	d.k = KindMysqlBit
+	d.x = b
+}
+
 // GetMysqlDecimal gets mysql.Decimal value
 func (d *Datum) GetMysqlDecimal() mysql.Decimal {
 	return d.x.(mysql.Decimal)
+}
+
+// SetMysqlDecimal sets mysql.Decimal value
+func (d *Datum) SetMysqlDecimal(b mysql.Decimal) {
+	d.k = KindMysqlDecimal
+	d.x = b
 }
 
 // GetMysqlDuration gets mysql.Duration value
@@ -169,9 +181,21 @@ func (d *Datum) GetMysqlDuration() mysql.Duration {
 	return d.x.(mysql.Duration)
 }
 
+// SetMysqlDuration sets mysql.Duration value
+func (d *Datum) SetMysqlDuration(b mysql.Duration) {
+	d.k = KindMysqlDuration
+	d.x = b
+}
+
 // GetMysqlEnum gets mysql.Enum value
 func (d *Datum) GetMysqlEnum() mysql.Enum {
 	return d.x.(mysql.Enum)
+}
+
+// SetMysqlEnum sets mysql.Enum value
+func (d *Datum) SetMysqlEnum(b mysql.Enum) {
+	d.k = KindMysqlEnum
+	d.x = b
 }
 
 // GetMysqlHex gets mysql.Hex value
@@ -179,14 +203,32 @@ func (d *Datum) GetMysqlHex() mysql.Hex {
 	return d.x.(mysql.Hex)
 }
 
+// SetMysqlHex sets mysql.Hex value
+func (d *Datum) SetMysqlHex(b mysql.Hex) {
+	d.k = KindMysqlHex
+	d.x = b
+}
+
 // GetMysqlSet gets mysql.Set value
 func (d *Datum) GetMysqlSet() mysql.Set {
 	return d.x.(mysql.Set)
 }
 
+// SetMysqlSet sets mysql.Set value
+func (d *Datum) SetMysqlSet(b mysql.Set) {
+	d.k = KindMysqlSet
+	d.x = b
+}
+
 // GetMysqlTime gets mysql.Time value
 func (d *Datum) GetMysqlTime() mysql.Time {
 	return d.x.(mysql.Time)
+}
+
+// SetMysqlTime sets mysql.Time value
+func (d *Datum) SetMysqlTime(b mysql.Time) {
+	d.k = KindMysqlTime
+	d.x = b
 }
 
 // GetValue gets the value of the datum of any kind.
@@ -1084,6 +1126,43 @@ func (d *Datum) ToInt64() (int64, error) {
 		return convertFloatToInt(fval, lowerBound, upperBound, tp)
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to int64", d.GetValue(), d.GetValue())
+	}
+}
+
+// ToFloat64 converts to a float64
+func (d *Datum) ToFloat64() (float64, error) {
+	switch d.Kind() {
+	case KindInt64:
+		return float64(d.GetInt64()), nil
+	case KindUint64:
+		return float64(d.GetUint64()), nil
+	case KindFloat32:
+		return float64(d.GetFloat32()), nil
+	case KindFloat64:
+		return d.GetFloat64(), nil
+	case KindString:
+		return StrToFloat(d.GetString())
+	case KindBytes:
+		return StrToFloat(string(d.GetBytes()))
+	case KindMysqlTime:
+		f, _ := d.GetMysqlTime().ToNumber().Float64()
+		return f, nil
+	case KindMysqlDuration:
+		f, _ := d.GetMysqlDuration().ToNumber().Float64()
+		return f, nil
+	case KindMysqlDecimal:
+		f, _ := d.GetMysqlDecimal().Float64()
+		return f, nil
+	case KindMysqlHex:
+		return d.GetMysqlHex().ToNumber(), nil
+	case KindMysqlBit:
+		return d.GetMysqlBit().ToNumber(), nil
+	case KindMysqlEnum:
+		return d.GetMysqlEnum().ToNumber(), nil
+	case KindMysqlSet:
+		return d.GetMysqlSet().ToNumber(), nil
+	default:
+		return 0, errors.Errorf("cannot convert %v(type %T) to float64", d.GetValue(), d.GetValue())
 	}
 }
 
