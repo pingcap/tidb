@@ -571,6 +571,18 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 		{
 			`select * from
 				t1 join (
+					t2 left join (
+						t3 join t4
+						on t3.i3 = t4.c4
+					)
+					on t2.i2 = t3.c3
+				)
+				on t1.i1 = t2.c2`,
+			"InnerJoin{OuterJoin{Table(t2)->InnerJoin{Table(t4)->Index(t3.i3)}}->Index(t1.i1)}->Fields",
+		},
+		{
+			`select * from
+				t1 join (
 					(t2 join t3
 						on t2.i2 = t3.i3
 					)
