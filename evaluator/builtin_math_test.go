@@ -15,6 +15,7 @@ package evaluator
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
@@ -30,18 +31,20 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 		{float64(-3.14), float64(3.14)},
 	}
 
-	for _, t := range tbl {
-		v, err := builtinAbs([]interface{}{t.Arg}, nil)
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinAbs(t["Arg"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t.Ret)
+		c.Assert(v, DatumEquals, t["Ret"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
-	v, err := builtinRand([]interface{}{}, nil)
+	v, err := builtinRand(make([]types.Datum, 0), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Less, float64(1))
-	c.Assert(v, GreaterEqual, float64(0))
+	c.Assert(v.GetFloat64(), Less, float64(1))
+	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {
@@ -55,10 +58,12 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		{[]interface{}{4, -2}, 0.0625},
 	}
 
-	for _, t := range tbl {
-		v, err := builtinPow(t.Arg, nil)
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinPow(t["Arg"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DeepEquals, t.Ret)
+		c.Assert(v, DatumEquals, t["Ret"][0])
 	}
 
 	errTbl := []struct {
@@ -69,9 +74,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		{[]interface{}{1, "test"}},
 		{[]interface{}{1, nil}},
 	}
-	for _, t := range errTbl {
-		_, err := builtinPow(t.Arg, nil)
+
+	errDtbl := tblToDtbl(errTbl)
+	for _, t := range errDtbl {
+		_, err := builtinPow(t["Arg"], nil)
 		c.Assert(err, NotNil)
 	}
-
 }
