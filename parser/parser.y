@@ -76,6 +76,7 @@ import (
 	begin		"BEGIN"
 	between		"BETWEEN"
 	both		"BOTH"
+	btree		"BTREE"
 	by		"BY"
 	byteType	"BYTE"
 	caseKwd		"CASE"
@@ -92,6 +93,8 @@ import (
 	comment 	"COMMENT"
 	commit		"COMMIT"
 	committed	"COMMITTED"
+	compact		"COMPACT"
+	compressed	"COMPRESSED"
 	compression	"COMPRESSION"
 	concat		"CONCAT"
 	concatWs	"CONCAT_WS"
@@ -130,6 +133,7 @@ import (
 	drop		"DROP"
 	dual 		"DUAL"
 	duplicate	"DUPLICATE"
+	dynamic		"DYNAMIC"
 	elseKwd		"ELSE"
 	end		"END"
 	engine		"ENGINE"
@@ -144,6 +148,7 @@ import (
 	falseKwd	"false"
 	fields		"FIELDS"
 	first		"FIRST"
+	fixed		"FIXED"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
 	foundRows	"FOUND_ROWS"
@@ -156,6 +161,7 @@ import (
 	grants		"GRANTS"
 	group		"GROUP"
 	groupConcat	"GROUP_CONCAT"
+	hash		"HASH"
 	having		"HAVING"
 	highPriority	"HIGH_PRIORITY"
 	hour		"HOUR"
@@ -223,6 +229,7 @@ import (
 	quick		"QUICK"
 	rand		"RAND"
 	read		"READ"
+	redundant	"REDUNDANT"
 	references	"REFERENCES"
 	regexpKwd	"REGEXP"
 	repeat		"REPEAT"
@@ -232,6 +239,7 @@ import (
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
 	row 		"ROW"
+	rowFormat	"ROW_FORMAT"
 	rsh		">>"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
@@ -452,7 +460,9 @@ import (
 	IndexColName		"Index column name"
 	IndexColNameList	"List of index column name"
 	IndexName		"index name"
+	IndexOption		"Index Option"
 	IndexType		"index type"
+	IndexTypeOpt		"Optional index type"
 	InsertIntoStmt		"INSERT INTO statement"
 	InsertValues		"Rest part of INSERT/REPLACE INTO statement"
 	IntoOpt			"INTO or EmptyString"
@@ -501,6 +511,7 @@ import (
 	ReplaceIntoStmt		"REPLACE INTO statement"
 	ReplacePriority		"replace statement priority"
 	RollbackStmt		"ROLLBACK statement"
+	RowFormat		"Row format option"
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
 	SelectStmtCalcFoundRows	"SELECT statement optional SQL_CALC_FOUND_ROWS"
@@ -905,11 +916,11 @@ ColumnOptionListOpt:
 	}
 
 ConstraintElem:
-	"PRIMARY" "KEY" '(' IndexColNameList ')'
+	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: $4.([]*ast.IndexColName)}
+		$$ = &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: $5.([]*ast.IndexColName)}
 	}
-|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')'
+|	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOption
 	{
 		$$ = &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
@@ -917,40 +928,40 @@ ConstraintElem:
 			Name:	$3.(string),
 		}
 	}
-|	"INDEX" IndexName '(' IndexColNameList ')'
+|	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		$$ = &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
-			Keys:	$4.([]*ast.IndexColName),
+			Keys:	$5.([]*ast.IndexColName),
 			Name:	$2.(string),
 		}
 	}
-|	"KEY" IndexName '(' IndexColNameList ')'
+|	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		$$ = &ast.Constraint{
 			Tp:	ast.ConstraintKey,
-			Keys:	$4.([]*ast.IndexColName),
+			Keys:	$5.([]*ast.IndexColName),
 			Name:	$2.(string)}
 	}
-|	"UNIQUE" IndexName '(' IndexColNameList ')'
+|	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		$$ = &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
-			Keys:	$4.([]*ast.IndexColName),
+			Keys:	$5.([]*ast.IndexColName),
 			Name:	$2.(string)}
 	}
-|	"UNIQUE" "INDEX" IndexName '(' IndexColNameList ')'
+|	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		$$ = &ast.Constraint{
 			Tp:	ast.ConstraintUniqIndex,
-			Keys:	$5.([]*ast.IndexColName),
+			Keys:	$6.([]*ast.IndexColName),
 			Name:	$3.(string)}
 	}
-|	"UNIQUE" "KEY" IndexName '(' IndexColNameList ')'
+|	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
 		$$ = &ast.Constraint{
 			Tp:	ast.ConstraintUniqKey,
-			Keys:	$5.([]*ast.IndexColName),
+			Keys:	$6.([]*ast.IndexColName),
 			Name:	$3.(string)}
 	}
 |	"FOREIGN" "KEY" IndexName '(' IndexColNameList ')' ReferDef
@@ -1671,11 +1682,42 @@ IndexName:
 		$$ = $1.(string)
 	}
 
-IndexType:
-	Identifier
+IndexOption:
+	{}
+|	"KEY_BLOCK_SIZE" EqOpt LengthNum 
 	{
-		// TODO: "index type"
-		$$ = $1.(string)
+		$$ = &ast.IndexOption{
+			KeyBlockSize: $1.(uint64),
+		}	
+	}
+|	IndexType
+	{
+		$$ = &ast.IndexOption {
+			Tp: $1.(ast.IndexType),
+		}
+	}
+|	"COMMENT" stringLit
+	{
+		$$ = &ast.IndexOption {
+			Comment: $2.(string),
+		}
+	}
+	   
+IndexType:
+	"USING" "BTREE"	
+	{
+		$$ = ast.IndexTypeBtree
+	}
+|	"USING" "HASH"
+	{
+		$$ = ast.IndexTypeHash
+	}
+
+IndexTypeOpt:
+	{}
+|	IndexType
+	{
+		$$ = $1
 	}
 
 /**********************************Identifier********************************************/
@@ -1683,13 +1725,13 @@ Identifier:
 	identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
-	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "CHARSET" | "COLUMNS" | "COMMIT" 
-|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FULL" 
-|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "ROLLBACK" | "SESSION" | "SIGNED" 
+	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
+|	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH" 
+|	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
-|	"NATIONAL" | "ROW" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
+|	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
 |	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
 
 NotKeywordToken:
@@ -3747,6 +3789,10 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionDelayKeyWrite, UintValue: $3.(uint64)} 
 	}
+|	RowFormat
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionRowFormat, UintValue: $1.(uint64)}
+	}
 
 
 TableOptionListOpt:
@@ -3774,6 +3820,32 @@ TruncateTableStmt:
 	"TRUNCATE" "TABLE" TableName
 	{
 		$$ = &ast.TruncateTableStmt{Table: $3.(*ast.TableName)}
+	}
+
+RowFormat:
+	 "ROW_FORMAT" EqOpt "DEFAULT"
+	{
+		$$ = ast.RowFormatDefault
+	}
+|	"ROW_FORMAT" EqOpt "DYNAMIC"
+	{
+		$$ = ast.RowFormatDynamic
+	}
+|	"ROW_FORMAT" EqOpt "FIXED"
+	{
+		$$ = ast.RowFormatFixed
+	}
+|	"ROW_FORMAT" EqOpt "COMPRESSED"
+	{
+		$$ = ast.RowFormatCompressed
+	}
+|	"ROW_FORMAT" EqOpt "REDUNDANT"
+	{
+		$$ = ast.RowFormatRedundant
+	}
+|	"ROW_FORMAT" EqOpt "COMPACT"
+	{
+		$$ = ast.RowFormatCompact
 	}
 
 /*************************************Type Begin***************************************/
