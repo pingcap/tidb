@@ -28,54 +28,56 @@ import (
 
 // see https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html
 
-func builtinAbs(args []interface{}, _ context.Context) (v interface{}, err error) {
-	d := args[0]
-	switch x := d.(type) {
-	case nil:
-		return nil, nil
-	case uint, uint8, uint16, uint32, uint64:
-		return x, nil
-	case int, int8, int16, int32, int64:
-		// we don't need to handle error here, it must be success
-		v, _ := types.ToInt64(d)
-		if v >= 0 {
-			return x, nil
+func builtinAbs(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	d = args[0]
+	switch d.Kind() {
+	case types.KindNull:
+		return d, nil
+	case types.KindUint64:
+		return d, nil
+	case types.KindInt64:
+		iv := d.GetInt64()
+		if iv >= 0 {
+			d.SetInt64(iv)
+			return d, nil
 		}
-
-		// TODO: handle overflow if x is MinInt64
-		return -v, nil
+		d.SetInt64(-iv)
+		return d, nil
 	default:
 		// we will try to convert other types to float
 		// TODO: if time has no precision, it will be a integer
-		f, err := types.ToFloat64(d)
-		return math.Abs(f), errors.Trace(err)
+		f, err := d.ToFloat64()
+		d.SetFloat64(math.Abs(f))
+		return d, errors.Trace(err)
 	}
 }
 
-func builtinRand(args []interface{}, _ context.Context) (v interface{}, err error) {
-	if len(args) == 1 {
-		seed, err := types.ToInt64(args[0])
+func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if len(args) == 1 && args[0].Kind() != types.KindNull {
+		seed, err := args[0].ToInt64()
 		if err != nil {
-			return nil, errors.Trace(err)
+			d.SetNull()
+			return d, errors.Trace(err)
 		}
 
 		rand.Seed(seed)
 	}
-
-	return rand.Float64(), nil
+	d.SetFloat64(rand.Float64())
+	return d, nil
 }
 
-func builtinPow(args []interface{}, _ context.Context) (v interface{}, err error) {
-	x, err := types.ToFloat64(args[0])
+func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	x, err := args[0].ToFloat64()
 	if err != nil {
-		return nil, errors.Trace(err)
+		d.SetNull()
+		return d, errors.Trace(err)
 	}
 
-	y, err := types.ToFloat64(args[1])
+	y, err := args[1].ToFloat64()
 	if err != nil {
-		return nil, errors.Trace(err)
+		d.SetNull()
+		return d, errors.Trace(err)
 	}
-
-	return math.Pow(x, y), nil
-
+	d.SetFloat64(math.Pow(x, y))
+	return d, nil
 }

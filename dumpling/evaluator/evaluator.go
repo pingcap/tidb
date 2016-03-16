@@ -614,6 +614,24 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 }
 
 func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
+	of, ok := OldFuncs[v.FnName.L]
+	if ok {
+		if len(v.Args) < of.MinArgs || (of.MaxArgs != -1 && len(v.Args) > of.MaxArgs) {
+			e.err = ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", of.MinArgs, of.MaxArgs)
+			return false
+		}
+		a := make([]interface{}, len(v.Args))
+		for i, arg := range v.Args {
+			a[i] = arg.GetValue()
+		}
+		val, err := of.F(a, e.ctx)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return false
+		}
+		v.SetValue(val)
+		return true
+	}
 	f, ok := Funcs[v.FnName.L]
 	if !ok {
 		e.err = ErrInvalidOperation.Gen("unknown function %s", v.FnName.O)
@@ -623,16 +641,16 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 		e.err = ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", f.MinArgs, f.MaxArgs)
 		return false
 	}
-	a := make([]interface{}, len(v.Args))
+	a := make([]types.Datum, len(v.Args))
 	for i, arg := range v.Args {
-		a[i] = arg.GetValue()
+		a[i] = *arg.GetDatum()
 	}
 	val, err := f.F(a, e.ctx)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-	v.SetValue(val)
+	v.SetDatum(val)
 	return true
 }
 
