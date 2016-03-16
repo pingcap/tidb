@@ -44,7 +44,7 @@ import (
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx context.Context, schema model.CIStr) error
-	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef, constrs []*ast.Constraint) error
+	CreateTable(ctx context.Context, ident ast.Ident, cols []*ast.ColumnDef, constrs []*ast.Constraint, options []*ast.TableOption) error
 	DropTable(ctx context.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx context.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr, columnNames []*ast.IndexColName) error
 	DropIndex(ctx context.Context, tableIdent ast.Ident, indexName model.CIStr) error
@@ -680,6 +680,13 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			idxInfo.Unique = true
 		}
+		if constr.Option != nil {
+			idxInfo.Comment = constr.Option.Comment
+			idxInfo.Tp = constr.Option.Tp
+		} else {
+			// Use btree as default index type.
+			idxInfo.Tp = model.IndexTypeBtree
+		}
 		idxInfo.ID, err = d.genGlobalID()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -689,7 +696,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 	return
 }
 
-func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef, constraints []*ast.Constraint) (err error) {
+func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.ColumnDef, constraints []*ast.Constraint, options []*ast.TableOption) (err error) {
 	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
