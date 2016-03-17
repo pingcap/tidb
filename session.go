@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -251,11 +250,6 @@ func (s *session) Retry() error {
 // ExecRestrictedSQL implements SQLHelper interface.
 // This is used for executing some restricted sql statements.
 func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.RecordSet, error) {
-	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
-		// We do not support run this function concurrently.
-		// TODO: Maybe we should remove this restriction latter.
-		return nil, errors.New("Should not call ExecRestrictedSQL concurrently.")
-	}
 	rawStmts, err := Parse(ctx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -273,8 +267,6 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, sql string) (ast.Record
 	// For example only support DML on system meta table.
 	// TODO: Add more restrictions.
 	log.Debugf("Executing %s [%s]", st.OriginText(), sql)
-	ctx.SetValue(&sqlexec.RestrictedSQLExecutorKeyType{}, true)
-	defer ctx.ClearValue(&sqlexec.RestrictedSQLExecutorKeyType{})
 	rs, err := st.Exec(ctx)
 	return rs, errors.Trace(err)
 }
@@ -331,9 +323,6 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 
 // IsAutocommit checks if it is in the auto-commit mode.
 func (s *session) isAutocommit(ctx context.Context) bool {
-	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
-		return false
-	}
 	autocommit, ok := variable.GetSessionVars(ctx).Systems["autocommit"]
 	if !ok {
 		if s.initing {
@@ -357,9 +346,6 @@ func (s *session) isAutocommit(ctx context.Context) bool {
 }
 
 func (s *session) ShouldAutocommit(ctx context.Context) bool {
-	if ctx.Value(&sqlexec.RestrictedSQLExecutorKeyType{}) != nil {
-		return false
-	}
 	// With START TRANSACTION, autocommit remains disabled until you end
 	// the transaction with COMMIT or ROLLBACK.
 	if variable.GetSessionVars(ctx).Status&mysql.ServerStatusInTrans == 0 && s.isAutocommit(ctx) {
