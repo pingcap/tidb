@@ -41,8 +41,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
-		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
-		"compact", "redundant",
+		"curtime", "variables", "dayname", "version",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -60,17 +59,6 @@ func (s *testParserSuite) TestSimple(c *C) {
 	stmts, err := Parse(src, "", "")
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 2)
-
-	// Testcase for /*! xx */
-	// See: http://dev.mysql.com/doc/refman/5.7/en/comments.html
-	// Fix: https://github.com/pingcap/tidb/issues/971
-	src = "/*!40101 SET character_set_client = utf8 */;"
-	stmts, err = Parse(src, "", "")
-	c.Assert(err, IsNil)
-	c.Assert(stmts, HasLen, 1)
-	stmt := stmts[0]
-	_, ok := stmt.(*ast.SetStmt)
-	c.Assert(ok, IsTrue)
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
@@ -630,13 +618,6 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) password 'abc'", true},
 		{"create table t (c int) DELAY_KEY_WRITE=1", true},
 		{"create table t (c int) DELAY_KEY_WRITE 1", true},
-		{"create table t (c int) ROW_FORMAT = default", true},
-		{"create table t (c int) ROW_FORMAT default", true},
-		{"create table t (c int) ROW_FORMAT = fixed", true},
-		{"create table t (c int) ROW_FORMAT = compressed", true},
-		{"create table t (c int) ROW_FORMAT = compact", true},
-		{"create table t (c int) ROW_FORMAT = redundant", true},
-		{"create table t (c int) ROW_FORMAT = dynamic", true},
 		// For check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)), check (c2 in (0, 1)))", true},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true},
@@ -660,67 +641,6 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop tables xxx, yyy", true},
 		{"drop table if exists xxx", true},
 		{"drop table if not exists xxx", false},
-		// For issue 974
-		{`CREATE TABLE address (
-		id bigint(20) NOT NULL AUTO_INCREMENT,
-		create_at datetime NOT NULL,
-		deleted tinyint(1) NOT NULL,
-		update_at datetime NOT NULL,
-		version bigint(20) DEFAULT NULL,
-		address varchar(128) NOT NULL,
-		address_detail varchar(128) NOT NULL,
-		cellphone varchar(16) NOT NULL,
-		latitude double NOT NULL,
-		longitude double NOT NULL,
-		name varchar(16) NOT NULL,
-		sex tinyint(1) NOT NULL,
-		user_id bigint(20) NOT NULL,
-		PRIMARY KEY (id),
-		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
-		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
-		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
-		// For issue 975
-		{`CREATE TABLE test_data (
-		id bigint(20) NOT NULL AUTO_INCREMENT,
-		create_at datetime NOT NULL,
-		deleted tinyint(1) NOT NULL,
-		update_at datetime NOT NULL,
-		version bigint(20) DEFAULT NULL,
-		address varchar(255) NOT NULL,
-		amount decimal(19,2) DEFAULT NULL,
-		charge_id varchar(32) DEFAULT NULL,
-		paid_amount decimal(19,2) DEFAULT NULL,
-		transaction_no varchar(64) DEFAULT NULL,
-		wx_mp_app_id varchar(32) DEFAULT NULL,
-		contacts varchar(50) DEFAULT NULL,
-		deliver_fee decimal(19,2) DEFAULT NULL,
-		deliver_info varchar(255) DEFAULT NULL,
-		deliver_time varchar(255) DEFAULT NULL,
-		description varchar(255) DEFAULT NULL,
-		invoice varchar(255) DEFAULT NULL,
-		order_from int(11) DEFAULT NULL,
-		order_state int(11) NOT NULL,
-		packing_fee decimal(19,2) DEFAULT NULL,
-		payment_time datetime DEFAULT NULL,
-		payment_type int(11) DEFAULT NULL,
-		phone varchar(50) NOT NULL,
-		store_employee_id bigint(20) DEFAULT NULL,
-		store_id bigint(20) NOT NULL,
-		user_id bigint(20) NOT NULL,
-		payment_mode int(11) NOT NULL,
-		current_latitude double NOT NULL,
-		current_longitude double NOT NULL,
-		address_latitude double NOT NULL,
-		address_longitude double NOT NULL,
-		PRIMARY KEY (id),
-		CONSTRAINT food_order_ibfk_1 FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
-		CONSTRAINT food_order_ibfk_2 FOREIGN KEY (store_id) REFERENCES waimaiqa.store (id),
-		CONSTRAINT food_order_ibfk_3 FOREIGN KEY (store_employee_id) REFERENCES waimaiqa.store_employee (id),
-		UNIQUE FK_UNIQUE_charge_id USING BTREE (charge_id) comment '',
-		INDEX FK_eqst2x1xisn3o0wbrlahnnqq8 USING BTREE (store_employee_id) comment '',
-		INDEX FK_8jcmec4kb03f4dod0uqwm54o9 USING BTREE (store_id) comment '',
-		INDEX FK_a3t0m9apja9jmrn60uab30pqd USING BTREE (user_id) comment ''
-		) ENGINE=InnoDB AUTO_INCREMENT=95 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
 	}
 	s.RunTest(c, table)
 }

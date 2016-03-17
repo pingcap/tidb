@@ -139,3 +139,11 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 func (txn *dbTxn) IsReadOnly() bool {
 	return !txn.dirty
 }
+
+func (txn *dbTxn) GetClient() kv.Client {
+	return &localClient{store: txn.store, regionInfo: txn.store.pd.GetRegionInfo()}
+}
+
+func (txn *dbTxn) StartTS() int64 {
+	return int64(txn.tid)
+}

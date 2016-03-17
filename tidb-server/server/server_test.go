@@ -296,11 +296,3 @@ func runTestIssues(c *C) {
 	c.Assert(err, NotNil, Commentf("Connecting to an unexists schema should be error"))
 	db.Close()
 }
-
-func runTestResultFieldTableIsNull(c *C) {
-	runTests(c, dsn, func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists test;")
-		dbt.mustExec("create table test (c int);")
-		dbt.mustExec("explain select * from test;")
-	})
-}

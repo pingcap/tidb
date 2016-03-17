@@ -13,6 +13,8 @@
 
 package kv
 
+import "io"
+
 const (
 	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
 	// we presume that the key does not exist in Store. The actual existence will be checked before the
@@ -76,6 +78,55 @@ type Transaction interface {
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
+
+	// GetClient gets kv client instance.
+	GetClient() Client
+
+	// StartTS returns the start timestamp.
+	StartTS() int64
+}
+
+// Client is used to send request to KV layer.
+type Client interface {
+	// Send sends request to KV layer, returns a ResponseIterator.
+	Send(req *Request) ResponseIterator
+
+	// SupportRequestType checks if reqType and subType is supported.
+	SupportRequestType(reqType, subType int64) bool
+}
+
+// ReqTypes.
+const (
+	ReqTypeSelect = 100
+	ReqTypeIndex  = 101
+)
+
+// KeyRange represent a range where StartKey <= key < EndKey.
+type KeyRange struct {
+	StartKey Key
+	EndKey   Key
+}
+
+// Request represents a kv request.
+type Request struct {
+	// The request type.
+	Tp   int64
+	Data []byte
+	// Key Ranges
+	KeyRanges []KeyRange
+	// If desc is true, the request is sent in descending order.
+	Desc bool
+	// If concurrency is 1, it only sends the request to a single storage node when
+	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
+	// sent to multiple storage nodes concurrently.
+	Concurrency int
+}
+
+// ResponseIterator is used to get responses from KV layer.
+type ResponseIterator interface {
+	// Next returns the response from a single storage node.
+	// When all storage nodes returned responses, nil is returned.
+	Next() (resp io.ReadCloser, err error)
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.

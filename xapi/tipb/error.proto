@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+option java_outer_classname = "SelectProto";
+
+enum ErrorCode {
+	UnkownError = 0;
+	// TODO: add more error codes.
+}
+
+message Error {
+	optional ErrorCode code = 1;
+	optional string err_msg = 2;
+}

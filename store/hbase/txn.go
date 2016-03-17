@@ -161,3 +161,11 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 func (txn *hbaseTxn) IsReadOnly() bool {
 	return !txn.dirty
 }
+
+func (txn *hbaseTxn) GetClient() kv.Client {
+	return nil
+}
+
+func (txn *hbaseTxn) StartTS() int64 {
+	return int64(txn.tid)
+}

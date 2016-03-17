@@ -14,11 +14,14 @@
 package evaluator
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator/builtin"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -120,6 +123,8 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.funcCall(v)
 	case *ast.FuncCastExpr:
 		ok = e.funcCast(v)
+	case *ast.FuncDateArithExpr:
+		ok = e.funcDateArith(v)
 	case *ast.IsNullExpr:
 		ok = e.isNull(v)
 	case *ast.IsTruthExpr:
@@ -178,39 +183,38 @@ func (e *Evaluator) between(v *ast.BetweenExpr) bool {
 	if e.err != nil {
 		return false
 	}
-	v.SetDatum(*ret.GetDatum())
+	v.SetValue(ret.GetValue())
 	return true
 }
 
 func (e *Evaluator) caseExpr(v *ast.CaseExpr) bool {
-	tmp := types.NewDatum(boolToInt64(true))
-	target := &tmp
+	var target interface{} = true
 	if v.Value != nil {
-		target = v.Value.GetDatum()
+		target = v.Value.GetValue()
 	}
-	if target.Kind() != types.KindNull {
+	if target != nil {
 		for _, val := range v.WhenClauses {
-			cmp, err := target.CompareDatum(*val.Expr.GetDatum())
+			cmp, err := types.Compare(target, val.Expr.GetValue())
 			if err != nil {
 				e.err = errors.Trace(err)
 				return false
 			}
 			if cmp == 0 {
-				v.SetDatum(*val.Result.GetDatum())
+				v.SetValue(val.Result.GetValue())
 				return true
 			}
 		}
 	}
 	if v.ElseClause != nil {
-		v.SetDatum(*v.ElseClause.GetDatum())
+		v.SetValue(v.ElseClause.GetValue())
 	} else {
-		v.SetNull()
+		v.SetValue(nil)
 	}
 	return true
 }
 
 func (e *Evaluator) columnName(v *ast.ColumnNameExpr) bool {
-	v.SetDatum(*v.Refer.Expr.GetDatum())
+	v.SetValue(v.Refer.Expr.GetValue())
 	return true
 }
 
@@ -219,12 +223,11 @@ func (e *Evaluator) defaultExpr(v *ast.DefaultExpr) bool {
 }
 
 func (e *Evaluator) compareSubquery(cs *ast.CompareSubqueryExpr) bool {
-	lvDatum := cs.L.GetDatum()
-	if lvDatum.Kind() == types.KindNull {
-		cs.SetNull()
+	lv := cs.L.GetValue()
+	if lv == nil {
+		cs.SetValue(nil)
 		return true
 	}
-	lv := lvDatum.GetValue()
 	x, err := e.checkResult(cs, lv, cs.R.GetValue().([]interface{}))
 	if err != nil {
 		e.err = errors.Trace(err)
@@ -304,17 +307,17 @@ func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv interface{}, 
 }
 
 func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
-	datum := v.Sel.GetDatum()
-	if datum.Kind() == types.KindNull {
-		v.SetInt64(0)
+	r := v.Sel.GetValue()
+	if r == nil {
+		v.SetValue(0)
 		return true
 	}
-	r := datum.GetValue()
 	rows, _ := r.([]interface{})
 	if len(rows) > 0 {
-		v.SetInt64(1)
+		v.SetValue(1)
 	} else {
-		v.SetInt64(0)
+		v.SetValue(0)
+
 	}
 	return true
 }
@@ -323,7 +326,7 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 // Get the value from v.SubQuery and set it to v.
 func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 	if v.SubqueryExec != nil {
-		v.SetDatum(*v.SubqueryExec.GetDatum())
+		v.SetValue(v.SubqueryExec.GetValue())
 	}
 	v.Evaluated = true
 	return true
@@ -348,7 +351,7 @@ func (e *Evaluator) subqueryExec(v ast.SubqueryExec) bool {
 	}
 	switch len(rows) {
 	case 0:
-		v.GetDatum().SetNull()
+		v.SetValue(nil)
 	case 1:
 		v.SetValue(rows[0])
 	default:
@@ -391,9 +394,9 @@ func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) in
 }
 
 func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
-	lhs := n.Expr.GetDatum()
-	if lhs.Kind() == types.KindNull {
-		n.SetNull()
+	lhs := n.Expr.GetValue()
+	if lhs == nil {
+		n.SetValue(nil)
 		return true
 	}
 	if n.Sel == nil {
@@ -401,7 +404,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		for _, ei := range n.List {
 			values = append(values, ei.GetValue())
 		}
-		x := e.checkInList(n.Not, lhs.GetValue(), values)
+		x := e.checkInList(n.Not, lhs, values)
 		if e.err != nil {
 			return false
 		}
@@ -412,7 +415,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 	sel := se.SubqueryExec
 
 	res := sel.GetValue().([]interface{})
-	x := e.checkInList(n.Not, lhs.GetValue(), res)
+	x := e.checkInList(n.Not, lhs, res)
 	if e.err != nil {
 		return false
 	}
@@ -422,21 +425,21 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 
 func (e *Evaluator) isNull(v *ast.IsNullExpr) bool {
 	var boolVal bool
-	if v.Expr.GetDatum().Kind() == types.KindNull {
+	if v.Expr.GetValue() == nil {
 		boolVal = true
 	}
 	if v.Not {
 		boolVal = !boolVal
 	}
-	v.SetInt64(boolToInt64(boolVal))
+	v.SetValue(boolToInt64(boolVal))
 	return true
 }
 
 func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	var boolVal bool
-	datum := v.Expr.GetDatum()
-	if datum.Kind() != types.KindNull {
-		ival, err := datum.ToBool()
+	val := v.Expr.GetValue()
+	if val != nil {
+		ival, err := types.ToBool(val)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -448,7 +451,7 @@ func (e *Evaluator) isTruth(v *ast.IsTruthExpr) bool {
 	if v.Not {
 		boolVal = !boolVal
 	}
-	v.GetDatum().SetInt64(boolToInt64(boolVal))
+	v.SetValue(boolToInt64(boolVal))
 	return true
 }
 
@@ -457,12 +460,12 @@ func (e *Evaluator) paramMarker(v *ast.ParamMarkerExpr) bool {
 }
 
 func (e *Evaluator) parentheses(v *ast.ParenthesesExpr) bool {
-	v.SetDatum(*v.Expr.GetDatum())
+	v.SetValue(v.Expr.GetValue())
 	return true
 }
 
 func (e *Evaluator) position(v *ast.PositionExpr) bool {
-	v.SetDatum(*v.Refer.Expr.GetDatum())
+	v.SetValue(v.Refer.Expr.GetValue())
 	return true
 }
 
@@ -481,82 +484,135 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 			e.err = errors.Errorf("%v", er)
 		}
 	}()
-	aDatum := u.V.GetDatum()
-	if aDatum.Kind() == types.KindNull {
-		u.SetNull()
+	a := u.V.GetValue()
+	if a == nil {
+		u.SetValue(nil)
 		return true
 	}
 	switch op := u.Op; op {
 	case opcode.Not:
-		n, err := aDatum.ToBool()
+		n, err := types.ToBool(a)
 		if err != nil {
 			e.err = errors.Trace(err)
 		} else if n == 0 {
-			u.SetInt64(1)
+			u.SetValue(int64(1))
 		} else {
-			u.SetInt64(0)
+			u.SetValue(int64(0))
 		}
 	case opcode.BitNeg:
 		// for bit operation, we will use int64 first, then return uint64
-		n, err := aDatum.ToInt64()
+		n, err := types.ToInt64(a)
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
 		}
-		u.SetUint64(uint64(^n))
+		u.SetValue(uint64(^n))
 	case opcode.Plus:
-		switch aDatum.Kind() {
-		case types.KindInt64,
-			types.KindUint64,
-			types.KindFloat64,
-			types.KindFloat32,
-			types.KindMysqlDuration,
-			types.KindMysqlTime,
-			types.KindString,
-			types.KindMysqlDecimal,
-			types.KindBytes,
-			types.KindMysqlHex,
-			types.KindMysqlBit,
-			types.KindMysqlEnum,
-			types.KindMysqlSet:
-			u.SetDatum(*aDatum)
+		switch x := a.(type) {
+		case bool:
+			u.SetValue(boolToInt64(x))
+		case float32:
+			u.SetValue(+x)
+		case float64:
+			u.SetValue(+x)
+		case int:
+			u.SetValue(+x)
+		case int8:
+			u.SetValue(+x)
+		case int16:
+			u.SetValue(+x)
+		case int32:
+			u.SetValue(+x)
+		case int64:
+			u.SetValue(+x)
+		case uint:
+			u.SetValue(+x)
+		case uint8:
+			u.SetValue(+x)
+		case uint16:
+			u.SetValue(+x)
+		case uint32:
+			u.SetValue(+x)
+		case uint64:
+			u.SetValue(+x)
+		case mysql.Duration:
+			u.SetValue(x)
+		case mysql.Time:
+			u.SetValue(x)
+		case string:
+			u.SetValue(x)
+		case mysql.Decimal:
+			u.SetValue(x)
+		case []byte:
+			u.SetValue(x)
+		case mysql.Hex:
+			u.SetValue(x)
+		case mysql.Bit:
+			u.SetValue(x)
+		case mysql.Enum:
+			u.SetValue(x)
+		case mysql.Set:
+			u.SetValue(x)
 		default:
 			e.err = ErrInvalidOperation
 			return false
 		}
 	case opcode.Minus:
-		switch aDatum.Kind() {
-		case types.KindInt64:
-			u.SetInt64(-aDatum.GetInt64())
-		case types.KindUint64:
-			u.SetInt64(-int64(aDatum.GetUint64()))
-		case types.KindFloat64:
-			u.SetFloat64(-aDatum.GetFloat64())
-		case types.KindFloat32:
-			u.SetFloat32(-aDatum.GetFloat32())
-		case types.KindMysqlDuration:
-			u.SetValue(mysql.ZeroDecimal.Sub(aDatum.GetMysqlDuration().ToNumber()))
-		case types.KindMysqlTime:
-			u.SetValue(mysql.ZeroDecimal.Sub(aDatum.GetMysqlTime().ToNumber()))
-		case types.KindString:
-			f, err := types.StrToFloat(aDatum.GetString())
+		switch x := a.(type) {
+		case bool:
+			if x {
+				u.SetValue(int64(-1))
+			} else {
+				u.SetValue(int64(0))
+			}
+		case float32:
+			u.SetValue(-x)
+		case float64:
+			u.SetValue(-x)
+		case int:
+			u.SetValue(-x)
+		case int8:
+			u.SetValue(-x)
+		case int16:
+			u.SetValue(-x)
+		case int32:
+			u.SetValue(-x)
+		case int64:
+			u.SetValue(-x)
+		case uint:
+			u.SetValue(-int64(x))
+		case uint8:
+			u.SetValue(-int64(x))
+		case uint16:
+			u.SetValue(-int64(x))
+		case uint32:
+			u.SetValue(-int64(x))
+		case uint64:
+			// TODO: check overflow and do more test for unsigned type
+			u.SetValue(-int64(x))
+		case mysql.Duration:
+			u.SetValue(mysql.ZeroDecimal.Sub(x.ToNumber()))
+		case mysql.Time:
+			u.SetValue(mysql.ZeroDecimal.Sub(x.ToNumber()))
+		case string:
+			f, err := types.StrToFloat(x)
 			e.err = errors.Trace(err)
-			u.SetFloat64(-f)
-		case types.KindMysqlDecimal:
-			f, _ := aDatum.GetMysqlDecimal().Float64()
+			u.SetValue(-f)
+		case mysql.Decimal:
+			f, _ := x.Float64()
 			u.SetValue(mysql.NewDecimalFromFloat(-f))
-		case types.KindBytes:
-			f, err := types.StrToFloat(string(aDatum.GetBytes()))
+		case []byte:
+			f, err := types.StrToFloat(string(x))
 			e.err = errors.Trace(err)
-			u.SetFloat64(-f)
-		case types.KindMysqlHex:
-			u.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
-		case types.KindMysqlBit:
-			u.SetFloat64(-aDatum.GetMysqlBit().ToNumber())
-		case types.KindMysqlEnum:
-			u.SetFloat64(-aDatum.GetMysqlEnum().ToNumber())
-		case types.KindMysqlSet:
-			u.SetFloat64(-aDatum.GetMysqlSet().ToNumber())
+			u.SetValue(-f)
+		case mysql.Hex:
+			u.SetValue(-x.ToNumber())
+		case mysql.Bit:
+			u.SetValue(-x.ToNumber())
+		case mysql.Enum:
+			u.SetValue(-x.ToNumber())
+		case mysql.Set:
+			u.SetValue(-x.ToNumber())
 		default:
 			e.err = ErrInvalidOperation
 			return false
@@ -570,7 +626,7 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 }
 
 func (e *Evaluator) values(v *ast.ValuesExpr) bool {
-	v.SetDatum(*v.Column.GetDatum())
+	v.SetValue(v.Column.GetValue())
 	return true
 }
 
@@ -581,11 +637,11 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	if !v.IsSystem {
 		// user vars
 		if value, ok := sessionVars.Users[name]; ok {
-			v.SetString(value)
+			v.SetValue(value)
 			return true
 		}
 		// select null user vars is permitted.
-		v.SetNull()
+		v.SetValue(nil)
 		return true
 	}
 
@@ -598,41 +654,21 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 
 	if !v.IsGlobal {
 		if value, ok := sessionVars.Systems[name]; ok {
-			v.SetString(value)
+			v.SetValue(value)
 			return true
 		}
 	}
-
 	value, err := globalVars.GetGlobalSysVar(e.ctx, name)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-
-	v.SetString(value)
+	v.SetValue(value)
 	return true
 }
 
 func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
-	of, ok := OldFuncs[v.FnName.L]
-	if ok {
-		if len(v.Args) < of.MinArgs || (of.MaxArgs != -1 && len(v.Args) > of.MaxArgs) {
-			e.err = ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", of.MinArgs, of.MaxArgs)
-			return false
-		}
-		a := make([]interface{}, len(v.Args))
-		for i, arg := range v.Args {
-			a[i] = arg.GetValue()
-		}
-		val, err := of.F(a, e.ctx)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return false
-		}
-		v.SetValue(val)
-		return true
-	}
-	f, ok := Funcs[v.FnName.L]
+	f, ok := builtin.Funcs[v.FnName.L]
 	if !ok {
 		e.err = ErrInvalidOperation.Gen("unknown function %s", v.FnName.O)
 		return false
@@ -641,16 +677,16 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 		e.err = ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", f.MinArgs, f.MaxArgs)
 		return false
 	}
-	a := make([]types.Datum, len(v.Args))
+	a := make([]interface{}, len(v.Args))
 	for i, arg := range v.Args {
-		a[i] = *arg.GetDatum()
+		a[i] = arg.GetValue()
 	}
 	val, err := f.F(a, e.ctx)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-	v.SetDatum(val)
+	v.SetValue(val)
 	return true
 }
 
@@ -658,7 +694,7 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 	value := v.Expr.GetValue()
 	// Casting nil to any type returns null
 	if value == nil {
-		v.SetNull()
+		v.SetValue(nil)
 		return true
 	}
 	var err error
@@ -669,6 +705,102 @@ func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
 	}
 	v.SetValue(value)
 	return true
+}
+
+func (e *Evaluator) funcDateArith(v *ast.FuncDateArithExpr) bool {
+	// health check for date and interval
+	nodeDate := v.Date.GetValue()
+	if nodeDate == nil {
+		v.SetValue(nil)
+		return true
+	}
+	nodeInterval := v.Interval.GetValue()
+	if nodeInterval == nil {
+		v.SetValue(nil)
+		return true
+	}
+	// parse date
+	fieldType := mysql.TypeDate
+	var resultField *types.FieldType
+	switch x := nodeDate.(type) {
+	case mysql.Time:
+		if (x.Type == mysql.TypeDatetime) || (x.Type == mysql.TypeTimestamp) {
+			fieldType = mysql.TypeDatetime
+		}
+	case string:
+		if !mysql.IsDateFormat(x) {
+			fieldType = mysql.TypeDatetime
+		}
+	case int64:
+		if t, err := mysql.ParseTimeFromInt64(x); err == nil {
+			if (t.Type == mysql.TypeDatetime) || (t.Type == mysql.TypeTimestamp) {
+				fieldType = mysql.TypeDatetime
+			}
+		}
+	}
+	if mysql.IsClockUnit(v.Unit) {
+		fieldType = mysql.TypeDatetime
+	}
+	resultField = types.NewFieldType(fieldType)
+	resultField.Decimal = mysql.MaxFsp
+	value, err := types.Convert(nodeDate, resultField)
+	if err != nil {
+		e.err = ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
+		return false
+	}
+	if value == nil {
+		e.err = ErrInvalidOperation.Gen("DateArith invalid args, need date but get %v", value)
+		return false
+	}
+	result, ok := value.(mysql.Time)
+	if !ok {
+		e.err = ErrInvalidOperation.Gen("DateArith need time type, but got %T", value)
+		return false
+	}
+	// parse interval
+	var interval string
+	if strings.ToLower(v.Unit) == "day" {
+		day, err2 := parseDayInterval(nodeInterval)
+		if err2 != nil {
+			e.err = ErrInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeInterval)
+			return false
+		}
+		interval = fmt.Sprintf("%d", day)
+	} else {
+		interval = fmt.Sprintf("%v", nodeInterval)
+	}
+	year, month, day, duration, err := mysql.ExtractTimeValue(v.Unit, interval)
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
+	if v.Op == ast.DateSub {
+		year, month, day, duration = -year, -month, -day, -duration
+	}
+	result.Time = result.Time.Add(duration)
+	result.Time = result.Time.AddDate(int(year), int(month), int(day))
+	if result.Time.Nanosecond() == 0 {
+		result.Fsp = 0
+	}
+	v.SetValue(result)
+	return true
+}
+
+var reg = regexp.MustCompile(`[\d]+`)
+
+func parseDayInterval(value interface{}) (int64, error) {
+	switch v := value.(type) {
+	case string:
+		s := strings.ToLower(v)
+		if s == "false" {
+			return 0, nil
+		} else if s == "true" {
+			return 1, nil
+		}
+		value = reg.FindString(v)
+	}
+
+	return types.ToInt64(value)
 }
 
 func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
@@ -688,7 +820,7 @@ func (e *Evaluator) aggregateFunc(v *ast.AggregateFuncExpr) bool {
 
 func (e *Evaluator) evalAggCount(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
-	v.SetInt64(ctx.Count)
+	v.SetValue(ctx.Count)
 }
 
 func (e *Evaluator) evalAggSetValue(v *ast.AggregateFuncExpr) {

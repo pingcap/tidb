@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package builtin
 
 import (
 	. "github.com/pingcap/check"
@@ -21,7 +21,12 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *testEvaluatorSuite) TestDatabase(c *C) {
+var _ = Suite(&testBuiltinInfoSuite{})
+
+type testBuiltinInfoSuite struct {
+}
+
+func (s *testBuiltinSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinDatabase(nil, ctx)
 	c.Assert(err, IsNil)
@@ -33,7 +38,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(v, Equals, "test")
 }
 
-func (s *testEvaluatorSuite) TestFoundRows(c *C) {
+func (s *testBuiltinSuite) TestFoundRows(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinFoundRows(nil, ctx)
 	c.Assert(err, NotNil)
@@ -45,7 +50,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	c.Assert(v, Equals, uint64(0))
 }
 
-func (s *testEvaluatorSuite) TestUser(c *C) {
+func (s *testBuiltinSuite) TestUser(c *C) {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -56,7 +61,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	c.Assert(v, Equals, "root@localhost")
 }
 
-func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
+func (s *testBuiltinSuite) TestCurrentUser(c *C) {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -67,7 +72,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	c.Assert(v, Equals, "root@localhost")
 }
 
-func (s *testEvaluatorSuite) TestConnectionID(c *C) {
+func (s *testBuiltinSuite) TestConnectionID(c *C) {
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -78,7 +83,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	c.Assert(v, Equals, uint64(1))
 }
 
-func (s *testEvaluatorSuite) TestVersion(c *C) {
+func (s *testBuiltinSuite) TestVersion(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinVersion(nil, ctx)
 	c.Assert(err, IsNil)

@@ -2,7 +2,6 @@ package ast
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 )
 
@@ -21,18 +20,14 @@ func (ts *testFunctionsSuite) TestAggregateFuncExtractor(c *C) {
 	c.Assert(extractor.AggFuncs[0], Equals, expr)
 
 	extractor = &AggregateFuncExtractor{}
-	expr = &FuncCallExpr{
-		FnName: model.NewCIStr("DATE_ARITH"),
-	}
+	expr = &FuncDateArithExpr{}
 	expr.Accept(extractor)
 	c.Assert(extractor.AggFuncs, HasLen, 0)
 
 	extractor = &AggregateFuncExtractor{}
 	r := &AggregateFuncExpr{}
 	expr = &BinaryOperationExpr{
-		L: &FuncCallExpr{
-			FnName: model.NewCIStr("DATE_ARITH"),
-		},
+		L: &FuncDateArithExpr{},
 		R: r,
 	}
 	expr.Accept(extractor)

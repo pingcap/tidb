@@ -1,0 +1,71 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+option java_outer_classname = "SelectProto";
+
+// MysqlType has the same constant value as MySQL.
+enum MysqlType {
+	TypeUnspecified = 0;
+	TypeTiny = 1;
+	TypeShort = 2;
+	TypeLong = 3;
+	TypeFloat = 4;
+	TypeDouble = 5;
+	TypeNull = 6;
+	TypeTimestamp = 7;
+	TypeLonglong = 8;
+	TypeInt24 = 9;
+	TypeDate = 10;
+	TypeDuration = 11;/* Original name was TypeTime, renamed to Duration to resolve the conflict with Go type Time.*/
+	TypeDatetime = 12;
+	TypeYear = 13;
+	TypeNewDate = 14;
+	TypeVarchar = 15;
+	TypeBit = 16;
+
+	TypeNewDecimal = 0xf6;
+	TypeEnum = 0xf7;
+	TypeSet = 0xf8;
+	TypeTinyBlob = 0xf9;
+	TypeMediumBlob = 0xfa;
+	TypeLongBlob = 0xfb;
+	TypeBlob = 0xfc;
+	TypeVarString = 0xfd;
+	TypeString = 0xfe;
+	TypeGeometry = 0xff;
+}
+
+// Collation has the same constant value as MySQL.
+enum Collation {
+	latin1_swedish_ci = 8;
+	utf8_general_ci = 33;
+	utf8mb4_general_ci = 45;
+	binary = 63;
+
+	// TODO: add more collations.
+}
+
+message TableInfo {
+	optional int64 table_id = 1;
+	repeated ColumnInfo columns = 2;
+}
+
+message ColumnInfo {
+	optional int64 column_id = 1;
+	optional MysqlType tp = 2;
+	optional Collation collation = 3;
+	optional int32 columnLen = 4;
+	optional int32 decimal = 5;
+	optional bool pk_handle = 6; // PK handle column value is row handle.
+	repeated string elems = 7;
+}
+
+message IndexInfo {
+	optional int64 table_id = 1;
+	optional int64 index_id = 2;
+	repeated ColumnInfo columns = 3;
+	optional bool unique = 4;
+}

@@ -248,11 +248,6 @@ func (t *MemoryTable) AllocAutoID() (int64, error) {
 	return t.alloc.Alloc(t.ID)
 }
 
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *MemoryTable) RebaseAutoID(newBase int64) error {
-	return t.alloc.Rebase(t.ID, newBase)
-}
-
 // IterRecords implements table.Table IterRecords interface.
 func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*column.Col,
 	fn table.RecordIterFunc) error {
