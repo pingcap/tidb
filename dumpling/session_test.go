@@ -443,6 +443,17 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIssue986(c *C) {
+	sqlText := `CREATE TABLE address (
+ 		id bigint(20) NOT NULL AUTO_INCREMENT,
+ 		PRIMARY KEY (id));`
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, sqlText)
+	sqlText = `insert into address values ('10')`
+	mustExecSQL(c, se, sqlText)
+
+}
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
