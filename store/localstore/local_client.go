@@ -3,10 +3,7 @@ package localstore
 import (
 	"io"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/xapi/tipb"
 )
 
 type localClient struct {
@@ -29,7 +26,7 @@ func (c *localClient) buildRespIterator(req *kv.Request) *respIterator {
 		client:      c,
 		concurrency: req.Concurrency,
 	}
-	it.buildRegionTasks(req)
+	it.tasks = buildRegionTasks(c, req)
 	if it.concurrency > len(it.tasks) {
 		it.concurrency = len(it.tasks)
 	}
@@ -101,14 +98,6 @@ func (r *localResponseReader) Close() error {
 	return nil
 }
 
-func (r *localResponseReader) rowToBytes(row *tipb.Row) ([]byte, error) {
-	bs, err := proto.Marshal(row)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return bs, err
-}
-
 type respIterator struct {
 	client      *localClient
 	reqSent     int
@@ -160,19 +149,17 @@ func (it *respIterator) createRetryTasks(resp *regionResponse) []*task {
 	return nil
 }
 
-func (it *respIterator) buildRegionTasks(req *kv.Request) {
+func buildRegionTasks(client *localClient, req *kv.Request) (tasks []*task) {
 	infoCursor := 0
 	rangeCursor := 0
 	var regionReq *regionRequest
-	infos := it.client.regionInfo
+	infos := client.regionInfo
 	for {
 		if rangeCursor >= len(req.KeyRanges) || infoCursor >= len(infos) {
 			break
 		}
 		info := infos[infoCursor]
 		ran := req.KeyRanges[rangeCursor]
-		//		log.Errorf("info start %q, end %q", info.startKey, info.endKey)
-		//		log.Errorf("range start %q, end %q", ran.StartKey, ran.EndKey)
 
 		rangeOnLeft := ran.EndKey.Cmp(info.startKey) <= 0
 		rangeOnRight := info.endKey.Cmp(ran.StartKey) <= 0
@@ -194,10 +181,11 @@ func (it *respIterator) buildRegionTasks(req *kv.Request) {
 				region:  info.rs,
 				request: regionReq,
 			}
-			it.tasks = append(it.tasks, task)
+			tasks = append(tasks, task)
 			infoCursor++
 		}
 	}
+	return
 }
 
 func (it *respIterator) Close() error {
@@ -223,5 +211,6 @@ func (it *respIterator) run() {
 			}
 		}()
 		it.taskChan <- it.tasks[i]
+		it.reqSent++
 	}
 }
