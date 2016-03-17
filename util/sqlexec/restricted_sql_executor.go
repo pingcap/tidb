@@ -18,14 +18,6 @@ import (
 	"github.com/pingcap/tidb/context"
 )
 
-// RestrictedSQLExecutorKeyType is a dummy type to avoid naming collision in session.
-type RestrictedSQLExecutorKeyType struct{}
-
-// String implements Stringer interface.
-func (k *RestrictedSQLExecutorKeyType) String() string {
-	return "restricted_sql_executor"
-}
-
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
 // Why we need this interface?
 // When we execute some management statements, we need to operate system tables.
