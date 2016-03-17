@@ -74,6 +74,8 @@ type Transaction interface {
 	SetOption(opt Option, val interface{})
 	// DelOption deletes an option.
 	DelOption(opt Option)
+	// IsReadOnly checks if the transaction has only performed read operations.
+	IsReadOnly() bool
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
