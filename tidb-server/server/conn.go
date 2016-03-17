@@ -86,6 +86,7 @@ func (cc *clientConn) handshake() error {
 		cc.writeError(err)
 		return errors.Trace(err)
 	}
+	log.Info("[conn] capability %v", cc.capability)
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
@@ -350,6 +351,11 @@ func (cc *clientConn) writeError(e error) error {
 }
 
 func (cc *clientConn) writeEOF() error {
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		// Expects an OK (instead of EOF) after the resultset rows of a Text Resultset.
+		// See: https://dev.mysql.com/doc/internals/en/capability-flags.html
+		return cc.writeOK()
+	}
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
@@ -463,8 +469,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 		row, err = rs.Next()
 	}
 
-	err = cc.writeEOF()
-	if err != nil {
+	if err = cc.writeEOF(); err != nil {
 		return errors.Trace(err)
 	}
 
