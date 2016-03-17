@@ -36,6 +36,7 @@ type hbaseTxn struct {
 	tid       uint64
 	valid     bool
 	version   kv.Version // commit version
+	dirty     bool
 }
 
 func newHbaseTxn(t themis.Txn, storeName string) *hbaseTxn {
@@ -57,6 +58,7 @@ func (txn *hbaseTxn) Get(k kv.Key) ([]byte, error) {
 
 func (txn *hbaseTxn) Set(k kv.Key, v []byte) error {
 	log.Debugf("[kv] set %q txn:%d", k, txn.tid)
+	txn.dirty = true
 	return txn.us.Set(k, v)
 }
 
@@ -71,6 +73,7 @@ func (txn *hbaseTxn) Seek(k kv.Key) (kv.Iterator, error) {
 
 func (txn *hbaseTxn) Delete(k kv.Key) error {
 	log.Debugf("[kv] delete %q txn:%d", k, txn.tid)
+	txn.dirty = true
 	return txn.us.Delete(k)
 }
 
@@ -153,4 +156,8 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 		}
 	}
 	return nil
+}
+
+func (txn *hbaseTxn) IsReadOnly() bool {
+	return !txn.dirty
 }
