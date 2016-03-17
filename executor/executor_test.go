@@ -351,44 +351,12 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 
 	insertSQL := `insert into insert_autoinc_test(c1) values (1), (2)`
 	tk.MustExec(insertSQL)
+
 	tk.MustExec("begin")
 	r := tk.MustQuery("select * from insert_autoinc_test;")
 	rowStr1 := fmt.Sprintf("%v %v", "1", "1")
 	rowStr2 := fmt.Sprintf("%v %v", "2", "2")
 	r.Check(testkit.Rows(rowStr1, rowStr2))
-	tk.MustExec("commit")
-
-	tk.MustExec("begin")
-	insertSQL = `insert into insert_autoinc_test(id, c1) values (5,5)`
-	tk.MustExec(insertSQL)
-	insertSQL = `insert into insert_autoinc_test(c1) values (6)`
-	tk.MustExec(insertSQL)
-	tk.MustExec("commit")
-	tk.MustExec("begin")
-	r = tk.MustQuery("select * from insert_autoinc_test;")
-	rowStr3 := fmt.Sprintf("%v %v", "5", "5")
-	rowStr4 := fmt.Sprintf("%v %v", "6", "6")
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3, rowStr4))
-	tk.MustExec("commit")
-
-	tk.MustExec("begin")
-	insertSQL = `insert into insert_autoinc_test(id, c1) values (3,3)`
-	tk.MustExec(insertSQL)
-	tk.MustExec("commit")
-	tk.MustExec("begin")
-	r = tk.MustQuery("select * from insert_autoinc_test;")
-	rowStr5 := fmt.Sprintf("%v %v", "3", "3")
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr5, rowStr3, rowStr4))
-	tk.MustExec("commit")
-
-	tk.MustExec("begin")
-	insertSQL = `insert into insert_autoinc_test(c1) values (7)`
-	tk.MustExec(insertSQL)
-	tk.MustExec("commit")
-	tk.MustExec("begin")
-	r = tk.MustQuery("select * from insert_autoinc_test;")
-	rowStr6 := fmt.Sprintf("%v %v", "7", "7")
-	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr5, rowStr3, rowStr4, rowStr6))
 	tk.MustExec("commit")
 }
 

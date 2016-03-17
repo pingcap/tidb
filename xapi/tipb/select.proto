@@ -1,0 +1,93 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+option java_outer_classname = "SelectProto";
+
+import "expression.proto";
+import "schema.proto";
+import "error.proto";
+
+// HandleRange specifies the range of handle to be scanned.
+// low is closed, high is open ( low <= value < high ).
+message HandleRange {
+	optional int64 low = 1;
+	optional int64 high = 2;
+}
+
+// SelectRequest works like a simplified select statement.
+message SelectRequest {
+	// transaction start timestamp.
+	optional int64 start_ts = 1;
+
+	// If table_info is not null, it represents a table scan, index_info would be null.
+	optional TableInfo table_info = 2;
+
+	// fields to be selected, fields type can be column reference for simple scan.
+	// or aggregation function.
+	repeated Expression fields = 3;
+
+	// disjoint handle ranges to be scanned.
+	repeated HandleRange ranges = 4;
+
+	// handle points to be looked up.
+	repeated int64 points = 5;
+
+	// where condition.
+	optional Expression where = 6;
+
+	// group by clause.
+	optional Expression group_by = 7;
+
+	// scan_limit should be greater than or equal to result_limit;
+	optional int64 scan_limit = 8;
+	optional int64 result_limit = 9;
+}
+
+// data is encoded.
+message Row {
+	optional int64 handle = 1;
+	optional bytes data = 2;
+}
+
+// Response for SelectRequest.
+message SelectResponse {
+	optional Error error = 1;
+
+	// Result rows.
+	repeated Row rows = 3;
+
+	// If the requested key range has not finished scanning.
+	// next_handle can be used to compose the range for the following request.
+	// null means there is no more data to scan.
+	optional int64 next_handle = 4;
+}
+
+// KeyRange is the encoded index key ranges.
+message KeyRange {
+	optional bytes low = 1;
+	optional bytes high = 2;
+}
+
+message IndexRequest {
+	// transaction start timestamp.
+	optional int64 start_ts = 1;
+
+	// If IndexInfo is not null, table_info would be null.
+	optional IndexInfo index_info = 2;
+
+	repeated KeyRange ranges = 3;
+
+	repeated bytes points = 4;
+
+	optional int64 limit = 5;
+}
+
+// IndexResponse is the
+message IndexResponse {
+	optional Error error = 1;
+	repeated int64 handles = 2;
+	optional bytes next_key = 3;
+}

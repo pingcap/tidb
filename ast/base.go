@@ -67,16 +67,6 @@ type exprNode struct {
 	flag uint64
 }
 
-// SetDatum implements Expression interface.
-func (en *exprNode) SetDatum(datum types.Datum) {
-	en.Datum = datum
-}
-
-// GetDatum implements Expression interface.
-func (en *exprNode) GetDatum() *types.Datum {
-	return &en.Datum
-}
-
 // SetType implements Expression interface.
 func (en *exprNode) SetType(tp *types.FieldType) {
 	en.Type = tp

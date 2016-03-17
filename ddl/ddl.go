@@ -594,10 +594,6 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintForeignKey {
-			// Ignore foreign key.
-			continue
-		}
 		if constr.Name != "" {
 			nameLower := strings.ToLower(constr.Name)
 			if constrNames[nameLower] {

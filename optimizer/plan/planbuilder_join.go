@@ -133,7 +133,7 @@ func newInnerJoinPath(leftPath, rightPath *joinPath, on *ast.OnCondition) *joinP
 	}
 	if len(rightPath.inners) != 0 {
 		innerJoin.inners = append(innerJoin.inners, rightPath.inners...)
-		innerJoin.conditions = append(innerJoin.conditions, rightPath.conditions...)
+		innerJoin.conditions = append(innerJoin.conditions, leftPath.conditions...)
 	} else {
 		innerJoin.inners = append(innerJoin.inners, rightPath)
 	}

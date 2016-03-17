@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package evaluator
+package builtin
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/types"
 )
 
-func (s *testEvaluatorSuite) TestAbs(c *C) {
+func (s *testBuiltinSuite) TestAbs(c *C) {
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -31,23 +30,21 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 		{float64(-3.14), float64(3.14)},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
-		v, err := builtinAbs(t["Arg"], nil)
+	for _, t := range tbl {
+		v, err := builtinAbs([]interface{}{t.Arg}, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Ret"][0])
+		c.Assert(v, DeepEquals, t.Ret)
 	}
 }
 
-func (s *testEvaluatorSuite) TestRand(c *C) {
-	v, err := builtinRand(make([]types.Datum, 0), nil)
+func (s *testBuiltinSuite) TestRand(c *C) {
+	v, err := builtinRand([]interface{}{}, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetFloat64(), Less, float64(1))
-	c.Assert(v.GetFloat64(), GreaterEqual, float64(0))
+	c.Assert(v, Less, float64(1))
+	c.Assert(v, GreaterEqual, float64(0))
 }
 
-func (s *testEvaluatorSuite) TestPow(c *C) {
+func (s *testBuiltinSuite) TestPow(c *C) {
 	tbl := []struct {
 		Arg []interface{}
 		Ret float64
@@ -58,12 +55,10 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		{[]interface{}{4, -2}, 0.0625},
 	}
 
-	Dtbl := tblToDtbl(tbl)
-
-	for _, t := range Dtbl {
-		v, err := builtinPow(t["Arg"], nil)
+	for _, t := range tbl {
+		v, err := builtinPow(t.Arg, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Ret"][0])
+		c.Assert(v, DeepEquals, t.Ret)
 	}
 
 	errTbl := []struct {
@@ -74,10 +69,9 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		{[]interface{}{1, "test"}},
 		{[]interface{}{1, nil}},
 	}
-
-	errDtbl := tblToDtbl(errTbl)
-	for _, t := range errDtbl {
-		_, err := builtinPow(t["Arg"], nil)
+	for _, t := range errTbl {
+		_, err := builtinPow(t.Arg, nil)
 		c.Assert(err, NotNil)
 	}
+
 }

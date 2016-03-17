@@ -76,9 +76,6 @@ type Table interface {
 	// AllocAutoID allocates an auto_increment ID for a new row.
 	AllocAutoID() (int64, error)
 
-	// RebaseAutoID rebases the auto_increment ID base.
-	RebaseAutoID(newBase int64) error
-
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 

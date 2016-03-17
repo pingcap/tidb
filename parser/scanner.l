@@ -297,7 +297,6 @@ avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
 begin		{b}{e}{g}{i}{n}
 between		{b}{e}{t}{w}{e}{e}{n}
 both		{b}{o}{t}{h}
-btree		{b}{t}{r}{e}{e}
 by		{b}{y}
 case		{c}{a}{s}{e}
 cast		{c}{a}{s}{t}
@@ -313,8 +312,6 @@ columns		{c}{o}{l}{u}{m}{n}{s}
 comment 	{c}{o}{m}{m}{e}{n}{t}
 commit		{c}{o}{m}{m}{i}{t}
 committed	{c}{o}{m}{m}{i}{t}{t}{e}{d}
-compact		{c}{o}{m}{p}{a}{c}{t}
-compressed	{c}{o}{m}{p}{r}{e}{s}{s}{e}{d}
 compression	{c}{o}{m}{p}{r}{e}{s}{s}{i}{o}{n}
 concat		{c}{o}{n}{c}{a}{t}
 concat_ws	{c}{o}{n}{c}{a}{t}_{w}{s}
@@ -353,7 +350,6 @@ div		{d}{i}{v}
 do		{d}{o}
 dual 		{d}{u}{a}{l}
 duplicate	{d}{u}{p}{l}{i}{c}{a}{t}{e}
-dynamic		{d}{y}{n}{a}{m}{i}{c}
 else		{e}{l}{s}{e}
 end		{e}{n}{d}
 engine		{e}{n}{g}{i}{n}{e}
@@ -365,7 +361,6 @@ explain		{e}{x}{p}{l}{a}{i}{n}
 extract		{e}{x}{t}{r}{a}{c}{t}
 fields		{f}{i}{e}{l}{d}{s}
 first		{f}{i}{r}{s}{t}
-fixed		{f}{i}{x}{e}{d}
 for		{f}{o}{r}
 foreign		{f}{o}{r}{e}{i}{g}{n}
 found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
@@ -377,7 +372,6 @@ grant		{g}{r}{a}{n}{t}
 grants		{g}{r}{a}{n}{t}{s}
 group		{g}{r}{o}{u}{p}
 group_concat	{g}{r}{o}{u}{p}_{c}{o}{n}{c}{a}{t}
-hash		{h}{a}{s}{h}
 having		{h}{a}{v}{i}{n}{g}
 high_priority	{h}{i}{g}{h}_{p}{r}{i}{o}{r}{i}{t}{y}
 hour		{h}{o}{u}{r}
@@ -439,12 +433,10 @@ repeatable	{r}{e}{p}{e}{a}{t}{a}{b}{l}{e}
 references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
 replace		{r}{e}{p}{l}{a}{c}{e}
-redundant	{r}{e}{d}{u}{n}{d}{a}{n}{t}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
 row 		{r}{o}{w}
-row_format	{r}{o}{w}_{f}{o}{r}{m}{a}{t}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 second		{s}{e}{c}{o}{n}{d}
@@ -670,8 +662,6 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return begin
 {between}		return between
 {both}			return both
-{btree}			lval.item = string(l.val)
-			return btree
 {by}			return by
 {case}			return caseKwd
 {cast}			lval.item = string(l.val)
@@ -696,10 +686,6 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return commit
 {committed}		lval.item = string(l.val)
 			return committed
-{compact}		lval.item = string(l.val)
-			return compact
-{compressed}		lval.item = string(l.val)
-			return compressed
 {compression}		lval.item = string(l.val)
 			return compression
 {concat}		lval.item = string(l.val)
@@ -770,8 +756,6 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {dual}			return dual
 {duplicate}		lval.item = string(l.val)
 			return duplicate
-{dynamic}		lval.item = string(l.val)
-			return dynamic
 {else}			return elseKwd
 {end}			lval.item = string(l.val)
 			return end
@@ -792,8 +776,6 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return fields
 {first}			lval.item = string(l.val)
 			return first
-{fixed}			lval.item = string(l.val)
-			return fixed
 {for}			return forKwd
 {foreign}		return foreign
 {found_rows}		lval.item = string(l.val)
@@ -808,8 +790,6 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {group}			return group
 {group_concat}		lval.item = string(l.val)
 			return groupConcat
-{hash}			lval.item = string(l.val)
-			return hash
 {having}		return having
 {high_priority}		return highPriority
 {hour}			lval.item = string(l.val)
@@ -906,15 +886,11 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return quarter
 {quick}			lval.item = string(l.val)
 			return quick
-redundant		lval.item = string(l.val)
-			return redundant
 {right}			return right
 {rollback}		lval.item = string(l.val)
 			return rollback
 {row}			lval.item = string(l.val)
 			return row
-{row_format}		lval.item = string(l.val)
-			return rowFormat
 {schema}		lval.item = string(l.val)
 			return schema
 {schemas}		return schemas
@@ -937,7 +913,7 @@ redundant		lval.item = string(l.val)
 			return repeat
 {repeatable}		lval.item = string(l.val)
 			return repeatable
-{regexp}		return regexpKwd
+{regexp}		return regexp
 {replace}		lval.item = string(l.val)
 			return replace
 {references}		return references

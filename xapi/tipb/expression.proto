@@ -1,0 +1,38 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+option java_outer_classname = "SelectProto";
+
+enum ExpressionType {
+	// children count 0.
+	// values are in text format.
+	Null = 0;
+	Int64 = 1;
+	Float64 = 2;
+	String = 3;
+	ColumnRef = 21;
+
+	// children count 2.
+	AndAnd = 101;
+	OrOr = 102;
+	Plus = 103;
+	Minus = 104;
+	EQ = 105;
+	GT = 106;
+	GE = 107;
+	LT = 108;
+	LE = 109;
+
+
+	// TODO: add more expression types.
+}
+
+// Evaluators should implement evaluation functions for every expression type.
+message Expression {
+	optional ExpressionType tp = 1;
+	optional bytes val = 2;
+	repeated Expression children = 3;
+}

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,30 +11,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package types
+package builtin
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&testDatumSuite{})
-
-type testDatumSuite struct {
+func TestT(t *testing.T) {
+	TestingT(t)
 }
 
-func (ts *testDatumSuite) TestDatum(c *C) {
-	values := []interface{}{
-		int64(1),
-		uint64(1),
-		1.1,
-		"abc",
-		[]byte("abc"),
-		[]int{1},
-	}
-	for _, val := range values {
-		var d Datum
-		d.SetValue(val)
-		x := d.GetValue()
-		c.Assert(x, DeepEquals, val)
-	}
+var _ = Suite(&testBuiltinSuite{})
+
+type testBuiltinSuite struct {
+}
+
+func (s *testBuiltinSuite) TestCoalesce(c *C) {
+	args := []interface{}{1, nil}
+	v, err := builtinCoalesce(args, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, 1)
+
+	args = []interface{}{nil, nil}
+	v, err = builtinCoalesce(args, nil)
+	c.Assert(err, IsNil)
+	c.Assert(v, IsNil)
 }
