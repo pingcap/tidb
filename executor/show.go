@@ -252,9 +252,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart,          // Sub_part
 				nil,              // Packed
 				"YES",            // Null
-				"BTREE",          // Index_type
+				idx.Tp.String(),  // Index_type
 				"",               // Comment
-				"",               // Index_comment
+				idx.Comment,      // Index_comment
 			)
 			e.rows = append(e.rows, &Row{Data: data})
 		}

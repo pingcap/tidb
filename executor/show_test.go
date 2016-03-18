@@ -37,4 +37,18 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
+
+	// Test case for index type and comment
+	tk.MustExec(`create table show_index (c int, index cIdx using hash (c) comment "index_comment_for_cIdx");`)
+	testSQL = "SHOW index from show_index;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	expectedRow := []interface{}{
+		"show_index", int64(1), "cIdx", int64(1), "c", "utf8_bin",
+		int64(0), nil, nil, "YES", "HASH", "", "index_comment_for_cIdx"}
+	row := result.Rows()[0]
+	c.Check(row, HasLen, len(expectedRow))
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
 }
