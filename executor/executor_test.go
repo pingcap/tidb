@@ -658,6 +658,16 @@ func (s *testSuite) TestUpdate(c *C) {
 	r.Check(testkit.Rows(rowStr1, rowStr2))
 	tk.MustExec("commit")
 
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists update_test;")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("create table update_test(id int not null auto_increment, name varchar(255), index(id))")
+	tk.MustExec("insert into update_test(name) values ('aa')")
+	_, err := tk.Exec("update update_test set id = null where name = 'aa'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), DeepEquals, "Column 'id' cannot be null")
+
 	tk.MustExec("drop table update_test")
 }
 

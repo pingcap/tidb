@@ -100,7 +100,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	id, err = alloc.Alloc(2)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(1))
+	c.Assert(id, Equals, int64(2))
 
 	alloc = autoid.NewAllocator(store, 1)
 	c.Assert(alloc, NotNil)
@@ -112,5 +112,10 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	id, err = alloc.Alloc(3)
 	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3210))
+	c.Assert(id, Equals, int64(3211))
+	err = alloc.Rebase(3, int64(6543), false)
+	c.Assert(err, IsNil)
+	id, err = alloc.Alloc(3)
+	c.Assert(err, IsNil)
+	c.Assert(id, Equals, int64(6544))
 }
