@@ -29,8 +29,13 @@ const (
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
+	// Alloc allocs the next autoID for table with tableID.
+	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	Alloc(tableID int64) (int64, error)
-	Rebase(tableID, newBase int64, isSetStep bool) error
+	// Rebase rebases the autoID base for table with tableID and the new base value.
+	// If allocIDs is true, it will allocate some IDs and save to the cache.
+	// If allocIDs is false, it will not allocate IDs.
+	Rebase(tableID, newBase int64, allocIDs bool) error
 }
 
 type allocator struct {
@@ -41,8 +46,8 @@ type allocator struct {
 	dbID  int64
 }
 
-// Rebase rebases the autoID base for table with tableID and the new base value.
-func (alloc *allocator) Rebase(tableID, newBase int64, isSetStep bool) error {
+// Rebase implements autoid.Allocator Rebase interface.
+func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	if tableID == 0 {
 		return errors.New("Invalid tableID")
 	}
@@ -68,8 +73,8 @@ func (alloc *allocator) Rebase(tableID, newBase int64, isSetStep bool) error {
 			return nil
 		}
 		newStep := newBase - end + step
-		if !isSetStep {
-			newStep = newBase - 1
+		if !allocIDs {
+			newStep = newBase - end
 		}
 		end, err = m.GenAutoTableID(alloc.dbID, tableID, newStep)
 		if err != nil {
@@ -78,15 +83,14 @@ func (alloc *allocator) Rebase(tableID, newBase int64, isSetStep bool) error {
 
 		alloc.end = end
 		alloc.base = newBase
-		if !isSetStep {
+		if !allocIDs {
 			alloc.base = alloc.end
 		}
 		return nil
 	})
 }
 
-// Alloc allocs the next autoID for table with tableID.
-// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
+// Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
 		return 0, errors.New("Invalid tableID")
@@ -136,14 +140,13 @@ type memoryAllocator struct {
 	dbID int64
 }
 
-// Rebase rebases the autoID base for table with tableID and the new base value.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64, isSetStep bool) error {
+// Rebase implements autoid.Allocator Rebase interface.
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	// TODO: implement it.
 	return nil
 }
 
-// Alloc allocs the next autoID for table with tableID.
-// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
+// Alloc implements autoid.Allocator Alloc interface.
 func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
 		return 0, errors.New("Invalid tableID")

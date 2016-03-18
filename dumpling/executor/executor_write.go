@@ -174,6 +174,9 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 			newHandle = newData[i]
 		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
+			if newData[i].Kind() == types.KindNull {
+				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
+			}
 			val, err := newData[i].ToInt64()
 			if err != nil {
 				return errors.Trace(err)
@@ -656,7 +659,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
 				continue
 			}
-			// Column value isn't nil or 0, and column is auto-increment, continue.
 			val, err := row[i].ToInt64()
 			if err != nil {
 				return errors.Trace(err)

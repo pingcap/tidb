@@ -746,7 +746,10 @@ func (d *ddl) handleTableOptions(options []*ast.TableOption, tbInfo *model.Table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err = tb.RebaseAutoID(int64(op.UintValue), false); err != nil {
+			// The operation of the minus 1 to make sure that the current value doesn't be used,
+			// the next Alloc operation will get this value.
+			// Its behavior is consistent with MySQL.
+			if err = tb.RebaseAutoID(int64(op.UintValue-1), false); err != nil {
 				return errors.Trace(err)
 			}
 		}
