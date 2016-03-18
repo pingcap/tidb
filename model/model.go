@@ -83,6 +83,7 @@ type TableInfo struct {
 	Indices    []*IndexInfo  `json:"index_info"`
 	State      SchemaState   `json:"state"`
 	PKIsHandle bool          `json:"pk_is_handle"`
+	Comment    string        `json:"comment"`
 }
 
 // Clone clones TableInfo.
@@ -114,6 +115,26 @@ func (i *IndexColumn) Clone() *IndexColumn {
 	return &ni
 }
 
+// IndexType is the type of index
+type IndexType int
+
+// String implements Stringer interface.
+func (t IndexType) String() string {
+	switch t {
+	case IndexTypeBtree:
+		return "BTREE"
+	case IndexTypeHash:
+		return "HASH"
+	}
+	return ""
+}
+
+// IndexTypes
+const (
+	IndexTypeBtree IndexType = iota + 1
+	IndexTypeHash
+)
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See: https://dev.mysql.com/doc/refman/5.7/en/create-index.html
@@ -125,6 +146,8 @@ type IndexInfo struct {
 	Unique  bool           `json:"is_unique"`  // Whether the index is unique.
 	Primary bool           `json:"is_primary"` // Whether the index is primary key.
 	State   SchemaState    `json:"state"`
+	Comment string         `json:"comment"`    // Comment
+	Tp      IndexType      `json:"index_type"` // Index type: Btree or Hash
 }
 
 // Clone clones IndexInfo.
