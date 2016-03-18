@@ -14,6 +14,7 @@
 package ast
 
 import (
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -198,15 +199,6 @@ func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// IndexType is the type of index
-type IndexType int
-
-// IndexTypes
-const (
-	IndexTypeBtree = iota + 1
-	IndexTypeHash
-)
-
 // IndexOption is the index options.
 //    KEY_BLOCK_SIZE [=] value
 //  | index_type
@@ -217,7 +209,7 @@ type IndexOption struct {
 	node
 
 	KeyBlockSize uint64
-	Tp           IndexType
+	Tp           model.IndexType
 	Comment      string
 }
 
@@ -259,6 +251,9 @@ type Constraint struct {
 
 	// Used for foreign key.
 	Refer *ReferenceDef
+
+	// Index Options
+	Option *IndexOption
 }
 
 // Accept implements Node Accept interface.
@@ -281,6 +276,13 @@ func (n *Constraint) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Refer = node.(*ReferenceDef)
+	}
+	if n.Option != nil {
+		node, ok := n.Option.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Option = node.(*IndexOption)
 	}
 	return v.Leave(n)
 }
