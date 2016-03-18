@@ -918,51 +918,122 @@ ColumnOptionListOpt:
 ConstraintElem:
 	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: $5.([]*ast.IndexColName)}
+		c := &ast.Constraint{
+			Tp: ast.ConstraintPrimaryKey, 
+			Keys: $5.([]*ast.IndexColName),
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
 			Keys:	$5.([]*ast.IndexColName),
 			Name:	$3.(string),
 		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		$$ = c
 	}
 |	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
 			Keys:	$5.([]*ast.IndexColName),
 			Name:	$2.(string),
 		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintKey,
 			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string)}
+			Name:	$2.(string),
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
 			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string)}
+			Name:	$2.(string),
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqIndex,
 			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string)}
+			Name:	$3.(string),
+		}
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if $4 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $4.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqKey,
 			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string)}
+			Name:	$3.(string),
+		}
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if $4 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $4.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"FOREIGN" "KEY" IndexName '(' IndexColNameList ')' ReferDef
 	{
@@ -1683,7 +1754,9 @@ IndexName:
 	}
 
 IndexOption:
-	{}
+	{
+		$$ = nil
+	}
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum 
 	{
 		$$ = &ast.IndexOption{
@@ -1693,7 +1766,7 @@ IndexOption:
 |	IndexType
 	{
 		$$ = &ast.IndexOption {
-			Tp: $1.(ast.IndexType),
+			Tp: $1.(model.IndexType),
 		}
 	}
 |	"COMMENT" stringLit
@@ -1706,15 +1779,17 @@ IndexOption:
 IndexType:
 	"USING" "BTREE"	
 	{
-		$$ = ast.IndexTypeBtree
+		$$ = model.IndexTypeBtree
 	}
 |	"USING" "HASH"
 	{
-		$$ = ast.IndexTypeHash
+		$$ = model.IndexTypeHash
 	}
 
 IndexTypeOpt:
-	{}
+	{
+		$$ = nil 
+	}
 |	IndexType
 	{
 		$$ = $1
