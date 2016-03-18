@@ -390,6 +390,40 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 	rowStr6 := fmt.Sprintf("%v %v", "7", "7")
 	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr5, rowStr3, rowStr4, rowStr6))
 	tk.MustExec("commit")
+
+	// issue-962
+	createSQL = `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
+	tk.MustExec(createSQL)
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (0.3, 1)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr1 = fmt.Sprintf("%v %v", "1", "1")
+	r.Check(testkit.Rows(rowStr1))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (-0.3, 2)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr2 = fmt.Sprintf("%v %v", "2", "2")
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (-3.3, 3)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr3 = fmt.Sprintf("%v %v", "-3", "3")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (4.3, 4)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr4 = fmt.Sprintf("%v %v", "4", "4")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4))
+	insertSQL = `insert into insert_autoinc_test(c1) values (5)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr5 = fmt.Sprintf("%v %v", "5", "5")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5))
+	insertSQL = `insert into insert_autoinc_test(id, c1) values (null, 6)`
+	tk.MustExec(insertSQL)
+	r = tk.MustQuery("select * from insert_autoinc_test;")
+	rowStr6 = fmt.Sprintf("%v %v", "6", "6")
+	r.Check(testkit.Rows(rowStr3, rowStr1, rowStr2, rowStr4, rowStr5, rowStr6))
 }
 
 func (s *testSuite) TestReplace(c *C) {
@@ -607,6 +641,33 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec(`UPDATE update_test SET name = "foo"`)
 	tk.CheckExecResult(2, 0)
 
+	// table option is auto-increment
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists update_test;")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("create table update_test(id int not null auto_increment, name varchar(255), primary key(id))")
+	tk.MustExec("insert into update_test(name) values ('aa')")
+	tk.MustExec("update update_test set id = 8 where name = 'aa'")
+	tk.MustExec("insert into update_test(name) values ('bb')")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from update_test;")
+	rowStr1 = fmt.Sprintf("%v %v", 8, []byte("aa"))
+	rowStr2 = fmt.Sprintf("%v %v", 9, []byte("bb"))
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	tk.MustExec("drop table if exists update_test;")
+	tk.MustExec("commit")
+	tk.MustExec("begin")
+	tk.MustExec("create table update_test(id int not null auto_increment, name varchar(255), index(id))")
+	tk.MustExec("insert into update_test(name) values ('aa')")
+	_, err := tk.Exec("update update_test set id = null where name = 'aa'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), DeepEquals, "Column 'id' cannot be null")
+
 	tk.MustExec("drop table update_test")
 }
 
@@ -787,7 +848,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 	}{
 		{
 			"select * from t",
-			testkit.Rows("-100", "0", "1", "2"),
+			testkit.Rows("-100", "1", "2", "3"),
 		},
 		{
 			"select * from t where a = 1",
@@ -795,37 +856,37 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 		},
 		{
 			"select * from t where a != 1",
-			testkit.Rows("-100", "0", "2"),
+			testkit.Rows("-100", "2", "3"),
 		},
 		{
 			"select * from t where a >= '1.1'",
-			testkit.Rows("2"),
+			testkit.Rows("2", "3"),
 		},
 		{
 			"select * from t where a < '1.1'",
-			testkit.Rows("-100", "0", "1"),
+			testkit.Rows("-100", "1"),
 		},
 		{
 			"select * from t where a > '-100.1' and a < 2",
-			testkit.Rows("-100", "0", "1"),
+			testkit.Rows("-100", "1"),
 		},
 		{
 			"select * from t where a is null",
 			testkit.Rows(),
 		}, {
 			"select * from t where a is true",
-			testkit.Rows("-100", "1", "2"),
+			testkit.Rows("-100", "1", "2", "3"),
 		}, {
 			"select * from t where a is false",
-			testkit.Rows("0"),
+			testkit.Rows(),
 		},
 		{
-			"select * from t where a in (0, 2)",
-			testkit.Rows("0", "2"),
+			"select * from t where a in (1, 2)",
+			testkit.Rows("1", "2"),
 		},
 		{
-			"select * from t where a between 0 and 1",
-			testkit.Rows("0", "1"),
+			"select * from t where a between 1 and 2",
+			testkit.Rows("1", "2"),
 		},
 	}
 

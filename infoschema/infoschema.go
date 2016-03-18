@@ -45,6 +45,7 @@ type InfoSchema interface {
 	IndexByName(schema, table, index model.CIStr) (*model.IndexInfo, bool)
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
+	AllocByID(id int64) (autoid.Allocator, bool)
 	ColumnByID(id int64) (*model.ColumnInfo, bool)
 	ColumnIndicesByID(id int64) ([]*model.IndexInfo, bool)
 	AllSchemaNames() []string
@@ -60,14 +61,15 @@ const (
 )
 
 type infoSchema struct {
-	schemaNameToID map[string]int64
-	tableNameToID  map[tableName]int64
-	columnNameToID map[columnName]int64
-	schemas        map[int64]*model.DBInfo
-	tables         map[int64]table.Table
-	columns        map[int64]*model.ColumnInfo
-	indices        map[indexName]*model.IndexInfo
-	columnIndices  map[int64][]*model.IndexInfo
+	schemaNameToID  map[string]int64
+	tableNameToID   map[tableName]int64
+	columnNameToID  map[columnName]int64
+	schemas         map[int64]*model.DBInfo
+	tables          map[int64]table.Table
+	tableAllocators map[int64]autoid.Allocator
+	columns         map[int64]*model.ColumnInfo
+	indices         map[indexName]*model.IndexInfo
+	columnIndices   map[int64][]*model.IndexInfo
 
 	// We should check version when change schema.
 	schemaMetaVersion int64
@@ -148,6 +150,11 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	val, ok = is.tables[id]
+	return
+}
+
+func (is *infoSchema) AllocByID(id int64) (val autoid.Allocator, ok bool) {
+	val, ok = is.tableAllocators[id]
 	return
 }
 
@@ -335,17 +342,30 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 		columnNameToID:    map[columnName]int64{},
 		schemas:           map[int64]*model.DBInfo{},
 		tables:            map[int64]table.Table{},
+		tableAllocators:   map[int64]autoid.Allocator{},
 		columns:           map[int64]*model.ColumnInfo{},
 		indices:           map[indexName]*model.IndexInfo{},
 		columnIndices:     map[int64][]*model.IndexInfo{},
 		schemaMetaVersion: schemaMetaVersion,
 	}
 	var err error
+	var hasOldInfo bool
+	infoschema := h.Get()
+	if infoschema != nil {
+		hasOldInfo = true
+	}
 	for _, di := range newInfo {
 		info.schemas[di.ID] = di
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
 			alloc := autoid.NewAllocator(h.store, di.ID)
+			if hasOldInfo {
+				val, ok := infoschema.AllocByID(t.ID)
+				if ok {
+					alloc = val
+				}
+			}
+			info.tableAllocators[t.ID] = alloc
 			info.tables[t.ID], err = table.TableFromMeta(alloc, t)
 			if err != nil {
 				return errors.Trace(err)

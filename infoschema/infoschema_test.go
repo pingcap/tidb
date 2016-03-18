@@ -140,6 +140,10 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(ok, IsFalse)
 	c.Assert(tb, IsNil)
 
+	alloc, ok := is.AllocByID(tbID)
+	c.Assert(ok, IsTrue)
+	c.Assert(alloc, NotNil)
+
 	tb, err = is.TableByName(dbName, tbName)
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
