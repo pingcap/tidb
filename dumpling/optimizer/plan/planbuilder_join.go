@@ -444,6 +444,7 @@ func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
 	}
 	for len(pathMap) > 0 {
 		next := p.nextPath(pathMap, availablePaths)
+		next.optimizeJoinOrder(availablePaths)
 		ordered = append(ordered, next)
 		delete(pathMap, next)
 		availablePaths = append(availablePaths, next)
@@ -456,9 +457,6 @@ func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
 			}
 		}
 		p.reattach(pathMap, availablePaths)
-		for path := range pathMap {
-			path.optimizeJoinOrder(availablePaths)
-		}
 	}
 	p.inners = ordered
 }
