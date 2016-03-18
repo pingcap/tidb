@@ -77,7 +77,9 @@ type Table interface {
 	AllocAutoID() (int64, error)
 
 	// RebaseAutoID rebases the auto_increment ID base.
-	RebaseAutoID(newBase int64) error
+	// If allocIDs is true, it will allocate some IDs and save to the cache.
+	// If allocIDs is false, it will not allocate IDs.
+	RebaseAutoID(newBase int64, allocIDs bool) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo

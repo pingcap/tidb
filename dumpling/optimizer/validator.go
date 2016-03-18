@@ -14,7 +14,9 @@
 package optimizer
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
 )
@@ -58,6 +60,8 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		v.checkBinaryOperation(x)
 	case *ast.ByItem:
 		v.checkAllOneColumn(x.Expr)
+	case *ast.CreateTableStmt:
+		v.checkAutoIncrement(x)
 	case *ast.CompareSubqueryExpr:
 		v.checkSameColumns(x.L, x.R)
 	case *ast.FieldList:
@@ -94,6 +98,99 @@ func (v *validator) checkAllOneColumn(exprs ...ast.ExprNode) {
 		}
 	}
 	return
+}
+
+func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
+	var hasAutoIncrement bool
+
+	if colDef.Options[num].Tp == ast.ColumnOptionAutoIncrement {
+		hasAutoIncrement = true
+		if len(colDef.Options) == num+1 {
+			return hasAutoIncrement, nil
+		}
+		for _, op := range colDef.Options[num+1:] {
+			if op.Tp == ast.ColumnOptionDefaultValue {
+				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
+			}
+		}
+	}
+	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
+		for _, op := range colDef.Options[num+1:] {
+			if op.Tp == ast.ColumnOptionAutoIncrement {
+				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
+			}
+		}
+	}
+
+	return hasAutoIncrement, nil
+}
+
+func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
+	for _, c := range constraints {
+		if len(c.Keys) < 1 {
+		}
+		// If the constraint as follows: primary key(c1, c2)
+		// we only support c1 column can be auto_increment.
+		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
+			continue
+		}
+		switch c.Tp {
+		case ast.ConstraintPrimaryKey, ast.ConstraintKey, ast.ConstraintIndex,
+			ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
+			return true
+		}
+	}
+
+	return false
+}
+
+func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
+	var (
+		isKey            bool
+		count            int
+		autoIncrementCol *ast.ColumnDef
+	)
+
+	for _, colDef := range stmt.Cols {
+		var hasAutoIncrement bool
+		for i, op := range colDef.Options {
+			ok, err := checkAutoIncrementOp(colDef, i)
+			if err != nil {
+				v.err = err
+				return
+			}
+			if ok {
+				hasAutoIncrement = true
+			}
+			switch op.Tp {
+			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey, ast.ColumnOptionUniqIndex,
+				ast.ColumnOptionUniq, ast.ColumnOptionKey, ast.ColumnOptionIndex:
+				isKey = true
+			}
+		}
+		if hasAutoIncrement {
+			count++
+			autoIncrementCol = colDef
+		}
+	}
+
+	if count < 1 {
+		return
+	}
+
+	if !isKey {
+		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
+	}
+	if !isKey || count > 1 {
+		v.err = errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")
+	}
+
+	switch autoIncrementCol.Tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
+	default:
+		v.err = errors.Errorf("Incorrect column specifier for column '%s'", autoIncrementCol.Name.Name.O)
+	}
 }
 
 func (v *validator) checkBinaryOperation(x *ast.BinaryOperationExpr) {
