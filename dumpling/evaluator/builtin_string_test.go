@@ -24,9 +24,9 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
-	v, err := builtinLength([]interface{}{nil}, nil)
+	d, err := builtinLength(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	tbl := []struct {
 		Input    interface{}
@@ -41,10 +41,12 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{mysql.Set{Value: 1, Name: "abc"}, 3},
 	}
 
-	for _, t := range tbl {
-		v, err = builtinLength([]interface{}{t.Input}, nil)
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err = builtinLength(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Expected)
+		c.Assert(d, DatumEquals, t["Expected"][0])
 	}
 }
 
@@ -71,82 +73,83 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
-	args := []interface{}{nil}
+	args := types.MakeDatums([]interface{}{nil}...)
 
 	v, err := builtinConcatWS(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	args = []interface{}{"|", "a", nil, "b", "c"}
+	args = types.MakeDatums([]interface{}{"|", "a", nil, "b", "c"}...)
+
 	v, err = builtinConcatWS(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "a|b|c")
+	c.Assert(v.GetString(), Equals, "a|b|c")
 
-	args = []interface{}{errors.New("must error")}
+	args = types.MakeDatums([]interface{}{errors.New("must error")}...)
 	_, err = builtinConcatWS(args, nil)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
-	args := []interface{}{"abcdefg", int64(2)}
+	args := types.MakeDatums([]interface{}{"abcdefg", int64(2)}...)
 	v, err := builtinLeft(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "ab")
+	c.Assert(v.GetString(), Equals, "ab")
 
-	args = []interface{}{"abcdefg", int64(-1)}
+	args = types.MakeDatums([]interface{}{"abcdefg", int64(-1)}...)
 	v, err = builtinLeft(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 
-	args = []interface{}{"abcdefg", int64(100)}
+	args = types.MakeDatums([]interface{}{"abcdefg", int64(100)}...)
 	v, err = builtinLeft(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "abcdefg")
+	c.Assert(v.GetString(), Equals, "abcdefg")
 
-	args = []interface{}{1, int64(1)}
+	args = types.MakeDatums([]interface{}{1, int64(1)}...)
 	_, err = builtinLeft(args, nil)
 	c.Assert(err, IsNil)
 
-	args = []interface{}{"abcdefg", "xxx"}
+	args = types.MakeDatums([]interface{}{"abcdefg", "xxx"}...)
 	_, err = builtinLeft(args, nil)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	args := []interface{}{"a", int64(2)}
-	v, err := builtinRepeat(args, nil)
+	v, err := builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "aa")
+	c.Assert(v.GetString(), Equals, "aa")
 
 	args = []interface{}{"a", uint64(2)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "aa")
+	c.Assert(v.GetString(), Equals, "aa")
 
 	args = []interface{}{"a", int64(-1)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 
 	args = []interface{}{"a", int64(0)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 
 	args = []interface{}{"a", uint64(0)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 }
 
 func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
-	v, err := builtinLower([]interface{}{nil}, nil)
+	d, err := builtinLower(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
-	v, err = builtinUpper([]interface{}{nil}, nil)
+	d, err = builtinUpper(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	tbl := []struct {
 		Input  interface{}
@@ -156,15 +159,16 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 		{1, "1"},
 	}
 
-	for _, t := range tbl {
-		args := []interface{}{t.Input}
-		v, err = builtinLower(args, nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Expect)
+	dtbl := tblToDtbl(tbl)
 
-		v, err = builtinUpper(args, nil)
+	for _, t := range dtbl {
+		d, err = builtinLower(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, strings.ToUpper(t.Expect))
+		c.Assert(d, DatumEquals, t["Expect"][0])
+
+		d, err = builtinUpper(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, strings.ToUpper(t["Expect"][0].GetString()))
 	}
 }
 
