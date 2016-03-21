@@ -46,20 +46,23 @@ func builtinLength(args []interface{}, _ context.Context) (v interface{}, err er
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
-func builtinConcat(args []interface{}, _ context.Context) (v interface{}, err error) {
+func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var s []byte
 	for _, a := range args {
-		if a == nil {
-			return nil, nil
+		if a.Kind() == types.KindNull {
+			d.SetNull()
+			return d, nil
 		}
-		ss, err := types.ToString(a)
+		var ss string
+		ss, err = a.ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			d.SetNull()
+			return d, errors.Trace(err)
 		}
 		s = append(s, []byte(ss)...)
 	}
-
-	return string(s), nil
+	d.SetBytesAsString(s)
+	return d, nil
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws

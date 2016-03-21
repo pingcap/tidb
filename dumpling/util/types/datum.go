@@ -112,7 +112,12 @@ func (d *Datum) GetString() string {
 // SetString sets string value.
 func (d *Datum) SetString(s string) {
 	d.k = KindString
+	sink(s)
 	d.b = hack.Slice(s)
+}
+
+// sink prevents s from being allocated on the stack.
+var sink = func(s string) {
 }
 
 // GetBytes gets bytes value.
@@ -1163,6 +1168,40 @@ func (d *Datum) ToFloat64() (float64, error) {
 		return d.GetMysqlSet().ToNumber(), nil
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to float64", d.GetValue(), d.GetValue())
+	}
+}
+
+// ToString gets the string representation of the datum.
+func (d *Datum) ToString() (string, error) {
+	switch d.Kind() {
+	case KindInt64:
+		return strconv.FormatInt(d.GetInt64(), 10), nil
+	case KindUint64:
+		return strconv.FormatUint(d.GetUint64(), 10), nil
+	case KindFloat32:
+		return strconv.FormatFloat(float64(d.GetFloat32()), 'f', -1, 32), nil
+	case KindFloat64:
+		return strconv.FormatFloat(float64(d.GetFloat64()), 'f', -1, 64), nil
+	case KindString:
+		return d.GetString(), nil
+	case KindBytes:
+		return d.GetString(), nil
+	case KindMysqlTime:
+		return d.GetMysqlTime().String(), nil
+	case KindMysqlDuration:
+		return d.GetMysqlDuration().String(), nil
+	case KindMysqlDecimal:
+		return d.GetMysqlDecimal().String(), nil
+	case KindMysqlHex:
+		return d.GetMysqlHex().ToString(), nil
+	case KindMysqlBit:
+		return d.GetMysqlBit().ToString(), nil
+	case KindMysqlEnum:
+		return d.GetMysqlEnum().String(), nil
+	case KindMysqlSet:
+		return d.GetMysqlSet().String(), nil
+	default:
+		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
@@ -50,22 +51,22 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	args := []interface{}{nil}
 
-	v, err := builtinConcat(args, nil)
+	v, err := builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
 	args = []interface{}{"a", "b", "c"}
-	v, err = builtinConcat(args, nil)
+	v, err = builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "abc")
+	c.Assert(v.GetString(), Equals, "abc")
 
 	args = []interface{}{"a", "b", nil, "c"}
-	v, err = builtinConcat(args, nil)
+	v, err = builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
 	args = []interface{}{errors.New("must error")}
-	_, err = builtinConcat(args, nil)
+	_, err = builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, NotNil)
 }
 
