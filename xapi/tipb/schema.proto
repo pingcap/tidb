@@ -1,0 +1,29 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+message TableInfo {
+	optional int64 table_id = 1;
+	repeated ColumnInfo columns = 2;
+}
+
+message ColumnInfo {
+	optional int64 column_id = 1;
+	optional int32 tp = 2; // MySQL type.
+	optional int32 collation = 3;
+	optional int32 columnLen = 4;
+	optional int32 decimal = 5;
+	optional int32 flag = 6;
+	repeated string elems = 7;
+	optional bool pk_handle = 21; // PK handle column value is row handle.
+}
+
+message IndexInfo {
+	optional int64 table_id = 1;
+	optional int64 index_id = 2;
+	repeated ColumnInfo columns = 3;
+	optional bool unique = 4;
+}

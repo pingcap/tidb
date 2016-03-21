@@ -1,0 +1,147 @@
+syntax = "proto2";
+
+package tipb;
+
+option java_multiple_files = true;
+option java_package = "com.pingcap.tidb.tipb";
+
+enum ExprType {
+	/* Children count 0. */
+	// Values are encoded bytes.
+	Null = 0;
+	Int64 = 1;
+	Uint64 = 2;
+	Float32 = 3;
+	Float64 = 4;
+	String = 5;
+	Bytes = 6;
+
+	// Mysql specific types.
+	MysqlBit = 101;
+	MysqlDecimal = 102;
+	MysqlDuration = 103;
+	MysqlEnum = 104;
+	MysqlHex = 105;
+	MysqlSet = 106;
+	MysqlTime = 107;
+
+	// Column reference. value is int64 column ID.
+	ColumnRef = 201;
+
+	/* Unary operations, children count 1. */
+	Not = 1001;
+	Neg = 1002;
+	BitNeg = 1003;
+
+	/* Binary operations, children count 2. */
+	// Comparison operations.
+	LT = 2001;
+	LE = 2002;
+	EQ = 2003;
+	NE = 2004;
+	GE = 2005;
+	GT = 2006;
+	NullEQ = 2007;
+
+	// Bit operations.
+	BitAnd = 2101;
+	BitOr = 2102;
+	BitXor = 2103;
+	LeftShift = 2104;
+	RighShift = 2105;
+
+	// Arithmatic.
+	Plus = 2201;
+	Minus = 2202;
+	Mul = 2203;
+	Div = 2204;
+	IntDiv = 2205;
+	Mod = 2206;
+
+	// Logic operations.
+	And = 2301;
+	Or = 2302;
+	Xor = 2303;
+
+	/* Mysql functions, children count is function specific. */
+	// Aggregate functions.
+	Count = 3001;
+	Sum = 3002;
+	Avg = 3003;
+	Min = 3004;
+	Max = 3005;
+	First = 3006;
+	GroupConcat = 3007;
+
+	// Math functions.
+	Abs = 3101;
+	Pow = 3102;
+
+	// String functions.
+	Concat = 3201;
+	ConcatWS = 3202;
+	Left = 3203;
+	Length = 3204;
+	Lower = 3205;
+	Repeat = 3206;
+	Replace = 3207;
+	Upper = 3208;
+	Strcmp = 3209;
+	Convert = 3210;
+	Cast = 3211;
+	Substring = 3212;
+	SubstringIndex = 3213;
+	Locate = 3214;
+	Trim = 3215;
+
+	// Control flow functions.
+	If = 3301;
+	NullIf = 3302;
+	IfNull = 3303;
+
+	// Time functions.
+	Date = 3401;
+	DateAdd = 3402;
+	DateSub = 3403;
+
+	Year = 3411;
+	YearWeek = 3412;
+
+	Month = 3421;
+
+	Week = 3431;
+	Weekday = 3432;
+	WeekOfYear = 3433;
+
+	Day = 3441;
+	DayName = 3442;
+	DayOfYear = 3443;
+	DayOfMonth = 3444;
+	DayOfWeek = 3445;
+
+	Hour = 3451;
+	Minute = 3452;
+	Second = 3453;
+	Microsecond = 3454;
+
+	Extract = 3461;
+
+	// Other functions;
+	Coalesce = 3501;
+
+	/* Other expressions. */
+	In = 4001;
+	IsTruth = 4002;
+	IsNull = 4003;
+	ExprRow = 4004;
+	Like = 4005;
+	RLike = 4006;
+	Case = 4007;
+}
+
+// Evaluators should implement evaluation functions for every expression type.
+message Expr {
+	optional ExprType tp = 1;
+	optional bytes val = 2;
+	repeated Expr children = 3;
+}

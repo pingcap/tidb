@@ -90,7 +90,7 @@ check:
 	@echo "vet --shadow"
 	@ go tool vet --shadow . 2>&1 | grep -vE 'Godeps' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ $(GOLINT) ./... 2>&1 | grep -vE 'LastInsertId|NewLexer' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ $(GOLINT) ./... 2>&1 | grep -vE 'LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 
