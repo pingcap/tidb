@@ -125,6 +125,8 @@ type Response interface {
 	// Next returns a resultSubset from a single storage unit.
 	// When full result set is returned, nil is returned.
 	Next() (resultSubset io.ReadCloser, err error)
+	// Close response.
+	Close() error
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.
