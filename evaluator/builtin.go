@@ -54,7 +54,6 @@ var OldFuncs = map[string]OldFunc{
 	"nullif": {builtinNullIf, 2, 2, true, false},
 
 	// string functions
-	"concat":          {builtinConcat, 1, -1, true, false},
 	"concat_ws":       {builtinConcatWS, 2, -1, true, false},
 	"left":            {builtinLeft, 2, 2, true, false},
 	"length":          {builtinLength, 1, 1, true, false},
@@ -115,6 +114,9 @@ var Funcs = map[string]Func{
 	"yearweek":          {builtinYearWeek, 1, 2},
 	"extract":           {builtinExtract, 2, 2},
 	"date_arith":        {builtinDateArith, 3, 3},
+
+	// string functions
+	"concat": {builtinConcat, 1, -1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
