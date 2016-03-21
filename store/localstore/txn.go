@@ -139,3 +139,22 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 func (txn *dbTxn) IsReadOnly() bool {
 	return !txn.dirty
 }
+
+func (txn *dbTxn) StartTS() int64 {
+	return int64(txn.tid)
+}
+
+func (txn *dbTxn) GetClient() kv.Client {
+	return nil
+}
+
+type dbClient struct {
+}
+
+func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
+	return false
+}
+
+func (c *dbClient) Send(req *kv.Request) kv.Response {
+	return nil
+}
