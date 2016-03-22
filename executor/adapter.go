@@ -75,6 +75,10 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		e = executorExec.StmtExec
 		if val := getInsertValues(e); val != nil {
 			val.IsPrepare = true
+			// It's used to insert or replace retry.
+			if len(val.AutoIncrementIDs) <= len(a.plan.(*plan.Execute).AutoIncrementIDs) {
+				copy(val.AutoIncrementIDs, a.plan.(*plan.Execute).AutoIncrementIDs)
+			}
 		}
 	}
 
@@ -87,7 +91,7 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 				return nil, errors.Trace(err)
 			}
 			if row == nil {
-				// It's used to insert retry.
+				// It's used to insert or replace retry.
 				changeInsertValueForRetry(a.plan, e)
 				return nil, nil
 			}
@@ -119,7 +123,15 @@ func getInsertValues(e Executor) *InsertValues {
 
 func changeInsertValueForRetry(p plan.Plan, e Executor) {
 	val := getInsertValues(e)
-	if val == nil || val.IsPrepare {
+	if val == nil {
+		return
+	}
+	if val.IsPrepare {
+		execPlan := p.(*plan.Execute)
+		// The Insert Plan AutoIncrementIDs's initial length is 0.
+		if len(execPlan.AutoIncrementIDs) == 0 {
+			execPlan.AutoIncrementIDs = append(execPlan.AutoIncrementIDs, val.AutoIncrementIDs...)
+		}
 		return
 	}
 

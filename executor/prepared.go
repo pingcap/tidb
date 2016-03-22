@@ -161,12 +161,13 @@ func (e *PrepareExec) DoPrepare() {
 // ExecuteExec represents an EXECUTE executor.
 // It executes a prepared statement.
 type ExecuteExec struct {
-	IS        infoschema.InfoSchema
-	Ctx       context.Context
-	Name      string
-	UsingVars []ast.ExprNode
-	ID        uint32
-	StmtExec  Executor
+	IS               infoschema.InfoSchema
+	Ctx              context.Context
+	Name             string
+	UsingVars        []ast.ExprNode
+	ID               uint32
+	StmtExec         Executor
+	AutoIncrementIDs []int64
 }
 
 // Fields implements Executor Fields interface.

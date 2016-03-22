@@ -318,11 +318,12 @@ func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plan.Execute) Executor {
 	return &ExecuteExec{
-		Ctx:       b.ctx,
-		IS:        b.is,
-		Name:      v.Name,
-		UsingVars: v.UsingVars,
-		ID:        v.ID,
+		Ctx:              b.ctx,
+		IS:               b.is,
+		Name:             v.Name,
+		UsingVars:        v.UsingVars,
+		ID:               v.ID,
+		AutoIncrementIDs: v.AutoIncrementIDs,
 	}
 }
 
@@ -371,10 +372,11 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	ivs := &InsertValues{
-		ctx:     b.ctx,
-		Columns: v.Columns,
-		Lists:   v.Lists,
-		Setlist: v.Setlist,
+		ctx:              b.ctx,
+		Columns:          v.Columns,
+		Lists:            v.Lists,
+		Setlist:          v.Setlist,
+		AutoIncrementIDs: make([]int64, len(v.Lists)),
 	}
 	if v.SelectPlan != nil {
 		ivs.SelectExec = b.build(v.SelectPlan)

@@ -76,7 +76,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 	case *ast.DropTableStmt:
 		return b.buildDDL(x)
 	case *ast.ExecuteStmt:
-		return &Execute{Name: x.Name, UsingVars: x.UsingVars}
+		return &Execute{Name: x.Name, UsingVars: x.UsingVars, AutoIncrementIDs: make([]int64, 0)}
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
 	case *ast.InsertStmt:

@@ -391,9 +391,10 @@ func (p *Prepare) Accept(v Visitor) (Plan, bool) {
 type Execute struct {
 	basePlan
 
-	Name      string
-	UsingVars []ast.ExprNode
-	ID        uint32
+	Name             string
+	UsingVars        []ast.ExprNode
+	ID               uint32
+	AutoIncrementIDs []int64
 }
 
 // Accept implements Plan Accept interface.
