@@ -24,10 +24,13 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
+// KindType is a dummy type to avoid naming collision in context.
+type KindType int
+
 // Kind constants.
 const (
-	KindNull  int = 0
-	KindInt64 int = iota + 1
+	KindNull  KindType = 0
+	KindInt64 KindType = iota + 1
 	KindUint64
 	KindFloat32
 	KindFloat64
@@ -46,17 +49,61 @@ const (
 	KindMaxValue
 )
 
+// String defines a Stringer function for debugging and pretty printing.
+func (k KindType) String() string {
+	switch k {
+	case KindNull:
+		return "KindNull"
+	case KindInt64:
+		return "KindInt64"
+	case KindUint64:
+		return "KindUint64"
+	case KindFloat32:
+		return "KindFloat32"
+	case KindFloat64:
+		return "KindFloat64"
+	case KindString:
+		return "KindString"
+	case KindBytes:
+		return "KindBytes"
+	case KindMysqlBit:
+		return "KindMysqlBit"
+	case KindMysqlDecimal:
+		return "KindMysqlDecimal"
+	case KindMysqlDuration:
+		return "KindMysqlDuration"
+	case KindMysqlEnum:
+		return "KindMysqlEnum"
+	case KindMysqlHex:
+		return "KindMysqlHex"
+	case KindMysqlSet:
+		return "KindMysqlSet"
+	case KindMysqlTime:
+		return "KindMysqlTime"
+	case KindRow:
+		return "KindRow"
+	case KindInterface:
+		return "KindInterface"
+	case KindMinNotNull:
+		return "KindMinNotNull"
+	case KindMaxValue:
+		return "KindMaxValue"
+	default:
+		return ""
+	}
+}
+
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k int         // datum kind.
+	k KindType    // datum kind.
 	i int64       // i can hold int64 uint64 float64 values.
 	b []byte      // b can hold string or []byte values.
 	x interface{} // f hold all other types.
 }
 
 // Kind gets the kind of the datum.
-func (d *Datum) Kind() int {
+func (d *Datum) Kind() KindType {
 	return d.k
 }
 
