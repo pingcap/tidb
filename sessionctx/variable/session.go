@@ -14,8 +14,45 @@
 package variable
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 )
+
+// RetryInfo saves retry infomation.
+type RetryInfo struct {
+	Retrying         bool
+	currRetryOff     int
+	autoIncrementIDs []int64
+}
+
+// Clean does some clean work.
+func (r *RetryInfo) Clean() {
+	r.currRetryOff = 0
+	if len(r.autoIncrementIDs) > 0 {
+		r.autoIncrementIDs = r.autoIncrementIDs[:0]
+	}
+}
+
+// AddAutoIncrementID adds id to AutoIncrementIDs.
+func (r *RetryInfo) AddAutoIncrementID(id int64) {
+	r.autoIncrementIDs = append(r.autoIncrementIDs, id)
+}
+
+// ResetOffset resets the current retry offset.
+func (r *RetryInfo) ResetOffset() {
+	r.currRetryOff = 0
+}
+
+// GetCurrAutoIncrementID gets current AutoIncrementID.
+func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
+	if r.currRetryOff >= len(r.autoIncrementIDs) {
+		return 0, errors.New("cannot get valid auto-increment id in retry")
+	}
+	id := r.autoIncrementIDs[r.currRetryOff]
+	r.currRetryOff++
+
+	return id, nil
+}
 
 // SessionVars is to handle user-defined or global variables in current session.
 type SessionVars struct {
@@ -24,11 +61,13 @@ type SessionVars struct {
 	// system variables
 	Systems map[string]string
 	// prepared statement
-	PreparedStmts map[uint32]interface{}
-
+	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
 	// prepared statement auto increment id
 	preparedStmtID uint32
+
+	// retry infomation
+	RetryInfo *RetryInfo
 
 	// following variables are special for current session
 	Status       uint16
@@ -65,6 +104,7 @@ func BindSessionVars(ctx context.Context) {
 		Systems:              make(map[string]string),
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
+		RetryInfo:            &RetryInfo{},
 	}
 
 	ctx.SetValue(sessionVarsKey, v)

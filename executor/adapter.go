@@ -84,8 +84,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 				return nil, errors.Trace(err)
 			}
 			if row == nil {
-				// It's used to insert retry.
-				changeInsertValueForRetry(a.plan, e)
 				return nil, nil
 			}
 		}
@@ -101,20 +99,4 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		executor: e,
 		fields:   fs,
 	}, nil
-}
-
-func changeInsertValueForRetry(p plan.Plan, e Executor) {
-	if v, ok := p.(*plan.Insert); ok {
-		var insertValue *InsertValues
-		if !v.IsReplace {
-			insertValue = e.(*InsertExec).InsertValues
-		} else {
-			insertValue = e.(*ReplaceExec).InsertValues
-		}
-		v.Columns = insertValue.Columns
-		v.Setlist = insertValue.Setlist
-		if len(v.Setlist) == 0 {
-			v.Lists = insertValue.Lists
-		}
-	}
 }

@@ -356,7 +356,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	mustExecSQL(c, se, "drop table if exists t")
 	c.Assert(se.(*session).txn, IsNil)
 	mustExecSQL(c, se, "create table t (c2 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
-	mustExecSQL(c, se, "insert into t (c2) values (1), (2), (3)")
+	mustExecSQL(c, se, "insert into t (c2) values (1), (2), (3), (4), (5)")
 
 	// insert values
 	lastInsertID := se.LastInsertID()
@@ -436,11 +436,98 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	currLastInsertID = se.LastInsertID()
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
+	// update
+	lastInsertID = se.LastInsertID()
+	mustExecSQL(c, se, "begin")
+	mustExecSQL(c, se, "insert into t set c2 = 41")
+	mustExecSQL(c, se, "update t set c1 = 0 where c2 = 41")
+	rs, err = exec(c, se, "select c1 from t where c2 = 41")
+	c.Assert(err, IsNil)
+	expect, err = GetRows(rs)
+	c.Assert(err, IsNil)
+	_, err = exec(c, se, "update t set c2 = 88 where c2 = 4")
+	c.Assert(err, IsNil)
+
+	mustExecSQL(c, se1, "begin")
+	mustExecSQL(c, se1, "update t set c2 = 99 where c2 = 4")
+	mustExecSQL(c, se1, "commit")
+
+	_, err = exec(c, se, "commit")
+	c.Assert(err, IsNil)
+
+	rs, err = exec(c, se, "select c1 from t where c2 = 41")
+	c.Assert(err, IsNil)
+	r, err = GetRows(rs)
+	c.Assert(err, IsNil)
+	c.Assert(r, DeepEquals, expect)
+	currLastInsertID = se.LastInsertID()
+	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+
+	// prepare
+	lastInsertID = se.LastInsertID()
+	mustExecSQL(c, se, "begin")
+	mustExecSQL(c, se, "prepare stmt from 'insert into t (c2) values (?)'")
+	mustExecSQL(c, se, "set @v1=100")
+	mustExecSQL(c, se, "set @v2=200")
+	mustExecSQL(c, se, "set @v3=300")
+	mustExecSQL(c, se, "execute stmt using @v1")
+	mustExecSQL(c, se, "execute stmt using @v2")
+	mustExecSQL(c, se, "execute stmt using @v3")
+	mustExecSQL(c, se, "deallocate prepare stmt")
+	rs, err = exec(c, se, "select c1 from t where c2 = 12")
+	c.Assert(err, IsNil)
+	expect, err = GetRows(rs)
+	c.Assert(err, IsNil)
+	_, err = exec(c, se, "update t set c2 = 111 where c2 = 5")
+	c.Assert(err, IsNil)
+
+	mustExecSQL(c, se1, "begin")
+	mustExecSQL(c, se1, "update t set c2 = 222 where c2 = 5")
+	mustExecSQL(c, se1, "commit")
+
+	_, err = exec(c, se, "commit")
+	c.Assert(err, IsNil)
+
+	rs, err = exec(c, se, "select c1 from t where c2 = 12")
+	c.Assert(err, IsNil)
+	r, err = GetRows(rs)
+	c.Assert(err, IsNil)
+	c.Assert(r, DeepEquals, expect)
+	currLastInsertID = se.LastInsertID()
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
+
 	mustExecSQL(c, se, s.dropDBSQL)
 	err = se.Close()
 	c.Assert(err, IsNil)
 	err = se1.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSessionSuite) TestIssue996(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	c.Assert(se.(*session).txn, IsNil)
+	mustExecSQL(c, se, "create table t (c2 int, c3 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
+	mustExecSQL(c, se, "insert into t set c2 = 30")
+
+	// insert values
+	lastInsertID := se.LastInsertID()
+	mustExecSQL(c, se, "prepare stmt1 from 'insert into t (c2) values (?)'")
+	mustExecSQL(c, se, "set @v1=10")
+	mustExecSQL(c, se, "set @v2=20")
+	mustExecSQL(c, se, "execute stmt1 using @v1")
+	mustExecSQL(c, se, "execute stmt1 using @v2")
+	mustExecSQL(c, se, "deallocate prepare stmt1")
+	rs, err := exec(c, se, "select c1 from t where c2 = 20")
+	c.Assert(err, IsNil)
+	r, err := GetRows(rs)
+	c.Assert(err, IsNil)
+	c.Assert(r, NotNil)
+	currLastInsertID := se.LastInsertID()
+	c.Assert(r[0][0].GetValue(), DeepEquals, int64(currLastInsertID))
+	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
 
 func (s *testSessionSuite) TestIssue986(c *C) {
