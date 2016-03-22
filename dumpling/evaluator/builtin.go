@@ -54,13 +54,7 @@ var OldFuncs = map[string]OldFunc{
 	"nullif": {builtinNullIf, 2, 2, true, false},
 
 	// string functions
-	"concat_ws":       {builtinConcatWS, 2, -1, true, false},
-	"left":            {builtinLeft, 2, 2, true, false},
-	"length":          {builtinLength, 1, 1, true, false},
-	"lower":           {builtinLower, 1, 1, true, false},
-	"repeat":          {builtinRepeat, 2, 2, true, false},
 	"replace":         {builtinReplace, 3, 3, true, false},
-	"upper":           {builtinUpper, 1, 1, true, false},
 	"strcmp":          {builtinStrcmp, 2, 2, true, false},
 	"convert":         {builtinConvert, 2, 2, true, false},
 	"substring":       {builtinSubstring, 2, 3, true, false},
@@ -116,7 +110,13 @@ var Funcs = map[string]Func{
 	"date_arith":        {builtinDateArith, 3, 3},
 
 	// string functions
-	"concat": {builtinConcat, 1, -1},
+	"concat":    {builtinConcat, 1, -1},
+	"concat_ws": {builtinConcatWS, 2, -1},
+	"left":      {builtinLeft, 2, 2},
+	"length":    {builtinLength, 1, 1},
+	"lower":     {builtinLower, 1, 1},
+	"repeat":    {builtinRepeat, 2, 2},
+	"upper":     {builtinUpper, 1, 1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce

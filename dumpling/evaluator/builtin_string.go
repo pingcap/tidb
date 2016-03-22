@@ -32,16 +32,19 @@ import (
 
 // https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
 
-func builtinLength(args []interface{}, _ context.Context) (v interface{}, err error) {
-	switch x := args[0].(type) {
-	case nil:
-		return nil, nil
+func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		d.SetNull()
+		return d, nil
 	default:
-		s, err := types.ToString(x)
+		s, err := args[0].ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			d.SetNull()
+			return d, errors.Trace(err)
 		}
-		return int64(len(s)), nil
+		d.SetInt64(int64(len(s)))
+		return d, nil
 	}
 }
 
@@ -66,19 +69,21 @@ func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err er
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat-ws
-func builtinConcatWS(args []interface{}, _ context.Context) (v interface{}, err error) {
+func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var sep string
 	s := make([]string, 0, len(args))
 	for i, a := range args {
-		if a == nil {
+		if a.Kind() == types.KindNull {
 			if i == 0 {
-				return nil, nil
+				d.SetNull()
+				return d, nil
 			}
 			continue
 		}
-		ss, err := types.ToString(a)
+		ss, err := a.ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			d.SetNull()
+			return d, errors.Trace(err)
 		}
 
 		if i == 0 {
@@ -88,19 +93,21 @@ func builtinConcatWS(args []interface{}, _ context.Context) (v interface{}, err 
 		s = append(s, ss)
 	}
 
-	return strings.Join(s, sep), nil
+	d.SetString(strings.Join(s, sep))
+	return d, nil
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
-func builtinLeft(args []interface{}, _ context.Context) (v interface{}, err error) {
-	str, err := types.ToString(args[0])
+func builtinLeft(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	str, err := args[0].ToString()
 	if err != nil {
-		return nil, errors.Errorf("BuiltinLeft invalid args, need string but get %T", args[0])
+		d.SetNull()
+		return d, errors.Trace(err)
 	}
-	// TODO: deal with other types
-	length, ok := args[1].(int64)
-	if !ok {
-		return nil, errors.Errorf("BuiltinLeft invalid args, need int but get %T", args[1])
+	length, err := args[1].ToInt64()
+	if err != nil {
+		d.SetNull()
+		return d, errors.Trace(err)
 	}
 	l := int(length)
 	if l < 0 {
@@ -108,50 +115,67 @@ func builtinLeft(args []interface{}, _ context.Context) (v interface{}, err erro
 	} else if l > len(str) {
 		l = len(str)
 	}
-	return str[:l], nil
+	d.SetString(str[:l])
+	return d, nil
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
-func builtinRepeat(args []interface{}, _ context.Context) (v interface{}, err error) {
-	ch := fmt.Sprintf("%v", args[0])
+func builtinRepeat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	str, err := args[0].ToString()
+	if err != nil {
+		d.SetNull()
+		return d, err
+	}
+	ch := fmt.Sprintf("%v", str)
 	num := 0
-	switch x := args[1].(type) {
-	case int64:
-		num = int(x)
-	case uint64:
-		num = int(x)
+	x := args[1]
+	switch x.Kind() {
+	case types.KindInt64:
+		num = int(x.GetInt64())
+	case types.KindUint64:
+		num = int(x.GetUint64())
 	}
 	if num < 1 {
-		return "", nil
+		d.SetString("")
+		return d, nil
 	}
-	return strings.Repeat(ch, num), nil
+	d.SetString(strings.Repeat(ch, num))
+	return d, nil
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
-func builtinLower(args []interface{}, _ context.Context) (interface{}, error) {
-	switch x := args[0].(type) {
-	case nil:
-		return nil, nil
+func builtinLower(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	x := args[0]
+	switch x.Kind() {
+	case types.KindNull:
+		d.SetNull()
+		return d, nil
 	default:
-		s, err := types.ToString(x)
+		s, err := x.ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			d.SetNull()
+			return d, errors.Trace(err)
 		}
-		return strings.ToLower(s), nil
+		d.SetString(strings.ToLower(s))
+		return d, nil
 	}
 }
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_upper
-func builtinUpper(args []interface{}, _ context.Context) (interface{}, error) {
-	switch x := args[0].(type) {
-	case nil:
-		return nil, nil
+func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	x := args[0]
+	switch x.Kind() {
+	case types.KindNull:
+		d.SetNull()
+		return d, nil
 	default:
-		s, err := types.ToString(x)
+		s, err := x.ToString()
 		if err != nil {
-			return nil, errors.Trace(err)
+			d.SetNull()
+			return d, errors.Trace(err)
 		}
-		return strings.ToUpper(s), nil
+		d.SetString(strings.ToUpper(s))
+		return d, nil
 	}
 }
 
