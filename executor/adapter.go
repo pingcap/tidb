@@ -73,6 +73,9 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			return nil, errors.Trace(err)
 		}
 		e = executorExec.StmtExec
+		if val := getInsertValues(e); val != nil {
+			val.IsPrepare = true
+		}
 	}
 
 	if len(e.Fields()) == 0 {
@@ -103,18 +106,27 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
+func getInsertValues(e Executor) *InsertValues {
+	var val *InsertValues
+	if exec, ok := e.(*InsertExec); ok {
+		val = exec.InsertValues
+	} else if exec, ok := e.(*ReplaceExec); ok {
+		val = exec.InsertValues
+	}
+
+	return val
+}
+
 func changeInsertValueForRetry(p plan.Plan, e Executor) {
-	if v, ok := p.(*plan.Insert); ok {
-		var insertValue *InsertValues
-		if !v.IsReplace {
-			insertValue = e.(*InsertExec).InsertValues
-		} else {
-			insertValue = e.(*ReplaceExec).InsertValues
-		}
-		v.Columns = insertValue.Columns
-		v.Setlist = insertValue.Setlist
-		if len(v.Setlist) == 0 {
-			v.Lists = insertValue.Lists
-		}
+	val := getInsertValues(e)
+	if val == nil || val.IsPrepare {
+		return
+	}
+
+	v := p.(*plan.Insert)
+	v.Columns = val.Columns
+	v.Setlist = val.Setlist
+	if len(v.Setlist) == 0 {
+		v.Lists = val.Lists
 	}
 }
