@@ -35,12 +35,10 @@ import (
 func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	switch args[0].Kind() {
 	case types.KindNull:
-		d.SetNull()
 		return d, nil
 	default:
 		s, err := args[0].ToString()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 		d.SetInt64(int64(len(s)))
@@ -53,13 +51,11 @@ func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err er
 	var s []byte
 	for _, a := range args {
 		if a.Kind() == types.KindNull {
-			d.SetNull()
 			return d, nil
 		}
 		var ss string
 		ss, err = a.ToString()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 		s = append(s, []byte(ss)...)
@@ -75,14 +71,12 @@ func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err 
 	for i, a := range args {
 		if a.Kind() == types.KindNull {
 			if i == 0 {
-				d.SetNull()
 				return d, nil
 			}
 			continue
 		}
 		ss, err := a.ToString()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 
@@ -101,12 +95,10 @@ func builtinConcatWS(args []types.Datum, _ context.Context) (d types.Datum, err 
 func builtinLeft(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	str, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	length, err := args[1].ToInt64()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	l := int(length)
@@ -123,7 +115,6 @@ func builtinLeft(args []types.Datum, _ context.Context) (d types.Datum, err erro
 func builtinRepeat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	str, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, err
 	}
 	ch := fmt.Sprintf("%v", str)
@@ -148,12 +139,10 @@ func builtinLower(args []types.Datum, _ context.Context) (d types.Datum, err err
 	x := args[0]
 	switch x.Kind() {
 	case types.KindNull:
-		d.SetNull()
 		return d, nil
 	default:
 		s, err := x.ToString()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 		d.SetString(strings.ToLower(s))
@@ -166,12 +155,10 @@ func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err err
 	x := args[0]
 	switch x.Kind() {
 	case types.KindNull:
-		d.SetNull()
 		return d, nil
 	default:
 		s, err := x.ToString()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 		d.SetString(strings.ToUpper(s))
@@ -182,17 +169,14 @@ func builtinUpper(args []types.Datum, _ context.Context) (d types.Datum, err err
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html
 func builtinStrcmp(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	if args[0].Kind() == types.KindNull || args[1].Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 	left, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	right, err := args[1].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	res := types.CompareString(left, right)
@@ -204,24 +188,20 @@ func builtinStrcmp(args []types.Datum, _ context.Context) (d types.Datum, err er
 func builtinReplace(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	for _, arg := range args {
 		if arg.Kind() == types.KindNull {
-			d.SetNull()
 			return d, nil
 		}
 	}
 
 	str, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	oldStr, err := args[1].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	newStr, err := args[2].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	d.SetString(strings.Replace(str, oldStr, newStr, -1))
@@ -233,7 +213,6 @@ func builtinReplace(args []types.Datum, _ context.Context) (d types.Datum, err e
 func builtinConvert(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// Casting nil to any type returns nil
 	if args[0].Kind() != types.KindString {
-		d.SetNull()
 		return d, nil
 	}
 
@@ -250,13 +229,11 @@ func builtinConvert(args []types.Datum, _ context.Context) (d types.Datum, err e
 
 	encoding, _ := charset.Lookup(Charset)
 	if encoding == nil {
-		d.SetNull()
 		return d, errors.Errorf("unknown encoding: %s", Charset)
 	}
 
 	target, _, err := transform.String(encoding.NewDecoder(), str)
 	if err != nil {
-		d.SetNull()
 		log.Errorf("Convert %s to %s with error: %v", str, Charset, err)
 		return d, errors.Trace(err)
 	}
@@ -271,21 +248,18 @@ func builtinSubstring(args []types.Datum, _ context.Context) (d types.Datum, err
 	// arg[2] -> Len (Optional)
 	str, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
-		return d, errors.Errorf("Substring invalid args, need string but get %v", args[0].Kind())
+		return d, errors.Errorf("Substring invalid args, need string but get %T", args[0].GetValue())
 	}
 
 	if args[1].Kind() != types.KindInt64 {
-		d.SetNull()
-		return d, errors.Errorf("Substring invalid pos args, need int but get %v", args[1].Kind())
+		return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[1].GetValue())
 	}
 	pos := args[1].GetInt64()
 
 	length := int64(-1)
 	if len(args) == 3 {
 		if args[2].Kind() != types.KindInt64 {
-			d.SetNull()
-			return d, errors.Errorf("Substring invalid pos args, need int but get %v", args[2].Kind())
+			return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[2].GetValue())
 		}
 		length = args[2].GetInt64()
 	}
@@ -321,14 +295,12 @@ func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum
 	// args[2] -> Count
 	str, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
-		return d, errors.Errorf("Substring_Index invalid args, need string but get %v", args[0].Kind())
+		return d, errors.Errorf("Substring_Index invalid args, need string but get %T", args[0].GetValue())
 	}
 
 	delim, err := args[1].ToString()
 	if err != nil {
-		d.SetNull()
-		return d, errors.Errorf("Substring_Index invalid delim, need string but get %v", args[1].Kind())
+		return d, errors.Errorf("Substring_Index invalid delim, need string but get %T", args[1].GetValue())
 	}
 	if len(delim) == 0 {
 		d.SetString("")
@@ -337,7 +309,6 @@ func builtinSubstringIndex(args []types.Datum, _ context.Context) (d types.Datum
 
 	c, err := args[2].ToInt64()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	count := int(c)
@@ -371,22 +342,18 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 	// args[2] -> Pos
 	// eval str
 	if args[1].Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 	str, err := args[1].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	// eval substr
 	if args[0].Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 	subStr, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	// eval pos
@@ -394,7 +361,6 @@ func builtinLocate(args []types.Datum, _ context.Context) (d types.Datum, err er
 	if len(args) == 3 {
 		p, err := args[2].ToInt64()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
 		pos = p - 1
@@ -429,12 +395,10 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	// args[2] -> Direction
 	// eval str
 	if args[0].Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 	str, err := args[0].ToString()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	remstr := ""
@@ -443,7 +407,6 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 		if args[1].Kind() != types.KindNull {
 			remstr, err = args[1].ToString()
 			if err != nil {
-				d.SetNull()
 				return d, errors.Trace(err)
 			}
 		}
