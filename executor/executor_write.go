@@ -376,10 +376,12 @@ type InsertValues struct {
 	ctx        context.Context
 	SelectExec Executor
 
-	Table   table.Table
-	Columns []*ast.ColumnName
-	Lists   [][]ast.ExprNode
-	Setlist []*ast.Assignment
+	Table            table.Table
+	Columns          []*ast.ColumnName
+	Lists            [][]ast.ExprNode
+	Setlist          []*ast.Assignment
+	IsPrepare        bool
+	AutoIncrementIDs []int64
 }
 
 // InsertExec represents an insert executor.
@@ -654,6 +656,10 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	var rewriteValueCol *column.Col
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
+		// It's used for retry.
+		if e.IsPrepare && mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull {
+			row[i].SetInt64(e.AutoIncrementIDs[e.currRow])
+		}
 		if row[i].Kind() != types.KindNull {
 			// Column value isn't nil and column isn't auto-increment, continue.
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
@@ -688,6 +694,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
 			// It's used for retry.
 			rewriteValueCol = c
+			if e.IsPrepare {
+				e.AutoIncrementIDs[e.currRow] = recordID
+			}
 		} else {
 			var err error
 			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
@@ -702,8 +711,8 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 		return errors.Trace(err)
 	}
 
-	// It's used for retry.
-	if rewriteValueCol == nil {
+	// It's used for retry. If the prepare statement doesn't use the way to retry.
+	if e.IsPrepare || rewriteValueCol == nil {
 		return nil
 	}
 	if len(e.Setlist) > 0 {
