@@ -40,3 +40,91 @@ func (s *testTxnSuite) TestBackOff(c *C) {
 func mustBackOff(c *C, cnt, sleep int) {
 	c.Assert(BackOff(cnt), LessEqual, sleep*int(time.Millisecond))
 }
+
+// mockTxn is a txn that returns a retryAble error when called Commit.
+type mockTxn struct {
+}
+
+// Always returns a retryable error
+func (t *mockTxn) Commit() error {
+	return ErrRetryable
+}
+
+func (t *mockTxn) Rollback() error {
+	return nil
+}
+
+func (t *mockTxn) String() string {
+	return ""
+}
+
+func (t *mockTxn) LockKeys(keys ...Key) error {
+	return nil
+}
+
+func (t *mockTxn) SetOption(opt Option, val interface{}) {
+	return
+}
+
+func (t *mockTxn) DelOption(opt Option) {
+	return
+}
+
+func (t *mockTxn) IsReadOnly() bool {
+	return true
+}
+
+func (t *mockTxn) GetClient() Client {
+	return nil
+}
+
+func (t *mockTxn) StartTS() int64 {
+	return int64(0)
+}
+func (t *mockTxn) Get(k Key) ([]byte, error) {
+	return nil, nil
+}
+
+func (t *mockTxn) Seek(k Key) (Iterator, error) {
+	return nil, nil
+}
+
+func (t *mockTxn) Set(k Key, v []byte) error {
+	return nil
+}
+func (t *mockTxn) Delete(k Key) error {
+	return nil
+}
+
+// mockStorage is used to start a must commit-failed txn
+type mockStorage struct {
+}
+
+func (s *mockStorage) Begin() (Transaction, error) {
+	return &mockTxn{}, nil
+
+}
+func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
+	return nil, nil
+}
+func (s *mockStorage) Close() error {
+	return nil
+}
+
+func (s *mockStorage) UUID() string {
+	return ""
+}
+
+// CurrentVersion returns current max committed version.
+func (s *mockStorage) CurrentVersion() (Version, error) {
+	return Version{uint64(1)}, nil
+}
+
+func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
+	maxRetryCnt = 5
+	err := RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
+		return nil
+	})
+	c.Assert(err, NotNil)
+	maxRetryCnt = 100
+}
