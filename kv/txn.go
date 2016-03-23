@@ -24,8 +24,12 @@ import (
 
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
+	var (
+		err error
+		txn Transaction
+	)
 	for i := 0; i < maxRetryCnt; i++ {
-		txn, err := store.Begin()
+		txn, err = store.Begin()
 		if err != nil {
 			log.Errorf("[kv] RunInNewTxn error - %v", err)
 			return errors.Trace(err)
@@ -54,8 +58,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		}
 		break
 	}
-
-	return nil
+	return errors.Trace(err)
 }
 
 var (
