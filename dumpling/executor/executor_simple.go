@@ -110,7 +110,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 		// Variable is case insensitive, we use lower case.
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
-			// User variable.
+			// Set user variable.
 			value, err := evaluator.Eval(e.ctx, v.Value)
 			if err != nil {
 				return errors.Trace(err)
@@ -121,8 +121,10 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			} else {
 				sessionVars.Users[name] = fmt.Sprintf("%v", value)
 			}
-			return nil
+			continue
 		}
+
+		// Set system variable
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
 			return variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
@@ -131,24 +133,30 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			return errors.Errorf("Variable '%s' is a read only variable", name)
 		}
 		if v.IsGlobal {
-			if sysVar.Scope&variable.ScopeGlobal > 0 {
-				value, err := evaluator.Eval(e.ctx, v.Value)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if value == nil {
-					value = ""
-				}
-				svalue, err := types.ToString(value)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = globalVars.SetGlobalSysVar(e.ctx, name, svalue)
+			// Set global scope system variable.
+			if sysVar.Scope&variable.ScopeGlobal == 0 {
+				return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
+			}
+			value, err := evaluator.Eval(e.ctx, v.Value)
+			if err != nil {
 				return errors.Trace(err)
 			}
-			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
-		}
-		if sysVar.Scope&variable.ScopeSession > 0 {
+			if value == nil {
+				value = ""
+			}
+			svalue, err := types.ToString(value)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = globalVars.SetGlobalSysVar(e.ctx, name, svalue)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			// Set session scope system variable.
+			if sysVar.Scope&variable.ScopeSession == 0 {
+				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
+			}
 			if value, err := evaluator.Eval(e.ctx, v.Value); err != nil {
 				return errors.Trace(err)
 			} else if value == nil {
@@ -156,9 +164,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			} else {
 				sessionVars.Systems[name] = fmt.Sprintf("%v", value)
 			}
-			return nil
 		}
-		return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
 	}
 	return nil
 }
