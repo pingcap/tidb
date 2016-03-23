@@ -26,6 +26,29 @@ func (k Key) Next() Key {
 	return buf
 }
 
+// PartialNext returns the next partial key.
+// For example, a key composed with two columns.
+// Next will return a key with the same first column value,
+// but PartialNext will return a key with different first column value.
+// key encoding method must ensure the next different value has the
+// same length as the original value.
+func (k Key) PartialNext() Key {
+	buf := make([]byte, len([]byte(k)))
+	copy(buf, []byte(k))
+	var i int
+	for i = len(k) - 1; i >= 0; i-- {
+		buf[i]++
+		if buf[i] != 0 {
+			break
+		}
+	}
+	if i == -1 {
+		copy(buf, k)
+		buf = append(buf, 0)
+	}
+	return buf
+}
+
 // Cmp returns the comparison result of two key.
 // The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
 func (k Key) Cmp(another Key) int {
