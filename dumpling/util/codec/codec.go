@@ -108,52 +108,13 @@ func Decode(b []byte) ([]types.Datum, error) {
 	}
 
 	var (
-		flag   byte
 		err    error
 		values = make([]types.Datum, 0, 1)
 	)
 
 	for len(b) > 0 {
-		flag = b[0]
-		b = b[1:]
 		var d types.Datum
-		switch flag {
-		case intFlag:
-			var v int64
-			b, v, err = DecodeInt(b)
-			d.SetInt64(v)
-		case uintFlag:
-			var v uint64
-			b, v, err = DecodeUint(b)
-			d.SetUint64(v)
-		case floatFlag:
-			var v float64
-			b, v, err = DecodeFloat(b)
-			d.SetFloat64(v)
-		case bytesFlag:
-			var v []byte
-			b, v, err = DecodeBytes(b)
-			d.SetBytes(v)
-		case compactBytesFlag:
-			var v []byte
-			b, v, err = DecodeCompactBytes(b)
-			d.SetBytes(v)
-		case decimalFlag:
-			var v mysql.Decimal
-			b, v, err = DecodeDecimal(b)
-			d.SetValue(v)
-		case durationFlag:
-			var r int64
-			b, r, err = DecodeInt(b)
-			if err == nil {
-				// use max fsp, let outer to do round manually.
-				v := mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
-				d.SetValue(v)
-			}
-		case nilFlag:
-		default:
-			return nil, errors.Errorf("invalid encoded key flag %v", flag)
-		}
+		b, d, err = DecodeOne(b)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -162,4 +123,54 @@ func Decode(b []byte) ([]types.Datum, error) {
 	}
 
 	return values, nil
+}
+
+// DecodeOne decodes on datum from a byte slice generated with EncodeKey or EncodeValue.
+func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
+	if len(b) < 1 {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	b = b[1:]
+	switch flag {
+	case intFlag:
+		var v int64
+		b, v, err = DecodeInt(b)
+		d.SetInt64(v)
+	case uintFlag:
+		var v uint64
+		b, v, err = DecodeUint(b)
+		d.SetUint64(v)
+	case floatFlag:
+		var v float64
+		b, v, err = DecodeFloat(b)
+		d.SetFloat64(v)
+	case bytesFlag:
+		var v []byte
+		b, v, err = DecodeBytes(b)
+		d.SetBytes(v)
+	case compactBytesFlag:
+		var v []byte
+		b, v, err = DecodeCompactBytes(b)
+		d.SetBytes(v)
+	case decimalFlag:
+		var v mysql.Decimal
+		b, v, err = DecodeDecimal(b)
+		d.SetValue(v)
+	case durationFlag:
+		var r int64
+		b, r, err = DecodeInt(b)
+		if err == nil {
+			// use max fsp, let outer to do round manually.
+			v := mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
+			d.SetValue(v)
+		}
+	case nilFlag:
+	default:
+		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
+	}
+	if err != nil {
+		return b, d, errors.Trace(err)
+	}
+	return b, d, nil
 }
