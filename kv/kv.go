@@ -13,7 +13,10 @@
 
 package kv
 
-import "io"
+import (
+	"bytes"
+	"io"
+)
 
 const (
 	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
@@ -97,12 +100,19 @@ type Client interface {
 const (
 	ReqTypeSelect = 101
 	ReqTypeIndex  = 102
+
+	ReqSubTypeBasic = 0
 )
 
 // KeyRange represents a range where StartKey <= key < EndKey.
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+}
+
+// IsPoint checks if the key range represents a point.
+func (r *KeyRange) IsPoint() bool {
+	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
 }
 
 // Request represents a kv request.

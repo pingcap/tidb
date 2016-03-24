@@ -28,6 +28,7 @@ import (
 
 // SelectResult is used to get response rows from SelectRequest.
 type SelectResult struct {
+	index  bool
 	fields []*types.FieldType
 	resp   kv.Response
 }
@@ -43,6 +44,7 @@ func (r *SelectResult) Next() (subResult *SubResult, err error) {
 		return nil, nil
 	}
 	subResult = &SubResult{
+		index:  r.index,
 		fields: r.fields,
 		reader: reader,
 	}
@@ -56,6 +58,7 @@ func (r *SelectResult) Close() error {
 
 // SubResult represents a subset of select result.
 type SubResult struct {
+	index  bool
 	fields []*types.FieldType
 	reader io.ReadCloser
 	resp   *tipb.SelectResponse
@@ -77,20 +80,24 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
+		if r.resp.Error != nil {
+			return 0, nil, errors.Errorf("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+		}
 	}
 	if r.cursor >= len(r.resp.Rows) {
 		return 0, nil, nil
 	}
 	row := r.resp.Rows[r.cursor]
-	data, err = tablecodec.DecodeValues(row.Data, r.fields)
+	data, err = tablecodec.DecodeValues(row.Data, r.fields, r.index)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
 	handleBytes := row.GetHandle()
-	_, handle, err = codec.DecodeInt(handleBytes)
+	datums, err := codec.Decode(handleBytes)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
+	handle = datums[0].GetInt64()
 	r.cursor++
 	return
 }
@@ -111,14 +118,14 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	var columns []*tipb.ColumnInfo
+	result := &SelectResult{resp: resp}
 	if req.TableInfo != nil {
-		columns = req.TableInfo.Columns
+		result.fields = tablecodec.ProtoColumnsToFieldTypes(req.TableInfo.Columns)
 	} else {
-		columns = req.IndexInfo.Columns
+		result.fields = tablecodec.ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
+		result.index = true
 	}
-	fields := tablecodec.ProtoColumnsToFieldTypes(columns)
-	return &SelectResult{fields: fields, resp: resp}, nil
+	return result, nil
 }
 
 // Convert tipb.Request to kv.Request.
@@ -129,7 +136,8 @@ func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, erro
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
 		tid := req.IndexInfo.GetTableId()
-		kvReq.KeyRanges = tablecodec.EncodeIndexRanges(tid, req.Ranges)
+		idxID := req.IndexInfo.GetIndexId()
+		kvReq.KeyRanges = tablecodec.EncodeIndexRanges(tid, idxID, req.Ranges)
 	} else {
 		kvReq.Tp = kv.ReqTypeSelect
 		tid := req.GetTableInfo().GetTableId()

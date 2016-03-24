@@ -135,6 +135,9 @@ type IndexScan struct {
 
 	// FilterConditions can be used to filter result.
 	FilterConditions []ast.ExprNode
+
+	// OutOfOrder indicates if the index scan can return out of order.
+	OutOfOrder bool
 }
 
 // Accept implements Plan Accept interface.
