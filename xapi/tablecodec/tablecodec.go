@@ -14,10 +14,9 @@
 package tablecodec
 
 import (
-	"sort"
+	"bytes"
 	"time"
 
-	"bytes"
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -49,10 +48,10 @@ func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 }
 
 // EncodeColumnKey encodes the table id, row handle and columnID into a kv.Key
-func EncodeColumnKey(tableID int64, encodedHandle []byte, columnID int64) kv.Key {
+func EncodeColumnKey(tableID int64, handle int64, columnID int64) kv.Key {
 	buf := make([]byte, 0, recordRowKeyLen+idLen)
 	buf = appendTableRecordPrefix(buf, tableID)
-	buf = append(buf, encodedHandle...)
+	buf = codec.EncodeInt(buf, handle)
 	buf = codec.EncodeInt(buf, columnID)
 	return buf
 }
@@ -85,7 +84,7 @@ func DecodeRowKey(key kv.Key) (handle int64, err error) {
 }
 
 // DecodeValues decodes a byte slice into datums with column types.
-func DecodeValues(data []byte, fts []*types.FieldType) ([]types.Datum, error) {
+func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Datum, error) {
 	values, err := codec.Decode(data)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -93,6 +92,11 @@ func DecodeValues(data []byte, fts []*types.FieldType) ([]types.Datum, error) {
 	if len(values) > len(fts) {
 		return nil, errors.Errorf("invalid column count %d is less than value count %d", len(fts), len(values))
 	}
+	if inIndex {
+		// We don't need to unflatten index columns for now.
+		return values, nil
+	}
+
 	for i := range values {
 		values[i], err = unflatten(values[i], fts[i])
 		if err != nil {
@@ -124,7 +128,7 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetValue(t)
+		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration:
 		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
@@ -160,28 +164,18 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 }
 
 // EncodeIndexSeekKey encodes an index value to kv.Key.
-func EncodeIndexSeekKey(tableID int64, encodedValue []byte) kv.Key {
+func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key {
 	key := make([]byte, 0, prefixLen+len(encodedValue))
 	key = appendTableIndexPrefix(key, tableID)
+	key = codec.EncodeInt(key, idxID)
 	key = append(key, encodedValue...)
 	return key
 }
 
-// IndexRowData extracts the row data and handle in an index key.
-// If the index is unique, handle would be nil.
-func IndexRowData(key kv.Key, columnCount int) (data, handle []byte, err error) {
-	b := key[prefixLen:]
-	// The index key may have primary key appended to the end, we decode the column values
-	// only to get the column values length.
-	for columnCount > 0 {
-		b, _, err = codec.DecodeOne(b)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		columnCount--
-	}
-	handle = b
-	return key[prefixLen : len(key)-len(handle)], handle, nil
+// DecodeIndexKey decodes datums from an index key.
+func DecodeIndexKey(key kv.Key) ([]types.Datum, error) {
+	b := key[prefixLen+idLen:]
+	return codec.Decode(b)
 }
 
 // Record prefix is "t[tableID]_r".
@@ -198,17 +192,6 @@ func appendTableIndexPrefix(buf []byte, tableID int64) []byte {
 	buf = codec.EncodeInt(buf, tableID)
 	buf = append(buf, indexPrefixSep...)
 	return buf
-}
-
-type int64Slice []int64
-
-func (p int64Slice) Len() int           { return len(p) }
-func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
-func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-
-// SortInt64Slice sorts an int64 slice.
-func SortInt64Slice(s []int64) {
-	sort.Sort(int64Slice(s))
 }
 
 func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
@@ -275,8 +258,8 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 		Unique:  proto.Bool(idx.Unique),
 	}
 	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
-	for _, c := range t.Columns {
-		cols = append(cols, columnToProto(c))
+	for _, c := range idx.Columns {
+		cols = append(cols, columnToProto(t.Columns[c.Offset]))
 	}
 	pi.Columns = cols
 	return pi
@@ -298,12 +281,12 @@ func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
 }
 
 // EncodeIndexRanges encodes index ranges into kv.KeyRanges.
-func EncodeIndexRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
+func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
 	keyRanges := make([]kv.KeyRange, 0, len(rans))
 	for _, r := range rans {
 		// Convert range to kv.KeyRange
-		start := EncodeIndexSeekKey(tid, r.Low)
-		end := EncodeIndexSeekKey(tid, r.High)
+		start := EncodeIndexSeekKey(tid, idxID, r.Low)
+		end := EncodeIndexSeekKey(tid, idxID, r.High)
 		nr := kv.KeyRange{
 			StartKey: start,
 			EndKey:   end,

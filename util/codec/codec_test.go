@@ -661,4 +661,16 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		ret := bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, t.Ret)
 	}
+
+	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
+		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
+	var decs [][]byte
+	for i := range floats {
+		dec := mysql.NewDecimalFromFloat(floats[i])
+		decs = append(decs, EncodeDecimal(nil, dec))
+	}
+	for i := 0; i < len(decs)-1; i++ {
+		cmp := bytes.Compare(decs[i], decs[i+1])
+		c.Assert(cmp, LessEqual, 0)
+	}
 }

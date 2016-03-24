@@ -93,6 +93,7 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum) *Row {
 }
 
 func (e *XSelectTableExec) doRequest() error {
+	// TODO: add offset and limit.
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -138,6 +139,9 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		return nil, nil
 	}
 	row := e.rows[e.cursor]
+	for i, field := range e.indexPlan.Fields() {
+		field.Expr.SetDatum(row.Data[i])
+	}
 	e.cursor++
 	return row, nil
 }
@@ -160,6 +164,9 @@ func (e *XSelectIndexExec) doRequest() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(handles) == 0 {
+		return nil
+	}
 	indexOrder := make(map[int64]int)
 	for i, h := range handles {
 		indexOrder[h] = i
@@ -169,6 +176,9 @@ func (e *XSelectIndexExec) doRequest() error {
 	unorderedRows, err := extractRowsFromTableResult(e.table, tblResult)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(unorderedRows) < len(handles) {
+		return errors.Errorf("got %d rows with %d handles", len(unorderedRows), len(handles))
 	}
 	// Restore the original index order.
 	rows := make([]*Row, len(handles))
@@ -181,12 +191,17 @@ func (e *XSelectIndexExec) doRequest() error {
 }
 
 func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResult, error) {
+	// TODO: add offset and limit.
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
+	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
+	for i, v := range e.indexPlan.Index.Columns {
+		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
+	}
 	var err error
-	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges)
+	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -194,6 +209,7 @@ func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResul
 }
 
 func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (*xapi.SelectResult, error) {
+	// TODO: add offset and limit.
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selTableReq.StartTs = &startTs
@@ -206,7 +222,7 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 		}
 		pbRange := new(tipb.KeyRange)
 		pbRange.Low = codec.EncodeInt(nil, h)
-		pbRange.High = codec.EncodeInt(nil, h)
+		pbRange.High = kv.Key(codec.EncodeInt(nil, h)).PartialNext()
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
 	selTableReq.Where = conditionsToPBExpression(e.indexPlan.FilterConditions...)
@@ -236,17 +252,21 @@ func tableRangesToPBRanges(tableRanges []plan.TableRange) []*tipb.KeyRange {
 	return hrs
 }
 
-func indexRangesToPBRanges(ranges []*plan.IndexRange) ([]*tipb.KeyRange, error) {
+func indexRangesToPBRanges(ranges []*plan.IndexRange, fieldTypes []*types.FieldType) ([]*tipb.KeyRange, error) {
 	keyRanges := make([]*tipb.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
-		low, err := codec.EncodeValue(nil, ran.LowVal...)
+		err := convertIndexRangeTypes(ran, fieldTypes)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		low, err := codec.EncodeKey(nil, ran.LowVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if ran.LowExclude {
 			low = []byte(kv.Key(low).PartialNext())
 		}
-		high, err := codec.EncodeValue(nil, ran.HighVal...)
+		high, err := codec.EncodeKey(nil, ran.HighVal...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -256,6 +276,66 @@ func indexRangesToPBRanges(ranges []*plan.IndexRange) ([]*tipb.KeyRange, error) 
 		keyRanges = append(keyRanges, &tipb.KeyRange{Low: low, High: high})
 	}
 	return keyRanges, nil
+}
+
+func convertIndexRangeTypes(ran *plan.IndexRange, fieldTypes []*types.FieldType) error {
+	for i := range ran.LowVal {
+		if ran.LowVal[i].Kind() == types.KindMinNotNull {
+			ran.LowVal[i].SetBytes([]byte{})
+			continue
+		}
+		converted, err := ran.LowVal[i].ConvertTo(fieldTypes[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cmp, err := converted.CompareDatum(ran.LowVal[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ran.LowVal[i] = converted
+		if cmp == 0 {
+			continue
+		}
+		if cmp < 0 && !ran.LowExclude {
+			// For int column a, a >= 1.1 is converted to a > 1.
+			ran.LowExclude = true
+		} else if cmp > 0 && ran.LowExclude {
+			// For int column a, a > 1.9 is converted to a >= 2.
+			ran.LowExclude = false
+		}
+		// The converted value has changed, the other column values doesn't matter.
+		// For equal condition, converted value changed means there will be no match.
+		// For non equal condition, this column would be the last one to build the range.
+		// Break here to prevent the rest columns modify LowExclude again.
+		break
+	}
+	for i := range ran.HighVal {
+		if ran.HighVal[i].Kind() == types.KindMaxValue {
+			continue
+		}
+		converted, err := ran.HighVal[i].ConvertTo(fieldTypes[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		cmp, err := converted.CompareDatum(ran.HighVal[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ran.HighVal[i] = converted
+		if cmp == 0 {
+			continue
+		}
+		// For int column a, a < 1.1 is converted to a <= 1.
+		if cmp < 0 && ran.HighExclude {
+			ran.HighExclude = false
+		}
+		// For int column a, a <= 1.9 is converted to a < 2.
+		if cmp > 0 && !ran.HighExclude {
+			ran.HighExclude = true
+		}
+		break
+	}
+	return nil
 }
 
 func extractHandlesFromIndexResult(idxResult *xapi.SelectResult) ([]int64, error) {

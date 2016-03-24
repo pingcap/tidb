@@ -13,7 +13,10 @@
 
 package kv
 
-import "io"
+import (
+	"bytes"
+	"io"
+)
 
 const (
 	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
@@ -103,6 +106,14 @@ const (
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
+}
+
+// IsPoint checks if the key range represents a point.
+func (r *KeyRange) IsPoint() bool {
+	if len(r.StartKey) != len(r.EndKey) {
+		return false
+	}
+	return bytes.Equal(r.StartKey.PartialNext(), r.EndKey)
 }
 
 // Request represents a kv request.
