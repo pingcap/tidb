@@ -376,10 +376,11 @@ type InsertValues struct {
 	ctx        context.Context
 	SelectExec Executor
 
-	Table   table.Table
-	Columns []*ast.ColumnName
-	Lists   [][]ast.ExprNode
-	Setlist []*ast.Assignment
+	Table     table.Table
+	Columns   []*ast.ColumnName
+	Lists     [][]ast.ExprNode
+	Setlist   []*ast.Assignment
+	IsPrepare bool
 }
 
 // InsertExec represents an insert executor.
@@ -651,9 +652,17 @@ func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]ty
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
-	var rewriteValueCol *column.Col
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
+		// It's used for retry.
+		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull &&
+			variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
+			id, err := variable.GetSessionVars(e.ctx).RetryInfo.GetCurrAutoIncrementID()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			row[i].SetInt64(id)
+		}
 		if row[i].Kind() != types.KindNull {
 			// Column value isn't nil and column isn't auto-increment, continue.
 			if !mysql.HasAutoIncrementFlag(c.Flag) {
@@ -687,7 +696,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			// Last insert id will be 1, not 3.
 			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
 			// It's used for retry.
-			rewriteValueCol = c
+			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
+				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
+			}
 		} else {
 			var err error
 			row[i], _, err = table.GetColDefaultValue(e.ctx, &c.ColumnInfo)
@@ -701,49 +712,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	if err := column.CastValues(e.ctx, row, defaultValueCols); err != nil {
 		return errors.Trace(err)
 	}
-
-	// It's used for retry.
-	if rewriteValueCol == nil {
-		return nil
-	}
-	if len(e.Setlist) > 0 {
-		val := &ast.Assignment{
-			Column: &ast.ColumnName{Name: rewriteValueCol.Name},
-			Expr:   ast.NewValueExpr(row[rewriteValueCol.Offset].GetValue())}
-		if len(e.Setlist) < rewriteValueCol.Offset+1 {
-			e.Setlist = append(e.Setlist, val)
-			return nil
-		}
-		setlist := make([]*ast.Assignment, 0, len(e.Setlist)+1)
-		setlist = append(setlist, e.Setlist[:rewriteValueCol.Offset]...)
-		setlist = append(setlist, val)
-		e.Setlist = append(setlist, e.Setlist[rewriteValueCol.Offset:]...)
-		return nil
-	}
-
-	// records the values of each row.
-	vals := make([]ast.ExprNode, len(row))
-	for i, col := range row {
-		vals[i] = ast.NewValueExpr(col.GetValue())
-	}
-	if len(e.Lists) <= e.currRow {
-		e.Lists = append(e.Lists, vals)
-	} else {
-		e.Lists[e.currRow] = vals
-	}
-
-	// records the column name only once.
-	if e.currRow != len(e.Lists)-1 {
-		return nil
-	}
-	if len(e.Columns) < rewriteValueCol.Offset+1 {
-		e.Columns = append(e.Columns, &ast.ColumnName{Name: rewriteValueCol.Name})
-		return nil
-	}
-	cols := make([]*ast.ColumnName, 0, len(e.Columns)+1)
-	cols = append(cols, e.Columns[:rewriteValueCol.Offset]...)
-	cols = append(cols, &ast.ColumnName{Name: rewriteValueCol.Name})
-	e.Columns = append(cols, e.Columns[rewriteValueCol.Offset:]...)
 
 	return nil
 }

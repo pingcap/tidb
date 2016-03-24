@@ -116,13 +116,18 @@ type session struct {
 	sid         int64
 	history     stmtHistory
 	initing     bool // Running bootstrap using this session.
-	retrying    bool
-	maxRetryCnt int // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
+	maxRetryCnt int  // Max retry times. If maxRetryCnt <=0, there is no limitation for retry times.
 
 	debugInfos map[string]interface{} // Vars for debug and unit tests.
 
 	// For performance_schema only.
 	stmtState *perfschema.StatementState
+}
+
+func (s *session) cleanRetryInfo() {
+	if !variable.GetSessionVars(s).RetryInfo.Retrying {
+		variable.GetSessionVars(s).RetryInfo.Clean()
+	}
 }
 
 func (s *session) Status() uint16 {
@@ -162,12 +167,13 @@ func (s *session) FinishTxn(rollback bool) error {
 
 	if rollback {
 		s.resetHistory()
+		s.cleanRetryInfo()
 		return s.txn.Rollback()
 	}
 
 	err := s.txn.Commit()
 	if err != nil {
-		if !s.retrying && kv.IsRetryableError(err) {
+		if !variable.GetSessionVars(s).RetryInfo.Retrying && kv.IsRetryableError(err) {
 			err = s.Retry()
 		}
 		if err != nil {
@@ -177,6 +183,7 @@ func (s *session) FinishTxn(rollback bool) error {
 	}
 
 	s.resetHistory()
+	s.cleanRetryInfo()
 	return nil
 }
 
@@ -197,7 +204,7 @@ func (s *session) String() string {
 }
 
 func (s *session) Retry() error {
-	s.retrying = true
+	variable.GetSessionVars(s).RetryInfo.Retrying = true
 	nh := s.history.clone()
 	// Debug infos.
 	if len(nh.history) == 0 {
@@ -207,7 +214,7 @@ func (s *session) Retry() error {
 	}
 	defer func() {
 		s.history.history = nh.history
-		s.retrying = false
+		variable.GetSessionVars(s).RetryInfo.Retrying = false
 	}()
 
 	if forUpdate := s.Value(forupdate.ForUpdateKey); forUpdate != nil {
@@ -219,6 +226,7 @@ func (s *session) Retry() error {
 		s.resetHistory()
 		s.FinishTxn(true)
 		success := true
+		variable.GetSessionVars(s).RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
 			st := sr.st
 			log.Warnf("Retry %s", st.OriginText())
@@ -573,7 +581,6 @@ func CreateSession(store kv.Storage) (Session, error) {
 		store:       store,
 		sid:         atomic.AddInt64(&sessionID, 1),
 		debugInfos:  make(map[string]interface{}),
-		retrying:    false,
 		maxRetryCnt: 10,
 	}
 	domain, err := domap.Get(store)
