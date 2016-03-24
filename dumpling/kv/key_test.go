@@ -40,7 +40,7 @@ func (s *testKeySuite) TestPartialNext(c *C) {
 	c.Assert(cmp, Equals, -1)
 
 	// Use next partial key, we can skip all index keys with first column value equal to "abc".
-	nextPartialKey := Key(seekKey).PartialNext()
+	nextPartialKey := Key(seekKey).PrefixNext()
 	cmp = bytes.Compare(nextPartialKey, keyA)
 	c.Assert(cmp, Equals, 1)
 

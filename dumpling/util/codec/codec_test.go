@@ -596,6 +596,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{"1234", "1234.0000", 0},
 		{"1234", "12.34", 1},
 		{"12.34", "12.35", -1},
+		{"0.12", "0.1234", -1},
 		{"0.1234", "12.3400", -1},
 		{"0.1234", "0.1235", -1},
 		{"0.123400", "12.34", -1},
@@ -609,6 +610,8 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{"-0.0001", "0", -1},
 		{"-0.1234", "0", -1},
 		{"-0.1234", "-0.12", -1},
+		{"-0.12", "-0.1234", 1},
+		{"-0.12", "-0.1200", 0},
 		{"-0.1234", "0.1234", -1},
 		{"-1.234", "-12.34", 1},
 		{"-0.1234", "-12.34", 1},
@@ -660,5 +663,17 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 		ret := bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, t.Ret)
+	}
+
+	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
+		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
+	var decs [][]byte
+	for i := range floats {
+		dec := mysql.NewDecimalFromFloat(floats[i])
+		decs = append(decs, EncodeDecimal(nil, dec))
+	}
+	for i := 0; i < len(decs)-1; i++ {
+		cmp := bytes.Compare(decs[i], decs[i+1])
+		c.Assert(cmp, LessEqual, 0)
 	}
 }
