@@ -167,7 +167,7 @@ func (txn *hbaseTxn) StartTS() int64 {
 }
 
 func (txn *hbaseTxn) GetClient() kv.Client {
-	return nil
+	return &hbaseClient{}
 }
 
 type hbaseClient struct {
