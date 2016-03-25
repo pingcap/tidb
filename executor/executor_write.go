@@ -830,6 +830,40 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		// While the insertion fails because a duplicate-key error occurs for a primary key or unique index,
 		// a storage engine may perform the REPLACE as an update rather than a delete plus insert.
 		// See: http://dev.mysql.com/doc/refman/5.7/en/replace.html.
+
+		// If PKIsHandle && PK value is changed, we should delete the row and insert a new row.
+		if e.Table.Meta().PKIsHandle {
+			changeHandle := false
+			oldRow, err1 := e.Table.Row(e.ctx, h)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			for i, col := range e.Table.Cols() {
+				if !col.IsPKHandleColumn(e.Table.Meta()) {
+					continue
+				}
+				// Check if PK value changes.
+				cmp, err2 := row[i].CompareDatum(oldRow[i])
+				if err2 != nil {
+					return nil, errors.Trace(err2)
+				}
+				if cmp != 0 {
+					changeHandle = true
+				}
+				break
+			}
+			if changeHandle {
+				// Remove old data and insert new data.
+				err = e.Table.RemoveRecord(e.ctx, h, oldRow)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				_, err = e.Table.AddRecord(e.ctx, row)
+				variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+				continue
+			}
+		}
+		// Replace the current row data.
 		if err = e.replaceRow(h, row); err != nil {
 			return nil, errors.Trace(err)
 		}
