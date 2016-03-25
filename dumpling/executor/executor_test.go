@@ -532,6 +532,19 @@ func (s *testSuite) TestReplace(c *C) {
 	tk.MustExec(issue989SQL)
 	r := tk.MustQuery("select * from tIssue989;")
 	r.Check(testkit.Rows("111 2"))
+
+	// For Issue1012
+	issue1012SQL := `CREATE TABLE tIssue1012 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));`
+	tk.MustExec(issue1012SQL)
+	issue1012SQL = `insert into tIssue1012 (a, b) values (1, 2);`
+	tk.MustExec(issue1012SQL)
+	issue1012SQL = `insert into tIssue1012 (a, b) values (2, 1);`
+	tk.MustExec(issue1012SQL)
+	issue1012SQL = `replace into tIssue1012(a, b) values (1, 1);`
+	tk.MustExec(issue1012SQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
+	r = tk.MustQuery("select * from tIssue1012;")
+	r.Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestSelectWithoutFrom(c *C) {
