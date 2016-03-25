@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	nilFlag byte = iota
-	bytesFlag
-	compactBytesFlag
-	intFlag
-	uintFlag
-	floatFlag
-	decimalFlag
-	durationFlag
+	nilFlag          byte = 0
+	bytesFlag        byte = 1
+	compactBytesFlag byte = 2
+	intFlag          byte = 3
+	uintFlag         byte = 4
+	floatFlag        byte = 5
+	decimalFlag      byte = 6
+	durationFlag     byte = 7
+	maxFlag          byte = 250
 )
 
 func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
@@ -69,6 +70,10 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			b = EncodeUint(b, uint64(val.GetMysqlSet().ToNumber()))
 		case types.KindNull:
 			b = append(b, nilFlag)
+		case types.KindMinNotNull:
+			b = append(b, bytesFlag)
+		case types.KindMaxValue:
+			b = append(b, maxFlag)
 		default:
 			return nil, errors.Errorf("unsupport encode type %d", val.Kind())
 		}
