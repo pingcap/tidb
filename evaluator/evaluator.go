@@ -46,6 +46,16 @@ func Eval(ctx context.Context, expr ast.ExprNode) (interface{}, error) {
 	return expr.GetValue(), nil
 }
 
+// EvalDatum evaluates an expression to a datum.
+func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
+	e := &Evaluator{ctx: ctx}
+	expr.Accept(e)
+	if e.err != nil {
+		return d, errors.Trace(e.err)
+	}
+	return *expr.GetDatum(), nil
+}
+
 // EvalBool evalueates an expression to a boolean value.
 func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
 	val, err := Eval(ctx, expr)
@@ -219,77 +229,79 @@ func (e *Evaluator) defaultExpr(v *ast.DefaultExpr) bool {
 }
 
 func (e *Evaluator) compareSubquery(cs *ast.CompareSubqueryExpr) bool {
-	lvDatum := cs.L.GetDatum()
-	if lvDatum.Kind() == types.KindNull {
+	lv := *cs.L.GetDatum()
+	if lv.Kind() == types.KindNull {
 		cs.SetNull()
 		return true
 	}
-	lv := lvDatum.GetValue()
-	x, err := e.checkResult(cs, lv, cs.R.GetValue().([]interface{}))
+	x, err := e.checkResult(cs, lv, cs.R.GetDatum().GetRow())
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-	cs.SetValue(x)
+	cs.SetDatum(x)
 	return true
 }
 
-func (e *Evaluator) checkResult(cs *ast.CompareSubqueryExpr, lv interface{}, result []interface{}) (interface{}, error) {
+func (e *Evaluator) checkResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (types.Datum, error) {
 	if cs.All {
 		return e.checkAllResult(cs, lv, result)
 	}
 	return e.checkAnyResult(cs, lv, result)
 }
 
-func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv interface{}, result []interface{}) (interface{}, error) {
+func (e *Evaluator) checkAllResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (d types.Datum, err error) {
 	hasNull := false
 	for _, v := range result {
-		if v == nil {
+		if v.Kind() == types.KindNull {
 			hasNull = true
 			continue
 		}
 
-		comRes, err := types.Compare(lv, v)
-		if err != nil {
-			return nil, errors.Trace(err)
+		comRes, err1 := lv.CompareDatum(v)
+		if err1 != nil {
+			return d, errors.Trace(err1)
 		}
 
-		res, err := getCompResult(cs.Op, comRes)
-		if err != nil {
-			return nil, errors.Trace(err)
+		res, err1 := getCompResult(cs.Op, comRes)
+		if err1 != nil {
+			return d, errors.Trace(err1)
 		}
 		if !res {
-			return false, nil
+			d.SetInt64(boolToInt64(false))
+			return d, nil
 		}
 	}
 	if hasNull {
 		// If no matched but we get null, return null.
 		// Like `insert t (c) values (1),(2),(null)`, then
 		// `select 3 > all (select c from t)`, returns null.
-		return nil, nil
+		return d, nil
 	}
-	return true, nil
+	d.SetInt64(boolToInt64(true))
+	return d, nil
 }
 
-func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv interface{}, result []interface{}) (interface{}, error) {
+func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv types.Datum, result []types.Datum) (d types.Datum, err error) {
 	hasNull := false
 	for _, v := range result {
-		if v == nil {
+		if v.Kind() == types.KindNull {
 			hasNull = true
 			continue
 		}
 
-		comRes, err := types.Compare(lv, v)
-		if err != nil {
-			return nil, errors.Trace(err)
+		comRes, err1 := lv.CompareDatum(v)
+		if err1 != nil {
+			return d, errors.Trace(err1)
 		}
 
-		res, err := getCompResult(cs.Op, comRes)
-		if err != nil {
-			return nil, errors.Trace(err)
+		res, err1 := getCompResult(cs.Op, comRes)
+		if err1 != nil {
+			return d, errors.Trace(err1)
 		}
 		if res {
-			return true, nil
+			d.SetInt64(boolToInt64(true))
+			return d, nil
 		}
 	}
 
@@ -297,20 +309,20 @@ func (e *Evaluator) checkAnyResult(cs *ast.CompareSubqueryExpr, lv interface{}, 
 		// If no matched but we get null, return null.
 		// Like `insert t (c) values (1),(2),(null)`, then
 		// `select 0 > any (select c from t)`, returns null.
-		return nil, nil
+		return d, nil
 	}
 
-	return false, nil
+	d.SetInt64(boolToInt64(false))
+	return d, nil
 }
 
 func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
-	datum := v.Sel.GetDatum()
-	if datum.Kind() == types.KindNull {
+	d := v.Sel.GetDatum()
+	if d.Kind() == types.KindNull {
 		v.SetInt64(0)
 		return true
 	}
-	r := datum.GetValue()
-	rows, _ := r.([]interface{})
+	rows := d.GetRow()
 	if len(rows) > 0 {
 		v.SetInt64(1)
 	} else {
@@ -343,14 +355,14 @@ func (e *Evaluator) subqueryExec(v ast.SubqueryExec) bool {
 		return false
 	}
 	if e.multipleRows || e.existRow {
-		v.SetValue(rows)
+		v.GetDatum().SetInterface(types.MakeDatums(rows...))
 		return true
 	}
 	switch len(rows) {
 	case 0:
 		v.GetDatum().SetNull()
 	case 1:
-		v.SetValue(rows[0])
+		v.SetDatum(types.NewDatum(rows[0]))
 	default:
 		e.err = errors.New("Subquery returns more than 1 row")
 		return false
@@ -358,65 +370,69 @@ func (e *Evaluator) subqueryExec(v ast.SubqueryExec) bool {
 	return true
 }
 
-func (e *Evaluator) checkInList(not bool, in interface{}, list []interface{}) interface{} {
+func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d types.Datum) {
 	hasNull := false
 	for _, v := range list {
-		if v == nil {
+		if v.Kind() == types.KindNull {
 			hasNull = true
 			continue
 		}
 
-		r, err := types.Compare(types.Coerce(in, v))
+		a, b := types.CoerceDatum(in, v)
+		r, err := a.CompareDatum(b)
 		if err != nil {
 			e.err = errors.Trace(err)
-			return nil
+			return d
 		}
 		if r == 0 {
 			if !not {
-				return 1
+				d.SetInt64(1)
+				return d
 			}
-			return 0
+			return d
 		}
 	}
 
 	if hasNull {
 		// if no matched but we got null in In, return null
 		// e.g 1 in (null, 2, 3) returns null
-		return nil
+		return d
 	}
 	if not {
-		return 1
+		d.SetInt64(1)
+		return d
 	}
-	return 0
+	d.SetInt64(0)
+	return d
 }
 
 func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
-	lhs := n.Expr.GetDatum()
+	lhs := *n.Expr.GetDatum()
 	if lhs.Kind() == types.KindNull {
 		n.SetNull()
 		return true
 	}
 	if n.Sel == nil {
-		values := make([]interface{}, 0, len(n.List))
+		ds := make([]types.Datum, 0, len(n.List))
 		for _, ei := range n.List {
-			values = append(values, ei.GetValue())
+			ds = append(ds, *ei.GetDatum())
 		}
-		x := e.checkInList(n.Not, lhs.GetValue(), values)
+		x := e.checkInList(n.Not, lhs, ds)
 		if e.err != nil {
 			return false
 		}
-		n.SetValue(x)
+		n.SetDatum(x)
 		return true
 	}
 	se := n.Sel.(*ast.SubqueryExpr)
 	sel := se.SubqueryExec
 
-	res := sel.GetValue().([]interface{})
-	x := e.checkInList(n.Not, lhs.GetValue(), res)
+	res := sel.GetDatum().GetRow()
+	x := e.checkInList(n.Not, lhs, res)
 	if e.err != nil {
 		return false
 	}
-	n.SetValue(x)
+	n.SetDatum(x)
 	return true
 }
 
@@ -467,11 +483,11 @@ func (e *Evaluator) position(v *ast.PositionExpr) bool {
 }
 
 func (e *Evaluator) row(v *ast.RowExpr) bool {
-	row := make([]interface{}, 0, len(v.Values))
+	row := make([]types.Datum, 0, len(v.Values))
 	for _, val := range v.Values {
-		row = append(row, val.GetValue())
+		row = append(row, *val.GetDatum())
 	}
-	v.SetValue(row)
+	v.GetDatum().SetRow(row)
 	return true
 }
 
@@ -535,20 +551,16 @@ func (e *Evaluator) unaryOperation(u *ast.UnaryOperationExpr) bool {
 		case types.KindFloat32:
 			u.SetFloat32(-aDatum.GetFloat32())
 		case types.KindMysqlDuration:
-			u.SetValue(mysql.ZeroDecimal.Sub(aDatum.GetMysqlDuration().ToNumber()))
+			u.SetMysqlDecimal(mysql.ZeroDecimal.Sub(aDatum.GetMysqlDuration().ToNumber()))
 		case types.KindMysqlTime:
-			u.SetValue(mysql.ZeroDecimal.Sub(aDatum.GetMysqlTime().ToNumber()))
-		case types.KindString:
+			u.SetMysqlDecimal(mysql.ZeroDecimal.Sub(aDatum.GetMysqlTime().ToNumber()))
+		case types.KindString, types.KindBytes:
 			f, err := types.StrToFloat(aDatum.GetString())
 			e.err = errors.Trace(err)
 			u.SetFloat64(-f)
 		case types.KindMysqlDecimal:
 			f, _ := aDatum.GetMysqlDecimal().Float64()
-			u.SetValue(mysql.NewDecimalFromFloat(-f))
-		case types.KindBytes:
-			f, err := types.StrToFloat(string(aDatum.GetBytes()))
-			e.err = errors.Trace(err)
-			u.SetFloat64(-f)
+			u.SetMysqlDecimal(mysql.NewDecimalFromFloat(-f))
 		case types.KindMysqlHex:
 			u.SetFloat64(-aDatum.GetMysqlHex().ToNumber())
 		case types.KindMysqlBit:
@@ -614,24 +626,6 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 }
 
 func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
-	of, ok := OldFuncs[v.FnName.L]
-	if ok {
-		if len(v.Args) < of.MinArgs || (of.MaxArgs != -1 && len(v.Args) > of.MaxArgs) {
-			e.err = ErrInvalidOperation.Gen("number of function arguments must in [%d, %d].", of.MinArgs, of.MaxArgs)
-			return false
-		}
-		a := make([]interface{}, len(v.Args))
-		for i, arg := range v.Args {
-			a[i] = arg.GetValue()
-		}
-		val, err := of.F(a, e.ctx)
-		if err != nil {
-			e.err = errors.Trace(err)
-			return false
-		}
-		v.SetValue(val)
-		return true
-	}
 	f, ok := Funcs[v.FnName.L]
 	if !ok {
 		e.err = ErrInvalidOperation.Gen("unknown function %s", v.FnName.O)
@@ -655,19 +649,19 @@ func (e *Evaluator) funcCall(v *ast.FuncCallExpr) bool {
 }
 
 func (e *Evaluator) funcCast(v *ast.FuncCastExpr) bool {
-	value := v.Expr.GetValue()
+	d := *v.Expr.GetDatum()
 	// Casting nil to any type returns null
-	if value == nil {
+	if d.Kind() == types.KindNull {
 		v.SetNull()
 		return true
 	}
 	var err error
-	value, err = types.Cast(value, v.Tp)
+	d, err = d.Cast(v.Tp)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
 	}
-	v.SetValue(value)
+	v.SetDatum(d)
 	return true
 }
 
@@ -700,18 +694,21 @@ func (e *Evaluator) evalAggAvg(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
 	switch x := ctx.Value.(type) {
 	case float64:
-		ctx.Value = x / float64(ctx.Count)
+		t := x / float64(ctx.Count)
+		ctx.Value = t
+		v.SetFloat64(t)
 	case mysql.Decimal:
-		ctx.Value = x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
+		t := x.Div(mysql.NewDecimalFromUint(uint64(ctx.Count), 0))
+		ctx.Value = t
+		v.SetMysqlDecimal(t)
 	}
-	v.SetValue(ctx.Value)
 }
 
 func (e *Evaluator) evalAggGroupConcat(v *ast.AggregateFuncExpr) {
 	ctx := v.GetContext()
 	if ctx.Buffer != nil {
-		v.SetValue(ctx.Buffer.String())
+		v.SetString(ctx.Buffer.String())
 	} else {
-		v.SetValue(nil)
+		v.SetNull()
 	}
 }

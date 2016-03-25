@@ -22,20 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// OldFunc is for a old builtin function.
-type OldFunc struct {
-	// F is the specific calling function.
-	F func([]interface{}, context.Context) (interface{}, error)
-	// MinArgs is the minimal arguments needed,
-	MinArgs int
-	// MaxArgs is the maximal arguments needed, -1 for infinity.
-	MaxArgs int
-	// IsStatic shows whether this function can be called statically.
-	IsStatic bool
-	// IsAggregate represents whether this function is an aggregate function or not.
-	IsAggregate bool
-}
-
 // Func is for a builtin function.
 type Func struct {
 	// F is the specific calling function.
@@ -44,22 +30,6 @@ type Func struct {
 	MinArgs int
 	// MaxArgs is the maximal arguments needed, -1 for infinity.
 	MaxArgs int
-}
-
-// OldFuncs holds all has old registered builtin functions.
-var OldFuncs = map[string]OldFunc{
-	// control functions
-	"if":     {builtinIf, 3, 3, true, false},
-	"ifnull": {builtinIfNull, 2, 2, true, false},
-	"nullif": {builtinNullIf, 2, 2, true, false},
-
-	// information functions
-	"current_user":  {builtinCurrentUser, 0, 0, false, false},
-	"database":      {builtinDatabase, 0, 0, false, false},
-	"found_rows":    {builtinFoundRows, 0, 0, false, false},
-	"user":          {builtinUser, 0, 0, false, false},
-	"connection_id": {builtinConnectionID, 0, 0, true, false},
-	"version":       {builtinVersion, 0, 0, true, false},
 }
 
 // Funcs holds all registered builtin functions.
@@ -115,6 +85,19 @@ var Funcs = map[string]Func{
 	"substring_index": {builtinSubstringIndex, 3, 3},
 	"locate":          {builtinLocate, 2, 3},
 	"trim":            {builtinTrim, 1, 3},
+
+	// information functions
+	"current_user":  {builtinCurrentUser, 0, 0},
+	"database":      {builtinDatabase, 0, 0},
+	"found_rows":    {builtinFoundRows, 0, 0},
+	"user":          {builtinUser, 0, 0},
+	"connection_id": {builtinConnectionID, 0, 0},
+	"version":       {builtinVersion, 0, 0},
+
+	// control functions
+	"if":     {builtinIf, 3, 3},
+	"ifnull": {builtinIfNull, 2, 2},
+	"nullif": {builtinNullIf, 2, 2},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
