@@ -145,7 +145,7 @@ func (txn *dbTxn) StartTS() int64 {
 }
 
 func (txn *dbTxn) GetClient() kv.Client {
-	return nil
+	return &dbClient{}
 }
 
 type dbClient struct {
