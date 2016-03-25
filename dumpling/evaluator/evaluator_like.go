@@ -128,13 +128,13 @@ func doMatch(str string, patChars, patTypes []byte) bool {
 }
 
 func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
-	expr := p.Expr.GetValue()
-	if expr == nil {
-		p.SetValue(nil)
+	expr := p.Expr.GetDatum()
+	if expr.Kind() == types.KindNull {
+		p.SetNull()
 		return true
 	}
 
-	sexpr, err := types.ToString(expr)
+	sexpr, err := expr.ToString()
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -143,12 +143,12 @@ func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	// We need to compile pattern if it has not been compiled or it is not static.
 	var needCompile = len(p.PatChars) == 0 || !ast.IsConstant(p.Pattern)
 	if needCompile {
-		pattern := p.Pattern.GetValue()
-		if pattern == nil {
-			p.SetValue(nil)
+		pattern := p.Pattern.GetDatum()
+		if pattern.Kind() == types.KindNull {
+			p.SetNull()
 			return true
 		}
-		spattern, err := types.ToString(pattern)
+		spattern, err := pattern.ToString()
 		if err != nil {
 			e.err = errors.Trace(err)
 			return false
@@ -159,7 +159,7 @@ func (e *Evaluator) patternLike(p *ast.PatternLikeExpr) bool {
 	if p.Not {
 		match = !match
 	}
-	p.SetValue(boolToInt64(match))
+	p.SetInt64(boolToInt64(match))
 	return true
 }
 
@@ -168,13 +168,13 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 	if p.Sexpr != nil {
 		sexpr = *p.Sexpr
 	} else {
-		expr := p.Expr.GetValue()
-		if expr == nil {
-			p.SetValue(nil)
+		expr := p.Expr.GetDatum()
+		if expr.Kind() == types.KindNull {
+			p.SetNull()
 			return true
 		}
 		var err error
-		sexpr, err = types.ToString(expr)
+		sexpr, err = expr.ToString()
 		if err != nil {
 			e.err = errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
 			return false
@@ -188,12 +188,12 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 
 	re := p.Re
 	if re == nil {
-		pattern := p.Pattern.GetValue()
-		if pattern == nil {
-			p.SetValue(nil)
+		pattern := p.Pattern.GetDatum()
+		if pattern.Kind() == types.KindNull {
+			p.SetNull()
 			return true
 		}
-		spattern, err := types.ToString(pattern)
+		spattern, err := pattern.ToString()
 		if err != nil {
 			e.err = errors.Errorf("non-string pattern in LIKE: %v (Value of type %T)", pattern, pattern)
 			return false
@@ -212,6 +212,6 @@ func (e *Evaluator) patternRegexp(p *ast.PatternRegexpExpr) bool {
 	if p.Not {
 		match = !match
 	}
-	p.SetValue(boolToInt64(match))
+	p.SetInt64(boolToInt64(match))
 	return true
 }
