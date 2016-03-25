@@ -39,21 +39,24 @@ message SelectRequest {
 	repeated KeyRange ranges = 5;
 
 	// distinct result.
-	optional bool distinct = 7;
+	optional bool distinct = 6;
 
 	// where condition.
-	optional Expr where = 8;
+	optional Expr where = 7;
 
 	// group by clause.
-	repeated ByItem group_by = 9;
+	repeated ByItem group_by = 8;
 
 	// having clause.
-	optional Expr having = 10;
+	optional Expr having = 9;
 
 	// order by clause.
-	repeated ByItem order_by = 11;
+	repeated ByItem order_by = 10;
 
-	// limit the result to be returned;
+    	// offset of the result.
+    	optional int64 offset = 11;
+
+	// limit the result to be returned.
 	optional int64 limit = 12;
 }
 
