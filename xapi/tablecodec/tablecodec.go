@@ -283,8 +283,8 @@ func IndexToProto(t *model.TableInfo, idx *model.IndexInfo) *tipb.IndexInfo {
 }
 
 // EncodeTableRanges encodes table ranges into kv.KeyRanges.
-func EncodeTableRanges(tid int64, rans []*tipb.KeyRange, points [][]byte) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans)+len(points))
+func EncodeTableRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
+	keyRanges := make([]kv.KeyRange, 0, len(rans))
 	for _, r := range rans {
 		start := EncodeRowKey(tid, r.Low)
 		end := EncodeRowKey(tid, r.High)
@@ -294,22 +294,12 @@ func EncodeTableRanges(tid int64, rans []*tipb.KeyRange, points [][]byte) []kv.K
 		}
 		keyRanges = append(keyRanges, nr)
 	}
-	for _, pdata := range points {
-		// Convert KeyPoint to kv.KeyRange
-		start := EncodeRowKey(tid, pdata)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   start.PartialNext(),
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	sortKeyRange(keyRanges)
 	return keyRanges
 }
 
 // EncodeIndexRanges encodes index ranges into kv.KeyRanges.
-func EncodeIndexRanges(tid int64, rans []*tipb.KeyRange, points [][]byte) []kv.KeyRange {
-	keyRanges := make([]kv.KeyRange, 0, len(rans)+len(points))
+func EncodeIndexRanges(tid int64, rans []*tipb.KeyRange) []kv.KeyRange {
+	keyRanges := make([]kv.KeyRange, 0, len(rans))
 	for _, r := range rans {
 		// Convert range to kv.KeyRange
 		start := EncodeIndexSeekKey(tid, r.Low)
@@ -320,21 +310,7 @@ func EncodeIndexRanges(tid int64, rans []*tipb.KeyRange, points [][]byte) []kv.K
 		}
 		keyRanges = append(keyRanges, nr)
 	}
-	for _, pdata := range points {
-		start := EncodeIndexSeekKey(tid, pdata)
-		nr := kv.KeyRange{
-			StartKey: start,
-			EndKey:   start.PartialNext(),
-		}
-		keyRanges = append(keyRanges, nr)
-	}
-	sortKeyRange(keyRanges)
 	return keyRanges
-}
-
-func sortKeyRange(ranges []kv.KeyRange) {
-	sorter := keyRangeSorter{ranges: ranges}
-	sort.Sort(&sorter)
 }
 
 type keyRangeSorter struct {

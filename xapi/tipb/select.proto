@@ -38,9 +38,6 @@ message SelectRequest {
 	// disjoint handle ranges to be scanned.
 	repeated KeyRange ranges = 5;
 
-	// handle points to be looked up.
-	repeated bytes points = 6;
-
 	// distinct result.
 	optional bool distinct = 7;
 

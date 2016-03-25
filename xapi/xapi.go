@@ -129,11 +129,11 @@ func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, erro
 	if req.IndexInfo != nil {
 		kvReq.Tp = kv.ReqTypeIndex
 		tid := req.IndexInfo.GetTableId()
-		kvReq.KeyRanges = tablecodec.EncodeIndexRanges(tid, req.Ranges, req.Points)
+		kvReq.KeyRanges = tablecodec.EncodeIndexRanges(tid, req.Ranges)
 	} else {
 		kvReq.Tp = kv.ReqTypeSelect
 		tid := req.GetTableInfo().GetTableId()
-		kvReq.KeyRanges = tablecodec.EncodeTableRanges(tid, req.Ranges, req.Points)
+		kvReq.KeyRanges = tablecodec.EncodeTableRanges(tid, req.Ranges)
 	}
 	var err error
 	kvReq.Data, err = proto.Marshal(req)
