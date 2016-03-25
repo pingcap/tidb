@@ -47,6 +47,7 @@ func testDatumToBool(c *C, in interface{}, res int) {
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, res64)
 }
+
 func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, int(0), 0)
 	testDatumToBool(c, int64(0), 0)
@@ -78,6 +79,40 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	d := NewDatum(&invalidMockType{})
 	_, err = d.ToBool()
 	c.Assert(err, NotNil)
+}
+
+func (ts *testDatumSuite) TestEqualDatums(c *C) {
+	testCases := []struct {
+		a    []interface{}
+		b    []interface{}
+		same bool
+	}{
+		// Positive cases
+		{[]interface{}{1}, []interface{}{1}, true},
+		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
+		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
+
+		// Negative cases
+		{[]interface{}{1}, []interface{}{2}, false},
+		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
+		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
+
+		// Corner cases
+		{[]interface{}{}, []interface{}{}, true},
+		{[]interface{}{nil}, []interface{}{nil}, true},
+		{[]interface{}{}, []interface{}{1}, false},
+		{[]interface{}{1}, []interface{}{1, 1}, false},
+		{[]interface{}{nil}, []interface{}{1}, false},
+	}
+	for _, t := range testCases {
+		testEqualDatums(c, t.a, t.b, t.same)
+	}
+}
+
+func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
+	res, err := EqualDatums(MakeDatums(a), MakeDatums(b))
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
 
 func testDatumToInt64(c *C, val interface{}, expect int64) {
