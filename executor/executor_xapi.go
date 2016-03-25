@@ -200,11 +200,12 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 	selTableReq.TableInfo = tablecodec.TableToProto(e.indexPlan.Table)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
+		if h == math.MaxInt64 {
+			// We can't convert MaxInt64 into an left closed, right open range.
+			continue
+		}
 		pbRange := new(tipb.KeyRange)
 		pbRange.Low = codec.EncodeInt(nil, h)
-		if h != math.MaxInt64 {
-			h++
-		}
 		pbRange.High = codec.EncodeInt(nil, h)
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
