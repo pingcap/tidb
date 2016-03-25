@@ -489,6 +489,10 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 func (s *testEvaluatorSuite) TestPatternIn(c *C) {
 	cases := []testCase{
 		{
+			exprStr:   "1 not in (1, 2, 3)",
+			resultStr: "0",
+		},
+		{
 			exprStr:   "1 in (1, 2, 3)",
 			resultStr: "1",
 		},
