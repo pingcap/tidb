@@ -522,6 +522,16 @@ func (s *testSuite) TestReplace(c *C) {
 	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
 	tk.MustExec(replacePrimaryKeySQL)
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	// For Issue989
+	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
+	tk.MustExec(issue989SQL)
+	r := tk.MustQuery("select * from tIssue989;")
+	r.Check(testkit.Rows("111 2"))
 }
 
 func (s *testSuite) TestSelectWithoutFrom(c *C) {
