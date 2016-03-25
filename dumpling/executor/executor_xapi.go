@@ -102,7 +102,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.StartTs = &startTs
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
 	selReq.Where = conditionsToPBExpression(e.tablePlan.FilterConditions...)
-	selReq.Ranges, selReq.Points = tableRangesToPBRangesAndPoints(e.tablePlan.Ranges)
+	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
 	selReq.TableInfo = tablecodec.TableToProto(e.tablePlan.Table)
 	e.result, err = xapi.Select(txn.GetClient(), selReq, 1)
 	if err != nil {
@@ -186,7 +186,7 @@ func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResul
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	var err error
-	selIdxReq.Ranges, selIdxReq.Points, err = indexRangesToPBRangesAndPoints(e.indexPlan.Ranges)
+	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -200,7 +200,14 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 	selTableReq.TableInfo = tablecodec.TableToProto(e.indexPlan.Table)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
-		selTableReq.Points = append(selTableReq.Points, codec.EncodeInt(nil, h))
+		if h == math.MaxInt64 {
+			// We can't convert MaxInt64 into an left closed, right open range.
+			continue
+		}
+		pbRange := new(tipb.KeyRange)
+		pbRange.Low = codec.EncodeInt(nil, h)
+		pbRange.High = codec.EncodeInt(nil, h)
+		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
 	selTableReq.Where = conditionsToPBExpression(e.indexPlan.FilterConditions...)
 	return xapi.Select(txn.GetClient(), selTableReq, 10)
@@ -214,55 +221,41 @@ func resultFieldsToPBExpression(fields []*ast.ResultField) []*tipb.Expr {
 	return nil
 }
 
-func tableRangesToPBRangesAndPoints(tableRanges []plan.TableRange) ([]*tipb.KeyRange, [][]byte) {
+func tableRangesToPBRanges(tableRanges []plan.TableRange) []*tipb.KeyRange {
 	hrs := make([]*tipb.KeyRange, 0, len(tableRanges))
-	var handlePoints [][]byte
-	for _, ran := range tableRanges {
-		if ran.LowVal == ran.HighVal {
-			handlePoints = append(handlePoints, codec.EncodeInt(nil, ran.LowVal))
-		} else {
-			hr := new(tipb.KeyRange)
-			hr.Low = codec.EncodeInt(nil, ran.LowVal)
-			hiVal := ran.HighVal
-			if hiVal != math.MaxInt64 {
-				hiVal++
-			}
-			hr.High = codec.EncodeInt(nil, ran.HighVal)
-			hrs = append(hrs, hr)
+	for _, tableRange := range tableRanges {
+		pbRange := new(tipb.KeyRange)
+		pbRange.Low = codec.EncodeInt(nil, tableRange.LowVal)
+		hi := tableRange.HighVal
+		if hi != math.MaxInt64 {
+			hi++
 		}
+		pbRange.High = codec.EncodeInt(nil, hi)
+		hrs = append(hrs, pbRange)
 	}
-	return hrs, handlePoints
+	return hrs
 }
 
-func indexRangesToPBRangesAndPoints(ranges []*plan.IndexRange) ([]*tipb.KeyRange, [][]byte, error) {
+func indexRangesToPBRanges(ranges []*plan.IndexRange) ([]*tipb.KeyRange, error) {
 	keyRanges := make([]*tipb.KeyRange, 0, len(ranges))
-	var points [][]byte
 	for _, ran := range ranges {
-		if ran.IsPoint() {
-			point, err := codec.EncodeValue(nil, ran.LowVal...)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			points = append(points, point)
-		} else {
-			low, err := codec.EncodeValue(nil, ran.LowVal...)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			if ran.LowExclude {
-				low = []byte(kv.Key(low).PartialNext())
-			}
-			high, err := codec.EncodeValue(nil, ran.HighVal...)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			if !ran.HighExclude {
-				high = []byte(kv.Key(high).PartialNext())
-			}
-			keyRanges = append(keyRanges, &tipb.KeyRange{Low: low, High: high})
+		low, err := codec.EncodeValue(nil, ran.LowVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		if ran.LowExclude {
+			low = []byte(kv.Key(low).PartialNext())
+		}
+		high, err := codec.EncodeValue(nil, ran.HighVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ran.HighExclude {
+			high = []byte(kv.Key(high).PartialNext())
+		}
+		keyRanges = append(keyRanges, &tipb.KeyRange{Low: low, High: high})
 	}
-	return keyRanges, points, nil
+	return keyRanges, nil
 }
 
 func extractHandlesFromIndexResult(idxResult *xapi.SelectResult) ([]int64, error) {
