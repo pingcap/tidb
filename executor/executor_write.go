@@ -818,85 +818,56 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	for _, row := range rows {
-		h, err := e.Table.AddRecord(e.ctx, row)
-		if err == nil {
+	/*
+	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
+	 *  1. Try to insert the new row into the table
+	 *  2. While the insertion fails because a duplicate-key error occurs for a primary key or unique index:
+	 *  3. Delete from the table the conflicting row that has the duplicate key value
+	 *  4. Try again to insert the new row into the table
+	 * See: http://dev.mysql.com/doc/refman/5.7/en/replace.html
+	 *
+	 * For REPLACE statements, the affected-rows value is 2 if the new row replaced an old row,
+	 * because in this case, one row was inserted after the duplicate was deleted.
+	 * See: http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
+	 */
+	idx := 0
+	rowsLen := len(rows)
+	for {
+		if idx >= rowsLen {
+			break
+		}
+		row := rows[idx]
+		h, err1 := e.Table.AddRecord(e.ctx, row)
+		if err1 == nil {
+			idx++
 			continue
 		}
-		if err != nil && !terror.ErrorEqual(err, kv.ErrKeyExists) {
-			return nil, errors.Trace(err)
+		if err1 != nil && !terror.ErrorEqual(err1, kv.ErrKeyExists) {
+			return nil, errors.Trace(err1)
 		}
-
-		// While the insertion fails because a duplicate-key error occurs for a primary key or unique index,
-		// a storage engine may perform the REPLACE as an update rather than a delete plus insert.
-		// See: http://dev.mysql.com/doc/refman/5.7/en/replace.html.
-
-		// If PKIsHandle && PK value is changed, we should delete the row and insert a new row.
-		if e.Table.Meta().PKIsHandle {
-			changeHandle := false
-			oldRow, err1 := e.Table.Row(e.ctx, h)
-			if err1 != nil {
-				return nil, errors.Trace(err1)
-			}
-			for i, col := range e.Table.Cols() {
-				if !col.IsPKHandleColumn(e.Table.Meta()) {
-					continue
-				}
-				// Check if PK value changes.
-				cmp, err2 := row[i].CompareDatum(oldRow[i])
-				if err2 != nil {
-					return nil, errors.Trace(err2)
-				}
-				if cmp != 0 {
-					changeHandle = true
-				}
-				break
-			}
-			if changeHandle {
-				// Remove old data and insert new data.
-				err = e.Table.RemoveRecord(e.ctx, h, oldRow)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				_, err = e.Table.AddRecord(e.ctx, row)
-				variable.GetSessionVars(e.ctx).AddAffectedRows(1)
-				continue
-			}
+		oldRow, err1 := e.Table.Row(e.ctx, h)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
-		// Replace the current row data.
-		if err = e.replaceRow(h, row); err != nil {
-			return nil, errors.Trace(err)
+		rowUnchanged, err1 := types.EqualDatums(oldRow, row)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		if rowUnchanged {
+			// If row unchanged, we do not need to do insert.
+			variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+			idx++
+			continue
+		}
+		// Remove current row and try replace again.
+		err1 = e.Table.RemoveRecord(e.ctx, h, oldRow)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
 	}
 	e.finished = true
 	return nil, nil
-}
-
-func (e *ReplaceExec) replaceRow(handle int64, replaceRow []types.Datum) error {
-	row, err := e.Table.Row(e.ctx, handle)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	isReplace := false
-	touched := make(map[int]bool, len(row))
-	for i, val := range row {
-		v, err1 := val.CompareDatum(replaceRow[i])
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if v != 0 {
-			touched[i] = true
-			isReplace = true
-		}
-	}
-	if isReplace {
-		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
-		if err = e.Table.UpdateRecord(e.ctx, handle, row, replaceRow, touched); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // SplitQualifiedName splits an identifier name to db, table and field name.
