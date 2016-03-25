@@ -389,6 +389,7 @@ func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d
 				d.SetInt64(1)
 				return d
 			}
+			d.SetInt64(0)
 			return d
 		}
 	}
