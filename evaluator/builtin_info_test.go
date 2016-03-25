@@ -19,30 +19,31 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
-	v, err := builtinDatabase(nil, ctx)
+	d, err := builtinDatabase(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	db.BindCurrentSchema(ctx, "test")
-	v, err = builtinDatabase(nil, ctx)
+	d, err = builtinDatabase(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "test")
+	c.Assert(d.GetString(), Equals, "test")
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	ctx := mock.NewContext()
-	v, err := builtinFoundRows(nil, ctx)
+	d, err := builtinFoundRows(types.MakeDatums(), ctx)
 	c.Assert(err, NotNil)
 
 	variable.BindSessionVars(ctx)
 
-	v, err = builtinFoundRows(nil, ctx)
+	d, err = builtinFoundRows(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(0))
+	c.Assert(d.GetUint64(), Equals, uint64(0))
 }
 
 func (s *testEvaluatorSuite) TestUser(c *C) {
@@ -51,9 +52,9 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	sessionVars := variable.GetSessionVars(ctx)
 	sessionVars.User = "root@localhost"
 
-	v, err := builtinUser(nil, ctx)
+	d, err := builtinUser(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "root@localhost")
+	c.Assert(d.GetString(), Equals, "root@localhost")
 }
 
 func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
@@ -62,9 +63,9 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	sessionVars := variable.GetSessionVars(ctx)
 	sessionVars.User = "root@localhost"
 
-	v, err := builtinCurrentUser(nil, ctx)
+	d, err := builtinCurrentUser(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "root@localhost")
+	c.Assert(d.GetString(), Equals, "root@localhost")
 }
 
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
@@ -73,14 +74,14 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	sessionVars := variable.GetSessionVars(ctx)
 	sessionVars.ConnectionID = uint64(1)
 
-	v, err := builtinConnectionID(nil, ctx)
+	d, err := builtinConnectionID(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(1))
+	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
 	ctx := mock.NewContext()
 	v, err := builtinVersion(nil, ctx)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, mysql.ServerVersion)
+	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
