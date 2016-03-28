@@ -501,6 +501,7 @@ import (
 	PrepareSQL		"Prepare statement sql string"
 	PrimaryExpression	"primary expression"
 	PrimaryFactor		"primary expression factor"
+	PrimaryOpt		"Optional primary keyword"
 	Priority		"insert statement priority"
 	PrivElem		"Privilege element"
 	PrivElemList		"Privilege element list"
@@ -619,6 +620,9 @@ import (
 
 %precedence lowerThanInsertValues
 %precedence insertValues
+
+%precedence lowerThanKey
+%precedence key 
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -851,6 +855,9 @@ CommitStmt:
 		$$ = &ast.CommitStmt{}
 	}
 
+PrimaryOpt:
+	{} | "PRIMARY"
+
 ColumnOption:
 	"NOT" "NULL"
 	{
@@ -864,13 +871,16 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	"PRIMARY" "KEY"
+|	PrimaryOpt "KEY" 
 	{
+		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY 
+		// can also be specified as just KEY when given in a column definition. 
+		// See: http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
 	}
-|	"UNIQUE"
+|	"UNIQUE" %prec lowerThanKey
 	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniq}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
 	}
 |	"UNIQUE" "KEY"
 	{
