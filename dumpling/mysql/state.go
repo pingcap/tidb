@@ -22,8 +22,8 @@ const (
 // The values are taken from ANSI SQL and ODBC and are more standardized.
 var MySQLState = map[uint16]string{
 	ErrDupKey:                              "23000",
-	ErrOutofmemory:                         "HY001",
-	ErrOutOfSortmemory:                     "HY001",
+	ErrOutofMemory:                         "HY001",
+	ErrOutOfSortMemory:                     "HY001",
 	ErrConCount:                            "08004",
 	ErrBadHost:                             "08S01",
 	ErrHandshake:                           "08S01",
@@ -43,8 +43,8 @@ var MySQLState = map[uint16]string{
 	ErrWrongGroupField:                     "42000",
 	ErrWrongValueCount:                     "21S01",
 	ErrTooLongIdent:                        "42000",
-	ErrDupFieldname:                        "42S21",
-	ErrDupKeyname:                          "42000",
+	ErrDupFieldName:                        "42S21",
+	ErrDupKeyName:                          "42000",
 	ErrDupEntry:                            "23000",
 	ErrWrongFieldSpec:                      "42000",
 	ErrParse:                               "42000",
