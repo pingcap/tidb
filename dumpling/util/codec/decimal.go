@@ -59,12 +59,6 @@ func decodeExp(expValue int64, expSign int64, valSign int64) int64 {
 	return expValue
 }
 
-func codecValue(value []byte, valSign int64) {
-	if valSign == negativeSign {
-		reverseBytes(value)
-	}
-}
-
 // EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.
 // EncodeDecimal guarantees that the encoded value is in ascending order for comparison.
 // Decimal encoding:
@@ -106,14 +100,16 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	expSign := codecSign(expVal)
 
 	// For negtive exp, do bit reverse for exp.
-	// For negtive decimal, do bit reverse for exp and value.
 	expVal = encodeExp(expVal, expSign, valSign)
-	codecValue(value, valSign)
 
 	b = append(b, byte(valSign))
 	b = append(b, byte(expSign))
 	b = EncodeInt(b, expVal)
-	b = EncodeBytes(b, value)
+	if valSign == negativeSign {
+		b = EncodeBytesDesc(b, value)
+	} else {
+		b = EncodeBytes(b, value)
+	}
 	return b
 }
 
@@ -153,11 +149,14 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 
 	// Decode abs value bytes.
 	value := []byte{}
-	r, value, err = DecodeBytes(r)
+	if valSign == negativeSign {
+		r, value, err = DecodeBytesDesc(r)
+	} else {
+		r, value, err = DecodeBytes(r)
+	}
 	if err != nil {
 		return r, d, errors.Trace(err)
 	}
-	codecValue(value, valSign)
 
 	// Generate decimal string value.
 	var decimalStr []byte
