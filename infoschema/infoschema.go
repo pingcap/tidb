@@ -113,7 +113,7 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	id, ok := is.tableNameToID[tableName{schema: schema.L, table: table.L}]
 	if !ok {
-		return nil, TableNotExists.Gen("table %s.%s does not exist", schema, table)
+		return nil, ErrTableNotExists.Gen("table %s.%s does not exist", schema, table)
 	}
 	t = is.tables[id]
 	return
@@ -392,7 +392,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	for _, t := range isDB.Tables {
 		tbl, ok := nameToTable[t.Name.L]
 		if !ok {
-			return errors.Errorf("table `%s` is missing.", t.Name)
+			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		info.tables[t.ID] = tbl
 		tname := tableName{isDB.Name.L, t.Name.L}
@@ -410,7 +410,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	for _, t := range psDB.Tables {
 		tbl, ok := perfHandle.GetTable(t.Name.O)
 		if !ok {
-			return errors.Errorf("table `%s` is missing.", t.Name)
+			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		info.tables[t.ID] = tbl
 		tname := tableName{psDB.Name.L, t.Name.L}
@@ -457,43 +457,51 @@ func (h *Handle) Get() InfoSchema {
 
 // Schema error codes.
 const (
-	CodeDbDropExists      terror.ErrCode = 1008
-	CodeDatabaseNotExists                = 1049
-	CodeTableNotExists                   = 1146
-	CodeColumnNotExists                  = 1054
+	codeDbDropExists      terror.ErrCode = 1008
+	codeDatabaseNotExists                = 1049
+	codeTableNotExists                   = 1146
+	codeColumnNotExists                  = 1054
 
-	CodeDatabaseExists = 1007
-	CodeTableExists    = 1050
-	CodeBadTable       = 1051
+	codeDatabaseExists = 1007
+	codeTableExists    = 1050
+	codeBadTable       = 1051
+	codeColumnExists   = 1060
+	codeIndexExists    = 1831
 )
 
 var (
-	// DatabaseDropExists returns for drop an unexist database.
-	DatabaseDropExists = terror.ClassSchema.New(CodeDbDropExists, "database doesn't exist")
-	// DatabaseNotExists returns for database not exists.
-	DatabaseNotExists = terror.ClassSchema.New(CodeDatabaseNotExists, "database not exists")
-	// TableNotExists returns for table not exists.
-	TableNotExists = terror.ClassSchema.New(CodeTableNotExists, "table not exists")
-	// ColumnNotExists returns for column not exists.
-	ColumnNotExists = terror.ClassSchema.New(CodeColumnNotExists, "field not exists")
+	// ErrDatabaseDropExists returns for dropping a non-existent database.
+	ErrDatabaseDropExists = terror.ClassSchema.New(codeDbDropExists, "database doesn't exist")
+	// ErrDatabaseNotExists returns for database not exists.
+	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
+	// ErrTableNotExists returns for table not exists.
+	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
+	// ErrColumnNotExists returns for column not exists.
+	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
 
-	// DatabaseExists returns for database already exists.
-	DatabaseExists = terror.ClassSchema.New(CodeDatabaseExists, "database already exists")
-	// TableExists returns for table already exists.
-	TableExists = terror.ClassSchema.New(CodeTableExists, "table already exists")
-	// TableDropExists returns for drop an unexist table.
-	TableDropExists = terror.ClassSchema.New(CodeBadTable, "unknown table")
+	// ErrDatabaseExists returns for database already exists.
+	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
+	// ErrTableExists returns for table already exists.
+	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
+	// ErrTableDropExists returns for dropping a non-existent table.
+	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
+	// ErrColumnExists returns for column already exists.
+	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
+	// ErrIndexExists returns for index already exists.
+	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeDbDropExists:      mysql.ErrDbDropExists,
-		CodeDatabaseNotExists: mysql.ErrBadDb,
-		CodeTableNotExists:    mysql.ErrNoSuchTable,
-		CodeColumnNotExists:   mysql.ErrBadField,
-		CodeDatabaseExists:    mysql.ErrDbCreateExists,
-		CodeTableExists:       mysql.ErrTableExists,
-		CodeBadTable:          mysql.ErrBadTable,
+		codeDbDropExists:      mysql.ErrDbDropExists,
+		codeDatabaseNotExists: mysql.ErrBadDb,
+		codeTableNotExists:    mysql.ErrNoSuchTable,
+		codeColumnNotExists:   mysql.ErrBadField,
+		codeDatabaseExists:    mysql.ErrDbCreateExists,
+		codeTableExists:       mysql.ErrTableExists,
+		codeBadTable:          mysql.ErrBadTable,
+		codeColumnExists:      mysql.ErrDupFieldName,
+		codeIndexExists:       mysql.ErrDupIndex,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }

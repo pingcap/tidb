@@ -91,7 +91,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
 	dbinfo, exists := sessionctx.GetDomain(e.ctx).InfoSchema().SchemaByName(dbname)
 	if !exists {
-		return infoschema.DatabaseNotExists.Gen("database %s not exists", dbname)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", dbname)
 	}
 	db.BindCurrentSchema(e.ctx, dbname.O)
 	// character_set_database is the character set used by the default database.
