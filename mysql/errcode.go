@@ -51,11 +51,11 @@ const (
 	ErrIllegalHa                                                    = 1031
 	ErrKeyNotFound                                                  = 1032
 	ErrNotFormFile                                                  = 1033
-	ErrNotKeyfile                                                   = 1034
-	ErrOldKeyfile                                                   = 1035
+	ErrNotKeyFile                                                   = 1034
+	ErrOldKeyFile                                                   = 1035
 	ErrOpenAsReadonly                                               = 1036
-	ErrOutofmemory                                                  = 1037
-	ErrOutOfSortmemory                                              = 1038
+	ErrOutofMemory                                                  = 1037
+	ErrOutOfSortMemory                                              = 1038
 	ErrUnexpectedEOF                                                = 1039
 	ErrConCount                                                     = 1040
 	ErrOutOfResources                                               = 1041
@@ -77,8 +77,8 @@ const (
 	ErrWrongSumSelect                                               = 1057
 	ErrWrongValueCount                                              = 1058
 	ErrTooLongIdent                                                 = 1059
-	ErrDupFieldname                                                 = 1060
-	ErrDupKeyname                                                   = 1061
+	ErrDupFieldName                                                 = 1060
+	ErrDupKeyName                                                   = 1061
 	ErrDupEntry                                                     = 1062
 	ErrWrongFieldSpec                                               = 1063
 	ErrParse                                                        = 1064
@@ -102,7 +102,7 @@ const (
 	ErrNoSuchIndex                                                  = 1082
 	ErrWrongFieldTerminators                                        = 1083
 	ErrBlobsAndNoTerminated                                         = 1084
-	ErrTextfileNotReadable                                          = 1085
+	ErrTextFileNotReadable                                          = 1085
 	ErrFileExists                                                   = 1086
 	ErrLoadInfo                                                     = 1087
 	ErrAlterInfo                                                    = 1088
@@ -115,7 +115,7 @@ const (
 	ErrKillDenied                                                   = 1095
 	ErrNoTablesUsed                                                 = 1096
 	ErrTooBigSet                                                    = 1097
-	ErrNoUniqueLogfile                                              = 1098
+	ErrNoUniqueLogFile                                              = 1098
 	ErrTableNotLockedForWrite                                       = 1099
 	ErrTableNotLocked                                               = 1100
 	ErrBlobCantHaveDefault                                          = 1101
@@ -604,7 +604,7 @@ const (
 	ErrWrongParametersToStoredFct                                   = 1584
 	ErrNativeFctNameCollision                                       = 1585
 	ErrDupEntryWithKeyName                                          = 1586
-	ErrBinlogPurgeEmfile                                            = 1587
+	ErrBinlogPurgeEmFile                                            = 1587
 	ErrEventCannotCreateInThePast                                   = 1588
 	ErrEventCannotAlterInThePast                                    = 1589
 	ErrSlaveIncident                                                = 1590
