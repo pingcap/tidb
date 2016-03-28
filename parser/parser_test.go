@@ -97,6 +97,17 @@ func (s *testParserSuite) TestSimple(c *C) {
 		ss, ok = st.(*ast.SelectStmt)
 		c.Assert(ok, IsTrue)
 	}
+
+	// For issue #961
+	src = "create table t (c int key);"
+	st, err = ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	cs, ok := st.(*ast.CreateTableStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(cs.Cols, HasLen, 1)
+	c.Assert(cs.Cols[0].Options, HasLen, 1)
+	c.Assert(cs.Cols[0].Options[0].Tp, Equals, ast.ColumnOptionPrimaryKey)
+
 }
 
 type testCase struct {
@@ -721,6 +732,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		INDEX FK_8jcmec4kb03f4dod0uqwm54o9 USING BTREE (store_id) comment '',
 		INDEX FK_a3t0m9apja9jmrn60uab30pqd USING BTREE (user_id) comment ''
 		) ENGINE=InnoDB AUTO_INCREMENT=95 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
+		{`create table t (c int KEY);`, true},
 	}
 	s.RunTest(c, table)
 }
