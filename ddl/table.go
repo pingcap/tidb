@@ -37,7 +37,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 	tables, err := t.ListTables(schemaID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return errors.Trace(infoschema.DatabaseNotExists)
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	} else if err != nil {
 		return errors.Trace(err)
 	}
@@ -47,7 +47,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 			if tbl.ID != tbInfo.ID {
 				// table exists, can't create, we should cancel this job now.
 				job.State = model.JobCancelled
-				return errors.Trace(infoschema.TableExists)
+				return errors.Trace(infoschema.ErrTableExists)
 			}
 
 			tbInfo = tbl
@@ -72,7 +72,7 @@ func (d *ddl) onCreateTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		return nil
 	default:
-		return errors.Errorf("invalid table state %v", tbInfo.State)
+		return ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
 	}
 }
 
@@ -109,14 +109,14 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return errors.Trace(infoschema.DatabaseNotExists)
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	} else if err != nil {
 		return errors.Trace(err)
 	}
 
 	if tblInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Trace(infoschema.TableNotExists)
+		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
 	_, err = t.GenSchemaVersion()
@@ -146,7 +146,7 @@ func (d *ddl) onDropTable(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		job.SchemaState = model.StateNone
 	default:
-		err = errors.Errorf("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 
 	return errors.Trace(err)
@@ -164,17 +164,17 @@ func (d *ddl) getTableInfo(t *meta.Meta, job *model.Job) (*model.TableInfo, erro
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if terror.ErrorEqual(err, meta.ErrDBNotExists) {
 		job.State = model.JobCancelled
-		return nil, errors.Trace(infoschema.DatabaseNotExists)
+		return nil, errors.Trace(infoschema.ErrDatabaseNotExists)
 	} else if err != nil {
 		return nil, errors.Trace(err)
 	} else if tblInfo == nil {
 		job.State = model.JobCancelled
-		return nil, errors.Trace(infoschema.TableNotExists)
+		return nil, errors.Trace(infoschema.ErrTableNotExists)
 	}
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobCancelled
-		return nil, errors.Errorf("table %s is not in public, but %s", tblInfo.Name.L, tblInfo.State)
+		return nil, ErrInvalidTableState.Gen("table %s is not in public, but %s", tblInfo.Name.L, tblInfo.State)
 	}
 
 	return tblInfo, nil

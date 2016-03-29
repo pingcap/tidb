@@ -61,7 +61,7 @@ func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
 		return
 	}
 
-	c.Assert(terror.ErrorEqual(err, ErrNotOwner), IsTrue)
+	c.Assert(terror.ErrorEqual(err, errNotOwner), IsTrue)
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
