@@ -63,6 +63,7 @@ const (
 	ClassServer
 	ClassVariable
 	ClassExpression
+	ClassDDL
 	// Add more as needed.
 )
 
@@ -85,6 +86,8 @@ func (ec ErrClass) String() string {
 		return "variable"
 	case ClassExpression:
 		return "expression"
+	case ClassDDL:
+		return "ddl"
 	}
 	return strconv.Itoa(int(ec))
 }

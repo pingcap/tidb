@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -28,13 +29,15 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64, idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
+func buildIndexInfo(tblInfo *model.TableInfo, unique bool, indexName model.CIStr, indexID int64,
+	idxColNames []*ast.IndexColName) (*model.IndexInfo, error) {
 	// build offsets
 	idxColumns := make([]*model.IndexColumn, 0, len(idxColNames))
 	for _, ic := range idxColNames {
 		col := findCol(tblInfo.Columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errors.Errorf("CREATE INDEX: column does not exist: %s", ic.Column.Name.O)
+			return nil, infoschema.ErrColumnNotExists.Gen("CREATE INDEX: column does not exist: %s",
+				ic.Column.Name.O)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
@@ -113,7 +116,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 			if idx.State == model.StatePublic {
 				// we already have a index with same index name
 				job.State = model.JobCancelled
-				return errors.Errorf("CREATE INDEX: index already exist %s", indexName)
+				return infoschema.ErrIndexExists.Gen("CREATE INDEX: index already exist %s", indexName)
 			}
 
 			indexInfo = idx
@@ -194,7 +197,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		return nil
 	default:
-		return errors.Errorf("invalid index state %v", tblInfo.State)
+		return ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
 	}
 }
 
@@ -220,7 +223,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 
 	if indexInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Errorf("index %s doesn't exist", indexName)
+		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
 	}
 
 	_, err = t.GenSchemaVersion()
@@ -285,7 +288,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		return nil
 	default:
-		return errors.Errorf("invalid table state %v", tblInfo.State)
+		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 }
 

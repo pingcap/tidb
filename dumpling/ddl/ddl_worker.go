@@ -150,7 +150,7 @@ func (d *ddl) checkOwner(t *meta.Meta, flag JobType) (*model.Owner, error) {
 
 	if owner.OwnerID != d.uuid {
 		log.Debugf("[ddl] not %s job owner, owner is %s", flag, owner.OwnerID)
-		return nil, errors.Trace(ErrNotOwner)
+		return nil, errors.Trace(errNotOwner)
 	}
 
 	return owner, nil
@@ -185,14 +185,6 @@ func (d *ddl) finishDDLJob(t *meta.Meta, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-// ErrNotOwner means we are not owner and can't handle DDL jobs.
-var ErrNotOwner = errors.New("DDL: not owner")
-
-// ErrWorkerClosed means we have already closed the DDL worker.
-var ErrWorkerClosed = errors.New("DDL: worker is closed")
-
-var errInvalidJobFlag = errors.New("DDL: invalid job flag")
-
 // JobType is job type, including ddl/background.
 type JobType int
 
@@ -224,7 +216,7 @@ func (d *ddl) handleDDLJobQueue() error {
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			owner, err := d.checkOwner(t, ddlJobFlag)
-			if terror.ErrorEqual(err, ErrNotOwner) {
+			if terror.ErrorEqual(err, errNotOwner) {
 				// we are not owner, return and retry checking later.
 				return nil
 			} else if err != nil {
@@ -363,7 +355,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled
-		err = errors.Errorf("invalid ddl job %v", job)
+		err = errInvalidDDLJob.Gen("invalid ddl job %v", job)
 	}
 
 	// saves error in job, so that others can know error happens.
