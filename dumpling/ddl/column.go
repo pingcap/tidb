@@ -18,6 +18,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -66,7 +67,7 @@ func (d *ddl) addColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos
 	} else if pos.Tp == ast.ColumnPositionAfter {
 		c := findCol(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
-			return nil, 0, errors.Errorf("No such column: %v", pos.RelativeColumn)
+			return nil, 0, infoschema.ErrColumnNotExists.Gen("no such column: %v", pos.RelativeColumn)
 		}
 
 		// Insert position is after the mentioned column.
@@ -109,7 +110,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		if columnInfo.State == model.StatePublic {
 			// we already have a column with same column name
 			job.State = model.JobCancelled
-			return errors.Errorf("ADD COLUMN: column already exist %s", col.Name.L)
+			return infoschema.ErrColumnExists.Gen("ADD COLUMN: column already exist %s", col.Name.L)
 		}
 	} else {
 		columnInfo, offset, err = d.addColumn(tblInfo, col, pos)
@@ -191,7 +192,7 @@ func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		return nil
 	default:
-		return errors.Errorf("invalid column state %v", columnInfo.State)
+		return ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
 }
 
@@ -212,12 +213,13 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 	colInfo := findCol(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobCancelled
-		return errors.Errorf("column %s doesn't exist", colName)
+		return infoschema.ErrColumnNotExists.Gen("column %s doesn't exist", colName)
 	}
 
 	if len(tblInfo.Columns) == 1 {
 		job.State = model.JobCancelled
-		return errors.Errorf("can't drop only column %s in table %s", colName, tblInfo.Name)
+		return ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
+			colName, tblInfo.Name)
 	}
 
 	// we don't support drop column with index covered now.
@@ -226,7 +228,8 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		for _, col := range indexInfo.Columns {
 			if col.Name.L == colName.L {
 				job.State = model.JobCancelled
-				return errors.Errorf("can't drop column %s with index %s covered now", colName, indexInfo.Name)
+				return errCantDropColWithIndex.Gen("can't drop column %s with index %s covered now",
+					colName, indexInfo.Name)
 			}
 		}
 	}
@@ -304,7 +307,7 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) error {
 		job.State = model.JobDone
 		return nil
 	default:
-		return errors.Errorf("invalid table state %v", tblInfo.State)
+		return ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 }
 

@@ -122,7 +122,7 @@ const (
 func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.Execute(fmt.Sprintf("USE %s;", mysql.SystemDB))
-	if err != nil && infoschema.DatabaseNotExists.NotEqual(err) {
+	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
 		log.Fatal(err)
 	}
 	// Check bootstrapped variable value in TiDB table.
@@ -138,7 +138,7 @@ func checkBootstrappedVar(s Session) (bool, error) {
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar)
 	rs, err := s.Execute(sql)
 	if err != nil {
-		if infoschema.TableNotExists.Equal(err) {
+		if infoschema.ErrTableNotExists.Equal(err) {
 			return false, nil
 		}
 		return false, errors.Trace(err)
