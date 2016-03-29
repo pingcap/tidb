@@ -22,24 +22,11 @@ import (
 const signMask uint64 = 0x8000000000000000
 
 func encodeIntToCmpUint(v int64) uint64 {
-	u := uint64(v)
-	if u&signMask > 0 {
-		u &= ^signMask
-	} else {
-		u |= signMask
-	}
-
-	return u
+	return uint64(v) ^ signMask
 }
 
 func decodeCmpUintToInt(u uint64) int64 {
-	if u&signMask > 0 {
-		u &= ^signMask
-	} else {
-		u |= signMask
-	}
-
-	return int64(u)
+	return int64(u ^ signMask)
 }
 
 // EncodeInt appends the encoded value to slice b and returns the appended slice.
