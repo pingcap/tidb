@@ -293,7 +293,7 @@ func dumpRowValuesBinary(alloc arena.Allocator, columns []*ColumnInfo, row []typ
 		case types.KindMysqlDecimal:
 			data = append(data, dumpLengthEncodedString(hack.Slice(val.GetMysqlDecimal().String()), alloc)...)
 		case types.KindMysqlTime:
-			data = append(data, dumpBinaryDateTime(val.GetMysqlTime(), nil)...)
+			data = append(data, dumpBinaryDateTime(*val.GetMysqlTime(), nil)...)
 		case types.KindMysqlDuration:
 			data = append(data, dumpBinaryTime(val.GetMysqlDuration().Duration)...)
 		case types.KindMysqlSet:
