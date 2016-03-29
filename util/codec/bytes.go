@@ -14,7 +14,6 @@
 package codec
 
 import (
-	"bytes"
 	"encoding/binary"
 	"runtime"
 	"unsafe"
@@ -77,33 +76,41 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		}
 
 		groupBytes := b[:encGroupSize+1]
-		if reverse {
-			reverseBytes(groupBytes)
-		}
 
 		group := groupBytes[:encGroupSize]
 		marker := groupBytes[encGroupSize]
 
-		// Check validity of marker.
-		padCount := encMarker - marker
-		realGroupSize := encGroupSize - padCount
+		var padCount byte
+		if reverse {
+			padCount = marker
+		} else {
+			padCount = encMarker - marker
+		}
 		if padCount > encGroupSize {
 			return nil, nil, errors.Errorf("invalid marker byte, group bytes %q", groupBytes)
 		}
 
+		realGroupSize := encGroupSize - padCount
 		data = append(data, group[:realGroupSize]...)
 		b = b[encGroupSize+1:]
 
-		if marker != encMarker {
-			// Check validity of padding bytes.
-			if bytes.Count(group[realGroupSize:], encPads) != int(padCount) {
-				return nil, nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
+		if padCount != 0 {
+			var padByte = encPad
+			if reverse {
+				padByte = encMarker
 			}
-
+			// Check validity of padding bytes.
+			for _, v := range group[realGroupSize:] {
+				if v != padByte {
+					return nil, nil, errors.Errorf("invalid padding byte, group bytes %q", groupBytes)
+				}
+			}
 			break
 		}
 	}
-
+	if reverse {
+		reverseBytes(data)
+	}
 	return b, data, nil
 }
 
