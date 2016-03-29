@@ -233,12 +233,12 @@ func (d *Datum) SetMysqlSet(b mysql.Set) {
 }
 
 // GetMysqlTime gets mysql.Time value
-func (d *Datum) GetMysqlTime() mysql.Time {
-	return d.x.(mysql.Time)
+func (d *Datum) GetMysqlTime() *mysql.Time {
+	return d.x.(*mysql.Time)
 }
 
 // SetMysqlTime sets mysql.Time value
-func (d *Datum) SetMysqlTime(b mysql.Time) {
+func (d *Datum) SetMysqlTime(b *mysql.Time) {
 	d.k = KindMysqlTime
 	d.x = b
 }
@@ -258,6 +258,8 @@ func (d *Datum) GetValue() interface{} {
 		return d.GetString()
 	case KindBytes:
 		return d.GetBytes()
+	case KindMysqlTime:
+		return *d.GetMysqlTime()
 	default:
 		return d.x
 	}
@@ -306,9 +308,10 @@ func (d *Datum) SetValue(val interface{}) {
 	case mysql.Set:
 		d.x = x
 		d.k = KindMysqlSet
+	case *mysql.Time:
+		d.SetMysqlTime(x)
 	case mysql.Time:
-		d.x = x
-		d.k = KindMysqlTime
+		d.SetMysqlTime(&x)
 	case []Datum:
 		d.x = x
 		d.k = KindRow
@@ -458,7 +461,7 @@ func (d *Datum) compareString(s string) (int, error) {
 		return d.GetMysqlDecimal().Cmp(dec), err
 	case KindMysqlTime:
 		dt, err := mysql.ParseDatetime(s)
-		return d.GetMysqlTime().Compare(dt), err
+		return d.GetMysqlTime().Compare(&dt), err
 	case KindMysqlDuration:
 		dur, err := mysql.ParseDuration(s, mysql.MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), err
@@ -544,7 +547,10 @@ func (d *Datum) compareMysqlSet(set mysql.Set) (int, error) {
 	}
 }
 
-func (d *Datum) compareMysqlTime(time mysql.Time) (int, error) {
+func (d *Datum) compareMysqlTime(time *mysql.Time) (int, error) {
+	if time == nil {
+		return 0, errors.Errorf("invalid time t")
+	}
 	switch d.k {
 	case KindString, KindBytes:
 		dt, err := mysql.ParseDatetime(d.GetString())

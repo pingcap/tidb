@@ -280,7 +280,10 @@ func (t Time) ConvertToDuration() (Duration, error) {
 
 // Compare returns an integer comparing the time instant t to o.
 // If t is after o, return 1, equal o, return 0, before o, return -1.
-func (t Time) Compare(o Time) int {
+func (t *Time) Compare(o *Time) int {
+	if o == nil {
+		return 1
+	}
 	if t.Time.After(o.Time) {
 		return 1
 	} else if t.Time.Equal(o.Time) {
@@ -299,7 +302,7 @@ func (t Time) CompareString(str string) (int, error) {
 		return 0, errors.Trace(err)
 	}
 
-	return t.Compare(o), nil
+	return t.Compare(&o), nil
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -1027,7 +1030,10 @@ func checkTimestamp(t Time) bool {
 }
 
 // ExtractTimeNum extracts time value number from time unit and format.
-func ExtractTimeNum(unit string, t Time) (int64, error) {
+func ExtractTimeNum(unit string, t *Time) (int64, error) {
+	if t == nil {
+		return 0, errors.Errorf("invalid time t")
+	}
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
 		return int64(t.Nanosecond() / 1000), nil
