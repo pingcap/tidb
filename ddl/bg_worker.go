@@ -34,7 +34,7 @@ func (d *ddl) handleBgJobQueue() error {
 	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		owner, err := d.checkOwner(t, bgJobFlag)
-		if terror.ErrorEqual(err, ErrNotOwner) {
+		if terror.ErrorEqual(err, errNotOwner) {
 			return nil
 		}
 		if err != nil {
@@ -85,8 +85,7 @@ func (d *ddl) runBgJob(t *meta.Meta, job *model.Job) {
 		err = d.delReorgTable(t, job)
 	default:
 		job.State = model.JobCancelled
-		err = errors.Errorf("invalid background job %v", job)
-
+		err = errInvalidBgJob
 	}
 
 	if err != nil {

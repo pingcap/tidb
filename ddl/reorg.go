@@ -97,8 +97,6 @@ func (d *ddl) newReorgContext() context.Context {
 
 const waitReorgTimeout = 10 * time.Second
 
-var errWaitReorgTimeout = errors.New("wait for reorganization timeout")
-
 func (d *ddl) runReorgJob(f func() error) error {
 	if d.reorgDoneCh == nil {
 		// start a reorganization job
@@ -137,7 +135,7 @@ func (d *ddl) runReorgJob(f func() error) error {
 func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 	if d.isClosed() {
 		// worker is closed, can't run reorganization.
-		return errors.Trace(ErrWorkerClosed)
+		return errors.Trace(errInvalidWorker.Gen("worker is closed"))
 	}
 
 	t := meta.NewMeta(txn)
@@ -147,7 +145,7 @@ func (d *ddl) isReorgRunnable(txn kv.Transaction) error {
 	} else if owner == nil || owner.OwnerID != d.uuid {
 		// if no owner, we will try later, so here just return error.
 		// or another server is owner, return error too.
-		return errors.Trace(ErrNotOwner)
+		return errors.Trace(errNotOwner)
 	}
 
 	return nil
@@ -225,7 +223,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job) (*reorgInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		} else if ver.Ver <= 0 {
-			return nil, errors.Errorf("invalid storage current version %d", ver.Ver)
+			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
 		}
 
 		job.SnapshotVer = ver.Ver
