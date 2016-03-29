@@ -26,13 +26,18 @@ func (k Key) Next() Key {
 	return buf
 }
 
-// PartialNext returns the next partial key.
-// For example, a key composed with two columns.
-// Next will return a key with the same first column value,
-// but PartialNext will return a key with different first column value.
-// key encoding method must ensure the next different value has the
-// same length as the original value.
-func (k Key) PartialNext() Key {
+// PrefixNext returns the next prefix key.
+//
+// Assume there are keys like:
+//
+//   rowkey1
+//   rowkey1_column1
+//   rowkey1_column2
+//   rowKey2
+//
+// If we seek 'rowkey1' Next, we will get 'rowkey1_colum1'.
+// If we seek 'rowkey1' PrefixNext, we will get 'rowkey2'.
+func (k Key) PrefixNext() Key {
 	buf := make([]byte, len([]byte(k)))
 	copy(buf, []byte(k))
 	var i int

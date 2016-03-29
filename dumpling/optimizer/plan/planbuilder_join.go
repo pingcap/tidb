@@ -602,7 +602,7 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 		if !path.attachCondition(whereCond, nil) {
 			// TODO: Find a better way to handle this condition.
 			path.conditions = append(path.conditions, whereCond)
-			log.Errorf("Failed to attach where condtion.")
+			log.Warnf("Failed to attach where condtion in %s", sel.Text())
 		}
 	}
 	path.extractEqualConditon()
