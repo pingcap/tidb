@@ -50,13 +50,13 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k   byte        // datum kind.
-	u8  uint8       // u8 can hold values in byte.
-	u16 uint16      // u16 can hold values in two bytes.
-	u32 uint32      // u32 can hold values in four bytes.
-	i   int64       // i can hold int64 uint64 float64 values.
-	b   []byte      // b can hold string or []byte values.
-	x   interface{} // f hold all other types.
+	k         byte        // datum kind.
+	collation uint8       // collation can hold uint8 values.
+	decimal   uint16      // decimal can hold uint16 values.
+	length    uint32      // length can hold uint32 values.
+	i         int64       // i can hold int64 uint64 float64 values.
+	b         []byte      // b can hold string or []byte values.
+	x         interface{} // f hold all other types.
 }
 
 // Kind gets the kind of the datum.
@@ -171,7 +171,7 @@ func (d *Datum) SetNull() {
 
 // GetMysqlBit gets mysql.Bit value
 func (d *Datum) GetMysqlBit() mysql.Bit {
-	width := int(d.u32)
+	width := int(d.length)
 	value := uint64(d.i)
 	return mysql.Bit{Value: value, Width: width}
 }
@@ -179,7 +179,7 @@ func (d *Datum) GetMysqlBit() mysql.Bit {
 // SetMysqlBit sets mysql.Bit value
 func (d *Datum) SetMysqlBit(b mysql.Bit) {
 	d.k = KindMysqlBit
-	d.u32 = uint32(b.Width)
+	d.length = uint32(b.Width)
 	d.i = int64(b.Value)
 }
 
