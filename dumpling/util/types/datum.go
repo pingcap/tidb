@@ -27,8 +27,8 @@ import (
 
 // Kind constants.
 const (
-	KindNull  int = 0
-	KindInt64 int = iota + 1
+	KindNull  byte = 0
+	KindInt64 byte = iota + 1
 	KindUint64
 	KindFloat32
 	KindFloat64
@@ -50,14 +50,17 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k int         // datum kind.
-	i int64       // i can hold int64 uint64 float64 values.
-	b []byte      // b can hold string or []byte values.
-	x interface{} // f hold all other types.
+	k         byte        // datum kind.
+	collation uint8       // collation can hold uint8 values.
+	decimal   uint16      // decimal can hold uint16 values.
+	length    uint32      // length can hold uint32 values.
+	i         int64       // i can hold int64 uint64 float64 values.
+	b         []byte      // b can hold string or []byte values.
+	x         interface{} // f hold all other types.
 }
 
 // Kind gets the kind of the datum.
-func (d *Datum) Kind() int {
+func (d *Datum) Kind() byte {
 	return d.k
 }
 
@@ -168,13 +171,16 @@ func (d *Datum) SetNull() {
 
 // GetMysqlBit gets mysql.Bit value
 func (d *Datum) GetMysqlBit() mysql.Bit {
-	return d.x.(mysql.Bit)
+	width := int(d.length)
+	value := uint64(d.i)
+	return mysql.Bit{Value: value, Width: width}
 }
 
 // SetMysqlBit sets mysql.Bit value
 func (d *Datum) SetMysqlBit(b mysql.Bit) {
 	d.k = KindMysqlBit
-	d.x = b
+	d.length = uint32(b.Width)
+	d.i = int64(b.Value)
 }
 
 // GetMysqlDecimal gets mysql.Decimal value
@@ -258,10 +264,22 @@ func (d *Datum) GetValue() interface{} {
 		return d.GetString()
 	case KindBytes:
 		return d.GetBytes()
+	case KindMysqlBit:
+		return d.GetMysqlBit()
+	case KindMysqlDecimal:
+		return d.GetMysqlDecimal()
+	case KindMysqlDuration:
+		return d.GetMysqlDuration()
+	case KindMysqlEnum:
+		return d.GetMysqlEnum()
+	case KindMysqlHex:
+		return d.GetMysqlHex()
+	case KindMysqlSet:
+		return d.GetMysqlSet()
 	case KindMysqlTime:
 		return *d.GetMysqlTime()
 	default:
-		return d.x
+		return d.GetInterface()
 	}
 }
 
@@ -291,33 +309,26 @@ func (d *Datum) SetValue(val interface{}) {
 	case []byte:
 		d.SetBytes(x)
 	case mysql.Bit:
-		d.x = x
-		d.k = KindMysqlBit
+		d.SetMysqlBit(x)
 	case mysql.Decimal:
-		d.x = x
-		d.k = KindMysqlDecimal
+		d.SetMysqlDecimal(x)
 	case mysql.Duration:
-		d.x = x
-		d.k = KindMysqlDuration
+		d.SetMysqlDuration(x)
 	case mysql.Enum:
-		d.x = x
-		d.k = KindMysqlEnum
+		d.SetMysqlEnum(x)
 	case mysql.Hex:
-		d.x = x
-		d.k = KindMysqlHex
+		d.SetMysqlHex(x)
 	case mysql.Set:
-		d.x = x
-		d.k = KindMysqlSet
+		d.SetMysqlSet(x)
 	case *mysql.Time:
 		d.SetMysqlTime(x)
 	case mysql.Time:
 		d.SetMysqlTime(&x)
 	case []Datum:
-		d.x = x
-		d.k = KindRow
+		d.SetRow(x)
 	case []interface{}:
-		d.k = KindRow
-		d.x = MakeDatums(x...)
+		ds := MakeDatums(x...)
+		d.SetRow(ds)
 	default:
 		d.SetInterface(x)
 	}
