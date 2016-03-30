@@ -222,6 +222,9 @@ func TableToProto(t *model.TableInfo) *tipb.TableInfo {
 	}
 	cols := make([]*tipb.ColumnInfo, 0, len(t.Columns))
 	for _, c := range t.Columns {
+		if c.State != model.StatePublic {
+			continue
+		}
 		col := columnToProto(c)
 		if t.PKIsHandle && mysql.HasPriKeyFlag(c.Flag) {
 			col.PkHandle = proto.Bool(true)
