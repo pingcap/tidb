@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/sessionctx"
@@ -141,4 +142,19 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		c.Assert(tp, Equals, ca.tp, Commentf("Tp for %s", ca.expr))
 		c.Assert(chs, Equals, ca.chs, Commentf("Charset for %s", ca.expr))
 	}
+}
+
+func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
+	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
+	c.Assert(err, IsNil)
+	defer store.Close()
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists tab0")
+	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
+	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
+	ctx := testKit.Se.(context.Context)
+	is := sessionctx.GetDomain(ctx).InfoSchema()
+	col, _ := is.ColumnByName(model.NewCIStr("test"), model.NewCIStr("tab0"), model.NewCIStr("col1"))
+	c.Assert(col.Tp, Equals, mysql.TypeLong)
 }
