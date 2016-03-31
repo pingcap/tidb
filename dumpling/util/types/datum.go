@@ -196,46 +196,51 @@ func (d *Datum) SetMysqlDecimal(b mysql.Decimal) {
 
 // GetMysqlDuration gets mysql.Duration value
 func (d *Datum) GetMysqlDuration() mysql.Duration {
-	return d.x.(mysql.Duration)
+	return mysql.Duration{Duration: time.Duration(d.i), Fsp: int(d.decimal)}
 }
 
 // SetMysqlDuration sets mysql.Duration value
 func (d *Datum) SetMysqlDuration(b mysql.Duration) {
 	d.k = KindMysqlDuration
-	d.x = b
+	d.i = int64(b.Duration)
+	d.decimal = uint16(b.Fsp)
 }
 
 // GetMysqlEnum gets mysql.Enum value
 func (d *Datum) GetMysqlEnum() mysql.Enum {
-	return d.x.(mysql.Enum)
+	return mysql.Enum{Value: uint64(d.i), Name: hack.String(d.b)}
 }
 
 // SetMysqlEnum sets mysql.Enum value
 func (d *Datum) SetMysqlEnum(b mysql.Enum) {
 	d.k = KindMysqlEnum
-	d.x = b
+	d.i = int64(b.Value)
+	sink(b.Name)
+	d.b = hack.Slice(b.Name)
 }
 
 // GetMysqlHex gets mysql.Hex value
 func (d *Datum) GetMysqlHex() mysql.Hex {
-	return d.x.(mysql.Hex)
+	return mysql.Hex{Value: d.i}
 }
 
 // SetMysqlHex sets mysql.Hex value
 func (d *Datum) SetMysqlHex(b mysql.Hex) {
 	d.k = KindMysqlHex
-	d.x = b
+	d.i = b.Value
 }
 
 // GetMysqlSet gets mysql.Set value
 func (d *Datum) GetMysqlSet() mysql.Set {
-	return d.x.(mysql.Set)
+	return mysql.Set{Value: uint64(d.i), Name: hack.String(d.b)}
 }
 
 // SetMysqlSet sets mysql.Set value
 func (d *Datum) SetMysqlSet(b mysql.Set) {
 	d.k = KindMysqlSet
-	d.x = b
+	d.i = int64(b.Value)
+	sink(b.Name)
+	d.b = hack.Slice(b.Name)
 }
 
 // GetMysqlTime gets mysql.Time value
