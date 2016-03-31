@@ -60,7 +60,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	ctx := mock.NewContext()
 	done := make(chan error, 1)
 	go func() {
-		done <- d.startDDLJob(ctx, job)
+		done <- d.doDDLJob(ctx, job)
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)

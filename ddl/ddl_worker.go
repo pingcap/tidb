@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 )
 
-func (d *ddl) startDDLJob(ctx context.Context, job *model.Job) error {
+func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// for every DDL, we must commit current transaction.
 	if err := ctx.FinishTxn(false); err != nil {
 		return errors.Trace(err)

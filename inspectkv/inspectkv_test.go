@@ -238,7 +238,7 @@ func (s *testSuite) TestScan(c *C) {
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {
-	return fmt.Sprintf("%s:%v != record:%v", prefix, ra, rb)
+	return fmt.Sprintf("[inspectkv:1]%s:%v != record:%v", prefix, ra, rb)
 }
 
 func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
@@ -288,7 +288,7 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 
 	errRs := append(rs, &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(3))})
 	err = CompareTableRecord(txn, tb, errRs, false)
-	c.Assert(err.Error(), DeepEquals, "handle:1 is repeated in data")
+	c.Assert(err.Error(), DeepEquals, "[inspectkv:2]handle:1 is repeated in data")
 }
 
 func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {

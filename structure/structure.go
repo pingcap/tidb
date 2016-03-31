@@ -13,7 +13,25 @@
 
 package structure
 
-import "github.com/pingcap/tidb/kv"
+import (
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
+)
+
+// structure error codes.
+const (
+	codeInvalidHashKeyFlag   terror.ErrCode = 1
+	codeInvalidHashKeyPrefix                = 2
+	codeInvalidListIndex                    = 3
+	codeInvalidListMetaData                 = 4
+)
+
+var (
+	errInvalidHashKeyFlag   = terror.ClassStructure.New(codeInvalidHashKeyFlag, "invalid encoded hash key flag")
+	errInvalidHashKeyPrefix = terror.ClassStructure.New(codeInvalidHashKeyPrefix, "invalid encoded hash key prefix")
+	errInvalidListIndex     = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list index")
+	errInvalidListMetaData  = terror.ClassStructure.New(codeInvalidListMetaData, "invalid list meta data")
+)
 
 // NewStructure creates a TxStructure in transaction txn and with key prefix.
 func NewStructure(txn kv.Transaction, prefix []byte) *TxStructure {
