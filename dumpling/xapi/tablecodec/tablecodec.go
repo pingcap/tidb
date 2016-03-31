@@ -128,7 +128,7 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetMysqlTime(&t)
+		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration:
 		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
