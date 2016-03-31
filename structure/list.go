@@ -160,7 +160,7 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	if index >= meta.LIndex && index < meta.RIndex {
 		return t.txn.Set(t.encodeListDataKey(key, index), value)
 	}
-	return errors.Errorf("invalid index %d", index)
+	return errInvalidListIndex.Gen("invalid list index %d", index)
 }
 
 // LClear removes the list of the key.
@@ -195,7 +195,7 @@ func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	}
 
 	if len(v) != 16 {
-		return meta, errors.Errorf("invalid list meta data")
+		return meta, errInvalidListMetaData
 	}
 
 	meta.LIndex = int64(binary.BigEndian.Uint64(v[0:8]))

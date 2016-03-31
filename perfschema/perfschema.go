@@ -17,6 +17,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
+)
+
+var (
+	errInvalidPerfSchemaTable = terror.ClassPerfSchema.New(codeInvalidPerfSchemaTable, "invalid perfschema table")
+	errInvalidTimerFlag       = terror.ClassPerfSchema.New(codeInvalidTimerFlag, "invalid timer flag")
 )
 
 // StatementInstrument defines the methods for statement instrumentation points
@@ -72,3 +78,9 @@ func init() {
 	schema := &perfSchema{}
 	PerfHandle = schema
 }
+
+// perfschema error codes.
+const (
+	codeInvalidPerfSchemaTable terror.ErrCode = 1
+	codeInvalidTimerFlag                      = 2
+)
