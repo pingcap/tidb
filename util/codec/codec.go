@@ -55,7 +55,7 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			b = EncodeInt(b, int64(val.GetMysqlDuration().Duration))
 		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
-			b = EncodeDecimal(b, val.GetMysqlDecimal())
+			b = EncodeDecimal(b, *val.GetMysqlDecimal())
 		case types.KindMysqlHex:
 			b = append(b, intFlag)
 			b = EncodeInt(b, int64(val.GetMysqlHex().ToNumber()))

@@ -184,12 +184,12 @@ func (d *Datum) SetMysqlBit(b mysql.Bit) {
 }
 
 // GetMysqlDecimal gets mysql.Decimal value
-func (d *Datum) GetMysqlDecimal() mysql.Decimal {
-	return d.x.(mysql.Decimal)
+func (d *Datum) GetMysqlDecimal() *mysql.Decimal {
+	return d.x.(*mysql.Decimal)
 }
 
 // SetMysqlDecimal sets mysql.Decimal value
-func (d *Datum) SetMysqlDecimal(b mysql.Decimal) {
+func (d *Datum) SetMysqlDecimal(b *mysql.Decimal) {
 	d.k = KindMysqlDecimal
 	d.x = b
 }
@@ -272,7 +272,7 @@ func (d *Datum) GetValue() interface{} {
 	case KindMysqlBit:
 		return d.GetMysqlBit()
 	case KindMysqlDecimal:
-		return d.GetMysqlDecimal()
+		return *d.GetMysqlDecimal()
 	case KindMysqlDuration:
 		return d.GetMysqlDuration()
 	case KindMysqlEnum:
@@ -315,8 +315,10 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetBytes(x)
 	case mysql.Bit:
 		d.SetMysqlBit(x)
-	case mysql.Decimal:
+	case *mysql.Decimal:
 		d.SetMysqlDecimal(x)
+	case mysql.Decimal:
+		d.SetMysqlDecimal(&x)
 	case mysql.Duration:
 		d.SetMysqlDuration(x)
 	case mysql.Enum:
@@ -373,7 +375,7 @@ func (d *Datum) CompareDatum(ad Datum) (int, error) {
 	case KindMysqlBit:
 		return d.compareMysqlBit(ad.GetMysqlBit())
 	case KindMysqlDecimal:
-		return d.compareMysqlDecimal(ad.GetMysqlDecimal())
+		return d.compareMysqlDecimal(*ad.GetMysqlDecimal())
 	case KindMysqlDuration:
 		return d.compareMysqlDuration(ad.GetMysqlDuration())
 	case KindMysqlEnum:
@@ -938,7 +940,7 @@ func (d *Datum) convertToMysqlDecimal(target *FieldType) (Datum, error) {
 			return ret, errors.Trace(err)
 		}
 	case KindMysqlDecimal:
-		dec = d.GetMysqlDecimal()
+		dec = *d.GetMysqlDecimal()
 	case KindMysqlTime:
 		dec = d.GetMysqlTime().ToNumber()
 	case KindMysqlDuration:
@@ -957,7 +959,7 @@ func (d *Datum) convertToMysqlDecimal(target *FieldType) (Datum, error) {
 	if target.Decimal != UnspecifiedLength {
 		dec = dec.Round(int32(target.Decimal))
 	}
-	ret.SetValue(dec)
+	ret.SetMysqlDecimal(&dec)
 	return ret, nil
 }
 
@@ -1132,7 +1134,7 @@ func ConvertDatumToDecimal(d Datum) (mysql.Decimal, error) {
 	case KindString:
 		return mysql.ParseDecimal(d.GetString())
 	case KindMysqlDecimal:
-		return d.GetMysqlDecimal(), nil
+		return *d.GetMysqlDecimal(), nil
 	case KindMysqlHex:
 		return mysql.NewDecimalFromInt(int64(d.GetMysqlHex().Value), 0), nil
 	case KindMysqlBit:
@@ -1315,11 +1317,11 @@ func CoerceDatum(a, b Datum) (x, y Datum) {
 	if hasDecimal {
 		d, err := ConvertDatumToDecimal(x)
 		if err == nil {
-			x.SetMysqlDecimal(d)
+			x.SetMysqlDecimal(&d)
 		}
-		d, err = ConvertDatumToDecimal(y)
+		d1, err := ConvertDatumToDecimal(y)
 		if err == nil {
-			y.SetMysqlDecimal(d)
+			y.SetMysqlDecimal(&d1)
 		}
 	} else if hasFloat {
 		switch x.Kind() {
