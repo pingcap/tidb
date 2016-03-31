@@ -48,7 +48,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 		Args:     []interface{}{dbInfo},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -59,7 +59,7 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 		Type:     model.ActionDropSchema,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -156,7 +156,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		Type:     model.ActionDropSchema,
 	}
 
-	err := d1.startDDLJob(ctx, job)
+	err := d1.doDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists), IsTrue)
 }
 
@@ -195,7 +195,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		Args:     []interface{}{dbInfo},
 	}
 
-	err = d2.startDDLJob(ctx, job)
+	err = d2.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d2, job)
 
@@ -207,7 +207,7 @@ func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
 	ctx := mock.NewContext()
 	done := make(chan error, 1)
 	go func() {
-		done <- d.startDDLJob(ctx, job)
+		done <- d.doDDLJob(ctx, job)
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)

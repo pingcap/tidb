@@ -1286,12 +1286,12 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	c.Assert(err.Error(), Equals, "[kv:3]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = se2.Execute("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	c.Assert(err.Error(), Equals, "[kv:3]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
 
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table test;")
