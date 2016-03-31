@@ -319,8 +319,8 @@ func computePlus(a, b types.Datum) (d types.Datum, err error) {
 	case types.KindMysqlDecimal:
 		switch b.Kind() {
 		case types.KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Add(b.GetMysqlDecimal())
-			d.SetMysqlDecimal(r)
+			r := (*a.GetMysqlDecimal()).Add(*b.GetMysqlDecimal())
+			d.SetMysqlDecimal(&r)
 			return d, nil
 		}
 	}
@@ -362,8 +362,8 @@ func computeMinus(a, b types.Datum) (d types.Datum, err error) {
 	case types.KindMysqlDecimal:
 		switch b.Kind() {
 		case types.KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Sub(b.GetMysqlDecimal())
-			d.SetMysqlDecimal(r)
+			r := (*a.GetMysqlDecimal()).Sub(*b.GetMysqlDecimal())
+			d.SetMysqlDecimal(&r)
 			return d, nil
 		}
 	}
@@ -405,8 +405,8 @@ func computeMul(a, b types.Datum) (d types.Datum, err error) {
 	case types.KindMysqlDecimal:
 		switch b.Kind() {
 		case types.KindMysqlDecimal:
-			r := a.GetMysqlDecimal().Mul(b.GetMysqlDecimal())
-			d.SetMysqlDecimal(r)
+			r := (*a.GetMysqlDecimal()).Mul(*b.GetMysqlDecimal())
+			d.SetMysqlDecimal(&r)
 			return d, nil
 		}
 	}
@@ -450,8 +450,8 @@ func computeDiv(a, b types.Datum) (d types.Datum, err error) {
 			// division by zero return null
 			return d, nil
 		}
-
-		d.SetMysqlDecimal(xa.Div(xb))
+		xc := xa.Div(xb)
+		d.SetMysqlDecimal(&xc)
 		return d, nil
 	}
 }
@@ -611,7 +611,7 @@ func coerceArithmetic(a types.Datum) (d types.Datum, err error) {
 			d.SetInt64(de.IntPart())
 			return d, nil
 		}
-		d.SetMysqlDecimal(de)
+		d.SetMysqlDecimal(&de)
 		return d, nil
 	case types.KindMysqlDuration:
 		// if duration has no precision, return int64
@@ -621,7 +621,7 @@ func coerceArithmetic(a types.Datum) (d types.Datum, err error) {
 			d.SetInt64(de.IntPart())
 			return d, nil
 		}
-		d.SetMysqlDecimal(de)
+		d.SetMysqlDecimal(&de)
 		return d, nil
 	case types.KindMysqlHex:
 		d.SetFloat64(a.GetMysqlHex().ToNumber())
