@@ -69,7 +69,7 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr(colName)}, Length: 256}}},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -82,7 +82,7 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 		Args:     []interface{}{model.NewCIStr(indexName)},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
