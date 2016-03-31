@@ -667,8 +667,8 @@ const (
 
 func init() {
 	metaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDatabaseExists:    mysql.ErrDbCreateExists,
-		codeDatabaseNotExists: mysql.ErrBadDb,
+		codeDatabaseExists:    mysql.ErrDBCreateExists,
+		codeDatabaseNotExists: mysql.ErrBadDB,
 		codeTableNotExists:    mysql.ErrNoSuchTable,
 		codeTableExists:       mysql.ErrTableExists,
 	}

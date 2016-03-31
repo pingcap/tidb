@@ -33,7 +33,7 @@ import (
 
 var (
 	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(codeDbDropExists, "database doesn't exist")
+	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "database doesn't exist")
 	// ErrDatabaseNotExists returns for database not exists.
 	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
 	// ErrTableNotExists returns for table not exists.
@@ -479,7 +479,7 @@ func (h *Handle) Get() InfoSchema {
 
 // Schema error codes.
 const (
-	codeDbDropExists      terror.ErrCode = 1008
+	codeDBDropExists      terror.ErrCode = 1008
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
 	codeColumnNotExists                  = 1054
@@ -493,11 +493,11 @@ const (
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDbDropExists:      mysql.ErrDbDropExists,
-		codeDatabaseNotExists: mysql.ErrBadDb,
+		codeDBDropExists:      mysql.ErrDBDropExists,
+		codeDatabaseNotExists: mysql.ErrBadDB,
 		codeTableNotExists:    mysql.ErrNoSuchTable,
 		codeColumnNotExists:   mysql.ErrBadField,
-		codeDatabaseExists:    mysql.ErrDbCreateExists,
+		codeDatabaseExists:    mysql.ErrDBCreateExists,
 		codeTableExists:       mysql.ErrTableExists,
 		codeBadTable:          mysql.ErrBadTable,
 		codeColumnExists:      mysql.ErrDupFieldName,
