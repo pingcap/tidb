@@ -310,7 +310,7 @@ func (d *ddl) CreateSchema(ctx context.Context, schema model.CIStr, charsetInfo 
 		Args:     []interface{}{dbInfo},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -327,7 +327,7 @@ func (d *ddl) DropSchema(ctx context.Context, schema model.CIStr) (err error) {
 		Type:     model.ActionDropSchema,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -772,7 +772,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Args:     []interface{}{tbInfo},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		err = d.handleTableOptions(options, tbInfo, schema.ID)
 	}
@@ -889,7 +889,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 		Args:     []interface{}{&col.ColumnInfo, spec.Position, 0},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -920,7 +920,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 		Args:     []interface{}{colName},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -944,7 +944,7 @@ func (d *ddl) DropTable(ctx context.Context, ti ast.Ident) (err error) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -972,7 +972,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 		Args:     []interface{}{unique, indexName, indexID, idxColNames},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
@@ -996,7 +996,7 @@ func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr
 		Args:     []interface{}{indexName},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
