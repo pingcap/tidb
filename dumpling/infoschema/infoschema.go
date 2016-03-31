@@ -31,6 +31,28 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	// ErrDatabaseDropExists returns for dropping a non-existent database.
+	ErrDatabaseDropExists = terror.ClassSchema.New(codeDbDropExists, "database doesn't exist")
+	// ErrDatabaseNotExists returns for database not exists.
+	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
+	// ErrTableNotExists returns for table not exists.
+	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
+	// ErrColumnNotExists returns for column not exists.
+	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
+
+	// ErrDatabaseExists returns for database already exists.
+	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
+	// ErrTableExists returns for table already exists.
+	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
+	// ErrTableDropExists returns for dropping a non-existent table.
+	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
+	// ErrColumnExists returns for column already exists.
+	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
+	// ErrIndexExists returns for index already exists.
+	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
+)
+
 // InfoSchema is the interface used to retrieve the schema information.
 // It works as a in memory cache and doesn't handle any schema change.
 // InfoSchema is read-only, and the returned value is a copy.
@@ -467,28 +489,6 @@ const (
 	codeBadTable       = 1051
 	codeColumnExists   = 1060
 	codeIndexExists    = 1831
-)
-
-var (
-	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(codeDbDropExists, "database doesn't exist")
-	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
-	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
-	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
-
-	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
-	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
-	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
-	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
-	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
 )
 
 func init() {

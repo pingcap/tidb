@@ -43,6 +43,41 @@ import (
 	"github.com/twinj/uuid"
 )
 
+var (
+	// errWorkerClosed means we have already closed the DDL worker.
+	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
+	// errNotOwner means we are not owner and can't handle DDL jobs.
+	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
+	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
+	errInvalidBgJob          = terror.ClassDDL.New(codeInvalidBgJob, "invalid background job")
+	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
+	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
+	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
+	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
+
+	// we don't support drop column with index covered now.
+	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
+	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
+
+	// ErrInvalidDBState returns for invalid database state.
+	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
+	// ErrInvalidTableState returns for invalid Table state.
+	ErrInvalidTableState = terror.ClassDDL.New(codeInvalidTableState, "invalid table state")
+	// ErrInvalidColumnState returns for invalid column state.
+	ErrInvalidColumnState = terror.ClassDDL.New(codeInvalidColumnState, "invalid column state")
+	// ErrInvalidIndexState returns for invalid index state.
+	ErrInvalidIndexState = terror.ClassDDL.New(codeInvalidIndexState, "invalid index state")
+
+	// ErrColumnBadNull returns for a bad null value.
+	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
+	// ErrCantRemoveAllFields returns for deleting all columns.
+	ErrCantRemoveAllFields = terror.ClassDDL.New(codeCantRemoveAllFields, "can't delete all columns with ALTER TABLE")
+	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
+	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
+	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
+	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
+)
+
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx context.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
@@ -1001,41 +1036,6 @@ const (
 	codeCantRemoveAllFields = 1090
 	codeCantDropFieldOrKey  = 1091
 	codeInvalidOnUpdate     = 1294
-)
-
-var (
-	// errWorkerClosed means we have already closed the DDL worker.
-	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
-	// errNotOwner means we are not owner and can't handle DDL jobs.
-	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
-	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid ddl job")
-	errInvalidBgJob          = terror.ClassDDL.New(codeInvalidBgJob, "invalid background job")
-	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
-	errRunMultiSchemaChanges = terror.ClassDDL.New(codeRunMultiSchemaChanges, "can't run multi schema change")
-	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
-	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
-
-	// we don't support drop column with index covered now.
-	errCantDropColWithIndex = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
-	errUnsupportedAddColumn = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
-
-	// ErrInvalidDBState returns for invalid database state.
-	ErrInvalidDBState = terror.ClassDDL.New(codeInvalidDBState, "invalid database state")
-	// ErrInvalidTableState returns for invalid Table state.
-	ErrInvalidTableState = terror.ClassDDL.New(codeInvalidTableState, "invalid table state")
-	// ErrInvalidColumnState returns for invalid column state.
-	ErrInvalidColumnState = terror.ClassDDL.New(codeInvalidColumnState, "invalid column state")
-	// ErrInvalidIndexState returns for invalid index state.
-	ErrInvalidIndexState = terror.ClassDDL.New(codeInvalidIndexState, "invalid index state")
-
-	// ErrColumnBadNull returns for a bad null value.
-	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
-	// ErrCantRemoveAllFields returns for deleting all columns.
-	ErrCantRemoveAllFields = terror.ClassDDL.New(codeCantRemoveAllFields, "can't delete all columns with ALTER TABLE")
-	// ErrCantDropFieldOrKey returns for dropping a non-existent field or key.
-	ErrCantDropFieldOrKey = terror.ClassDDL.New(codeCantDropFieldOrKey, "can't drop field; check that column/key exists")
-	// ErrInvalidOnUpdate returns for invalid ON UPDATE clause.
-	ErrInvalidOnUpdate = terror.ClassDDL.New(codeInvalidOnUpdate, "invalid ON UPDATE clause for the column")
 )
 
 func init() {

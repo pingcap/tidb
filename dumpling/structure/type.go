@@ -86,7 +86,7 @@ func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	} else if TypeFlag(tp) != HashData {
-		return nil, nil, errors.Errorf("invalid encoded hash data key flag %c", byte(tp))
+		return nil, nil, errInvalidHashKeyFlag.Gen("invalid encoded hash data key flag %c", byte(tp))
 	}
 
 	_, field, err = codec.DecodeBytes(ek)

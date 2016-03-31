@@ -20,11 +20,14 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/terror"
 )
 
 const (
 	step = 1000
 )
+
+var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
 
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
@@ -49,7 +52,7 @@ type allocator struct {
 // Rebase implements autoid.Allocator Rebase interface.
 func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	if tableID == 0 {
-		return errors.New("Invalid tableID")
+		return errInvalidTableID.Gen("Invalid tableID")
 	}
 
 	alloc.mu.Lock()
@@ -93,7 +96,7 @@ func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
-		return 0, errors.New("Invalid tableID")
+		return 0, errInvalidTableID.Gen("Invalid tableID")
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
@@ -149,7 +152,7 @@ func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) erro
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
-		return 0, errors.New("Invalid tableID")
+		return 0, errInvalidTableID.Gen("Invalid tableID")
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
@@ -178,3 +181,6 @@ func NewMemoryAllocator(dbID int64) Allocator {
 		dbID: dbID,
 	}
 }
+
+//autoid error codes.
+const codeInvalidTableID terror.ErrCode = 1

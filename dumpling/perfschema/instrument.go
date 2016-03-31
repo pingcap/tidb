@@ -70,7 +70,7 @@ func (ps *perfSchema) addInstrument(name string) (uint64, error) {
 
 func (ps *perfSchema) getTimerName(flag int) (enumTimerName, error) {
 	if flag < 0 || flag >= len(setupTimersRecords) {
-		return timerNameNone, errors.Errorf("Unknown timerName flag %d", flag)
+		return timerNameNone, errInvalidTimerFlag.Gen("Unknown timerName flag %d", flag)
 	}
 	timerName := fmt.Sprintf("%s", setupTimersRecords[flag][1].GetString())
 	switch timerName {

@@ -53,41 +53,62 @@ type ErrClass int
 
 // Error classes.
 const (
-	ClassParser ErrClass = iota + 1
-	ClassSchema
+	ClassAutoid ErrClass = iota + 1
+	ClassDDL
+	ClassDomain
+	ClassEvaluator
+	ClassExecutor
+	ClassExpression
+	ClassInspectkv
+	ClassKV
+	ClassMeta
 	ClassOptimizer
 	ClassOptimizerPlan
-	ClassExecutor
-	ClassEvaluator
-	ClassKV
+	ClassParser
+	ClassPerfSchema
+	ClassPrivilege
+	ClassSchema
 	ClassServer
+	ClassStructure
 	ClassVariable
-	ClassExpression
-	ClassDDL
 	// Add more as needed.
 )
 
 // String implements fmt.Stringer interface.
 func (ec ErrClass) String() string {
 	switch ec {
-	case ClassParser:
-		return "parser"
-	case ClassSchema:
-		return "schema"
-	case ClassOptimizer:
-		return "optimizer"
-	case ClassExecutor:
-		return "executor"
-	case ClassKV:
-		return "kv"
-	case ClassServer:
-		return "server"
-	case ClassVariable:
-		return "variable"
-	case ClassExpression:
-		return "expression"
+	case ClassAutoid:
+		return "autoid"
 	case ClassDDL:
 		return "ddl"
+	case ClassDomain:
+		return "domain"
+	case ClassExecutor:
+		return "executor"
+	case ClassExpression:
+		return "expression"
+	case ClassInspectkv:
+		return "inspectkv"
+	case ClassMeta:
+		return "meta"
+	case ClassKV:
+		return "kv"
+	case ClassOptimizer:
+		return "optimizer"
+	case ClassParser:
+		return "parser"
+	case ClassPerfSchema:
+		return "perfschema"
+	case ClassPrivilege:
+		return "privilege"
+	case ClassSchema:
+		return "schema"
+	case ClassServer:
+		return "server"
+	case ClassStructure:
+		return "structure"
+	case ClassVariable:
+		return "variable"
 	}
 	return strconv.Itoa(int(ec))
 }
@@ -208,10 +229,10 @@ var (
 
 func init() {
 	ErrClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
-	ErrClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
 	ErrClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
-	ErrClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
 	ErrClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
+	ErrClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
+	ErrClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
 	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 
