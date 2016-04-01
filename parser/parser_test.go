@@ -438,6 +438,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT DAYNAME('2007-02-03');", true},
 		{"SELECT WEEKDAY('2007-02-03');", true},
 
+		// For utc_date
+		{"SELECT UTC_DATE, UTC_DATE();", true},
+
 		// for week, month, year
 		{"SELECT WEEK('2007-02-03');", true},
 		{"SELECT WEEK('2007-02-03', 0);", true},
