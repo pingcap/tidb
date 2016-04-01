@@ -259,15 +259,6 @@ func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.Ke
 	return rows, nil
 }
 
-func datumStrings(datums ...types.Datum) []string {
-	var strs []string
-	for _, d := range datums {
-		s, _ := d.ToString()
-		strs = append(strs, s)
-	}
-	return strs
-}
-
 func decodeHandle(data []byte) (int64, error) {
 	var h int64
 	buf := bytes.NewBuffer(data)
