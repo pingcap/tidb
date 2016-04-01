@@ -196,55 +196,60 @@ func (d *Datum) SetMysqlDecimal(b mysql.Decimal) {
 
 // GetMysqlDuration gets mysql.Duration value
 func (d *Datum) GetMysqlDuration() mysql.Duration {
-	return d.x.(mysql.Duration)
+	return mysql.Duration{Duration: time.Duration(d.i), Fsp: int(d.decimal)}
 }
 
 // SetMysqlDuration sets mysql.Duration value
 func (d *Datum) SetMysqlDuration(b mysql.Duration) {
 	d.k = KindMysqlDuration
-	d.x = b
+	d.i = int64(b.Duration)
+	d.decimal = uint16(b.Fsp)
 }
 
 // GetMysqlEnum gets mysql.Enum value
 func (d *Datum) GetMysqlEnum() mysql.Enum {
-	return d.x.(mysql.Enum)
+	return mysql.Enum{Value: uint64(d.i), Name: hack.String(d.b)}
 }
 
 // SetMysqlEnum sets mysql.Enum value
 func (d *Datum) SetMysqlEnum(b mysql.Enum) {
 	d.k = KindMysqlEnum
-	d.x = b
+	d.i = int64(b.Value)
+	sink(b.Name)
+	d.b = hack.Slice(b.Name)
 }
 
 // GetMysqlHex gets mysql.Hex value
 func (d *Datum) GetMysqlHex() mysql.Hex {
-	return d.x.(mysql.Hex)
+	return mysql.Hex{Value: d.i}
 }
 
 // SetMysqlHex sets mysql.Hex value
 func (d *Datum) SetMysqlHex(b mysql.Hex) {
 	d.k = KindMysqlHex
-	d.x = b
+	d.i = b.Value
 }
 
 // GetMysqlSet gets mysql.Set value
 func (d *Datum) GetMysqlSet() mysql.Set {
-	return d.x.(mysql.Set)
+	return mysql.Set{Value: uint64(d.i), Name: hack.String(d.b)}
 }
 
 // SetMysqlSet sets mysql.Set value
 func (d *Datum) SetMysqlSet(b mysql.Set) {
 	d.k = KindMysqlSet
-	d.x = b
+	d.i = int64(b.Value)
+	sink(b.Name)
+	d.b = hack.Slice(b.Name)
 }
 
 // GetMysqlTime gets mysql.Time value
-func (d *Datum) GetMysqlTime() *mysql.Time {
-	return d.x.(*mysql.Time)
+func (d *Datum) GetMysqlTime() mysql.Time {
+	return d.x.(mysql.Time)
 }
 
 // SetMysqlTime sets mysql.Time value
-func (d *Datum) SetMysqlTime(b *mysql.Time) {
+func (d *Datum) SetMysqlTime(b mysql.Time) {
 	d.k = KindMysqlTime
 	d.x = b
 }
@@ -277,7 +282,7 @@ func (d *Datum) GetValue() interface{} {
 	case KindMysqlSet:
 		return d.GetMysqlSet()
 	case KindMysqlTime:
-		return *d.GetMysqlTime()
+		return d.GetMysqlTime()
 	default:
 		return d.GetInterface()
 	}
@@ -320,10 +325,8 @@ func (d *Datum) SetValue(val interface{}) {
 		d.SetMysqlHex(x)
 	case mysql.Set:
 		d.SetMysqlSet(x)
-	case *mysql.Time:
-		d.SetMysqlTime(x)
 	case mysql.Time:
-		d.SetMysqlTime(&x)
+		d.SetMysqlTime(x)
 	case []Datum:
 		d.SetRow(x)
 	case []interface{}:
@@ -472,7 +475,7 @@ func (d *Datum) compareString(s string) (int, error) {
 		return d.GetMysqlDecimal().Cmp(dec), err
 	case KindMysqlTime:
 		dt, err := mysql.ParseDatetime(s)
-		return d.GetMysqlTime().Compare(&dt), err
+		return d.GetMysqlTime().Compare(dt), err
 	case KindMysqlDuration:
 		dur, err := mysql.ParseDuration(s, mysql.MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), err
@@ -558,10 +561,7 @@ func (d *Datum) compareMysqlSet(set mysql.Set) (int, error) {
 	}
 }
 
-func (d *Datum) compareMysqlTime(time *mysql.Time) (int, error) {
-	if time == nil {
-		return 0, errors.Errorf("invalid time t")
-	}
+func (d *Datum) compareMysqlTime(time mysql.Time) (int, error) {
 	switch d.k {
 	case KindString, KindBytes:
 		dt, err := mysql.ParseDatetime(d.GetString())

@@ -272,6 +272,11 @@ func (p *joinPath) attachEqualCond(eqCon *equalCond, availablePaths []*joinPath)
 		}
 		return false
 	}
+	// subquery join
+	if p.subquery != nil {
+		// TODO: find a way to attach condition to subquery.
+		return false
+	}
 	// outer join
 	if p.outer.attachEqualCond(eqCon, availablePaths) {
 		p.filterRate *= rateEqual

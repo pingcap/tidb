@@ -125,7 +125,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }
@@ -148,7 +148,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -157,7 +157,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job.Args = []interface{}{tblInfo}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -167,7 +167,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -180,7 +180,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -217,7 +217,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -227,7 +227,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -243,7 +243,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{1},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -253,7 +253,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("t"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -263,7 +263,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -275,7 +275,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -285,7 +285,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{1},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -297,7 +297,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{model.NewCIStr("c1_index")},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }
@@ -319,7 +319,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Type:     model.ActionAddColumn,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -329,7 +329,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Type:     model.ActionDropColumn,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -358,7 +358,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -369,7 +369,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Args:     []interface{}{1},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }

@@ -25,7 +25,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/terror"
 )
 
 var (
@@ -58,14 +60,17 @@ var (
 )
 
 var (
+	errInvalidTableKey = terror.ClassMeta.New(codeInvalidTableKey, "invalid table meta key")
+	errInvalidDBKey    = terror.ClassMeta.New(codeInvalidDBKey, "invalid db key")
+
 	// ErrDBExists is the error for db exists.
-	ErrDBExists = errors.New("database already exists")
+	ErrDBExists = terror.ClassMeta.New(codeDatabaseExists, "database already exists")
 	// ErrDBNotExists is the error for db not exists.
-	ErrDBNotExists = errors.New("database doesn't exist")
+	ErrDBNotExists = terror.ClassMeta.New(codeDatabaseNotExists, "database doesn't exist")
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = errors.New("table already exists")
+	ErrTableExists = terror.ClassMeta.New(codeTableExists, "table already exists")
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = errors.New("table doesn't exist")
+	ErrTableNotExists = terror.ClassMeta.New(codeTableNotExists, "table doesn't exist")
 )
 
 // Meta is for handling meta information in a transaction.
@@ -647,4 +652,25 @@ func (m *Meta) GetBgJobOwner() (*model.Owner, error) {
 // SetBgJobOwner sets the current background job owner.
 func (m *Meta) SetBgJobOwner(o *model.Owner) error {
 	return m.setJobOwner(mBgJobOwnerKey, o)
+}
+
+// meta error codes.
+const (
+	codeInvalidTableKey terror.ErrCode = 1
+	codeInvalidDBKey                   = 2
+
+	codeDatabaseExists    = 1007
+	codeDatabaseNotExists = 1049
+	codeTableExists       = 1050
+	codeTableNotExists    = 1146
+)
+
+func init() {
+	metaMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeDatabaseExists:    mysql.ErrDBCreateExists,
+		codeDatabaseNotExists: mysql.ErrBadDB,
+		codeTableNotExists:    mysql.ErrNoSuchTable,
+		codeTableExists:       mysql.ErrTableExists,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassMeta] = metaMySQLErrCodes
 }

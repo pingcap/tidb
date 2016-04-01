@@ -29,9 +29,9 @@ type testMvccSuite struct {
 	s kv.Storage
 }
 
-func createMemStore() kv.Storage {
+func createMemStore(suffix int) kv.Storage {
 	// avoid cache
-	path := fmt.Sprintf("memory://%d", time.Now().UnixNano())
+	path := fmt.Sprintf("memory://%d", suffix)
 	d := Driver{
 		goleveldb.MemoryDriver{},
 	}
@@ -81,7 +81,7 @@ func (t *testMvccSuite) scanRawEngine(c *C, f func([]byte, []byte)) {
 
 func (t *testMvccSuite) SetUpTest(c *C) {
 	// create new store
-	t.s = createMemStore()
+	t.s = createMemStore(time.Now().Nanosecond())
 	t.addDirtyData()
 	// insert test data
 	txn, err := t.s.Begin()
@@ -295,7 +295,7 @@ func (t *testMvccSuite) TestMvccSuiteGetLatest(c *C) {
 }
 
 func (t *testMvccSuite) TestBufferedIterator(c *C) {
-	s := createMemStore()
+	s := createMemStore(time.Now().Nanosecond())
 	tx, _ := s.Begin()
 	tx.Set([]byte{0x0, 0x0}, []byte("1"))
 	tx.Set([]byte{0x0, 0xff}, []byte("2"))

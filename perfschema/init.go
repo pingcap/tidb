@@ -331,7 +331,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 func (ps *perfSchema) initRecords(tbName string, records [][]types.Datum) error {
 	tbl, ok := ps.mTables[tbName]
 	if !ok {
-		return errors.Errorf("Unknown PerformanceSchema table: %s", tbName)
+		return errInvalidPerfSchemaTable.Gen("Unknown PerformanceSchema table: %s", tbName)
 	}
 	for _, rec := range records {
 		_, err := tbl.AddRecord(nil, rec)

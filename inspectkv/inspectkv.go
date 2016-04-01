@@ -196,7 +196,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedC
 		vals2, err := rowWithCols(txn, t, h, cols)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			record := &RecordData{Handle: h, Values: vals1}
-			err = errors.Errorf("index:%v != record:%v", record, nil)
+			err = errDateNotEqual.Gen("index:%v != record:%v", record, nil)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -204,7 +204,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedC
 		if !reflect.DeepEqual(vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
-			return errors.Errorf("index:%v != record:%v", record1, record2)
+			return errDateNotEqual.Gen("index:%v != record:%v", record1, record2)
 		}
 	}
 
@@ -224,14 +224,14 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, errors.Errorf("index:%v != record:%v", record2, record1)
+			return false, errDateNotEqual.Gen("index:%v != record:%v", record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, errors.Errorf("index:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("index:%v != record:%v", nil, record)
 		}
 
 		return true, nil
@@ -310,7 +310,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	m := make(map[int64][]types.Datum, len(data))
 	for _, r := range data {
 		if _, ok := m[r.Handle]; ok {
-			return errors.Errorf("handle:%d is repeated in data", r.Handle)
+			return errRepeatHandle.Gen("handle:%d is repeated in data", r.Handle)
 		}
 		m[r.Handle] = r.Values
 	}
@@ -320,7 +320,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
-			return false, errors.Errorf("data:%v != record:%v", nil, record)
+			return false, errDateNotEqual.Gen("data:%v != record:%v", nil, record)
 		}
 		if !exact {
 			delete(m, h)
@@ -330,7 +330,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 		if !reflect.DeepEqual(vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
-			return false, errors.Errorf("data:%v != record:%v", record1, record2)
+			return false, errDateNotEqual.Gen("data:%v != record:%v", record1, record2)
 		}
 
 		delete(m, h)
@@ -344,7 +344,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 
 	for h, vals := range m {
 		record := &RecordData{Handle: h, Values: vals}
-		return errors.Errorf("data:%v != record:%v", record, nil)
+		return errDateNotEqual.Gen("data:%v != record:%v", record, nil)
 	}
 
 	return nil
@@ -386,7 +386,7 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) (
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col.State != model.StatePublic {
-			return nil, errors.Errorf("Cannot use none public column - %v", cols)
+			return nil, errInvalidColumnState.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.Meta()) {
 			v[i].SetInt64(h)
@@ -450,3 +450,16 @@ func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []
 
 	return nil
 }
+
+// inspectkv error codes.
+const (
+	codeDataNotEqual       terror.ErrCode = 1
+	codeRepeatHandle                      = 2
+	codeInvalidColumnState                = 3
+)
+
+var (
+	errDateNotEqual       = terror.ClassInspectkv.New(codeDataNotEqual, "data isn't equal")
+	errRepeatHandle       = terror.ClassInspectkv.New(codeRepeatHandle, "handle is repeated")
+	errInvalidColumnState = terror.ClassInspectkv.New(codeInvalidColumnState, "invalid column state")
+)

@@ -24,8 +24,20 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/types"
+)
+
+// privilege error codes.
+const (
+	codeInvalidPrivilegeType  terror.ErrCode = 1
+	codeInvalidUserNameFormat                = 2
+)
+
+var (
+	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type")
+	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
 )
 
 var _ privilege.Checker = (*UserPrivileges)(nil)
@@ -209,7 +221,7 @@ func (p *UserPrivileges) Check(ctx context.Context, db *model.DBInfo, tbl *model
 func (p *UserPrivileges) loadPrivileges(ctx context.Context) error {
 	strs := strings.Split(p.User, "@")
 	if len(strs) != 2 {
-		return errors.Errorf("Wrong username format: %s", p.User)
+		return errInvalidUserNameFormat.Gen("Wrong username format: %s", p.User)
 	}
 	username, host := strs[0], strs[1]
 	p.privs = &userPrivileges{
@@ -262,7 +274,7 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 		for i := userTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			if d.Kind() != types.KindMysqlEnum {
-				return errors.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
+				return errInvalidPrivilegeType.Gen("Privilege should be mysql.Enum: %v(%T)", d, d)
 			}
 			ed := d.GetMysqlEnum()
 			if ed.String() != "Y" {
@@ -271,7 +283,7 @@ func (p *UserPrivileges) loadGlobalPrivileges(ctx context.Context) error {
 			f := fs[i]
 			p, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errors.New("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
 			}
 			ps.add(p)
 		}
@@ -307,7 +319,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 		for i := dbTablePrivColumnStartIndex; i < len(fs); i++ {
 			d := row.Data[i]
 			if d.Kind() != types.KindMysqlEnum {
-				return errors.Errorf("Privilege should be mysql.Enum: %v(%T)", d, d)
+				return errInvalidPrivilegeType.Gen("Privilege should be mysql.Enum: %v(%T)", d, d)
 			}
 			ed := d.GetMysqlEnum()
 			if ed.String() != "Y" {
@@ -316,7 +328,7 @@ func (p *UserPrivileges) loadDBScopePrivileges(ctx context.Context) error {
 			f := fs[i]
 			p, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errors.New("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
 			}
 			ps[dbStr].add(p)
 		}
@@ -357,7 +369,7 @@ func (p *UserPrivileges) loadTableScopePrivileges(ctx context.Context) error {
 		for _, d := range pvs {
 			p, ok := mysql.SetStr2Priv[d]
 			if !ok {
-				return errors.New("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
 			}
 			ps[dbStr][tblStr].add(p)
 		}

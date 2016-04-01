@@ -31,6 +31,28 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+var (
+	// ErrDatabaseDropExists returns for dropping a non-existent database.
+	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "database doesn't exist")
+	// ErrDatabaseNotExists returns for database not exists.
+	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
+	// ErrTableNotExists returns for table not exists.
+	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
+	// ErrColumnNotExists returns for column not exists.
+	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
+
+	// ErrDatabaseExists returns for database already exists.
+	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
+	// ErrTableExists returns for table already exists.
+	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
+	// ErrTableDropExists returns for dropping a non-existent table.
+	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
+	// ErrColumnExists returns for column already exists.
+	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
+	// ErrIndexExists returns for index already exists.
+	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
+)
+
 // InfoSchema is the interface used to retrieve the schema information.
 // It works as a in memory cache and doesn't handle any schema change.
 // InfoSchema is read-only, and the returned value is a copy.
@@ -457,7 +479,7 @@ func (h *Handle) Get() InfoSchema {
 
 // Schema error codes.
 const (
-	codeDbDropExists      terror.ErrCode = 1008
+	codeDBDropExists      terror.ErrCode = 1008
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
 	codeColumnNotExists                  = 1054
@@ -469,35 +491,13 @@ const (
 	codeIndexExists    = 1831
 )
 
-var (
-	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.New(codeDbDropExists, "database doesn't exist")
-	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
-	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
-	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
-
-	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
-	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
-	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
-	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
-	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
-)
-
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDbDropExists:      mysql.ErrDbDropExists,
-		codeDatabaseNotExists: mysql.ErrBadDb,
+		codeDBDropExists:      mysql.ErrDBDropExists,
+		codeDatabaseNotExists: mysql.ErrBadDB,
 		codeTableNotExists:    mysql.ErrNoSuchTable,
 		codeColumnNotExists:   mysql.ErrBadField,
-		codeDatabaseExists:    mysql.ErrDbCreateExists,
+		codeDatabaseExists:    mysql.ErrDBCreateExists,
 		codeTableExists:       mysql.ErrTableExists,
 		codeBadTable:          mysql.ErrBadTable,
 		codeColumnExists:      mysql.ErrDupFieldName,
