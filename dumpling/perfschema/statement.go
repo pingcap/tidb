@@ -200,11 +200,12 @@ func (ps *perfSchema) EndStatement(state *StatementState) {
 	log.Debugf("EndStatement: sql %s, connection id %d, type %s", state.sqlText, state.connID, state.stmtType)
 
 	record := state2Record(state)
-	err := ps.updateEventsStmtsCurrent(state.connID, record)
-	if err != nil {
-		log.Error("Unable to update events_statements_current table")
-	}
-	err = ps.appendEventsStmtsHistory(record)
+	// TODO: add back when customized performance schema implemented.
+	// err := ps.updateEventsStmtsCurrent(state.connID, record)
+	// if err != nil {
+	// 	   log.Error("Unable to update events_statements_current table")
+	// }
+	err := ps.appendEventsStmtsHistory(record)
 	if err != nil {
 		log.Errorf("Unable to append to events_statements_history table %v", errors.ErrorStack(err))
 	}
