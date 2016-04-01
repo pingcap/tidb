@@ -1654,7 +1654,7 @@ func (s *testSessionSuite) TestJoinSubquery(c *C) {
 	mustExecSQL(c, se, "CREATE TABLE table2 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30), t1id INTEGER)")
 	sqlTxt := `SELECT table1.id AS table1_id, table1.data AS table1_data FROM
 	table1 INNER JOIN (
-		SELECT table2.id AS id, table2.data AS ata, table2.t1id AS t1id FROM table2
+		SELECT table2.id AS id, table2.data AS data, table2.t1id AS t1id FROM table2
 	) AS anon_1 ON table1.id = anon_1.t1id;`
 	mustExecSQL(c, se, sqlTxt)
 }
