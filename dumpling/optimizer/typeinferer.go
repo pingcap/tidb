@@ -66,7 +66,9 @@ func (v *typeInferrer) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.FuncCallExpr:
 		v.handleFuncCallExpr(x)
 	case *ast.FuncCastExpr:
-		x.SetType(x.Tp)
+		// Copy a new field type.
+		tp := *x.Tp
+		x.SetType(&tp)
 		if len(x.Type.Charset) == 0 {
 			x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
 		}
@@ -315,11 +317,11 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 // If used in a string context, the result is returned as a string.
 // If used in a numeric context, the result is returned as a decimal, real, or integer value.
 func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
-	var currType *types.FieldType
+	var currType types.FieldType
 	for _, w := range x.WhenClauses {
 		t := w.Result.GetType()
-		if currType == nil {
-			currType = t
+		if currType.Tp == mysql.TypeUnspecified {
+			currType = *t
 			continue
 		}
 		mtp := types.MergeFieldType(currType.Tp, t.Tp)
@@ -332,8 +334,8 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 	}
 	if x.ElseClause != nil {
 		t := x.ElseClause.GetType()
-		if currType == nil {
-			currType = t
+		if currType.Tp == mysql.TypeUnspecified {
+			currType = *t
 		} else {
 			mtp := types.MergeFieldType(currType.Tp, t.Tp)
 			if mtp == t.Tp && mtp != currType.Tp {
@@ -343,7 +345,7 @@ func (v *typeInferrer) handleCaseExpr(x *ast.CaseExpr) {
 			currType.Tp = mtp
 		}
 	}
-	x.SetType(currType)
+	x.SetType(&currType)
 	// TODO: We need a better way to set charset/collation
 	x.Type.Charset, x.Type.Collate = types.DefaultCharsetForType(x.Type.Tp)
 }

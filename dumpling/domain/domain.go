@@ -184,7 +184,7 @@ func (do *Domain) reload() error {
 	case err := <-done:
 		return errors.Trace(err)
 	case <-time.After(timeout):
-		return errors.New("reload schema timeout")
+		return errLoadSchemaTimeOut
 	}
 }
 
@@ -268,3 +268,12 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 
 	return d, nil
 }
+
+// Domain error codes.
+const (
+	codeLoadSchemaTimeOut terror.ErrCode = 1
+)
+
+var (
+	errLoadSchemaTimeOut = terror.ClassDomain.New(codeLoadSchemaTimeOut, "reload schema timeout")
+)

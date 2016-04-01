@@ -1286,12 +1286,12 @@ func (s *testSessionSuite) TestIssue461(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	c.Assert(err.Error(), Equals, "[kv:3]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = se2.Execute("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
-	c.Assert(err.Error(), Equals, "[kv:3]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
 
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, "drop table test;")
@@ -1645,6 +1645,18 @@ func (s *testSessionSuite) TestIgnoreForeignKey(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	mustExecSQL(c, se, sqlText)
+}
+
+func (s *testSessionSuite) TestJoinSubquery(c *C) {
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "CREATE TABLE table1 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30))")
+	mustExecSQL(c, se, "CREATE TABLE table2 (id INTEGER key AUTO_INCREMENT, data VARCHAR(30), t1id INTEGER)")
+	sqlTxt := `SELECT table1.id AS table1_id, table1.data AS table1_data FROM
+	table1 INNER JOIN (
+		SELECT table2.id AS id, table2.data AS data, table2.t1id AS t1id FROM table2
+	) AS anon_1 ON table1.id = anon_1.t1id;`
+	mustExecSQL(c, se, sqlTxt)
 }
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {

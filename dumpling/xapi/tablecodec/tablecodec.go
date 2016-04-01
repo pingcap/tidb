@@ -128,7 +128,7 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
-		datum.SetMysqlTime(&t)
+		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration:
 		dur := mysql.Duration{Duration: time.Duration(datum.GetInt64())}
@@ -222,6 +222,9 @@ func TableToProto(t *model.TableInfo) *tipb.TableInfo {
 	}
 	cols := make([]*tipb.ColumnInfo, 0, len(t.Columns))
 	for _, c := range t.Columns {
+		if c.State != model.StatePublic {
+			continue
+		}
 		col := columnToProto(c)
 		if t.PKIsHandle && mysql.HasPriKeyFlag(c.Flag) {
 			col.PkHandle = proto.Bool(true)

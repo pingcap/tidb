@@ -943,3 +943,13 @@ func (s *testSuite) TestJoin(c *C) {
 		result.Check(ca.result)
 	}
 }
+
+func (s *testSuite) TestIndexScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unique)")
+	tk.MustExec("insert t values (-1), (2), (3), (5), (6), (7), (8), (9)")
+	result := tk.MustQuery("select a from t where a < 0 or (a >= 2.1 and a < 5.1) or ( a > 5.9 and a <= 7.9) or a > '8.1'")
+	result.Check(testkit.Rows("-1", "3", "5", "6", "7", "9"))
+}

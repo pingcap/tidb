@@ -42,7 +42,7 @@ func count(db engine.DB) int {
 }
 
 func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
-	store := createMemStore()
+	store := createMemStore(time.Now().Nanosecond())
 	db := store.(*dbStore).db
 	store.(*dbStore).compactor.Stop()
 
@@ -92,7 +92,7 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 }
 
 func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
-	store := createMemStore()
+	store := createMemStore(time.Now().Nanosecond())
 	compactor := store.(*dbStore).compactor
 	txn, _ := store.Begin()
 	txn.Set([]byte("a"), []byte("1"))
@@ -115,7 +115,7 @@ func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
 // TestStartStop is to test `Panic: sync: WaitGroup is reused before previous Wait has returned`
 // in Stop function.
 func (s *localstoreCompactorTestSuite) TestStartStop(c *C) {
-	store := createMemStore()
+	store := createMemStore(time.Now().Nanosecond())
 	db := store.(*dbStore).db
 
 	for i := 0; i < 10000; i++ {

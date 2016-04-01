@@ -184,7 +184,7 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 		d.SetNull()
 		return d, errors.Trace(err)
 	}
-	d.SetMysqlTime(&tr)
+	d.SetMysqlTime(tr)
 	return d, nil
 }
 
@@ -373,7 +373,7 @@ func builtinCurrentDate(args []types.Datum, _ context.Context) (d types.Datum, e
 	t := mysql.Time{
 		Time: time.Date(year, month, day, 0, 0, 0, 0, time.Local),
 		Type: mysql.TypeDate, Fsp: 0}
-	d.SetMysqlTime(&t)
+	d.SetMysqlTime(t)
 	return d, nil
 }
 
