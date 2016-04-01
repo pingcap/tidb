@@ -411,14 +411,14 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 	columnLen := dumpLengthEncodedInt(uint64(len(columns)))
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = append(data, columnLen...)
-	if err := cc.writePacket(data); err != nil {
+	if err = cc.writePacket(data); err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, v := range columns {
 		data = data[0:4]
 		data = append(data, v.Dump(cc.alloc)...)
-		if err := cc.writePacket(data); err != nil {
+		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -457,7 +457,7 @@ func (cc *clientConn) writeResultset(rs ResultSet, binary bool) error {
 			}
 		}
 
-		if err := cc.writePacket(data); err != nil {
+		if err = cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
 		row, err = rs.Next()
