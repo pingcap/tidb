@@ -474,6 +474,29 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
 
+	// Fix issue #1046
+	tblDate := []struct {
+		Input  string
+		Fsp    int
+		Expect string
+	}{
+		{"12-12-31 11:30:45", 0, "20121231"},
+		{"12-12-31 11:30:45", 6, "20121231"},
+		{"12-12-31 11:30:45.123", 6, "20121231"},
+		{"12-12-31 11:30:45.123345", 0, "20121231"},
+		{"12-12-31 11:30:45.123345", 3, "20121231"},
+		{"12-12-31 11:30:45.123345", 5, "20121231"},
+		{"12-12-31 11:30:45.123345", 6, "20121231"},
+		{"12-12-31 11:30:45.1233457", 6, "20121231"},
+		{"12-12-31 11:30:45.823345", 0, "20121231"},
+	}
+
+	for _, test := range tblDate {
+		t, err := ParseTime(test.Input, TypeDate, 0)
+		c.Assert(err, IsNil)
+		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+	}
+
 	tblDuration := []struct {
 		Input  string
 		Fsp    int
