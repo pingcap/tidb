@@ -215,9 +215,11 @@ func (t *Time) UnmarshalInLocation(b []byte, loc *time.Location) error {
 }
 
 const numberFormat = "20060102150405"
+const dateFormat = "20060102"
 
 // ToNumber returns a formatted number.
 // e.g,
+// 2012-12-12 -> 20121212
 // 2012-12-12T10:10:10 -> 20121212101010
 // 2012-12-12T10:10:10.123456 -> 20121212101010.123456
 func (t Time) ToNumber() Decimal {
@@ -225,7 +227,15 @@ func (t Time) ToNumber() Decimal {
 		return ZeroDecimal
 	}
 
-	tfStr := numberFormat
+	// Fix issue #1046
+	// Prevents from converting 2012-12-12 to 20121212000000
+	var tfStr string
+	if t.Type == TypeDate {
+		tfStr = dateFormat
+	} else {
+		tfStr = numberFormat
+	}
+
 	if t.Fsp > 0 {
 		tfStr = fmt.Sprintf("%s.%s", tfStr, strings.Repeat("0", t.Fsp))
 	}
