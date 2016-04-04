@@ -170,3 +170,25 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 		readResult(rs[0], 1)
 	}
 }
+
+func BenchmarkInsertWithIndex(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	mustExecute(se, "drop table if exists t")
+	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
+	}
+}
+
+func BenchmarkInsertNoIndex(b *testing.B) {
+	b.StopTimer()
+	se := prepareBenchSession()
+	mustExecute(se, "drop table if exists t")
+	mustExecute(se, "create table t (pk int primary key, col int)")
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, fmt.Sprintf("insert t values (%d, %d)", i, i))
+	}
+}
