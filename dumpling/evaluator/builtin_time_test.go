@@ -316,6 +316,14 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testEvaluatorSuite) TestUTCDate(c *C) {
+	last := time.Now().UTC()
+	v, err := builtinUTCDate(types.MakeDatums(nil), nil)
+	c.Assert(err, IsNil)
+	n := v.GetMysqlTime()
+	c.Assert(n.String(), GreaterEqual, last.Format(mysql.DateFormat))
+}
+
 func (s *testEvaluatorSuite) TestDateArith(c *C) {
 	ctx := mock.NewContext()
 
