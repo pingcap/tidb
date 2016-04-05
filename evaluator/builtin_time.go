@@ -392,7 +392,7 @@ func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, e
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
 func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-	year, month, day := time.Now().Date()
+	year, month, day := time.Now().UTC().Date()
 	t := mysql.Time{
 		Time: time.Date(year, month, day, 0, 0, 0, 0, time.UTC),
 		Type: mysql.TypeDate, Fsp: mysql.UnspecifiedFsp}
