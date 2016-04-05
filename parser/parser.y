@@ -106,6 +106,7 @@ import (
 	create		"CREATE"
 	cross 		"CROSS"
 	curDate 	"CURDATE"
+	utcDate 	"UTC_DATE"
 	currentDate 	"CURRENT_DATE"
 	curTime 	"CUR_TIME"
 	currentTime 	"CURRENT_TIME"
@@ -2169,7 +2170,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION" | "UTC_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -2182,6 +2183,10 @@ FunctionCallConflict:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
 |	"CURRENT_DATE"
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"UTC_DATE"
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}

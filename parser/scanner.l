@@ -483,6 +483,7 @@ unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
 upper		{u}{p}{p}{e}{r}
+utc_date	{u}{t}{c}_{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
@@ -948,6 +949,8 @@ redundant		lval.item = string(l.val)
 
 {user_var}		lval.item = string(l.val)
 			return userVar
+{utc_date}		lval.item = string(l.val)
+			return utcDate
 {second}		lval.item = string(l.val)
 			return second
 {second_microsecond}	lval.item= string(l.val)
