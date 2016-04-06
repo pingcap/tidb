@@ -287,13 +287,22 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
 	var err error
-	row.Data, err = e.t.Row(e.ctx, handle)
+
+	columns := make([]*column.Col, len(e.fields))
+	for i, v := range e.fields {
+		if v.Referenced {
+			columns[i] = e.t.Cols()[i]
+		}
+	}
+	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set result fields value.
 	for i, v := range e.fields {
-		v.Expr.SetValue(row.Data[i].GetValue())
+		if v.Referenced {
+			v.Expr.SetValue(row.Data[i].GetValue())
+		}
 	}
 
 	// Put rowKey to the tail of record row
@@ -415,7 +424,13 @@ func indexCompare(idxKey []types.Datum, boundVals []types.Datum) (int, error) {
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
 	var err error
-	row.Data, err = e.scan.tbl.Row(e.scan.ctx, h)
+	columns := make([]*column.Col, len(e.scan.fields))
+	for i, v := range e.scan.fields {
+		if v.Referenced {
+			columns[i] = e.scan.tbl.Cols()[i]
+		}
+	}
+	row.Data, err = e.scan.tbl.RowWithCols(e.scan.ctx, h, columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
