@@ -218,29 +218,19 @@ func collationToProto(c string) int32 {
 	return int32(mysql.DefaultCollationID)
 }
 
-// TableToProto converts a model.TableInfo to a tipb.TableInfo.
-func TableToProto(t *model.TableInfo, referenced []bool) *tipb.TableInfo {
-	pt := &tipb.TableInfo{
-		TableId: proto.Int64(t.ID),
-	}
-	cols := make([]*tipb.ColumnInfo, 0, len(t.Columns))
-	for i, c := range t.Columns {
-		if !referenced[i] {
-			continue
-		}
-		if c.State != model.StatePublic {
-			continue
-		}
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
 		col := columnToProto(c)
-		if t.PKIsHandle && mysql.HasPriKeyFlag(c.Flag) {
+		if pkIsHandle && mysql.HasPriKeyFlag(c.Flag) {
 			col.PkHandle = proto.Bool(true)
 		} else {
 			col.PkHandle = proto.Bool(false)
 		}
 		cols = append(cols, col)
 	}
-	pt.Columns = cols
-	return pt
+	return cols
 }
 
 // ProtoColumnsToFieldTypes converts tipb column info slice to FieldTyps slice.
