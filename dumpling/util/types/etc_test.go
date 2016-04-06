@@ -19,30 +19,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 )
 
 func TestT(t *testing.T) {
-	check.TestingT(t)
+	TestingT(t)
 }
 
-var _ = check.Suite(&testTypeEtcSuite{})
+var _ = Suite(&testTypeEtcSuite{})
 
 type testTypeEtcSuite struct {
 }
 
-func testIsTypeBlob(c *check.C, tp byte, expect bool) {
+func testIsTypeBlob(c *C, tp byte, expect bool) {
 	v := IsTypeBlob(tp)
-	c.Assert(v, check.Equals, expect)
+	c.Assert(v, Equals, expect)
 }
 
-func testIsTypeChar(c *check.C, tp byte, expect bool) {
+func testIsTypeChar(c *C, tp byte, expect bool) {
 	v := IsTypeChar(tp)
-	c.Assert(v, check.Equals, expect)
+	c.Assert(v, Equals, expect)
 }
 
-func (s *testTypeEtcSuite) TestIsType(c *check.C) {
+func (s *testTypeEtcSuite) TestIsType(c *C) {
 	testIsTypeBlob(c, mysql.TypeTinyBlob, true)
 	testIsTypeBlob(c, mysql.TypeMediumBlob, true)
 	testIsTypeBlob(c, mysql.TypeBlob, true)
@@ -54,17 +54,17 @@ func (s *testTypeEtcSuite) TestIsType(c *check.C) {
 	testIsTypeChar(c, mysql.TypeLong, false)
 }
 
-func testTypeStr(c *check.C, tp byte, expect string) {
+func testTypeStr(c *C, tp byte, expect string) {
 	v := TypeStr(tp)
-	c.Assert(v, check.Equals, expect)
+	c.Assert(v, Equals, expect)
 }
 
-func testTypeToStr(c *check.C, tp byte, charset string, expect string) {
+func testTypeToStr(c *C, tp byte, charset string, expect string) {
 	v := TypeToStr(tp, charset)
-	c.Assert(v, check.Equals, expect)
+	c.Assert(v, Equals, expect)
 }
 
-func (s *testTypeEtcSuite) TestTypeToStr(c *check.C) {
+func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 	testTypeStr(c, mysql.TypeYear, "year")
 	testTypeStr(c, 0xdd, "")
 
@@ -100,22 +100,22 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *check.C) {
 	testTypeToStr(c, mysql.TypeSet, "binary", "set")
 }
 
-func (s *testTypeEtcSuite) TestEOFAsNil(c *check.C) {
+func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
 	err := EOFAsNil(io.EOF)
-	c.Assert(err, check.IsNil)
+	c.Assert(err, IsNil)
 }
 
-func checkCollate(c *check.C, x, y []interface{}, expect int) {
+func checkCollate(c *C, x, y []interface{}, expect int) {
 	v := collate(x, y)
-	c.Assert(v, check.Equals, expect)
+	c.Assert(v, Equals, expect)
 }
 
-func checkCollateDesc(c *check.C, x, y []interface{}, expect int) {
+func checkCollateDesc(c *C, x, y []interface{}, expect int) {
 	v := collateDesc(x, y)
-	c.Assert(v, check.Equals, expect)
+	c.Assert(v, Equals, expect)
 }
 
-func (s *testTypeEtcSuite) TestCollate(c *check.C) {
+func (s *testTypeEtcSuite) TestCollate(c *C) {
 	checkCollate(c, []interface{}{1, 2}, nil, 1)
 	checkCollate(c, nil, []interface{}{1, 2}, -1)
 	checkCollate(c, nil, nil, 0)
@@ -131,17 +131,17 @@ func (s *testTypeEtcSuite) TestCollate(c *check.C) {
 	checkCollateDesc(c, []interface{}{3, 2, 5}, []interface{}{3, 2}, -1)
 }
 
-func checkClone(c *check.C, a interface{}, pass bool) {
+func checkClone(c *C, a interface{}, pass bool) {
 	b, err := Clone(a)
 	if pass {
-		c.Assert(err, check.DeepEquals, nil)
-		c.Assert(a, check.DeepEquals, b)
+		c.Assert(err, DeepEquals, nil)
+		c.Assert(a, DeepEquals, b)
 		return
 	}
-	c.Assert(err, check.NotNil)
+	c.Assert(err, NotNil)
 }
 
-func (s *testTypeEtcSuite) TestClone(c *check.C) {
+func (s *testTypeEtcSuite) TestClone(c *C) {
 	checkClone(c, nil, true)
 	checkClone(c, uint16(111), true)
 	checkClone(c, "abcd1.c--/+!%^", true)
@@ -157,7 +157,7 @@ func (s *testTypeEtcSuite) TestClone(c *check.C) {
 	checkClone(c, mysql.Set{Name: "a", Value: 1}, true)
 }
 
-func checkCoerce(c *check.C, a, b interface{}) {
+func checkCoerce(c *C, a, b interface{}) {
 	a, b = Coerce(a, b)
 	var hasFloat, hasDecimal bool
 	switch x := a.(type) {
@@ -186,18 +186,18 @@ func checkCoerce(c *check.C, a, b interface{}) {
 	}
 	if hasDecimal {
 		_, ok := a.(mysql.Decimal)
-		c.Assert(ok, check.IsTrue)
+		c.Assert(ok, IsTrue)
 		_, ok = b.(mysql.Decimal)
-		c.Assert(ok, check.IsTrue)
+		c.Assert(ok, IsTrue)
 	} else if hasFloat {
 		_, ok := a.(float64)
-		c.Assert(ok, check.IsTrue)
+		c.Assert(ok, IsTrue)
 		_, ok = b.(float64)
-		c.Assert(ok, check.IsTrue)
+		c.Assert(ok, IsTrue)
 	}
 }
 
-func (s *testTypeEtcSuite) TestCoerce(c *check.C) {
+func (s *testTypeEtcSuite) TestCoerce(c *C) {
 	checkCoerce(c, uint64(3), int16(4))
 	checkCoerce(c, uint64(0xffffffffffffffff), float64(2.3))
 	checkCoerce(c, float64(1.3), uint64(0xffffffffffffffff))
@@ -210,22 +210,22 @@ func (s *testTypeEtcSuite) TestCoerce(c *check.C) {
 	checkCoerce(c, int32(43), 3.235)
 }
 
-func (s *testTypeEtcSuite) TestIsOrderedType(c *check.C) {
+func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
 	r := IsOrderedType(1)
-	c.Assert(r, check.IsTrue)
+	c.Assert(r, IsTrue)
 	r = IsOrderedType(-1)
-	c.Assert(r, check.IsTrue)
+	c.Assert(r, IsTrue)
 	r = IsOrderedType(uint(1))
-	c.Assert(r, check.IsTrue)
+	c.Assert(r, IsTrue)
 
 	r = IsOrderedType(mysql.Duration{Duration: time.Duration(0), Fsp: 0})
-	c.Assert(r, check.IsTrue)
+	c.Assert(r, IsTrue)
 
 	r = IsOrderedType([]byte{1})
-	c.Assert(r, check.IsTrue)
+	c.Assert(r, IsTrue)
 }
 
-func (s *testTypeEtcSuite) TestMaxFloat(c *check.C) {
+func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 	tbl := []struct {
 		Flen    int
 		Decimal int
@@ -239,11 +239,11 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *check.C) {
 
 	for _, t := range tbl {
 		f := getMaxFloat(t.Flen, t.Decimal)
-		c.Assert(f, check.Equals, t.Expect)
+		c.Assert(f, Equals, t.Expect)
 	}
 }
 
-func (s *testTypeEtcSuite) TestRoundFloat(c *check.C) {
+func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
 	tbl := []struct {
 		Input  float64
 		Expect float64
@@ -259,11 +259,11 @@ func (s *testTypeEtcSuite) TestRoundFloat(c *check.C) {
 
 	for _, t := range tbl {
 		f := RoundFloat(t.Input)
-		c.Assert(f, check.Equals, t.Expect)
+		c.Assert(f, Equals, t.Expect)
 	}
 }
 
-func (s *testTypeEtcSuite) TestTruncate(c *check.C) {
+func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	tbl := []struct {
 		Input   float64
 		Decimal int
@@ -276,6 +276,6 @@ func (s *testTypeEtcSuite) TestTruncate(c *check.C) {
 
 	for _, t := range tbl {
 		f := truncateFloat(t.Input, t.Decimal)
-		c.Assert(f, check.Equals, t.Expect)
+		c.Assert(f, Equals, t.Expect)
 	}
 }
