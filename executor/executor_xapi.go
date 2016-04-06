@@ -17,10 +17,12 @@ import (
 	"math"
 	"sort"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
@@ -111,13 +113,16 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Where = conditionsToPBExpression(e.tablePlan.FilterConditions...)
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
 
-	referenced := make([]bool, len(e.tablePlan.Fields()))
-	for i, v := range e.tablePlan.Fields() {
+	columns := make([]*model.ColumnInfo, 0, len(e.tablePlan.Fields()))
+	for _, v := range e.tablePlan.Fields() {
 		if v.Referenced {
-			referenced[i] = true
+			columns = append(columns, v.Column)
 		}
 	}
-	selReq.TableInfo = tablecodec.TableToProto(e.tablePlan.Table, referenced)
+	selReq.TableInfo = &tipb.TableInfo{
+		TableId: proto.Int64(e.table.Meta().ID),
+	}
+	selReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	e.result, err = xapi.Select(txn.GetClient(), selReq, 1)
 	if err != nil {
 		return errors.Trace(err)
@@ -238,13 +243,16 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selTableReq.StartTs = &startTs
-	referenced := make([]bool, len(e.indexPlan.Fields()))
-	for i, v := range e.indexPlan.Fields() {
+	columns := make([]*model.ColumnInfo, 0, len(e.indexPlan.Fields()))
+	for _, v := range e.indexPlan.Fields() {
 		if v.Referenced {
-			referenced[i] = true
+			columns = append(columns, v.Column)
 		}
 	}
-	selTableReq.TableInfo = tablecodec.TableToProto(e.indexPlan.Table, referenced)
+	selTableReq.TableInfo = &tipb.TableInfo{
+		TableId: proto.Int64(e.table.Meta().ID),
+	}
+	selTableReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
 		if h == math.MaxInt64 {
