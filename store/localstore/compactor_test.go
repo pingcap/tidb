@@ -19,11 +19,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&localstoreCompactorTestSuite{})
+var _ = Suite(&testLocalstoreCompactorSuite{})
 
-type localstoreCompactorTestSuite struct {
+type testLocalstoreCompactorSuite struct {
 }
 
 func count(db engine.DB) int {
@@ -41,7 +42,8 @@ func count(db engine.DB) int {
 	return totalCnt
 }
 
-func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
+func (s *testLocalstoreCompactorSuite) TestCompactor(c *C) {
+	defer testleak.AfterTest(c)()
 	store := createMemStore(time.Now().Nanosecond())
 	db := store.(*dbStore).db
 	store.(*dbStore).compactor.Stop()
@@ -88,10 +90,12 @@ func (s *localstoreCompactorTestSuite) TestCompactor(c *C) {
 	t = count(db)
 	c.Assert(t, Equals, 2)
 
-	compactor.Stop()
+	err := store.Close()
+	c.Assert(err, IsNil)
 }
 
-func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
+func (s *testLocalstoreCompactorSuite) TestGetAllVersions(c *C) {
+	defer testleak.AfterTest(c)()
 	store := createMemStore(time.Now().Nanosecond())
 	compactor := store.(*dbStore).compactor
 	txn, _ := store.Begin()
@@ -110,11 +114,15 @@ func (s *localstoreCompactorTestSuite) TestGetAllVersions(c *C) {
 	keys, err := compactor.getAllVersions([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(keys, HasLen, 2)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
 }
 
 // TestStartStop is to test `Panic: sync: WaitGroup is reused before previous Wait has returned`
 // in Stop function.
-func (s *localstoreCompactorTestSuite) TestStartStop(c *C) {
+func (s *testLocalstoreCompactorSuite) TestStartStop(c *C) {
+	defer testleak.AfterTest(c)()
 	store := createMemStore(time.Now().Nanosecond())
 	db := store.(*dbStore).db
 
@@ -129,4 +137,7 @@ func (s *localstoreCompactorTestSuite) TestStartStop(c *C) {
 		compactor.Stop()
 		c.Logf("Test compactor stop and start %d times", i)
 	}
+
+	err := store.Close()
+	c.Assert(err, IsNil)
 }

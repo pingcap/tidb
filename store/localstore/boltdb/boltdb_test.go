@@ -20,6 +20,7 @@ import (
 	"github.com/boltdb/bolt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/localstore/engine"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -49,6 +50,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSuite) TestPutNilAndDelete(c *C) {
+	defer testleak.AfterTest(c)()
 	d := s.db
 	rawDB := d.(*db).DB
 	// nil as value
@@ -96,6 +98,7 @@ func (s *testSuite) TestPutNilAndDelete(c *C) {
 }
 
 func (s *testSuite) TestGetSet(c *C) {
+	defer testleak.AfterTest(c)()
 	db := s.db
 
 	b := db.NewBatch()
@@ -116,6 +119,7 @@ func (s *testSuite) TestGetSet(c *C) {
 }
 
 func (s *testSuite) TestSeek(c *C) {
+	defer testleak.AfterTest(c)()
 	b := s.db.NewBatch()
 	b.Put([]byte("a"), []byte("1"))
 	b.Put([]byte("b"), []byte("2"))
@@ -149,6 +153,7 @@ func (s *testSuite) TestSeek(c *C) {
 }
 
 func (s *testSuite) TestMultiSeek(c *C) {
+	defer testleak.AfterTest(c)()
 	b := s.db.NewBatch()
 	b.Put([]byte("a"), []byte("1"))
 	b.Put([]byte("b"), []byte("2"))

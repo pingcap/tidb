@@ -16,6 +16,7 @@ package types
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testFieldTypeSuite{})
@@ -24,6 +25,7 @@ type testFieldTypeSuite struct {
 }
 
 func (s *testFieldTypeSuite) TestFieldType(c *C) {
+	defer testleak.AfterTest(c)()
 	ft := NewFieldType(mysql.TypeDuration)
 	c.Assert(ft.Flen, Equals, UnspecifiedLength)
 	c.Assert(ft.Decimal, Equals, UnspecifiedLength)
@@ -107,6 +109,7 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 }
 
 func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		value interface{}
 		tp    byte

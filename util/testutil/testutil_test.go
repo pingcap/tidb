@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -29,6 +30,7 @@ type testTestUtilSuite struct {
 }
 
 func (s *testTestUtilSuite) TestCompareUnorderedString(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		a []string
 		b []string

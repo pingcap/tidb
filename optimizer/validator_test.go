@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/optimizer"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testValidatorSuite{})
@@ -29,6 +30,7 @@ type testValidatorSuite struct {
 }
 
 func (s *testValidatorSuite) TestValidator(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql       string
 		inPrepare bool
@@ -52,6 +54,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	}
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	se, err := tidb.CreateSession(store)
 	c.Assert(err, IsNil)
 	for _, ca := range cases {

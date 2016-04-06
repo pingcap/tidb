@@ -29,6 +29,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -58,6 +59,7 @@ func (s *brokenStore) Open(schema string) (kv.Storage, error) {
 }
 
 func (s *testMainSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.dbName = "test_main_db"
 	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
 	s.dropDBSQL = fmt.Sprintf("drop database %s;", s.dbName)
@@ -73,6 +75,7 @@ func (s *testMainSuite) SetUpSuite(c *C) {
 }
 
 func (s *testMainSuite) TearDownSuite(c *C) {
+	defer testleak.AfterTest(c)()
 	removeStore(c, s.dbName)
 }
 
@@ -144,6 +147,7 @@ func (s *testMainSuite) TestConcurrent(c *C) {
 		go f(i*step, step)
 	}
 	wg.Wait()
+
 	mustExec(c, testDB, dropDBSQL)
 }
 
@@ -192,6 +196,8 @@ func (s *testMainSuite) TestTableInfoMeta(c *C) {
 
 	// drop db
 	mustExec(c, testDB, s.dropDBSQL)
+	err = testDB.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testMainSuite) TestInfoSchema(c *C) {
@@ -201,6 +207,9 @@ func (s *testMainSuite) TestInfoSchema(c *C) {
 	row, err := rs.Next()
 	c.Assert(err, IsNil)
 	match(c, row.Data, "utf8mb4")
+
+	err = store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testMainSuite) TestCaseInsensitive(c *C) {
@@ -224,7 +233,10 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	rows, err := GetRows(rs)
 	c.Assert(err, IsNil)
 	match(c, rows[0], 3)
+
 	mustExecSQL(c, se, s.dropDBSQL)
+	err = store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testMainSuite) TestDriverPrepare(c *C) {
@@ -249,12 +261,16 @@ func (s *testMainSuite) TestDriverPrepare(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(a, Equals, 1)
 	c.Assert(b, Equals, 2)
+
 	mustExec(c, testDB, s.dropDBSQL)
+	err = testDB.Close()
+	c.Assert(err, IsNil)
 }
 
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
 	db, err := sql.Open("tidb", "memory://test/test")
+	c.Assert(err, IsNil)
 	defer db.Close()
 	_, err = db.Exec("create table t (c int)")
 	c.Assert(err, IsNil)
@@ -275,8 +291,8 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 // Testcase for arg type.
 func (s *testMainSuite) TestCheckArgs(c *C) {
 	db, err := sql.Open("tidb", "memory://test/test")
-	defer db.Close()
 	c.Assert(err, IsNil)
+	defer db.Close()
 	mustExec(c, db, "create table if not exists t (c datetime)")
 	mustExec(c, db, "insert t values (?)", time.Now())
 	mustExec(c, db, "drop table t")

@@ -15,7 +15,9 @@ package evaluator
 
 import (
 	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"reflect"
 )
@@ -91,6 +93,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 }
 
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
+	defer testleak.AfterTest(c)()
 	args := types.MakeDatums(1, nil)
 	v, err := builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)

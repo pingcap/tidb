@@ -15,6 +15,7 @@ package variable
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testStatusVarSuite{})
@@ -58,6 +59,7 @@ func (ms *mockStatistics) Stats() (map[string]interface{}, error) {
 }
 
 func (s *testStatusVarSuite) TestStatusVar(c *C) {
+	defer testleak.AfterTest(c)()
 	scope := s.ms.GetScope(testStatus)
 	c.Assert(scope, Equals, DefaultScopeFlag)
 	scope = s.ms.GetScope(testSessionStatus)
