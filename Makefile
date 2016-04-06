@@ -125,9 +125,6 @@ race:
 ddl_test:
 	$(GO) test ./ddl/... -skip_ddl=false
 
-leak_test:
-	$(GO) test ./... -skip_leak=false
-
 ddl_race_test:
 	$(GO) test --race ./ddl/... -skip_ddl=false
 

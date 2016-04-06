@@ -15,11 +15,11 @@ package evaluator
 
 import (
 	"fmt"
+	"reflect"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"reflect"
 )
 
 // tblToDtbl is a util function for test.
@@ -39,6 +39,7 @@ func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	}
 	return tbl
 }
+
 func makeDatums(i interface{}) []types.Datum {
 	if i != nil {
 		t := reflect.TypeOf(i)

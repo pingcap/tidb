@@ -316,7 +316,7 @@ func (s *testMainSuite) TestIsQuery(c *C) {
 	}
 }
 
-func (s *testMainSuite) TestitrimSQL(c *C) {
+func (s *testMainSuite) TestTrimSQL(c *C) {
 	tbl := []struct {
 		sql    string
 		target string

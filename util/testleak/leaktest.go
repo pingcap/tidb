@@ -18,7 +18,6 @@
 package testleak
 
 import (
-	"flag"
 	"runtime"
 	"sort"
 	"strings"
@@ -27,8 +26,6 @@ import (
 	"github.com/cockroachdb/cockroach/util/timeutil"
 	"github.com/pingcap/check"
 )
-
-var skipLeak = flag.Bool("skip_leak", true, "default skip leak test")
 
 func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
@@ -53,7 +50,6 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "runtime.MHeap_Scavenger") {
 			continue
 		}
-		//fmt.Printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!no.%d, g:%v-----\n", i, stack)
 		gs = append(gs, stack)
 	}
 	sort.Strings(gs)
@@ -66,10 +62,6 @@ var beforeTestGorountines = map[string]bool{}
 // It's used for check.Suite.SetUpSuite() function.
 // Now it's only used in the tidb_test.go.
 func BeforeTest() {
-	if *skipLeak {
-		return
-	}
-
 	for _, g := range interestingGoroutines() {
 		beforeTestGorountines[g] = true
 	}
@@ -81,12 +73,6 @@ func BeforeTest() {
 // It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
 // call alone at the beginning of each test.
 func AfterTest(c *check.C) func() {
-	if *skipLeak {
-		return func() {
-			c.Logf("skip leak test")
-		}
-	}
-
 	if len(beforeTestGorountines) == 0 {
 		for _, g := range interestingGoroutines() {
 			beforeTestGorountines[g] = true
@@ -116,7 +102,7 @@ func AfterTest(c *check.C) func() {
 				continue
 			}
 			for _, g := range leaked {
-				c.Errorf("Leaked goroutine: %v", g)
+				c.Errorf("Test appears to have leaked: %v", g)
 			}
 			return
 		}
