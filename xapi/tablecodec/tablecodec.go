@@ -85,6 +85,9 @@ func DecodeRowKey(key kv.Key) (handle int64, err error) {
 
 // DecodeValues decodes a byte slice into datums with column types.
 func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Datum, error) {
+	if data == nil {
+		return nil, nil
+	}
 	values, err := codec.Decode(data)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -216,12 +219,15 @@ func collationToProto(c string) int32 {
 }
 
 // TableToProto converts a model.TableInfo to a tipb.TableInfo.
-func TableToProto(t *model.TableInfo) *tipb.TableInfo {
+func TableToProto(t *model.TableInfo, referenced []bool) *tipb.TableInfo {
 	pt := &tipb.TableInfo{
 		TableId: proto.Int64(t.ID),
 	}
 	cols := make([]*tipb.ColumnInfo, 0, len(t.Columns))
-	for _, c := range t.Columns {
+	for i, c := range t.Columns {
+		if !referenced[i] {
+			continue
+		}
 		if c.State != model.StatePublic {
 			continue
 		}

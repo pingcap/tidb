@@ -216,6 +216,9 @@ func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.C
 	row := item.(*itemPair).data
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
+		if col == nil {
+			continue
+		}
 		v[i] = row[col.Offset]
 	}
 	return v, nil

@@ -92,6 +92,12 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 	if err != nil {
 		return 0, nil, errors.Trace(err)
 	}
+	if data == nil {
+		// When no column is referenced, the data may be nil, like 'select count(*) from t'.
+		// In this case, we need to create a zero length datum slice,
+		// as caller will check if data is nil to finish iteration.
+		data = make([]types.Datum, 0)
+	}
 	handleBytes := row.GetHandle()
 	datums, err := codec.Decode(handleBytes)
 	if err != nil {

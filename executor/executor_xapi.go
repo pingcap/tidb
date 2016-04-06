@@ -67,10 +67,16 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		fullRowData := make([]types.Datum, len(e.tablePlan.Fields()))
+		var j int
 		for i, field := range e.tablePlan.Fields() {
-			field.Expr.SetDatum(rowData[i])
+			if field.Referenced {
+				fullRowData[i] = rowData[j]
+				field.Expr.SetDatum(rowData[j])
+				j++
+			}
 		}
-		return resultRowToRow(e.table, h, rowData), nil
+		return resultRowToRow(e.table, h, fullRowData), nil
 	}
 }
 
@@ -104,7 +110,14 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
 	selReq.Where = conditionsToPBExpression(e.tablePlan.FilterConditions...)
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
-	selReq.TableInfo = tablecodec.TableToProto(e.tablePlan.Table)
+
+	referenced := make([]bool, len(e.tablePlan.Fields()))
+	for i, v := range e.tablePlan.Fields() {
+		if v.Referenced {
+			referenced[i] = true
+		}
+	}
+	selReq.TableInfo = tablecodec.TableToProto(e.tablePlan.Table, referenced)
 	e.result, err = xapi.Select(txn.GetClient(), selReq, 1)
 	if err != nil {
 		return errors.Trace(err)
@@ -179,7 +192,10 @@ func (e *XSelectIndexExec) doRequest() error {
 
 	sort.Sort(int64Slice(handles))
 	tblResult, err := e.doTableRequest(txn, handles)
-	rows, err := extractRowsFromTableResult(e.table, tblResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rows, err := e.extractRowsFromTableResult(e.table, tblResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -222,7 +238,13 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selTableReq.StartTs = &startTs
-	selTableReq.TableInfo = tablecodec.TableToProto(e.indexPlan.Table)
+	referenced := make([]bool, len(e.indexPlan.Fields()))
+	for i, v := range e.indexPlan.Fields() {
+		if v.Referenced {
+			referenced[i] = true
+		}
+	}
+	selTableReq.TableInfo = tablecodec.TableToProto(e.indexPlan.Table, referenced)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
 		if h == math.MaxInt64 {
@@ -381,7 +403,7 @@ func extractHandlesFromIndexSubResult(subResult *xapi.SubResult) ([]int64, error
 	return handles, nil
 }
 
-func extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		subResult, err := tblResult.Next()
@@ -391,7 +413,7 @@ func extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]
 		if subResult == nil {
 			break
 		}
-		subRows, err := extractRowsFromSubResult(t, subResult)
+		subRows, err := e.extractRowsFromSubResult(t, subResult)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -400,7 +422,7 @@ func extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]
 	return rows, nil
 }
 
-func extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := subResult.Next()
@@ -410,7 +432,16 @@ func extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row,
 		if rowData == nil {
 			break
 		}
-		row := resultRowToRow(t, h, rowData)
+		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
+		var j int
+		for i, field := range e.indexPlan.Fields() {
+			if field.Referenced {
+				fullRowData[i] = rowData[j]
+				field.Expr.SetDatum(fullRowData[i])
+				j++
+			}
+		}
+		row := resultRowToRow(t, h, fullRowData)
 		rows = append(rows, row)
 	}
 	return rows, nil

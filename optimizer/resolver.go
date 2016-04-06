@@ -609,6 +609,7 @@ func (nr *nameResolver) resolveColumnInTableSources(cn *ast.ColumnNameExpr, tabl
 	if matchedResultField != nil {
 		// Bind column.
 		cn.Refer = matchedResultField
+		matchedResultField.Referenced = true
 		return true
 	}
 	return false
@@ -638,6 +639,7 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 			if rf.Column.Name.L == "" {
 				// This is not a real table column, resolve it directly.
 				cn.Refer = rf
+				rf.Referenced = true
 				return true
 			}
 			if matched == nil {
@@ -664,6 +666,7 @@ func (nr *nameResolver) resolveColumnInResultFields(ctx *resolverContext, cn *as
 		}
 		// Bind column.
 		cn.Refer = matched
+		matched.Referenced = true
 		return true
 	}
 	return false
@@ -714,6 +717,7 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 
 		}
 		for _, trf := range tableRfs {
+			trf.Referenced = true
 			// Convert it to ColumnNameExpr
 			cn := &ast.ColumnName{
 				Schema: trf.DBName,
@@ -799,6 +803,7 @@ func (nr *nameResolver) handlePosition(pos *ast.PositionExpr) {
 	}
 	nf.Expr = expr
 	pos.Refer = &nf
+	pos.Refer.Referenced = true
 	if nr.currentContext().inGroupBy {
 		// make sure item is not aggregate function
 		if ast.HasAggFlag(pos.Refer.Expr) {
