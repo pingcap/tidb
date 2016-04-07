@@ -49,6 +49,7 @@ const (
 	FlagHasSubquery
 	FlagHasVariable
 	FlagHasDefault
+	FlagEvaluated
 )
 
 // ExprNode is a node that can be evaluated.

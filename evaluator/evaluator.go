@@ -38,21 +38,21 @@ const (
 
 // Eval evaluates an expression to a value.
 func Eval(ctx context.Context, expr ast.ExprNode) (interface{}, error) {
-	e := &Evaluator{ctx: ctx}
-	expr.Accept(e)
-	if e.err != nil {
-		return nil, errors.Trace(e.err)
-	}
-	return expr.GetValue(), nil
+	d, err := EvalDatum(ctx, expr)
+	return d.GetValue(), err
 }
 
 // EvalDatum evaluates an expression to a datum.
 func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
+	if ast.IsEvaluated(expr) {
+		return *expr.GetDatum(), nil
+	}
 	e := &Evaluator{ctx: ctx}
 	expr.Accept(e)
 	if e.err != nil {
 		return d, errors.Trace(e.err)
 	}
+	expr.SetFlag(expr.GetFlag() | ast.FlagEvaluated)
 	return *expr.GetDatum(), nil
 }
 

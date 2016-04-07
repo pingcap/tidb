@@ -17,7 +17,22 @@ const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHa
 
 // IsPreEvaluable checks if the expression can be evaluated before execution.
 func IsPreEvaluable(expr ExprNode) bool {
-	return expr.GetFlag()|preEvaluable == preEvaluable
+	return (expr.GetFlag()|preEvaluable)&^FlagEvaluated == preEvaluable
+}
+
+const evaluated = preEvaluable & ^FlagHasFunc
+
+// IsEvaluated checks if the expression are evaluated and needn't be evaluated any more.
+func IsEvaluated(expr ExprNode) bool {
+	flag := expr.GetFlag()
+	if flag&FlagEvaluated == 0 {
+		return false
+	}
+	flag &= ^FlagEvaluated
+	if flag == FlagConstant {
+		return false
+	}
+	return flag|evaluated == evaluated
 }
 
 // IsConstant checks if the expression is constant.
