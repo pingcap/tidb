@@ -42,7 +42,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
-		"compact", "redundant",
+		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -107,7 +107,6 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(cs.Cols, HasLen, 1)
 	c.Assert(cs.Cols[0].Options, HasLen, 1)
 	c.Assert(cs.Cols[0].Options[0].Tp, Equals, ast.ColumnOptionPrimaryKey)
-
 }
 
 type testCase struct {
@@ -322,6 +321,9 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// For https://github.com/pingcap/tidb/issues/320
 		{`(select 1);`, true},
+
+		// For https://github.com/pingcap/tidb/issues/1050
+		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
 	}
 	s.RunTest(c, table)
 }
