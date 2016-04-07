@@ -18,9 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists truncate_test;`)
@@ -34,6 +36,7 @@ func (s *testSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testSuite) TestCreateTable(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Test create an exist database
@@ -103,6 +106,7 @@ func (s *testSuite) TestCreateTable(c *C) {
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
@@ -111,6 +115,7 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -120,6 +125,7 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 }
 
 func (s *testSuite) TestCreateDropIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists drop_test (a int)")
@@ -129,6 +135,7 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 }
 
 func (s *testSuite) TestAlterTable(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists alter_test (c1 int)")

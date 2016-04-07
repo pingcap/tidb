@@ -16,6 +16,7 @@ package ddl
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type testDDLCallback struct {
@@ -44,6 +45,7 @@ func (tc *testDDLCallback) OnJobUpdated(job *model.Job) {
 }
 
 func (s *testDDLSuite) TestCallback(c *C) {
+	defer testleak.AfterTest(c)()
 	cb := &BaseCallback{}
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)

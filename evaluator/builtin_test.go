@@ -15,9 +15,11 @@ package evaluator
 
 import (
 	"fmt"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/types"
 	"reflect"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 // tblToDtbl is a util function for test.
@@ -37,6 +39,7 @@ func tblToDtbl(i interface{}) []map[string][]types.Datum {
 	}
 	return tbl
 }
+
 func makeDatums(i interface{}) []types.Datum {
 	if i != nil {
 		t := reflect.TypeOf(i)
@@ -91,6 +94,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 }
 
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
+	defer testleak.AfterTest(c)()
 	args := types.MakeDatums(1, nil)
 	v, err := builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)

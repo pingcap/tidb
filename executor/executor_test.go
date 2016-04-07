@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -51,6 +52,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSuite) TestAdmin(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -107,6 +109,7 @@ func (s *testSuite) TestAdmin(c *C) {
 }
 
 func (s *testSuite) TestPrepared(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists prepare_test")
@@ -175,6 +178,7 @@ func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 }
 
 func (s *testSuite) TestDelete(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillData(tk, "delete_test")
 
@@ -221,6 +225,7 @@ func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultiTableDelete(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	s.fillDataMultiTable(tk)
 
@@ -233,6 +238,7 @@ func (s *testSuite) TestMultiTableDelete(c *C) {
 }
 
 func (s *testSuite) TestQualifedDelete(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -271,6 +277,7 @@ func (s *testSuite) TestQualifedDelete(c *C) {
 }
 
 func (s *testSuite) TestInsert(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists insert_test;create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
@@ -344,6 +351,7 @@ func (s *testSuite) TestInsert(c *C) {
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists insert_autoinc_test; create table insert_autoinc_test (id int primary key auto_increment, c1 int);`
@@ -427,6 +435,7 @@ func (s *testSuite) TestInsertAutoInc(c *C) {
 }
 
 func (s *testSuite) TestReplace(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists replace_test;
@@ -548,6 +557,7 @@ func (s *testSuite) TestReplace(c *C) {
 }
 
 func (s *testSuite) TestSelectWithoutFrom(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -563,6 +573,7 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 }
 
 func (s *testSuite) TestSelectOrderBy(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_order_test")
@@ -585,6 +596,7 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_distinct_test")
@@ -599,6 +611,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 }
 
 func (s *testSuite) TestSelectHaving(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "select_having_test")
@@ -613,6 +626,7 @@ func (s *testSuite) TestSelectHaving(c *C) {
 }
 
 func (s *testSuite) TestSelectErrorRow(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -645,6 +659,7 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 }
 
 func (s *testSuite) TestUpdate(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillData(tk, "update_test")
@@ -706,6 +721,7 @@ func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
 }
 
 func (s *testSuite) TestMultipleTableUpdate(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	s.fillMultiTableForUpdate(tk)
@@ -742,6 +758,7 @@ func (s *testSuite) TestMultipleTableUpdate(c *C) {
 
 // For https://github.com/pingcap/tidb/issues/345
 func (s *testSuite) TestIssue345(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1, t2`)
@@ -782,6 +799,7 @@ func (s *testSuite) TestIssue345(c *C) {
 }
 
 func (s *testSuite) TestMultiUpdate(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// fix https://github.com/pingcap/tidb/issues/369
@@ -808,6 +826,7 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 }
 
 func (s *testSuite) TestUnion(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -858,6 +877,7 @@ func (s *testSuite) TestUnion(c *C) {
 }
 
 func (s *testSuite) TestTablePKisHandleScan(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -920,6 +940,7 @@ func (s *testSuite) TestTablePKisHandleScan(c *C) {
 }
 
 func (s *testSuite) TestJoin(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -945,6 +966,7 @@ func (s *testSuite) TestJoin(c *C) {
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

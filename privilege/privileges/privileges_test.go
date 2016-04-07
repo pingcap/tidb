@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -87,6 +88,7 @@ func (s *testPrivilegeSuite) TearDownTest(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
+	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'test'@'localhost' identified by '123';`)
 	pc := &privileges.UserPrivileges{}
@@ -116,6 +118,7 @@ func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
+	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'test1'@'localhost' identified by '123';`)
 	pc := &privileges.UserPrivileges{}
@@ -157,6 +160,7 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
+	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
@@ -234,6 +238,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
+	defer testleak.AfterTest(c)()
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)

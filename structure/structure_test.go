@@ -20,19 +20,20 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestTxStructure(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&tesTxStructureSuite{})
+var _ = Suite(&testTxStructureSuite{})
 
-type tesTxStructureSuite struct {
+type testTxStructureSuite struct {
 	store kv.Storage
 }
 
-func (s *tesTxStructureSuite) SetUpSuite(c *C) {
+func (s *testTxStructureSuite) SetUpSuite(c *C) {
 	path := "memory:"
 	d := localstore.Driver{
 		Driver: goleveldb.MemoryDriver{},
@@ -42,12 +43,13 @@ func (s *tesTxStructureSuite) SetUpSuite(c *C) {
 	s.store = store
 }
 
-func (s *tesTxStructureSuite) TearDownSuite(c *C) {
+func (s *testTxStructureSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
 
-func (s *tesTxStructureSuite) TestString(c *C) {
+func (s *testTxStructureSuite) TestString(c *C) {
+	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
@@ -86,7 +88,8 @@ func (s *tesTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *tesTxStructureSuite) TestList(c *C) {
+func (s *testTxStructureSuite) TestList(c *C) {
+	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
@@ -168,7 +171,8 @@ func (s *tesTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *tesTxStructureSuite) TestHash(c *C) {
+func (s *testTxStructureSuite) TestHash(c *C) {
+	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
