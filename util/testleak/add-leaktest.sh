@@ -8,7 +8,7 @@ sed -i'~' -e '
   /^func (s \*test.*Suite) Test.*(c \*C) {/ {
     n
     /testleak.AfterTest/! i\
-	defer testleak.AfterTest(c)()
+		defer testleak.AfterTest(c)()
   }
 ' $@
 
