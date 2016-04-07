@@ -183,6 +183,15 @@ func (*testSuite) TestT(c *C) {
 	idx, ok := is.IndexByName(dbName, tbName, idxName)
 	c.Assert(ok, IsTrue)
 	c.Assert(idx, NotNil)
+
+	// Make sure partitions table exists
+	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
+	c.Assert(err, IsNil)
+	c.Assert(tb, NotNil)
+
+	col, ok = is.ColumnByName(model.NewCIStr("information_schema"), model.NewCIStr("files"), model.NewCIStr("FILE_TYPE"))
+	c.Assert(ok, IsTrue)
+	c.Assert(col, NotNil)
 }
 
 func genGlobalID(store kv.Storage) (int64, error) {
