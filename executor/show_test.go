@@ -56,5 +56,4 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = `show tables like 'show\_test'`
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
-
 }
