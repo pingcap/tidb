@@ -144,7 +144,7 @@ func (e *Evaluator) evalLT(expr *tipb.Expr) (types.Datum, error) {
 	} else if cmp < 0 {
 		return types.NewIntDatum(1), nil
 	} else {
-		return types.NewDatum(0), nil
+		return types.NewIntDatum(0), nil
 	}
 }
 
@@ -158,7 +158,7 @@ func (e *Evaluator) evalLE(expr *tipb.Expr) (types.Datum, error) {
 	} else if cmp <= 0 {
 		return types.NewIntDatum(1), nil
 	} else {
-		return types.NewDatum(0), nil
+		return types.NewIntDatum(0), nil
 	}
 }
 
@@ -172,7 +172,7 @@ func (e *Evaluator) evalEQ(expr *tipb.Expr) (types.Datum, error) {
 	} else if cmp == 0 {
 		return types.NewIntDatum(1), nil
 	} else {
-		return types.NewDatum(0), nil
+		return types.NewIntDatum(0), nil
 	}
 }
 
@@ -186,7 +186,7 @@ func (e *Evaluator) evalNE(expr *tipb.Expr) (types.Datum, error) {
 	} else if cmp != 0 {
 		return types.NewIntDatum(1), nil
 	} else {
-		return types.NewDatum(0), nil
+		return types.NewIntDatum(0), nil
 	}
 }
 
@@ -200,7 +200,7 @@ func (e *Evaluator) evalGE(expr *tipb.Expr) (types.Datum, error) {
 	} else if cmp >= 0 {
 		return types.NewIntDatum(1), nil
 	} else {
-		return types.NewDatum(0), nil
+		return types.NewIntDatum(0), nil
 	}
 }
 
@@ -214,7 +214,7 @@ func (e *Evaluator) evalGT(expr *tipb.Expr) (types.Datum, error) {
 	} else if cmp > 0 {
 		return types.NewIntDatum(1), nil
 	} else {
-		return types.NewDatum(0), nil
+		return types.NewIntDatum(0), nil
 	}
 }
 
