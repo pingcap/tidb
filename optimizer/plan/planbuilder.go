@@ -737,6 +737,9 @@ func (b *planBuilder) buildDistinct(src Plan) Plan {
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	sel := &ast.SelectStmt{From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildFrom(sel)
+	for _, v := range p.Fields() {
+		v.Referenced = true
+	}
 	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
@@ -772,6 +775,9 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.Res
 func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 	sel := &ast.SelectStmt{From: del.TableRefs, Where: del.Where, OrderBy: del.Order, Limit: del.Limit}
 	p := b.buildFrom(sel)
+	for _, v := range p.Fields() {
+		v.Referenced = true
+	}
 	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
