@@ -13,11 +13,11 @@
 
 package ast
 
-const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault
+const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault | FlagEvaluated
 
 // IsPreEvaluable checks if the expression can be evaluated before execution.
 func IsPreEvaluable(expr ExprNode) bool {
-	return (expr.GetFlag()|preEvaluable)&^FlagEvaluated == preEvaluable
+	return expr.GetFlag()|preEvaluable == preEvaluable
 }
 
 const evaluated = preEvaluable & ^FlagHasFunc
