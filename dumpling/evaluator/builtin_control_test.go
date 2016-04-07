@@ -17,10 +17,12 @@ import (
 	"errors"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestIf(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -43,6 +45,7 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIfNull(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}
@@ -61,6 +64,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestNullIf(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}

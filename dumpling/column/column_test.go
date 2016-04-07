@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -31,6 +32,7 @@ func TestT(t *testing.T) {
 type testColumnSuite struct{}
 
 func (s *testColumnSuite) TestString(c *C) {
+	defer testleak.AfterTest(c)()
 	col := &Col{
 		model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeTiny),
@@ -75,6 +77,7 @@ func (s *testColumnSuite) TestString(c *C) {
 }
 
 func (s *testColumnSuite) TestFind(c *C) {
+	defer testleak.AfterTest(c)()
 	cols := []*Col{
 		newCol("a"),
 		newCol("b"),
@@ -87,6 +90,7 @@ func (s *testColumnSuite) TestFind(c *C) {
 }
 
 func (s *testColumnSuite) TestCheck(c *C) {
+	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
 	cols := []*Col{col, col}
@@ -98,6 +102,7 @@ func (s *testColumnSuite) TestCheck(c *C) {
 }
 
 func (s *testColumnSuite) TestDesc(c *C) {
+	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
 	NewColDesc(col)

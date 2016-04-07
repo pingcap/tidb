@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -30,6 +31,7 @@ type testDBSuite struct {
 }
 
 func (s *testDBSuite) TestDB(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	// Set and check current schema

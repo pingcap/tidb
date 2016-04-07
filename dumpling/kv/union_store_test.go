@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testUnionStoreSuite{})
@@ -36,6 +37,7 @@ func (s *testUnionStoreSuite) TearDownTest(c *C) {
 }
 
 func (s *testUnionStoreSuite) TestGetSet(c *C) {
+	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))
 	v, err := s.us.Get([]byte("1"))
 	c.Assert(err, IsNil)
@@ -47,6 +49,7 @@ func (s *testUnionStoreSuite) TestGetSet(c *C) {
 }
 
 func (s *testUnionStoreSuite) TestDelete(c *C) {
+	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))
 	err := s.us.Delete([]byte("1"))
 	c.Assert(err, IsNil)
@@ -60,6 +63,7 @@ func (s *testUnionStoreSuite) TestDelete(c *C) {
 }
 
 func (s *testUnionStoreSuite) TestSeek(c *C) {
+	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))
 	s.store.Set([]byte("2"), []byte("2"))
 	s.store.Set([]byte("3"), []byte("3"))
@@ -84,6 +88,7 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 }
 
 func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
+	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))
 	s.store.Set([]byte("2"), []byte("2"))
 

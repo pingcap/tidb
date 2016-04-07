@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -91,6 +92,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 }
 
 func (s *testDBSuite) TestIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	s.testAddIndex(c)
 	s.testDropIndex(c)
 }
@@ -309,6 +311,7 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 }
 
 func (s *testDBSuite) TestColumn(c *C) {
+	defer testleak.AfterTest(c)()
 	s.testAddColumn(c)
 	s.testDropColumn(c)
 }

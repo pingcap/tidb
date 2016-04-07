@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
+	defer testleak.AfterTest(c)()
 	d, err := builtinLength(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
@@ -54,6 +56,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
+	defer testleak.AfterTest(c)()
 	args := []interface{}{nil}
 
 	v, err := builtinConcat(types.MakeDatums(args...), nil)
@@ -76,6 +79,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
+	defer testleak.AfterTest(c)()
 	args := types.MakeDatums([]interface{}{nil}...)
 
 	v, err := builtinConcatWS(args, nil)
@@ -94,6 +98,7 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
+	defer testleak.AfterTest(c)()
 	args := types.MakeDatums([]interface{}{"abcdefg", int64(2)}...)
 	v, err := builtinLeft(args, nil)
 	c.Assert(err, IsNil)
@@ -119,6 +124,7 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRepeat(c *C) {
+	defer testleak.AfterTest(c)()
 	args := []interface{}{"a", int64(2)}
 	v, err := builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
@@ -146,6 +152,7 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
+	defer testleak.AfterTest(c)()
 	d, err := builtinLower(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
@@ -176,6 +183,7 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestStrcmp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  []interface{}
 		Expect interface{}
@@ -204,6 +212,7 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestReplace(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  []interface{}
 		Expect interface{}
@@ -226,6 +235,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		str    string
 		pos    int64
@@ -285,6 +295,7 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConvert(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		str    string
@@ -333,6 +344,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		str    string
 		delim  string
@@ -396,6 +408,7 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		subStr string
 		Str    string
@@ -485,6 +498,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTrim(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		str    interface{}
 		remstr interface{}

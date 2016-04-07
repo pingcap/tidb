@@ -22,9 +22,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestCharsetDatabase(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
 	tk.MustExec(testSQL)
@@ -44,6 +46,7 @@ func (s *testSuite) TestCharsetDatabase(c *C) {
 }
 
 func (s *testSuite) TestSetVar(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -99,6 +102,7 @@ func (s *testSuite) TestSetVar(c *C) {
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 
@@ -115,11 +119,13 @@ func (s *testSuite) TestSetCharset(c *C) {
 }
 
 func (s *testSuite) TestDo(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("do 1, 2")
 }
 
 func (s *testSuite) TestTransaction(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("begin")
 	ctx := tk.Se.(context.Context)
@@ -137,6 +143,7 @@ func inTxn(ctx context.Context) bool {
 }
 
 func (s *testSuite) TestCreateUser(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	// Make sure user test not in mysql.User.
 	result := tk.MustQuery(`SELECT Password FROM mysql.User WHERE User="test" and Host="localhost"`)
@@ -159,6 +166,7 @@ func (s *testSuite) TestCreateUser(c *C) {
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	createUserSQL := `CREATE USER 'testpwd'@'localhost' IDENTIFIED BY '';`
 	tk.MustExec(createUserSQL)
