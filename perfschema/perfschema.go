@@ -15,7 +15,6 @@ package perfschema
 
 import (
 	"github.com/ngaut/log"
-
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
