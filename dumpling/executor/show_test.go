@@ -51,4 +51,9 @@ func (s *testSuite) TestShow(c *C) {
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
+
+	// For show like with escape
+	testSQL = `show tables like 'show\_test'`
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
 }
