@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -59,6 +60,7 @@ func (m *mockExec) Close() error {
 }
 
 func (s *testAggFuncSuite) TestCount(c *C) {
+	defer testleak.AfterTest(c)()
 	// Compose aggregate exec for "select c1, count(c2) from t";
 	// c1  c2
 	// 1	1

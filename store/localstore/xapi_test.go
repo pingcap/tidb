@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tidb/xapi/tipb"
@@ -50,6 +51,7 @@ var tbInfo = &simpleTableInfo{
 }
 
 func (s *testXAPISuite) TestSelect(c *C) {
+	defer testleak.AfterTest(c)()
 	store := createMemStore(time.Now().Nanosecond())
 	count := int64(10)
 	err := prepareTableData(store, tbInfo, count, genValues)
@@ -107,6 +109,8 @@ func (s *testXAPISuite) TestSelect(c *C) {
 		c.Assert(h, Equals, i+1)
 	}
 	txn.Commit()
+
+	store.Close()
 }
 
 // simpleTableInfo just have the minimum information enough to describe the table.

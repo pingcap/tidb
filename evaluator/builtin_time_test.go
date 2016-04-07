@@ -22,10 +22,12 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
+	defer testleak.AfterTest(c)()
 	tblDate := []struct {
 		Input  interface{}
 		Expect interface{}
@@ -172,6 +174,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestClock(c *C) {
+	defer testleak.AfterTest(c)()
 	// test hour, minute, second, micro second
 
 	tbl := []struct {
@@ -244,6 +247,7 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestNow(c *C) {
+	defer testleak.AfterTest(c)()
 	v, err := builtinNow(nil, nil)
 	c.Assert(err, IsNil)
 	t := v.GetMysqlTime()
@@ -264,6 +268,7 @@ func (s *testEvaluatorSuite) TestNow(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestSysDate(c *C) {
+	defer testleak.AfterTest(c)()
 	last := time.Now()
 	v, err := builtinSysDate(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
@@ -280,6 +285,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
+	defer testleak.AfterTest(c)()
 	last := time.Now()
 	v, err := builtinCurrentDate(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
@@ -288,6 +294,7 @@ func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
+	defer testleak.AfterTest(c)()
 	tfStr := "15:04:05"
 
 	last := time.Now()
@@ -317,6 +324,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
+	defer testleak.AfterTest(c)()
 	last := time.Now().UTC()
 	v, err := builtinUTCDate(types.MakeDatums(nil), nil)
 	c.Assert(err, IsNil)
@@ -325,6 +333,7 @@ func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestDateArith(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	// list all test cases

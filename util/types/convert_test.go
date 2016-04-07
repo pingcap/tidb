@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -33,6 +34,7 @@ type invalidMockType struct {
 }
 
 func (s *testTypeConvertSuite) TestConvertType(c *C) {
+	defer testleak.AfterTest(c)()
 	ft := NewFieldType(mysql.TypeBlob)
 	ft.Flen = 4
 	ft.Charset = "utf8"
@@ -257,6 +259,7 @@ func testToInt64(c *C, val interface{}, expect int64) {
 }
 
 func (s *testTypeConvertSuite) TestConvertToInt64(c *C) {
+	defer testleak.AfterTest(c)()
 	testToInt64(c, "0", int64(0))
 	testToInt64(c, int(0), int64(0))
 	testToInt64(c, int64(0), int64(0))
@@ -295,6 +298,7 @@ func testToFloat64(c *C, val interface{}, expect float64) {
 }
 
 func (s *testTypeConvertSuite) TestConvertToFloat64(c *C) {
+	defer testleak.AfterTest(c)()
 	testToFloat64(c, "0", float64(0))
 	testToFloat64(c, int(0), float64(0))
 	testToFloat64(c, int64(0), float64(0))
@@ -332,6 +336,7 @@ func testToString(c *C, val interface{}, expect string) {
 }
 
 func (s *testTypeConvertSuite) TestConvertToString(c *C) {
+	defer testleak.AfterTest(c)()
 	testToString(c, "0", "0")
 	testToString(c, true, "1")
 	testToString(c, "false", "false")
@@ -371,6 +376,7 @@ func testToBool(c *C, val interface{}, expect int64) {
 }
 
 func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
+	defer testleak.AfterTest(c)()
 	testToBool(c, int(0), 0)
 	testToBool(c, int64(0), 0)
 	testToBool(c, uint64(0), 0)
@@ -420,6 +426,7 @@ func testStrToFloat(c *C, str string, expect float64) {
 }
 
 func (s *testTypeConvertSuite) TestStrToNum(c *C) {
+	defer testleak.AfterTest(c)()
 	testStrToInt(c, "0", 0)
 	testStrToInt(c, "-1", -1)
 	testStrToInt(c, "100", 100)
@@ -450,6 +457,7 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 }
 
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
+	defer testleak.AfterTest(c)()
 	v := TypeToStr(mysql.TypeDecimal, "not binary")
 	c.Assert(v, Equals, type2Str[mysql.TypeDecimal])
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
@@ -506,6 +514,7 @@ func strvalue(v interface{}) string {
 }
 
 func (s *testTypeConvertSuite) TestConvert(c *C) {
+	defer testleak.AfterTest(c)()
 	// integer ranges
 	signedDeny(c, mysql.TypeTiny, -129, "-128")
 	signedAccept(c, mysql.TypeTiny, -128, "-128")

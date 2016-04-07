@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -33,6 +34,7 @@ type testSuite struct {
 }
 
 func (s *testSuite) TestMeta(c *C) {
+	defer testleak.AfterTest(c)()
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
@@ -162,6 +164,7 @@ func (s *testSuite) TestMeta(c *C) {
 }
 
 func (s *testSuite) TestDDL(c *C) {
+	defer testleak.AfterTest(c)()
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)

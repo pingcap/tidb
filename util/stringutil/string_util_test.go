@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -29,6 +30,7 @@ type testStringUtilSuite struct {
 }
 
 func (s *testStringUtilSuite) TestRemoveUselessBackslash(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		str    string
 		expect string

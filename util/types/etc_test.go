@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -43,6 +44,7 @@ func testIsTypeChar(c *C, tp byte, expect bool) {
 }
 
 func (s *testTypeEtcSuite) TestIsType(c *C) {
+	defer testleak.AfterTest(c)()
 	testIsTypeBlob(c, mysql.TypeTinyBlob, true)
 	testIsTypeBlob(c, mysql.TypeMediumBlob, true)
 	testIsTypeBlob(c, mysql.TypeBlob, true)
@@ -65,6 +67,7 @@ func testTypeToStr(c *C, tp byte, charset string, expect string) {
 }
 
 func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
+	defer testleak.AfterTest(c)()
 	testTypeStr(c, mysql.TypeYear, "year")
 	testTypeStr(c, 0xdd, "")
 
@@ -101,6 +104,7 @@ func (s *testTypeEtcSuite) TestTypeToStr(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestEOFAsNil(c *C) {
+	defer testleak.AfterTest(c)()
 	err := EOFAsNil(io.EOF)
 	c.Assert(err, IsNil)
 }
@@ -116,6 +120,7 @@ func checkCollateDesc(c *C, x, y []interface{}, expect int) {
 }
 
 func (s *testTypeEtcSuite) TestCollate(c *C) {
+	defer testleak.AfterTest(c)()
 	checkCollate(c, []interface{}{1, 2}, nil, 1)
 	checkCollate(c, nil, []interface{}{1, 2}, -1)
 	checkCollate(c, nil, nil, 0)
@@ -142,6 +147,7 @@ func checkClone(c *C, a interface{}, pass bool) {
 }
 
 func (s *testTypeEtcSuite) TestClone(c *C) {
+	defer testleak.AfterTest(c)()
 	checkClone(c, nil, true)
 	checkClone(c, uint16(111), true)
 	checkClone(c, "abcd1.c--/+!%^", true)
@@ -198,6 +204,7 @@ func checkCoerce(c *C, a, b interface{}) {
 }
 
 func (s *testTypeEtcSuite) TestCoerce(c *C) {
+	defer testleak.AfterTest(c)()
 	checkCoerce(c, uint64(3), int16(4))
 	checkCoerce(c, uint64(0xffffffffffffffff), float64(2.3))
 	checkCoerce(c, float64(1.3), uint64(0xffffffffffffffff))
@@ -211,6 +218,7 @@ func (s *testTypeEtcSuite) TestCoerce(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
+	defer testleak.AfterTest(c)()
 	r := IsOrderedType(1)
 	c.Assert(r, IsTrue)
 	r = IsOrderedType(-1)
@@ -226,6 +234,7 @@ func (s *testTypeEtcSuite) TestIsOrderedType(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Flen    int
 		Decimal int
@@ -244,6 +253,7 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  float64
 		Expect float64
@@ -264,6 +274,7 @@ func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
 }
 
 func (s *testTypeEtcSuite) TestTruncate(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input   float64
 		Decimal int

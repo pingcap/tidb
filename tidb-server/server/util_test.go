@@ -16,6 +16,7 @@ package server
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testUtilSuite{})
@@ -24,6 +25,7 @@ type testUtilSuite struct {
 }
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
+	defer testleak.AfterTest(c)()
 	t, err := mysql.ParseTimestamp("0000-00-00 00:00:00.0000000")
 	c.Assert(err, IsNil)
 	d := dumpBinaryDateTime(t, nil)
