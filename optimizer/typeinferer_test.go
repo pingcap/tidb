@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTypeInferrerSuite{})
@@ -145,6 +146,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 }
 
 func (s *testTypeInferrerSuite) TestColumnInfoModified(c *C) {
+	defer testleak.AfterTest(c)()
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)
 	defer store.Close()

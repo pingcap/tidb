@@ -15,6 +15,7 @@ package segmentmap
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSegmentMapSuite{})
@@ -23,6 +24,7 @@ type testSegmentMapSuite struct {
 }
 
 func (s *testSegmentMapSuite) TestSegment(c *C) {
+	defer testleak.AfterTest(c)()
 	segs := int64(2)
 	m, err := NewSegmentMap(segs)
 	c.Assert(err, IsNil)

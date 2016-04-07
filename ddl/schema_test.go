@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -131,6 +132,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 
@@ -161,6 +163,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
@@ -227,6 +230,7 @@ LOOP:
 }
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 

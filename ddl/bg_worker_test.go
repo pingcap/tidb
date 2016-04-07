@@ -21,9 +21,11 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testDDLSuite) TestDropSchemaError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_drop_schema")
 	defer store.Close()
 
@@ -58,6 +60,7 @@ func verifyBgJobState(c *C, d *ddl, job *model.Job, state model.JobState) {
 }
 
 func (s *testDDLSuite) TestDropTableError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_drop_table")
 	defer store.Close()
 
@@ -84,6 +87,7 @@ func (s *testDDLSuite) TestDropTableError(c *C) {
 }
 
 func (s *testDDLSuite) TestInvalidBgJobType(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_invalid_bg_job_type")
 	defer store.Close()
 

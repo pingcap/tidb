@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testCompareSuite{})
@@ -26,6 +27,7 @@ type testCompareSuite struct {
 }
 
 func (s *testCompareSuite) TestCompare(c *C) {
+	defer testleak.AfterTest(c)()
 	cmpTbl := []struct {
 		lhs interface{}
 		rhs interface{}
@@ -158,6 +160,7 @@ func (s *testCompareSuite) TestCompare(c *C) {
 }
 
 func (s *testCompareSuite) TestCompareDatum(c *C) {
+	defer testleak.AfterTest(c)()
 	cmpTbl := []struct {
 		lhs Datum
 		rhs Datum

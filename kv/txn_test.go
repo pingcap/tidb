@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTxnSuite{})
@@ -31,6 +32,7 @@ func (s *testTxnSuite) TearDownTest(c *C) {
 }
 
 func (s *testTxnSuite) TestBackOff(c *C) {
+	defer testleak.AfterTest(c)()
 	mustBackOff(c, 1, 2)
 	mustBackOff(c, 2, 4)
 	mustBackOff(c, 3, 8)
@@ -121,6 +123,7 @@ func (s *mockStorage) CurrentVersion() (Version, error) {
 }
 
 func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
+	defer testleak.AfterTest(c)()
 	maxRetryCnt = 5
 	err := RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
 		return nil
