@@ -13,26 +13,26 @@
 
 package ast
 
-const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault | FlagEvaluated
+const preEvaluable = FlagHasParamMarker | FlagHasFunc | FlagHasVariable | FlagHasDefault | FlagPreEvaluated
 
 // IsPreEvaluable checks if the expression can be evaluated before execution.
 func IsPreEvaluable(expr ExprNode) bool {
 	return expr.GetFlag()|preEvaluable == preEvaluable
 }
 
-const evaluated = preEvaluable & ^FlagHasFunc
+// ResetEvaluatedFlag reset the evaluated flag.
+func ResetEvaluatedFlag(n Node) {
+	var reseter preEvaluatedReseter
+	n.Accept(&reseter)
+}
+
+func resetEvaluatedExpr(expr ExprNode) {
+	expr.SetFlag(expr.GetFlag() &^ FlagPreEvaluated)
+}
 
 // IsEvaluated checks if the expression are evaluated and needn't be evaluated any more.
 func IsEvaluated(expr ExprNode) bool {
-	flag := expr.GetFlag()
-	if flag&FlagEvaluated == 0 {
-		return false
-	}
-	flag &= ^FlagEvaluated
-	if flag == FlagConstant {
-		return false
-	}
-	return flag|evaluated == evaluated
+	return expr.GetFlag()&FlagPreEvaluated == FlagPreEvaluated
 }
 
 // IsConstant checks if the expression is constant.
@@ -44,6 +44,20 @@ func IsConstant(expr ExprNode) bool {
 // HasAggFlag checks if the expr contains FlagHasAggregateFunc.
 func HasAggFlag(expr ExprNode) bool {
 	return expr.GetFlag()&FlagHasAggregateFunc > 0
+}
+
+type preEvaluatedReseter struct {
+}
+
+func (r *preEvaluatedReseter) Enter(in Node) (Node, bool) {
+	return in, false
+}
+
+func (r *preEvaluatedReseter) Leave(in Node) (Node, bool) {
+	if expr, ok := in.(ExprNode); ok {
+		resetEvaluatedExpr(expr)
+	}
+	return in, true
 }
 
 // SetFlag sets flag for expression.

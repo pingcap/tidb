@@ -52,7 +52,9 @@ func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error
 	if e.err != nil {
 		return d, errors.Trace(e.err)
 	}
-	expr.SetFlag(expr.GetFlag() | ast.FlagEvaluated)
+	if ast.IsPreEvaluable(expr) && !ast.IsConstant(expr) && (expr.GetFlag()&ast.FlagHasFunc == 0) {
+		expr.SetFlag(expr.GetFlag() | ast.FlagPreEvaluated)
+	}
 	return *expr.GetDatum(), nil
 }
 
