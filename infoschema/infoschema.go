@@ -265,6 +265,7 @@ var (
 	filesTbl      table.Table
 	defTbl        table.Table
 	profilingTbl  table.Table
+	partitionsTbl table.Table
 	nameToTable   map[string]table.Table
 
 	perfHandle perfschema.PerfSchema
