@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -284,6 +285,13 @@ func IsQuery(sql string) bool {
 	return false
 }
 
+var tpsMetrics metric.TPSMetrics
+
+// GetTPS gets tidb tps.
+func GetTPS() int64 {
+	return tpsMetrics.Get()
+}
+
 func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
@@ -296,4 +304,7 @@ func init() {
 	if EnablePprof {
 		go http.ListenAndServe(PprofAddr, nil)
 	}
+
+	// Init metrics
+	tpsMetrics = metric.NewTPSMetrics()
 }

@@ -32,8 +32,9 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := &Config{
-		Addr:     ":4001",
-		LogLevel: "debug",
+		Addr:       ":4001",
+		LogLevel:   "debug",
+		StatusAddr: ":10090",
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -84,4 +85,8 @@ func (ts *TidbTestSuite) TestIssues(c *C) {
 
 func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 	runTestResultFieldTableIsNull(c)
+}
+
+func (ts *TidbTestSuite) TestStatusAPI(c *C) {
+	runTestStatusAPI(c)
 }

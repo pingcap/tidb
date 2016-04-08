@@ -361,6 +361,26 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 	}
 }
 
+func (s *testMainSuite) TestTPS(c *C) {
+	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
+	c.Assert(err, IsNil)
+	defer testDB.Close()
+
+	mustExec(c, testDB, "set @@autocommit=0;")
+	for i := 1; i < 6; i++ {
+		for j := 0; j < 5; j++ {
+			for k := 0; k < i; k++ {
+				mustExec(c, testDB, "begin;")
+				mustExec(c, testDB, "select 1;")
+				mustExec(c, testDB, "commit;")
+			}
+			time.Sleep(220 * time.Millisecond)
+		}
+		// It is hard to get the accurate tps because there is another timeline in tpsMetrics.
+		// We could only get the upper/lower boundary for tps
+		c.Assert(GetTPS(), GreaterEqual, int64(4*(i-1)))
+	}
+}
 func sessionExec(c *C, se Session, sql string) ([]ast.RecordSet, error) {
 	se.Execute("BEGIN;")
 	r, err := se.Execute(sql)
