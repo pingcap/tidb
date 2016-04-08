@@ -163,6 +163,11 @@ func (s *session) FinishTxn(rollback bool) error {
 	defer func() {
 		s.txn = nil
 		variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, false)
+		// Update tps metrics
+		if !variable.GetSessionVars(s).RetryInfo.Retrying {
+			tpsMetrics.Add(1)
+		}
+
 	}()
 
 	if rollback {

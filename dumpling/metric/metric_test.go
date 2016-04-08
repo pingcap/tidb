@@ -61,3 +61,33 @@ func (t *testSuite) TestRegMetric(c *C) {
 	c.Assert(r.Get(testTimeMetricName).(metrics.Histogram).Max(), GreaterEqual, int64(100))
 	c.Assert(r.Get(testTimeMetricName).(metrics.Histogram).Min(), Less, int64(100))
 }
+
+func (t *testSuite) TestTPSMetrics(c *C) {
+
+	// Test tpsMetrics with manual tick.
+	tm := newTPSMetrics()
+	for i := 1; i < 10; i++ {
+		for j := 0; j < 5; j++ {
+			tm.Add(int64(i))
+		}
+		tm.tick()
+		c.Assert(tm.Get(), Equals, int64(i*5))
+		tm.tick()
+		c.Assert(tm.Get(), Equals, int64(0))
+	}
+
+	// Test TPSMetrics with auto tick.
+	m := NewTPSMetrics()
+	for i := 1; i < 6; i++ {
+		for j := 0; j < 5; j++ {
+			m.Add(int64(i))
+			time.Sleep(220 * time.Millisecond)
+		}
+		// It is hard to get the accurate tps because there is another timeline in tpsMetrics.
+		// We could only get the upper/lower boundary for tps
+		maxTPS := int64(i * 5)
+		minTPS := int64((i - 1) * 4)
+		c.Assert(m.Get(), LessEqual, maxTPS)
+		c.Assert(m.Get(), GreaterEqual, minTPS)
+	}
+}

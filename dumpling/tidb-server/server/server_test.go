@@ -15,6 +15,8 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -303,4 +305,15 @@ func runTestResultFieldTableIsNull(c *C) {
 		dbt.mustExec("create table test (c int);")
 		dbt.mustExec("explain select * from test;")
 	})
+}
+
+func runTestStatusAPI(c *C) {
+	resp, err := http.Get("http://127.0.0.1:10090/status")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	var data status
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.Version, Equals, tmysql.ServerVersion)
 }
