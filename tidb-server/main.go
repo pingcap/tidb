@@ -23,14 +23,17 @@ import (
 	"time"
 
 	"github.com/ngaut/log"
+	"github.com/pingcap/ticlient"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
+	"github.com/pingcap/tidb/store/hbase"
+	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
-	store      = flag.String("store", "goleveldb", "registered store name, [hbase, memory, goleveldb, boltdb]")
+	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, hbase, boltdb, tikv]")
 	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel   = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
 	port       = flag.String("P", "4000", "mp server port")
@@ -39,6 +42,10 @@ var (
 )
 
 func main() {
+	tidb.RegisterStore("hbase", hbasekv.Driver{})
+	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	tidb.RegisterStore("tikv", ticlient.Driver{})
+
 	metric.RunMetric(3 * time.Second)
 	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())

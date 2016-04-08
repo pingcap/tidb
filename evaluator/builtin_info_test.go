@@ -19,10 +19,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/db"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	d, err := builtinDatabase(types.MakeDatums(), ctx)
 	c.Assert(err, IsNil)
@@ -35,6 +37,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestFoundRows(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	d, err := builtinFoundRows(types.MakeDatums(), ctx)
 	c.Assert(err, NotNil)
@@ -47,6 +50,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUser(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -58,6 +62,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -69,6 +74,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	variable.BindSessionVars(ctx)
 	sessionVars := variable.GetSessionVars(ctx)
@@ -80,6 +86,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestVersion(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	v, err := builtinVersion(nil, ctx)
 	c.Assert(err, IsNil)

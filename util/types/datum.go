@@ -1361,6 +1361,42 @@ func NewDatum(in interface{}) (d Datum) {
 	return d
 }
 
+// NewIntDatum creates a new Datum from an int64 value.
+func NewIntDatum(i int64) (d Datum) {
+	d.SetInt64(i)
+	return d
+}
+
+// NewUintDatum creates a new Datum from an uint64 value.
+func NewUintDatum(i uint64) (d Datum) {
+	d.SetUint64(i)
+	return d
+}
+
+// NewBytesDatum creates a new Datum from a byte slice.
+func NewBytesDatum(b []byte) (d Datum) {
+	d.SetBytes(b)
+	return d
+}
+
+// NewStringDatum creates a new Datum from a string.
+func NewStringDatum(s string) (d Datum) {
+	d.SetString(s)
+	return d
+}
+
+// NewFloat64Datum creates a new Datum from a float64 value.
+func NewFloat64Datum(f float64) (d Datum) {
+	d.SetFloat64(f)
+	return d
+}
+
+// NewFloat32Datum creates a new Datum from a float32 value.
+func NewFloat32Datum(f float32) (d Datum) {
+	d.SetFloat32(f)
+	return d
+}
+
 // MakeDatums creates datum slice from interfaces.
 func MakeDatums(args ...interface{}) []Datum {
 	datums := make([]Datum, len(args))

@@ -18,18 +18,20 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&tableCodecSuite{})
+var _ = Suite(&testTableCodecSuite{})
 
-type tableCodecSuite struct{}
+type testTableCodecSuite struct{}
 
 // TODO: add more tests.
-func (s *tableCodecSuite) TestTableCodec(c *C) {
+func (s *testTableCodecSuite) TestTableCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
 	h, err := DecodeRowKey(key)
 	c.Assert(err, IsNil)

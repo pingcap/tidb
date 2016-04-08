@@ -15,6 +15,7 @@ package mysql
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSQLErrorSuite{})
@@ -23,6 +24,7 @@ type testSQLErrorSuite struct {
 }
 
 func (s *testSQLErrorSuite) TestSQLError(c *C) {
+	defer testleak.AfterTest(c)()
 	e := NewErrf(ErrNoDB, "no db error")
 	c.Assert(len(e.Error()), Greater, 0)
 

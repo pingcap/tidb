@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -30,6 +31,7 @@ type testTimeSuite struct {
 }
 
 func (s *testTimeSuite) TestDateTime(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -87,6 +89,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 }
 
 func (s *testTimeSuite) TestTimestamp(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -112,6 +115,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 }
 
 func (s *testTimeSuite) TestDate(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -142,6 +146,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 }
 
 func (s *testTimeSuite) TestTime(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -219,6 +224,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 }
 
 func (s *testTimeSuite) TestTimeFsp(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Fsp    int
@@ -252,6 +258,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 }
 func (s *testTimeSuite) TestYear(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect int16
@@ -310,6 +317,7 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 }
 
 func (s *testTimeSuite) TestCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	t, err := ParseTimestamp("2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
 	b, err := t.Marshal()
@@ -382,6 +390,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 }
 
 func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
@@ -452,6 +461,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 }
 
 func (s *testTimeSuite) TestToNumber(c *C) {
+	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int
@@ -523,6 +533,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 }
 
 func (s *testTimeSuite) TestParseFrac(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		S   string
 		Fsp int
@@ -544,6 +555,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestRoundFrac(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -588,6 +600,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestConvert(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -630,6 +643,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 }
 
 func (s *testTimeSuite) TestCompare(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -672,6 +686,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 }
 
 func (s *testTimeSuite) TestDurationClock(c *C) {
+	defer testleak.AfterTest(c)()
 	// test hour, minute, second and micro second
 	tbl := []struct {
 		Input       string
@@ -696,6 +711,7 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 }
 
 func (s *testTimeSuite) TestParseDateFormat(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Result []string

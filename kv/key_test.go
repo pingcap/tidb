@@ -15,8 +15,10 @@ package kv
 
 import (
 	"bytes"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -26,6 +28,7 @@ type testKeySuite struct {
 }
 
 func (s *testKeySuite) TestPartialNext(c *C) {
+	defer testleak.AfterTest(c)()
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(nil, types.NewDatum("abc"), types.NewDatum("def"))
 	c.Check(err, IsNil)
