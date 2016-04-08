@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
-	"github.com/pingcap/tidb/xapi/tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func TestT(t *testing.T) {
