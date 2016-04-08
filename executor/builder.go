@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -139,12 +138,11 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 			ctx:       b.ctx,
 			tablePlan: v,
 		}
-		where := conditionsToPBExpression(v.FilterConditions...)
-		if xapi.SupportExpression(client, where) {
+		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.Fields())
+		if where != nil {
 			e.where = where
-			return e
 		}
-		return b.buildFilter(e, v.FilterConditions)
+		return b.buildFilter(e, remained)
 	}
 
 	e := &TableScanExec{
@@ -198,12 +196,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 			ctx:       b.ctx,
 			indexPlan: v,
 		}
-		where := conditionsToPBExpression(v.FilterConditions...)
-		if xapi.SupportExpression(client, where) {
+		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.Fields())
+		if where != nil {
 			e.where = where
-			return e
 		}
-		return b.buildFilter(e, v.FilterConditions)
+		return b.buildFilter(e, remained)
 	}
 	var idx *column.IndexedCol
 	for _, val := range tbl.Indices() {

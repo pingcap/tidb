@@ -37,7 +37,7 @@ const (
 
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
-	row map[int64]types.Datum // column values.
+	Row map[int64]types.Datum // column values.
 }
 
 // Eval evaluates expr to a Datum.
@@ -87,7 +87,7 @@ func (e *Evaluator) evalColumnRef(val []byte) (types.Datum, error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-	d, ok := e.row[i]
+	d, ok := e.Row[i]
 	if !ok {
 		return d, ErrInvalid.Gen("column % x not found", val)
 	}
@@ -271,13 +271,21 @@ func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool in
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	leftBool, err = left.ToBool()
-	if err != nil {
-		return 0, 0, errors.Trace(err)
+	if left.Kind() == types.KindNull {
+		leftBool = compareResultNull
+	} else {
+		leftBool, err = left.ToBool()
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
 	}
-	rightBool, err = right.ToBool()
-	if err != nil {
-		return 0, 0, errors.Trace(err)
+	if right.Kind() == types.KindNull {
+		rightBool = compareResultNull
+	} else {
+		rightBool, err = right.ToBool()
+		if err != nil {
+			return 0, 0, errors.Trace(err)
+		}
 	}
 	return
 }
