@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi/tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
