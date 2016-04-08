@@ -71,6 +71,7 @@ const (
 	ClassServer
 	ClassStructure
 	ClassVariable
+	ClassXEval
 	// Add more as needed.
 )
 
