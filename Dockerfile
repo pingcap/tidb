@@ -9,5 +9,5 @@ RUN cd /go/src/github.com/pingcap/tidb && \
 
 EXPOSE 4000
 
-CMD ["tidb-server"]
+ENTRYPOINT ["tidb-server"]
 
