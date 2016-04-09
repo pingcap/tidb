@@ -282,6 +282,8 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 	return xapi.Select(txn.GetClient(), selTableReq, 10)
 }
 
+// conditionsToPBExpr tries to convert filter conditions to a tipb.Expr.
+// not supported conditions will be returned in remained.
 func conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, fields []*ast.ResultField) (pbexpr *tipb.Expr,
 	remained []ast.ExprNode) {
 	for _, expr := range exprs {
@@ -292,6 +294,7 @@ func conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, fields []*ast.Re
 			if pbexpr == nil {
 				pbexpr = v
 			} else {
+				// merge multiple converted pb expression into an AND expression.
 				pbexpr = &tipb.Expr{Tp: tipb.ExprType_And.Enum(), Children: []*tipb.Expr{pbexpr, v}}
 			}
 		}
