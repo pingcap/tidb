@@ -327,7 +327,8 @@ func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
 func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 	tn := path.table
 	p := &TableScan{
-		Table: tn.TableInfo,
+		Table:     tn.TableInfo,
+		TableName: tn,
 	}
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = len(path.eqConds) > 0
@@ -357,7 +358,7 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 
 func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath) Plan {
 	tn := path.table
-	ip := &IndexScan{Table: tn.TableInfo, Index: index}
+	ip := &IndexScan{Table: tn.TableInfo, Index: index, TableName: tn}
 	ip.RefAccess = len(path.eqConds) > 0
 	ip.SetFields(tn.GetResultFields())
 

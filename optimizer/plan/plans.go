@@ -42,6 +42,10 @@ type TableScan struct {
 
 	// FilterConditions can be used to filter result.
 	FilterConditions []ast.ExprNode
+
+	// TableName is used to distinguish the same table selected multiple times in different place,
+	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
+	TableName *ast.TableName
 }
 
 // Accept implements Plan Accept interface.
@@ -138,6 +142,10 @@ type IndexScan struct {
 
 	// OutOfOrder indicates if the index scan can return out of order.
 	OutOfOrder bool
+
+	// TableName is used to distinguish the same table selected multiple times in different place,
+	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
+	TableName *ast.TableName
 }
 
 // Accept implements Plan Accept interface.
