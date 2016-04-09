@@ -374,7 +374,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (%s) ", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`) ", pkCol.Name.O))
 	}
 
 	if len(tb.Indices()) > 0 {
@@ -411,7 +411,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT '%s'", tb.Meta().Comment))
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", tb.Meta().Comment))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())
