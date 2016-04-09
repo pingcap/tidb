@@ -524,6 +524,7 @@ func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.Ta
 	for _, f := range tn.GetResultFields() {
 		if f.TableName == column.Refer.TableName && f.Column.ID == column.Refer.Column.ID {
 			matched = true
+			break
 		}
 	}
 	if matched {
