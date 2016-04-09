@@ -372,6 +372,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	if pkCol != nil {
+		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (%s) ", pkCol.Name.O))
 	}

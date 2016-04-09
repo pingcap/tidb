@@ -515,7 +515,6 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*co
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
-				// col.Comment = v.StrValue
 				value, err := evaluator.EvalDatum(ctx, v.Expr)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
