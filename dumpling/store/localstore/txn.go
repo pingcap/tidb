@@ -140,8 +140,8 @@ func (txn *dbTxn) IsReadOnly() bool {
 	return !txn.dirty
 }
 
-func (txn *dbTxn) StartTS() int64 {
-	return int64(txn.tid)
+func (txn *dbTxn) StartTS() uint64 {
+	return txn.tid
 }
 
 func (txn *dbTxn) GetClient() kv.Client {

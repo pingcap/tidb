@@ -84,7 +84,7 @@ type Transaction interface {
 	// GetClient gets a client instance.
 	GetClient() Client
 	// StartTS returns the transaction start timestamp.
-	StartTS() int64
+	StartTS() uint64
 }
 
 // Client is used to send request to KV layer.
