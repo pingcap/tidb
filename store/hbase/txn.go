@@ -162,8 +162,8 @@ func (txn *hbaseTxn) IsReadOnly() bool {
 	return !txn.dirty
 }
 
-func (txn *hbaseTxn) StartTS() int64 {
-	return int64(txn.tid)
+func (txn *hbaseTxn) StartTS() uint64 {
+	return txn.tid
 }
 
 func (txn *hbaseTxn) GetClient() kv.Client {

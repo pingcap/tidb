@@ -80,8 +80,8 @@ func (t *mockTxn) GetClient() Client {
 	return nil
 }
 
-func (t *mockTxn) StartTS() int64 {
-	return int64(0)
+func (t *mockTxn) StartTS() uint64 {
+	return uint64(0)
 }
 func (t *mockTxn) Get(k Key) ([]byte, error) {
 	return nil, nil

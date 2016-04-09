@@ -226,10 +226,10 @@ func encodeColumnKV(tid, handle, cid int64, value types.Datum) (kv.Key, []byte, 
 	return key, val, nil
 }
 
-func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs int64) (*kv.Request, error) {
+func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.TableInfo = simpleInfo.toPBTableInfo()
-	selReq.StartTs = proto.Int64(startTs)
+	selReq.StartTs = proto.Uint64(startTs)
 	selReq.Ranges = []*tipb.KeyRange{fullPBTableRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {
@@ -266,10 +266,10 @@ func fullIndexRange(tid int64, idxID int64) kv.KeyRange {
 	}
 }
 
-func prepareIndexRequest(simpleInfo *simpleTableInfo, startTs int64) (*kv.Request, error) {
+func prepareIndexRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.IndexInfo = simpleInfo.toPBIndexInfo(0)
-	selReq.StartTs = proto.Int64(startTs)
+	selReq.StartTs = proto.Uint64(startTs)
 	selReq.Ranges = []*tipb.KeyRange{fullPBIndexRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {
