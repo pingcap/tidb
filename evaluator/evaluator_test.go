@@ -354,6 +354,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(1))
 	valExpr.SetValue(4)
+	ast.ResetEvaluatedFlag(caseExpr)
 	v, err = Eval(ctx, caseExpr)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
@@ -418,6 +419,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Expr: ast.NewValueExpr(1),
 		Tp:   f,
 	}
+	ast.SetFlag(expr)
 	ctx := mock.NewContext()
 	v, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
@@ -788,8 +790,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
-	expr := &ast.UnaryOperationExpr{}
 	for i, t := range tbl {
+		expr := &ast.UnaryOperationExpr{}
 		expr.Op = t.op
 		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
@@ -831,6 +833,7 @@ func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
 	rf := &ast.ResultField{Expr: value1}
 	expr := &ast.ColumnNameExpr{Refer: rf}
 
+	ast.SetFlag(expr)
 	result, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, int64(1))
@@ -849,6 +852,7 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 		F: ast.AggFuncAvg,
 	}
 	avg.CurrentGroup = "emptyGroup"
+	ast.SetFlag(avg)
 	result, err := Eval(ctx, avg)
 	c.Assert(err, IsNil)
 	// Empty group should return nil.

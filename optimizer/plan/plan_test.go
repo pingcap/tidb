@@ -302,6 +302,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			sql:  "select a from t where a = 1 limit 1 for update",
 			best: "Range(t)->Lock->Fields->Limit",
 		},
+
 		{
 			sql:  "admin show ddl",
 			best: "ShowDDL",

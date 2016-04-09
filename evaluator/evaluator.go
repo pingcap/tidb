@@ -52,7 +52,7 @@ func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error
 	if e.err != nil {
 		return d, errors.Trace(e.err)
 	}
-	if ast.IsPreEvaluable(expr) && !ast.IsConstant(expr) && (expr.GetFlag()&ast.FlagHasFunc == 0) {
+	if ast.IsPreEvaluable(expr) && (expr.GetFlag()&ast.FlagHasFunc == 0) {
 		expr.SetFlag(expr.GetFlag() | ast.FlagPreEvaluated)
 	}
 	return *expr.GetDatum(), nil
@@ -184,8 +184,10 @@ func (e *Evaluator) between(v *ast.BetweenExpr) bool {
 		l = &ast.BinaryOperationExpr{Op: opcode.GE, L: v.Expr, R: v.Left}
 		r = &ast.BinaryOperationExpr{Op: opcode.LE, L: v.Expr, R: v.Right}
 	}
-
+	ast.SetBinaryOperationExprFlag(l, v.Expr, v.Left)
+	ast.SetBinaryOperationExprFlag(r, v.Expr, v.Right)
 	ret := &ast.BinaryOperationExpr{Op: op, L: l, R: r}
+	ast.SetBinaryOperationExprFlag(ret, l, r)
 	ret.Accept(e)
 	if e.err != nil {
 		return false
