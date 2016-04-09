@@ -175,7 +175,6 @@ func (rs *localRegion) getRowByHandle(txn kv.Transaction, sel *tipb.SelectReques
 	handle int64, eval *xeval.Evaluator) (*tipb.Row, error) {
 	tid := sel.TableInfo.GetTableId()
 	columns := sel.TableInfo.Columns
-	where := sel.Where
 	row := new(tipb.Row)
 	var d types.Datum
 	d.SetInt64(handle)
@@ -196,34 +195,34 @@ func (rs *localRegion) getRowByHandle(txn kv.Transaction, sel *tipb.SelectReques
 			row.Data = append(row.Data, data...)
 		}
 	}
-	if where != nil {
-		if len(row.Data) > 0 {
-			var datums []types.Datum
-			datums, err = codec.Decode(row.Data)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			for i, c := range columns {
-				eval.Row[c.GetColumnId()] = datums[i]
-			}
-		}
-		result, err := eval.Eval(where)
+	if sel.Where == nil {
+		return row, nil
+	}
+	if len(row.Data) > 0 {
+		var datums []types.Datum
+		datums, err = codec.Decode(row.Data)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if result.Kind() == types.KindNull {
-			return nil, nil
+		for i, c := range columns {
+			eval.Row[c.GetColumnId()] = datums[i]
 		}
-		boolResult, err := result.ToBool()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if boolResult == 1 {
-			return row, nil
-		}
+	}
+	result, err := eval.Eval(sel.Where)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if result.Kind() == types.KindNull {
 		return nil, nil
 	}
-	return row, nil
+	boolResult, err := result.ToBool()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if boolResult == 1 {
+		return row, nil
+	}
+	return nil, nil
 }
 
 func toPBError(err error) *tipb.Error {
