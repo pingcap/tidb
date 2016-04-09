@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type dbClient struct {
@@ -37,11 +38,25 @@ func (c *dbClient) Send(req *kv.Request) kv.Response {
 func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
 	switch reqType {
 	case kv.ReqTypeSelect:
-		return subType == kv.ReqSubTypeBasic
+		return supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeIndex:
 		return subType == kv.ReqSubTypeBasic
 	}
 	return false
+}
+
+func supportExpr(exprType tipb.ExprType) bool {
+	switch exprType {
+	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_Float32,
+		tipb.ExprType_Float64, tipb.ExprType_String, tipb.ExprType_Bytes,
+		tipb.ExprType_ColumnRef,
+		tipb.ExprType_And, tipb.ExprType_Or,
+		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
+		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *dbClient) updateRegionInfo() {

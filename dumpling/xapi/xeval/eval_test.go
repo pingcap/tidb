@@ -35,7 +35,7 @@ func (s *testEvalSuite) TestEval(c *C) {
 	colID := int64(1)
 	row := make(map[int64]types.Datum)
 	row[colID] = types.NewIntDatum(100)
-	xevaluator := &Evaluator{row: row}
+	xevaluator := &Evaluator{Row: row}
 	cases := []struct {
 		expr   *tipb.Expr
 		result types.Datum
