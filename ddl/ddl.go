@@ -514,7 +514,16 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*co
 
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
-			case ast.ColumnOptionFulltext, ast.ColumnOptionComment:
+			case ast.ColumnOptionComment:
+				value, err := evaluator.EvalDatum(ctx, v.Expr)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
+				col.Comment, err = value.ToString()
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
+			case ast.ColumnOptionFulltext:
 				// Do nothing.
 			}
 		}
@@ -771,34 +780,52 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		Type:     model.ActionCreateTable,
 		Args:     []interface{}{tbInfo},
 	}
+	// Handle Table Options
 
+	d.handleTableOptions(options, tbInfo, schema.ID)
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
-		err = d.handleTableOptions(options, tbInfo, schema.ID)
+		if tbInfo.AutoIncID > 1 {
+			// Default tableAutoIncID base is 0.
+			// If the first id is expected to greater than 1, we need to do rebase.
+			d.handleAutoIncID(tbInfo, schema.ID)
+		}
 	}
 	err = d.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
-func (d *ddl) handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, schemaID int64) error {
+// If create table with auto_increment option, we should rebase tableAutoIncID value.
+func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
+	alloc := autoid.NewAllocator(d.store, schemaID)
+	tbInfo.State = model.StatePublic
+	tb, err := table.TableFromMeta(alloc, tbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// The operation of the minus 1 to make sure that the current value doesn't be used,
+	// the next Alloc operation will get this value.
+	// Its behavior is consistent with MySQL.
+	if err = tb.RebaseAutoID(tbInfo.AutoIncID-1, false); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Add create table options into TableInfo.
+func (d *ddl) handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, schemaID int64) {
 	for _, op := range options {
-		if op.Tp == ast.TableOptionAutoIncrement {
-			alloc := autoid.NewAllocator(d.store, schemaID)
-			tbInfo.State = model.StatePublic
-			tb, err := table.TableFromMeta(alloc, tbInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// The operation of the minus 1 to make sure that the current value doesn't be used,
-			// the next Alloc operation will get this value.
-			// Its behavior is consistent with MySQL.
-			if err = tb.RebaseAutoID(int64(op.UintValue-1), false); err != nil {
-				return errors.Trace(err)
-			}
+		switch op.Tp {
+		case ast.TableOptionAutoIncrement:
+			tbInfo.AutoIncID = int64(op.UintValue)
+		case ast.TableOptionComment:
+			tbInfo.Comment = op.StrValue
+		case ast.TableOptionCharset:
+			tbInfo.Charset = op.StrValue
+		case ast.TableOptionCollate:
+			tbInfo.Charset = op.StrValue
 		}
 	}
-
-	return nil
 }
 
 func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {

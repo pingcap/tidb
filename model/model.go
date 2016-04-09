@@ -64,6 +64,7 @@ type ColumnInfo struct {
 	DefaultValue    interface{} `json:"default"`
 	types.FieldType `json:"type"`
 	State           SchemaState `json:"state"`
+	Comment         string      `json:"comment"`
 }
 
 // Clone clones ColumnInfo.
@@ -84,6 +85,7 @@ type TableInfo struct {
 	State      SchemaState   `json:"state"`
 	PKIsHandle bool          `json:"pk_is_handle"`
 	Comment    string        `json:"comment"`
+	AutoIncID  int64         `json:"auto_inc_id"`
 }
 
 // Clone clones TableInfo.

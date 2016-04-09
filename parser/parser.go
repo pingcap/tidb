@@ -6278,7 +6278,7 @@ yynewstate:
 		}
 	case 50:
 		{
-			yyVAL.item = &ast.ColumnOption{Tp: ast.ColumnOptionComment}
+			yyVAL.item = &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr(yyS[yypt-0].item)}
 		}
 	case 51:
 		{
