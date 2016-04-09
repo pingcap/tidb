@@ -756,6 +756,7 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
+		columnNameExpr.Type = equiv.left.Expr.GetType()
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
 		ast.SetFlag(condition)
 		path.conditions = append(path.conditions, condition)
@@ -785,6 +786,7 @@ func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
+		columnNameExpr.Type = equiv.left.Expr.GetType()
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
 		ast.SetFlag(condition)
 		path.conditions = append(path.conditions, condition)
