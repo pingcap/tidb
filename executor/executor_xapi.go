@@ -284,10 +284,10 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 
 // conditionsToPBExpr tries to convert filter conditions to a tipb.Expr.
 // not supported conditions will be returned in remained.
-func conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, fields []*ast.ResultField) (pbexpr *tipb.Expr,
+func conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, tn *ast.TableName) (pbexpr *tipb.Expr,
 	remained []ast.ExprNode) {
 	for _, expr := range exprs {
-		v := exprToPBExpr(client, expr, fields)
+		v := exprToPBExpr(client, expr, tn)
 		if v == nil {
 			remained = append(remained, expr)
 		} else {
@@ -492,22 +492,22 @@ func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 // exprToPBExpr converts an ast.ExprNode to a tipb.Expr, if not supported, nil will be returned.
-func exprToPBExpr(client kv.Client, expr ast.ExprNode, fields []*ast.ResultField) *tipb.Expr {
+func exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *ast.TableName) *tipb.Expr {
 	switch x := expr.(type) {
 	case *ast.ValueExpr, *ast.ParamMarkerExpr:
 		return datumToPBExpr(client, *expr.GetDatum())
 	case *ast.ColumnNameExpr:
-		return columnNameToPBExpr(client, x, fields)
+		return columnNameToPBExpr(client, x, tn)
 	case *ast.BinaryOperationExpr:
-		return binopToPBExpr(client, x, fields)
+		return binopToPBExpr(client, x, tn)
 	case *ast.ParenthesesExpr:
-		return exprToPBExpr(client, x.Expr, fields)
+		return exprToPBExpr(client, x.Expr, tn)
 	default:
 		return nil
 	}
 }
 
-func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, fields []*ast.ResultField) *tipb.Expr {
+func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
@@ -521,8 +521,8 @@ func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, fields []*
 		return nil
 	}
 	matched := false
-	for _, f := range fields {
-		if f.Column.ID == column.Refer.Column.ID {
+	for _, f := range tn.GetResultFields() {
+		if f.TableName == column.Refer.TableName && f.Column.ID == column.Refer.Column.ID {
 			matched = true
 		}
 	}
@@ -570,7 +570,7 @@ func datumToPBExpr(client kv.Client, d types.Datum) *tipb.Expr {
 	return &tipb.Expr{Tp: tp.Enum(), Val: val}
 }
 
-func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, fields []*ast.ResultField) *tipb.Expr {
+func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.TableName) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.Op {
 	case opcode.LT:
@@ -597,11 +597,11 @@ func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, fields []*as
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	leftExpr := exprToPBExpr(client, expr.L, fields)
+	leftExpr := exprToPBExpr(client, expr.L, tn)
 	if leftExpr == nil {
 		return nil
 	}
-	rightExpr := exprToPBExpr(client, expr.R, fields)
+	rightExpr := exprToPBExpr(client, expr.R, tn)
 	if rightExpr == nil {
 		return nil
 	}
