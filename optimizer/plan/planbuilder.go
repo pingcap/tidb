@@ -575,6 +575,7 @@ func pushOrder(p Plan, items []*ast.ByItem) bool {
 			return false
 		}
 		var hasDesc bool
+		var hasAsc bool
 		for i, item := range items {
 			var rf *ast.ResultField
 			switch y := item.Expr.(type) {
@@ -589,9 +590,15 @@ func pushOrder(p Plan, items []*ast.ByItem) bool {
 				return false
 			}
 			if item.Desc {
+				if hasAsc {
+					return false
+				}
 				hasDesc = true
-			} else if hasDesc {
-				return false
+			} else {
+				if hasDesc {
+					return false
+				}
+				hasAsc = true
 			}
 		}
 		x.Desc = hasDesc
