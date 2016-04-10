@@ -249,10 +249,17 @@ func (e *Evaluator) evalAnd(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	if leftBool == 1 && rightBool == 1 {
-		return types.NewIntDatum(1), nil
+	var d types.Datum
+	if leftBool == 0 || rightBool == 0 {
+		d.SetInt64(0)
+		return d, nil
 	}
-	return types.NewIntDatum(0), nil
+	if leftBool == compareResultNull || rightBool == compareResultNull {
+		d.SetNull()
+		return d, nil
+	}
+	d.SetInt64(1)
+	return d, nil
 }
 
 func (e *Evaluator) evalOr(expr *tipb.Expr) (types.Datum, error) {
@@ -260,10 +267,17 @@ func (e *Evaluator) evalOr(expr *tipb.Expr) (types.Datum, error) {
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
+	var d types.Datum
 	if leftBool == 1 || rightBool == 1 {
-		return types.NewIntDatum(1), nil
+		d.SetInt64(1)
+		return d, nil
 	}
-	return types.NewIntDatum(0), nil
+	if leftBool == compareResultNull || rightBool == compareResultNull {
+		d.SetNull()
+		return d, nil
+	}
+	d.SetInt64(0)
+	return d, nil
 }
 
 func (e *Evaluator) evalTwoBoolChildren(expr *tipb.Expr) (leftBool, rightBool int64, err error) {

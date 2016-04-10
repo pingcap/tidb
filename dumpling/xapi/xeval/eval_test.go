@@ -168,11 +168,27 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.NewIntDatum(1),
 		},
 		{
+			binaryExpr(types.NewIntDatum(0), types.Datum{}, tipb.ExprType_And),
+			types.NewIntDatum(0),
+		},
+		{
+			binaryExpr(types.NewIntDatum(1), types.Datum{}, tipb.ExprType_And),
+			types.Datum{},
+		},
+		{
 			binaryExpr(types.NewIntDatum(0), types.NewIntDatum(0), tipb.ExprType_Or),
 			types.NewIntDatum(0),
 		},
 		{
 			binaryExpr(types.NewIntDatum(0), types.NewIntDatum(1), tipb.ExprType_Or),
+			types.NewIntDatum(1),
+		},
+		{
+			binaryExpr(types.NewIntDatum(0), types.Datum{}, tipb.ExprType_Or),
+			types.Datum{},
+		},
+		{
+			binaryExpr(types.NewIntDatum(1), types.Datum{}, tipb.ExprType_Or),
 			types.NewIntDatum(1),
 		},
 		{
