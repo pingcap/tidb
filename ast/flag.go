@@ -20,7 +20,7 @@ func IsPreEvaluable(expr ExprNode) bool {
 	return expr.GetFlag()|preEvaluable == preEvaluable
 }
 
-// ResetEvaluatedFlag reset the evaluated flag.
+// ResetEvaluatedFlag resets the evaluated flag.
 func ResetEvaluatedFlag(n Node) {
 	var reseter preEvaluatedReseter
 	n.Accept(&reseter)
@@ -193,12 +193,12 @@ func (f *flagSetter) aggregateFunc(x *AggregateFuncExpr) {
 	x.SetFlag(flag)
 }
 
-// SetBinaryOperationExprFlag set flag to binary operation expression generated manually.
+// SetBinaryOperationExprFlag sets flag to binary operation expression generated manually.
 func SetBinaryOperationExprFlag(result, l, r ExprNode) {
 	result.SetFlag((l.GetFlag() | r.GetFlag()) &^ FlagPreEvaluated)
 }
 
-// SetColumnNameExprFlag set flag to column name expression generated manually.
+// SetColumnNameExprFlag sets flag to column name expression generated manually.
 func SetColumnNameExprFlag(result, c ExprNode) {
 	result.SetFlag((c.GetFlag() | FlagHasReference) &^ FlagPreEvaluated)
 }

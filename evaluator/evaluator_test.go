@@ -961,3 +961,40 @@ func (s *testEvaluatorSuite) TestIsCurrentTimeExpr(c *C) {
 	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
 	c.Assert(v, IsTrue)
 }
+
+func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
+	l := ast.NewValueExpr(int64(1))
+	r := ast.NewValueExpr(int64(2))
+	b := &ast.BinaryOperationExpr{L: l, R: r, Op: opcode.Plus}
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	ctx := mock.NewContext()
+	d, err := EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, true)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	funcCall := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("abs"),
+		Args:   []ast.ExprNode{ast.NewValueExpr(int(-1))},
+	}
+	b = &ast.BinaryOperationExpr{L: funcCall, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	rf := &ast.ResultField{Expr: ast.NewValueExpr(int64(1))}
+	colExpr := &ast.ColumnNameExpr{Refer: rf}
+	b = &ast.BinaryOperationExpr{L: colExpr, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, false)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+}
