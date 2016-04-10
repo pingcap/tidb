@@ -46,6 +46,7 @@ var (
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &SortExec{}
+	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
 )
 
@@ -205,6 +206,33 @@ func (e *CheckTableExec) Next() (*Row, error) {
 
 // Close implements plan.Plan Close interface.
 func (e *CheckTableExec) Close() error {
+	return nil
+}
+
+// TableDualExec represents a dual table executor.
+type TableDualExec struct {
+	fields   []*ast.ResultField
+	executed bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *TableDualExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Execution Next interface.
+func (e *TableDualExec) Next() (*Row, error) {
+	if e.executed {
+		return nil, nil
+	}
+
+	e.executed = true
+
+	return &Row{}, nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *TableDualExec) Close() error {
 	return nil
 }
 
