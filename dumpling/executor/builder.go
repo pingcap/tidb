@@ -227,7 +227,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	for i, val := range v.Ranges {
 		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
-	return b.buildFilter(e, v.FilterConditions)
+	x := b.buildFilter(e, v.FilterConditions)
+	if v.Desc {
+		x = &ReverseExec{Src: x}
+	}
+	return x
 }
 
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
