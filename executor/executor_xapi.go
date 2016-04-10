@@ -138,8 +138,20 @@ type XSelectIndexExec struct {
 	indexPlan *plan.IndexScan
 	ctx       context.Context
 	where     *tipb.Expr
-	rows      []*Row
-	cursor    int
+
+	tasks      []*lookupTableTask
+	taskCursor int
+	indexOrder map[int64]int
+}
+
+// Max number of handles for a lookupTableTask.
+var LookupTableTaskLimit = 256
+
+type lookupTableTask struct {
+	handles []int64
+	rows    []*Row
+	cursor  int
+	done    bool
 }
 
 // Fields implements Executor Fields interface.
@@ -149,21 +161,49 @@ func (e *XSelectIndexExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
-	if e.rows == nil {
-		err := e.doRequest()
+	if e.tasks == nil {
+		handles, err := e.fetchHandles()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.buildTableTasks(handles)
 	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
+	for {
+		if e.taskCursor >= len(e.tasks) {
+			return nil, nil
+		}
+		task := e.tasks[e.taskCursor]
+		if !task.done {
+			sort.Sort(int64Slice(task.handles))
+			tblResult, err := e.doTableRequest(task.handles)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !e.indexPlan.OutOfOrder {
+				// Restore the index order.
+				sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
+				if e.indexPlan.Desc {
+					sort.Sort(sort.Reverse(sorter))
+				} else {
+					sort.Sort(sorter)
+				}
+			}
+			task.done = true
+		}
+		if task.cursor < len(task.rows) {
+			row := task.rows[task.cursor]
+			for i, field := range e.indexPlan.Fields() {
+				field.Expr.SetDatum(row.Data[i])
+			}
+			task.cursor++
+			return row, nil
+		}
+		e.taskCursor++
 	}
-	row := e.rows[e.cursor]
-	for i, field := range e.indexPlan.Fields() {
-		field.Expr.SetDatum(row.Data[i])
-	}
-	e.cursor++
-	return row, nil
 }
 
 // Close implements Executor Close interface.
@@ -171,48 +211,51 @@ func (e *XSelectIndexExec) Close() error {
 	return nil
 }
 
-func (e *XSelectIndexExec) doRequest() error {
-	txn, err := e.ctx.GetTxn(false)
+func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
+	idxResult, err := e.doIndexRequest()
 	if err != nil {
-		return errors.Trace(err)
-	}
-	idxResult, err := e.doIndexRequest(txn)
-	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	handles, err := extractHandlesFromIndexResult(idxResult)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if len(handles) == 0 {
-		return nil
-	}
-
-	var indexOrder map[int64]int
 	if !e.indexPlan.OutOfOrder {
 		// Save the index order.
-		indexOrder = make(map[int64]int)
+		e.indexOrder = make(map[int64]int)
 		for i, h := range handles {
-			indexOrder[h] = i
+			e.indexOrder[h] = i
 		}
 	}
+	return handles, nil
+}
 
-	sort.Sort(int64Slice(handles))
-	tblResult, err := e.doTableRequest(txn, handles)
-	if err != nil {
-		return errors.Trace(err)
+func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
+	e.tasks = make([]*lookupTableTask, 0, (len(handles)/LookupTableTaskLimit)+1)
+	for {
+		if len(handles) > LookupTableTaskLimit {
+			task := &lookupTableTask{
+				handles: handles[:LookupTableTaskLimit],
+			}
+			e.tasks = append(e.tasks, task)
+			handles = handles[LookupTableTaskLimit:]
+			continue
+		}
+		if len(handles) > 0 {
+			task := &lookupTableTask{
+				handles: handles,
+			}
+			e.tasks = append(e.tasks, task)
+		}
+		break
 	}
-	rows, err := e.extractRowsFromTableResult(e.table, tblResult)
-	if err != nil {
-		return errors.Trace(err)
+	if e.indexPlan.Desc {
+		// Reverse tasks order.
+		for i := 0; i < len(e.tasks)/2; i++ {
+			j := len(e.tasks) - i - 1
+			e.tasks[i], e.tasks[j] = e.tasks[j], e.tasks[i]
+		}
 	}
-	if !e.indexPlan.OutOfOrder {
-		// Restore the index order.
-		sorter := &rowsSorter{order: indexOrder, rows: rows}
-		sort.Sort(sorter)
-	}
-	e.rows = rows
-	return nil
 }
 
 type rowsSorter struct {
@@ -234,7 +277,11 @@ func (s *rowsSorter) Swap(i, j int) {
 	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
 }
 
-func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// TODO: add offset and limit.
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
@@ -244,7 +291,6 @@ func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResul
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	var err error
 	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -252,7 +298,11 @@ func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResul
 	return xapi.Select(txn.GetClient(), selIdxReq, 1)
 }
 
-func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (*xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// TODO: add offset and limit.
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()

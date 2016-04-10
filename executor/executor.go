@@ -1170,3 +1170,45 @@ func (e *DistinctExec) Next() (*Row, error) {
 func (e *DistinctExec) Close() error {
 	return e.Src.Close()
 }
+
+// ReverseExec produces reverse ordered result, it is used to wrap executors that do not support reverse scan.
+type ReverseExec struct {
+	Src    Executor
+	rows   []*Row
+	cursor int
+	done   bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *ReverseExec) Fields() []*ast.ResultField {
+	return e.Src.Fields()
+}
+
+// Next implements Executor Next interface.
+func (e *ReverseExec) Next() (*Row, error) {
+	if !e.done {
+		for {
+			row, err := e.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				break
+			}
+			e.rows = append(e.rows, row)
+		}
+		e.cursor = len(e.rows) - 1
+		e.done = true
+	}
+	if e.cursor < 0 {
+		return nil, nil
+	}
+	row := e.rows[e.cursor]
+	e.cursor--
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *ReverseExec) Close() error {
+	return e.Src.Close()
+}
