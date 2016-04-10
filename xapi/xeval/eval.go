@@ -250,17 +250,9 @@ func (e *Evaluator) evalAnd(expr *tipb.Expr) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	var d types.Datum
-	if leftBool != compareResultNull {
-		if leftBool == 0 {
-			d.SetInt64(0)
-			return d, nil
-		}
-	}
-	if rightBool != compareResultNull {
-		if rightBool == 0 {
-			d.SetInt64(0)
-			return d, nil
-		}
+	if leftBool == 0 || rightBool == 0 {
+		d.SetInt64(0)
+		return d, nil
 	}
 	if leftBool == compareResultNull || rightBool == compareResultNull {
 		d.SetNull()
@@ -276,17 +268,9 @@ func (e *Evaluator) evalOr(expr *tipb.Expr) (types.Datum, error) {
 		return types.Datum{}, errors.Trace(err)
 	}
 	var d types.Datum
-	if leftBool != compareResultNull {
-		if leftBool == 1 {
-			d.SetInt64(1)
-			return d, nil
-		}
-	}
-	if rightBool != compareResultNull {
-		if rightBool == 1 {
-			d.SetInt64(1)
-			return d, nil
-		}
+	if leftBool == 1 || rightBool == 1 {
+		d.SetInt64(1)
+		return d, nil
 	}
 	if leftBool == compareResultNull || rightBool == compareResultNull {
 		d.SetNull()
