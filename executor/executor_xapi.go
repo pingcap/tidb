@@ -144,7 +144,7 @@ type XSelectIndexExec struct {
 	indexOrder map[int64]int
 }
 
-// Max number of handles for a lookupTableTask.
+// LookupTableTaskLimit represents max number of handles for a lookupTableTask.
 var LookupTableTaskLimit = 256
 
 type lookupTableTask struct {
