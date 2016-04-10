@@ -14,6 +14,7 @@
 package perfschema
 
 import (
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -72,7 +73,7 @@ func NewPerfHandle(store kv.Storage) PerfSchema {
 	schema.historyHandles = make([]int64, 0, stmtsHistoryElemMax)
 	err := schema.initialize()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
 	registerStatements()
 	return PerfHandle
