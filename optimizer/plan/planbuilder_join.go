@@ -744,13 +744,13 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 	join.Conditions = path.conditions
 	for _, equiv := range path.eqConds {
 		columnNameExpr := &ast.ColumnNameExpr{}
-		ast.SetColumnNameExprFlag(columnNameExpr, equiv.left.Expr)
 		columnNameExpr.Name = &ast.ColumnName{}
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
+		ast.SetFlag(columnNameExpr)
 		cond := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
-		ast.SetBinaryOperationExprFlag(cond, columnNameExpr, equiv.right.Expr)
+		ast.MergeChildrenFlags(cond, columnNameExpr, equiv.right.Expr)
 		join.Conditions = append(join.Conditions, cond)
 	}
 	return join
@@ -759,14 +759,14 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 	for _, equiv := range path.eqConds {
 		columnNameExpr := &ast.ColumnNameExpr{}
-		ast.SetColumnNameExprFlag(columnNameExpr, equiv.left.Expr)
 		columnNameExpr.Name = &ast.ColumnName{}
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
 		columnNameExpr.Type = equiv.left.Expr.GetType()
+		ast.SetFlag(columnNameExpr)
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
-		ast.SetBinaryOperationExprFlag(condition, columnNameExpr, equiv.right.Expr)
+		ast.MergeChildrenFlags(condition, columnNameExpr, equiv.right.Expr)
 		path.conditions = append(path.conditions, condition)
 	}
 	candidates := b.buildAllAccessMethodsPlan(path)
@@ -790,14 +790,14 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 	for _, equiv := range path.eqConds {
 		columnNameExpr := &ast.ColumnNameExpr{}
-		ast.SetColumnNameExprFlag(columnNameExpr, equiv.left.Expr)
 		columnNameExpr.Name = &ast.ColumnName{}
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
 		columnNameExpr.Type = equiv.left.Expr.GetType()
+		ast.SetFlag(columnNameExpr)
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
-		ast.SetBinaryOperationExprFlag(condition, columnNameExpr, equiv.right.Expr)
+		ast.MergeChildrenFlags(condition, columnNameExpr, equiv.right.Expr)
 		path.conditions = append(path.conditions, condition)
 	}
 	p := b.build(path.subquery)

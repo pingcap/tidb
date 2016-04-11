@@ -184,10 +184,10 @@ func (e *Evaluator) between(v *ast.BetweenExpr) bool {
 		l = &ast.BinaryOperationExpr{Op: opcode.GE, L: v.Expr, R: v.Left}
 		r = &ast.BinaryOperationExpr{Op: opcode.LE, L: v.Expr, R: v.Right}
 	}
-	ast.SetBinaryOperationExprFlag(l, v.Expr, v.Left)
-	ast.SetBinaryOperationExprFlag(r, v.Expr, v.Right)
+	ast.MergeChildrenFlags(l, v.Expr, v.Left)
+	ast.MergeChildrenFlags(l, v.Expr, v.Right)
 	ret := &ast.BinaryOperationExpr{Op: op, L: l, R: r}
-	ast.SetBinaryOperationExprFlag(ret, l, r)
+	ast.MergeChildrenFlags(ret, l, r)
 	ret.Accept(e)
 	if e.err != nil {
 		return false

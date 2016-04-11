@@ -279,7 +279,7 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 		L:  conditions[0],
 		R:  b.joinConditions(conditions[1:]),
 	}
-	ast.SetBinaryOperationExprFlag(condition, condition.L, condition.R)
+	ast.MergeChildrenFlags(condition, condition.L, condition.R)
 	return condition
 }
 
