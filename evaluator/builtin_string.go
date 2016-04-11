@@ -46,6 +46,25 @@ func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err er
 	}
 }
 
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
+func builtinASCII(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		s, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if len(s) == 0 {
+			d.SetInt64(0)
+			return d, nil
+		}
+		d.SetInt64(int64(s[0]))
+		return d, nil
+	}
+}
+
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var s []byte
