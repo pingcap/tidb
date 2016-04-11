@@ -552,6 +552,10 @@ func exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *ast.TableName) *tipb.
 		return binopToPBExpr(client, x, tn)
 	case *ast.ParenthesesExpr:
 		return exprToPBExpr(client, x.Expr, tn)
+	case *ast.PatternLikeExpr:
+		return likeToPBExpr(client, x, tn)
+	case *ast.UnaryOperationExpr:
+		return unaryToPBExpr(client, x, tn)
 	default:
 		return nil
 	}
@@ -657,4 +661,37 @@ func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.Tabl
 		return nil
 	}
 	return &tipb.Expr{Tp: tp.Enum(), Children: []*tipb.Expr{leftExpr, rightExpr}}
+}
+
+func likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName) *tipb.Expr {
+	targetExpr := exprToPBExpr(client, expr.Expr, tn)
+	if targetExpr == nil {
+		return nil
+	}
+	patternExpr := exprToPBExpr(client, expr.Pattern, tn)
+	if patternExpr == nil {
+		return nil
+	}
+	likeExpr := &tipb.Expr{Tp: tipb.ExprType_Like.Enum(), Children: []*tipb.Expr{targetExpr, patternExpr}}
+	if expr.Escape != '\\' {
+		escapeExpr := &tipb.Expr{Tp: tipb.ExprType_String.Enum(), Val: []byte{expr.Escape}}
+		likeExpr.Children = append(likeExpr.Children, escapeExpr)
+	}
+	if expr.Not {
+		return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{likeExpr}}
+	}
+	return likeExpr
+}
+
+func unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.TableName) *tipb.Expr {
+	switch expr.Op {
+	case opcode.Not:
+	default:
+		return nil
+	}
+	child := exprToPBExpr(client, expr.V, tn)
+	if child == nil {
+		return nil
+	}
+	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{child}}
 }

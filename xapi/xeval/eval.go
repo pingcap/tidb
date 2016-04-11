@@ -77,6 +77,10 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalAnd(expr)
 	case tipb.ExprType_Or:
 		return e.evalOr(expr)
+	case tipb.ExprType_Like:
+		return e.evalLike(expr)
+	case tipb.ExprType_Not:
+		return e.evalNot(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -318,4 +322,173 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 		return types.Datum{}, types.Datum{}, errors.Trace(err)
 	}
 	return
+}
+
+func (e *Evaluator) evalLike(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 2 && len(expr.Children) != 3 {
+		return types.Datum{}, ErrInvalid.Gen("need 2 or 3 operands but got %d", len(expr.Children))
+	}
+	datums, err := e.evalChildren(expr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	strs := make([]string, len(datums))
+	for i, d := range datums {
+		if d.Kind() == types.KindNull {
+			return types.Datum{}, nil
+		}
+		strs[i], err = d.ToString()
+		if err != nil {
+			return types.Datum{}, errors.Trace(err)
+		}
+	}
+	targetStr, patternStr := strs[0], strs[1]
+	escapeChar := byte('\\')
+	if len(strs) == 3 && len(strs[2]) > 0 {
+		escapeChar = strs[2][0]
+	}
+	patChars, patTypes := compilePattern(patternStr, escapeChar)
+	if matchPattern(targetStr, patChars, patTypes) {
+		return types.NewIntDatum(1), nil
+	}
+	return types.NewIntDatum(0), nil
+}
+
+const (
+	patMatch = 1
+	patOne   = 2
+	patAny   = 3
+)
+
+// handle escapes and wild cards convert pattern characters and pattern types,
+func compilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
+	var lastAny bool
+	patChars = make([]byte, len(pattern))
+	patTypes = make([]byte, len(pattern))
+	patLen := 0
+	for i := 0; i < len(pattern); i++ {
+		var tp byte
+		var c = pattern[i]
+		switch c {
+		case escape:
+			lastAny = false
+			tp = patMatch
+			if i < len(pattern)-1 {
+				i++
+				c = pattern[i]
+				if c == escape || c == '_' || c == '%' {
+					// valid escape.
+				} else {
+					// invalid escape, fall back to escape byte
+					// mysql will treat escape character as the origin value even
+					// the escape sequence is invalid in Go or C.
+					// e.g, \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
+					// Following case is correct just for escape \, not for others like +.
+					// TODO: add more checks for other escapes.
+					i--
+					c = escape
+				}
+			}
+		case '_':
+			lastAny = false
+			tp = patOne
+		case '%':
+			if lastAny {
+				continue
+			}
+			lastAny = true
+			tp = patAny
+		default:
+			lastAny = false
+			tp = patMatch
+		}
+		patChars[patLen] = c
+		patTypes[patLen] = tp
+		patLen++
+	}
+	for i := 0; i < patLen-1; i++ {
+		if (patTypes[i] == patAny) && (patTypes[i+1] == patOne) {
+			patTypes[i] = patOne
+			patTypes[i+1] = patAny
+		}
+	}
+	patChars = patChars[:patLen]
+	patTypes = patTypes[:patLen]
+	return
+}
+
+const caseDiff = 'a' - 'A'
+
+func matchByteCI(a, b byte) bool {
+	if a == b {
+		return true
+	}
+	if a >= 'a' && a <= 'z' && a-caseDiff == b {
+		return true
+	}
+	return a >= 'A' && a <= 'Z' && a+caseDiff == b
+}
+
+func matchPattern(str string, patChars, patTypes []byte) bool {
+	var sIdx int
+	for i := 0; i < len(patChars); i++ {
+		switch patTypes[i] {
+		case patMatch:
+			if sIdx >= len(str) || !matchByteCI(str[sIdx], patChars[i]) {
+				return false
+			}
+			sIdx++
+		case patOne:
+			sIdx++
+			if sIdx > len(str) {
+				return false
+			}
+		case patAny:
+			i++
+			if i == len(patChars) {
+				return true
+			}
+			for sIdx < len(str) {
+				if matchByteCI(patChars[i], str[sIdx]) && matchPattern(str[sIdx:], patChars[i:], patTypes[i:]) {
+					return true
+				}
+				sIdx++
+			}
+			return false
+		}
+	}
+	return sIdx == len(str)
+}
+
+func (e *Evaluator) evalChildren(expr *tipb.Expr) ([]types.Datum, error) {
+	datums := make([]types.Datum, len(expr.Children))
+	for i, child := range expr.Children {
+		d, err := e.Eval(child)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		datums[i] = d
+	}
+	return datums, nil
+}
+
+func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 1 {
+		return types.Datum{}, ErrInvalid.Gen("NOT need 1 operand, got %d", len(expr.Children))
+	}
+	d, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if d.Kind() == types.KindNull {
+		return d, nil
+	}
+	boolVal, err := d.ToBool()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if boolVal == 1 {
+		return types.NewIntDatum(0), nil
+	}
+	return types.NewIntDatum(1), nil
 }
