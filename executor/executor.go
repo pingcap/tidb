@@ -856,6 +856,7 @@ type SortExec struct {
 	ByItems []*ast.ByItem
 	Rows    []*orderByRow
 	ctx     context.Context
+	Limit   *plan.Limit
 	Idx     int
 	fetched bool
 	err     error
@@ -901,10 +902,16 @@ func (e *SortExec) Less(i, j int) bool {
 
 	return false
 }
-
+var SortBufferSize = 500
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
+		offset := -1
+		count := -1
+		if e.Limit != nil{
+			offset = int(e.Limit.Offset)
+			count = offset + int(e.Limit.Count)
+		}
 		for {
 			srcRow, err := e.Src.Next()
 			if err != nil {
@@ -924,8 +931,15 @@ func (e *SortExec) Next() (*Row, error) {
 				}
 			}
 			e.Rows = append(e.Rows, orderRow)
+			if count != -1 && e.Len() >= count + SortBufferSize{
+				sort.Sort(e)
+				e.Rows = e.Rows[0:count]
+			}
 		}
 		sort.Sort(e)
+		if offset > 0{
+			e.Rows = e.Rows[offset:count]
+		}
 		e.fetched = true
 	}
 	if e.err != nil {

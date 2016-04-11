@@ -273,6 +273,8 @@ type Sort struct {
 	planWithSrc
 
 	ByItems []*ast.ByItem
+
+	ExecLimit *Limit
 }
 
 // Accept implements Plan Accept interface.
