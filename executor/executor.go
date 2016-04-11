@@ -902,8 +902,10 @@ func (e *SortExec) Less(i, j int) bool {
 
 	return false
 }
-//SortBufferSize presents the total extra row counts that sort can use
+
+// SortBufferSize represents the total extra row count that sort can use.
 var SortBufferSize = 500
+
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
