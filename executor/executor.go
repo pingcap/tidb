@@ -902,15 +902,16 @@ func (e *SortExec) Less(i, j int) bool {
 
 	return false
 }
+//SortBufferSize presents the total extra row counts that sort can use
 var SortBufferSize = 500
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
 		offset := -1
-		count := -1
+		totalCount := -1
 		if e.Limit != nil{
 			offset = int(e.Limit.Offset)
-			count = offset + int(e.Limit.Count)
+			totalCount = offset + int(e.Limit.Count)
 		}
 		for {
 			srcRow, err := e.Src.Next()
@@ -931,14 +932,14 @@ func (e *SortExec) Next() (*Row, error) {
 				}
 			}
 			e.Rows = append(e.Rows, orderRow)
-			if count != -1 && e.Len() >= count + SortBufferSize{
+			if totalCount != -1 && e.Len() >= totalCount + SortBufferSize{
 				sort.Sort(e)
-				e.Rows = e.Rows[0:count]
+				e.Rows = e.Rows[:totalCount]
 			}
 		}
 		sort.Sort(e)
 		if offset > 0{
-			e.Rows = e.Rows[offset:count]
+			e.Rows = e.Rows[offset:totalCount]
 		}
 		e.fetched = true
 	}
