@@ -38,7 +38,7 @@ func IsEvaluated(expr ExprNode) bool {
 // IsConstant checks if the expression is constant.
 // A constant expression is safe to be rewritten to value expression.
 func IsConstant(expr ExprNode) bool {
-	return expr.GetFlag() == FlagConstant
+	return (expr.GetFlag() &^ FlagPreEvaluated) == FlagConstant
 }
 
 // HasAggFlag checks if the expr contains FlagHasAggregateFunc.
