@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/terror"
+	"math"
+	"sync/atomic"
 )
 
 const (
@@ -184,3 +186,10 @@ func NewMemoryAllocator(dbID int64) Allocator {
 
 //autoid error codes.
 const codeInvalidTableID terror.ErrCode = 1
+
+var localSchemaID int64 = math.MaxInt64
+
+// GenLocalSchemaID generates a local schema ID.
+func GenLocalSchemaID() int64 {
+	return atomic.AddInt64(&localSchemaID, -1)
+}
