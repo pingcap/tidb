@@ -488,7 +488,7 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 	}
 	if s, ok := src.(*Sort); ok {
 		s.ExecLimit = li
-		return s;
+		return s
 	}
 	li.SetSrc(src)
 	li.SetFields(src.Fields())
