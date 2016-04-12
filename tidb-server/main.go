@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/ticlient"
 	"github.com/pingcap/tidb"
@@ -67,15 +68,21 @@ func main() {
 	log.SetLevelByString(cfg.LogLevel)
 	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
+	// Create a session to load information schema.
+	se, err := tidb.CreateSession(store)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	se.Close()
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
 	var svr *server.Server
 	svr, err = server.NewServer(cfg, driver)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
 
 	sc := make(chan os.Signal, 1)
