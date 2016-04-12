@@ -15,6 +15,7 @@ package tidb
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1937,4 +1938,28 @@ func checkPlan(c *C, se Session, sql, explain string) {
 	p, err := optimizer.Optimize(ctx, stmt, executor.NewSubQueryBuilder(is))
 	c.Assert(err, IsNil)
 	c.Assert(plan.ToString(p), Equals, explain)
+}
+
+func mustExecMultiSQL(c *C, se Session, sql string) {
+	ss := strings.Split(sql, "\n")
+	for _, s := range ss {
+		s = strings.TrimSpace(s)
+		if len(s) == 0 {
+			continue
+		}
+		mustExecSQL(c, se, s)
+	}
+}
+
+func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
+	initSQL := `
+		CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT)
+		INSERT INTO tab1 VALUES(0,26,690.51)
+		CREATE INDEX idx_tab1_1 on tab1 (col1)`
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	mustExecMultiSQL(c, se, initSQL)
+
+	sql := "SELECT col0 FROM tab1 WHERE 71*22 >= col1"
+	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
 }
