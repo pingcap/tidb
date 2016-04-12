@@ -940,8 +940,14 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 		}
 		sort.Sort(e)
-		if offset > 0 {
-			e.Rows = e.Rows[offset:totalCount]
+		if offset >= 0 && offset < e.Len() {
+			if totalCount > e.Len() {
+				e.Rows = e.Rows[offset:]
+			} else {
+				e.Rows = e.Rows[offset:totalCount]
+			}
+		} else if offset != -1 {
+			e.Rows = e.Rows[:0]
 		}
 		e.fetched = true
 	}
