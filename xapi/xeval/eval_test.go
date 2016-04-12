@@ -293,46 +293,6 @@ func notExpr(value interface{}) *tipb.Expr {
 }
 
 func (s *testEvalSuite) TestLike(c *C) {
-	tbl := []struct {
-		pattern string
-		input   string
-		escape  byte
-		match   bool
-	}{
-		{"", "a", '\\', false},
-		{"a", "a", '\\', true},
-		{"a", "b", '\\', false},
-		{"aA", "aA", '\\', true},
-		{"_", "a", '\\', true},
-		{"_", "ab", '\\', false},
-		{"__", "b", '\\', false},
-		{"_ab", "AAB", '\\', true},
-		{"%", "abcd", '\\', true},
-		{"%", "", '\\', true},
-		{"%a", "AAA", '\\', true},
-		{"%b", "AAA", '\\', false},
-		{"b%", "BBB", '\\', true},
-		{"%a%", "BBB", '\\', false},
-		{"%a%", "BAB", '\\', true},
-		{"a%", "BBB", '\\', false},
-		{`\%a`, `%a`, '\\', true},
-		{`\%a`, `aa`, '\\', false},
-		{`\_a`, `_a`, '\\', true},
-		{`\_a`, `aa`, '\\', false},
-		{`\\_a`, `\xa`, '\\', true},
-		{`\a\b`, `\a\b`, '\\', true},
-		{"%%_", `abc`, '\\', true},
-		{`+_a`, `_a`, '+', true},
-		{`+%a`, `%a`, '+', true},
-		{`\%a`, `%a`, '+', false},
-		{`++a`, `+a`, '+', true},
-		{`++_a`, `+xa`, '+', true},
-	}
-	for _, v := range tbl {
-		patChars, patTypes := compilePattern(v.pattern, v.escape)
-		match := matchPattern(v.input, patChars, patTypes)
-		c.Assert(match, Equals, v.match, Commentf("%v", v))
-	}
 	cases := []struct {
 		expr   *tipb.Expr
 		result int64
@@ -350,16 +310,36 @@ func (s *testEvalSuite) TestLike(c *C) {
 			result: 0,
 		},
 		{
-			expr:   likeExpr("aA", "Aa"),
+			expr:   likeExpr("aAb", "AaB"),
 			result: 1,
+		},
+		{
+			expr:   likeExpr("a", "%"),
+			result: 1,
+		},
+		{
+			expr:   likeExpr("aAD", "%d"),
+			result: 1,
+		},
+		{
+			expr:   likeExpr("aAeD", "%e"),
+			result: 0,
 		},
 		{
 			expr:   likeExpr("aAb", "Aa%"),
 			result: 1,
 		},
 		{
-			expr:   likeExpr("aAb", "Aa_"),
+			expr:   likeExpr("abAb", "Aa%"),
+			result: 0,
+		},
+		{
+			expr:   likeExpr("aAcb", "%C%"),
 			result: 1,
+		},
+		{
+			expr:   likeExpr("aAb", "%C%"),
+			result: 0,
 		},
 	}
 	ev := &Evaluator{}

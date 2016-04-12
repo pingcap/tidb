@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"strings"
 )
 
 // Error instances.
@@ -325,152 +326,83 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 }
 
 func (e *Evaluator) evalLike(expr *tipb.Expr) (types.Datum, error) {
-	if len(expr.Children) != 2 && len(expr.Children) != 3 {
-		return types.Datum{}, ErrInvalid.Gen("need 2 or 3 operands but got %d", len(expr.Children))
-	}
-	datums, err := e.evalChildren(expr)
+	target, pattern, err := e.evalTwoChildren(expr)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	strs := make([]string, len(datums))
-	for i, d := range datums {
-		if d.Kind() == types.KindNull {
-			return types.Datum{}, nil
-		}
-		strs[i], err = d.ToString()
-		if err != nil {
-			return types.Datum{}, errors.Trace(err)
-		}
+	if target.Kind() == types.KindNull || pattern.Kind() == types.KindNull {
+		return types.Datum{}, nil
 	}
-	targetStr, patternStr := strs[0], strs[1]
-	escapeChar := byte('\\')
-	if len(strs) == 3 && len(strs[2]) > 0 {
-		escapeChar = strs[2][0]
+	targetStr, err := target.ToString()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
 	}
-	patChars, patTypes := compilePattern(patternStr, escapeChar)
-	if matchPattern(targetStr, patChars, patTypes) {
+	patternStr, err := pattern.ToString()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if containsAlphabet(patternStr) {
+		patternStr = strings.ToLower(patternStr)
+		targetStr = strings.ToLower(targetStr)
+	}
+	mType, trimmedPattern := matchType(patternStr)
+	var matched bool
+	switch mType {
+	case matchExact:
+		matched = targetStr == trimmedPattern
+	case matchPrefix:
+		matched = strings.HasPrefix(targetStr, trimmedPattern)
+	case matchSuffix:
+		matched = strings.HasSuffix(targetStr, trimmedPattern)
+	case matchMiddle:
+		matched = strings.Index(targetStr, trimmedPattern) != -1
+	}
+	if matched {
 		return types.NewIntDatum(1), nil
 	}
 	return types.NewIntDatum(0), nil
 }
 
+func containsAlphabet(s string) bool {
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func matchType(pattern string) (tp int, trimmed string) {
+	switch len(pattern) {
+	case 0:
+		return matchExact, pattern
+	case 1:
+		if pattern[0] == '%' {
+			return matchMiddle, ""
+		}
+		return matchExact, pattern
+	default:
+		first := pattern[0]
+		last := pattern[len(pattern)-1]
+		if first == '%' {
+			if last == '%' {
+				return matchMiddle, pattern[1 : len(pattern)-1]
+			}
+			return matchSuffix, pattern[1:]
+		}
+		if last == '%' {
+			return matchPrefix, pattern[:len(pattern)-1]
+		}
+		return matchExact, pattern
+	}
+}
+
 const (
-	patMatch = 1
-	patOne   = 2
-	patAny   = 3
+	matchExact  = 1
+	matchPrefix = 2
+	matchSuffix = 3
+	matchMiddle = 4
 )
-
-// handle escapes and wild cards convert pattern characters and pattern types,
-func compilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
-	patChars = make([]byte, len(pattern))
-	patTypes = make([]byte, len(pattern))
-	patLen := 0
-	for i := 0; i < len(pattern); i++ {
-		var tp byte
-		var c = pattern[i]
-		switch c {
-		case escape:
-			lastAny = false
-			tp = patMatch
-			if i < len(pattern)-1 {
-				i++
-				c = pattern[i]
-				if c == escape || c == '_' || c == '%' {
-					// valid escape.
-				} else {
-					// invalid escape, fall back to escape byte
-					// mysql will treat escape character as the origin value even
-					// the escape sequence is invalid in Go or C.
-					// e.g, \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
-					// Following case is correct just for escape \, not for others like +.
-					// TODO: add more checks for other escapes.
-					i--
-					c = escape
-				}
-			}
-		case '_':
-			lastAny = false
-			tp = patOne
-		case '%':
-			if lastAny {
-				continue
-			}
-			lastAny = true
-			tp = patAny
-		default:
-			lastAny = false
-			tp = patMatch
-		}
-		patChars[patLen] = c
-		patTypes[patLen] = tp
-		patLen++
-	}
-	for i := 0; i < patLen-1; i++ {
-		if (patTypes[i] == patAny) && (patTypes[i+1] == patOne) {
-			patTypes[i] = patOne
-			patTypes[i+1] = patAny
-		}
-	}
-	patChars = patChars[:patLen]
-	patTypes = patTypes[:patLen]
-	return
-}
-
-const caseDiff = 'a' - 'A'
-
-func matchByteCI(a, b byte) bool {
-	if a == b {
-		return true
-	}
-	if a >= 'a' && a <= 'z' && a-caseDiff == b {
-		return true
-	}
-	return a >= 'A' && a <= 'Z' && a+caseDiff == b
-}
-
-func matchPattern(str string, patChars, patTypes []byte) bool {
-	var sIdx int
-	for i := 0; i < len(patChars); i++ {
-		switch patTypes[i] {
-		case patMatch:
-			if sIdx >= len(str) || !matchByteCI(str[sIdx], patChars[i]) {
-				return false
-			}
-			sIdx++
-		case patOne:
-			sIdx++
-			if sIdx > len(str) {
-				return false
-			}
-		case patAny:
-			i++
-			if i == len(patChars) {
-				return true
-			}
-			for sIdx < len(str) {
-				if matchByteCI(patChars[i], str[sIdx]) && matchPattern(str[sIdx:], patChars[i:], patTypes[i:]) {
-					return true
-				}
-				sIdx++
-			}
-			return false
-		}
-	}
-	return sIdx == len(str)
-}
-
-func (e *Evaluator) evalChildren(expr *tipb.Expr) ([]types.Datum, error) {
-	datums := make([]types.Datum, len(expr.Children))
-	for i, child := range expr.Children {
-		d, err := e.Eval(child)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		datums[i] = d
-	}
-	return datums, nil
-}
 
 func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
 	if len(expr.Children) != 1 {
