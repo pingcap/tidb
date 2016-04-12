@@ -333,6 +333,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
+		Limit:   v.ExecLimit,
 	}
 	return e
 }
