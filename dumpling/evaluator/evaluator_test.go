@@ -354,6 +354,7 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(1))
 	valExpr.SetValue(4)
+	ast.ResetEvaluatedFlag(caseExpr)
 	v, err = Eval(ctx, caseExpr)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
@@ -418,6 +419,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Expr: ast.NewValueExpr(1),
 		Tp:   f,
 	}
+	ast.SetFlag(expr)
 	ctx := mock.NewContext()
 	v, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
@@ -788,8 +790,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
-	expr := &ast.UnaryOperationExpr{}
 	for i, t := range tbl {
+		expr := &ast.UnaryOperationExpr{}
 		expr.Op = t.op
 		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
@@ -831,6 +833,7 @@ func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
 	rf := &ast.ResultField{Expr: value1}
 	expr := &ast.ColumnNameExpr{Refer: rf}
 
+	ast.SetFlag(expr)
 	result, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, int64(1))
@@ -849,6 +852,7 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 		F: ast.AggFuncAvg,
 	}
 	avg.CurrentGroup = "emptyGroup"
+	ast.SetFlag(avg)
 	result, err := Eval(ctx, avg)
 	c.Assert(err, IsNil)
 	// Empty group should return nil.
@@ -956,4 +960,41 @@ func (s *testEvaluatorSuite) TestIsCurrentTimeExpr(c *C) {
 
 	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
 	c.Assert(v, IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
+	l := ast.NewValueExpr(int64(1))
+	r := ast.NewValueExpr(int64(2))
+	b := &ast.BinaryOperationExpr{L: l, R: r, Op: opcode.Plus}
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	ctx := mock.NewContext()
+	d, err := EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, true)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	funcCall := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("abs"),
+		Args:   []ast.ExprNode{ast.NewValueExpr(int(-1))},
+	}
+	b = &ast.BinaryOperationExpr{L: funcCall, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	rf := &ast.ResultField{Expr: ast.NewValueExpr(int64(1))}
+	colExpr := &ast.ColumnNameExpr{Refer: rf}
+	b = &ast.BinaryOperationExpr{L: colExpr, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, false)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
 }
