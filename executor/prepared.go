@@ -211,6 +211,7 @@ func (e *ExecuteExec) Build() error {
 		prepared.Params[i].SetValue(val)
 	}
 
+	ast.ResetEvaluatedFlag(prepared.Stmt)
 	if prepared.SchemaVersion != e.IS.SchemaMetaVersion() {
 		// If the schema version has changed we need to prepare it again,
 		// if this time it failed, the real reason for the error is schema changed.

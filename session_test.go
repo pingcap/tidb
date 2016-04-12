@@ -83,6 +83,26 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(err, IsNil)
 	mustExecSQL(c, se, s.dropDBSQL)
 
+	mustExecSQL(c, se, "prepare stmt from 'select 1+?'")
+	mustExecSQL(c, se, "set @v1=100")
+	rs := mustExecSQL(c, se, "execute stmt using @v1")
+	r, err := rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(r.Data[0].GetFloat64(), Equals, float64(101))
+
+	mustExecSQL(c, se, "set @v2=200")
+	rs = mustExecSQL(c, se, "execute stmt using @v2")
+	r, err = rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(r.Data[0].GetFloat64(), Equals, float64(201))
+
+	mustExecSQL(c, se, "set @v3=300")
+	rs = mustExecSQL(c, se, "execute stmt using @v3")
+	r, err = rs.Next()
+	c.Assert(err, IsNil)
+	c.Assert(r.Data[0].GetFloat64(), Equals, float64(301))
+	mustExecSQL(c, se, "deallocate prepare stmt")
+
 	err = store.Close()
 	c.Assert(err, IsNil)
 }
