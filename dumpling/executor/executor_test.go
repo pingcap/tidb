@@ -588,6 +588,27 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustExec("begin")
+	// Test limit
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 0;")
+	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	// Test limit overflow
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 100 offset 0;")
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	// Test offset overflow
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
+	r.Check(testkit.Rows())
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
 	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
