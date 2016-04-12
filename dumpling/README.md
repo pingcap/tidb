@@ -22,7 +22,7 @@ Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable 
 
 
 - __NewSQL over TiKV__ 
-Turn TiKV into NewSQL database
+Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database
 
 - __Multiple storage engine support__  
 Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from GolevelDB, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
