@@ -15,10 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"strings"
-	"testing"
-	"time"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
@@ -29,6 +25,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
+	"strings"
+	"testing"
+	"time"
 )
 
 func TestT(t *testing.T) {
@@ -594,6 +593,25 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
 
+	// Test limit + order by
+	tk.MustExec("begin")
+	executor.SortBufferSize = 10
+	for i := 3; i <= 10; i += 1 {
+		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
+	}
+	tk.MustExec("insert INTO select_order_test VALUES (10086, \"hi\");")
+	for i := 11; i <= 20; i += 1 {
+		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"hh\");", i))
+	}
+	for i := 21; i <= 30; i += 1 {
+		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
+	}
+	tk.MustExec("insert INTO select_order_test VALUES (1501, \"aa\");")
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
+	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+	executor.SortBufferSize = 500
 	tk.MustExec("drop table select_order_test")
 }
 
