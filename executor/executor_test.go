@@ -15,6 +15,10 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
+	"testing"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
@@ -25,9 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestT(t *testing.T) {
