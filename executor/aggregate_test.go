@@ -97,6 +97,8 @@ func (s *testAggFuncSuite) TestCount(c *C) {
 		AggFuncs: []*ast.AggregateFuncExpr{fc1, fc2},
 		Src:      src,
 	}
+	ast.SetFlag(fc1)
+	ast.SetFlag(fc2)
 	var (
 		row *Row
 		cnt int

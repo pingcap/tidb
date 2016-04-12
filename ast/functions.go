@@ -386,6 +386,7 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 				F:    AggFuncFirstRow,
 				Args: []ExprNode{v},
 			}
+			agg.SetFlag((v.GetFlag() | FlagHasAggregateFunc))
 			a.AggFuncs = append(a.AggFuncs, agg)
 			return agg, true
 		}
