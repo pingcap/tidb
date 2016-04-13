@@ -40,9 +40,9 @@ type regionResponse struct {
 }
 
 type selectContext struct {
-	sel  *tipb.SelectRequest
-	txn  kv.Transaction
-	eval *xeval.Evaluator
+	sel          *tipb.SelectRequest
+	txn          kv.Transaction
+	eval         *xeval.Evaluator
 	whereColumns map[int64]*tipb.ColumnInfo
 }
 
@@ -170,7 +170,7 @@ func (rs *localRegion) extractKVRanges(tid int64, idxID int64, krans []*tipb.Key
 	return kvRanges
 }
 
-func (rs *localRegion) getRowsFromRange(ctx *selectContext,	ran kv.KeyRange) ([]*tipb.Row, error) {
+func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange) ([]*tipb.Row, error) {
 	var rows []*tipb.Row
 	if ran.IsPoint() {
 		_, err := ctx.txn.Get(ran.StartKey)
