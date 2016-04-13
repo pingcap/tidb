@@ -14,15 +14,15 @@
 package autoid
 
 import (
+	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/terror"
-	"math"
-	"sync/atomic"
 )
 
 const (
