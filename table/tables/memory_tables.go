@@ -216,6 +216,9 @@ func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.C
 	row := item.(*itemPair).data
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
+		if col == nil {
+			continue
+		}
 		v[i] = row[col.Offset]
 	}
 	return v, nil
@@ -249,8 +252,8 @@ func (t *MemoryTable) AllocAutoID() (int64, error) {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *MemoryTable) RebaseAutoID(newBase int64) error {
-	return t.alloc.Rebase(t.ID, newBase)
+func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool) error {
+	return t.alloc.Rebase(t.ID, newBase, isSetStep)
 }
 
 // IterRecords implements table.Table IterRecords interface.

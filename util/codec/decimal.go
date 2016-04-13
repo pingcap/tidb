@@ -35,41 +35,10 @@ func codecSign(value int64) int64 {
 	return positiveSign
 }
 
-func encodeExp(expValue int64, expSign int64, valSign int64) int64 {
-	if expSign == negativeSign {
-		expValue = -expValue
-	}
-
-	if expSign != valSign {
-		expValue = ^expValue
-	}
-
-	return expValue
-}
-
-func decodeExp(expValue int64, expSign int64, valSign int64) int64 {
-	if expSign != valSign {
-		expValue = ^expValue
-	}
-
-	if expSign == negativeSign {
-		expValue = -expValue
-	}
-
-	return expValue
-}
-
-func codecValue(value []byte, valSign int64) {
-	if valSign == negativeSign {
-		reverseBytes(value)
-	}
-}
-
 // EncodeDecimal encodes a decimal d into a byte slice which can be sorted lexicographically later.
 // EncodeDecimal guarantees that the encoded value is in ascending order for comparison.
 // Decimal encoding:
 // Byte -> value sign
-// Byte -> exp sign
 // EncodeInt -> exp value
 // EncodeBytes -> abs value bytes
 func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
@@ -103,17 +72,17 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	}
 
 	expVal := exp + int64(d.Exponent())
-	expSign := codecSign(expVal)
-
-	// For negtive exp, do bit reverse for exp.
-	// For negtive decimal, do bit reverse for exp and value.
-	expVal = encodeExp(expVal, expSign, valSign)
-	codecValue(value, valSign)
+	if valSign == negativeSign {
+		expVal = -expVal
+	}
 
 	b = append(b, byte(valSign))
-	b = append(b, byte(expSign))
 	b = EncodeInt(b, expVal)
-	b = EncodeBytes(b, value)
+	if valSign == negativeSign {
+		b = EncodeBytesDesc(b, value)
+	} else {
+		b = EncodeBytes(b, value)
+	}
 	return b
 }
 
@@ -139,25 +108,24 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 		return r, d, errors.Trace(err)
 	}
 
-	// Decode exp sign.
-	expSign := int64(r[0])
-	r = r[1:]
-
 	// Decode exp value.
 	expVal := int64(0)
 	r, expVal, err = DecodeInt(r)
 	if err != nil {
 		return r, d, errors.Trace(err)
 	}
-	expVal = decodeExp(expVal, expSign, valSign)
 
 	// Decode abs value bytes.
 	value := []byte{}
-	r, value, err = DecodeBytes(r)
+	if valSign == negativeSign {
+		expVal = -expVal
+		r, value, err = DecodeBytesDesc(r)
+	} else {
+		r, value, err = DecodeBytes(r)
+	}
 	if err != nil {
 		return r, d, errors.Trace(err)
 	}
-	codecValue(value, valSign)
 
 	// Generate decimal string value.
 	var decimalStr []byte

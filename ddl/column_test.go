@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -80,7 +81,7 @@ func testCreateColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, t
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -93,7 +94,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 		Args:     []interface{}{model.NewCIStr(colName)},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
 		return nil
@@ -104,6 +105,7 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 }
 
 func (s *testColumnSuite) TestColumn(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
 	defer ctx.FinishTxn(true)
@@ -550,6 +552,7 @@ func (s *testColumnSuite) testGetColumn(c *C, t table.Table, name string, isExis
 }
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
+	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
@@ -616,6 +619,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
+	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(c, d)

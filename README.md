@@ -21,17 +21,12 @@ Use TiDB as MySQL. You can replace MySQL with TiDB to power your application wit
 Enjoy TiDB as much as we love Go. We believe Go code is both easy and enjoyable to work with. Go makes us improve TiDB fast and makes it easy to dive into the codebase.
 
 
-- __NewSQL over HBase__  
-Turn HBase into NewSQL database
+- __NewSQL over TiKV__  
+  Turn [TiKV](https://github.com/pingcap/tikv) into NewSQL database
 
 - __Multiple storage engine support__  
 Power TiDB with your most favorite engines. TiDB supports many popular storage engines in single-machine mode. You can choose from GolevelDB, LevelDB, RocksDB, LMDB, BoltDB and even more to come.
 
-## Status
-
-TiDB is at its early age and under heavy development, all of the features mentioned above are fully implemented.
-
-__Please do not use it in production.__
 
 ## Roadmap
 

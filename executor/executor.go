@@ -287,13 +287,22 @@ func (e *TableScanExec) seekRange(handle int64) (inRange bool) {
 func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
 	var err error
-	row.Data, err = e.t.Row(e.ctx, handle)
+
+	columns := make([]*column.Col, len(e.fields))
+	for i, v := range e.fields {
+		if v.Referenced {
+			columns[i] = e.t.Cols()[i]
+		}
+	}
+	row.Data, err = e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// Set result fields value.
 	for i, v := range e.fields {
-		v.Expr.SetValue(row.Data[i].GetValue())
+		if v.Referenced {
+			v.Expr.SetValue(row.Data[i].GetValue())
+		}
 	}
 
 	// Put rowKey to the tail of record row
@@ -415,7 +424,13 @@ func indexCompare(idxKey []types.Datum, boundVals []types.Datum) (int, error) {
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
 	var err error
-	row.Data, err = e.scan.tbl.Row(e.scan.ctx, h)
+	columns := make([]*column.Col, len(e.scan.fields))
+	for i, v := range e.scan.fields {
+		if v.Referenced {
+			columns[i] = e.scan.tbl.Cols()[i]
+		}
+	}
+	row.Data, err = e.scan.tbl.RowWithCols(e.scan.ctx, h, columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -841,6 +856,7 @@ type SortExec struct {
 	ByItems []*ast.ByItem
 	Rows    []*orderByRow
 	ctx     context.Context
+	Limit   *plan.Limit
 	Idx     int
 	fetched bool
 	err     error
@@ -887,9 +903,18 @@ func (e *SortExec) Less(i, j int) bool {
 	return false
 }
 
+// SortBufferSize represents the total extra row count that sort can use.
+var SortBufferSize = 500
+
 // Next implements Executor Next interface.
 func (e *SortExec) Next() (*Row, error) {
 	if !e.fetched {
+		offset := -1
+		totalCount := -1
+		if e.Limit != nil {
+			offset = int(e.Limit.Offset)
+			totalCount = offset + int(e.Limit.Count)
+		}
 		for {
 			srcRow, err := e.Src.Next()
 			if err != nil {
@@ -909,8 +934,21 @@ func (e *SortExec) Next() (*Row, error) {
 				}
 			}
 			e.Rows = append(e.Rows, orderRow)
+			if totalCount != -1 && e.Len() >= totalCount+SortBufferSize {
+				sort.Sort(e)
+				e.Rows = e.Rows[:totalCount]
+			}
 		}
 		sort.Sort(e)
+		if offset >= 0 && offset < e.Len() {
+			if totalCount > e.Len() {
+				e.Rows = e.Rows[offset:]
+			} else {
+				e.Rows = e.Rows[offset:totalCount]
+			}
+		} else if offset != -1 {
+			e.Rows = e.Rows[:0]
+		}
 		e.fetched = true
 	}
 	if e.err != nil {
@@ -1153,5 +1191,47 @@ func (e *DistinctExec) Next() (*Row, error) {
 
 // Close implements Executor Close interface.
 func (e *DistinctExec) Close() error {
+	return e.Src.Close()
+}
+
+// ReverseExec produces reverse ordered result, it is used to wrap executors that do not support reverse scan.
+type ReverseExec struct {
+	Src    Executor
+	rows   []*Row
+	cursor int
+	done   bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *ReverseExec) Fields() []*ast.ResultField {
+	return e.Src.Fields()
+}
+
+// Next implements Executor Next interface.
+func (e *ReverseExec) Next() (*Row, error) {
+	if !e.done {
+		for {
+			row, err := e.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if row == nil {
+				break
+			}
+			e.rows = append(e.rows, row)
+		}
+		e.cursor = len(e.rows) - 1
+		e.done = true
+	}
+	if e.cursor < 0 {
+		return nil, nil
+	}
+	row := e.rows[e.cursor]
+	e.cursor--
+	return row, nil
+}
+
+// Close implements Executor Close interface.
+func (e *ReverseExec) Close() error {
 	return e.Src.Close()
 }

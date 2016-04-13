@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -29,6 +28,28 @@ import (
 	// import table implementation to init table.TableFromMeta
 	_ "github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/types"
+)
+
+var (
+	// ErrDatabaseDropExists returns for dropping a non-existent database.
+	ErrDatabaseDropExists = terror.ClassSchema.New(codeDBDropExists, "database doesn't exist")
+	// ErrDatabaseNotExists returns for database not exists.
+	ErrDatabaseNotExists = terror.ClassSchema.New(codeDatabaseNotExists, "database not exists")
+	// ErrTableNotExists returns for table not exists.
+	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
+	// ErrColumnNotExists returns for column not exists.
+	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
+
+	// ErrDatabaseExists returns for database already exists.
+	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
+	// ErrTableExists returns for table already exists.
+	ErrTableExists = terror.ClassSchema.New(codeTableExists, "table already exists")
+	// ErrTableDropExists returns for dropping a non-existent table.
+	ErrTableDropExists = terror.ClassSchema.New(codeBadTable, "unknown table")
+	// ErrColumnExists returns for column already exists.
+	ErrColumnExists = terror.ClassSchema.New(codeColumnExists, "Duplicate column")
+	// ErrIndexExists returns for index already exists.
+	ErrIndexExists = terror.ClassSchema.New(codeIndexExists, "Duplicate Index")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -45,6 +66,7 @@ type InfoSchema interface {
 	IndexByName(schema, table, index model.CIStr) (*model.IndexInfo, bool)
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
+	AllocByID(id int64) (autoid.Allocator, bool)
 	ColumnByID(id int64) (*model.ColumnInfo, bool)
 	ColumnIndicesByID(id int64) ([]*model.IndexInfo, bool)
 	AllSchemaNames() []string
@@ -60,14 +82,15 @@ const (
 )
 
 type infoSchema struct {
-	schemaNameToID map[string]int64
-	tableNameToID  map[tableName]int64
-	columnNameToID map[columnName]int64
-	schemas        map[int64]*model.DBInfo
-	tables         map[int64]table.Table
-	columns        map[int64]*model.ColumnInfo
-	indices        map[indexName]*model.IndexInfo
-	columnIndices  map[int64][]*model.IndexInfo
+	schemaNameToID  map[string]int64
+	tableNameToID   map[tableName]int64
+	columnNameToID  map[columnName]int64
+	schemas         map[int64]*model.DBInfo
+	tables          map[int64]table.Table
+	tableAllocators map[int64]autoid.Allocator
+	columns         map[int64]*model.ColumnInfo
+	indices         map[indexName]*model.IndexInfo
+	columnIndices   map[int64][]*model.IndexInfo
 
 	// We should check version when change schema.
 	schemaMetaVersion int64
@@ -111,7 +134,7 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	id, ok := is.tableNameToID[tableName{schema: schema.L, table: table.L}]
 	if !ok {
-		return nil, TableNotExists.Gen("table %s.%s does not exist", schema, table)
+		return nil, ErrTableNotExists.Gen("table %s.%s does not exist", schema, table)
 	}
 	t = is.tables[id]
 	return
@@ -148,6 +171,11 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	val, ok = is.tables[id]
+	return
+}
+
+func (is *infoSchema) AllocByID(id int64) (val autoid.Allocator, ok bool) {
+	val, ok = is.tableAllocators[id]
 	return
 }
 
@@ -205,23 +233,13 @@ func NewHandle(store kv.Storage) *Handle {
 		store: store,
 	}
 	// init memory tables
-	initMemoryTables(store)
-	initPerfSchema(store)
+	initMemoryTables()
+	initPerfSchema()
 	return h
 }
 
-func initPerfSchema(store kv.Storage) {
-	perfHandle = perfschema.NewPerfHandle(store)
-}
-
-func genGlobalID(store kv.Storage) (int64, error) {
-	var globalID int64
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
-	})
-	return globalID, errors.Trace(err)
+func initPerfSchema() {
+	perfHandle = perfschema.NewPerfHandle()
 }
 
 var (
@@ -236,44 +254,27 @@ var (
 	filesTbl      table.Table
 	defTbl        table.Table
 	profilingTbl  table.Table
+	partitionsTbl table.Table
 	nameToTable   map[string]table.Table
 
 	perfHandle perfschema.PerfSchema
 )
 
-func setColumnID(meta *model.TableInfo, store kv.Storage) error {
-	var err error
-	for _, c := range meta.Columns {
-		c.ID, err = genGlobalID(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func initMemoryTables(store kv.Storage) error {
+func initMemoryTables() error {
 	// Init Information_Schema
 	var (
 		err error
 		tbl table.Table
 	)
-	dbID, err := genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	dbID := autoid.GenLocalSchemaID()
 	nameToTable = make(map[string]table.Table)
 	isTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		meta := buildTableMeta(name, cols)
 		isTables = append(isTables, meta)
-		meta.ID, err = genGlobalID(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = setColumnID(meta, store)
-		if err != nil {
-			return errors.Trace(err)
+		meta.ID = autoid.GenLocalSchemaID()
+		for _, c := range meta.Columns {
+			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
 		tbl, err = createMemoryTable(meta, alloc)
@@ -335,17 +336,30 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 		columnNameToID:    map[columnName]int64{},
 		schemas:           map[int64]*model.DBInfo{},
 		tables:            map[int64]table.Table{},
+		tableAllocators:   map[int64]autoid.Allocator{},
 		columns:           map[int64]*model.ColumnInfo{},
 		indices:           map[indexName]*model.IndexInfo{},
 		columnIndices:     map[int64][]*model.IndexInfo{},
 		schemaMetaVersion: schemaMetaVersion,
 	}
 	var err error
+	var hasOldInfo bool
+	infoschema := h.Get()
+	if infoschema != nil {
+		hasOldInfo = true
+	}
 	for _, di := range newInfo {
 		info.schemas[di.ID] = di
 		info.schemaNameToID[di.Name.L] = di.ID
 		for _, t := range di.Tables {
 			alloc := autoid.NewAllocator(h.store, di.ID)
+			if hasOldInfo {
+				val, ok := infoschema.AllocByID(t.ID)
+				if ok {
+					alloc = val
+				}
+			}
+			info.tableAllocators[t.ID] = alloc
 			info.tables[t.ID], err = table.TableFromMeta(alloc, t)
 			if err != nil {
 				return errors.Trace(err)
@@ -372,7 +386,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	for _, t := range isDB.Tables {
 		tbl, ok := nameToTable[t.Name.L]
 		if !ok {
-			return errors.Errorf("table `%s` is missing.", t.Name)
+			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		info.tables[t.ID] = tbl
 		tname := tableName{isDB.Name.L, t.Name.L}
@@ -390,7 +404,7 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	for _, t := range psDB.Tables {
 		tbl, ok := perfHandle.GetTable(t.Name.O)
 		if !ok {
-			return errors.Errorf("table `%s` is missing.", t.Name)
+			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		info.tables[t.ID] = tbl
 		tname := tableName{psDB.Name.L, t.Name.L}
@@ -437,43 +451,29 @@ func (h *Handle) Get() InfoSchema {
 
 // Schema error codes.
 const (
-	CodeDbDropExists      terror.ErrCode = 1008
-	CodeDatabaseNotExists                = 1049
-	CodeTableNotExists                   = 1146
-	CodeColumnNotExists                  = 1054
+	codeDBDropExists      terror.ErrCode = 1008
+	codeDatabaseNotExists                = 1049
+	codeTableNotExists                   = 1146
+	codeColumnNotExists                  = 1054
 
-	CodeDatabaseExists = 1007
-	CodeTableExists    = 1050
-	CodeBadTable       = 1051
-)
-
-var (
-	// DatabaseDropExists returns for drop an unexist database.
-	DatabaseDropExists = terror.ClassSchema.New(CodeDbDropExists, "database doesn't exist")
-	// DatabaseNotExists returns for database not exists.
-	DatabaseNotExists = terror.ClassSchema.New(CodeDatabaseNotExists, "database not exists")
-	// TableNotExists returns for table not exists.
-	TableNotExists = terror.ClassSchema.New(CodeTableNotExists, "table not exists")
-	// ColumnNotExists returns for column not exists.
-	ColumnNotExists = terror.ClassSchema.New(CodeColumnNotExists, "field not exists")
-
-	// DatabaseExists returns for database already exists.
-	DatabaseExists = terror.ClassSchema.New(CodeDatabaseExists, "database already exists")
-	// TableExists returns for table already exists.
-	TableExists = terror.ClassSchema.New(CodeTableExists, "table already exists")
-	// TableDropExists returns for drop an unexist table.
-	TableDropExists = terror.ClassSchema.New(CodeBadTable, "unknown table")
+	codeDatabaseExists = 1007
+	codeTableExists    = 1050
+	codeBadTable       = 1051
+	codeColumnExists   = 1060
+	codeIndexExists    = 1831
 )
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeDbDropExists:      mysql.ErrDbDropExists,
-		CodeDatabaseNotExists: mysql.ErrBadDb,
-		CodeTableNotExists:    mysql.ErrNoSuchTable,
-		CodeColumnNotExists:   mysql.ErrBadField,
-		CodeDatabaseExists:    mysql.ErrDbCreateExists,
-		CodeTableExists:       mysql.ErrTableExists,
-		CodeBadTable:          mysql.ErrBadTable,
+		codeDBDropExists:      mysql.ErrDBDropExists,
+		codeDatabaseNotExists: mysql.ErrBadDB,
+		codeTableNotExists:    mysql.ErrNoSuchTable,
+		codeColumnNotExists:   mysql.ErrBadField,
+		codeDatabaseExists:    mysql.ErrDBCreateExists,
+		codeTableExists:       mysql.ErrTableExists,
+		codeBadTable:          mysql.ErrBadTable,
+		codeColumnExists:      mysql.ErrDupFieldName,
+		codeIndexExists:       mysql.ErrDupIndex,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }

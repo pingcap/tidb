@@ -15,6 +15,8 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
@@ -236,17 +238,17 @@ func runTestErrorCode(c *C) {
 		txn2, err := dbt.db.Begin()
 		c.Assert(err, IsNil)
 		_, err = txn2.Exec("use db_not_exists;")
-		checkErrorCode(c, err, tmysql.ErrBadDb)
+		checkErrorCode(c, err, tmysql.ErrBadDB)
 		_, err = txn2.Exec("select * from tbl_not_exists;")
 		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
-		checkErrorCode(c, err, tmysql.ErrDbCreateExists)
+		checkErrorCode(c, err, tmysql.ErrDBCreateExists)
 		_, err = txn2.Exec("create table test (c int);")
 		checkErrorCode(c, err, tmysql.ErrTableExists)
 		_, err = txn2.Exec("drop table unknown_table;")
 		checkErrorCode(c, err, tmysql.ErrBadTable)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, tmysql.ErrDbDropExists)
+		checkErrorCode(c, err, tmysql.ErrDBDropExists)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
@@ -303,4 +305,15 @@ func runTestResultFieldTableIsNull(c *C) {
 		dbt.mustExec("create table test (c int);")
 		dbt.mustExec("explain select * from test;")
 	})
+}
+
+func runTestStatusAPI(c *C) {
+	resp, err := http.Get("http://127.0.0.1:10090/status")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	var data status
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(data.Version, Equals, tmysql.ServerVersion)
 }

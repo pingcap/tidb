@@ -161,3 +161,22 @@ func (txn *hbaseTxn) LockKeys(keys ...kv.Key) error {
 func (txn *hbaseTxn) IsReadOnly() bool {
 	return !txn.dirty
 }
+
+func (txn *hbaseTxn) StartTS() uint64 {
+	return txn.tid
+}
+
+func (txn *hbaseTxn) GetClient() kv.Client {
+	return &hbaseClient{}
+}
+
+type hbaseClient struct {
+}
+
+func (c *hbaseClient) SupportRequestType(reqType, subType int64) bool {
+	return false
+}
+
+func (c *hbaseClient) Send(req *kv.Request) kv.Response {
+	return nil
+}

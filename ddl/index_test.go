@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -69,7 +70,7 @@ func testCreateIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		Args:     []interface{}{unique, model.NewCIStr(indexName), id, []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr(colName)}, Length: 256}}},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -82,12 +83,13 @@ func testDropIndex(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 		Args:     []interface{}{model.NewCIStr(indexName)},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
 	defer ctx.FinishTxn(true)
@@ -562,6 +564,7 @@ func (s *testIndexSuite) checkAddOrDropIndex(c *C, state model.SchemaState, d *d
 }
 
 func (s *testIndexSuite) TestAddIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)
@@ -629,6 +632,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 }
 
 func (s *testIndexSuite) TestDropIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(c, d)

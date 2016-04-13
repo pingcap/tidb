@@ -16,16 +16,18 @@ package types
 import (
 	"time"
 
-	"github.com/pingcap/check"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = check.Suite(&testCompareSuite{})
+var _ = Suite(&testCompareSuite{})
 
 type testCompareSuite struct {
 }
 
-func (s *testCompareSuite) TestCompare(c *check.C) {
+func (s *testCompareSuite) TestCompare(c *C) {
+	defer testleak.AfterTest(c)()
 	cmpTbl := []struct {
 		lhs interface{}
 		rhs interface{}
@@ -146,18 +148,19 @@ func (s *testCompareSuite) TestCompare(c *check.C) {
 	}
 
 	for i, t := range cmpTbl {
-		comment := check.Commentf("%d %v %v", i, t.lhs, t.rhs)
+		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
 		ret, err := Compare(t.lhs, t.rhs)
-		c.Assert(err, check.IsNil)
-		c.Assert(ret, check.Equals, t.ret, comment)
+		c.Assert(err, IsNil)
+		c.Assert(ret, Equals, t.ret, comment)
 
 		ret, err = Compare(t.rhs, t.lhs)
-		c.Assert(err, check.IsNil)
-		c.Assert(ret, check.Equals, -t.ret, comment)
+		c.Assert(err, IsNil)
+		c.Assert(ret, Equals, -t.ret, comment)
 	}
 }
 
-func (s *testCompareSuite) TestCompareDatum(c *check.C) {
+func (s *testCompareSuite) TestCompareDatum(c *C) {
+	defer testleak.AfterTest(c)()
 	cmpTbl := []struct {
 		lhs Datum
 		rhs Datum
@@ -173,13 +176,13 @@ func (s *testCompareSuite) TestCompareDatum(c *check.C) {
 		{MinNotNullDatum(), MaxValueDatum(), -1},
 	}
 	for i, t := range cmpTbl {
-		comment := check.Commentf("%d %v %v", i, t.lhs, t.rhs)
+		comment := Commentf("%d %v %v", i, t.lhs, t.rhs)
 		ret, err := t.lhs.CompareDatum(t.rhs)
-		c.Assert(err, check.IsNil)
-		c.Assert(ret, check.Equals, t.ret, comment)
+		c.Assert(err, IsNil)
+		c.Assert(ret, Equals, t.ret, comment)
 
 		ret, err = t.rhs.CompareDatum(t.lhs)
-		c.Assert(err, check.IsNil)
-		c.Assert(ret, check.Equals, -t.ret, comment)
+		c.Assert(err, IsNil)
+		c.Assert(ret, Equals, -t.ret, comment)
 	}
 }

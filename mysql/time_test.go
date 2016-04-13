@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -30,6 +31,7 @@ type testTimeSuite struct {
 }
 
 func (s *testTimeSuite) TestDateTime(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -87,6 +89,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 }
 
 func (s *testTimeSuite) TestTimestamp(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -112,6 +115,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 }
 
 func (s *testTimeSuite) TestDate(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -142,6 +146,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 }
 
 func (s *testTimeSuite) TestTime(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -219,6 +224,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 }
 
 func (s *testTimeSuite) TestTimeFsp(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Fsp    int
@@ -252,6 +258,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 }
 func (s *testTimeSuite) TestYear(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect int16
@@ -310,6 +317,7 @@ func (s *testTimeSuite) getLocation(c *C) *time.Location {
 }
 
 func (s *testTimeSuite) TestCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	t, err := ParseTimestamp("2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
 	b, err := t.Marshal()
@@ -382,6 +390,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 }
 
 func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
@@ -452,6 +461,7 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 }
 
 func (s *testTimeSuite) TestToNumber(c *C) {
+	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int
@@ -470,6 +480,29 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 
 	for _, test := range tblDateTime {
 		t, err := ParseTime(test.Input, TypeDatetime, test.Fsp)
+		c.Assert(err, IsNil)
+		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+	}
+
+	// Fix issue #1046
+	tblDate := []struct {
+		Input  string
+		Fsp    int
+		Expect string
+	}{
+		{"12-12-31 11:30:45", 0, "20121231"},
+		{"12-12-31 11:30:45", 6, "20121231"},
+		{"12-12-31 11:30:45.123", 6, "20121231"},
+		{"12-12-31 11:30:45.123345", 0, "20121231"},
+		{"12-12-31 11:30:45.123345", 3, "20121231"},
+		{"12-12-31 11:30:45.123345", 5, "20121231"},
+		{"12-12-31 11:30:45.123345", 6, "20121231"},
+		{"12-12-31 11:30:45.1233457", 6, "20121231"},
+		{"12-12-31 11:30:45.823345", 0, "20121231"},
+	}
+
+	for _, test := range tblDate {
+		t, err := ParseTime(test.Input, TypeDate, 0)
 		c.Assert(err, IsNil)
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
 	}
@@ -500,6 +533,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 }
 
 func (s *testTimeSuite) TestParseFrac(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		S   string
 		Fsp int
@@ -521,6 +555,7 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestRoundFrac(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -565,6 +600,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 }
 
 func (s *testTimeSuite) TestConvert(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -607,6 +643,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 }
 
 func (s *testTimeSuite) TestCompare(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -649,6 +686,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 }
 
 func (s *testTimeSuite) TestDurationClock(c *C) {
+	defer testleak.AfterTest(c)()
 	// test hour, minute, second and micro second
 	tbl := []struct {
 		Input       string
@@ -673,6 +711,7 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 }
 
 func (s *testTimeSuite) TestParseDateFormat(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Result []string

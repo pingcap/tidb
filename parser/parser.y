@@ -106,6 +106,7 @@ import (
 	create		"CREATE"
 	cross 		"CROSS"
 	curDate 	"CURDATE"
+	utcDate 	"UTC_DATE"
 	currentDate 	"CURRENT_DATE"
 	curTime 	"CUR_TIME"
 	currentTime 	"CURRENT_TIME"
@@ -301,6 +302,8 @@ import (
 	zerofill	"ZEROFILL"
 	
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
+	sqlCache	"SQL_CACHE"
+	sqlNoCache	"SQL_NO_CACHE"
 
 	currentTs	"CURRENT_TIMESTAMP"
 	localTime	"LOCALTIME"
@@ -501,6 +504,7 @@ import (
 	PrepareSQL		"Prepare statement sql string"
 	PrimaryExpression	"primary expression"
 	PrimaryFactor		"primary expression factor"
+	PrimaryOpt		"Optional primary keyword"
 	Priority		"insert statement priority"
 	PrivElem		"Privilege element"
 	PrivElemList		"Privilege element list"
@@ -515,6 +519,7 @@ import (
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
 	SelectStmtCalcFoundRows	"SELECT statement optional SQL_CALC_FOUND_ROWS"
+	SelectStmtSQLCache	"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
 	SelectStmtDistinct	"SELECT statement optional DISTINCT clause"
 	SelectStmtFieldList	"SELECT statement field list"
 	SelectStmtLimit		"SELECT statement optional LIMIT clause"
@@ -614,11 +619,17 @@ import (
 %precedence lowerThanCalcFoundRows
 %precedence calcFoundRows
 
+%precedence lowerThanSQLCache
+%precedence sqlCache sqlNoCache
+
 %precedence lowerThanSetKeyword
 %precedence set
 
 %precedence lowerThanInsertValues
 %precedence insertValues
+
+%precedence lowerThanKey
+%precedence key 
 
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
@@ -851,6 +862,9 @@ CommitStmt:
 		$$ = &ast.CommitStmt{}
 	}
 
+PrimaryOpt:
+	{} | "PRIMARY"
+
 ColumnOption:
 	"NOT" "NULL"
 	{
@@ -864,13 +878,16 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoIncrement}
 	}
-|	"PRIMARY" "KEY"
+|	PrimaryOpt "KEY" 
 	{
+		// KEY is normally a synonym for INDEX. The key attribute PRIMARY KEY 
+		// can also be specified as just KEY when given in a column definition. 
+		// See: http://dev.mysql.com/doc/refman/5.7/en/create-table.html
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionPrimaryKey}
 	}
-|	"UNIQUE"
+|	"UNIQUE" %prec lowerThanKey
 	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniq}
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
 	}
 |	"UNIQUE" "KEY"
 	{
@@ -887,7 +904,7 @@ ColumnOption:
 	}
 |	"COMMENT" stringLit
 	{
-		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment}
+		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr($2)}
 	}
 |	"CHECK" '(' Expression ')'
 	{
@@ -918,51 +935,122 @@ ColumnOptionListOpt:
 ConstraintElem:
 	"PRIMARY" "KEY" IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: $5.([]*ast.IndexColName)}
+		c := &ast.Constraint{
+			Tp: ast.ConstraintPrimaryKey, 
+			Keys: $5.([]*ast.IndexColName),
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"FULLTEXT" "KEY" IndexName '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintFulltext,
 			Keys:	$5.([]*ast.IndexColName),
 			Name:	$3.(string),
 		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		$$ = c
 	}
 |	"INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintIndex,
 			Keys:	$5.([]*ast.IndexColName),
 			Name:	$2.(string),
 		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintKey,
 			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string)}
+			Name:	$2.(string),
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"UNIQUE" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniq,
 			Keys:	$5.([]*ast.IndexColName),
-			Name:	$2.(string)}
+			Name:	$2.(string),
+		}
+		if $7 != nil {
+			c.Option = $7.(*ast.IndexOption)
+		}
+		if $3 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $3.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"UNIQUE" "INDEX" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqIndex,
 			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string)}
+			Name:	$3.(string),
+		}
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if $4 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $4.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"UNIQUE" "KEY" IndexName IndexTypeOpt '(' IndexColNameList ')' IndexOption
 	{
-		$$ = &ast.Constraint{
+		c := &ast.Constraint{
 			Tp:	ast.ConstraintUniqKey,
 			Keys:	$6.([]*ast.IndexColName),
-			Name:	$3.(string)}
+			Name:	$3.(string),
+		}
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if $4 != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = $4.(model.IndexType)	
+		}
+		$$ = c
 	}
 |	"FOREIGN" "KEY" IndexName '(' IndexColNameList ')' ReferDef
 	{
@@ -1683,7 +1771,9 @@ IndexName:
 	}
 
 IndexOption:
-	{}
+	{
+		$$ = nil
+	}
 |	"KEY_BLOCK_SIZE" EqOpt LengthNum 
 	{
 		$$ = &ast.IndexOption{
@@ -1693,7 +1783,7 @@ IndexOption:
 |	IndexType
 	{
 		$$ = &ast.IndexOption {
-			Tp: $1.(ast.IndexType),
+			Tp: $1.(model.IndexType),
 		}
 	}
 |	"COMMENT" stringLit
@@ -1706,15 +1796,17 @@ IndexOption:
 IndexType:
 	"USING" "BTREE"	
 	{
-		$$ = ast.IndexTypeBtree
+		$$ = model.IndexTypeBtree
 	}
 |	"USING" "HASH"
 	{
-		$$ = ast.IndexTypeHash
+		$$ = model.IndexTypeHash
 	}
 
 IndexTypeOpt:
-	{}
+	{
+		$$ = nil 
+	}
 |	IndexType
 	{
 		$$ = $1
@@ -1732,7 +1824,7 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -2084,7 +2176,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION" | "UTC_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -2097,6 +2189,10 @@ FunctionCallConflict:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
 |	"CURRENT_DATE"
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"UTC_DATE"
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
@@ -3116,7 +3212,7 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	SelectStmtDistinct SelectStmtCalcFoundRows
+	SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
 		// TODO: return calc_found_rows opt and support more other options
 		$$ = $1
@@ -3130,6 +3226,19 @@ SelectStmtCalcFoundRows:
 |	"SQL_CALC_FOUND_ROWS"
 	{
 		$$ = true
+	}
+SelectStmtSQLCache:
+	%prec lowerThanSQLCache
+	{
+		$$ = false
+	}
+|	"SQL_CACHE"
+	{
+		$$ = true
+	}
+|	"SQL_NO_CACHE"
+	{
+		$$ = false
 	}
 
 SelectStmtFieldList:
@@ -3569,7 +3678,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" PrimaryExpression
 	{
-		$$ = &ast.PatternLikeExpr{Pattern: $2.(ast.ExprNode)}
+		$$ = &ast.PatternLikeExpr{
+			Pattern: $2.(ast.ExprNode),
+			Escape: '\\',
+		}
 	}
 |	"WHERE" Expression
 	{

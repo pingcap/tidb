@@ -16,15 +16,17 @@ package types
 import (
 	"math"
 
-	"github.com/pingcap/check"
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = check.Suite(&testOverflowSuite{})
+var _ = Suite(&testOverflowSuite{})
 
 type testOverflowSuite struct {
 }
 
-func (s *testOverflowSuite) TestAdd(c *check.C) {
+func (s *testOverflowSuite) TestAdd(c *C) {
+	defer testleak.AfterTest(c)()
 	tblUint64 := []struct {
 		lsh      uint64
 		rsh      uint64
@@ -39,9 +41,9 @@ func (s *testOverflowSuite) TestAdd(c *check.C) {
 	for _, t := range tblUint64 {
 		ret, err := AddUint64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -63,9 +65,9 @@ func (s *testOverflowSuite) TestAdd(c *check.C) {
 	for _, t := range tblInt64 {
 		ret, err := AddInt64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -86,14 +88,15 @@ func (s *testOverflowSuite) TestAdd(c *check.C) {
 	for _, t := range tblInt {
 		ret, err := AddInteger(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 }
 
-func (s *testOverflowSuite) TestSub(c *check.C) {
+func (s *testOverflowSuite) TestSub(c *C) {
+	defer testleak.AfterTest(c)()
 	tblUint64 := []struct {
 		lsh      uint64
 		rsh      uint64
@@ -111,9 +114,9 @@ func (s *testOverflowSuite) TestSub(c *check.C) {
 	for _, t := range tblUint64 {
 		ret, err := SubUint64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -137,9 +140,9 @@ func (s *testOverflowSuite) TestSub(c *check.C) {
 	for _, t := range tblInt64 {
 		ret, err := SubInt64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -161,9 +164,9 @@ func (s *testOverflowSuite) TestSub(c *check.C) {
 	for _, t := range tblInt {
 		ret, err := SubUintWithInt(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -184,14 +187,15 @@ func (s *testOverflowSuite) TestSub(c *check.C) {
 	for _, t := range tblInt2 {
 		ret, err := SubIntWithUint(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 }
 
-func (s *testOverflowSuite) TestMul(c *check.C) {
+func (s *testOverflowSuite) TestMul(c *C) {
+	defer testleak.AfterTest(c)()
 	tblUint64 := []struct {
 		lsh      uint64
 		rsh      uint64
@@ -207,9 +211,9 @@ func (s *testOverflowSuite) TestMul(c *check.C) {
 	for _, t := range tblUint64 {
 		ret, err := MulUint64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -234,9 +238,9 @@ func (s *testOverflowSuite) TestMul(c *check.C) {
 	for _, t := range tblInt64 {
 		ret, err := MulInt64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -257,14 +261,15 @@ func (s *testOverflowSuite) TestMul(c *check.C) {
 	for _, t := range tblInt {
 		ret, err := MulInteger(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 }
 
-func (s *testOverflowSuite) TestDiv(c *check.C) {
+func (s *testOverflowSuite) TestDiv(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInt64 := []struct {
 		lsh      int64
 		rsh      int64
@@ -284,9 +289,9 @@ func (s *testOverflowSuite) TestDiv(c *check.C) {
 	for _, t := range tblInt64 {
 		ret, err := DivInt64(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -305,9 +310,9 @@ func (s *testOverflowSuite) TestDiv(c *check.C) {
 	for _, t := range tblInt {
 		ret, err := DivUintWithInt(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 
@@ -325,9 +330,9 @@ func (s *testOverflowSuite) TestDiv(c *check.C) {
 	for _, t := range tblInt2 {
 		ret, err := DivIntWithUint(t.lsh, t.rsh)
 		if t.overflow {
-			c.Assert(err, check.NotNil)
+			c.Assert(err, NotNil)
 		} else {
-			c.Assert(ret, check.Equals, t.ret)
+			c.Assert(ret, Equals, t.ret)
 		}
 	}
 }

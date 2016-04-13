@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -49,6 +50,7 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 }
 
 func (s *testIndexSuite) TestIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	index := kv.NewKVIndex([]byte("i"), "test", 0, false)
 
 	// Test ununiq index.
@@ -146,6 +148,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 }
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
+	defer testleak.AfterTest(c)()
 	index := kv.NewKVIndex([]byte("i"), "test", 1, false)
 
 	txn, err := s.s.Begin()

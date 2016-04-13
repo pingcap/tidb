@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -29,6 +30,7 @@ type testDistinctSuite struct {
 }
 
 func (s *testDistinctSuite) TestDistinct(c *check.C) {
+	defer testleak.AfterTest(c)()
 	dc := CreateDistinctChecker()
 	cases := []struct {
 		vals   []interface{}

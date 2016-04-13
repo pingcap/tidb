@@ -22,20 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// OldFunc is for a old builtin function.
-type OldFunc struct {
-	// F is the specific calling function.
-	F func([]interface{}, context.Context) (interface{}, error)
-	// MinArgs is the minimal arguments needed,
-	MinArgs int
-	// MaxArgs is the maximal arguments needed, -1 for infinity.
-	MaxArgs int
-	// IsStatic shows whether this function can be called statically.
-	IsStatic bool
-	// IsAggregate represents whether this function is an aggregate function or not.
-	IsAggregate bool
-}
-
 // Func is for a builtin function.
 type Func struct {
 	// F is the specific calling function.
@@ -44,38 +30,6 @@ type Func struct {
 	MinArgs int
 	// MaxArgs is the maximal arguments needed, -1 for infinity.
 	MaxArgs int
-}
-
-// OldFuncs holds all has old registered builtin functions.
-var OldFuncs = map[string]OldFunc{
-	// control functions
-	"if":     {builtinIf, 3, 3, true, false},
-	"ifnull": {builtinIfNull, 2, 2, true, false},
-	"nullif": {builtinNullIf, 2, 2, true, false},
-
-	// string functions
-	"concat":          {builtinConcat, 1, -1, true, false},
-	"concat_ws":       {builtinConcatWS, 2, -1, true, false},
-	"left":            {builtinLeft, 2, 2, true, false},
-	"length":          {builtinLength, 1, 1, true, false},
-	"lower":           {builtinLower, 1, 1, true, false},
-	"repeat":          {builtinRepeat, 2, 2, true, false},
-	"replace":         {builtinReplace, 3, 3, true, false},
-	"upper":           {builtinUpper, 1, 1, true, false},
-	"strcmp":          {builtinStrcmp, 2, 2, true, false},
-	"convert":         {builtinConvert, 2, 2, true, false},
-	"substring":       {builtinSubstring, 2, 3, true, false},
-	"substring_index": {builtinSubstringIndex, 3, 3, true, false},
-	"locate":          {builtinLocate, 2, 3, true, false},
-	"trim":            {builtinTrim, 1, 3, true, false},
-
-	// information functions
-	"current_user":  {builtinCurrentUser, 0, 0, false, false},
-	"database":      {builtinDatabase, 0, 0, false, false},
-	"found_rows":    {builtinFoundRows, 0, 0, false, false},
-	"user":          {builtinUser, 0, 0, false, false},
-	"connection_id": {builtinConnectionID, 0, 0, true, false},
-	"version":       {builtinVersion, 0, 0, true, false},
 }
 
 // Funcs holds all registered builtin functions.
@@ -108,6 +62,7 @@ var Funcs = map[string]Func{
 	"now":               {builtinNow, 0, 1},
 	"second":            {builtinSecond, 1, 1},
 	"sysdate":           {builtinSysDate, 0, 1},
+	"utc_date":          {builtinUTCDate, 0, 0},
 	"week":              {builtinWeek, 1, 2},
 	"weekday":           {builtinWeekDay, 1, 1},
 	"weekofyear":        {builtinWeekOfYear, 1, 1},
@@ -115,6 +70,35 @@ var Funcs = map[string]Func{
 	"yearweek":          {builtinYearWeek, 1, 2},
 	"extract":           {builtinExtract, 2, 2},
 	"date_arith":        {builtinDateArith, 3, 3},
+
+	// string functions
+	"concat":          {builtinConcat, 1, -1},
+	"concat_ws":       {builtinConcatWS, 2, -1},
+	"left":            {builtinLeft, 2, 2},
+	"length":          {builtinLength, 1, 1},
+	"lower":           {builtinLower, 1, 1},
+	"repeat":          {builtinRepeat, 2, 2},
+	"upper":           {builtinUpper, 1, 1},
+	"replace":         {builtinReplace, 3, 3},
+	"strcmp":          {builtinStrcmp, 2, 2},
+	"convert":         {builtinConvert, 2, 2},
+	"substring":       {builtinSubstring, 2, 3},
+	"substring_index": {builtinSubstringIndex, 3, 3},
+	"locate":          {builtinLocate, 2, 3},
+	"trim":            {builtinTrim, 1, 3},
+
+	// information functions
+	"current_user":  {builtinCurrentUser, 0, 0},
+	"database":      {builtinDatabase, 0, 0},
+	"found_rows":    {builtinFoundRows, 0, 0},
+	"user":          {builtinUser, 0, 0},
+	"connection_id": {builtinConnectionID, 0, 0},
+	"version":       {builtinVersion, 0, 0},
+
+	// control functions
+	"if":     {builtinIf, 3, 3},
+	"ifnull": {builtinIfNull, 2, 2},
+	"nullif": {builtinNullIf, 2, 2},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce

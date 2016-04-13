@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testHexSuite{})
@@ -25,6 +26,7 @@ type testHexSuite struct {
 }
 
 func (s *testHexSuite) TestHex(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Expect int64

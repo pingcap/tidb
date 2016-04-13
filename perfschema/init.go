@@ -15,8 +15,6 @@ package perfschema
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -190,27 +188,6 @@ var stagesCurrentCols = []columnInfo{
 	{mysql.TypeEnum, -1, 0, nil, []string{"TRANSACTION", "STATEMENT", "STAGE"}},
 }
 
-func setColumnID(meta *model.TableInfo, store kv.Storage) error {
-	var err error
-	for _, c := range meta.Columns {
-		c.ID, err = genGlobalID(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func genGlobalID(store kv.Storage) (int64, error) {
-	var globalID int64
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
-	})
-	return globalID, errors.Trace(err)
-}
-
 func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {
 	tbl, _ := tables.MemoryTableFromMeta(alloc, meta)
 	return tbl, nil
@@ -219,29 +196,21 @@ func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Tab
 func (ps *perfSchema) buildTables() error {
 	tbls := make([]*model.TableInfo, 0, len(ps.tables))
 	ps.mTables = make(map[string]table.Table, len(ps.tables))
-	dbID, err := genGlobalID(ps.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	dbID := autoid.GenLocalSchemaID()
 	// Set PKIsHandle
 	// TableStmtsCurrent use THREAD_ID as PK and handle
 	tb := ps.tables[TableStmtsHistory]
 	tb.PKIsHandle = true
 	tb.Columns[0].Flag = tb.Columns[0].Flag | mysql.PriKeyFlag
 
-	var tbl table.Table
 	for name, meta := range ps.tables {
 		tbls = append(tbls, meta)
-		meta.ID, err = genGlobalID(ps.store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = setColumnID(meta, ps.store)
-		if err != nil {
-			return errors.Trace(err)
+		meta.ID = autoid.GenLocalSchemaID()
+		for _, c := range meta.Columns {
+			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
-		tbl, err = createMemoryTable(meta, alloc)
+		tbl, err := createMemoryTable(meta, alloc)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -331,7 +300,7 @@ func buildEnumColumnInfo(offset int, name string, elems []string, flag uint, def
 func (ps *perfSchema) initRecords(tbName string, records [][]types.Datum) error {
 	tbl, ok := ps.mTables[tbName]
 	if !ok {
-		return errors.Errorf("Unknown PerformanceSchema table: %s", tbName)
+		return errInvalidPerfSchemaTable.Gen("Unknown PerformanceSchema table: %s", tbName)
 	}
 	for _, rec := range records {
 		_, err := tbl.AddRecord(nil, rec)

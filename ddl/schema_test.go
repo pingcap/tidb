@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -48,7 +49,7 @@ func testCreateSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *
 		Args:     []interface{}{dbInfo},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -59,7 +60,7 @@ func testDropSchema(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo) *mo
 		Type:     model.ActionDropSchema,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -131,6 +132,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job) {
 }
 
 func (s *testSchemaSuite) TestSchema(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema")
 	defer store.Close()
 
@@ -156,11 +158,12 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		Type:     model.ActionDropSchema,
 	}
 
-	err := d1.startDDLJob(ctx, job)
-	c.Assert(terror.ErrorEqual(err, infoschema.DatabaseNotExists), IsTrue)
+	err := d1.doDDLJob(ctx, job)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists), IsTrue)
 }
 
 func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_wait")
 	defer store.Close()
 
@@ -195,7 +198,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		Args:     []interface{}{dbInfo},
 	}
 
-	err = d2.startDDLJob(ctx, job)
+	err = d2.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d2, job)
 
@@ -207,7 +210,7 @@ func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
 	ctx := mock.NewContext()
 	done := make(chan error, 1)
 	go func() {
-		done <- d.startDDLJob(ctx, job)
+		done <- d.doDDLJob(ctx, job)
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -227,6 +230,7 @@ LOOP:
 }
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 

@@ -14,23 +14,33 @@
 package autoid
 
 import (
+	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/terror"
 )
 
 const (
 	step = 1000
 )
 
+var errInvalidTableID = terror.ClassAutoid.New(codeInvalidTableID, "invalid TableID")
+
 // Allocator is an auto increment id generator.
 // Just keep id unique actually.
 type Allocator interface {
+	// Alloc allocs the next autoID for table with tableID.
+	// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
 	Alloc(tableID int64) (int64, error)
-	Rebase(tableID, newBase int64) error
+	// Rebase rebases the autoID base for table with tableID and the new base value.
+	// If allocIDs is true, it will allocate some IDs and save to the cache.
+	// If allocIDs is false, it will not allocate IDs.
+	Rebase(tableID, newBase int64, allocIDs bool) error
 }
 
 type allocator struct {
@@ -41,10 +51,10 @@ type allocator struct {
 	dbID  int64
 }
 
-// Rebase rebases the autoID base for table with tableID and the new base value.
-func (alloc *allocator) Rebase(tableID, newBase int64) error {
+// Rebase implements autoid.Allocator Rebase interface.
+func (alloc *allocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	if tableID == 0 {
-		return errors.New("Invalid tableID")
+		return errInvalidTableID.Gen("Invalid tableID")
 	}
 
 	alloc.mu.Lock()
@@ -63,37 +73,53 @@ func (alloc *allocator) Rebase(tableID, newBase int64) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		if newBase <= end {
+			return nil
+		}
 		newStep := newBase - end + step
+		if !allocIDs {
+			newStep = newBase - end
+		}
 		end, err = m.GenAutoTableID(alloc.dbID, tableID, newStep)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		alloc.end = end
-		alloc.base = alloc.end - step
+		alloc.base = newBase
+		if !allocIDs {
+			alloc.base = alloc.end
+		}
 		return nil
 	})
 }
 
-// Alloc allocs the next autoID for table with tableID.
-// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
+// Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
-		return 0, errors.New("Invalid tableID")
+		return 0, errInvalidTableID.Gen("Invalid tableID")
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
-			// err1 is used for passing `go tool vet --shadow` check.
+			base, err1 := m.GetAutoTableID(alloc.dbID, tableID)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
 			end, err1 := m.GenAutoTableID(alloc.dbID, tableID, step)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
 
 			alloc.end = end
-			alloc.base = alloc.end - step
+			if end == step {
+				alloc.base = base
+			} else {
+				alloc.base = end - step
+			}
 			return nil
 		})
 
@@ -119,17 +145,16 @@ type memoryAllocator struct {
 	dbID int64
 }
 
-// Rebase rebases the autoID base for table with tableID and the new base value.
-func (alloc *memoryAllocator) Rebase(tableID, newBase int64) error {
+// Rebase implements autoid.Allocator Rebase interface.
+func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
 	// TODO: implement it.
 	return nil
 }
 
-// Alloc allocs the next autoID for table with tableID.
-// It gets a batch of autoIDs at a time. So it does not need to access storage for each call.
+// Alloc implements autoid.Allocator Alloc interface.
 func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
-		return 0, errors.New("Invalid tableID")
+		return 0, errInvalidTableID.Gen("Invalid tableID")
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
@@ -157,4 +182,14 @@ func NewMemoryAllocator(dbID int64) Allocator {
 	return &memoryAllocator{
 		dbID: dbID,
 	}
+}
+
+//autoid error codes.
+const codeInvalidTableID terror.ErrCode = 1
+
+var localSchemaID int64 = math.MaxInt64
+
+// GenLocalSchemaID generates a local schema ID.
+func GenLocalSchemaID() int64 {
+	return atomic.AddInt64(&localSchemaID, -1)
 }

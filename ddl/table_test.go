@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -77,7 +78,7 @@ func testCreateTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tb
 		Args:     []interface{}{tblInfo},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -89,7 +90,7 @@ func testDropTable(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblI
 		Type:     model.ActionDropTable,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -149,6 +150,7 @@ func testNewContext(c *C, d *ddl) context.Context {
 }
 
 func (s *testTableSuite) TestTable(c *C) {
+	defer testleak.AfterTest(c)()
 	d := s.d
 
 	ctx := testNewContext(c, d)
@@ -168,7 +170,7 @@ func (s *testTableSuite) TestTable(c *C) {
 		Args:     []interface{}{newTblInfo},
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -185,6 +187,7 @@ func (s *testTableSuite) TestTable(c *C) {
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {
+	defer testleak.AfterTest(c)()
 	d := s.d
 
 	testCheckOwner(c, d, true, ddlJobFlag)

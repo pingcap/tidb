@@ -19,13 +19,19 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
-	v, err := builtinLength([]interface{}{nil}, nil)
+	defer testleak.AfterTest(c)()
+	d, err := builtinLength(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	tbl := []struct {
 		Input    interface{}
@@ -40,112 +46,120 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{mysql.Set{Value: 1, Name: "abc"}, 3},
 	}
 
-	for _, t := range tbl {
-		v, err = builtinLength([]interface{}{t.Input}, nil)
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err = builtinLength(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Expected)
+		c.Assert(d, DatumEquals, t["Expected"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
+	defer testleak.AfterTest(c)()
 	args := []interface{}{nil}
 
-	v, err := builtinConcat(args, nil)
+	v, err := builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
 	args = []interface{}{"a", "b", "c"}
-	v, err = builtinConcat(args, nil)
+	v, err = builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "abc")
+	c.Assert(v.GetString(), Equals, "abc")
 
 	args = []interface{}{"a", "b", nil, "c"}
-	v, err = builtinConcat(args, nil)
+	v, err = builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
 	args = []interface{}{errors.New("must error")}
-	_, err = builtinConcat(args, nil)
+	_, err = builtinConcat(types.MakeDatums(args...), nil)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestConcatWS(c *C) {
-	args := []interface{}{nil}
+	defer testleak.AfterTest(c)()
+	args := types.MakeDatums([]interface{}{nil}...)
 
 	v, err := builtinConcatWS(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
 
-	args = []interface{}{"|", "a", nil, "b", "c"}
+	args = types.MakeDatums([]interface{}{"|", "a", nil, "b", "c"}...)
+
 	v, err = builtinConcatWS(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "a|b|c")
+	c.Assert(v.GetString(), Equals, "a|b|c")
 
-	args = []interface{}{errors.New("must error")}
+	args = types.MakeDatums([]interface{}{errors.New("must error")}...)
 	_, err = builtinConcatWS(args, nil)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestLeft(c *C) {
-	args := []interface{}{"abcdefg", int64(2)}
+	defer testleak.AfterTest(c)()
+	args := types.MakeDatums([]interface{}{"abcdefg", int64(2)}...)
 	v, err := builtinLeft(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "ab")
+	c.Assert(v.GetString(), Equals, "ab")
 
-	args = []interface{}{"abcdefg", int64(-1)}
+	args = types.MakeDatums([]interface{}{"abcdefg", int64(-1)}...)
 	v, err = builtinLeft(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 
-	args = []interface{}{"abcdefg", int64(100)}
+	args = types.MakeDatums([]interface{}{"abcdefg", int64(100)}...)
 	v, err = builtinLeft(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "abcdefg")
+	c.Assert(v.GetString(), Equals, "abcdefg")
 
-	args = []interface{}{1, int64(1)}
+	args = types.MakeDatums([]interface{}{1, int64(1)}...)
 	_, err = builtinLeft(args, nil)
 	c.Assert(err, IsNil)
 
-	args = []interface{}{"abcdefg", "xxx"}
+	args = types.MakeDatums([]interface{}{"abcdefg", "xxx"}...)
 	_, err = builtinLeft(args, nil)
 	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestRepeat(c *C) {
+	defer testleak.AfterTest(c)()
 	args := []interface{}{"a", int64(2)}
-	v, err := builtinRepeat(args, nil)
+	v, err := builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "aa")
+	c.Assert(v.GetString(), Equals, "aa")
 
 	args = []interface{}{"a", uint64(2)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "aa")
+	c.Assert(v.GetString(), Equals, "aa")
 
 	args = []interface{}{"a", int64(-1)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 
 	args = []interface{}{"a", int64(0)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 
 	args = []interface{}{"a", uint64(0)}
-	v, err = builtinRepeat(args, nil)
+	v, err = builtinRepeat(types.MakeDatums(args...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, "")
+	c.Assert(v.GetString(), Equals, "")
 }
 
 func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
-	v, err := builtinLower([]interface{}{nil}, nil)
+	defer testleak.AfterTest(c)()
+	d, err := builtinLower(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
-	v, err = builtinUpper([]interface{}{nil}, nil)
+	d, err = builtinUpper(types.MakeDatums([]interface{}{nil}...), nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	tbl := []struct {
 		Input  interface{}
@@ -155,19 +169,21 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 		{1, "1"},
 	}
 
-	for _, t := range tbl {
-		args := []interface{}{t.Input}
-		v, err = builtinLower(args, nil)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Expect)
+	dtbl := tblToDtbl(tbl)
 
-		v, err = builtinUpper(args, nil)
+	for _, t := range dtbl {
+		d, err = builtinLower(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, strings.ToUpper(t.Expect))
+		c.Assert(d, DatumEquals, t["Expect"][0])
+
+		d, err = builtinUpper(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, strings.ToUpper(t["Expect"][0].GetString()))
 	}
 }
 
 func (s *testEvaluatorSuite) TestStrcmp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  []interface{}
 		Expect interface{}
@@ -187,14 +203,16 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 		{[]interface{}{nil, ""}, nil},
 	}
 
-	for _, t := range tbl {
-		v, err := builtinStrcmp(t.Input, nil)
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		d, err := builtinStrcmp(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Expect)
+		c.Assert(d, DatumEquals, t["Expect"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestReplace(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  []interface{}
 		Expect interface{}
@@ -207,9 +225,306 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		{[]interface{}{12345, 2, "aa"}, "1aa345"},
 	}
 
-	for _, t := range tbl {
-		v, err := builtinReplace(t.Input, nil)
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err := builtinReplace(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Expect)
+		c.Assert(d, DatumEquals, t["Expect"][0])
+	}
+}
+
+func (s *testEvaluatorSuite) TestSubstring(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		str    string
+		pos    int64
+		slen   int64
+		result string
+	}{
+		{"Quadratically", 5, -1, "ratically"},
+		{"foobarbar", 4, -1, "barbar"},
+		{"Quadratically", 5, 6, "ratica"},
+		{"Sakila", -3, -1, "ila"},
+		{"Sakila", -5, 3, "aki"},
+		{"Sakila", -4, 2, "ki"},
+		{"Sakila", 1000, 2, ""},
+		{"", 2, 3, ""},
+	}
+	ctx := mock.NewContext()
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
+		}
+		if v.slen != -1 {
+			f.Args = append(f.Args, ast.NewValueExpr(v.slen))
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+
+		r1, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s1, ok := r1.(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, s1)
+	}
+	errTbl := []struct {
+		str    interface{}
+		pos    interface{}
+		len    interface{}
+		result string
+	}{
+		{"foobarbar", "4", -1, "barbar"},
+		{"Quadratically", 5, "6", "ratica"},
+	}
+	for _, v := range errTbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
+		}
+		if v.len != -1 {
+			f.Args = append(f.Args, ast.NewValueExpr(v.len))
+		}
+		_, err := Eval(ctx, f)
+		c.Assert(err, NotNil)
+	}
+}
+
+func (s *testEvaluatorSuite) TestConvert(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	tbl := []struct {
+		str    string
+		cs     string
+		result string
+	}{
+		{"haha", "utf8", "haha"},
+		{"haha", "ascii", "haha"},
+	}
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("CONVERT"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr(v.str),
+				ast.NewValueExpr(v.cs),
+			},
+		}
+
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+
+	// Test case for error
+	errTbl := []struct {
+		str    interface{}
+		cs     string
+		result string
+	}{
+		{"haha", "wrongcharset", "haha"},
+	}
+	for _, v := range errTbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("CONVERT"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr(v.str),
+				ast.NewValueExpr(v.cs),
+			},
+		}
+
+		_, err := Eval(ctx, f)
+		c.Assert(err, NotNil)
+	}
+}
+
+func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		str    string
+		delim  string
+		count  int64
+		result string
+	}{
+		{"www.mysql.com", ".", 2, "www.mysql"},
+		{"www.mysql.com", ".", -2, "mysql.com"},
+		{"www.mysql.com", ".", 0, ""},
+		{"www.mysql.com", ".", 3, "www.mysql.com"},
+		{"www.mysql.com", ".", 4, "www.mysql.com"},
+		{"www.mysql.com", ".", -3, "www.mysql.com"},
+		{"www.mysql.com", ".", -4, "www.mysql.com"},
+
+		{"www.mysql.com", "d", 1, "www.mysql.com"},
+		{"www.mysql.com", "d", 0, ""},
+		{"www.mysql.com", "d", -1, "www.mysql.com"},
+
+		{"", ".", 2, ""},
+		{"", ".", -2, ""},
+		{"", ".", 0, ""},
+
+		{"www.mysql.com", "", 1, ""},
+		{"www.mysql.com", "", -1, ""},
+		{"www.mysql.com", "", 0, ""},
+	}
+	ctx := mock.NewContext()
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING_INDEX"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(string)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+	errTbl := []struct {
+		str   interface{}
+		delim interface{}
+		count interface{}
+	}{
+		{nil, ".", 2},
+		{nil, ".", -2},
+		{nil, ".", 0},
+		{"asdf", nil, 2},
+		{"asdf", nil, -2},
+		{"asdf", nil, 0},
+		{"www.mysql.com", ".", nil},
+	}
+	for _, v := range errTbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("SUBSTRING_INDEX"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, NotNil)
+		c.Assert(r, IsNil)
+	}
+}
+
+func (s *testEvaluatorSuite) TestLocate(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		subStr string
+		Str    string
+		result int64
+	}{
+		{"bar", "foobarbar", 4},
+		{"xbar", "foobar", 0},
+		{"", "foobar", 1},
+		{"foobar", "", 0},
+		{"", "", 1},
+	}
+	ctx := mock.NewContext()
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(int64)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+
+	tbl2 := []struct {
+		subStr string
+		Str    string
+		pos    int64
+		result int64
+	}{
+		{"bar", "foobarbar", 5, 7},
+		{"xbar", "foobar", 1, 0},
+		{"", "foobar", 2, 2},
+		{"foobar", "", 1, 0},
+		{"", "", 2, 0},
+	}
+	for _, v := range tbl2 {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		s, ok := r.(int64)
+		c.Assert(ok, IsTrue)
+		c.Assert(s, Equals, v.result)
+	}
+
+	errTbl := []struct {
+		subStr interface{}
+		Str    interface{}
+	}{
+		{nil, nil},
+		{"", nil},
+		{nil, ""},
+		{"foo", nil},
+		{nil, "bar"},
+	}
+	for _, v := range errTbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
+		}
+		r, _ := Eval(ctx, f)
+		c.Assert(r, IsNil)
+	}
+
+	errTbl2 := []struct {
+		subStr interface{}
+		Str    interface{}
+		pos    interface{}
+	}{
+		{nil, nil, 1},
+		{"", nil, 1},
+		{nil, "", 1},
+		{"foo", nil, -1},
+		{nil, "bar", 0},
+	}
+	for _, v := range errTbl2 {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("LOCATE"),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
+		}
+		r, _ := Eval(ctx, f)
+		c.Assert(r, IsNil)
+	}
+}
+
+func (s *testEvaluatorSuite) TestTrim(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		str    interface{}
+		remstr interface{}
+		dir    ast.TrimDirectionType
+		result interface{}
+	}{
+		{"  bar   ", nil, ast.TrimBothDefault, "bar"},
+		{"xxxbarxxx", "x", ast.TrimLeading, "barxxx"},
+		{"xxxbarxxx", "x", ast.TrimBoth, "bar"},
+		{"barxxyz", "xyz", ast.TrimTrailing, "barx"},
+		{nil, "xyz", ast.TrimBoth, nil},
+		{1, 2, ast.TrimBoth, "1"},
+		{"  \t\rbar\n   ", nil, ast.TrimBothDefault, "bar"},
+	}
+	ctx := mock.NewContext()
+	for _, v := range tbl {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("TRIM"),
+			Args: []ast.ExprNode{
+				ast.NewValueExpr(v.str),
+				ast.NewValueExpr(v.remstr),
+				ast.NewValueExpr(v.dir),
+			},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		c.Assert(r, Equals, v.result)
 	}
 }

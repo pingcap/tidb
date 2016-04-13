@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -51,43 +52,44 @@ type testPrivilegeSuite struct {
 	createColumnPrivTableSQL string
 }
 
-func (t *testPrivilegeSuite) SetUpTest(c *C) {
+func (s *testPrivilegeSuite) SetUpTest(c *C) {
 	log.SetLevelByString("error")
-	t.dbName = "test"
-	t.store = newStore(c, t.dbName)
-	se := newSession(c, t.store, t.dbName)
-	t.createDBSQL = fmt.Sprintf("create database if not exists %s;", t.dbName)
-	t.createDB1SQL = fmt.Sprintf("create database if not exists %s1;", t.dbName)
-	t.dropDBSQL = fmt.Sprintf("drop database if exists %s;", t.dbName)
-	t.useDBSQL = fmt.Sprintf("use %s;", t.dbName)
-	t.createTableSQL = `CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`
+	s.dbName = "test"
+	s.store = newStore(c, s.dbName)
+	se := newSession(c, s.store, s.dbName)
+	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
+	s.createDB1SQL = fmt.Sprintf("create database if not exists %s1;", s.dbName)
+	s.dropDBSQL = fmt.Sprintf("drop database if exists %s;", s.dbName)
+	s.useDBSQL = fmt.Sprintf("use %s;", s.dbName)
+	s.createTableSQL = `CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`
 
-	mustExec(c, se, t.createDBSQL)
-	mustExec(c, se, t.createDB1SQL) // create database test1
-	mustExec(c, se, t.useDBSQL)
-	mustExec(c, se, t.createTableSQL)
+	mustExec(c, se, s.createDBSQL)
+	mustExec(c, se, s.createDB1SQL) // create database test1
+	mustExec(c, se, s.useDBSQL)
+	mustExec(c, se, s.createTableSQL)
 
-	t.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
-	t.createUserTableSQL = tidb.CreateUserTable
-	t.createDBPrivTableSQL = tidb.CreateDBPrivTable
-	t.createTablePrivTableSQL = tidb.CreateTablePrivTable
-	t.createColumnPrivTableSQL = tidb.CreateColumnPrivTable
+	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
+	s.createUserTableSQL = tidb.CreateUserTable
+	s.createDBPrivTableSQL = tidb.CreateDBPrivTable
+	s.createTablePrivTableSQL = tidb.CreateTablePrivTable
+	s.createColumnPrivTableSQL = tidb.CreateColumnPrivTable
 
-	mustExec(c, se, t.createSystemDBSQL)
-	mustExec(c, se, t.createUserTableSQL)
-	mustExec(c, se, t.createDBPrivTableSQL)
-	mustExec(c, se, t.createTablePrivTableSQL)
-	mustExec(c, se, t.createColumnPrivTableSQL)
+	mustExec(c, se, s.createSystemDBSQL)
+	mustExec(c, se, s.createUserTableSQL)
+	mustExec(c, se, s.createDBPrivTableSQL)
+	mustExec(c, se, s.createTablePrivTableSQL)
+	mustExec(c, se, s.createColumnPrivTableSQL)
 }
 
-func (t *testPrivilegeSuite) TearDownTest(c *C) {
+func (s *testPrivilegeSuite) TearDownTest(c *C) {
 	// drop db
-	se := newSession(c, t.store, t.dbName)
-	mustExec(c, se, t.dropDBSQL)
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, s.dropDBSQL)
 }
 
-func (t *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
-	se := newSession(c, t.store, t.dbName)
+func (s *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
+	defer testleak.AfterTest(c)()
+	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'test'@'localhost' identified by '123';`)
 	pc := &privileges.UserPrivileges{}
 	db := &model.DBInfo{
@@ -115,8 +117,9 @@ func (t *testPrivilegeSuite) TestCheckDBPrivilege(c *C) {
 	c.Assert(r, IsTrue)
 }
 
-func (t *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
-	se := newSession(c, t.store, t.dbName)
+func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
+	defer testleak.AfterTest(c)()
+	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'test1'@'localhost' identified by '123';`)
 	pc := &privileges.UserPrivileges{}
 	db := &model.DBInfo{
@@ -156,8 +159,9 @@ func (t *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 	c.Assert(r, IsTrue)
 }
 
-func (t *testPrivilegeSuite) TestShowGrants(c *C) {
-	se := newSession(c, t.store, t.dbName)
+func (s *testPrivilegeSuite) TestShowGrants(c *C) {
+	defer testleak.AfterTest(c)()
+	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
 	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
@@ -233,8 +237,9 @@ func (t *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 }
 
-func (t *testPrivilegeSuite) TestDropTablePriv(c *C) {
-	se := newSession(c, t.store, t.dbName)
+func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
+	defer testleak.AfterTest(c)()
+	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(context.Context)
 	mustExec(c, se, `CREATE TABLE todrop(c int);`)
 	variable.GetSessionVars(ctx).User = "root@localhost"
@@ -250,7 +255,7 @@ func (t *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	variable.GetSessionVars(ctx).User = "root@localhost"
 	mustExec(c, se, `GRANT Drop ON test.todrop TO  'drop'@'localhost';`)
 
-	se1 := newSession(c, t.store, t.dbName)
+	se1 := newSession(c, s.store, s.dbName)
 	ctx1, _ := se1.(context.Context)
 	variable.GetSessionVars(ctx1).User = "drop@localhost"
 	mustExec(c, se1, `DROP TABLE todrop;`)

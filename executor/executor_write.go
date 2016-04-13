@@ -173,6 +173,16 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 		if col.IsPKHandleColumn(t.Meta()) {
 			newHandle = newData[i]
 		}
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			if newData[i].Kind() == types.KindNull {
+				return errors.Errorf("Column '%v' cannot be null", col.Name.O)
+			}
+			val, err := newData[i].ToInt64()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			t.RebaseAutoID(val, true)
+		}
 
 		touched[colIndex] = true
 		assignExists = true
@@ -366,10 +376,11 @@ type InsertValues struct {
 	ctx        context.Context
 	SelectExec Executor
 
-	Table   table.Table
-	Columns []*ast.ColumnName
-	Lists   [][]ast.ExprNode
-	Setlist []*ast.Assignment
+	Table     table.Table
+	Columns   []*ast.ColumnName
+	Lists     [][]ast.ExprNode
+	Setlist   []*ast.Assignment
+	IsPrepare bool
 }
 
 // InsertExec represents an insert executor.
@@ -641,15 +652,30 @@ func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]ty
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
-	var rewriteValueCol *column.Col
 	var defaultValueCols []*column.Col
 	for i, c := range e.Table.Cols() {
-		if row[i].Kind() != types.KindNull {
-			if mysql.HasAutoIncrementFlag(c.Flag) {
-				e.Table.RebaseAutoID(row[i].GetValue().(int64))
+		// It's used for retry.
+		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull &&
+			variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
+			id, err := variable.GetSessionVars(e.ctx).RetryInfo.GetCurrAutoIncrementID()
+			if err != nil {
+				return errors.Trace(err)
 			}
-			// Column value is not nil, continue.
-			continue
+			row[i].SetInt64(id)
+		}
+		if row[i].Kind() != types.KindNull {
+			// Column value isn't nil and column isn't auto-increment, continue.
+			if !mysql.HasAutoIncrementFlag(c.Flag) {
+				continue
+			}
+			val, err := row[i].ToInt64()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if val != 0 {
+				e.Table.RebaseAutoID(val, true)
+				continue
+			}
 		}
 
 		// If the nil value is evaluated in insert list, we will use nil except auto increment column.
@@ -663,15 +689,15 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(recordID)
-			if c.IsPKHandleColumn(e.Table.Meta()) {
-				// Notes: incompatible with mysql
-				// MySQL will set last insert id to the first row, as follows:
-				// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-				// `insert t (c1) values(1),(2),(3);`
-				// Last insert id will be 1, not 3.
-				variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
-				// It's used for retry.
-				rewriteValueCol = c
+			// Notes: incompatible with mysql
+			// MySQL will set last insert id to the first row, as follows:
+			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
+			// `insert t (c1) values(1),(2),(3);`
+			// Last insert id will be 1, not 3.
+			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+			// It's used for retry.
+			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
+				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
 			}
 		} else {
 			var err error
@@ -686,49 +712,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 	if err := column.CastValues(e.ctx, row, defaultValueCols); err != nil {
 		return errors.Trace(err)
 	}
-
-	// It's used for retry.
-	if rewriteValueCol == nil {
-		return nil
-	}
-	if len(e.Setlist) > 0 {
-		val := &ast.Assignment{
-			Column: &ast.ColumnName{Name: rewriteValueCol.Name},
-			Expr:   ast.NewValueExpr(row[rewriteValueCol.Offset].GetValue())}
-		if len(e.Setlist) < rewriteValueCol.Offset+1 {
-			e.Setlist = append(e.Setlist, val)
-			return nil
-		}
-		setlist := make([]*ast.Assignment, 0, len(e.Setlist)+1)
-		setlist = append(setlist, e.Setlist[:rewriteValueCol.Offset]...)
-		setlist = append(setlist, val)
-		e.Setlist = append(setlist, e.Setlist[rewriteValueCol.Offset:]...)
-		return nil
-	}
-
-	// records the values of each row.
-	vals := make([]ast.ExprNode, len(row))
-	for i, col := range row {
-		vals[i] = ast.NewValueExpr(col.GetValue())
-	}
-	if len(e.Lists) <= e.currRow {
-		e.Lists = append(e.Lists, vals)
-	} else {
-		e.Lists[e.currRow] = vals
-	}
-
-	// records the column name only once.
-	if e.currRow != len(e.Lists)-1 {
-		return nil
-	}
-	if len(e.Columns) < rewriteValueCol.Offset+1 {
-		e.Columns = append(e.Columns, &ast.ColumnName{Name: rewriteValueCol.Name})
-		return nil
-	}
-	cols := make([]*ast.ColumnName, 0, len(e.Columns)+1)
-	cols = append(cols, e.Columns[:rewriteValueCol.Offset]...)
-	cols = append(cols, &ast.ColumnName{Name: rewriteValueCol.Name})
-	e.Columns = append(cols, e.Columns[rewriteValueCol.Offset:]...)
 
 	return nil
 }
@@ -835,51 +818,56 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		return nil, errors.Trace(err)
 	}
 
-	for _, row := range rows {
-		h, err := e.Table.AddRecord(e.ctx, row)
-		if err == nil {
+	/*
+	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
+	 *  1. Try to insert the new row into the table
+	 *  2. While the insertion fails because a duplicate-key error occurs for a primary key or unique index:
+	 *  3. Delete from the table the conflicting row that has the duplicate key value
+	 *  4. Try again to insert the new row into the table
+	 * See: http://dev.mysql.com/doc/refman/5.7/en/replace.html
+	 *
+	 * For REPLACE statements, the affected-rows value is 2 if the new row replaced an old row,
+	 * because in this case, one row was inserted after the duplicate was deleted.
+	 * See: http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
+	 */
+	idx := 0
+	rowsLen := len(rows)
+	for {
+		if idx >= rowsLen {
+			break
+		}
+		row := rows[idx]
+		h, err1 := e.Table.AddRecord(e.ctx, row)
+		if err1 == nil {
+			idx++
 			continue
 		}
-		if err != nil && !terror.ErrorEqual(err, kv.ErrKeyExists) {
-			return nil, errors.Trace(err)
+		if err1 != nil && !terror.ErrorEqual(err1, kv.ErrKeyExists) {
+			return nil, errors.Trace(err1)
 		}
-
-		// While the insertion fails because a duplicate-key error occurs for a primary key or unique index,
-		// a storage engine may perform the REPLACE as an update rather than a delete plus insert.
-		// See: http://dev.mysql.com/doc/refman/5.7/en/replace.html.
-		if err = e.replaceRow(h, row); err != nil {
-			return nil, errors.Trace(err)
+		oldRow, err1 := e.Table.Row(e.ctx, h)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		rowUnchanged, err1 := types.EqualDatums(oldRow, row)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		if rowUnchanged {
+			// If row unchanged, we do not need to do insert.
+			variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+			idx++
+			continue
+		}
+		// Remove current row and try replace again.
+		err1 = e.Table.RemoveRecord(e.ctx, h, oldRow)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
 	}
 	e.finished = true
 	return nil, nil
-}
-
-func (e *ReplaceExec) replaceRow(handle int64, replaceRow []types.Datum) error {
-	row, err := e.Table.Row(e.ctx, handle)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	isReplace := false
-	touched := make(map[int]bool, len(row))
-	for i, val := range row {
-		v, err1 := val.CompareDatum(replaceRow[i])
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if v != 0 {
-			touched[i] = true
-			isReplace = true
-		}
-	}
-	if isReplace {
-		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
-		if err = e.Table.UpdateRecord(e.ctx, handle, row, replaceRow, touched); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
 }
 
 // SplitQualifiedName splits an identifier name to db, table and field name.

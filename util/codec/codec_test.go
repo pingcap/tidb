@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -33,6 +34,7 @@ type testCodecSuite struct {
 }
 
 func (s *testCodecSuite) TestCodecKey(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  []types.Datum
 		Expect []types.Datum
@@ -89,6 +91,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 }
 
 func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Left   []types.Datum
 		Right  []types.Datum
@@ -198,6 +201,7 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 }
 
 func (s *testCodecSuite) TestNumberCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInt64 := []int64{
 		math.MinInt64,
 		math.MinInt32,
@@ -270,6 +274,7 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 }
 
 func (s *testCodecSuite) TestNumberOrder(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInt64 := []struct {
 		Arg1 int64
 		Arg2 int64
@@ -338,6 +343,7 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 }
 
 func (s *testCodecSuite) TestFloatCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	tblFloat := []float64{
 		-1,
 		0,
@@ -396,6 +402,7 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 }
 
 func (s *testCodecSuite) TestBytes(c *C) {
+	defer testleak.AfterTest(c)()
 	tblBytes := [][]byte{
 		{},
 		{0x00, 0x01},
@@ -473,6 +480,7 @@ func parseDuration(c *C, s string) mysql.Duration {
 }
 
 func (s *testCodecSuite) TestTime(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []string{
 		"2011-01-01 00:00:00",
 		"2011-01-01 00:00:00",
@@ -514,6 +522,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 }
 
 func (s *testCodecSuite) TestDuration(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []string{
 		"11:11:11",
 		"00:00:00",
@@ -556,6 +565,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 }
 
 func (s *testCodecSuite) TestDecimal(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []string{
 		"1234.00",
 		"1234",
@@ -596,6 +606,7 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{"1234", "1234.0000", 0},
 		{"1234", "12.34", 1},
 		{"12.34", "12.35", -1},
+		{"0.12", "0.1234", -1},
 		{"0.1234", "12.3400", -1},
 		{"0.1234", "0.1235", -1},
 		{"0.123400", "12.34", -1},
@@ -608,6 +619,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		{"0", "-0.0000", 0},
 		{"-0.0001", "0", -1},
 		{"-0.1234", "0", -1},
+		{"-0.1234", "-0.12", -1},
+		{"-0.12", "-0.1234", 1},
+		{"-0.12", "-0.1200", 0},
 		{"-0.1234", "0.1234", -1},
 		{"-1.234", "-12.34", 1},
 		{"-0.1234", "-12.34", 1},
@@ -659,5 +673,17 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 		ret := bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, t.Ret)
+	}
+
+	floats := []float64{-123.45, -123.40, -23.45, -1.43, -0.93, -0.4333, -0.068,
+		-0.0099, 0, 0.001, 0.0012, 0.12, 1.2, 1.23, 123.3, 2424.242424}
+	var decs [][]byte
+	for i := range floats {
+		dec := mysql.NewDecimalFromFloat(floats[i])
+		decs = append(decs, EncodeDecimal(nil, dec))
+	}
+	for i := 0; i < len(decs)-1; i++ {
+		cmp := bytes.Compare(decs[i], decs[i+1])
+		c.Assert(cmp, LessEqual, 0)
 	}
 }

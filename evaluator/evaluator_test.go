@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -63,6 +64,7 @@ func (s *testEvaluatorSuite) runTests(c *C, cases []testCase) {
 }
 
 func (s *testEvaluatorSuite) TestBetween(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
@@ -71,6 +73,7 @@ func (s *testEvaluatorSuite) TestBetween(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs    interface{}
@@ -145,6 +148,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs interface{}
@@ -182,6 +186,7 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs interface{}
@@ -217,6 +222,7 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs interface{}
@@ -315,6 +321,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
@@ -347,60 +354,14 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(1))
 	valExpr.SetValue(4)
+	ast.ResetEvaluatedFlag(caseExpr)
 	v, err = Eval(ctx, caseExpr)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 }
 
-func (s *testEvaluatorSuite) TestConvert(c *C) {
-	ctx := mock.NewContext()
-	tbl := []struct {
-		str    string
-		cs     string
-		result string
-	}{
-		{"haha", "utf8", "haha"},
-		{"haha", "ascii", "haha"},
-	}
-	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("CONVERT"),
-			Args: []ast.ExprNode{
-				ast.NewValueExpr(v.str),
-				ast.NewValueExpr(v.cs),
-			},
-		}
-
-		r, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		s, ok := r.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
-	}
-
-	// Test case for error
-	errTbl := []struct {
-		str    interface{}
-		cs     string
-		result string
-	}{
-		{"haha", "wrongcharset", "haha"},
-	}
-	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("CONVERT"),
-			Args: []ast.ExprNode{
-				ast.NewValueExpr(v.str),
-				ast.NewValueExpr(v.cs),
-			},
-		}
-
-		_, err := Eval(ctx, f)
-		c.Assert(err, NotNil)
-	}
-}
-
 func (s *testEvaluatorSuite) TestCall(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	// Test case for correct number of arguments
@@ -451,12 +412,14 @@ func (s *testEvaluatorSuite) TestCall(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
+	defer testleak.AfterTest(c)()
 	f := types.NewFieldType(mysql.TypeLonglong)
 
 	expr := &ast.FuncCastExpr{
 		Expr: ast.NewValueExpr(1),
 		Tp:   f,
 	}
+	ast.SetFlag(expr)
 	ctx := mock.NewContext()
 	v, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
@@ -486,6 +449,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {
+	defer testleak.AfterTest(c)()
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
 		Unit   string
@@ -535,7 +499,12 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPatternIn(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
+		{
+			exprStr:   "1 not in (1, 2, 3)",
+			resultStr: "0",
+		},
 		{
 			exprStr:   "1 in (1, 2, 3)",
 			resultStr: "1",
@@ -577,6 +546,7 @@ func (s *testEvaluatorSuite) TestPatternIn(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsNull(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "1 IS NULL",
@@ -599,6 +569,7 @@ func (s *testEvaluatorSuite) TestIsNull(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsTruth(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "1 IS TRUE",
@@ -669,6 +640,7 @@ func (s *testEvaluatorSuite) TestIsTruth(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern string
 		input   string
@@ -739,6 +711,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern string
 		input   string
@@ -766,249 +739,8 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestSubstring(c *C) {
-	tbl := []struct {
-		str    string
-		pos    int64
-		slen   int64
-		result string
-	}{
-		{"Quadratically", 5, -1, "ratically"},
-		{"foobarbar", 4, -1, "barbar"},
-		{"Quadratically", 5, 6, "ratica"},
-		{"Sakila", -3, -1, "ila"},
-		{"Sakila", -5, 3, "aki"},
-		{"Sakila", -4, 2, "ki"},
-		{"Sakila", 1000, 2, ""},
-		{"", 2, 3, ""},
-	}
-	ctx := mock.NewContext()
-	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
-		}
-		if v.slen != -1 {
-			f.Args = append(f.Args, ast.NewValueExpr(v.slen))
-		}
-		r, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		s, ok := r.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
-
-		r1, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		s1, ok := r1.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, s1)
-	}
-	errTbl := []struct {
-		str    interface{}
-		pos    interface{}
-		len    interface{}
-		result string
-	}{
-		{"foobarbar", "4", -1, "barbar"},
-		{"Quadratically", 5, "6", "ratica"},
-	}
-	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.pos)},
-		}
-		if v.len != -1 {
-			f.Args = append(f.Args, ast.NewValueExpr(v.len))
-		}
-		_, err := Eval(ctx, f)
-		c.Assert(err, NotNil)
-	}
-}
-
-func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
-	tbl := []struct {
-		str    string
-		delim  string
-		count  int64
-		result string
-	}{
-		{"www.mysql.com", ".", 2, "www.mysql"},
-		{"www.mysql.com", ".", -2, "mysql.com"},
-		{"www.mysql.com", ".", 0, ""},
-		{"www.mysql.com", ".", 3, "www.mysql.com"},
-		{"www.mysql.com", ".", 4, "www.mysql.com"},
-		{"www.mysql.com", ".", -3, "www.mysql.com"},
-		{"www.mysql.com", ".", -4, "www.mysql.com"},
-
-		{"www.mysql.com", "d", 1, "www.mysql.com"},
-		{"www.mysql.com", "d", 0, ""},
-		{"www.mysql.com", "d", -1, "www.mysql.com"},
-
-		{"", ".", 2, ""},
-		{"", ".", -2, ""},
-		{"", ".", 0, ""},
-
-		{"www.mysql.com", "", 1, ""},
-		{"www.mysql.com", "", -1, ""},
-		{"www.mysql.com", "", 0, ""},
-	}
-	ctx := mock.NewContext()
-	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING_INDEX"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
-		}
-		r, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		s, ok := r.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
-	}
-	errTbl := []struct {
-		str   interface{}
-		delim interface{}
-		count interface{}
-	}{
-		{nil, ".", 2},
-		{nil, ".", -2},
-		{nil, ".", 0},
-		{"asdf", nil, 2},
-		{"asdf", nil, -2},
-		{"asdf", nil, 0},
-		{"www.mysql.com", ".", nil},
-	}
-	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("SUBSTRING_INDEX"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.str), ast.NewValueExpr(v.delim), ast.NewValueExpr(v.count)},
-		}
-		r, err := Eval(ctx, f)
-		c.Assert(err, NotNil)
-		c.Assert(r, IsNil)
-	}
-}
-
-func (s *testEvaluatorSuite) TestLocate(c *C) {
-	tbl := []struct {
-		subStr string
-		Str    string
-		result int64
-	}{
-		{"bar", "foobarbar", 4},
-		{"xbar", "foobar", 0},
-		{"", "foobar", 1},
-		{"foobar", "", 0},
-		{"", "", 1},
-	}
-	ctx := mock.NewContext()
-	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
-		}
-		r, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		s, ok := r.(int64)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
-	}
-
-	tbl2 := []struct {
-		subStr string
-		Str    string
-		pos    int64
-		result int64
-	}{
-		{"bar", "foobarbar", 5, 7},
-		{"xbar", "foobar", 1, 0},
-		{"", "foobar", 2, 2},
-		{"foobar", "", 1, 0},
-		{"", "", 2, 0},
-	}
-	for _, v := range tbl2 {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
-		}
-		r, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		s, ok := r.(int64)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
-	}
-
-	errTbl := []struct {
-		subStr interface{}
-		Str    interface{}
-	}{
-		{nil, nil},
-		{"", nil},
-		{nil, ""},
-		{"foo", nil},
-		{nil, "bar"},
-	}
-	for _, v := range errTbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
-		}
-		r, _ := Eval(ctx, f)
-		c.Assert(r, IsNil)
-	}
-
-	errTbl2 := []struct {
-		subStr interface{}
-		Str    interface{}
-		pos    interface{}
-	}{
-		{nil, nil, 1},
-		{"", nil, 1},
-		{nil, "", 1},
-		{"foo", nil, -1},
-		{nil, "bar", 0},
-	}
-	for _, v := range errTbl2 {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("LOCATE"),
-			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
-		}
-		r, _ := Eval(ctx, f)
-		c.Assert(r, IsNil)
-	}
-}
-
-func (s *testEvaluatorSuite) TestTrim(c *C) {
-	tbl := []struct {
-		str    interface{}
-		remstr interface{}
-		dir    ast.TrimDirectionType
-		result interface{}
-	}{
-		{"  bar   ", nil, ast.TrimBothDefault, "bar"},
-		{"xxxbarxxx", "x", ast.TrimLeading, "barxxx"},
-		{"xxxbarxxx", "x", ast.TrimBoth, "bar"},
-		{"barxxyz", "xyz", ast.TrimTrailing, "barx"},
-		{nil, "xyz", ast.TrimBoth, nil},
-		{1, 2, ast.TrimBoth, "1"},
-		{"  \t\rbar\n   ", nil, ast.TrimBothDefault, "bar"},
-	}
-	ctx := mock.NewContext()
-	for _, v := range tbl {
-		f := &ast.FuncCallExpr{
-			FnName: model.NewCIStr("TRIM"),
-			Args: []ast.ExprNode{
-				ast.NewValueExpr(v.str),
-				ast.NewValueExpr(v.remstr),
-				ast.NewValueExpr(v.dir),
-			},
-		}
-		r, err := Eval(ctx, f)
-		c.Assert(err, IsNil)
-		c.Assert(r, Equals, v.result)
-	}
-}
-
 func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		arg    interface{}
 		op     opcode.Op
@@ -1058,8 +790,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
-	expr := &ast.UnaryOperationExpr{}
 	for i, t := range tbl {
+		expr := &ast.UnaryOperationExpr{}
 		expr.Op = t.op
 		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
@@ -1095,11 +827,13 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	value1 := ast.NewValueExpr(1)
 	rf := &ast.ResultField{Expr: value1}
 	expr := &ast.ColumnNameExpr{Refer: rf}
 
+	ast.SetFlag(expr)
 	result, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, int64(1))
@@ -1112,11 +846,13 @@ func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	avg := &ast.AggregateFuncExpr{
 		F: ast.AggFuncAvg,
 	}
 	avg.CurrentGroup = "emptyGroup"
+	ast.SetFlag(avg)
 	result, err := Eval(ctx, avg)
 	c.Assert(err, IsNil)
 	// Empty group should return nil.
@@ -1136,6 +872,7 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
+	defer testleak.AfterTest(c)()
 	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -1217,9 +954,47 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsCurrentTimeExpr(c *C) {
+	defer testleak.AfterTest(c)()
 	v := IsCurrentTimeExpr(ast.NewValueExpr("abc"))
 	c.Assert(v, IsFalse)
 
 	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
 	c.Assert(v, IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
+	l := ast.NewValueExpr(int64(1))
+	r := ast.NewValueExpr(int64(2))
+	b := &ast.BinaryOperationExpr{L: l, R: r, Op: opcode.Plus}
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	ctx := mock.NewContext()
+	d, err := EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, true)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	funcCall := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("abs"),
+		Args:   []ast.ExprNode{ast.NewValueExpr(int(-1))},
+	}
+	b = &ast.BinaryOperationExpr{L: funcCall, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	rf := &ast.ResultField{Expr: ast.NewValueExpr(int64(1))}
+	colExpr := &ast.ColumnNameExpr{Refer: rf}
+	b = &ast.BinaryOperationExpr{L: colExpr, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, false)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
 }

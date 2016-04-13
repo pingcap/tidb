@@ -91,7 +91,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	return t, nil
 }
 
-// NewTable constructs a Table instance.
+// newTable constructs a Table instance.
 func newTable(tableID int64, cols []*column.Col, alloc autoid.Allocator) *Table {
 	t := &Table{
 		ID:           tableID,
@@ -437,6 +437,9 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 	}
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
+		if col == nil {
+			continue
+		}
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
@@ -631,8 +634,8 @@ func (t *Table) AllocAutoID() (int64, error) {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (t *Table) RebaseAutoID(newBase int64) error {
-	return t.alloc.Rebase(t.ID, newBase)
+func (t *Table) RebaseAutoID(newBase int64, isSetStep bool) error {
+	return t.alloc.Rebase(t.ID, newBase, isSetStep)
 }
 
 // Seek implements table.Table Seek interface.

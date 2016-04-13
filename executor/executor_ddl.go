@@ -99,7 +99,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	}
 	err := sessionctx.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
 	if err != nil {
-		if terror.ErrorEqual(err, infoschema.DatabaseExists) && s.IfNotExists {
+		if terror.ErrorEqual(err, infoschema.ErrDatabaseExists) && s.IfNotExists {
 			err = nil
 		}
 	}
@@ -108,12 +108,12 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := sessionctx.GetDomain(e.ctx).DDL().CreateTable(e.ctx, ident, s.Cols, s.Constraints)
-	if terror.ErrorEqual(err, infoschema.TableExists) {
+	err := sessionctx.GetDomain(e.ctx).DDL().CreateTable(e.ctx, ident, s.Cols, s.Constraints, s.Options)
+	if terror.ErrorEqual(err, infoschema.ErrTableExists) {
 		if s.IfNotExists {
 			return nil
 		}
-		return infoschema.TableExists.Gen("CREATE TABLE: table exists %s", ident)
+		return infoschema.ErrTableExists.Gen("CREATE TABLE: table exists %s", ident)
 	}
 	return errors.Trace(err)
 }
@@ -126,11 +126,11 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	err := sessionctx.GetDomain(e.ctx).DDL().DropSchema(e.ctx, model.NewCIStr(s.Name))
-	if terror.ErrorEqual(err, infoschema.DatabaseNotExists) {
+	if terror.ErrorEqual(err, infoschema.ErrDatabaseNotExists) {
 		if s.IfExists {
 			err = nil
 		} else {
-			err = infoschema.DatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
+			err = infoschema.ErrDatabaseDropExists.Gen("Can't drop database '%s'; database doesn't exist", s.Name)
 		}
 	}
 	return errors.Trace(err)
@@ -165,14 +165,14 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 
 		err = sessionctx.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
-		if infoschema.DatabaseNotExists.Equal(err) || infoschema.TableNotExists.Equal(err) {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 		} else if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
-		return infoschema.TableDropExists.Gen("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
+		return infoschema.ErrTableDropExists.Gen("DROP TABLE: table %s does not exist", strings.Join(notExistTables, ","))
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := sessionctx.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName))
-	if (infoschema.DatabaseNotExists.Equal(err) || infoschema.TableNotExists.Equal(err)) && s.IfExists {
+	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
 	}
 	return errors.Trace(err)

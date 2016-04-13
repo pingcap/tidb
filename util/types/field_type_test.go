@@ -14,99 +14,102 @@
 package types
 
 import (
-	"github.com/pingcap/check"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = check.Suite(&testFieldTypeSuite{})
+var _ = Suite(&testFieldTypeSuite{})
 
 type testFieldTypeSuite struct {
 }
 
-func (s *testFieldTypeSuite) TestFieldType(c *check.C) {
+func (s *testFieldTypeSuite) TestFieldType(c *C) {
+	defer testleak.AfterTest(c)()
 	ft := NewFieldType(mysql.TypeDuration)
-	c.Assert(ft.Flen, check.Equals, UnspecifiedLength)
-	c.Assert(ft.Decimal, check.Equals, UnspecifiedLength)
+	c.Assert(ft.Flen, Equals, UnspecifiedLength)
+	c.Assert(ft.Decimal, Equals, UnspecifiedLength)
 	ft.Decimal = 5
-	c.Assert(ft.String(), check.Equals, "time(5)")
+	c.Assert(ft.String(), Equals, "time(5)")
 
 	ft.Tp = mysql.TypeLong
 	ft.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
-	c.Assert(ft.String(), check.Equals, "int(5) UNSIGNED ZEROFILL")
+	c.Assert(ft.String(), Equals, "int(5) UNSIGNED ZEROFILL")
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 10
 	ft.Decimal = 3
-	c.Assert(ft.String(), check.Equals, "float(10,3)")
+	c.Assert(ft.String(), Equals, "float(10,3)")
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 10
 	ft.Decimal = -1
-	c.Assert(ft.String(), check.Equals, "float")
+	c.Assert(ft.String(), Equals, "float")
 
 	ft = NewFieldType(mysql.TypeDouble)
 	ft.Flen = 10
 	ft.Decimal = 3
-	c.Assert(ft.String(), check.Equals, "double(10,3)")
+	c.Assert(ft.String(), Equals, "double(10,3)")
 	ft = NewFieldType(mysql.TypeDouble)
 	ft.Flen = 10
 	ft.Decimal = -1
-	c.Assert(ft.String(), check.Equals, "double")
+	c.Assert(ft.String(), Equals, "double")
 
 	ft = NewFieldType(mysql.TypeBlob)
 	ft.Flen = 10
 	ft.Charset = "UTF8"
 	ft.Collate = "UTF8_UNICODE_GI"
-	c.Assert(ft.String(), check.Equals, "text(10) CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
+	c.Assert(ft.String(), Equals, "text(10) CHARACTER SET UTF8 COLLATE UTF8_UNICODE_GI")
 
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), check.Equals, "varchar(10) BINARY")
+	c.Assert(ft.String(), Equals, "varchar(10) BINARY")
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b"}
-	c.Assert(ft.String(), check.Equals, "enum('a','b')")
+	c.Assert(ft.String(), Equals, "enum('a','b')")
 
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"'a'", "'b'"}
-	c.Assert(ft.String(), check.Equals, "enum('''a''','''b''')")
+	c.Assert(ft.String(), Equals, "enum('''a''','''b''')")
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b"}
-	c.Assert(ft.String(), check.Equals, "set('a','b')")
+	c.Assert(ft.String(), Equals, "set('a','b')")
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"'a'", "'b'"}
-	c.Assert(ft.String(), check.Equals, "set('''a''','''b''')")
+	c.Assert(ft.String(), Equals, "set('''a''','''b''')")
 
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Flen = 8
 	ft.Decimal = 2
-	c.Assert(ft.String(), check.Equals, "timestamp(2)")
+	c.Assert(ft.String(), Equals, "timestamp(2)")
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Flen = 8
 	ft.Decimal = 0
-	c.Assert(ft.String(), check.Equals, "timestamp")
+	c.Assert(ft.String(), Equals, "timestamp")
 
 	ft = NewFieldType(mysql.TypeDatetime)
 	ft.Flen = 8
 	ft.Decimal = 2
-	c.Assert(ft.String(), check.Equals, "datetime(2)")
+	c.Assert(ft.String(), Equals, "datetime(2)")
 	ft = NewFieldType(mysql.TypeDatetime)
 	ft.Flen = 8
 	ft.Decimal = 0
-	c.Assert(ft.String(), check.Equals, "datetime")
+	c.Assert(ft.String(), Equals, "datetime")
 	ft = NewFieldType(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 2
-	c.Assert(ft.String(), check.Equals, "date(2)")
+	c.Assert(ft.String(), Equals, "date(2)")
 	ft = NewFieldType(mysql.TypeDate)
 	ft.Flen = 8
 	ft.Decimal = 0
-	c.Assert(ft.String(), check.Equals, "date")
+	c.Assert(ft.String(), Equals, "date")
 }
 
-func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
+func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		value interface{}
 		tp    byte
@@ -128,6 +131,6 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *check.C) {
 	}
 	for _, ca := range cases {
 		ft := DefaultTypeForValue(ca.value)
-		c.Assert(ft.Tp, check.Equals, ca.tp, check.Commentf("%v %v", ft, ca))
+		c.Assert(ft.Tp, Equals, ca.tp, Commentf("%v %v", ft, ca))
 	}
 }

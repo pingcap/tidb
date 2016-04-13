@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -61,10 +62,11 @@ func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
 		return
 	}
 
-	c.Assert(terror.ErrorEqual(err, ErrNotOwner), IsTrue)
+	c.Assert(terror.ErrorEqual(err, errNotOwner), IsTrue)
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
@@ -109,6 +111,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
@@ -125,12 +128,13 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }
 
 func (s *testDDLSuite) TestTableError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
@@ -148,7 +152,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 	ctx := testNewContext(c, d)
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -157,7 +161,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	job.Args = []interface{}{tblInfo}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -167,7 +171,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -180,7 +184,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		Type:     model.ActionDropTable,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -201,6 +205,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 }
 
 func (s *testDDLSuite) TestIndexError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
@@ -217,7 +222,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -227,7 +232,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -243,7 +248,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{1},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -253,7 +258,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("t"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -263,7 +268,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -275,7 +280,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionAddIndex,
 		Args:     []interface{}{false, model.NewCIStr("c1_index"), []*ast.IndexColName{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -285,7 +290,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{1},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -297,12 +302,13 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		Type:     model.ActionDropIndex,
 		Args:     []interface{}{model.NewCIStr("c1_index")},
 	}
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }
 
 func (s *testDDLSuite) TestColumnError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
 
@@ -319,7 +325,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Type:     model.ActionAddColumn,
 	}
 
-	err := d.startDDLJob(ctx, job)
+	err := d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -329,7 +335,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Type:     model.ActionDropColumn,
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -358,7 +364,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Args:     []interface{}{col, pos, 0},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 
@@ -369,7 +375,7 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		Args:     []interface{}{1},
 	}
 
-	err = d.startDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err, NotNil)
 	testCheckJobCancelled(c, d, job)
 }

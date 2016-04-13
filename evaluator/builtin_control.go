@@ -14,25 +14,27 @@
 package evaluator
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
 )
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
-func builtinIf(args []interface{}, _ context.Context) (interface{}, error) {
+func builtinIf(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// if(expr1, expr2, expr3)
 	// if expr1 is true, return expr2, otherwise, return expr3
 	v1 := args[0]
 	v2 := args[1]
 	v3 := args[2]
 
-	if v1 == nil {
+	if v1.Kind() == types.KindNull {
 		return v3, nil
 	}
 
-	b, err := types.ToBool(v1)
+	b, err := v1.ToBool()
 	if err != nil {
-		return nil, err
+		d := types.Datum{}
+		return d, errors.Trace(err)
 	}
 
 	// TODO: check return type, must be numeric or string
@@ -44,13 +46,13 @@ func builtinIf(args []interface{}, _ context.Context) (interface{}, error) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_ifnull
-func builtinIfNull(args []interface{}, _ context.Context) (interface{}, error) {
+func builtinIfNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// ifnull(expr1, expr2)
 	// if expr1 is not null, return expr1, otherwise, return expr2
 	v1 := args[0]
 	v2 := args[1]
 
-	if v1 != nil {
+	if v1.Kind() != types.KindNull {
 		return v1, nil
 	}
 
@@ -58,18 +60,19 @@ func builtinIfNull(args []interface{}, _ context.Context) (interface{}, error) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_nullif
-func builtinNullIf(args []interface{}, _ context.Context) (interface{}, error) {
+func builtinNullIf(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	// nullif(expr1, expr2)
 	// returns null if expr1 = expr2 is true, otherwise returns expr1
 	v1 := args[0]
 	v2 := args[1]
 
-	if v1 == nil || v2 == nil {
+	if v1.Kind() == types.KindNull || v2.Kind() == types.KindNull {
 		return v1, nil
 	}
 
-	if n, err := types.Compare(v1, v2); err != nil || n == 0 {
-		return nil, err
+	if n, err1 := v1.CompareDatum(v2); err1 != nil || n == 0 {
+		d := types.Datum{}
+		return d, errors.Trace(err1)
 	}
 
 	return v1, nil

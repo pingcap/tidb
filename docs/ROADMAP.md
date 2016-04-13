@@ -1,12 +1,12 @@
 # Roadmap
 
-this document defines the roadmap for TiDB development.
+This document defines the roadmap for TiDB development.
 
 ##### __SQL Layer__  
 - [x] Simple CRUD / DDL
 - [x] Index support
 - [x] Index optimization
-- [ ] Query plan optimization
+- [x] Query plan optimization
 - [x] Transactions
 - [x] Functions support  (e.g. MAX / MIN / COUNT / CONCAT ... )
 - [x] Aggregation support
@@ -39,11 +39,10 @@ this document defines the roadmap for TiDB development.
 ##### __Storage__  
 - [x] BoltDB
 - [x] GoLevelDB
-- [ ] LevelDB [WIP]
 - [x] RocksDB
 - [x] LMDB
 - [x] HBase
-- [ ] Homemade distributed KV:
+- [x] Homemade distributed KV:
     - [ ] Transactions
     - [ ] Replicate log using Paxos/Raft
     - [ ] Auto-Rebalance

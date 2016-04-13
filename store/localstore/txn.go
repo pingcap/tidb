@@ -52,12 +52,12 @@ func newTxn(s *dbStore, ver kv.Version) *dbTxn {
 // Implement transaction interface
 
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
-	log.Debugf("[kv] get key:%q, txn:%d", k, txn.tid)
+	log.Debugf("[kv] get key:% x, txn:%d", k, txn.tid)
 	return txn.us.Get(k)
 }
 
 func (txn *dbTxn) Set(k kv.Key, data []byte) error {
-	log.Debugf("[kv] set key:%q, txn:%d", k, txn.tid)
+	log.Debugf("[kv] set key:% x, txn:%d", k, txn.tid)
 	txn.dirty = true
 	return txn.us.Set(k, data)
 }
@@ -67,12 +67,12 @@ func (txn *dbTxn) String() string {
 }
 
 func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
-	log.Debugf("[kv] seek key:%q, txn:%d", k, txn.tid)
+	log.Debugf("[kv] seek key:% x, txn:%d", k, txn.tid)
 	return txn.us.Seek(k)
 }
 
 func (txn *dbTxn) Delete(k kv.Key) error {
-	log.Debugf("[kv] delete key:%q, txn:%d", k, txn.tid)
+	log.Debugf("[kv] delete key:% x, txn:%d", k, txn.tid)
 	txn.dirty = true
 	return txn.us.Delete(k)
 }
@@ -138,4 +138,12 @@ func (txn *dbTxn) LockKeys(keys ...kv.Key) error {
 
 func (txn *dbTxn) IsReadOnly() bool {
 	return !txn.dirty
+}
+
+func (txn *dbTxn) StartTS() uint64 {
+	return txn.tid
+}
+
+func (txn *dbTxn) GetClient() kv.Client {
+	return &dbClient{store: txn.store, regionInfo: txn.store.pd.GetRegionInfo()}
 }

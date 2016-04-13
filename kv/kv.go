@@ -13,6 +13,11 @@
 
 package kv
 
+import (
+	"bytes"
+	"io"
+)
+
 const (
 	// PresumeKeyNotExists directives that when dealing with a Get operation but failing to read data from cache,
 	// we presume that the key does not exist in Store. The actual existence will be checked before the
@@ -76,6 +81,62 @@ type Transaction interface {
 	DelOption(opt Option)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
+	// GetClient gets a client instance.
+	GetClient() Client
+	// StartTS returns the transaction start timestamp.
+	StartTS() uint64
+}
+
+// Client is used to send request to KV layer.
+type Client interface {
+	// Send sends request to KV layer, returns a Response.
+	Send(req *Request) Response
+
+	// SupportRequestType checks if reqType and subType is supported.
+	SupportRequestType(reqType, subType int64) bool
+}
+
+// ReqTypes.
+const (
+	ReqTypeSelect = 101
+	ReqTypeIndex  = 102
+
+	ReqSubTypeBasic = 0
+)
+
+// KeyRange represents a range where StartKey <= key < EndKey.
+type KeyRange struct {
+	StartKey Key
+	EndKey   Key
+}
+
+// IsPoint checks if the key range represents a point.
+func (r *KeyRange) IsPoint() bool {
+	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
+}
+
+// Request represents a kv request.
+type Request struct {
+	// The request type.
+	Tp   int64
+	Data []byte
+	// Key Ranges
+	KeyRanges []KeyRange
+	// If desc is true, the request is sent in descending order.
+	Desc bool
+	// If concurrency is 1, it only sends the request to a single storage unit when
+	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
+	// sent to multiple storage units concurrently.
+	Concurrency int
+}
+
+// Response represents the response returned from KV layer.
+type Response interface {
+	// Next returns a resultSubset from a single storage unit.
+	// When full result set is returned, nil is returned.
+	Next() (resultSubset io.ReadCloser, err error)
+	// Close response.
+	Close() error
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.

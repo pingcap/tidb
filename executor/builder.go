@@ -17,10 +17,12 @@ import (
 	"math"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -117,7 +119,32 @@ func (b *executorBuilder) buildFilter(src Executor, conditions []ast.ExprNode) E
 }
 
 func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
+	txn, err := b.ctx.GetTxn(false)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	table, _ := b.is.TableByID(v.Table.ID)
+	client := txn.GetClient()
+	var memDB bool
+	switch v.Fields()[0].DBName.L {
+	case "information_schema", "performance_schema":
+		memDB = true
+	}
+	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) && txn.IsReadOnly() {
+		log.Debug("xapi select table")
+		e := &XSelectTableExec{
+			table:     table,
+			ctx:       b.ctx,
+			tablePlan: v,
+		}
+		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		if where != nil {
+			e.where = where
+		}
+		return b.buildFilter(e, remained)
+	}
+
 	e := &TableScanExec{
 		t:          table,
 		fields:     v.Fields(),
@@ -150,7 +177,31 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 }
 
 func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
+	txn, err := b.ctx.GetTxn(false)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	tbl, _ := b.is.TableByID(v.Table.ID)
+	client := txn.GetClient()
+	var memDB bool
+	switch v.Fields()[0].DBName.L {
+	case "information_schema", "performance_schema":
+		memDB = true
+	}
+	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) && txn.IsReadOnly() {
+		log.Debug("xapi select index")
+		e := &XSelectIndexExec{
+			table:     tbl,
+			ctx:       b.ctx,
+			indexPlan: v,
+		}
+		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		if where != nil {
+			e.where = where
+		}
+		return b.buildFilter(e, remained)
+	}
 	var idx *column.IndexedCol
 	for _, val := range tbl.Indices() {
 		if val.IndexInfo.Name.L == v.Index.Name.L {
@@ -176,7 +227,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	for i, val := range v.Ranges {
 		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
-	return b.buildFilter(e, v.FilterConditions)
+	x := b.buildFilter(e, v.FilterConditions)
+	if v.Desc {
+		x = &ReverseExec{Src: x}
+	}
+	return x
 }
 
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
@@ -224,6 +279,7 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 		L:  conditions[0],
 		R:  b.joinConditions(conditions[1:]),
 	}
+	ast.MergeChildrenFlags(condition, condition.L, condition.R)
 	return condition
 }
 
@@ -277,6 +333,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
+		Limit:   v.ExecLimit,
 	}
 	return e
 }

@@ -272,6 +272,11 @@ func (p *joinPath) attachEqualCond(eqCon *equalCond, availablePaths []*joinPath)
 		}
 		return false
 	}
+	// subquery join
+	if p.subquery != nil {
+		// TODO: find a way to attach condition to subquery.
+		return false
+	}
 	// outer join
 	if p.outer.attachEqualCond(eqCon, availablePaths) {
 		p.filterRate *= rateEqual
@@ -444,6 +449,7 @@ func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
 	}
 	for len(pathMap) > 0 {
 		next := p.nextPath(pathMap, availablePaths)
+		next.optimizeJoinOrder(availablePaths)
 		ordered = append(ordered, next)
 		delete(pathMap, next)
 		availablePaths = append(availablePaths, next)
@@ -456,9 +462,6 @@ func (p *joinPath) optimizeJoinOrder(availablePaths []*joinPath) {
 			}
 		}
 		p.reattach(pathMap, availablePaths)
-		for path := range pathMap {
-			path.optimizeJoinOrder(availablePaths)
-		}
 	}
 	p.inners = ordered
 }
@@ -604,7 +607,7 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 		if !path.attachCondition(whereCond, nil) {
 			// TODO: Find a better way to handle this condition.
 			path.conditions = append(path.conditions, whereCond)
-			log.Errorf("Failed to attach where condtion.")
+			log.Warnf("Failed to attach where condtion in %s", sel.Text())
 		}
 	}
 	path.extractEqualConditon()
@@ -740,7 +743,14 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 	}
 	join.Conditions = path.conditions
 	for _, equiv := range path.eqConds {
-		cond := &ast.BinaryOperationExpr{L: equiv.left.Expr, R: equiv.right.Expr, Op: opcode.EQ}
+		columnNameExpr := &ast.ColumnNameExpr{}
+		columnNameExpr.Name = &ast.ColumnName{}
+		columnNameExpr.Name.Name = equiv.left.Column.Name
+		columnNameExpr.Name.Table = equiv.left.Table.Name
+		columnNameExpr.Refer = equiv.left
+		ast.SetFlag(columnNameExpr)
+		cond := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
+		ast.MergeChildrenFlags(cond, columnNameExpr, equiv.right.Expr)
 		join.Conditions = append(join.Conditions, cond)
 	}
 	return join
@@ -753,8 +763,10 @@ func (b *planBuilder) buildTablePlanFromJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
+		columnNameExpr.Type = equiv.left.Expr.GetType()
+		ast.SetFlag(columnNameExpr)
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
-		ast.SetFlag(condition)
+		ast.MergeChildrenFlags(condition, columnNameExpr, equiv.right.Expr)
 		path.conditions = append(path.conditions, condition)
 	}
 	candidates := b.buildAllAccessMethodsPlan(path)
@@ -782,8 +794,10 @@ func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 		columnNameExpr.Name.Name = equiv.left.Column.Name
 		columnNameExpr.Name.Table = equiv.left.Table.Name
 		columnNameExpr.Refer = equiv.left
+		columnNameExpr.Type = equiv.left.Expr.GetType()
+		ast.SetFlag(columnNameExpr)
 		condition := &ast.BinaryOperationExpr{L: columnNameExpr, R: equiv.right.Expr, Op: opcode.EQ}
-		ast.SetFlag(condition)
+		ast.MergeChildrenFlags(condition, columnNameExpr, equiv.right.Expr)
 		path.conditions = append(path.conditions, condition)
 	}
 	p := b.build(path.subquery)

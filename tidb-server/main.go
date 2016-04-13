@@ -22,22 +22,31 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/ticlient"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
+	"github.com/pingcap/tidb/store/hbase"
+	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
-	store     = flag.String("store", "goleveldb", "registered store name, [hbase, memory, goleveldb, boltdb]")
-	storePath = flag.String("path", "/tmp/tidb", "tidb storage path")
-	logLevel  = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
-	port      = flag.String("P", "4000", "mp server port")
-	lease     = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, hbase, boltdb, tikv]")
+	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
+	logLevel   = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
+	port       = flag.String("P", "4000", "mp server port")
+	statusPort = flag.String("status", "10080", "tidb server status port")
+	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
 )
 
 func main() {
+	tidb.RegisterStore("hbase", hbasekv.Driver{})
+	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
+	tidb.RegisterStore("tikv", ticlient.Driver{})
+
 	metric.RunMetric(3 * time.Second)
 	printer.PrintTiDBInfo()
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -51,22 +60,29 @@ func main() {
 	tidb.SetSchemaLease(time.Duration(*lease) * time.Second)
 
 	cfg := &server.Config{
-		Addr:     fmt.Sprintf(":%s", *port),
-		LogLevel: *logLevel,
+		Addr:       fmt.Sprintf(":%s", *port),
+		LogLevel:   *logLevel,
+		StatusAddr: fmt.Sprintf(":%s", *statusPort),
 	}
 
 	log.SetLevelByString(cfg.LogLevel)
 	store, err := tidb.NewStore(fmt.Sprintf("%s://%s", *store, *storePath))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
+	// Create a session to load information schema.
+	se, err := tidb.CreateSession(store)
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
+	se.Close()
 
 	var driver server.IDriver
 	driver = server.NewTiDBDriver(store)
 	var svr *server.Server
 	svr, err = server.NewServer(cfg, driver)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(errors.ErrorStack(err))
 	}
 
 	sc := make(chan os.Signal, 1)

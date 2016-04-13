@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testStatSuite{})
@@ -34,6 +35,7 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 }
 
 func (s *testStatSuite) TestStat(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
@@ -60,7 +62,7 @@ func (s *testStatSuite) TestStat(c *C) {
 	ctx := mock.NewContext()
 	done := make(chan error, 1)
 	go func() {
-		done <- d.startDDLJob(ctx, job)
+		done <- d.doDDLJob(ctx, job)
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)

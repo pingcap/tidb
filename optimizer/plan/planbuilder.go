@@ -251,7 +251,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	}
-	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
+	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil
@@ -327,7 +327,8 @@ func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
 func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 	tn := path.table
 	p := &TableScan{
-		Table: tn.TableInfo,
+		Table:     tn.TableInfo,
+		TableName: tn,
 	}
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = len(path.eqConds) > 0
@@ -357,7 +358,7 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 
 func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath) Plan {
 	tn := path.table
-	ip := &IndexScan{Table: tn.TableInfo, Index: index}
+	ip := &IndexScan{Table: tn.TableInfo, Index: index, TableName: tn}
 	ip.RefAccess = len(path.eqConds) > 0
 	ip.SetFields(tn.GetResultFields())
 
@@ -417,7 +418,7 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 	if sel.GroupBy != nil {
 		return p
 	}
-	if !matchOrder(p, sel.OrderBy.Items) {
+	if !pushOrder(p, sel.OrderBy.Items) {
 		np := &Sort{ByItems: sel.OrderBy.Items}
 		np.SetSrc(p)
 		p = np
@@ -484,6 +485,10 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 	li := &Limit{
 		Offset: limit.Offset,
 		Count:  limit.Count,
+	}
+	if s, ok := src.(*Sort); ok {
+		s.ExecLimit = li
+		return s
 	}
 	li.SetSrc(src)
 	li.SetFields(src.Fields())
@@ -563,8 +568,9 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 	}
 }
 
-// matchOrder checks if the plan has the same ordering as items.
-func matchOrder(p Plan, items []*ast.ByItem) bool {
+// pushOrder tries to push order by items to the plan, returns true if
+// order is pushed.
+func pushOrder(p Plan, items []*ast.ByItem) bool {
 	switch x := p.(type) {
 	case *Aggregate:
 		return false
@@ -572,10 +578,9 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 		if len(items) > len(x.Index.Columns) {
 			return false
 		}
+		var hasDesc bool
+		var hasAsc bool
 		for i, item := range items {
-			if item.Desc {
-				return false
-			}
 			var rf *ast.ResultField
 			switch y := item.Expr.(type) {
 			case *ast.ColumnNameExpr:
@@ -588,7 +593,19 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 			if rf.Table.Name.L != x.Table.Name.L || rf.Column.Name.L != x.Index.Columns[i].Name.L {
 				return false
 			}
+			if item.Desc {
+				if hasAsc {
+					return false
+				}
+				hasDesc = true
+			} else {
+				if hasDesc {
+					return false
+				}
+				hasAsc = true
+			}
 		}
+		x.Desc = hasDesc
 		return true
 	case *TableScan:
 		if len(items) != 1 || !x.Table.PKIsHandle {
@@ -618,9 +635,9 @@ func matchOrder(p Plan, items []*ast.ByItem) bool {
 		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.
 		return false
 	case WithSrcPlan:
-		return matchOrder(x.Src(), items)
+		return pushOrder(x.Src(), items)
 	}
-	return true
+	return false
 }
 
 // splitWhere split a where expression to a list of AND conditions.
@@ -737,7 +754,10 @@ func (b *planBuilder) buildDistinct(src Plan) Plan {
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	sel := &ast.SelectStmt{From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildFrom(sel)
-	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
+	for _, v := range p.Fields() {
+		v.Referenced = true
+	}
+	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil
@@ -772,7 +792,10 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.Res
 func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 	sel := &ast.SelectStmt{From: del.TableRefs, Where: del.Where, OrderBy: del.Order, Limit: del.Limit}
 	p := b.buildFrom(sel)
-	if sel.OrderBy != nil && !matchOrder(p, sel.OrderBy.Items) {
+	for _, v := range p.Fields() {
+		v.Referenced = true
+	}
+	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil

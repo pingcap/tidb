@@ -49,6 +49,7 @@ const (
 	FlagHasSubquery
 	FlagHasVariable
 	FlagHasDefault
+	FlagPreEvaluated
 )
 
 // ExprNode is a node that can be evaluated.
@@ -120,6 +121,9 @@ type ResultField struct {
 	// will be set for every retrieved row.
 	Expr      ExprNode
 	TableName *TableName
+	// Whether this result field has been referenced.
+	// If not, we don't need to get the values.
+	Referenced bool
 }
 
 // Row represents a single row from Recordset.

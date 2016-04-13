@@ -13,7 +13,10 @@
 
 package mysql
 
-import . "github.com/pingcap/check"
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
+)
 
 var _ = Suite(&testBitSuite{})
 
@@ -21,6 +24,7 @@ type testBitSuite struct {
 }
 
 func (s *testBitSuite) TestBit(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input     string
 		Width     int

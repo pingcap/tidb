@@ -390,6 +390,16 @@ func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, e
 	return convertToDuration(d, fsp)
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
+func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	year, month, day := time.Now().UTC().Date()
+	t := mysql.Time{
+		Time: time.Date(year, month, day, 0, 0, 0, 0, time.UTC),
+		Type: mysql.TypeDate, Fsp: mysql.UnspecifiedFsp}
+	d.SetMysqlTime(t)
+	return d, nil
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	unit := args[0].GetString()
@@ -501,8 +511,8 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	// parse interval
 	var interval string
 	if strings.ToLower(nodeInterval.Unit) == "day" {
-		day, err2 := parseDayInterval(*nodeIntervalIntervalDatum)
-		if err2 != nil {
+		day, err1 := parseDayInterval(*nodeIntervalIntervalDatum)
+		if err1 != nil {
 			d.SetNull()
 			return d, ErrInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
 		}
@@ -511,10 +521,10 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		if nodeIntervalIntervalDatum.Kind() == types.KindString {
 			interval = fmt.Sprintf("%v", nodeIntervalIntervalDatum.GetString())
 		} else {
-			ii, err := nodeIntervalIntervalDatum.ToInt64()
-			if err != nil {
+			ii, err1 := nodeIntervalIntervalDatum.ToInt64()
+			if err1 != nil {
 				d.SetNull()
-				return d, errors.Trace(err)
+				return d, errors.Trace(err1)
 			}
 			interval = fmt.Sprintf("%v", ii)
 		}

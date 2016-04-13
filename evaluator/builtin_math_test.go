@@ -15,10 +15,12 @@ package evaluator
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
 func (s *testEvaluatorSuite) TestAbs(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg interface{}
 		Ret interface{}
@@ -41,6 +43,7 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRand(c *C) {
+	defer testleak.AfterTest(c)()
 	v, err := builtinRand(make([]types.Datum, 0), nil)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetFloat64(), Less, float64(1))
@@ -48,6 +51,7 @@ func (s *testEvaluatorSuite) TestRand(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPow(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg []interface{}
 		Ret float64
