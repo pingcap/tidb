@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -33,6 +34,7 @@ type testCodecSuite struct {
 }
 
 func (s *testCodecSuite) TestCodecKey(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  []types.Datum
 		Expect []types.Datum
@@ -89,6 +91,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 }
 
 func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
+	defer testleak.AfterTest(c)()
 	table := []struct {
 		Left   []types.Datum
 		Right  []types.Datum
@@ -198,6 +201,7 @@ func (s *testCodecSuite) TestCodecKeyCompare(c *C) {
 }
 
 func (s *testCodecSuite) TestNumberCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInt64 := []int64{
 		math.MinInt64,
 		math.MinInt32,
@@ -270,6 +274,7 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 }
 
 func (s *testCodecSuite) TestNumberOrder(c *C) {
+	defer testleak.AfterTest(c)()
 	tblInt64 := []struct {
 		Arg1 int64
 		Arg2 int64
@@ -338,6 +343,7 @@ func (s *testCodecSuite) TestNumberOrder(c *C) {
 }
 
 func (s *testCodecSuite) TestFloatCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	tblFloat := []float64{
 		-1,
 		0,
@@ -396,6 +402,7 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 }
 
 func (s *testCodecSuite) TestBytes(c *C) {
+	defer testleak.AfterTest(c)()
 	tblBytes := [][]byte{
 		{},
 		{0x00, 0x01},
@@ -473,6 +480,7 @@ func parseDuration(c *C, s string) mysql.Duration {
 }
 
 func (s *testCodecSuite) TestTime(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []string{
 		"2011-01-01 00:00:00",
 		"2011-01-01 00:00:00",
@@ -514,6 +522,7 @@ func (s *testCodecSuite) TestTime(c *C) {
 }
 
 func (s *testCodecSuite) TestDuration(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []string{
 		"11:11:11",
 		"00:00:00",
@@ -556,6 +565,7 @@ func (s *testCodecSuite) TestDuration(c *C) {
 }
 
 func (s *testCodecSuite) TestDecimal(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []string{
 		"1234.00",
 		"1234",

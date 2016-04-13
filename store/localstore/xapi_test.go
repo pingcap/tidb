@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
-	"github.com/pingcap/tidb/xapi/tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func TestT(t *testing.T) {
@@ -50,6 +51,7 @@ var tbInfo = &simpleTableInfo{
 }
 
 func (s *testXAPISuite) TestSelect(c *C) {
+	defer testleak.AfterTest(c)()
 	store := createMemStore(time.Now().Nanosecond())
 	count := int64(10)
 	err := prepareTableData(store, tbInfo, count, genValues)
@@ -107,6 +109,8 @@ func (s *testXAPISuite) TestSelect(c *C) {
 		c.Assert(h, Equals, i+1)
 	}
 	txn.Commit()
+
+	store.Close()
 }
 
 // simpleTableInfo just have the minimum information enough to describe the table.
@@ -222,10 +226,10 @@ func encodeColumnKV(tid, handle, cid int64, value types.Datum) (kv.Key, []byte, 
 	return key, val, nil
 }
 
-func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs int64) (*kv.Request, error) {
+func prepareSelectRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.TableInfo = simpleInfo.toPBTableInfo()
-	selReq.StartTs = proto.Int64(startTs)
+	selReq.StartTs = proto.Uint64(startTs)
 	selReq.Ranges = []*tipb.KeyRange{fullPBTableRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {
@@ -262,10 +266,10 @@ func fullIndexRange(tid int64, idxID int64) kv.KeyRange {
 	}
 }
 
-func prepareIndexRequest(simpleInfo *simpleTableInfo, startTs int64) (*kv.Request, error) {
+func prepareIndexRequest(simpleInfo *simpleTableInfo, startTs uint64) (*kv.Request, error) {
 	selReq := new(tipb.SelectRequest)
 	selReq.IndexInfo = simpleInfo.toPBIndexInfo(0)
-	selReq.StartTs = proto.Int64(startTs)
+	selReq.StartTs = proto.Uint64(startTs)
 	selReq.Ranges = []*tipb.KeyRange{fullPBIndexRange}
 	data, err := proto.Marshal(selReq)
 	if err != nil {

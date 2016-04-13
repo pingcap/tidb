@@ -29,18 +29,16 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/ticlient"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore"
-	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/util/types"
@@ -48,13 +46,9 @@ import (
 
 // Engine prefix name
 const (
-	EngineGoLevelDBMemory     = "memory://"
-	EngineGoLevelDBPersistent = "goleveldb://"
-	EngineBoltDB              = "boltdb://"
-	EngineHBase               = "hbase://"
-	EngineTiKV                = "tikv://"
-	defaultMaxRetries         = 30
-	retrySleepInterval        = 500 * time.Millisecond
+	EngineGoLevelDBMemory = "memory://"
+	defaultMaxRetries     = 30
+	retrySleepInterval    = 500 * time.Millisecond
 )
 
 type domainMap struct {
@@ -284,16 +278,22 @@ func IsQuery(sql string) bool {
 	return false
 }
 
+var tpsMetrics metric.TPSMetrics
+
+// GetTPS gets tidb tps.
+func GetTPS() int64 {
+	return tpsMetrics.Get()
+}
+
 func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
-	RegisterLocalStore("boltdb", boltdb.Driver{})
-	RegisterStore("hbase", hbasekv.Driver{})
-	RegisterStore("tikv", ticlient.Driver{})
-
 	// start pprof handlers
 	if EnablePprof {
 		go http.ListenAndServe(PprofAddr, nil)
 	}
+
+	// Init metrics
+	tpsMetrics = metric.NewTPSMetrics()
 }

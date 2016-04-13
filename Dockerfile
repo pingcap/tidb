@@ -1,15 +1,13 @@
-FROM golang
+FROM golang:1.6
 
-VOLUME /opt
+COPY . /go/src/github.com/pingcap/tidb
 
-RUN apt-get update && apt-get install -y wget git make ; \
-        cd /opt ; \
-        export PATH=$GOROOT/bin:$GOPATH/bin:$PATH ; \
-        go get -d github.com/pingcap/tidb ; \
-        cd $GOPATH/src/github.com/pingcap/tidb ; \
-        make ; make server ; cp tidb-server/tidb-server /usr/bin/ 
+RUN cd /go/src/github.com/pingcap/tidb && \
+    make godep && make server && \
+    mv tidb-server/tidb-server /tidb-server && \
+    make clean
 
 EXPOSE 4000
 
-CMD ["/usr/bin/tidb-server"]
+ENTRYPOINT ["/tidb-server"]
 

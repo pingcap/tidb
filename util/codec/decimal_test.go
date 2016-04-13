@@ -16,6 +16,7 @@ package codec
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testDecimalSuite{})
@@ -24,6 +25,7 @@ type testDecimalSuite struct {
 }
 
 func (s *testDecimalSuite) TestDecimalCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	inputs := []struct {
 		Input float64
 	}{

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -33,6 +34,7 @@ func TestT(t *testing.T) {
 type testPlanSuite struct{}
 
 func (s *testPlanSuite) TestRangeBuilder(c *C) {
+	defer testleak.AfterTest(c)()
 	rb := &rangeBuilder{}
 
 	cases := []struct {
@@ -206,6 +208,7 @@ func (s *testPlanSuite) TestRangeBuilder(c *C) {
 }
 
 func (s *testPlanSuite) TestFilterRate(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		expr string
 		rate float64
@@ -238,6 +241,7 @@ func (s *testPlanSuite) TestFilterRate(c *C) {
 }
 
 func (s *testPlanSuite) TestBestPlan(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql  string
 		best string
@@ -323,6 +327,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 }
 
 func (s *testPlanSuite) TestSplitWhere(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		expr  string
 		count int
@@ -345,6 +350,7 @@ func (s *testPlanSuite) TestSplitWhere(c *C) {
 }
 
 func (s *testPlanSuite) TestNullRejectFinder(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		expr    string
 		notNull bool
@@ -512,6 +518,7 @@ func (b *mockJoinResolver) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 func (s *testPlanSuite) TestJoinPath(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql     string
 		explain string
@@ -605,6 +612,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 }
 
 func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []struct {
 		sql              string
 		accessEqualCount int
@@ -633,6 +641,7 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 }
 
 func (s *testPlanSuite) TestVisitCount(c *C) {
+	defer testleak.AfterTest(c)()
 	sqls := []string{
 		"select t1.c1, t2.c2 from t1, t2",
 		"select * from t1 left join t2 on t1.c1 = t2.c1",

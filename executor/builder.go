@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
-	"github.com/pingcap/tidb/xapi"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -139,12 +138,11 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 			ctx:       b.ctx,
 			tablePlan: v,
 		}
-		where := conditionsToPBExpression(v.FilterConditions...)
-		if xapi.SupportExpression(client, where) {
+		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		if where != nil {
 			e.where = where
-			return e
 		}
-		return b.buildFilter(e, v.FilterConditions)
+		return b.buildFilter(e, remained)
 	}
 
 	e := &TableScanExec{
@@ -198,12 +196,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 			ctx:       b.ctx,
 			indexPlan: v,
 		}
-		where := conditionsToPBExpression(v.FilterConditions...)
-		if xapi.SupportExpression(client, where) {
+		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		if where != nil {
 			e.where = where
-			return e
 		}
-		return b.buildFilter(e, v.FilterConditions)
+		return b.buildFilter(e, remained)
 	}
 	var idx *column.IndexedCol
 	for _, val := range tbl.Indices() {
@@ -230,7 +227,11 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	for i, val := range v.Ranges {
 		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
-	return b.buildFilter(e, v.FilterConditions)
+	x := b.buildFilter(e, v.FilterConditions)
+	if v.Desc {
+		x = &ReverseExec{Src: x}
+	}
+	return x
 }
 
 func (b *executorBuilder) buildIndexRange(scan *IndexScanExec, v *plan.IndexRange) *IndexRangeExec {
@@ -278,6 +279,7 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 		L:  conditions[0],
 		R:  b.joinConditions(conditions[1:]),
 	}
+	ast.MergeChildrenFlags(condition, condition.L, condition.R)
 	return condition
 }
 
@@ -331,6 +333,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
+		Limit:   v.ExecLimit,
 	}
 	return e
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -65,6 +66,7 @@ func testCheckOwner(c *C, d *ddl, isOwner bool, flag JobType) {
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
@@ -109,6 +111,7 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
@@ -131,6 +134,7 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 }
 
 func (s *testDDLSuite) TestTableError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
@@ -201,6 +205,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 }
 
 func (s *testDDLSuite) TestIndexError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
@@ -303,6 +308,7 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 }
 
 func (s *testDDLSuite) TestColumnError(c *C) {
+	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
 

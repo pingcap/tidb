@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func TestT(t *testing.T) {
@@ -30,6 +31,7 @@ type testSessionCtxSuite struct {
 }
 
 func (s *testSessionCtxSuite) TestDomain(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	c.Assert(domainKey.String(), Not(Equals), "")

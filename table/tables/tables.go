@@ -437,6 +437,9 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 	}
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
+		if col == nil {
+			continue
+		}
 		if col.State != model.StatePublic {
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}

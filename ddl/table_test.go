@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -149,6 +150,7 @@ func testNewContext(c *C, d *ddl) context.Context {
 }
 
 func (s *testTableSuite) TestTable(c *C) {
+	defer testleak.AfterTest(c)()
 	d := s.d
 
 	ctx := testNewContext(c, d)
@@ -185,6 +187,7 @@ func (s *testTableSuite) TestTable(c *C) {
 }
 
 func (s *testTableSuite) TestTableResume(c *C) {
+	defer testleak.AfterTest(c)()
 	d := s.d
 
 	testCheckOwner(c, d, true, ddlJobFlag)

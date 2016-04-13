@@ -106,6 +106,7 @@ import (
 	create		"CREATE"
 	cross 		"CROSS"
 	curDate 	"CURDATE"
+	utcDate 	"UTC_DATE"
 	currentDate 	"CURRENT_DATE"
 	curTime 	"CUR_TIME"
 	currentTime 	"CURRENT_TIME"
@@ -301,6 +302,8 @@ import (
 	zerofill	"ZEROFILL"
 	
 	calcFoundRows	"SQL_CALC_FOUND_ROWS"
+	sqlCache	"SQL_CACHE"
+	sqlNoCache	"SQL_NO_CACHE"
 
 	currentTs	"CURRENT_TIMESTAMP"
 	localTime	"LOCALTIME"
@@ -516,6 +519,7 @@ import (
 	SelectLockOpt		"FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmt		"SELECT statement"
 	SelectStmtCalcFoundRows	"SELECT statement optional SQL_CALC_FOUND_ROWS"
+	SelectStmtSQLCache	"SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
 	SelectStmtDistinct	"SELECT statement optional DISTINCT clause"
 	SelectStmtFieldList	"SELECT statement field list"
 	SelectStmtLimit		"SELECT statement optional LIMIT clause"
@@ -614,6 +618,9 @@ import (
 
 %precedence lowerThanCalcFoundRows
 %precedence calcFoundRows
+
+%precedence lowerThanSQLCache
+%precedence sqlCache sqlNoCache
 
 %precedence lowerThanSetKeyword
 %precedence set
@@ -897,7 +904,7 @@ ColumnOption:
 	}
 |	"COMMENT" stringLit
 	{
-		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment}
+		$$ =  &ast.ColumnOption{Tp: ast.ColumnOptionComment, Expr: ast.NewValueExpr($2)}
 	}
 |	"CHECK" '(' Expression ')'
 	{
@@ -1817,7 +1824,7 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
@@ -2169,7 +2176,7 @@ Function:
 |	FunctionCallAgg
 
 FunctionNameConflict:
-	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION"
+	"DATABASE" | "SCHEMA" | "IF" | "LEFT" | "REPEAT" | "CURRENT_USER" | "CURRENT_DATE" | "VERSION" | "UTC_DATE"
 
 FunctionCallConflict:
 	FunctionNameConflict '(' ExpressionListOpt ')' 
@@ -2182,6 +2189,10 @@ FunctionCallConflict:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
 |	"CURRENT_DATE"
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"UTC_DATE"
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
@@ -3201,7 +3212,7 @@ SelectStmtDistinct:
 	}
 
 SelectStmtOpts:
-	SelectStmtDistinct SelectStmtCalcFoundRows
+	SelectStmtDistinct SelectStmtSQLCache SelectStmtCalcFoundRows
 	{
 		// TODO: return calc_found_rows opt and support more other options
 		$$ = $1
@@ -3215,6 +3226,19 @@ SelectStmtCalcFoundRows:
 |	"SQL_CALC_FOUND_ROWS"
 	{
 		$$ = true
+	}
+SelectStmtSQLCache:
+	%prec lowerThanSQLCache
+	{
+		$$ = false
+	}
+|	"SQL_CACHE"
+	{
+		$$ = true
+	}
+|	"SQL_NO_CACHE"
+	{
+		$$ = false
 	}
 
 SelectStmtFieldList:
@@ -3654,7 +3678,10 @@ ShowLikeOrWhereOpt:
 	}
 |	"LIKE" PrimaryExpression
 	{
-		$$ = &ast.PatternLikeExpr{Pattern: $2.(ast.ExprNode)}
+		$$ = &ast.PatternLikeExpr{
+			Pattern: $2.(ast.ExprNode),
+			Escape: '\\',
+		}
 	}
 |	"WHERE" Expression
 	{

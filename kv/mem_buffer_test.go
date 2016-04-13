@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 const (
@@ -137,6 +138,7 @@ func mustGet(c *C, buffer MemBuffer) {
 }
 
 func (s *testKVSuite) TestGetSet(c *C) {
+	defer testleak.AfterTest(c)()
 	for _, buffer := range s.bs {
 		insertData(c, buffer)
 		mustGet(c, buffer)
@@ -145,6 +147,7 @@ func (s *testKVSuite) TestGetSet(c *C) {
 }
 
 func (s *testKVSuite) TestNewIterator(c *C) {
+	defer testleak.AfterTest(c)()
 	for _, buffer := range s.bs {
 		// should be invalid
 		iter, err := buffer.Seek(nil)
@@ -158,6 +161,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 }
 
 func (s *testKVSuite) TestBasicNewIterator(c *C) {
+	defer testleak.AfterTest(c)()
 	for _, buffer := range s.bs {
 		it, err := buffer.Seek([]byte("2"))
 		c.Assert(err, IsNil)
@@ -167,6 +171,7 @@ func (s *testKVSuite) TestBasicNewIterator(c *C) {
 }
 
 func (s *testKVSuite) TestNewIteratorMin(c *C) {
+	defer testleak.AfterTest(c)()
 	kvs := []struct {
 		key   string
 		value string

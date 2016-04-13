@@ -17,17 +17,21 @@ import (
 	"math"
 	"sort"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi"
 	"github.com/pingcap/tidb/xapi/tablecodec"
-	"github.com/pingcap/tidb/xapi/tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // XSelectTableExec represents XAPI select executor.
@@ -67,10 +71,16 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			e.subResult = nil
 			continue
 		}
+		fullRowData := make([]types.Datum, len(e.tablePlan.Fields()))
+		var j int
 		for i, field := range e.tablePlan.Fields() {
-			field.Expr.SetDatum(rowData[i])
+			if field.Referenced {
+				fullRowData[i] = rowData[j]
+				field.Expr.SetDatum(rowData[j])
+				j++
+			}
 		}
-		return resultRowToRow(e.table, h, rowData), nil
+		return resultRowToRow(e.table, h, fullRowData), nil
 	}
 }
 
@@ -102,9 +112,19 @@ func (e *XSelectTableExec) doRequest() error {
 	startTs := txn.StartTS()
 	selReq.StartTs = &startTs
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
-	selReq.Where = conditionsToPBExpression(e.tablePlan.FilterConditions...)
+	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
-	selReq.TableInfo = tablecodec.TableToProto(e.tablePlan.Table)
+
+	columns := make([]*model.ColumnInfo, 0, len(e.tablePlan.Fields()))
+	for _, v := range e.tablePlan.Fields() {
+		if v.Referenced {
+			columns = append(columns, v.Column)
+		}
+	}
+	selReq.TableInfo = &tipb.TableInfo{
+		TableId: proto.Int64(e.table.Meta().ID),
+	}
+	selReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	e.result, err = xapi.Select(txn.GetClient(), selReq, 1)
 	if err != nil {
 		return errors.Trace(err)
@@ -118,8 +138,20 @@ type XSelectIndexExec struct {
 	indexPlan *plan.IndexScan
 	ctx       context.Context
 	where     *tipb.Expr
-	rows      []*Row
-	cursor    int
+
+	tasks      []*lookupTableTask
+	taskCursor int
+	indexOrder map[int64]int
+}
+
+// LookupTableTaskLimit represents max number of handles for a lookupTableTask.
+var LookupTableTaskLimit = 256
+
+type lookupTableTask struct {
+	handles []int64
+	rows    []*Row
+	cursor  int
+	done    bool
 }
 
 // Fields implements Executor Fields interface.
@@ -129,21 +161,49 @@ func (e *XSelectIndexExec) Fields() []*ast.ResultField {
 
 // Next implements Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
-	if e.rows == nil {
-		err := e.doRequest()
+	if e.tasks == nil {
+		handles, err := e.fetchHandles()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.buildTableTasks(handles)
 	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
+	for {
+		if e.taskCursor >= len(e.tasks) {
+			return nil, nil
+		}
+		task := e.tasks[e.taskCursor]
+		if !task.done {
+			sort.Sort(int64Slice(task.handles))
+			tblResult, err := e.doTableRequest(task.handles)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if !e.indexPlan.OutOfOrder {
+				// Restore the index order.
+				sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
+				if e.indexPlan.Desc {
+					sort.Sort(sort.Reverse(sorter))
+				} else {
+					sort.Sort(sorter)
+				}
+			}
+			task.done = true
+		}
+		if task.cursor < len(task.rows) {
+			row := task.rows[task.cursor]
+			for i, field := range e.indexPlan.Fields() {
+				field.Expr.SetDatum(row.Data[i])
+			}
+			task.cursor++
+			return row, nil
+		}
+		e.taskCursor++
 	}
-	row := e.rows[e.cursor]
-	for i, field := range e.indexPlan.Fields() {
-		field.Expr.SetDatum(row.Data[i])
-	}
-	e.cursor++
-	return row, nil
 }
 
 // Close implements Executor Close interface.
@@ -151,55 +211,77 @@ func (e *XSelectIndexExec) Close() error {
 	return nil
 }
 
-func (e *XSelectIndexExec) doRequest() error {
-	txn, err := e.ctx.GetTxn(false)
+func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
+	idxResult, err := e.doIndexRequest()
 	if err != nil {
-		return errors.Trace(err)
-	}
-	idxResult, err := e.doIndexRequest(txn)
-	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	handles, err := extractHandlesFromIndexResult(idxResult)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if len(handles) == 0 {
-		return nil
-	}
-
-	var indexOrder map[int64]int
 	if !e.indexPlan.OutOfOrder {
 		// Save the index order.
-		indexOrder = make(map[int64]int)
+		e.indexOrder = make(map[int64]int)
 		for i, h := range handles {
-			indexOrder[h] = i
+			e.indexOrder[h] = i
 		}
 	}
-
-	sort.Sort(int64Slice(handles))
-	tblResult, err := e.doTableRequest(txn, handles)
-	rows, err := extractRowsFromTableResult(e.table, tblResult)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) < len(handles) {
-		return errors.Errorf("got %d rows with %d handles", len(rows), len(handles))
-	}
-	if !e.indexPlan.OutOfOrder {
-		// Restore the index order.
-		orderedRows := make([]*Row, len(handles))
-		for i, h := range handles {
-			oi := indexOrder[h]
-			orderedRows[oi] = rows[i]
-		}
-		rows = orderedRows
-	}
-	e.rows = rows
-	return nil
+	return handles, nil
 }
 
-func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResult, error) {
+func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
+	e.tasks = make([]*lookupTableTask, 0, (len(handles)/LookupTableTaskLimit)+1)
+	for {
+		if len(handles) > LookupTableTaskLimit {
+			task := &lookupTableTask{
+				handles: handles[:LookupTableTaskLimit],
+			}
+			e.tasks = append(e.tasks, task)
+			handles = handles[LookupTableTaskLimit:]
+			continue
+		}
+		if len(handles) > 0 {
+			task := &lookupTableTask{
+				handles: handles,
+			}
+			e.tasks = append(e.tasks, task)
+		}
+		break
+	}
+	if e.indexPlan.Desc {
+		// Reverse tasks order.
+		for i := 0; i < len(e.tasks)/2; i++ {
+			j := len(e.tasks) - i - 1
+			e.tasks[i], e.tasks[j] = e.tasks[j], e.tasks[i]
+		}
+	}
+}
+
+type rowsSorter struct {
+	order map[int64]int
+	rows  []*Row
+}
+
+func (s *rowsSorter) Less(i, j int) bool {
+	x := s.order[s.rows[i].RowKeys[0].Handle]
+	y := s.order[s.rows[j].RowKeys[0].Handle]
+	return x < y
+}
+
+func (s *rowsSorter) Len() int {
+	return len(s.rows)
+}
+
+func (s *rowsSorter) Swap(i, j int) {
+	s.rows[i], s.rows[j] = s.rows[j], s.rows[i]
+}
+
+func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// TODO: add offset and limit.
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
@@ -209,7 +291,6 @@ func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResul
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
 	}
-	var err error
 	selIdxReq.Ranges, err = indexRangesToPBRanges(e.indexPlan.Ranges, fieldTypes)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -217,12 +298,25 @@ func (e *XSelectIndexExec) doIndexRequest(txn kv.Transaction) (*xapi.SelectResul
 	return xapi.Select(txn.GetClient(), selIdxReq, 1)
 }
 
-func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (*xapi.SelectResult, error) {
+func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
+	txn, err := e.ctx.GetTxn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// TODO: add offset and limit.
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selTableReq.StartTs = &startTs
-	selTableReq.TableInfo = tablecodec.TableToProto(e.indexPlan.Table)
+	columns := make([]*model.ColumnInfo, 0, len(e.indexPlan.Fields()))
+	for _, v := range e.indexPlan.Fields() {
+		if v.Referenced {
+			columns = append(columns, v.Column)
+		}
+	}
+	selTableReq.TableInfo = &tipb.TableInfo{
+		TableId: proto.Int64(e.table.Meta().ID),
+	}
+	selTableReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
 	selTableReq.Fields = resultFieldsToPBExpression(e.indexPlan.Fields())
 	for _, h := range handles {
 		if h == math.MaxInt64 {
@@ -234,12 +328,28 @@ func (e *XSelectIndexExec) doTableRequest(txn kv.Transaction, handles []int64) (
 		pbRange.High = kv.Key(pbRange.Low).PrefixNext()
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
-	selTableReq.Where = conditionsToPBExpression(e.indexPlan.FilterConditions...)
+	selTableReq.Where = e.where
 	return xapi.Select(txn.GetClient(), selTableReq, 10)
 }
 
-func conditionsToPBExpression(expr ...ast.ExprNode) *tipb.Expr {
-	return nil
+// conditionsToPBExpr tries to convert filter conditions to a tipb.Expr.
+// not supported conditions will be returned in remained.
+func conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, tn *ast.TableName) (pbexpr *tipb.Expr,
+	remained []ast.ExprNode) {
+	for _, expr := range exprs {
+		v := exprToPBExpr(client, expr, tn)
+		if v == nil {
+			remained = append(remained, expr)
+		} else {
+			if pbexpr == nil {
+				pbexpr = v
+			} else {
+				// merge multiple converted pb expression into an AND expression.
+				pbexpr = &tipb.Expr{Tp: tipb.ExprType_And.Enum(), Children: []*tipb.Expr{pbexpr, v}}
+			}
+		}
+	}
+	return
 }
 
 func resultFieldsToPBExpression(fields []*ast.ResultField) []*tipb.Expr {
@@ -381,7 +491,7 @@ func extractHandlesFromIndexSubResult(subResult *xapi.SubResult) ([]int64, error
 	return handles, nil
 }
 
-func extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		subResult, err := tblResult.Next()
@@ -391,7 +501,7 @@ func extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]
 		if subResult == nil {
 			break
 		}
-		subRows, err := extractRowsFromSubResult(t, subResult)
+		subRows, err := e.extractRowsFromSubResult(t, subResult)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -400,7 +510,7 @@ func extractRowsFromTableResult(t table.Table, tblResult *xapi.SelectResult) ([]
 	return rows, nil
 }
 
-func extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
+func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row, error) {
 	var rows []*Row
 	for {
 		h, rowData, err := subResult.Next()
@@ -410,7 +520,16 @@ func extractRowsFromSubResult(t table.Table, subResult *xapi.SubResult) ([]*Row,
 		if rowData == nil {
 			break
 		}
-		row := resultRowToRow(t, h, rowData)
+		fullRowData := make([]types.Datum, len(e.indexPlan.Fields()))
+		var j int
+		for i, field := range e.indexPlan.Fields() {
+			if field.Referenced {
+				fullRowData[i] = rowData[j]
+				field.Expr.SetDatum(fullRowData[i])
+				j++
+			}
+		}
+		row := resultRowToRow(t, h, fullRowData)
 		rows = append(rows, row)
 	}
 	return rows, nil
@@ -421,3 +540,121 @@ type int64Slice []int64
 func (p int64Slice) Len() int           { return len(p) }
 func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+// exprToPBExpr converts an ast.ExprNode to a tipb.Expr, if not supported, nil will be returned.
+func exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *ast.TableName) *tipb.Expr {
+	switch x := expr.(type) {
+	case *ast.ValueExpr, *ast.ParamMarkerExpr:
+		return datumToPBExpr(client, *expr.GetDatum())
+	case *ast.ColumnNameExpr:
+		return columnNameToPBExpr(client, x, tn)
+	case *ast.BinaryOperationExpr:
+		return binopToPBExpr(client, x, tn)
+	case *ast.ParenthesesExpr:
+		return exprToPBExpr(client, x.Expr, tn)
+	default:
+		return nil
+	}
+}
+
+func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
+		return nil
+	}
+	// Zero Column ID is not a column from table, can not support for now.
+	if column.Refer.Column.ID == 0 {
+		return nil
+	}
+	switch column.Refer.Expr.GetType().Tp {
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeDecimal, mysql.TypeNewDecimal, mysql.TypeGeometry,
+		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp, mysql.TypeYear:
+		return nil
+	}
+	matched := false
+	for _, f := range tn.GetResultFields() {
+		if f.TableName == column.Refer.TableName && f.Column.ID == column.Refer.Column.ID {
+			matched = true
+			break
+		}
+	}
+	if matched {
+		pbExpr := new(tipb.Expr)
+		pbExpr.Tp = tipb.ExprType_ColumnRef.Enum()
+		pbExpr.Val = codec.EncodeInt(nil, column.Refer.Column.ID)
+		return pbExpr
+	}
+	// If the column ID is in fields, it means the column is from an outer table,
+	// its value is available to use.
+	return datumToPBExpr(client, *column.Refer.Expr.GetDatum())
+}
+
+func datumToPBExpr(client kv.Client, d types.Datum) *tipb.Expr {
+	var tp tipb.ExprType
+	var val []byte
+	switch d.Kind() {
+	case types.KindNull:
+		tp = tipb.ExprType_Null
+	case types.KindInt64:
+		tp = tipb.ExprType_Int64
+		val = codec.EncodeInt(nil, d.GetInt64())
+	case types.KindUint64:
+		tp = tipb.ExprType_Uint64
+		val = codec.EncodeUint(nil, d.GetUint64())
+	case types.KindString:
+		tp = tipb.ExprType_String
+		val = d.GetBytes()
+	case types.KindBytes:
+		tp = tipb.ExprType_Bytes
+		val = d.GetBytes()
+	case types.KindFloat32:
+		tp = tipb.ExprType_Float32
+		val = codec.EncodeFloat(nil, d.GetFloat64())
+	case types.KindFloat64:
+		tp = tipb.ExprType_Float64
+		val = codec.EncodeFloat(nil, d.GetFloat64())
+	default:
+		return nil
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	return &tipb.Expr{Tp: tp.Enum(), Val: val}
+}
+
+func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.TableName) *tipb.Expr {
+	var tp tipb.ExprType
+	switch expr.Op {
+	case opcode.LT:
+		tp = tipb.ExprType_LT
+	case opcode.LE:
+		tp = tipb.ExprType_LE
+	case opcode.EQ:
+		tp = tipb.ExprType_EQ
+	case opcode.NE:
+		tp = tipb.ExprType_NE
+	case opcode.GE:
+		tp = tipb.ExprType_GE
+	case opcode.GT:
+		tp = tipb.ExprType_GT
+	case opcode.NullEQ:
+		tp = tipb.ExprType_NullEQ
+	case opcode.AndAnd:
+		tp = tipb.ExprType_And
+	case opcode.OrOr:
+		tp = tipb.ExprType_Or
+	default:
+		return nil
+	}
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	leftExpr := exprToPBExpr(client, expr.L, tn)
+	if leftExpr == nil {
+		return nil
+	}
+	rightExpr := exprToPBExpr(client, expr.R, tn)
+	if rightExpr == nil {
+		return nil
+	}
+	return &tipb.Expr{Tp: tp.Enum(), Children: []*tipb.Expr{leftExpr, rightExpr}}
+}

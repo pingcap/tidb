@@ -16,14 +16,16 @@ package executor_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite) TestShow(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
-	testSQL = `create table show_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
+	testSQL = `create table show_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int comment "c1_comment", c2 int, c3 int default 1) ENGINE=InnoDB AUTO_INCREMENT=28934 DEFAULT CHARSET=utf8 COMMENT "table_comment";`
 	tk.MustExec(testSQL)
 
 	testSQL = "show columns from show_test;"
@@ -33,6 +35,13 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = "show create table show_test;"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
+	row := result.Rows()[0]
+	// For issue https://github.com/pingcap/tidb/issues/1061
+	expectedRow := []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n PRIMARY KEY (`id`) \n) ENGINE=InnoDB DEFAULT CHARSET=utf8 AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
@@ -43,12 +52,17 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = "SHOW index from show_index;"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
-	expectedRow := []interface{}{
+	expectedRow = []interface{}{
 		"show_index", int64(1), "cIdx", int64(1), "c", "utf8_bin",
 		int64(0), nil, nil, "YES", "HASH", "", "index_comment_for_cIdx"}
-	row := result.Rows()[0]
+	row = result.Rows()[0]
 	c.Check(row, HasLen, len(expectedRow))
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
+
+	// For show like with escape
+	testSQL = `show tables like 'show\_test'`
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
 }

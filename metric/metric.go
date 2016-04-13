@@ -54,3 +54,59 @@ func RunMetric(interval time.Duration) {
 		}()
 	})
 }
+
+// TPSMetrics is the metrics for tps (Transaction Per Second)
+type TPSMetrics interface {
+	// Add c transactions
+	Add(c int64)
+	// Get current tps
+	Get() int64
+}
+
+// Simple tps metrics
+// Accumulate txn count in a second and reset the counter at each second.
+type tpsMetrics struct {
+	meter metrics.Counter
+	tps   int64
+	mu    sync.Mutex
+}
+
+func (tm *tpsMetrics) Add(c int64) {
+	tm.meter.Inc(c)
+}
+
+func (tm *tpsMetrics) Get() int64 {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	return tm.tps
+}
+
+func (tm *tpsMetrics) tick() {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	t := tm.meter.Count()
+	tm.meter.Clear()
+	tm.tps = t
+
+}
+
+func (tm *tpsMetrics) updateTPS() {
+	for {
+		tm.tick()
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func newTPSMetrics() *tpsMetrics {
+	return &tpsMetrics{
+		meter: metrics.NewCounter(),
+	}
+}
+
+// NewTPSMetrics creates a tpsMetrics and starts its ticker.
+func NewTPSMetrics() TPSMetrics {
+	m := newTPSMetrics()
+	// Tick and update tps
+	go m.updateTPS()
+	return m
+}

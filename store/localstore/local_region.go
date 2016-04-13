@@ -11,7 +11,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
-	"github.com/pingcap/tidb/xapi/tipb"
+	"github.com/pingcap/tidb/xapi/xeval"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // local region server.
@@ -73,23 +74,15 @@ func (rs *localRegion) Handle(req *regionRequest) (*regionResponse, error) {
 }
 
 func (rs *localRegion) getRowsFromSelectReq(txn kv.Transaction, sel *tipb.SelectRequest) ([]*tipb.Row, error) {
-	tid := sel.TableInfo.GetTableId()
-	kvRanges := rs.extractKVRanges(tid, 0, sel.Ranges)
-	var handles []int64
-	for _, ran := range kvRanges {
-		ranHandles, err := seekRangeHandles(tid, txn, ran)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		handles = append(handles, ranHandles...)
-	}
+	kvRanges := rs.extractKVRanges(sel.TableInfo.GetTableId(), 0, sel.Ranges)
+	eval := &xeval.Evaluator{Row: make(map[int64]types.Datum)}
 	var rows []*tipb.Row
-	for _, handle := range handles {
-		row, err := rs.getRowByHandle(txn, tid, handle, sel.TableInfo.Columns)
+	for _, ran := range kvRanges {
+		ranRows, err := rs.getRowsFromRange(txn, sel, ran, eval)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		rows = append(rows, row)
+		rows = append(rows, ranRows...)
 	}
 	return rows, nil
 }
@@ -130,7 +123,58 @@ func (rs *localRegion) extractKVRanges(tid int64, idxID int64, krans []*tipb.Key
 	return kvRanges
 }
 
-func (rs *localRegion) getRowByHandle(txn kv.Transaction, tid, handle int64, columns []*tipb.ColumnInfo) (*tipb.Row, error) {
+func (rs *localRegion) getRowsFromRange(txn kv.Transaction, sel *tipb.SelectRequest,
+	ran kv.KeyRange, eval *xeval.Evaluator) ([]*tipb.Row, error) {
+	var rows []*tipb.Row
+	if ran.IsPoint() {
+		_, err := txn.Get(ran.StartKey)
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			return nil, nil
+		} else if err != nil {
+			return nil, errors.Trace(err)
+		}
+		h, err := tablecodec.DecodeRowKey(ran.StartKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row, err := rs.getRowByHandle(txn, sel, h, eval)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			rows = append(rows, row)
+		}
+		return rows, nil
+	}
+	seekKey := ran.StartKey
+	for {
+		it, err := txn.Seek(seekKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !it.Valid() || it.Key().Cmp(ran.EndKey) >= 0 {
+			break
+		}
+		h, err := tablecodec.DecodeRowKey(it.Key())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		row, err := rs.getRowByHandle(txn, sel, h, eval)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if row != nil {
+			rows = append(rows, row)
+		}
+		seekKey = it.Key().PrefixNext()
+	}
+	return rows, nil
+}
+
+func (rs *localRegion) getRowByHandle(txn kv.Transaction, sel *tipb.SelectRequest,
+	handle int64, eval *xeval.Evaluator) (*tipb.Row, error) {
+	tid := sel.TableInfo.GetTableId()
+	columns := sel.TableInfo.Columns
 	row := new(tipb.Row)
 	var d types.Datum
 	d.SetInt64(handle)
@@ -144,14 +188,41 @@ func (rs *localRegion) getRowByHandle(txn kv.Transaction, tid, handle int64, col
 			row.Data = append(row.Data, row.Handle...)
 		} else {
 			key := tablecodec.EncodeColumnKey(tid, handle, col.GetColumnId())
-			data, err := txn.Get(key)
-			if err != nil {
-				return nil, errors.Trace(err)
+			data, err1 := txn.Get(key)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
 			row.Data = append(row.Data, data...)
 		}
 	}
-	return row, nil
+	if sel.Where == nil {
+		return row, nil
+	}
+	if len(row.Data) > 0 {
+		var datums []types.Datum
+		datums, err = codec.Decode(row.Data)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for i, c := range columns {
+			eval.Row[c.GetColumnId()] = datums[i]
+		}
+	}
+	result, err := eval.Eval(sel.Where)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if result.Kind() == types.KindNull {
+		return nil, nil
+	}
+	boolResult, err := result.ToBool()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if boolResult == 1 {
+		return row, nil
+	}
+	return nil, nil
 }
 
 func toPBError(err error) *tipb.Error {
@@ -164,40 +235,6 @@ func toPBError(err error) *tipb.Error {
 	errStr := err.Error()
 	perr.Msg = &errStr
 	return perr
-}
-
-func seekRangeHandles(tid int64, txn kv.Transaction, ran kv.KeyRange) ([]int64, error) {
-	if ran.IsPoint() {
-		_, err := txn.Get(ran.StartKey)
-		if terror.ErrorEqual(err, kv.ErrNotExist) {
-			return nil, nil
-		} else if err != nil {
-			return nil, errors.Trace(err)
-		}
-		h, err := tablecodec.DecodeRowKey(ran.StartKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return []int64{h}, nil
-	}
-	seekKey := ran.StartKey
-	var handles []int64
-	for {
-		it, err := txn.Seek(seekKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !it.Valid() || it.Key().Cmp(ran.EndKey) >= 0 {
-			break
-		}
-		h, err := tablecodec.DecodeRowKey(it.Key())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		handles = append(handles, h)
-		seekKey = it.Key().PrefixNext()
-	}
-	return handles, nil
 }
 
 func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectRequest) ([]*tipb.Row, error) {

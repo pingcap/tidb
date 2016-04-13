@@ -337,6 +337,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
+	var pkCol *column.Col
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if mysql.HasAutoIncrementFlag(col.Flag) {
@@ -345,22 +346,35 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if mysql.HasNotNullFlag(col.Flag) {
 				buf.WriteString(" NOT NULL")
 			}
-			switch col.DefaultValue {
-			case nil:
-				buf.WriteString(" DEFAULT NULL")
-			case "CURRENT_TIMESTAMP":
-				buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
-			default:
-				buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+			if !mysql.HasNoDefaultValueFlag(col.Flag) {
+				switch col.DefaultValue {
+				case nil:
+					buf.WriteString(" DEFAULT NULL")
+				case "CURRENT_TIMESTAMP":
+					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+				default:
+					buf.WriteString(fmt.Sprintf(" DEFAULT '%v'", col.DefaultValue))
+				}
 			}
-
 			if mysql.HasOnUpdateNowFlag(col.Flag) {
 				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
 			}
 		}
+		if len(col.Comment) > 0 {
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", col.Comment))
+		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
 		}
+		if tb.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = col
+		}
+	}
+
+	if pkCol != nil {
+		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
+		buf.WriteString(",\n")
+		buf.WriteString(fmt.Sprintf(" PRIMARY KEY (`%s`) ", pkCol.Name.O))
 	}
 
 	if len(tb.Indices()) > 0 {
@@ -390,8 +404,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString(") ENGINE=InnoDB")
 	if s := tb.Meta().Charset; len(s) > 0 {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", s))
-	} else {
-		buf.WriteString(" DEFAULT CHARSET=latin1")
+	}
+
+	if tb.Meta().AutoIncID > 0 {
+		buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", tb.Meta().AutoIncID))
+	}
+
+	if len(tb.Meta().Comment) > 0 {
+		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", tb.Meta().Comment))
 	}
 
 	data := types.MakeDatums(tb.Meta().Name.O, buf.String())

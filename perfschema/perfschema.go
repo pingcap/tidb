@@ -14,6 +14,8 @@
 package perfschema
 
 import (
+	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
@@ -65,11 +67,13 @@ var (
 )
 
 // NewPerfHandle creates a new perfSchema on store.
-func NewPerfHandle(store kv.Storage) PerfSchema {
+func NewPerfHandle() PerfSchema {
 	schema := PerfHandle.(*perfSchema)
-	schema.store = store
 	schema.historyHandles = make([]int64, 0, stmtsHistoryElemMax)
-	_ = schema.initialize()
+	err := schema.initialize()
+	if err != nil {
+		log.Fatal(errors.ErrorStack(err))
+	}
 	registerStatements()
 	return PerfHandle
 }

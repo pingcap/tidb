@@ -37,6 +37,7 @@ const (
 	tableFiles         = "FILES"
 	catalogVal         = "def"
 	tableProfiling     = "PROFILING"
+	tablePartitions    = "PARTITIONS"
 )
 
 type columnInfo struct {
@@ -197,6 +198,35 @@ var collationsCols = []columnInfo{
 	{"SORTLEN", mysql.TypeLonglong, 3, 0, nil, nil},
 }
 
+// See: https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
+var partitionsCols = []columnInfo{
+	{"TABLE_CATALOG", mysql.TypeVarchar, 512, 0, nil, nil},
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PARTITION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUBPARTITION_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"PARTITION_ORDINAL_POSITION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"SUBPARTITION_ORDINAL_POSITION", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"PARTITION_METHOD", mysql.TypeVarchar, 18, 0, nil, nil},
+	{"SUBPARTITION_METHOD", mysql.TypeVarchar, 12, 0, nil, nil},
+	{"PARTITION_EXPRESSION", mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"SUBPARTITION_EXPRESSION", mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"PARTITION_DESCRIPTION", mysql.TypeLongBlob, types.UnspecifiedLength, 0, nil, nil},
+	{"TABLE_ROWS", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"AVG_ROW_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MAX_DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_FREE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CREATE_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"UPDATE_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"CHECK_TIME", mysql.TypeDatetime, 0, 0, nil, nil},
+	{"CHECKSUM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"PARTITION_COMMENT", mysql.TypeVarchar, 80, 0, nil, nil},
+	{"NODEGROUP", mysql.TypeVarchar, 12, 0, nil, nil},
+	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
@@ -222,6 +252,7 @@ func dataForColltions() (records [][]types.Datum) {
 var filesCols = []columnInfo{
 	{"FILE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"FILE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"FILE_TYPE", mysql.TypeVarchar, 20, 0, nil, nil},
 	{"TABLESPACE_NAME", mysql.TypeVarchar, 20, 0, nil, nil},
 	{"TABLE_CATALOG", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -450,6 +481,7 @@ var tableNameToColumns = map[string]([]columnInfo){
 	tableCollations:    collationsCols,
 	tableFiles:         filesCols,
 	tableProfiling:     profilingCols,
+	tablePartitions:    partitionsCols,
 }
 
 func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Table, error) {

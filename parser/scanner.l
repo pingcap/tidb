@@ -483,6 +483,7 @@ unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
 upper		{u}{p}{p}{e}{r}
+utc_date	{u}{t}{c}_{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
 variables	{v}{a}{r}{i}{a}{b}{l}{e}{s}
@@ -502,6 +503,8 @@ false		{f}{a}{l}{s}{e}
 true		{t}{r}{u}{e}
 
 calc_found_rows	{s}{q}{l}_{c}{a}{l}{c}_{f}{o}{u}{n}{d}_{r}{o}{w}{s}
+sql_cache	{s}{q}{l}_{c}{a}{c}{h}{e}
+sql_no_cache	{s}{q}{l}_{n}{o}_{c}{a}{c}{h}{e}
 
 current_ts	{c}{u}{r}{r}{e}{n}{t}_{t}{i}{m}{e}{s}{t}{a}{m}{p}
 localtime	{l}{o}{c}{a}{l}{t}{i}{m}{e}
@@ -948,6 +951,8 @@ redundant		lval.item = string(l.val)
 
 {user_var}		lval.item = string(l.val)
 			return userVar
+{utc_date}		lval.item = string(l.val)
+			return utcDate
 {second}		lval.item = string(l.val)
 			return second
 {second_microsecond}	lval.item= string(l.val)
@@ -1039,6 +1044,10 @@ redundant		lval.item = string(l.val)
 
 {calc_found_rows}	lval.item = string(l.val)
 			return calcFoundRows
+{sql_cache}		lval.item = string(l.val)
+			return sqlCache
+{sql_no_cache}		lval.item = string(l.val)
+			return sqlNoCache
 
 {current_ts}		lval.item = string(l.val)
 			return currentTs

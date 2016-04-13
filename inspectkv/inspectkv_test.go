@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -125,6 +126,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSuite) TestGetDDLInfo(c *C) {
+	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -153,6 +155,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestGetBgDDLInfo(c *C) {
+	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -176,6 +179,7 @@ func (s *testSuite) TestGetBgDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestScan(c *C) {
+	defer testleak.AfterTest(c)()
 	alloc := autoid.NewAllocator(s.store, s.dbInfo.ID)
 	tb, err := tables.TableFromMeta(alloc, s.tbInfo)
 	c.Assert(err, IsNil)

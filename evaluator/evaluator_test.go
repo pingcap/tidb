@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -63,6 +64,7 @@ func (s *testEvaluatorSuite) runTests(c *C, cases []testCase) {
 }
 
 func (s *testEvaluatorSuite) TestBetween(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{exprStr: "1 between 2 and 3", resultStr: "0"},
 		{exprStr: "1 not between 2 and 3", resultStr: "1"},
@@ -71,6 +73,7 @@ func (s *testEvaluatorSuite) TestBetween(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs    interface{}
@@ -145,6 +148,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs interface{}
@@ -182,6 +186,7 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs interface{}
@@ -217,6 +222,7 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	tbl := []struct {
 		lhs interface{}
@@ -315,6 +321,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "case 1 when 1 then 'str1' when 2 then 'str2' end",
@@ -347,12 +354,14 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(1))
 	valExpr.SetValue(4)
+	ast.ResetEvaluatedFlag(caseExpr)
 	v, err = Eval(ctx, caseExpr)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestCall(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 
 	// Test case for correct number of arguments
@@ -403,12 +412,14 @@ func (s *testEvaluatorSuite) TestCall(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
+	defer testleak.AfterTest(c)()
 	f := types.NewFieldType(mysql.TypeLonglong)
 
 	expr := &ast.FuncCastExpr{
 		Expr: ast.NewValueExpr(1),
 		Tp:   f,
 	}
+	ast.SetFlag(expr)
 	ctx := mock.NewContext()
 	v, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
@@ -438,6 +449,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestExtract(c *C) {
+	defer testleak.AfterTest(c)()
 	str := "2011-11-11 10:10:10.123456"
 	tbl := []struct {
 		Unit   string
@@ -487,6 +499,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestPatternIn(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "1 not in (1, 2, 3)",
@@ -533,6 +546,7 @@ func (s *testEvaluatorSuite) TestPatternIn(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsNull(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "1 IS NULL",
@@ -555,6 +569,7 @@ func (s *testEvaluatorSuite) TestIsNull(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsTruth(c *C) {
+	defer testleak.AfterTest(c)()
 	cases := []testCase{
 		{
 			exprStr:   "1 IS TRUE",
@@ -625,6 +640,7 @@ func (s *testEvaluatorSuite) TestIsTruth(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern string
 		input   string
@@ -695,6 +711,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestRegexp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		pattern string
 		input   string
@@ -723,6 +740,7 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
+	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		arg    interface{}
 		op     opcode.Op
@@ -772,8 +790,8 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		{mysql.Set{Name: "a", Value: 1}, opcode.Minus, -1.0},
 	}
 	ctx := mock.NewContext()
-	expr := &ast.UnaryOperationExpr{}
 	for i, t := range tbl {
+		expr := &ast.UnaryOperationExpr{}
 		expr.Op = t.op
 		expr.V = ast.NewValueExpr(t.arg)
 		result, err := Eval(ctx, expr)
@@ -809,11 +827,13 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	value1 := ast.NewValueExpr(1)
 	rf := &ast.ResultField{Expr: value1}
 	expr := &ast.ColumnNameExpr{Refer: rf}
 
+	ast.SetFlag(expr)
 	result, err := Eval(ctx, expr)
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, int64(1))
@@ -826,11 +846,13 @@ func (s *testEvaluatorSuite) TestColumnNameExpr(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
+	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	avg := &ast.AggregateFuncExpr{
 		F: ast.AggFuncAvg,
 	}
 	avg.CurrentGroup = "emptyGroup"
+	ast.SetFlag(avg)
 	result, err := Eval(ctx, avg)
 	c.Assert(err, IsNil)
 	// Empty group should return nil.
@@ -850,6 +872,7 @@ func (s *testEvaluatorSuite) TestAggFuncAvg(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
+	defer testleak.AfterTest(c)()
 	v, err := GetTimeValue(nil, "2012-12-12 00:00:00", mysql.TypeTimestamp, mysql.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -931,9 +954,47 @@ func (s *testEvaluatorSuite) TestGetTimeValue(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestIsCurrentTimeExpr(c *C) {
+	defer testleak.AfterTest(c)()
 	v := IsCurrentTimeExpr(ast.NewValueExpr("abc"))
 	c.Assert(v, IsFalse)
 
 	v = IsCurrentTimeExpr(&ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")})
 	c.Assert(v, IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
+	l := ast.NewValueExpr(int64(1))
+	r := ast.NewValueExpr(int64(2))
+	b := &ast.BinaryOperationExpr{L: l, R: r, Op: opcode.Plus}
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	ctx := mock.NewContext()
+	d, err := EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, true)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	funcCall := &ast.FuncCallExpr{
+		FnName: model.NewCIStr("abs"),
+		Args:   []ast.ExprNode{ast.NewValueExpr(int(-1))},
+	}
+	b = &ast.BinaryOperationExpr{L: funcCall, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, true)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+
+	rf := &ast.ResultField{Expr: ast.NewValueExpr(int64(1))}
+	colExpr := &ast.ColumnNameExpr{Refer: rf}
+	b = &ast.BinaryOperationExpr{L: colExpr, R: r, Op: opcode.Plus}
+	ast.ResetEvaluatedFlag(b)
+	ast.SetFlag(b)
+	c.Assert(ast.IsPreEvaluable(b), Equals, false)
+	d, err = EvalDatum(ctx, b)
+	c.Assert(ast.IsEvaluated(b), Equals, false)
+	c.Assert(err, IsNil)
+	c.Assert(d, DatumEquals, types.NewIntDatum(3))
 }

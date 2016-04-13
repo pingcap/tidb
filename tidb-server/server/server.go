@@ -29,14 +29,17 @@
 package server
 
 import (
+	"encoding/json"
 	"math/rand"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/arena"
 )
@@ -53,6 +56,11 @@ type Server struct {
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
+}
+
+// ConnectionCount gets current connection count.
+func (s *Server) ConnectionCount() int {
+	return len(s.clients)
 }
 
 func (s *Server) getToken() *Token {
@@ -119,6 +127,10 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 
 // Run runs the server.
 func (s *Server) Run() error {
+
+	// Start http api to report tidb info such as tps.
+	s.startStatusHTTP()
+
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -161,4 +173,39 @@ func (s *Server) onConn(c net.Conn) {
 	s.rwlock.Unlock()
 
 	conn.Run()
+}
+
+var once sync.Once
+
+const defaultStatusAddr = ":10080"
+
+func (s *Server) startStatusHTTP() {
+	once.Do(func() {
+		go func() {
+			http.HandleFunc("/status", func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				s := status{TPS: tidb.GetTPS(), Connections: s.ConnectionCount(), Version: mysql.ServerVersion}
+				js, err := json.Marshal(s)
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					log.Error("Encode json error", err)
+				} else {
+					w.Write(js)
+				}
+
+			})
+			addr := s.cfg.StatusAddr
+			if len(addr) == 0 {
+				addr = defaultStatusAddr
+			}
+			log.Fatal(http.ListenAndServe(addr, nil))
+		}()
+	})
+}
+
+// TiDB status
+type status struct {
+	TPS         int64  `json:"tps"`
+	Connections int    `json:"connections"`
+	Version     string `json:"version"`
 }

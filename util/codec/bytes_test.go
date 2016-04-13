@@ -15,6 +15,7 @@ package codec
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testBytesSuite{})
@@ -23,6 +24,7 @@ type testBytesSuite struct {
 }
 
 func (s *testBytesSuite) TestBytesCodec(c *C) {
+	defer testleak.AfterTest(c)()
 	inputs := []struct {
 		enc  []byte
 		dec  []byte

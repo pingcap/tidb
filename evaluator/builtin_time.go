@@ -390,6 +390,16 @@ func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, e
 	return convertToDuration(d, fsp)
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
+func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	year, month, day := time.Now().UTC().Date()
+	t := mysql.Time{
+		Time: time.Date(year, month, day, 0, 0, 0, 0, time.UTC),
+		Type: mysql.TypeDate, Fsp: mysql.UnspecifiedFsp}
+	d.SetMysqlTime(t)
+	return d, nil
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	unit := args[0].GetString()
