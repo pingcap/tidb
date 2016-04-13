@@ -64,6 +64,7 @@ type joinPath struct {
 	idxDepCount   int // number of paths this table depends on.
 	ordering      *ast.ResultField
 	orderingDesc  bool
+	LimitDesc     *Limit
 
 	// for outer join path
 	outer     *joinPath

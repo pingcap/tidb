@@ -213,7 +213,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	b.buildSubquery(sel)
 	var p Plan
 	if sel.From != nil {
-		p = b.buildFrom(sel)
+		p = b.buildFrom(sel, hasAgg)
 		if b.err != nil {
 			return nil
 		}
@@ -266,15 +266,15 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildFrom(sel *ast.SelectStmt) Plan {
+func (b *planBuilder) buildFrom(sel *ast.SelectStmt, hasAggr bool) Plan {
 	from := sel.From.TableRefs
 	if from.Right == nil {
-		return b.buildSingleTable(sel)
+		return b.buildSingleTable(sel, hasAggr)
 	}
 	return b.buildJoin(sel)
 }
 
-func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
+func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt, hasAggr bool) Plan {
 	from := sel.From.TableRefs
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
@@ -297,6 +297,9 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 	}
 	conditions := splitWhere(sel.Where)
 	path := &joinPath{table: tn, conditions: conditions}
+	if sel.Limit != nil && !hasAggr {
+		path.LimitDesc = &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
+	}
 	candidates := b.buildAllAccessMethodsPlan(path)
 	var lowestCost float64
 	for _, v := range candidates {
@@ -330,6 +333,10 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 		Table:     tn.TableInfo,
 		TableName: tn,
 	}
+	if path.LimitDesc != nil {
+		result := int64(path.LimitDesc.Count + path.LimitDesc.Offset)
+		p.LimitCount = &result
+	}
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = len(path.eqConds) > 0
 	p.SetFields(tn.GetResultFields())
@@ -359,6 +366,10 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath) Plan {
 	tn := path.table
 	ip := &IndexScan{Table: tn.TableInfo, Index: index, TableName: tn}
+	if path.LimitDesc != nil {
+		result := int64(path.LimitDesc.Count + path.LimitDesc.Offset)
+		ip.LimitCount = &result
+	}
 	ip.RefAccess = len(path.eqConds) > 0
 	ip.SetFields(tn.GetResultFields())
 
@@ -753,7 +764,7 @@ func (b *planBuilder) buildDistinct(src Plan) Plan {
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	sel := &ast.SelectStmt{From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
-	p := b.buildFrom(sel)
+	p := b.buildFrom(sel, false)
 	for _, v := range p.Fields() {
 		v.Referenced = true
 	}
@@ -791,7 +802,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.Res
 
 func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 	sel := &ast.SelectStmt{From: del.TableRefs, Where: del.Where, OrderBy: del.Order, Limit: del.Limit}
-	p := b.buildFrom(sel)
+	p := b.buildFrom(sel, false)
 	for _, v := range p.Fields() {
 		v.Referenced = true
 	}

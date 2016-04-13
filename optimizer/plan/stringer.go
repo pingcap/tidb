@@ -46,6 +46,9 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		str = "CheckTable"
 	case *IndexScan:
 		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
+		if x.LimitCount != nil {
+			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
+		}
 	case *Limit:
 		str = "Limit"
 	case *SelectFields:
@@ -67,6 +70,9 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		} else {
 			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
 		}
+		if x.LimitCount != nil {
+			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
+		}
 	case *JoinOuter:
 		last := len(e.idxs) - 1
 		idx := e.idxs[last]
@@ -81,6 +87,8 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		e.strs = e.strs[:idx]
 		str = "InnerJoin{" + strings.Join(chilrden, "->") + "}"
 		e.idxs = e.idxs[:last]
+	case *Aggregate:
+		str = "Aggregate"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

@@ -182,7 +182,7 @@ func (db *DBInfo) Clone() *DBInfo {
 	return &newInfo
 }
 
-// CIStr is case insensitve string.
+// CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
 	L string `json:"L"` // Lower case string.
