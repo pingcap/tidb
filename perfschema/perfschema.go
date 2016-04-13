@@ -67,9 +67,8 @@ var (
 )
 
 // NewPerfHandle creates a new perfSchema on store.
-func NewPerfHandle(store kv.Storage) PerfSchema {
+func NewPerfHandle() PerfSchema {
 	schema := PerfHandle.(*perfSchema)
-	schema.store = store
 	schema.historyHandles = make([]int64, 0, stmtsHistoryElemMax)
 	err := schema.initialize()
 	if err != nil {
