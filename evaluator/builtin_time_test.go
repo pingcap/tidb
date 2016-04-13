@@ -425,6 +425,7 @@ func (s *testEvaluatorSuite) TestDateArith(c *C) {
 				dateArithInterval,
 			},
 		}
+		ast.SetFlag(expr)
 		v, err := Eval(ctx, expr)
 		if t.error == true {
 			c.Assert(err, NotNil)

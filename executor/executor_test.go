@@ -588,12 +588,52 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustExec("begin")
+	// Test limit
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 0;")
+	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	// Test limit overflow
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 100 offset 0;")
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1, rowStr2))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	// Test offset overflow
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
+	r.Check(testkit.Rows())
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
 	rowStr = fmt.Sprintf("%v %v", 1, []byte("hello"))
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
 
+	// Test limit + order by
+	tk.MustExec("begin")
+	executor.SortBufferSize = 10
+	for i := 3; i <= 10; i += 1 {
+		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
+	}
+	tk.MustExec("insert INTO select_order_test VALUES (10086, \"hi\");")
+	for i := 11; i <= 20; i += 1 {
+		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"hh\");", i))
+	}
+	for i := 21; i <= 30; i += 1 {
+		tk.MustExec(fmt.Sprintf("insert INTO select_order_test VALUES (%d, \"zz\");", i))
+	}
+	tk.MustExec("insert INTO select_order_test VALUES (1501, \"aa\");")
+	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 3;")
+	rowStr = fmt.Sprintf("%v %v", 11, []byte("hh"))
+	r.Check(testkit.Rows(rowStr))
+	tk.MustExec("commit")
+	executor.SortBufferSize = 500
 	tk.MustExec("drop table select_order_test")
 }
 

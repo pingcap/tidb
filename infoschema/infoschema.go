@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -234,23 +233,13 @@ func NewHandle(store kv.Storage) *Handle {
 		store: store,
 	}
 	// init memory tables
-	initMemoryTables(store)
-	initPerfSchema(store)
+	initMemoryTables()
+	initPerfSchema()
 	return h
 }
 
-func initPerfSchema(store kv.Storage) {
-	perfHandle = perfschema.NewPerfHandle(store)
-}
-
-func genGlobalID(store kv.Storage) (int64, error) {
-	var globalID int64
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
-	})
-	return globalID, errors.Trace(err)
+func initPerfSchema() {
+	perfHandle = perfschema.NewPerfHandle()
 }
 
 var (
@@ -271,39 +260,21 @@ var (
 	perfHandle perfschema.PerfSchema
 )
 
-func setColumnID(meta *model.TableInfo, store kv.Storage) error {
-	var err error
-	for _, c := range meta.Columns {
-		c.ID, err = genGlobalID(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func initMemoryTables(store kv.Storage) error {
+func initMemoryTables() error {
 	// Init Information_Schema
 	var (
 		err error
 		tbl table.Table
 	)
-	dbID, err := genGlobalID(store)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	dbID := autoid.GenLocalSchemaID()
 	nameToTable = make(map[string]table.Table)
 	isTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		meta := buildTableMeta(name, cols)
 		isTables = append(isTables, meta)
-		meta.ID, err = genGlobalID(store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = setColumnID(meta, store)
-		if err != nil {
-			return errors.Trace(err)
+		meta.ID = autoid.GenLocalSchemaID()
+		for _, c := range meta.Columns {
+			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
 		tbl, err = createMemoryTable(meta, alloc)

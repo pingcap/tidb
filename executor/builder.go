@@ -279,6 +279,7 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 		L:  conditions[0],
 		R:  b.joinConditions(conditions[1:]),
 	}
+	ast.MergeChildrenFlags(condition, condition.L, condition.R)
 	return condition
 }
 
@@ -332,6 +333,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 		Src:     src,
 		ByItems: v.ByItems,
 		ctx:     b.ctx,
+		Limit:   v.ExecLimit,
 	}
 	return e
 }
