@@ -19,4 +19,5 @@ type Config struct {
 	LogLevel   string `json:"log_level" toml:"log_level"`
 	SkipAuth   bool   `json:"skip_auth" toml:"skip_auth"`
 	StatusAddr string `json:"status_addr" toml:"status_addr"`
+	Socket     string `json:"socket" toml:"socket"`
 }
