@@ -14,7 +14,9 @@
 package autoid
 
 import (
+	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -184,3 +186,10 @@ func NewMemoryAllocator(dbID int64) Allocator {
 
 //autoid error codes.
 const codeInvalidTableID terror.ErrCode = 1
+
+var localSchemaID int64 = math.MaxInt64
+
+// GenLocalSchemaID generates a local schema ID.
+func GenLocalSchemaID() int64 {
+	return atomic.AddInt64(&localSchemaID, -1)
+}

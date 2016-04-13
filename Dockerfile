@@ -4,10 +4,10 @@ COPY . /go/src/github.com/pingcap/tidb
 
 RUN cd /go/src/github.com/pingcap/tidb && \
     make godep && make server && \
-    cp tidb-server/tidb-server /go/bin/ && \
+    mv tidb-server/tidb-server /tidb-server && \
     make clean
 
 EXPOSE 4000
 
-ENTRYPOINT ["tidb-server"]
+ENTRYPOINT ["/tidb-server"]
 
