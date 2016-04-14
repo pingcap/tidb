@@ -104,7 +104,7 @@ func (e *ShowDDLExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
@@ -174,7 +174,7 @@ func (e *CheckTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *CheckTableExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
@@ -220,7 +220,7 @@ func (e *TableDualExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *TableDualExec) Next() (*Row, error) {
 	if e.executed {
 		return nil, nil
@@ -250,7 +250,7 @@ func (e *TableScanExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *TableScanExec) Next() (*Row, error) {
 	for {
 		if e.cursor >= len(e.ranges) {
