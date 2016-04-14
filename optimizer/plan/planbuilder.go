@@ -331,7 +331,6 @@ func (b *planBuilder) buildTableDual(sel *ast.SelectStmt) Plan {
 	dual := &TableDual{FilterConditions: splitWhere(sel.Where)}
 	ret := ast.ResultField{}
 	dual.SetFields([]*ast.ResultField{&ret})
-
 	return dual
 }
 

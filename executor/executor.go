@@ -225,9 +225,7 @@ func (e *TableDualExec) Next() (*Row, error) {
 	if e.executed {
 		return nil, nil
 	}
-
 	e.executed = true
-
 	return &Row{}, nil
 }
 
