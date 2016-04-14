@@ -72,6 +72,7 @@ var Funcs = map[string]Func{
 	"date_arith":        {builtinDateArith, 3, 3},
 
 	// string functions
+	"ascii":           {builtinASCII, 1, 1},
 	"concat":          {builtinConcat, 1, -1},
 	"concat_ws":       {builtinConcatWS, 2, -1},
 	"left":            {builtinLeft, 2, 2},

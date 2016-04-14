@@ -390,6 +390,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
 
+		{`SELECT ASCII(""), ASCII("A"), ASCII(1);`, true},
+
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
 		{`SELECT REPLACE('www.mysql.com', 'w', 'Ww')`, true},
