@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -111,7 +112,19 @@ func bootstrap(s Session) {
 		return
 	}
 	doDDLWorks(s)
-	doDMLWorks(s)
+	err = doDMLWorks(s)
+	if err != nil {
+		time.Sleep(1 * time.Second)
+		// Check if TiDB is already bootstraped.
+		b1, err1 := checkBootstrapped(s)
+		if err1 != nil {
+			log.Fatal(err1)
+		}
+		if b1 {
+			return
+		}
+		log.Fatal(err)
+	}
 }
 
 const (
@@ -185,7 +198,7 @@ func doDDLWorks(s Session) {
 
 // Execute DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-func doDMLWorks(s Session) {
+func doDMLWorks(s Session) error {
 	mustExecute(s, "BEGIN")
 
 	// Insert a default user with empty password.
@@ -206,7 +219,8 @@ func doDMLWorks(s Session) {
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
 	mustExecute(s, sql)
-	mustExecute(s, "COMMIT")
+	_, err := s.Execute("COMMIT")
+	return errors.Trace(err)
 }
 
 func mustExecute(s Session, sql string) {
