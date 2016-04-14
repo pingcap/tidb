@@ -90,3 +90,20 @@ func (ts *TidbTestSuite) TestResultFieldTableIsNull(c *C) {
 func (ts *TidbTestSuite) TestStatusAPI(c *C) {
 	runTestStatusAPI(c)
 }
+
+func (ts *TidbTestSuite) TestSocket(c *C) {
+	cfg := &Config{
+		LogLevel:   "debug",
+		StatusAddr: ":10091",
+		Socket:     "/tmp/tidbtest.sock",
+	}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+	tcpDsn := dsn
+	dsn = "root@unix(/tmp/tidbtest.sock)/test?strict=true"
+	runTestRegression(c)
+	dsn = tcpDsn
+	server.Close()
+}

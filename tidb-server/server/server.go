@@ -114,7 +114,12 @@ func NewServer(cfg *Config, driver IDriver) (*Server, error) {
 	}
 
 	var err error
-	s.listener, err = net.Listen("tcp", s.cfg.Addr)
+	if cfg.Socket != "" {
+		cfg.SkipAuth = true
+		s.listener, err = net.Listen("unix", cfg.Socket)
+	} else {
+		s.listener, err = net.Listen("tcp", s.cfg.Addr)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -134,6 +139,11 @@ func (s *Server) Run() error {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
+			if opErr, ok := err.(*net.OpError); ok {
+				if opErr.Err.Error() == "use of closed network connection" {
+					return nil
+				}
+			}
 			log.Errorf("accept error %s", err.Error())
 			return errors.Trace(err)
 		}
