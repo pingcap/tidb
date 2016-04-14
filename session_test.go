@@ -789,7 +789,7 @@ func (s *testSessionSuite) TestExpression(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSessionSuite) TestSelectll(c *C) {
+func (s *testSessionSuite) TestSelect(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
