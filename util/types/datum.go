@@ -1065,9 +1065,9 @@ func (d *Datum) ToBool() (int64, error) {
 	case KindUint64:
 		isZero = (d.GetUint64() == 0)
 	case KindFloat32:
-		isZero = (d.GetFloat32() == 0)
+		isZero = (RoundFloat(d.GetFloat64()) == 0)
 	case KindFloat64:
-		isZero = (d.GetFloat64() == 0)
+		isZero = (RoundFloat(d.GetFloat64()) == 0)
 	case KindString:
 		s := d.GetString()
 		if len(s) == 0 {
@@ -1095,7 +1095,7 @@ func (d *Datum) ToBool() (int64, error) {
 		isZero = (d.GetMysqlDuration().Duration == 0)
 	case KindMysqlDecimal:
 		v, _ := d.GetMysqlDecimal().Float64()
-		isZero = (v == 0)
+		isZero = (RoundFloat(v) == 0)
 	case KindMysqlHex:
 		isZero = (d.GetMysqlHex().ToNumber() == 0)
 	case KindMysqlBit:

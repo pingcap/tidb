@@ -95,6 +95,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSimple(v)
 	case *plan.Sort:
 		return b.buildSort(v)
+	case *plan.TableDual:
+		return b.buildTableDual(v)
 	case *plan.TableScan:
 		return b.buildTableScan(v)
 	case *plan.Union:
@@ -116,6 +118,11 @@ func (b *executorBuilder) buildFilter(src Executor, conditions []ast.ExprNode) E
 		Condition: b.joinConditions(conditions),
 		ctx:       b.ctx,
 	}
+}
+
+func (b *executorBuilder) buildTableDual(v *plan.TableDual) Executor {
+	e := &TableDualExec{fields: v.Fields()}
+	return b.buildFilter(e, v.FilterConditions)
 }
 
 func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
