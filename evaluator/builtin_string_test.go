@@ -55,6 +55,33 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestASCII(c *C) {
+	defer testleak.AfterTest(c)()
+	v, err := builtinASCII(types.MakeDatums([]interface{}{nil}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
+	for _, t := range []struct {
+		Input    interface{}
+		Expected int64
+	}{
+		{"", 0},
+		{"A", 65},
+		{"你好", 228},
+		{1, 49},
+		{1.2, 49},
+		{true, 49},
+		{false, 48},
+	} {
+		v, err = builtinASCII(types.MakeDatums(t.Input), nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, t.Expected)
+	}
+
+	v, err = builtinASCII(types.MakeDatums([]interface{}{errors.New("must error")}...), nil)
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestConcat(c *C) {
 	defer testleak.AfterTest(c)()
 	args := []interface{}{nil}
