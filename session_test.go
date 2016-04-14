@@ -1083,6 +1083,11 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "drop table if exists t")
 	se.Close()
 
+	// Try do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
+	// For https://github.com/pingcap/tidb/issues/1096
+	se, err = CreateSession(store)
+	doDMLWorks(se)
+
 	err = store.Close()
 	c.Assert(err, IsNil)
 }

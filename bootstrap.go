@@ -112,19 +112,7 @@ func bootstrap(s Session) {
 		return
 	}
 	doDDLWorks(s)
-	err = doDMLWorks(s)
-	if err != nil {
-		time.Sleep(1 * time.Second)
-		// Check if TiDB is already bootstraped.
-		b1, err1 := checkBootstrapped(s)
-		if err1 != nil {
-			log.Fatal(err1)
-		}
-		if b1 {
-			return
-		}
-		log.Fatal(err)
-	}
+	doDMLWorks(s)
 }
 
 const (
@@ -198,7 +186,7 @@ func doDDLWorks(s Session) {
 
 // Execute DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-func doDMLWorks(s Session) error {
+func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
 
 	// Insert a default user with empty password.
@@ -220,7 +208,18 @@ func doDMLWorks(s Session) error {
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
 	mustExecute(s, sql)
 	_, err := s.Execute("COMMIT")
-	return errors.Trace(err)
+	if err != nil {
+		time.Sleep(1 * time.Second)
+		// Check if TiDB is already bootstraped.
+		b, err1 := checkBootstrapped(s)
+		if err1 != nil {
+			log.Fatal(err1)
+		}
+		if b {
+			return
+		}
+		log.Fatal(err)
+	}
 }
 
 func mustExecute(s Session, sql string) {
