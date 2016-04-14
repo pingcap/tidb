@@ -26,6 +26,21 @@ type TableRange struct {
 	HighVal int64
 }
 
+// TableDual represents a dual table plan.
+type TableDual struct {
+	basePlan
+
+	HasAgg bool
+	// FilterConditions can be used to filter result.
+	FilterConditions []ast.ExprNode
+}
+
+// Accept implements Plan Accept interface.
+func (p *TableDual) Accept(v Visitor) (Plan, bool) {
+	np, _ := v.Enter(p)
+	return v.Leave(np)
+}
+
 // TableScan represents a table scan plan.
 type TableScan struct {
 	basePlan
