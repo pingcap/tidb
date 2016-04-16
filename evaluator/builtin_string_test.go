@@ -263,6 +263,11 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	defer testleak.AfterTest(c)()
+
+	d, err := builtinSubstring(types.MakeDatums([]interface{}{"hello", 2, -1}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "")
+
 	tbl := []struct {
 		str    string
 		pos    int64
@@ -271,10 +276,21 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	}{
 		{"Quadratically", 5, -1, "ratically"},
 		{"foobarbar", 4, -1, "barbar"},
-		{"Quadratically", 5, 6, "ratica"},
+		{"Sakila", 1, -1, "Sakila"},
+		{"Sakila", 2, -1, "akila"},
 		{"Sakila", -3, -1, "ila"},
 		{"Sakila", -5, 3, "aki"},
 		{"Sakila", -4, 2, "ki"},
+		{"Quadratically", 5, 6, "ratica"},
+		{"Sakila", 1, 4, "Saki"},
+		{"Sakila", -6, 4, "Saki"},
+		{"Sakila", 2, 1000, "akila"},
+		{"Sakila", -5, 1000, "akila"},
+		{"Sakila", 2, -2, ""},
+		{"Sakila", -5, -2, ""},
+		{"Sakila", 2, 0, ""},
+		{"Sakila", -5, -3, ""},
+		{"Sakila", -1000, 3, ""},
 		{"Sakila", 1000, 2, ""},
 		{"", 2, 3, ""},
 	}
