@@ -15,10 +15,18 @@ package perfschema_test
 
 import (
 	"database/sql"
+	"fmt"
+	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/util/testleak"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 type testPerfSchemaSuit struct {
 	vars map[string]interface{}
@@ -100,79 +108,41 @@ func checkResult(c *C, r sql.Result, affectedRows int64, insertID int64) {
 	c.Assert(gotID, Equals, insertID)
 }
 
-func (p *testPerfSchemaSuit) TestSelect(c *C) {
-	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
-	c.Assert(err, IsNil)
-	defer testDB.Close()
-
-	cnt := mustQuery(c, testDB, "select * from performance_schema.setup_actors")
-	c.Assert(cnt, Equals, 1)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_objects")
-	c.Assert(cnt, Equals, 12)
-	// Note: so far, there has no instrumentation point yet
-	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_instruments")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_consumers")
-	c.Assert(cnt, Equals, 12)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_timers")
-	c.Assert(cnt, Equals, 3)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_statements_current")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_statements_history")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_statements_history_long")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.prepared_statements_instances")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_transactions_current")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_transactions_history")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_transactions_history_long")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_stages_current")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_stages_history")
-	c.Assert(cnt, Equals, 0)
-	cnt = mustQuery(c, testDB, "select * from performance_schema.events_stages_history_long")
-	c.Assert(cnt, Equals, 0)
-
-	mustFailQuery(c, testDB, "select * from performance_schema.unknown_table")
-}
-
 func (p *testPerfSchemaSuit) TestInsert(c *C) {
+	defer testleak.AfterTest(c)()
 	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
 	c.Assert(err, IsNil)
 	defer testDB.Close()
 
 	r := mustExec(c, testDB, `insert into performance_schema.setup_actors values("localhost", "nieyy", "contributor", "NO", "NO");`)
-	checkResult(c, r, 1, 0)
+	checkResult(c, r, 0, 0)
 	cnt := mustQuery(c, testDB, "select * from performance_schema.setup_actors")
 	c.Assert(cnt, Equals, 2)
 
 	r = mustExec(c, testDB, `insert into performance_schema.setup_actors (host, user, role) values ("localhost", "lijian", "contributor");`)
-	checkResult(c, r, 1, 0)
+	checkResult(c, r, 0, 0)
 	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_actors")
 	c.Assert(cnt, Equals, 3)
 
 	r = mustExec(c, testDB, `insert into performance_schema.setup_objects values("EVENT", "test", "%", "NO", "NO")`)
-	checkResult(c, r, 1, 0)
+	checkResult(c, r, 0, 0)
 	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_objects")
 	c.Assert(cnt, Equals, 13)
 
 	r = mustExec(c, testDB, `insert into performance_schema.setup_objects (object_schema, object_name) values ("test1", "%")`)
-	checkResult(c, r, 1, 0)
+	checkResult(c, r, 0, 0)
 	cnt = mustQuery(c, testDB, "select * from performance_schema.setup_objects")
 	c.Assert(cnt, Equals, 14)
 
 	mustFailExec(c, testDB, `insert into performance_schema.setup_actors (host) values (null);`)
 	mustFailExec(c, testDB, `insert into performance_schema.setup_objects (object_type) values (null);`)
-	mustFailExec(c, testDB, `insert into performance_schema.setup_instruments values("select", "YES", "YES");`)
-	mustFailExec(c, testDB, `insert into performance_schema.setup_consumers values("events_stages_current", "YES");`)
-	mustFailExec(c, testDB, `insert into performance_schema.setup_timers values("timer1", "NANOSECOND");`)
+	mustFailExec(c, testDB, `insert into performance_schema.setup_instruments values("select", "N/A", "N/A");`)
+	mustFailExec(c, testDB, `insert into performance_schema.setup_consumers values("events_stages_current", "N/A");`)
+	mustFailExec(c, testDB, `insert into performance_schema.setup_timers values("timer1", "XXXSECOND");`)
 }
 
 func (p *testPerfSchemaSuit) TestInstrument(c *C) {
+	defer testleak.AfterTest(c)()
 	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
 	c.Assert(err, IsNil)
 	defer testDB.Close()
@@ -185,4 +155,32 @@ func (p *testPerfSchemaSuit) TestInstrument(c *C) {
 	c.Assert(cnt, Equals, 1)
 	cnt = mustQuery(c, testDB, "select * from performance_schema.events_statements_history")
 	c.Assert(cnt, Greater, 0)
+}
+
+func (p *testPerfSchemaSuit) TestConcurrentStatement(c *C) {
+	defer testleak.AfterTest(c)()
+	testDB, err := sql.Open(tidb.DriverName, tidb.EngineGoLevelDBMemory+"/test/test")
+	c.Assert(err, IsNil)
+	defer testDB.Close()
+
+	mustExec(c, testDB, "create table test (a int, b int)")
+
+	var wg sync.WaitGroup
+	iFunc := func(a, b int) {
+		defer wg.Done()
+		mustExec(c, testDB, fmt.Sprintf(`INSERT INTO test VALUES (%d, %d);`, a, b))
+	}
+	sFunc := func() {
+		defer wg.Done()
+		mustQuery(c, testDB, "select * from performance_schema.events_statements_current")
+		mustQuery(c, testDB, "select * from performance_schema.events_statements_history")
+	}
+
+	cnt := 10
+	for i := 0; i < cnt; i++ {
+		wg.Add(2)
+		go iFunc(i, i)
+		go sFunc()
+	}
+	wg.Wait()
 }
