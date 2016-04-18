@@ -210,7 +210,7 @@ func doDMLWorks(s Session) {
 	_, err := s.Execute("COMMIT")
 	if err != nil {
 		time.Sleep(1 * time.Second)
-		// Check if TiDB is already bootstraped.
+		// Check if TiDB is already bootstrapped.
 		b, err1 := checkBootstrapped(s)
 		if err1 != nil {
 			log.Fatal(err1)
