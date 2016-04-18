@@ -267,8 +267,28 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 			best: "Index(t.b) + Limit(100)->Fields->Limit",
 		},
 		{
+			sql:  "select * from t where a > 0 order by b DESC limit 100",
+			best: "Index(t.b) + Limit(100)->Fields->Limit",
+		},
+		{
+			sql:  "select * from t where a > 0 order by b + a limit 100",
+			best: "Range(t)->Fields->Sort",
+		},
+		{
 			sql:  "select count(*) from t where a > 0 order by b limit 100",
 			best: "Range(t)->Aggregate->Fields->Sort",
+		},
+		{
+			sql:  "select count(*) from t where a > 0 limit 100",
+			best: "Range(t)->Aggregate->Fields->Limit",
+		},
+		{
+			sql:  "select distinct a from t where a > 0 limit 100",
+			best: "Range(t)->Fields->Distinct->Limit",
+		},
+		{
+			sql:  "select * from t where a > 0 order by a limit 100",
+			best: "Range(t) + Limit(100)->Fields->Limit",
 		},
 		{
 			sql:  "select * from t where d = 0",
@@ -664,7 +684,7 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 		ast.SetFlag(stmt)
 		mockResolve(stmt)
 		b := &planBuilder{}
-		p := b.buildFrom(stmt, false)
+		p := b.buildFrom(stmt)
 		err = Refine(p)
 		c.Assert(err, IsNil)
 		idxScan, ok := p.(*IndexScan)

@@ -76,19 +76,21 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 	case *JoinOuter:
 		last := len(e.idxs) - 1
 		idx := e.idxs[last]
-		chilrden := e.strs[idx:]
+		children := e.strs[idx:]
 		e.strs = e.strs[:idx]
-		str = "OuterJoin{" + strings.Join(chilrden, "->") + "}"
+		str = "OuterJoin{" + strings.Join(children, "->") + "}"
 		e.idxs = e.idxs[:last]
 	case *JoinInner:
 		last := len(e.idxs) - 1
 		idx := e.idxs[last]
-		chilrden := e.strs[idx:]
+		children := e.strs[idx:]
 		e.strs = e.strs[:idx]
-		str = "InnerJoin{" + strings.Join(chilrden, "->") + "}"
+		str = "InnerJoin{" + strings.Join(children, "->") + "}"
 		e.idxs = e.idxs[:last]
 	case *Aggregate:
 		str = "Aggregate"
+	case *Distinct:
+		str = "Distinct"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

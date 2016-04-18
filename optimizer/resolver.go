@@ -746,7 +746,6 @@ func (nr *nameResolver) createResultFields(field *ast.SelectField) (rfs []*ast.R
 		rf.DBName = v.Refer.DBName
 		rf.TableName = v.Refer.TableName
 		rf.Expr = v
-	case *ast.ParenthesesExpr:
 	default:
 		rf.Column = &model.ColumnInfo{} // Empty column info.
 		rf.Table = &model.TableInfo{}   // Empty table info.

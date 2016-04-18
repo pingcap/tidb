@@ -205,6 +205,7 @@ func (b *planBuilder) buildSubquery(n ast.Node) {
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
 	hasAgg := b.detectSelectAgg(sel)
+	canPush := !hasAgg
 	if hasAgg {
 		aggFuncs = b.extractSelectAgg(sel)
 	}
@@ -213,7 +214,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	b.buildSubquery(sel)
 	var p Plan
 	if sel.From != nil {
-		p = b.buildFrom(sel, hasAgg)
+		p = b.buildFrom(sel)
 		if b.err != nil {
 			return nil
 		}
@@ -231,6 +232,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	} else {
+		canPush = false
 		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
@@ -246,18 +248,23 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if sel.Distinct {
+		canPush = false
 		p = b.buildDistinct(p)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
+		canPush = false
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.Limit != nil {
+		if canPush {
+			pushLimit(p, sel.Limit)
+		}
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
@@ -266,15 +273,15 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	return p
 }
 
-func (b *planBuilder) buildFrom(sel *ast.SelectStmt, hasAggr bool) Plan {
+func (b *planBuilder) buildFrom(sel *ast.SelectStmt) Plan {
 	from := sel.From.TableRefs
 	if from.Right == nil {
-		return b.buildSingleTable(sel, hasAggr)
+		return b.buildSingleTable(sel)
 	}
 	return b.buildJoin(sel)
 }
 
-func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt, hasAggr bool) Plan {
+func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 	from := sel.From.TableRefs
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
@@ -297,9 +304,6 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt, hasAggr bool) Plan {
 	}
 	conditions := splitWhere(sel.Where)
 	path := &joinPath{table: tn, conditions: conditions}
-	if sel.Limit != nil && !hasAggr {
-		path.LimitDesc = &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
-	}
 	candidates := b.buildAllAccessMethodsPlan(path)
 	var lowestCost float64
 	for _, v := range candidates {
@@ -333,10 +337,6 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 		Table:     tn.TableInfo,
 		TableName: tn,
 	}
-	if path.LimitDesc != nil {
-		result := int64(path.LimitDesc.Count + path.LimitDesc.Offset)
-		p.LimitCount = &result
-	}
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = len(path.eqConds) > 0
 	p.SetFields(tn.GetResultFields())
@@ -366,10 +366,6 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath) Plan {
 	tn := path.table
 	ip := &IndexScan{Table: tn.TableInfo, Index: index, TableName: tn}
-	if path.LimitDesc != nil {
-		result := int64(path.LimitDesc.Count + path.LimitDesc.Offset)
-		ip.LimitCount = &result
-	}
 	ip.RefAccess = len(path.eqConds) > 0
 	ip.SetFields(tn.GetResultFields())
 
@@ -579,6 +575,19 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 	}
 }
 
+func pushLimit(p Plan, limit *ast.Limit) {
+	switch x := p.(type) {
+	case *IndexScan:
+		limitCount := int64(limit.Offset + limit.Count)
+		x.LimitCount = &limitCount
+	case *TableScan:
+		limitCount := int64(limit.Offset + limit.Count)
+		x.LimitCount = &limitCount
+	case WithSrcPlan:
+		pushLimit(x.Src(), limit)
+	}
+}
+
 // pushOrder tries to push order by items to the plan, returns true if
 // order is pushed.
 func pushOrder(p Plan, items []*ast.ByItem) bool {
@@ -764,7 +773,7 @@ func (b *planBuilder) buildDistinct(src Plan) Plan {
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	sel := &ast.SelectStmt{From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
-	p := b.buildFrom(sel, false)
+	p := b.buildFrom(sel)
 	for _, v := range p.Fields() {
 		v.Referenced = true
 	}
@@ -775,6 +784,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
+		pushLimit(p, sel.Limit)
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
@@ -802,7 +812,7 @@ func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.Res
 
 func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 	sel := &ast.SelectStmt{From: del.TableRefs, Where: del.Where, OrderBy: del.Order, Limit: del.Limit}
-	p := b.buildFrom(sel, false)
+	p := b.buildFrom(sel)
 	for _, v := range p.Fields() {
 		v.Referenced = true
 	}
@@ -813,6 +823,7 @@ func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
+		pushLimit(p, sel.Limit)
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
