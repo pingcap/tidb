@@ -40,7 +40,7 @@ TARGET = ""
 
 .PHONY: godep deps all build install update parser clean todo test gotest interpreter server
 
-all: godep build test check
+all: godep parser build test check
 
 godep:
 	go get github.com/tools/godep
