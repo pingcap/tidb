@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -206,7 +207,19 @@ func doDMLWorks(s Session) {
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, bootstrappedVar, bootstrappedVarTrue, bootstrappedVarTrue)
 	mustExecute(s, sql)
-	mustExecute(s, "COMMIT")
+	_, err := s.Execute("COMMIT")
+	if err != nil {
+		time.Sleep(1 * time.Second)
+		// Check if TiDB is already bootstrapped.
+		b, err1 := checkBootstrapped(s)
+		if err1 != nil {
+			log.Fatal(err1)
+		}
+		if b {
+			return
+		}
+		log.Fatal(err)
+	}
 }
 
 func mustExecute(s Session, sql string) {
