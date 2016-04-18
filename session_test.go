@@ -1085,7 +1085,9 @@ func (s *testSessionSuite) TestBootstrap(c *C) {
 
 	// Try do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
 	// For https://github.com/pingcap/tidb/issues/1096
+	store = newStore(c, s.dbName)
 	se, err = CreateSession(store)
+	c.Assert(err, IsNil)
 	doDMLWorks(se)
 
 	err = store.Close()
