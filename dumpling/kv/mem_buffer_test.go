@@ -42,7 +42,7 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	s.bs = make([]MemBuffer, 2)
-	s.bs[0] = NewBTreeBuffer()
+	s.bs[0] = NewRBTreeBuffer()
 	s.bs[1] = NewMemDbBuffer()
 }
 
@@ -207,24 +207,24 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 
 var opCnt = 100000
 
-func BenchmarkBTreeBufferSequential(b *testing.B) {
+func BenchmarkRBTreeBufferSequential(b *testing.B) {
 	data := make([][]byte, opCnt)
 	for i := 0; i < opCnt; i++ {
 		data[i] = encodeInt(i)
 	}
-	buffer := NewBTreeBuffer()
+	buffer := NewRBTreeBuffer()
 	benchmarkSetGet(b, buffer, data)
 	buffer.Release()
 	b.ReportAllocs()
 }
 
-func BenchmarkBTreeBufferRandom(b *testing.B) {
+func BenchmarkRBTreeBufferRandom(b *testing.B) {
 	data := make([][]byte, opCnt)
 	for i := 0; i < opCnt; i++ {
 		data[i] = encodeInt(i)
 	}
 	shuffle(data)
-	buffer := NewBTreeBuffer()
+	buffer := NewRBTreeBuffer()
 	benchmarkSetGet(b, buffer, data)
 	buffer.Release()
 	b.ReportAllocs()
@@ -253,8 +253,8 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func BenchmarkBTreeIter(b *testing.B) {
-	buffer := NewBTreeBuffer()
+func BenchmarkRBTreeIter(b *testing.B) {
+	buffer := NewRBTreeBuffer()
 	benchIterator(b, buffer)
 	buffer.Release()
 	b.ReportAllocs()
@@ -267,9 +267,9 @@ func BenchmarkMemDbIter(b *testing.B) {
 	b.ReportAllocs()
 }
 
-func BenchmarkBTreeCreation(b *testing.B) {
+func BenchmarkRBTreeCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		buffer := NewBTreeBuffer()
+		buffer := NewRBTreeBuffer()
 		buffer.Release()
 	}
 	b.ReportAllocs()
