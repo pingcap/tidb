@@ -252,11 +252,11 @@ func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []types.Dat
 	tbl := ps.mTables[TableStmtsCurrent]
 	handle, ok := ps.stmtHandles[connID]
 	if !ok {
-		handle, err := tbl.AddRecord(nil, record)
+		newHandle, err := tbl.AddRecord(nil, record)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ps.stmtHandles[connID] = handle
+		ps.stmtHandles[connID] = newHandle
 		return nil
 	}
 	err := tbl.UpdateRecord(nil, handle, nil, record, nil)
