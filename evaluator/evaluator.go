@@ -60,15 +60,15 @@ func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error
 
 // EvalBool evalueates an expression to a boolean value.
 func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
-	val, err := Eval(ctx, expr)
+	val, err := EvalDatum(ctx, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if val == nil {
+	if val.Kind() == types.KindNull {
 		return false, nil
 	}
 
-	i, err := types.ToBool(val)
+	i, err := val.ToBool()
 	if err != nil {
 		return false, errors.Trace(err)
 	}

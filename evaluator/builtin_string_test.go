@@ -51,7 +51,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 	for _, t := range dtbl {
 		d, err = builtinLength(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expected"][0])
+		c.Assert(d, types.DatumEquals, t["Expected"][0])
 	}
 }
 
@@ -201,7 +201,7 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	for _, t := range dtbl {
 		d, err = builtinLower(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expect"][0])
+		c.Assert(d, types.DatumEquals, t["Expect"][0])
 
 		d, err = builtinUpper(t["Input"], nil)
 		c.Assert(err, IsNil)
@@ -234,7 +234,7 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	for _, t := range dtbl {
 		d, err := builtinStrcmp(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expect"][0])
+		c.Assert(d, types.DatumEquals, t["Expect"][0])
 	}
 }
 
@@ -257,7 +257,7 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 	for _, t := range dtbl {
 		d, err := builtinReplace(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expect"][0])
+		c.Assert(d, types.DatumEquals, t["Expect"][0])
 	}
 }
 

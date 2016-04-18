@@ -204,11 +204,11 @@ func (e *ExecuteExec) Build() error {
 	}
 
 	for i, usingVar := range e.UsingVars {
-		val, err := evaluator.Eval(e.Ctx, usingVar)
+		val, err := evaluator.EvalDatum(e.Ctx, usingVar)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		prepared.Params[i].SetValue(val)
+		prepared.Params[i].SetDatum(val)
 	}
 
 	ast.ResetEvaluatedFlag(prepared.Stmt)

@@ -42,7 +42,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		v, err := builtinDate(t["Input"], nil)
 		c.Assert(err, IsNil)
 		if v.Kind() != types.KindMysqlTime {
-			c.Assert(v, DatumEquals, t["Expect"][0])
+			c.Assert(v, types.DatumEquals, t["Expect"][0])
 		} else {
 			c.Assert(v.GetMysqlTime().String(), Equals, t["Expect"][0].GetString())
 		}
@@ -71,43 +71,43 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		args := t["Input"]
 		v, err := builtinYear(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Year"][0])
+		c.Assert(v, types.DatumEquals, t["Year"][0])
 
 		v, err = builtinMonth(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Month"][0])
+		c.Assert(v, types.DatumEquals, t["Month"][0])
 
 		v, err = builtinDayOfMonth(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayOfMonth"][0])
+		c.Assert(v, types.DatumEquals, t["DayOfMonth"][0])
 
 		v, err = builtinDayOfWeek(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayOfWeek"][0])
+		c.Assert(v, types.DatumEquals, t["DayOfWeek"][0])
 
 		v, err = builtinDayOfYear(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayOfYear"][0])
+		c.Assert(v, types.DatumEquals, t["DayOfYear"][0])
 
 		v, err = builtinWeekDay(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["WeekDay"][0])
+		c.Assert(v, types.DatumEquals, t["WeekDay"][0])
 
 		v, err = builtinDayName(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayName"][0])
+		c.Assert(v, types.DatumEquals, t["DayName"][0])
 
 		v, err = builtinWeek(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Week"][0])
+		c.Assert(v, types.DatumEquals, t["Week"][0])
 
 		v, err = builtinWeekOfYear(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["WeekOfYear"][0])
+		c.Assert(v, types.DatumEquals, t["WeekOfYear"][0])
 
 		v, err = builtinYearWeek(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["YearWeek"][0])
+		c.Assert(v, types.DatumEquals, t["YearWeek"][0])
 	}
 
 	// test nil
@@ -133,43 +133,43 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		args := t["Input"]
 		v, err := builtinYear(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Year"][0])
+		c.Assert(v, types.DatumEquals, t["Year"][0])
 
 		v, err = builtinMonth(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Month"][0])
+		c.Assert(v, types.DatumEquals, t["Month"][0])
 
 		v, err = builtinDayOfMonth(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayOfMonth"][0])
+		c.Assert(v, types.DatumEquals, t["DayOfMonth"][0])
 
 		v, err = builtinDayOfWeek(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayOfWeek"][0])
+		c.Assert(v, types.DatumEquals, t["DayOfWeek"][0])
 
 		v, err = builtinDayOfYear(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayOfYear"][0])
+		c.Assert(v, types.DatumEquals, t["DayOfYear"][0])
 
 		v, err = builtinWeekDay(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["WeekDay"][0])
+		c.Assert(v, types.DatumEquals, t["WeekDay"][0])
 
 		v, err = builtinWeekDay(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["DayName"][0])
+		c.Assert(v, types.DatumEquals, t["DayName"][0])
 
 		v, err = builtinWeek(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Week"][0])
+		c.Assert(v, types.DatumEquals, t["Week"][0])
 
 		v, err = builtinWeekOfYear(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["WeekOfYear"][0])
+		c.Assert(v, types.DatumEquals, t["WeekOfYear"][0])
 
 		v, err = builtinYearWeek(args, nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["YearWeek"][0])
+		c.Assert(v, types.DatumEquals, t["YearWeek"][0])
 	}
 }
 
@@ -193,19 +193,19 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	for _, t := range dtbl {
 		v, err := builtinHour(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Hour"][0])
+		c.Assert(v, types.DatumEquals, t["Hour"][0])
 
 		v, err = builtinMinute(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Minute"][0])
+		c.Assert(v, types.DatumEquals, t["Minute"][0])
 
 		v, err = builtinSecond(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Second"][0])
+		c.Assert(v, types.DatumEquals, t["Second"][0])
 
 		v, err = builtinMicroSecond(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["MicroSecond"][0])
+		c.Assert(v, types.DatumEquals, t["MicroSecond"][0])
 	}
 
 	// nil

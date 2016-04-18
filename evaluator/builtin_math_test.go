@@ -38,7 +38,7 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 	for _, t := range Dtbl {
 		v, err := builtinAbs(t["Arg"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Ret"][0])
+		c.Assert(v, types.DatumEquals, t["Ret"][0])
 	}
 }
 
@@ -67,7 +67,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	for _, t := range Dtbl {
 		v, err := builtinPow(t["Arg"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(v, DatumEquals, t["Ret"][0])
+		c.Assert(v, types.DatumEquals, t["Ret"][0])
 	}
 
 	errTbl := []struct {

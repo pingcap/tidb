@@ -45,7 +45,7 @@ func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
 		if _, ok = expr.(*ast.ValueExpr); ok {
 			return in, true
 		} else if ast.IsPreEvaluable(expr) {
-			val, err := evaluator.Eval(r.ctx, expr)
+			val, err := evaluator.EvalDatum(r.ctx, expr)
 			if err != nil {
 				r.err = err
 				return in, false
@@ -55,10 +55,10 @@ func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
 				valExpr := &ast.ValueExpr{}
 				valExpr.SetText(expr.Text())
 				valExpr.SetType(expr.GetType())
-				valExpr.SetValue(val)
+				valExpr.SetDatum(val)
 				return valExpr, true
 			}
-			expr.SetValue(val)
+			expr.SetDatum(val)
 		}
 	}
 	return in, true

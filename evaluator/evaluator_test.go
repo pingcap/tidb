@@ -972,7 +972,7 @@ func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
 	d, err := EvalDatum(ctx, b)
 	c.Assert(ast.IsEvaluated(b), Equals, true)
 	c.Assert(err, IsNil)
-	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+	c.Assert(d, types.DatumEquals, types.NewIntDatum(3))
 
 	funcCall := &ast.FuncCallExpr{
 		FnName: model.NewCIStr("abs"),
@@ -985,7 +985,7 @@ func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
 	d, err = EvalDatum(ctx, b)
 	c.Assert(ast.IsEvaluated(b), Equals, false)
 	c.Assert(err, IsNil)
-	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+	c.Assert(d, types.DatumEquals, types.NewIntDatum(3))
 
 	rf := &ast.ResultField{Expr: ast.NewValueExpr(int64(1))}
 	colExpr := &ast.ColumnNameExpr{Refer: rf}
@@ -996,5 +996,5 @@ func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
 	d, err = EvalDatum(ctx, b)
 	c.Assert(ast.IsEvaluated(b), Equals, false)
 	c.Assert(err, IsNil)
-	c.Assert(d, DatumEquals, types.NewIntDatum(3))
+	c.Assert(d, types.DatumEquals, types.NewIntDatum(3))
 }

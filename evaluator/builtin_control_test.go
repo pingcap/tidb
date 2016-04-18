@@ -37,7 +37,7 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	for _, t := range tbl {
 		d, err := builtinIf(types.MakeDatums([]interface{}{t.Arg1, t.Arg2, t.Arg3}...), nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, types.NewDatum(t.Ret))
+		c.Assert(d, types.DatumEquals, types.NewDatum(t.Ret))
 	}
 
 	_, err := builtinIf(types.MakeDatums([]interface{}{errors.New("must error"), 1, 2}...), nil)
@@ -59,7 +59,7 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 	for _, t := range tbl {
 		d, err := builtinIfNull(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...), nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, types.NewDatum(t.Ret))
+		c.Assert(d, types.DatumEquals, types.NewDatum(t.Ret))
 	}
 }
 
@@ -79,6 +79,6 @@ func (s *testEvaluatorSuite) TestNullIf(c *C) {
 	for _, t := range tbl {
 		d, err := builtinNullIf(types.MakeDatums([]interface{}{t.Arg1, t.Arg2}...), nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, types.NewDatum(t.Ret))
+		c.Assert(d, types.DatumEquals, types.NewDatum(t.Ret))
 	}
 }

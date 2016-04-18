@@ -733,11 +733,11 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		Data:    make([]types.Datum, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
-		val, err := evaluator.Eval(e.ctx, field.Expr)
+		val, err := evaluator.EvalDatum(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data[i] = types.NewDatum(val)
+		row.Data[i] = val
 	}
 	return row, nil
 }
@@ -872,7 +872,7 @@ func (e *LimitExec) Close() error {
 
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
-	key []interface{}
+	key []types.Datum
 	row *Row
 }
 
@@ -909,7 +909,7 @@ func (e *SortExec) Less(i, j int) bool {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := types.Compare(v1, v2)
+		ret, err := v1.CompareDatum(v2)
 		if err != nil {
 			e.err = err
 			return true
@@ -951,10 +951,10 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]interface{}, len(e.ByItems)),
+				key: make([]types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = evaluator.Eval(e.ctx, byItem.Expr)
+				orderRow.key[i], err = evaluator.EvalDatum(e.ctx, byItem.Expr)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1059,11 +1059,11 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
-		v, err := evaluator.Eval(e.ctx, item.Expr)
+		v, err := evaluator.EvalDatum(e.ctx, item.Expr)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		vals = append(vals, types.NewDatum(v))
+		vals = append(vals, v)
 	}
 	bs, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {
@@ -1100,7 +1100,7 @@ func (e *AggregateExec) innerNext() (bool, error) {
 	}
 	for _, af := range e.AggFuncs {
 		for _, arg := range af.Args {
-			_, err := evaluator.Eval(e.ctx, arg)
+			_, err := evaluator.EvalDatum(e.ctx, arg)
 			if err != nil {
 				return false, errors.Trace(err)
 			}

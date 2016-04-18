@@ -123,11 +123,11 @@ func (e *UpdateExec) fetchRows() error {
 			data[i] = types.NewDatum(f.Expr.GetValue())
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
-				val, err := evaluator.Eval(e.ctx, e.OrderedList[i].Expr)
+				val, err := evaluator.EvalDatum(e.ctx, e.OrderedList[i].Expr)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				newData[i] = types.NewDatum(val)
+				newData[i] = val
 			}
 		}
 		row.Data = data
@@ -595,9 +595,9 @@ func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVa
 				vals[i] = defaultVals[cols[i].Name.L]
 			}
 		} else {
-			var val interface{}
-			val, err = evaluator.Eval(e.ctx, expr)
-			vals[i].SetValue(val)
+			var val types.Datum
+			val, err = evaluator.EvalDatum(e.ctx, expr)
+			vals[i] = val
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -737,12 +737,12 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			newData[i] = c
 			continue
 		}
-		var val interface{}
-		val, err = evaluator.Eval(e.ctx, asgn.Expr)
+		var val types.Datum
+		val, err = evaluator.EvalDatum(e.ctx, asgn.Expr)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newData[i].SetValue(val)
+		newData[i] = val
 	}
 	if err = updateRecord(e.ctx, h, data, newData, cols, e.Table, 0, true); err != nil {
 		return errors.Trace(err)
