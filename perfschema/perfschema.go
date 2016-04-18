@@ -49,14 +49,11 @@ type PerfSchema interface {
 }
 
 type perfSchema struct {
-	store   kv.Storage
-	dbInfo  *model.DBInfo
-	tables  map[string]*model.TableInfo
-	mTables map[string]table.Table // MemoryTables for perfSchema
-
-	// Used for TableStmtsHistory
-	historyHandles []int64
-	historyCursor  int
+	store       kv.Storage
+	dbInfo      *model.DBInfo
+	tables      map[string]*model.TableInfo
+	mTables     map[string]table.Table // Memory tables for perfSchema
+	stmtHandles map[uint64]int64
 }
 
 var _ PerfSchema = (*perfSchema)(nil)
@@ -69,7 +66,6 @@ var (
 // NewPerfHandle creates a new perfSchema on store.
 func NewPerfHandle() PerfSchema {
 	schema := PerfHandle.(*perfSchema)
-	schema.historyHandles = make([]int64, 0, stmtsHistoryElemMax)
 	err := schema.initialize()
 	if err != nil {
 		log.Fatal(errors.ErrorStack(err))
