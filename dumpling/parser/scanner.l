@@ -368,6 +368,7 @@ fields		{f}{i}{e}{l}{d}{s}
 first		{f}{i}{r}{s}{t}
 fixed		{f}{i}{x}{e}{d}
 for		{f}{o}{r}
+force		{f}{o}{r}{c}{e}
 foreign		{f}{o}{r}{e}{i}{g}{n}
 found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
 from		{f}{r}{o}{m}
@@ -801,6 +802,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {fixed}			lval.item = string(l.val)
 			return fixed
 {for}			return forKwd
+{force}			return force
 {foreign}		return foreign
 {found_rows}		lval.item = string(l.val)
 			return foundRows
