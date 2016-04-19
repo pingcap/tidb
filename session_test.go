@@ -604,6 +604,24 @@ func (s *testSessionSuite) TestIssue986(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIssue1089(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	r := mustExecSQL(c, se, "select cast(0.5 as unsigned)")
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 1)
+	r = mustExecSQL(c, se, "select cast(-0.5 as signed)")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, -1)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
