@@ -199,14 +199,10 @@ func (s *testMainSuite) TestDeletePanic(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
 	defer store.Close()
-	_, err := exec(c, se, "create table t (c int)")
-	c.Assert(err, IsNil)
-	_, err = exec(c, se, "insert into t values (1), (2), (3)")
-	c.Assert(err, IsNil)
-	_, err = exec(c, se, "delete from `t` where `c` = ?", 1)
-	c.Assert(err, IsNil)
-	rs, err := exec(c, se, "delete from `t` where `c` = ?", 2)
-	c.Assert(err, IsNil)
+	mustExecSQL(c, se, "create table t (c int)")
+	mustExecSQL(c, se, "insert into t values (1), (2), (3)")
+	mustExecSQL(c, se, "delete from `t` where `c` = ?", 1)
+	rs := mustExecSQL(c, se, "delete from `t` where `c` = ?", 2)
 	c.Assert(rs, IsNil)
 }
 
