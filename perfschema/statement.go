@@ -250,6 +250,9 @@ func state2Record(state *StatementState) []types.Datum {
 
 func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []types.Datum) error {
 	tbl := ps.mTables[TableStmtsCurrent]
+	if tbl == nil {
+		return nil
+	}
 	handle, ok := ps.stmtHandles[connID]
 	if !ok {
 		newHandle, err := tbl.AddRecord(nil, record)
@@ -268,6 +271,9 @@ func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []types.Dat
 
 func (ps *perfSchema) appendEventsStmtsHistory(record []types.Datum) error {
 	tbl := ps.mTables[TableStmtsHistory]
+	if tbl == nil {
+		return nil
+	}
 	_, err := tbl.AddRecord(nil, record)
 	if err != nil {
 		return errors.Trace(err)
