@@ -272,11 +272,11 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t where a > 0 order by b + a limit 100",
-			best: "Range(t)->Fields->Sort",
+			best: "Range(t)->Fields->Sort + Limit(100) + Offset(0)",
 		},
 		{
 			sql:  "select count(*) from t where a > 0 order by b limit 100",
-			best: "Range(t)->Aggregate->Fields->Sort",
+			best: "Range(t)->Aggregate->Fields->Sort + Limit(100) + Offset(0)",
 		},
 		{
 			sql:  "select count(*) from t where a > 0 limit 100",

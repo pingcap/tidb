@@ -59,6 +59,9 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		str = "ShowDDL"
 	case *Sort:
 		str = "Sort"
+		if x.ExecLimit != nil {
+			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
+		}
 	case *TableScan:
 		if len(x.Ranges) > 0 {
 			ran := x.Ranges[0]
