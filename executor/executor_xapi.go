@@ -103,7 +103,6 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum) *Row {
 }
 
 func (e *XSelectTableExec) doRequest() error {
-
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -283,7 +282,6 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
