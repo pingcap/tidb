@@ -387,9 +387,9 @@ func ToBool(value interface{}) (int64, error) {
 	case uint64:
 		isZero = (v == 0)
 	case float32:
-		isZero = (v == 0)
+		isZero = (RoundFloat(float64(v)) == 0)
 	case float64:
-		isZero = (v == 0)
+		isZero = (RoundFloat(v) == 0)
 	case string:
 		if len(v) == 0 {
 			isZero = true
@@ -416,7 +416,7 @@ func ToBool(value interface{}) (int64, error) {
 		isZero = (v.Duration == 0)
 	case mysql.Decimal:
 		vv, _ := v.Float64()
-		isZero = (vv == 0)
+		isZero = (RoundFloat(vv) == 0)
 	case mysql.Hex:
 		isZero = (v.ToNumber() == 0)
 	case mysql.Bit:

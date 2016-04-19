@@ -233,6 +233,9 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		}
 	} else {
 		canPush = false
+		if sel.Where != nil {
+			p = b.buildTableDual(sel)
+		}
 		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
@@ -329,6 +332,13 @@ func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
 		candidates = append(candidates, ip)
 	}
 	return candidates
+}
+
+func (b *planBuilder) buildTableDual(sel *ast.SelectStmt) Plan {
+	dual := &TableDual{FilterConditions: splitWhere(sel.Where)}
+	ret := ast.ResultField{}
+	dual.SetFields([]*ast.ResultField{&ret})
+	return dual
 }
 
 func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {

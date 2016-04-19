@@ -46,6 +46,25 @@ func builtinLength(args []types.Datum, _ context.Context) (d types.Datum, err er
 	}
 }
 
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
+func builtinASCII(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	switch args[0].Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		s, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		if len(s) == 0 {
+			d.SetInt64(0)
+			return d, nil
+		}
+		d.SetInt64(int64(s[0]))
+		return d, nil
+	}
+}
+
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func builtinConcat(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	var s []byte
@@ -256,12 +275,12 @@ func builtinSubstring(args []types.Datum, _ context.Context) (d types.Datum, err
 	}
 	pos := args[1].GetInt64()
 
-	length := int64(-1)
+	length, hasLen := int64(-1), false
 	if len(args) == 3 {
 		if args[2].Kind() != types.KindInt64 {
 			return d, errors.Errorf("Substring invalid pos args, need int but get %T", args[2].GetValue())
 		}
-		length = args[2].GetInt64()
+		length, hasLen = args[2].GetInt64(), true
 	}
 	// The forms without a len argument return a substring from string str starting at position pos.
 	// The forms with a len argument return a substring len characters long from string str, starting at position pos.
@@ -273,17 +292,20 @@ func builtinSubstring(args []types.Datum, _ context.Context) (d types.Datum, err
 	} else {
 		pos--
 	}
-	if pos > int64(len(str)) || pos <= int64(0) {
+	if pos > int64(len(str)) || pos < int64(0) {
 		pos = int64(len(str))
 	}
-	end := int64(len(str))
-	if length != int64(-1) {
-		end = pos + length
+	if hasLen {
+		if end := pos + length; end < pos {
+			d.SetString("")
+		} else if end > int64(len(str)) {
+			d.SetString(str[pos:])
+		} else {
+			d.SetString(str[pos:end])
+		}
+	} else {
+		d.SetString(str[pos:])
 	}
-	if end > int64(len(str)) {
-		end = int64(len(str))
-	}
-	d.SetString(str[pos:end])
 	return d, nil
 }
 

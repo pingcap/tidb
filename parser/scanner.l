@@ -291,6 +291,7 @@ and		{a}{n}{d}
 any 		{a}{n}{y}
 as		{a}{s}
 asc		{a}{s}{c}
+ascii		{a}{s}{c}{i}{i}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
 avg		{a}{v}{g}
 avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
@@ -663,6 +664,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return any
 {asc}			return asc
 {as}			return as
+{ascii}			lval.item = string(l.val)
+			return ascii
 {auto_increment}	lval.item = string(l.val)
 			return autoIncrement
 {avg}			lval.item = string(l.val)
