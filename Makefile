@@ -43,6 +43,8 @@ TARGET = ""
 all: godep parser build test check
 
 godep:
+	go get google.golang.org/grpc
+	git -C $$(echo $(GOPATH)|cut -d':' -f1)/src/google.golang.org/grpc checkout dec33edc378cf4971a2741cfd86ed70a644d6ba3
 	go get github.com/tools/godep
 	go get github.com/pingcap/go-hbase
 	go get github.com/pingcap/go-themis
