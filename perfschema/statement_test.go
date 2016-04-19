@@ -20,12 +20,9 @@ import (
 )
 
 type testStatementSuit struct {
-	vars map[string]interface{}
 }
 
-var _ = Suite(&testStatementSuit{
-	vars: make(map[string]interface{}),
-})
+var _ = Suite(&testStatementSuit{})
 
 func (p *testStatementSuit) TestUninitPS(c *C) {
 	defer testleak.AfterTest(c)()
