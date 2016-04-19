@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -61,10 +62,10 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	args := types.MakeDatums(1, nil)
 	v, err := builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, types.DatumEquals, types.NewDatum(1))
+	c.Assert(v, testutil.DatumEquals, types.NewDatum(1))
 
 	args = types.MakeDatums(nil, nil)
 	v, err = builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, types.DatumEquals, types.NewDatum(nil))
+	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }

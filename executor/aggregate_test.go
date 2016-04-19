@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -115,18 +116,18 @@ func (s *testAggFuncSuite) TestCount(c *C) {
 	c.Assert(cnt, Equals, 1)
 	c.Assert(row, NotNil)
 	ctx := mock.NewContext()
-	val, err := evaluator.EvalDatum(ctx, fc1)
+	val, err := evaluator.Eval(ctx, fc1)
 	c.Assert(err, IsNil)
-	c.Assert(val, types.DatumEquals, types.NewDatum(int64(1)))
-	val, err = evaluator.EvalDatum(ctx, fc2)
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(1)))
+	val, err = evaluator.Eval(ctx, fc2)
 	c.Assert(err, IsNil)
-	c.Assert(val, types.DatumEquals, types.NewDatum(int64(2)))
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(2)))
 
 	agg.Close()
-	val, err = evaluator.EvalDatum(ctx, fc1)
+	val, err = evaluator.Eval(ctx, fc1)
 	c.Assert(err, IsNil)
 	c.Assert(val.Kind(), Equals, types.KindNull)
-	val, err = evaluator.EvalDatum(ctx, fc2)
+	val, err = evaluator.Eval(ctx, fc2)
 	c.Assert(err, IsNil)
-	c.Assert(val, types.DatumEquals, types.NewDatum(int64(0)))
+	c.Assert(val, testutil.DatumEquals, types.NewDatum(int64(0)))
 }

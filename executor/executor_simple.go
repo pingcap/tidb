@@ -111,7 +111,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := evaluator.EvalDatum(e.ctx, v.Value)
+			value, err := evaluator.Eval(e.ctx, v.Value)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -141,7 +141,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if sysVar.Scope&variable.ScopeGlobal == 0 {
 				return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
 			}
-			value, err := evaluator.EvalDatum(e.ctx, v.Value)
+			value, err := evaluator.Eval(e.ctx, v.Value)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -161,7 +161,7 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if sysVar.Scope&variable.ScopeSession == 0 {
 				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
 			}
-			if value, err := evaluator.EvalDatum(e.ctx, v.Value); err != nil {
+			if value, err := evaluator.Eval(e.ctx, v.Value); err != nil {
 				return errors.Trace(err)
 			} else if value.Kind() == types.KindNull {
 				sessionVars.Systems[name] = ""
@@ -196,7 +196,7 @@ func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
 
 func (e *SimpleExec) executeDo(s *ast.DoStmt) error {
 	for _, expr := range s.Exprs {
-		_, err := evaluator.EvalDatum(e.ctx, expr)
+		_, err := evaluator.Eval(e.ctx, expr)
 		if err != nil {
 			return errors.Trace(err)
 		}

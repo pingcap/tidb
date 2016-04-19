@@ -45,7 +45,7 @@ func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
 		if _, ok = expr.(*ast.ValueExpr); ok {
 			return in, true
 		} else if ast.IsPreEvaluable(expr) {
-			val, err := evaluator.EvalDatum(r.ctx, expr)
+			val, err := evaluator.Eval(r.ctx, expr)
 			if err != nil {
 				r.err = err
 				return in, false

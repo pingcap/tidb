@@ -36,14 +36,8 @@ const (
 	CodeInvalidOperation terror.ErrCode = 1
 )
 
-// Eval evaluates an expression to a value.
-func Eval(ctx context.Context, expr ast.ExprNode) (interface{}, error) {
-	d, err := EvalDatum(ctx, expr)
-	return d.GetValue(), err
-}
-
-// EvalDatum evaluates an expression to a datum.
-func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
+// Eval evaluates an expression to a datum.
+func Eval(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error) {
 	if ast.IsEvaluated(expr) {
 		return *expr.GetDatum(), nil
 	}
@@ -60,7 +54,7 @@ func EvalDatum(ctx context.Context, expr ast.ExprNode) (d types.Datum, err error
 
 // EvalBool evalueates an expression to a boolean value.
 func EvalBool(ctx context.Context, expr ast.ExprNode) (bool, error) {
-	val, err := EvalDatum(ctx, expr)
+	val, err := Eval(ctx, expr)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

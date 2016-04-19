@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -1447,40 +1446,4 @@ func EqualDatums(a []Datum, b []Datum) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-// DatumEquals checker.
-type datumEqualsChecker struct {
-	*check.CheckerInfo
-}
-
-// DatumEquals checker verifies that the obtained value is equal to
-// the expected value.
-// For example:
-//     c.Assert(value, DatumEquals, NewDatum(42))
-var DatumEquals check.Checker = &datumEqualsChecker{
-	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
-}
-
-func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
-	defer func() {
-		if v := recover(); v != nil {
-			result = false
-			error = fmt.Sprint(v)
-		}
-	}()
-	paramFirst, ok := params[0].(Datum)
-	if !ok {
-		panic("the first param should be datum")
-	}
-	paramSecond, ok := params[1].(Datum)
-	if !ok {
-		panic("the second param should be datum")
-	}
-
-	res, err := paramFirst.CompareDatum(paramSecond)
-	if err != nil {
-		panic(err)
-	}
-	return res == 0, ""
 }

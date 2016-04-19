@@ -123,7 +123,7 @@ func (e *UpdateExec) fetchRows() error {
 			data[i] = types.NewDatum(f.Expr.GetValue())
 			newData[i] = data[i]
 			if e.OrderedList[i] != nil {
-				val, err := evaluator.EvalDatum(e.ctx, e.OrderedList[i].Expr)
+				val, err := evaluator.Eval(e.ctx, e.OrderedList[i].Expr)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -596,7 +596,7 @@ func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVa
 			}
 		} else {
 			var val types.Datum
-			val, err = evaluator.EvalDatum(e.ctx, expr)
+			val, err = evaluator.Eval(e.ctx, expr)
 			vals[i] = val
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -738,7 +738,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 			continue
 		}
 		var val types.Datum
-		val, err = evaluator.EvalDatum(e.ctx, asgn.Expr)
+		val, err = evaluator.Eval(e.ctx, asgn.Expr)
 		if err != nil {
 			return errors.Trace(err)
 		}

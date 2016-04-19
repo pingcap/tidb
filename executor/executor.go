@@ -733,7 +733,7 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		Data:    make([]types.Datum, len(e.ResultFields)),
 	}
 	for i, field := range e.ResultFields {
-		val, err := evaluator.EvalDatum(e.ctx, field.Expr)
+		val, err := evaluator.Eval(e.ctx, field.Expr)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -954,7 +954,7 @@ func (e *SortExec) Next() (*Row, error) {
 				key: make([]types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
-				orderRow.key[i], err = evaluator.EvalDatum(e.ctx, byItem.Expr)
+				orderRow.key[i], err = evaluator.Eval(e.ctx, byItem.Expr)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1059,7 +1059,7 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 	}
 	vals := make([]types.Datum, 0, len(e.GroupByItems))
 	for _, item := range e.GroupByItems {
-		v, err := evaluator.EvalDatum(e.ctx, item.Expr)
+		v, err := evaluator.Eval(e.ctx, item.Expr)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -1100,7 +1100,7 @@ func (e *AggregateExec) innerNext() (bool, error) {
 	}
 	for _, af := range e.AggFuncs {
 		for _, arg := range af.Args {
-			_, err := evaluator.EvalDatum(e.ctx, arg)
+			_, err := evaluator.Eval(e.ctx, arg)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
