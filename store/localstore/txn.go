@@ -71,6 +71,11 @@ func (txn *dbTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	return txn.us.Seek(k)
 }
 
+func (txn *dbTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
+	log.Debugf("[kv] seek reverse key:% x, txn:%d", k, txn.tid)
+	return txn.us.SeekReverse(k)
+}
+
 func (txn *dbTxn) Delete(k kv.Key) error {
 	log.Debugf("[kv] delete key:% x, txn:%d", k, txn.tid)
 	txn.dirty = true

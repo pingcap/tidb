@@ -113,6 +113,13 @@ func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
 	return lmb.mb.Seek(k)
 }
 
+func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
+	if lmb.mb == nil {
+		lmb.mb = p.get()
+	}
+	return lmb.mb.SeekReverse(k)
+}
+
 func (lmb *lazyMemBuffer) Release() {
 	if lmb.mb == nil {
 		return
