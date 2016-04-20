@@ -62,7 +62,7 @@ var (
 
 	// ErrKeyExists returns when key is already exist.
 	ErrKeyExists = terror.ClassKV.New(codeKeyExists, "key already exist")
-
+	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = terror.ClassKV.New(codeNotImplemented, "not implemented")
 )
 
