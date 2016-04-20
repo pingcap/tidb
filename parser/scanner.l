@@ -585,6 +585,11 @@ day_minute		{d}{a}{y}_{m}{i}{n}{u}{t}{e}
 day_hour		{d}{a}{y}_{h}{o}{u}{r}
 year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 
+restrict	{r}{e}{s}{t}{r}{i}{c}{t}
+cascade		{c}{a}{s}{c}{a}{d}{e}
+no		{n}{o}
+action		{a}{c}{t}{i}{o}{n}
+
 %yyc c
 %yyn c = l.next()
 %yyt l.sc
@@ -1049,7 +1054,16 @@ redundant		lval.item = string(l.val)
 			return yearweek
 {year_month}		lval.item = string(l.val)
 			return yearMonth
-			
+
+{restrict}		lval.item = string(l.val)
+			return restrict
+{cascade}		lval.item = string(l.val)
+			return cascade
+{no}			lval.item = string(l.val)
+			return no
+{action}		lval.item = string(l.val)
+			return action
+
 {signed}		lval.item = string(l.val)
 			return signed
 {unsigned}		return unsigned

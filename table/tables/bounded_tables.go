@@ -139,6 +139,11 @@ func (t *BoundedTable) Indices() []*column.IndexedCol {
 	return nil
 }
 
+// ForeignKeys implements table.Table ForeignKeys interface.
+func (t *BoundedTable) ForeignKeys() []*column.ForeignKey {
+	return nil
+}
+
 // Meta implements table.Table Meta interface.
 func (t *BoundedTable) Meta() *model.TableInfo {
 	return t.meta

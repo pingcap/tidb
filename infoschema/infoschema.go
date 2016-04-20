@@ -39,7 +39,12 @@ var (
 	ErrTableNotExists = terror.ClassSchema.New(codeTableNotExists, "table not exists")
 	// ErrColumnNotExists returns for column not exists.
 	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
-
+	// ErrForeignKeyNotMatch returns for foreign key not match.
+	ErrForeignKeyNotMatch = terror.ClassSchema.New(codeForeignKeyNotMatch, "foreign key not match")
+	// ErrForeignKeyExists returns for foreign key exists.
+	ErrForeignKeyExists = terror.ClassSchema.New(codeForeignKeyExists, "foreign key already exists")
+	// ErrForeignKeyNotExists returns for foreign key not exists.
+	ErrForeignKeyNotExists = terror.ClassSchema.New(codeForeignKeyNotExists, "foreign key not exists")
 	// ErrDatabaseExists returns for database already exists.
 	ErrDatabaseExists = terror.ClassSchema.New(codeDatabaseExists, "database already exists")
 	// ErrTableExists returns for table already exists.
@@ -455,6 +460,10 @@ const (
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
 	codeColumnNotExists                  = 1054
+
+	codeForeignKeyNotMatch  = 1055
+	codeForeignKeyExists    = 1056
+	codeForeignKeyNotExists = 1057
 
 	codeDatabaseExists = 1007
 	codeTableExists    = 1050

@@ -88,3 +88,47 @@ func (s statistics) Stats() (map[string]interface{}, error) {
 	m["test_interface_slice"] = []interface{}{"a", "b", "c"}
 	return m, nil
 }
+
+func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `drop table if exists show_test`
+	tk.MustExec(testSQL)
+
+	testSQL = "create table show_test (`id` int PRIMARY KEY AUTO_INCREMENT, FOREIGN KEY `fk` (`id`) REFERENCES `t1` (`a`) ON DELETE CASCADE ON UPDATE CASCADE) ENGINE=InnoDB"
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result := tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row := result.Rows()[0]
+	expectedRow := []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`) \n  CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	testSQL = "alter table show_test drop foreign key `fk`"
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`) \n) ENGINE=InnoDB"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	testSQL = "ALTER TABLE SHOW_TEST ADD CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n "
+	tk.MustExec(testSQL)
+	testSQL = "show create table show_test;"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"show_test", "CREATE TABLE `show_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n PRIMARY KEY (`id`) \n  CONSTRAINT `fk` FOREIGN KEY (`id`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+}

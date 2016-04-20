@@ -42,6 +42,11 @@ type IndexedCol struct {
 	X kv.Index
 }
 
+// ForeignKey be used to wrap a foreign key info.
+type ForeignKey struct {
+	model.FKInfo
+}
+
 // String implements fmt.Stringer interface.
 func (c *Col) String() string {
 	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}

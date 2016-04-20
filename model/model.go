@@ -80,12 +80,13 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns    []*ColumnInfo `json:"cols"`
-	Indices    []*IndexInfo  `json:"index_info"`
-	State      SchemaState   `json:"state"`
-	PKIsHandle bool          `json:"pk_is_handle"`
-	Comment    string        `json:"comment"`
-	AutoIncID  int64         `json:"auto_inc_id"`
+	Columns     []*ColumnInfo `json:"cols"`
+	Indices     []*IndexInfo  `json:"index_info"`
+	ForeignKeys []*FKInfo     `json:"fk_info"`
+	State       SchemaState   `json:"state"`
+	PKIsHandle  bool          `json:"pk_is_handle"`
+	Comment     string        `json:"comment"`
+	AutoIncID   int64         `json:"auto_inc_id"`
 }
 
 // Clone clones TableInfo.
@@ -93,6 +94,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
+	nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
 
 	for i := range t.Columns {
 		nt.Columns[i] = t.Columns[i].Clone()
@@ -101,6 +103,11 @@ func (t *TableInfo) Clone() *TableInfo {
 	for i := range t.Indices {
 		nt.Indices[i] = t.Indices[i].Clone()
 	}
+
+	for i := range t.ForeignKeys {
+		nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+	}
+
 	return &nt
 }
 
@@ -160,6 +167,34 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
 	return &ni
+}
+
+// FKInfo provides meta data describing a foreign key constraint.
+type FKInfo struct {
+	ID       int64       `json:"id"`
+	Name     CIStr       `json:"fk_name"`
+	RefTable CIStr       `json:"ref_table"`
+	RefCols  []CIStr     `json:"ref_cols"`
+	Cols     []CIStr     `json:"cols"`
+	OnDelete int         `json:"on_delete"`
+	OnUpdate int         `json:"on_update"`
+	State    SchemaState `json:"state"`
+}
+
+// Clone clones FKInfo
+func (fk *FKInfo) Clone() *FKInfo {
+	nfk := *fk
+
+	nfk.RefCols = make([]CIStr, len(fk.RefCols))
+	nfk.Cols = make([]CIStr, len(fk.Cols))
+	for i := range fk.RefCols {
+		nfk.RefCols[i] = fk.RefCols[i]
+	}
+	for i := range fk.Cols {
+		nfk.Cols[i] = fk.Cols[i]
+	}
+
+	return &nfk
 }
 
 // DBInfo provides meta data describing a DB.
