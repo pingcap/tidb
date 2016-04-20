@@ -7,6 +7,7 @@ endif
 
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
+export GO15VENDOREXPERIMENT = "1"
 
 # Check the version of make and set env varirables/commands accordingly.
 version_list := $(subst ., ,$(MAKE_VERSION))
@@ -28,7 +29,8 @@ else
   GOLINT  := golint
 endif
 
-GO        := GO15VENDOREXPERIMENT="1" go
+
+GO        := go
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
@@ -40,7 +42,16 @@ TARGET = ""
 
 .PHONY: godep deps all build install update parser clean todo test gotest interpreter server
 
-all: parser build test check
+all: godep parser build test check
+
+godep:
+	go get google.golang.org/grpc
+	go get github.com/tools/godep
+	go get github.com/pingcap/go-hbase
+	go get github.com/pingcap/go-themis
+	go get github.com/pingcap/tso/client
+	go get github.com/pingcap/ticlient
+	go get github.com/pingcap/tipb/go-tipb
 
 build:
 	$(GO) build
