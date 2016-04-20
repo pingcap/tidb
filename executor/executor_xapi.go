@@ -103,7 +103,6 @@ func resultRowToRow(t table.Table, h int64, data []types.Datum) *Row {
 }
 
 func (e *XSelectTableExec) doRequest() error {
-	// TODO: add offset and limit.
 	txn, err := e.ctx.GetTxn(false)
 	if err != nil {
 		return errors.Trace(err)
@@ -114,6 +113,7 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
+	selReq.Limit = e.tablePlan.LimitCount
 
 	columns := make([]*model.ColumnInfo, 0, len(e.tablePlan.Fields()))
 	for _, v := range e.tablePlan.Fields() {
@@ -282,11 +282,11 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// TODO: add offset and limit.
 	selIdxReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
+	selIdxReq.Limit = e.indexPlan.LimitCount
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)

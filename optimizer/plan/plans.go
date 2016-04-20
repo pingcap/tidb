@@ -61,6 +61,8 @@ type TableScan struct {
 	// TableName is used to distinguish the same table selected multiple times in different place,
 	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
 	TableName *ast.TableName
+
+	LimitCount *int64
 }
 
 // Accept implements Plan Accept interface.
@@ -161,6 +163,8 @@ type IndexScan struct {
 	// TableName is used to distinguish the same table selected multiple times in different place,
 	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
 	TableName *ast.TableName
+
+	LimitCount *int64
 }
 
 // Accept implements Plan Accept interface.
