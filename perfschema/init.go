@@ -32,6 +32,15 @@ type columnInfo struct {
 	elems []string
 }
 
+const (
+	// Maximum concurrent number of elements in table events_xxx_current.
+	// TODO: make it configurable?
+	currentElemMax int32 = 1024
+	// Maximum allowed number of elements in table events_xxx_history.
+	// TODO: make it configurable?
+	historyElemMax int32 = 1024
+)
+
 var setupActorsCols = []columnInfo{
 	{mysql.TypeString, 60, mysql.NotNullFlag, `%`, nil},
 	{mysql.TypeString, 32, mysql.NotNullFlag, `%`, nil},
@@ -193,15 +202,13 @@ func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Tab
 	return tbl, nil
 }
 
+func createBoundedTable(meta *model.TableInfo, alloc autoid.Allocator, capacity int32) table.Table {
+	return tables.BoundedTableFromMeta(alloc, meta, capacity)
+}
+
 func (ps *perfSchema) buildTables() error {
 	tbls := make([]*model.TableInfo, 0, len(ps.tables))
-	ps.mTables = make(map[string]table.Table, len(ps.tables))
 	dbID := autoid.GenLocalSchemaID()
-	// Set PKIsHandle
-	// TableStmtsCurrent use THREAD_ID as PK and handle
-	tb := ps.tables[TableStmtsHistory]
-	tb.PKIsHandle = true
-	tb.Columns[0].Flag = tb.Columns[0].Flag | mysql.PriKeyFlag
 
 	for name, meta := range ps.tables {
 		tbls = append(tbls, meta)
@@ -210,9 +217,19 @@ func (ps *perfSchema) buildTables() error {
 			c.ID = autoid.GenLocalSchemaID()
 		}
 		alloc := autoid.NewMemoryAllocator(dbID)
-		tbl, err := createMemoryTable(meta, alloc)
-		if err != nil {
-			return errors.Trace(err)
+
+		var tbl table.Table
+		switch name {
+		case TableStmtsCurrent, TablePreparedStmtsInstances, TableTransCurrent, TableStagesCurrent:
+			tbl = createBoundedTable(meta, alloc, currentElemMax)
+		case TableStmtsHistory, TableStmtsHistoryLong, TableTransHistory, TableTransHistoryLong, TableStagesHistory, TableStagesHistoryLong:
+			tbl = createBoundedTable(meta, alloc, historyElemMax)
+		default:
+			var err error
+			tbl, err = createMemoryTable(meta, alloc)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		ps.mTables[name] = tbl
 	}
@@ -315,6 +332,8 @@ var setupTimersRecords [][]types.Datum
 
 func (ps *perfSchema) initialize() (err error) {
 	ps.tables = make(map[string]*model.TableInfo)
+	ps.mTables = make(map[string]table.Table, len(ps.tables))
+	ps.stmtHandles = make(map[uint64]int64)
 
 	allColDefs := [][]columnInfo{
 		setupActorsCols,

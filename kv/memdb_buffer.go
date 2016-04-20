@@ -50,6 +50,11 @@ func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
 	return i, nil
 }
 
+func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
+	// TODO: implement Reverse.
+	return nil, ErrNotImplemented
+}
+
 // Get returns the value associated with key.
 func (m *memDbBuffer) Get(k Key) ([]byte, error) {
 	v, err := m.db.Get(k)

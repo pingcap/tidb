@@ -108,6 +108,36 @@ type TableName struct {
 
 	DBInfo    *model.DBInfo
 	TableInfo *model.TableInfo
+
+	IndexHints []*IndexHint
+}
+
+// IndexHintType is the type for index hint use, ignore or force.
+type IndexHintType int
+
+// IndexHintUseType values.
+const (
+	HintUse    IndexHintType = 1
+	HintIgnore IndexHintType = 2
+	HintForce  IndexHintType = 3
+)
+
+// IndexHintScope is the type for index hint for join, order by or group by.
+type IndexHintScope int
+
+// Index hint scopes.
+const (
+	HintForScan    IndexHintScope = 1
+	HintForJoin    IndexHintScope = 2
+	HintForOrderBy IndexHintScope = 3
+	HintForGroupBy IndexHintScope = 4
+)
+
+// IndexHint represents a hint for optimizer to use/ignore/force for join/order by/group by.
+type IndexHint struct {
+	IndexNames []model.CIStr
+	HintType   IndexHintType
+	HintScope  IndexHintScope
 }
 
 // Accept implements Node Accept interface.

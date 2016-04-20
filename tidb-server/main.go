@@ -40,6 +40,7 @@ var (
 	port       = flag.String("P", "4000", "mp server port")
 	statusPort = flag.String("status", "10080", "tidb server status port")
 	lease      = flag.Int("lease", 1, "schema lease seconds, very dangerous to change only if you know what you do")
+	socket     = flag.String("socket", "", "The socket file to use for connection.")
 )
 
 func main() {
@@ -63,6 +64,7 @@ func main() {
 		Addr:       fmt.Sprintf(":%s", *port),
 		LogLevel:   *logLevel,
 		StatusAddr: fmt.Sprintf(":%s", *statusPort),
+		Socket:     *socket,
 	}
 
 	log.SetLevelByString(cfg.LogLevel)

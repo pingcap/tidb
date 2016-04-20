@@ -233,7 +233,7 @@ func (t *Table) setOnUpdateData(ctx context.Context, touched map[int]bool, data 
 				return errors.Trace(err)
 			}
 
-			data[col.Offset] = types.NewDatum(value)
+			data[col.Offset] = value
 			touched[col.Offset] = true
 		}
 	}

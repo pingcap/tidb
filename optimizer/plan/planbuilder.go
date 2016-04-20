@@ -205,6 +205,7 @@ func (b *planBuilder) buildSubquery(n ast.Node) {
 func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	var aggFuncs []*ast.AggregateFuncExpr
 	hasAgg := b.detectSelectAgg(sel)
+	canPushLimit := !hasAgg
 	if hasAgg {
 		aggFuncs = b.extractSelectAgg(sel)
 	}
@@ -231,6 +232,10 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 			return nil
 		}
 	} else {
+		canPushLimit = false
+		if sel.Where != nil {
+			p = b.buildTableDual(sel)
+		}
 		if hasAgg {
 			p = b.buildAggregate(p, aggFuncs, nil)
 		}
@@ -246,18 +251,23 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 		}
 	}
 	if sel.Distinct {
+		canPushLimit = false
 		p = b.buildDistinct(p)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.OrderBy != nil && !pushOrder(p, sel.OrderBy.Items) {
+		canPushLimit = false
 		p = b.buildSort(p, sel.OrderBy.Items)
 		if b.err != nil {
 			return nil
 		}
 	}
 	if sel.Limit != nil {
+		if canPushLimit {
+			pushLimit(p, sel.Limit)
+		}
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
@@ -322,6 +332,13 @@ func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
 		candidates = append(candidates, ip)
 	}
 	return candidates
+}
+
+func (b *planBuilder) buildTableDual(sel *ast.SelectStmt) Plan {
+	dual := &TableDual{FilterConditions: splitWhere(sel.Where)}
+	ret := ast.ResultField{}
+	dual.SetFields([]*ast.ResultField{&ret})
+	return dual
 }
 
 func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
@@ -568,6 +585,19 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 	}
 }
 
+func pushLimit(p Plan, limit *ast.Limit) {
+	switch x := p.(type) {
+	case *IndexScan:
+		limitCount := int64(limit.Offset + limit.Count)
+		x.LimitCount = &limitCount
+	case *TableScan:
+		limitCount := int64(limit.Offset + limit.Count)
+		x.LimitCount = &limitCount
+	case WithSrcPlan:
+		pushLimit(x.Src(), limit)
+	}
+}
+
 // pushOrder tries to push order by items to the plan, returns true if
 // order is pushed.
 func pushOrder(p Plan, items []*ast.ByItem) bool {
@@ -764,6 +794,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
+		pushLimit(p, sel.Limit)
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
@@ -802,6 +833,7 @@ func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
+		pushLimit(p, sel.Limit)
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil

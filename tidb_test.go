@@ -14,7 +14,6 @@
 package tidb
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"net/url"
@@ -79,125 +78,80 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 }
 
-func mustBegin(c *C, currDB *sql.DB) *sql.Tx {
-	tx, err := currDB.Begin()
-	c.Assert(err, IsNil)
-	return tx
-}
-
-func mustCommit(c *C, tx *sql.Tx) {
-	err := tx.Commit()
-	c.Assert(err, IsNil)
-}
-
-func mustExecuteSQL(c *C, tx *sql.Tx, sql string, args ...interface{}) sql.Result {
-	r, err := tx.Exec(sql, args...)
-	c.Assert(err, IsNil)
-	return r
-}
-
-func mustExec(c *C, currDB *sql.DB, sql string, args ...interface{}) sql.Result {
-	tx := mustBegin(c, currDB)
-	r := mustExecuteSQL(c, tx, sql, args...)
-	mustCommit(c, tx)
-	return r
-}
-
-func checkResult(c *C, r sql.Result, affectedRows int64, insertID int64) {
-	gotRows, err := r.RowsAffected()
-	c.Assert(err, IsNil)
+func checkResult(c *C, se Session, affectedRows uint64, insertID uint64) {
+	gotRows := se.AffectedRows()
 	c.Assert(gotRows, Equals, affectedRows)
 
-	gotID, err := r.LastInsertId()
-	c.Assert(err, IsNil)
+	gotID := se.LastInsertID()
 	c.Assert(gotID, Equals, insertID)
 }
 
 func (s *testMainSuite) TestConcurrent(c *C) {
 	dbName := "test_concurrent_db"
 	defer removeStore(c, dbName)
-
-	testDB, err := sql.Open(DriverName, *store+"://"+dbName+"/"+dbName)
-	c.Assert(err, IsNil)
-	defer testDB.Close()
-
-	var wg sync.WaitGroup
+	store := newStore(c, dbName)
+	se := newSession(c, store, dbName)
+	defer store.Close()
 	// create db
 	createDBSQL := fmt.Sprintf("create database if not exists %s;", dbName)
 	dropDBSQL := fmt.Sprintf("drop database %s;", dbName)
 	useDBSQL := fmt.Sprintf("use %s;", dbName)
 	createTableSQL := ` CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id)); `
 
-	mustExec(c, testDB, dropDBSQL)
-	mustExec(c, testDB, createDBSQL)
-	mustExec(c, testDB, useDBSQL)
-	mustExec(c, testDB, createTableSQL)
-
+	mustExecSQL(c, se, dropDBSQL)
+	mustExecSQL(c, se, createDBSQL)
+	mustExecSQL(c, se, useDBSQL)
+	mustExecSQL(c, se, createTableSQL)
+	wg := &sync.WaitGroup{}
 	f := func(start, count int) {
-		defer wg.Done()
+		sess := newSession(c, store, dbName)
 		for i := 0; i < count; i++ {
 			// insert data
-			mustExec(c, testDB, fmt.Sprintf(`INSERT INTO test VALUES (%d, "hello");`, start+i))
+			mustExecSQL(c, sess, fmt.Sprintf(`INSERT INTO test VALUES (%d, "hello");`, start+i))
 		}
+		wg.Done()
 	}
-
 	step := 10
 	for i := 0; i < step; i++ {
 		wg.Add(1)
 		go f(i*step, step)
 	}
 	wg.Wait()
-
-	mustExec(c, testDB, dropDBSQL)
+	mustExecSQL(c, se, dropDBSQL)
 }
 
 func (s *testMainSuite) TestTableInfoMeta(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
-	c.Assert(err, IsNil)
-	defer testDB.Close()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	defer store.Close()
 
 	// create db
-	mustExec(c, testDB, s.createDBSQL)
+	mustExecSQL(c, se, s.createDBSQL)
 
 	// use db
-	mustExec(c, testDB, s.useDBSQL)
+	mustExecSQL(c, se, s.useDBSQL)
 
 	// create table
-	mustExec(c, testDB, s.createTableSQL)
+	mustExecSQL(c, se, s.createTableSQL)
 
 	// insert data
-	r := mustExec(c, testDB, `INSERT INTO tbl_test VALUES (1, "hello");`)
-	checkResult(c, r, 1, 0)
+	mustExecSQL(c, se, `INSERT INTO tbl_test VALUES (1, "hello");`)
+	checkResult(c, se, 1, 0)
 
-	r = mustExec(c, testDB, `INSERT INTO tbl_test VALUES (2, "hello");`)
-	checkResult(c, r, 1, 0)
+	mustExecSQL(c, se, `INSERT INTO tbl_test VALUES (2, "hello");`)
+	checkResult(c, se, 1, 0)
 
-	r = mustExec(c, testDB, `UPDATE tbl_test SET name = "abc" where id = 2;`)
-	checkResult(c, r, 1, 0)
+	mustExecSQL(c, se, `UPDATE tbl_test SET name = "abc" where id = 2;`)
+	checkResult(c, se, 1, 0)
 
-	r = mustExec(c, testDB, `DELETE from tbl_test where id = 2;`)
-	checkResult(c, r, 1, 0)
+	mustExecSQL(c, se, `DELETE from tbl_test where id = 2;`)
+	checkResult(c, se, 1, 0)
 
 	// select data
-	tx := mustBegin(c, testDB)
-	rows, err := tx.Query(s.selectSQL)
-	c.Assert(err, IsNil)
-	defer rows.Close()
-
-	for rows.Next() {
-		var id int
-		var name string
-		rows.Scan(&id, &name)
-		c.Assert(id, Equals, 1)
-		c.Assert(name, Equals, "hello")
-	}
-
-	mustCommit(c, tx)
+	mustExecMatch(c, se, s.selectSQL, [][]interface{}{{1, []byte("hello")}})
 
 	// drop db
-	mustExec(c, testDB, s.dropDBSQL)
-	err = testDB.Close()
-	c.Assert(err, IsNil)
+	mustExecSQL(c, se, s.dropDBSQL)
 }
 
 func (s *testMainSuite) TestInfoSchema(c *C) {
@@ -215,6 +169,7 @@ func (s *testMainSuite) TestInfoSchema(c *C) {
 func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
+	defer store.Close()
 	mustExecSQL(c, se, "create table T (a text, B int)")
 	mustExecSQL(c, se, "insert t (A, b) values ('aaa', 1)")
 	rs := mustExecSQL(c, se, "select * from t")
@@ -239,63 +194,26 @@ func (s *testMainSuite) TestCaseInsensitive(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testMainSuite) TestDriverPrepare(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
-	c.Assert(err, IsNil)
-	defer testDB.Close()
-
-	// create db
-	mustExec(c, testDB, s.createDBSQL)
-
-	// use db
-	mustExec(c, testDB, s.useDBSQL)
-
-	// create table
-	mustExec(c, testDB, "create table t (a int, b int)")
-	mustExec(c, testDB, "insert t values (?, ?)", 1, 2)
-	row := testDB.QueryRow("select * from t where 1 = ?", 1)
-	// TODO: This will fail test
-	// row := testDB.QueryRow("select ?, ? from t", "a", "b")
-	var a, b int
-	err = row.Scan(&a, &b)
-	c.Assert(err, IsNil)
-	c.Assert(a, Equals, 1)
-	c.Assert(b, Equals, 2)
-
-	mustExec(c, testDB, s.dropDBSQL)
-	err = testDB.Close()
-	c.Assert(err, IsNil)
-}
-
 // Testcase for delete panic
 func (s *testMainSuite) TestDeletePanic(c *C) {
-	db, err := sql.Open("tidb", "memory://test/test")
-	c.Assert(err, IsNil)
-	defer db.Close()
-	_, err = db.Exec("create table t (c int)")
-	c.Assert(err, IsNil)
-	_, err = db.Exec("insert into t values (1), (2), (3)")
-	c.Assert(err, IsNil)
-	_, err = db.Query("delete from `t` where `c` = ?", 1)
-	c.Assert(err, IsNil)
-	rs, err := db.Query("delete from `t` where `c` = ?", 2)
-	c.Assert(err, IsNil)
-	cols, err := rs.Columns()
-	c.Assert(err, IsNil)
-	c.Assert(cols, HasLen, 0)
-	c.Assert(rs.Next(), IsFalse)
-	c.Assert(rs.Next(), IsFalse)
-	c.Assert(rs.Close(), IsNil)
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	defer store.Close()
+	mustExecSQL(c, se, "create table t (c int)")
+	mustExecSQL(c, se, "insert into t values (1), (2), (3)")
+	mustExecSQL(c, se, "delete from `t` where `c` = ?", 1)
+	rs := mustExecSQL(c, se, "delete from `t` where `c` = ?", 2)
+	c.Assert(rs, IsNil)
 }
 
 // Testcase for arg type.
 func (s *testMainSuite) TestCheckArgs(c *C) {
-	db, err := sql.Open("tidb", "memory://test/test")
-	c.Assert(err, IsNil)
-	defer db.Close()
-	mustExec(c, db, "create table if not exists t (c datetime)")
-	mustExec(c, db, "insert t values (?)", time.Now())
-	mustExec(c, db, "drop table t")
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	defer store.Close()
+	mustExecSQL(c, se, "create table if not exists t (c datetime)")
+	mustExecSQL(c, se, "insert t values (?)", time.Now())
+	mustExecSQL(c, se, "drop table t")
 	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
 		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
 		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
@@ -378,17 +296,17 @@ func (s *testMainSuite) TestParseDSN(c *C) {
 }
 
 func (s *testMainSuite) TestTPS(c *C) {
-	testDB, err := sql.Open(DriverName, *store+"://"+s.dbName+"/"+s.dbName)
-	c.Assert(err, IsNil)
-	defer testDB.Close()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	defer store.Close()
 
-	mustExec(c, testDB, "set @@autocommit=0;")
+	mustExecSQL(c, se, "set @@autocommit=0;")
 	for i := 1; i < 6; i++ {
 		for j := 0; j < 5; j++ {
 			for k := 0; k < i; k++ {
-				mustExec(c, testDB, "begin;")
-				mustExec(c, testDB, "select 1;")
-				mustExec(c, testDB, "commit;")
+				mustExecSQL(c, se, "begin;")
+				mustExecSQL(c, se, "select 1;")
+				mustExecSQL(c, se, "commit;")
 			}
 			time.Sleep(220 * time.Millisecond)
 		}

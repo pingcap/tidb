@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -51,8 +52,35 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 	for _, t := range dtbl {
 		d, err = builtinLength(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expected"][0])
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
+}
+
+func (s *testEvaluatorSuite) TestASCII(c *C) {
+	defer testleak.AfterTest(c)()
+	v, err := builtinASCII(types.MakeDatums([]interface{}{nil}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
+	for _, t := range []struct {
+		Input    interface{}
+		Expected int64
+	}{
+		{"", 0},
+		{"A", 65},
+		{"你好", 228},
+		{1, 49},
+		{1.2, 49},
+		{true, 49},
+		{false, 48},
+	} {
+		v, err = builtinASCII(types.MakeDatums(t.Input), nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, t.Expected)
+	}
+
+	v, err = builtinASCII(types.MakeDatums([]interface{}{errors.New("must error")}...), nil)
+	c.Assert(err, NotNil)
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {
@@ -174,7 +202,7 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	for _, t := range dtbl {
 		d, err = builtinLower(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expect"][0])
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 
 		d, err = builtinUpper(t["Input"], nil)
 		c.Assert(err, IsNil)
@@ -207,7 +235,7 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	for _, t := range dtbl {
 		d, err := builtinStrcmp(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expect"][0])
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
 }
 
@@ -230,12 +258,17 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 	for _, t := range dtbl {
 		d, err := builtinReplace(t["Input"], nil)
 		c.Assert(err, IsNil)
-		c.Assert(d, DatumEquals, t["Expect"][0])
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
 	}
 }
 
 func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	defer testleak.AfterTest(c)()
+
+	d, err := builtinSubstring(types.MakeDatums([]interface{}{"hello", 2, -1}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "")
+
 	tbl := []struct {
 		str    string
 		pos    int64
@@ -244,10 +277,21 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	}{
 		{"Quadratically", 5, -1, "ratically"},
 		{"foobarbar", 4, -1, "barbar"},
-		{"Quadratically", 5, 6, "ratica"},
+		{"Sakila", 1, -1, "Sakila"},
+		{"Sakila", 2, -1, "akila"},
 		{"Sakila", -3, -1, "ila"},
 		{"Sakila", -5, 3, "aki"},
 		{"Sakila", -4, 2, "ki"},
+		{"Quadratically", 5, 6, "ratica"},
+		{"Sakila", 1, 4, "Saki"},
+		{"Sakila", -6, 4, "Saki"},
+		{"Sakila", 2, 1000, "akila"},
+		{"Sakila", -5, 1000, "akila"},
+		{"Sakila", 2, -2, ""},
+		{"Sakila", -5, -2, ""},
+		{"Sakila", 2, 0, ""},
+		{"Sakila", -5, -3, ""},
+		{"Sakila", -1000, 3, ""},
 		{"Sakila", 1000, 2, ""},
 		{"", 2, 3, ""},
 	}
@@ -262,15 +306,13 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		}
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		s, ok := r.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
+		c.Assert(r.Kind(), Equals, types.KindString)
+		c.Assert(r.GetString(), Equals, v.result)
 
 		r1, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		s1, ok := r1.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, s1)
+		c.Assert(r1.Kind(), Equals, types.KindString)
+		c.Assert(r.GetString(), Equals, r1.GetString())
 	}
 	errTbl := []struct {
 		str    interface{}
@@ -316,9 +358,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		s, ok := r.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
+		c.Assert(r.Kind(), Equals, types.KindString)
+		c.Assert(r.GetString(), Equals, v.result)
 	}
 
 	// Test case for error
@@ -379,9 +420,8 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		}
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		s, ok := r.(string)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
+		c.Assert(r.Kind(), Equals, types.KindString)
+		c.Assert(r.GetString(), Equals, v.result)
 	}
 	errTbl := []struct {
 		str   interface{}
@@ -403,7 +443,7 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		}
 		r, err := Eval(ctx, f)
 		c.Assert(err, NotNil)
-		c.Assert(r, IsNil)
+		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 }
 
@@ -428,9 +468,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		}
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		s, ok := r.(int64)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
+		c.Assert(r.Kind(), Equals, types.KindInt64)
+		c.Assert(r.GetInt64(), Equals, v.result)
 	}
 
 	tbl2 := []struct {
@@ -452,9 +491,8 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		}
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		s, ok := r.(int64)
-		c.Assert(ok, IsTrue)
-		c.Assert(s, Equals, v.result)
+		c.Assert(r.Kind(), Equals, types.KindInt64)
+		c.Assert(r.GetInt64(), Equals, v.result)
 	}
 
 	errTbl := []struct {
@@ -473,7 +511,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str)},
 		}
 		r, _ := Eval(ctx, f)
-		c.Assert(r, IsNil)
+		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 
 	errTbl2 := []struct {
@@ -493,7 +531,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 			Args:   []ast.ExprNode{ast.NewValueExpr(v.subStr), ast.NewValueExpr(v.Str), ast.NewValueExpr(v.pos)},
 		}
 		r, _ := Eval(ctx, f)
-		c.Assert(r, IsNil)
+		c.Assert(r.Kind(), Equals, types.KindNull)
 	}
 }
 
@@ -525,6 +563,6 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		}
 		r, err := Eval(ctx, f)
 		c.Assert(err, IsNil)
-		c.Assert(r, Equals, v.result)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
 }

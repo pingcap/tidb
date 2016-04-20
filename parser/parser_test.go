@@ -390,6 +390,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', 2);", true},
 		{"SELECT SUBSTRING_INDEX('www.mysql.com', '.', -2);", true},
 
+		{`SELECT ASCII(""), ASCII("A"), ASCII(1);`, true},
+
 		{`SELECT LOWER("A"), UPPER("a")`, true},
 
 		{`SELECT REPLACE('www.mysql.com', 'w', 'Ww')`, true},
@@ -886,6 +888,21 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 		{`LOCK TABLES t1 READ;`, true},
 		{`show table status like 't'`, true},
 		{`LOCK TABLES t2 WRITE`, true},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestIndexHint(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select * from t use index ();`, true},
+		{`select * from t use index (idx);`, true},
+		{`select * from t use index (idx1, idx2);`, true},
+		{`select * from t ignore key (idx1)`, true},
+		{`select * from t force index for join (idx1)`, true},
+		{`select * from t use index for order by (idx1)`, true},
+		{`select * from t force index for group by (idx1)`, true},
+		{`select * from t use index for group by (idx1) use index for order by (idx2), t2`, true},
 	}
 	s.RunTest(c, table)
 }

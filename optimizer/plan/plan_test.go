@@ -264,7 +264,31 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select * from t where a > 0 order by b limit 100",
-			best: "Index(t.b)->Fields->Limit",
+			best: "Index(t.b) + Limit(100)->Fields->Limit",
+		},
+		{
+			sql:  "select * from t where a > 0 order by b DESC limit 100",
+			best: "Index(t.b) + Limit(100)->Fields->Limit",
+		},
+		{
+			sql:  "select * from t where a > 0 order by b + a limit 100",
+			best: "Range(t)->Fields->Sort + Limit(100) + Offset(0)",
+		},
+		{
+			sql:  "select count(*) from t where a > 0 order by b limit 100",
+			best: "Range(t)->Aggregate->Fields->Sort + Limit(100) + Offset(0)",
+		},
+		{
+			sql:  "select count(*) from t where a > 0 limit 100",
+			best: "Range(t)->Aggregate->Fields->Limit",
+		},
+		{
+			sql:  "select distinct a from t where a > 0 limit 100",
+			best: "Range(t)->Fields->Distinct->Limit",
+		},
+		{
+			sql:  "select * from t where a > 0 order by a limit 100",
+			best: "Range(t) + Limit(100)->Fields->Limit",
 		},
 		{
 			sql:  "select * from t where d = 0",
@@ -300,7 +324,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		},
 		{
 			sql:  "select a from t where a = 1 limit 1 for update",
-			best: "Range(t)->Lock->Fields->Limit",
+			best: "Range(t) + Limit(1)->Lock->Fields->Limit",
 		},
 		{
 			sql:  "admin show ddl",
@@ -426,9 +450,15 @@ func mockResolve(node ast.Node) {
 type mockResolver struct {
 	table     *model.TableInfo
 	tableName *ast.TableName
+
+	contextStack [][]*ast.ResultField
 }
 
 func (b *mockResolver) Enter(in ast.Node) (ast.Node, bool) {
+	switch in.(type) {
+	case *ast.SelectStmt:
+		b.contextStack = append(b.contextStack, make([]*ast.ResultField, 0))
+	}
 	return in, false
 }
 
@@ -447,6 +477,30 @@ func (b *mockResolver) Leave(in ast.Node) (ast.Node, bool) {
 		}
 	case *ast.TableName:
 		x.TableInfo = b.table
+	case *ast.FieldList:
+		for _, v := range x.Fields {
+			if v.WildCard == nil {
+				rf := &ast.ResultField{ColumnAsName: v.AsName}
+				switch k := v.Expr.(type) {
+				case *ast.ColumnNameExpr:
+					rf = &ast.ResultField{
+						Column: &model.ColumnInfo{
+							Name: k.Name.Name,
+						},
+						Table:     b.table,
+						TableName: b.tableName,
+					}
+				case *ast.AggregateFuncExpr:
+					rf.Column = &model.ColumnInfo{} // Empty column info.
+					rf.Table = &model.TableInfo{}   // Empty table info.
+					rf.Expr = k
+					b.contextStack[len(b.contextStack)-1] = append(b.contextStack[len(b.contextStack)-1], rf)
+				}
+			}
+		}
+	case *ast.SelectStmt:
+		x.SetResultFields(b.contextStack[len(b.contextStack)-1])
+		b.contextStack = b.contextStack[:len(b.contextStack)-1]
 	}
 	return in, true
 }

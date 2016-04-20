@@ -291,6 +291,7 @@ and		{a}{n}{d}
 any 		{a}{n}{y}
 as		{a}{s}
 asc		{a}{s}{c}
+ascii		{a}{s}{c}{i}{i}
 auto_increment	{a}{u}{t}{o}_{i}{n}{c}{r}{e}{m}{e}{n}{t}
 avg		{a}{v}{g}
 avg_row_length	{a}{v}{g}_{r}{o}{w}_{l}{e}{n}{g}{t}{h}
@@ -367,6 +368,7 @@ fields		{f}{i}{e}{l}{d}{s}
 first		{f}{i}{r}{s}{t}
 fixed		{f}{i}{x}{e}{d}
 for		{f}{o}{r}
+force		{f}{o}{r}{c}{e}
 foreign		{f}{o}{r}{e}{i}{g}{n}
 found_rows	{f}{o}{u}{n}{d}_{r}{o}{w}{s}
 from		{f}{r}{o}{m}
@@ -663,6 +665,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return any
 {asc}			return asc
 {as}			return as
+{ascii}			lval.item = string(l.val)
+			return ascii
 {auto_increment}	lval.item = string(l.val)
 			return autoIncrement
 {avg}			lval.item = string(l.val)
@@ -798,6 +802,7 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {fixed}			lval.item = string(l.val)
 			return fixed
 {for}			return forKwd
+{force}			return force
 {foreign}		return foreign
 {found_rows}		lval.item = string(l.val)
 			return foundRows

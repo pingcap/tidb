@@ -26,6 +26,21 @@ type TableRange struct {
 	HighVal int64
 }
 
+// TableDual represents a dual table plan.
+type TableDual struct {
+	basePlan
+
+	HasAgg bool
+	// FilterConditions can be used to filter result.
+	FilterConditions []ast.ExprNode
+}
+
+// Accept implements Plan Accept interface.
+func (p *TableDual) Accept(v Visitor) (Plan, bool) {
+	np, _ := v.Enter(p)
+	return v.Leave(np)
+}
+
 // TableScan represents a table scan plan.
 type TableScan struct {
 	basePlan
@@ -46,6 +61,8 @@ type TableScan struct {
 	// TableName is used to distinguish the same table selected multiple times in different place,
 	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
 	TableName *ast.TableName
+
+	LimitCount *int64
 }
 
 // Accept implements Plan Accept interface.
@@ -146,6 +163,8 @@ type IndexScan struct {
 	// TableName is used to distinguish the same table selected multiple times in different place,
 	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
 	TableName *ast.TableName
+
+	LimitCount *int64
 }
 
 // Accept implements Plan Accept interface.

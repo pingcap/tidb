@@ -380,12 +380,12 @@ func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
 	testToBool(c, int(0), 0)
 	testToBool(c, int64(0), 0)
 	testToBool(c, uint64(0), 0)
-	testToBool(c, float32(0), 0)
-	testToBool(c, float64(0), 0)
+	testToBool(c, float32(0.1), 0)
+	testToBool(c, float64(0.1), 0)
 	testToBool(c, "", 0)
-	testToBool(c, "0", 0)
+	testToBool(c, "0.1", 0)
 	testToBool(c, []byte{}, 0)
-	testToBool(c, []byte("0"), 0)
+	testToBool(c, []byte("0.1"), 0)
 	testToBool(c, mysql.Hex{Value: 0}, 0)
 	testToBool(c, mysql.Bit{Value: 0, Width: 8}, 0)
 	testToBool(c, mysql.Enum{Name: "a", Value: 1}, 1)
@@ -401,9 +401,9 @@ func (s *testTypeConvertSuite) TestConvertToBool(c *C) {
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
-	v, err := Convert(3.1415926, ft)
+	v, err := Convert(0.1415926, ft)
 	c.Assert(err, IsNil)
-	testToBool(c, v, 1)
+	testToBool(c, v, 0)
 
 	_, err = ToBool(&invalidMockType{})
 	c.Assert(err, NotNil)

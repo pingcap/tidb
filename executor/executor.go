@@ -46,6 +46,7 @@ var (
 	_ Executor = &SelectLockExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &SortExec{}
+	_ Executor = &TableDualExec{}
 	_ Executor = &TableScanExec{}
 )
 
@@ -103,7 +104,7 @@ func (e *ShowDDLExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *ShowDDLExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
@@ -173,7 +174,7 @@ func (e *CheckTableExec) Fields() []*ast.ResultField {
 	return nil
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *CheckTableExec) Next() (*Row, error) {
 	if e.done {
 		return nil, nil
@@ -208,6 +209,31 @@ func (e *CheckTableExec) Close() error {
 	return nil
 }
 
+// TableDualExec represents a dual table executor.
+type TableDualExec struct {
+	fields   []*ast.ResultField
+	executed bool
+}
+
+// Fields implements Executor Fields interface.
+func (e *TableDualExec) Fields() []*ast.ResultField {
+	return e.fields
+}
+
+// Next implements Executor Next interface.
+func (e *TableDualExec) Next() (*Row, error) {
+	if e.executed {
+		return nil, nil
+	}
+	e.executed = true
+	return &Row{}, nil
+}
+
+// Close implements plan.Plan Close interface.
+func (e *TableDualExec) Close() error {
+	return nil
+}
+
 // TableScanExec represents a table scan executor.
 type TableScanExec struct {
 	t          table.Table
@@ -224,7 +250,7 @@ func (e *TableScanExec) Fields() []*ast.ResultField {
 	return e.fields
 }
 
-// Next implements Execution Next interface.
+// Next implements Executor Next interface.
 func (e *TableScanExec) Next() (*Row, error) {
 	for {
 		if e.cursor >= len(e.ranges) {
@@ -711,7 +737,7 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data[i] = types.NewDatum(val)
+		row.Data[i] = val
 	}
 	return row, nil
 }
@@ -846,7 +872,7 @@ func (e *LimitExec) Close() error {
 
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
-	key []interface{}
+	key []types.Datum
 	row *Row
 }
 
@@ -883,7 +909,7 @@ func (e *SortExec) Less(i, j int) bool {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := types.Compare(v1, v2)
+		ret, err := v1.CompareDatum(v2)
 		if err != nil {
 			e.err = err
 			return true
@@ -925,7 +951,7 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]interface{}, len(e.ByItems)),
+				key: make([]types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
 				orderRow.key[i], err = evaluator.Eval(e.ctx, byItem.Expr)
@@ -1037,7 +1063,7 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		vals = append(vals, types.NewDatum(v))
+		vals = append(vals, v)
 	}
 	bs, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {

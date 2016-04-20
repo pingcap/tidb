@@ -69,6 +69,7 @@ import (
 	any 		"ANY"
 	as		"AS"
 	asc		"ASC"
+	ascii		"ASCII"
 	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
@@ -152,6 +153,7 @@ import (
 	fixed		"FIXED"
 	foreign		"FOREIGN"
 	forKwd		"FOR"
+	force		"FORCE"
 	foundRows	"FOUND_ROWS"
 	from		"FROM"
 	full		"FULL"
@@ -462,7 +464,13 @@ import (
 	IgnoreOptional		"IGNORE or empty"
 	IndexColName		"Index column name"
 	IndexColNameList	"List of index column name"
+	IndexHint		"index hint"
+	IndexHintList		"index hint list"
+	IndexHintListOpt	"index hint list opt"
+	IndexHintScope		"index hint scope"
+	IndexHintType		"index hint type"
 	IndexName		"index name"
+	IndexNameList		"index name list"
 	IndexOption		"Index Option"
 	IndexType		"index type"
 	IndexTypeOpt		"Optional index type"
@@ -1817,7 +1825,7 @@ Identifier:
 	identifier | UnReservedKeyword | NotKeywordToken
 
 UnReservedKeyword:
-	"AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
+	"ASCII" | "AUTO_INCREMENT" | "AFTER" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "CHARSET" | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED"
 |	"DATE" | "DATETIME" | "DEALLOCATE" | "DO" | "DYNAMIC" | "END" | "ENGINE" | "ENGINES" | "EXECUTE" | "FIRST" | "FIXED" | "FULL" | "HASH" 
 |	"LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT" | "ROLLBACK" | "SESSION" | "SIGNED" 
 |	"START" | "STATUS" | "GLOBAL" | "TABLES"| "TEXT" | "TIME" | "TIMESTAMP" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN"
@@ -2252,6 +2260,10 @@ FunctionCallKeyword:
 			Tp: $5.(*types.FieldType),
 			FunctionType: ast.CastConvertFunction,
 		}	
+	}
+|	"ASCII" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"DATE" '(' Expression ')'
 	{
@@ -2842,7 +2854,7 @@ TableName:
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema:model.NewCIStr($1.(string)), Name:model.NewCIStr($3.(string))}
+		$$ = &ast.TableName{Schema:model.NewCIStr($1.(string)),	Name:model.NewCIStr($3.(string))}
 	}
 
 TableNameList:
@@ -3090,9 +3102,11 @@ TableRef:
 	}
 
 TableFactor:
-	TableName TableAsNameOpt
+	TableName TableAsNameOpt IndexHintListOpt
 	{
-		$$ = &ast.TableSource{Source: $1.(*ast.TableName), AsName: $2.(model.CIStr)}
+		tn := $1.(*ast.TableName)
+		tn.IndexHints = $3.([]*ast.IndexHint)
+		$$ = &ast.TableSource{Source: tn, AsName: $2.(model.CIStr)}
 	}
 |	'(' SelectStmt ')' TableAsName
 	{
@@ -3128,6 +3142,83 @@ TableAsName:
 |	"AS" Identifier
 	{
 		$$ = model.NewCIStr($2.(string))
+	}
+
+IndexHintType:
+	"USE" KeyOrIndex
+	{
+		$$ = ast.HintUse
+	}
+|	"IGNORE" KeyOrIndex
+	{
+		$$ = ast.HintIgnore
+	}
+|	"FORCE" KeyOrIndex
+	{
+		$$ = ast.HintForce
+	}
+
+IndexHintScope:
+	{
+		$$ = ast.HintForScan
+	}
+|	"FOR" "JOIN"
+	{
+		$$ = ast.HintForJoin
+	}
+|	"FOR" "ORDER" "BY"
+	{
+		$$ = ast.HintForOrderBy
+	}
+|	"FOR" "GROUP" "BY"
+	{
+		$$ = ast.HintForGroupBy
+	}
+
+
+IndexHint:
+	IndexHintType IndexHintScope '(' IndexNameList ')'
+	{
+		$$ = &ast.IndexHint{
+			IndexNames:	$4.([]model.CIStr),
+			HintType:	$1.(ast.IndexHintType),
+			HintScope:	$2.(ast.IndexHintScope),
+		}
+	}
+
+IndexNameList:
+	{
+		var nameList []model.CIStr
+		$$ = nameList
+	}
+|	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1.(string))}
+	}
+|	IndexNameList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3.(string)))
+	}
+
+
+IndexHintList:
+	IndexHint
+	{
+		$$ = []*ast.IndexHint{$1.(*ast.IndexHint)}
+	}
+|	IndexHintList IndexHint
+ 	{
+ 		$$ = append($1.([]*ast.IndexHint), $2.(*ast.IndexHint))
+ 	}
+ 	
+IndexHintListOpt:
+	{
+		var hintList []*ast.IndexHint
+		$$ = hintList
+	}
+|	IndexHintList
+	{
+		$$ = $1
 	}
 
 JoinTable:

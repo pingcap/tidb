@@ -22,8 +22,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -97,12 +95,6 @@ type StatementState struct {
 	// Metric, no good index used flag
 	noGoodIndexUsed uint8
 }
-
-const (
-	// Maximum allowed number of elements in table events_statements_history.
-	// TODO: make it configurable?
-	stmtsHistoryElemMax int = 1024
-)
 
 var (
 	stmtInfos = make(map[reflect.Type]*statementInfo)
@@ -200,12 +192,11 @@ func (ps *perfSchema) EndStatement(state *StatementState) {
 	log.Debugf("EndStatement: sql %s, connection id %d, type %s", state.sqlText, state.connID, state.stmtType)
 
 	record := state2Record(state)
-	// TODO: add back when customized performance schema implemented.
-	// err := ps.updateEventsStmtsCurrent(state.connID, record)
-	// if err != nil {
-	// 	   log.Error("Unable to update events_statements_current table")
-	// }
-	err := ps.appendEventsStmtsHistory(record)
+	err := ps.updateEventsStmtsCurrent(state.connID, record)
+	if err != nil {
+		log.Error("Unable to update events_statements_current table")
+	}
+	err = ps.appendEventsStmtsHistory(record)
 	if err != nil {
 		log.Errorf("Unable to append to events_statements_history table %v", errors.ErrorStack(err))
 	}
@@ -258,46 +249,36 @@ func state2Record(state *StatementState) []types.Datum {
 }
 
 func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []types.Datum) error {
-	// Try AddRecord
 	tbl := ps.mTables[TableStmtsCurrent]
-	_, err := tbl.AddRecord(nil, record)
-	if err == nil {
+	if tbl == nil {
 		return nil
 	}
-	if terror.ErrorNotEqual(err, kv.ErrKeyExists) {
+	handle, ok := ps.stmtHandles[connID]
+	if !ok {
+		newHandle, err := tbl.AddRecord(nil, record)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ps.stmtHandles[connID] = newHandle
+		return nil
+	}
+	err := tbl.UpdateRecord(nil, handle, nil, record, nil)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	// Update it
-	handle := int64(connID)
-	err = tbl.UpdateRecord(nil, handle, nil, record, nil)
-	return errors.Trace(err)
+	return nil
 }
 
 func (ps *perfSchema) appendEventsStmtsHistory(record []types.Datum) error {
 	tbl := ps.mTables[TableStmtsHistory]
-	if len(ps.historyHandles) < stmtsHistoryElemMax {
-		h, err := tbl.AddRecord(nil, record)
-		if err == nil {
-			ps.historyHandles = append(ps.historyHandles, h)
-			return nil
-		}
-		if terror.ErrorNotEqual(err, kv.ErrKeyExists) {
-			return errors.Trace(err)
-		}
-		// THREAD_ID is PK
-		handle := int64(record[0].GetUint64())
-		err = tbl.UpdateRecord(nil, handle, nil, record, nil)
+	if tbl == nil {
+		return nil
+	}
+	_, err := tbl.AddRecord(nil, record)
+	if err != nil {
 		return errors.Trace(err)
-
 	}
-	// If histroy is full, replace old data
-	if ps.historyCursor >= len(ps.historyHandles) {
-		ps.historyCursor = 0
-	}
-	h := ps.historyHandles[ps.historyCursor]
-	ps.historyCursor++
-	err := tbl.UpdateRecord(nil, h, nil, record, nil)
-	return errors.Trace(err)
+	return nil
 }
 
 func registerStatements() {
