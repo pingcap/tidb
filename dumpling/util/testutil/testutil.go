@@ -13,6 +13,13 @@
 
 package testutil
 
+import (
+	"fmt"
+
+	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/types"
+)
+
 // CompareUnorderedStringSlice compare two string slices.
 // If a and b is exactly the same except the order, it returns true.
 // In otherwise return false.
@@ -47,4 +54,40 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 		}
 	}
 	return len(m) == 0
+}
+
+// DatumEquals checker.
+type datumEqualsChecker struct {
+	*check.CheckerInfo
+}
+
+// DatumEquals checker verifies that the obtained value is equal to
+// the expected value.
+// For example:
+//     c.Assert(value, DatumEquals, NewDatum(42))
+var DatumEquals check.Checker = &datumEqualsChecker{
+	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
+}
+
+func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+	defer func() {
+		if v := recover(); v != nil {
+			result = false
+			error = fmt.Sprint(v)
+		}
+	}()
+	paramFirst, ok := params[0].(types.Datum)
+	if !ok {
+		panic("the first param should be datum")
+	}
+	paramSecond, ok := params[1].(types.Datum)
+	if !ok {
+		panic("the second param should be datum")
+	}
+
+	res, err := paramFirst.CompareDatum(paramSecond)
+	if err != nil {
+		panic(err)
+	}
+	return res == 0, ""
 }
