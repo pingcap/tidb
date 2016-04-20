@@ -14,11 +14,11 @@
 package evaluator
 
 import (
-	"fmt"
 	"reflect"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -57,51 +57,15 @@ func makeDatums(i interface{}) []types.Datum {
 	return types.MakeDatums(i)
 }
 
-// DatumEquals checker.
-type datumEqualsChecker struct {
-	*CheckerInfo
-}
-
-// The DatumEquals checker verifies that the obtained value is equal to
-// the expected value.
-// For example:
-//     c.Assert(value, DatumEquals, NewDatum(42))
-var DatumEquals Checker = &datumEqualsChecker{
-	&CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
-}
-
-func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
-	defer func() {
-		if v := recover(); v != nil {
-			result = false
-			error = fmt.Sprint(v)
-		}
-	}()
-	paramFirst, ok := params[0].(types.Datum)
-	if !ok {
-		panic("the first param should be datum")
-	}
-	paramSecond, ok := params[1].(types.Datum)
-	if !ok {
-		panic("the second param should be datum")
-	}
-
-	res, err := paramFirst.CompareDatum(paramSecond)
-	if err != nil {
-		panic(err)
-	}
-	return res == 0, ""
-}
-
 func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	defer testleak.AfterTest(c)()
 	args := types.MakeDatums(1, nil)
 	v, err := builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, DatumEquals, types.NewDatum(1))
+	c.Assert(v, testutil.DatumEquals, types.NewDatum(1))
 
 	args = types.MakeDatums(nil, nil)
 	v, err = builtinCoalesce(args, nil)
 	c.Assert(err, IsNil)
-	c.Assert(v, DatumEquals, types.NewDatum(nil))
+	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }

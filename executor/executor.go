@@ -737,7 +737,7 @@ func (e *SelectFieldsExec) Next() (*Row, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		row.Data[i] = types.NewDatum(val)
+		row.Data[i] = val
 	}
 	return row, nil
 }
@@ -872,7 +872,7 @@ func (e *LimitExec) Close() error {
 
 // orderByRow binds a row to its order values, so it can be sorted.
 type orderByRow struct {
-	key []interface{}
+	key []types.Datum
 	row *Row
 }
 
@@ -909,7 +909,7 @@ func (e *SortExec) Less(i, j int) bool {
 		v1 := e.Rows[i].key[index]
 		v2 := e.Rows[j].key[index]
 
-		ret, err := types.Compare(v1, v2)
+		ret, err := v1.CompareDatum(v2)
 		if err != nil {
 			e.err = err
 			return true
@@ -951,7 +951,7 @@ func (e *SortExec) Next() (*Row, error) {
 			}
 			orderRow := &orderByRow{
 				row: srcRow,
-				key: make([]interface{}, len(e.ByItems)),
+				key: make([]types.Datum, len(e.ByItems)),
 			}
 			for i, byItem := range e.ByItems {
 				orderRow.key[i], err = evaluator.Eval(e.ctx, byItem.Expr)
@@ -1063,7 +1063,7 @@ func (e *AggregateExec) getGroupKey() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		vals = append(vals, types.NewDatum(v))
+		vals = append(vals, v)
 	}
 	bs, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {

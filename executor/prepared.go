@@ -208,7 +208,7 @@ func (e *ExecuteExec) Build() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		prepared.Params[i].SetValue(val)
+		prepared.Params[i].SetDatum(val)
 	}
 
 	ast.ResetEvaluatedFlag(prepared.Stmt)
