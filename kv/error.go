@@ -32,6 +32,7 @@ const (
 	codeCantSetNilValue                           = 7
 	codeInvalidTxn                                = 8
 	codeNotCommitted                              = 9
+	codeNotImplemented                            = 10
 
 	codeKeyExists = 1062
 )
@@ -61,6 +62,8 @@ var (
 
 	// ErrKeyExists returns when key is already exist.
 	ErrKeyExists = terror.ClassKV.New(codeKeyExists, "key already exist")
+
+	ErrNotImplemented = terror.ClassKV.New(codeNotImplemented, "not implemented")
 )
 
 func init() {

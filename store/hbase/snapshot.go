@@ -91,6 +91,10 @@ func (s *hbaseSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 	return newInnerScanner(scanner), nil
 }
 
+func (s *hbaseSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
+	return nil, kv.ErrNotImplemented
+}
+
 func newInnerScanner(scanner *themis.ThemisScanner) kv.Iterator {
 	it := &hbaseIter{
 		ThemisScanner: scanner,
