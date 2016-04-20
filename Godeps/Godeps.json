@@ -1,23 +1,11 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
-	"GoVersion": "go1.5",
-	"Packages": [
-		"./..."
-	],
+	"GoVersion": "go1.6",
+	"GodepVersion": "v62",
 	"Deps": [
 		{
-			"ImportPath": "github.com/boltdb/bolt",
-			"Comment": "v1.0-129-g51f99c8",
-			"Rev": "51f99c862475898df9773747d3accd05a7ca33c1"
-		},
-		{
-			"ImportPath": "github.com/go-sql-driver/mysql",
-			"Comment": "v1.2-118-g3dd7008",
-			"Rev": "3dd7008ac1529aca1bcd8a9db75228a71ba23cac"
-		},
-		{
 			"ImportPath": "github.com/golang/protobuf/proto",
-			"Rev": "c75fbf01dc6cb73649c4cd4326182c3e44aa9dbb"
+			"Rev": "99511271042a09d1e01baea8781caa5210fec66e"
 		},
 		{
 			"ImportPath": "github.com/golang/snappy",
@@ -25,19 +13,15 @@
 		},
 		{
 			"ImportPath": "github.com/juju/errors",
-			"Rev": "4567a5e69fd3130ca0d89f69478e7ac025b67452"
+			"Rev": "1b5e39b83d1835fa480e0c2ddefb040ee82d58b3"
+		},
+		{
+			"ImportPath": "github.com/ngaut/go-zookeeper/zk",
+			"Rev": "9c3719e318c7cfd072e41eb48cb71fcaa49d5e05"
 		},
 		{
 			"ImportPath": "github.com/ngaut/log",
-			"Rev": "a0a08fbeee2359177b429b973f61a519e1372bc7"
-		},
-		{
-			"ImportPath": "github.com/ngaut/pool",
-			"Rev": "440660161f02291a5f955d3d92dd3dd56b9c47a9"
-		},
-		{
-			"ImportPath": "github.com/peterh/liner",
-			"Rev": "1bb0d1c1a25ed393d8feb09bab039b2b1b1fbced"
+			"Rev": "37d3e0f43b4fe05429e1adb75e835bf31fc1bba6"
 		},
 		{
 			"ImportPath": "github.com/petar/GoLLRB/llrb",
@@ -48,11 +32,79 @@
 			"Rev": "ce8a2f822ab1e245a4eefcef2996531c79c943f1"
 		},
 		{
+			"ImportPath": "github.com/pingcap/go-hbase",
+			"Rev": "7a98d1fe4e9e115de8c77ae0e158c0d08732c550"
+		},
+		{
+			"ImportPath": "github.com/pingcap/go-hbase/iohelper",
+			"Rev": "7a98d1fe4e9e115de8c77ae0e158c0d08732c550"
+		},
+		{
+			"ImportPath": "github.com/pingcap/go-hbase/proto",
+			"Rev": "7a98d1fe4e9e115de8c77ae0e158c0d08732c550"
+		},
+		{
+			"ImportPath": "github.com/pingcap/go-themis",
+			"Rev": "dbb996606c1d1fe8571fd9ac6da2254c76d2c5c9"
+		},
+		{
+			"ImportPath": "github.com/pingcap/go-themis/oracle",
+			"Rev": "dbb996606c1d1fe8571fd9ac6da2254c76d2c5c9"
+		},
+		{
+			"ImportPath": "github.com/pingcap/tipb/go-tipb",
+			"Rev": "165b67c950adb0bc4818eb1d47f26e4029daa19d"
+		},
+		{
 			"ImportPath": "github.com/rcrowley/go-metrics",
-			"Rev": "1ce93efbc8f9c568886b2ef85ce305b2217b3de3"
+			"Rev": "eeba7bd0dd01ace6e690fa833b3f22aaec29af43"
 		},
 		{
 			"ImportPath": "github.com/syndtr/goleveldb/leveldb",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/cache",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/comparer",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/errors",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/filter",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/iterator",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/journal",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/memdb",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/opt",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/storage",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/table",
+			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
+		},
+		{
+			"ImportPath": "github.com/syndtr/goleveldb/leveldb/util",
 			"Rev": "1a9d62f03ea92815b46fcaab357cfd4df264b1a0"
 		},
 		{
@@ -61,6 +113,38 @@
 		},
 		{
 			"ImportPath": "golang.org/x/text/encoding",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/charmap",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/internal",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/internal/identifier",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/japanese",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/korean",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/simplifiedchinese",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/traditionalchinese",
+			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
+		},
+		{
+			"ImportPath": "golang.org/x/text/encoding/unicode",
 			"Rev": "505f8b49cc14d790314b7535959a10b87b9161c7"
 		},
 		{

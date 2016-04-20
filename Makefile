@@ -28,7 +28,7 @@ else
   GOLINT  := golint
 endif
 
-GO        := $(GODEP) go
+GO        := GO15VENDOREXPERIMENT="1" go
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
@@ -40,17 +40,7 @@ TARGET = ""
 
 .PHONY: godep deps all build install update parser clean todo test gotest interpreter server
 
-all: godep parser build test check
-
-godep:
-	go get google.golang.org/grpc
-	git -C $$(echo $(GOPATH)|cut -d':' -f1)/src/google.golang.org/grpc checkout dec33edc378cf4971a2741cfd86ed70a644d6ba3
-	go get github.com/tools/godep
-	go get github.com/pingcap/go-hbase
-	go get github.com/pingcap/go-themis
-	go get github.com/pingcap/tso/client
-	go get github.com/pingcap/ticlient
-	go get github.com/pingcap/tipb/go-tipb
+all: parser build test check
 
 build:
 	$(GO) build
@@ -93,25 +83,17 @@ check:
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
-	@ go tool vet . 2>&1 | grep -vE 'Godeps|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet . 2>&1 | grep -vE 'vendor|Godeps|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "vet --shadow"
-	@ go tool vet --shadow . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet --shadow . 2>&1 | grep -vE 'vendor|Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ $(GOLINT) ./... 2>&1 | grep -vE 'LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ $(GOLINT) ./... 2>&1 | grep -vE 'vendor|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
-
-deps:
-	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
-		sort | uniq | grep -E '[^/]+\.[^/]+/' |grep -v "pingcap/tidb" | \
-		awk 'BEGIN{ print "#!/bin/bash" }{ printf("go get -u %s\n", $$1) }' > deps.sh
-	chmod +x deps.sh
-	bash deps.sh
+	@ gofmt -s -l . 2>&1 | grep -vE 'vendor|Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
-	rm -f deps.sh
 
 todo:
 	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/scanner.l parser/parser.y || true
