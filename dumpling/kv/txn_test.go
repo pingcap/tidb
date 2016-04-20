@@ -91,6 +91,10 @@ func (t *mockTxn) Seek(k Key) (Iterator, error) {
 	return nil, nil
 }
 
+func (t *mockTxn) SeekReverse(k Key) (Iterator, error) {
+	return nil, nil
+}
+
 func (t *mockTxn) Set(k Key, v []byte) error {
 	return nil
 }
