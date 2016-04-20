@@ -56,6 +56,11 @@ func (m *rbTreeBuffer) Seek(k Key) (Iterator, error) {
 	return it, nil
 }
 
+func (m *rbTreeBuffer) SeekReverse(k Key) (Iterator, error) {
+	// TODO: implement Prev.
+	return nil, ErrNotImplemented
+}
+
 // Get returns the value associated with key.
 func (m *rbTreeBuffer) Get(k Key) ([]byte, error) {
 	pair := m.tree.Get(keyItem(k))

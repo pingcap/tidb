@@ -124,6 +124,11 @@ func (s *dbSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 	return it, errors.Trace(err)
 }
 
+func (s *dbSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
+	// TODO: implement Prev.
+	return nil, kv.ErrNotImplemented
+}
+
 func (s *dbSnapshot) Release() {
 }
 
