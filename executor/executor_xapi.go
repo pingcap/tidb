@@ -663,6 +663,7 @@ func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.Tabl
 	return &tipb.Expr{Tp: tp.Enum(), Children: []*tipb.Expr{leftExpr, rightExpr}}
 }
 
+// Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
 func likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName) *tipb.Expr {
 	if expr.Escape != '\\' {
 		return nil
