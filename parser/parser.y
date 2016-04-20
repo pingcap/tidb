@@ -179,6 +179,7 @@ import (
 	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
+	isNull		"ISNULL"
 	isolation	"ISOLATION"
 	join		"JOIN"
 	key		"KEY"
@@ -1838,7 +1839,7 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
-|	"IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
+|	"IFNULL" | "ISNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
 |	"POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen
 |	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" |	"YEARWEEK"
 
@@ -2404,6 +2405,10 @@ FunctionCallNonKeyword:
 |	"IFNULL" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
+	}
+|	"ISNULL" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"LENGTH" '(' Expression ')'
 	{

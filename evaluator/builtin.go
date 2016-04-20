@@ -36,6 +36,7 @@ type Func struct {
 var Funcs = map[string]Func{
 	// common functions
 	"coalesce": {builtinCoalesce, 1, -1},
+	"isnull":   {builtinIsNull, 1, 1},
 
 	// math functions
 	"abs":   {builtinAbs, 1, 1},
@@ -108,6 +109,16 @@ func builtinCoalesce(args []types.Datum, ctx context.Context) (d types.Datum, er
 		if d.Kind() != types.KindNull {
 			return d, nil
 		}
+	}
+	return d, nil
+}
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_isnull
+func builtinIsNull(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].Kind() == types.KindNull {
+		d.SetInt64(1)
+	} else {
+		d.SetInt64(0)
 	}
 	return d, nil
 }

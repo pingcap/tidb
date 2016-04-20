@@ -394,6 +394,7 @@ insert		{i}{n}{s}{e}{r}{t}
 interval	{i}{n}{t}{e}{r}{v}{a}{l}
 into		{i}{n}{t}{o}
 is		{i}{s}
+isnull		{i}{s}{n}{u}{l}{l}
 isolation	{i}{s}{o}{l}{a}{t}{i}{o}{n}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
@@ -834,6 +835,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return ifKwd
 {ifnull}		lval.item = string(l.val)
 			return ifNull
+{isnull}		lval.item = string(l.val)
+			return isNull
 {ignore}		return ignore
 {index}			return index
 {inner} 		return inner

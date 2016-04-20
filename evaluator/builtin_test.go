@@ -69,3 +69,15 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, testutil.DatumEquals, types.NewDatum(nil))
 }
+
+func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
+	defer testleak.AfterTest(c)()
+
+	v, err := builtinIsNull(types.MakeDatums(1), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(0))
+
+	v, err = builtinIsNull(types.MakeDatums(nil), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.GetInt64(), Equals, int64(1))
+}
