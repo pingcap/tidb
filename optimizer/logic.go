@@ -55,10 +55,10 @@ func (r *preEvaluator) Leave(in ast.Node) (ast.Node, bool) {
 				valExpr := &ast.ValueExpr{}
 				valExpr.SetText(expr.Text())
 				valExpr.SetType(expr.GetType())
-				valExpr.SetValue(val)
+				valExpr.SetDatum(val)
 				return valExpr, true
 			}
-			expr.SetValue(val)
+			expr.SetDatum(val)
 		}
 	}
 	return in, true

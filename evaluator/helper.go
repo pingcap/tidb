@@ -26,11 +26,11 @@ var (
 )
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interface{}, error) {
+func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (types.Datum, error) {
 	return getTimeValue(ctx, v, tp, fsp)
 }
 
-func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interface{}, error) {
+func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
 	value := mysql.Time{
 		Type: tp,
 		Fsp:  fsp,
@@ -38,7 +38,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 
 	defaultTime, err := getSystemTimestamp(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return d, errors.Trace(err)
 	}
 
 	switch x := v.(type) {
@@ -51,7 +51,7 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 		} else {
 			value, err = mysql.ParseTime(x, tp, fsp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return d, errors.Trace(err)
 			}
 		}
 	case *ast.ValueExpr:
@@ -59,44 +59,46 @@ func getTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (interfa
 		case types.KindString:
 			value, err = mysql.ParseTime(x.GetString(), tp, fsp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return d, errors.Trace(err)
 			}
 		case types.KindInt64:
 			value, err = mysql.ParseTimeFromNum(x.GetInt64(), tp, fsp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return d, errors.Trace(err)
 			}
 		case types.KindNull:
-			return nil, nil
+			return d, nil
 		default:
-			return nil, errors.Trace(errDefaultValue)
+			return d, errors.Trace(errDefaultValue)
 		}
 	case *ast.FuncCallExpr:
 		if x.FnName.L == currentTimestampL {
-			return CurrentTimestamp, nil
+			d.SetString(CurrentTimestamp)
+			return d, nil
 		}
-		return nil, errors.Trace(errDefaultValue)
+		return d, errors.Trace(errDefaultValue)
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
 		v, err := Eval(ctx, x)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return d, errors.Trace(err)
 		}
 		ft := types.NewFieldType(mysql.TypeLonglong)
-		xval, err := types.Convert(v, ft)
+		xval, err := v.ConvertTo(ft)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return d, errors.Trace(err)
 		}
 
-		value, err = mysql.ParseTimeFromNum(xval.(int64), tp, fsp)
+		value, err = mysql.ParseTimeFromNum(xval.GetInt64(), tp, fsp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return d, errors.Trace(err)
 		}
 	default:
-		return nil, nil
+		return d, nil
 	}
 
-	return value, nil
+	d.SetMysqlTime(value)
+	return d, nil
 }
 
 // IsCurrentTimeExpr returns whether e is CurrentTimeExpr.

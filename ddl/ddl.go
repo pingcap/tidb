@@ -515,7 +515,7 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*co
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
 			case ast.ColumnOptionComment:
-				value, err := evaluator.EvalDatum(ctx, v.Expr)
+				value, err := evaluator.Eval(ctx, v.Expr)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -547,7 +547,8 @@ func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*co
 
 func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		value, err := evaluator.GetTimeValue(ctx, c.Expr, tp, fsp)
+		vd, err := evaluator.GetTimeValue(ctx, c.Expr, tp, fsp)
+		value := vd.GetValue()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -568,7 +569,7 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return v, nil
+	return v.GetValue(), nil
 }
 
 func removeOnUpdateNowFlag(c *column.Col) {
