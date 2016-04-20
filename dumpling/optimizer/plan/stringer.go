@@ -46,6 +46,9 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		str = "CheckTable"
 	case *IndexScan:
 		str = fmt.Sprintf("Index(%s.%s)", x.Table.Name.L, x.Index.Name.L)
+		if x.LimitCount != nil {
+			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
+		}
 	case *Limit:
 		str = "Limit"
 	case *SelectFields:
@@ -56,6 +59,9 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		str = "ShowDDL"
 	case *Sort:
 		str = "Sort"
+		if x.ExecLimit != nil {
+			str += fmt.Sprintf(" + Limit(%v) + Offset(%v)", x.ExecLimit.Count, x.ExecLimit.Offset)
+		}
 	case *TableScan:
 		if len(x.Ranges) > 0 {
 			ran := x.Ranges[0]
@@ -67,20 +73,27 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 		} else {
 			str = fmt.Sprintf("Table(%s)", x.Table.Name.L)
 		}
+		if x.LimitCount != nil {
+			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
+		}
 	case *JoinOuter:
 		last := len(e.idxs) - 1
 		idx := e.idxs[last]
-		chilrden := e.strs[idx:]
+		children := e.strs[idx:]
 		e.strs = e.strs[:idx]
-		str = "OuterJoin{" + strings.Join(chilrden, "->") + "}"
+		str = "OuterJoin{" + strings.Join(children, "->") + "}"
 		e.idxs = e.idxs[:last]
 	case *JoinInner:
 		last := len(e.idxs) - 1
 		idx := e.idxs[last]
-		chilrden := e.strs[idx:]
+		children := e.strs[idx:]
 		e.strs = e.strs[:idx]
-		str = "InnerJoin{" + strings.Join(chilrden, "->") + "}"
+		str = "InnerJoin{" + strings.Join(children, "->") + "}"
 		e.idxs = e.idxs[:last]
+	case *Aggregate:
+		str = "Aggregate"
+	case *Distinct:
+		str = "Distinct"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

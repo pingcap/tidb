@@ -52,7 +52,7 @@ import (
 type Session interface {
 	Status() uint16                              // Flag of current status, such as autocommit
 	LastInsertID() uint64                        // Last inserted auto_increment id
-	AffectedRows() uint64                        // Affected rows by lastest executed stmt
+	AffectedRows() uint64                        // Affected rows by latest executed stmt
 	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement
 	String() string                              // For debug
 	FinishTxn(rollback bool) error
