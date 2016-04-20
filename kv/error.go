@@ -37,6 +37,7 @@ const (
 	codeKeyExists = 1062
 )
 
+// Error instances.
 var (
 	// ErrClosed is used when close an already closed txn.
 	ErrClosed = terror.ClassKV.New(codeClosed, "Error: Transaction already closed")
