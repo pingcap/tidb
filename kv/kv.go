@@ -39,7 +39,7 @@ type Retriever interface {
 	// The Iterator must be Closed after use.
 	Seek(k Key) (Iterator, error)
 
-	// SeekReverse creates an reversed Iterator positioned on the first entry which key is less than k.
+	// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	SeekReverse(k Key) (Iterator, error)
 }
