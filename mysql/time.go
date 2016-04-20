@@ -342,7 +342,7 @@ func parseDateFormat(format string) []string {
 	start := 0
 	seps := []string{}
 	for i := 0; i < len(format); i++ {
-		// Date fromat must start and end with number.
+		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
 			if !unicode.IsNumber(rune(format[i])) {
 				return nil
@@ -351,7 +351,7 @@ func parseDateFormat(format string) []string {
 			continue
 		}
 
-		// Seperator is a single none-number char.
+		// Separator is a single none-number char.
 		if !unicode.IsNumber(rune(format[i])) {
 			if !unicode.IsNumber(rune(format[i-1])) {
 				return nil
@@ -938,7 +938,7 @@ func parseDateTimeFromNum(num int64) (Time, error) {
 // Type is TypeDatetime, TypeTimestamp and TypeDate.
 // Fsp is in range [0, 6].
 // MySQL supports many valid datatime format, but still has some limitation.
-// If delimiter exists, the date part and time part is seperated by a space or T,
+// If delimiter exists, the date part and time part is separated by a space or T,
 // other punctuation character can be used as the delimiter between date parts or time parts.
 // If no delimiter, the format must be YYYYMMDDHHMMSS or YYMMDDHHMMSS
 // If we have fractional seconds part, we must use decimal points as the delimiter.

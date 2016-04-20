@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
-// InvConv returns a failed convertion error.
+// InvConv returns a failed conversion error.
 func invConv(val interface{}, tp byte) (interface{}, error) {
 	return nil, errors.Errorf("cannot convert %v (type %T) to type %s", val, val, TypeStr(tp))
 }

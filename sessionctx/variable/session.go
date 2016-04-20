@@ -22,7 +22,7 @@ const codeCantGetValidID terror.ErrCode = 1
 
 var errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
 
-// RetryInfo saves retry infomation.
+// RetryInfo saves retry information.
 type RetryInfo struct {
 	Retrying         bool
 	currRetryOff     int
@@ -70,7 +70,7 @@ type SessionVars struct {
 	// prepared statement auto increment id
 	preparedStmtID uint32
 
-	// retry infomation
+	// retry information
 	RetryInfo *RetryInfo
 
 	// following variables are special for current session
