@@ -339,6 +339,7 @@ func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 	return true
 }
 
+// EvalSubquery evaluates a subquery.
 func EvalSubquery(ctx context.Context, v *ast.SubqueryExpr, multipleRows, existRow bool) error {
 	if v.SubqueryExec != nil {
 		rowCount := 2
