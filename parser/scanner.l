@@ -408,7 +408,8 @@ limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
 locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
-lower		{l}{o}{w}{e}{r}|{l}{c}{a}{s}{e}
+lower		{l}{o}{w}{e}{r}
+lcase		{l}{c}{a}{s}{e}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
 ltrim		{l}{t}{r}{i}{m}
 max_rows	{m}{a}{x}_{r}{o}{w}{s}
@@ -487,7 +488,8 @@ unique		{u}{n}{i}{q}{u}{e}
 unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
-upper		{u}{p}{p}{e}{r}|{u}{c}{a}{s}{e}
+upper		{u}{p}{p}{e}{r}
+ucase		{u}{c}{a}{s}{e}
 utc_date	{u}{t}{c}_{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
@@ -869,6 +871,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {lock}			return lock
 {lower}			lval.item = string(l.val)
 			return lower
+{lcase}			lval.item = string(l.val)
+			return lcase
 {low_priority}		return lowPriority
 {ltrim}			lval.item = string(l.val)
 			return ltrim
@@ -1016,6 +1020,8 @@ redundant		lval.item = string(l.val)
 {update}		return update
 {upper}			lval.item = string(l.val)
 			return upper
+{ucase}			lval.item = string(l.val)
+			return ucase
 {use}			return use
 {user}			lval.item = string(l.val)
 			return user
