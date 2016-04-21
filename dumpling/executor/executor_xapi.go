@@ -134,10 +134,11 @@ func (e *XSelectTableExec) doRequest() error {
 
 // XSelectIndexExec represents XAPI select index executor.
 type XSelectIndexExec struct {
-	table     table.Table
-	indexPlan *plan.IndexScan
-	ctx       context.Context
-	where     *tipb.Expr
+	table       table.Table
+	indexPlan   *plan.IndexScan
+	ctx         context.Context
+	where       *tipb.Expr
+	supportDesc bool
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -186,7 +187,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 			if !e.indexPlan.OutOfOrder {
 				// Restore the index order.
 				sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
-				if e.indexPlan.Desc {
+				if e.indexPlan.Desc && !e.supportDesc {
 					sort.Sort(sort.Reverse(sorter))
 				} else {
 					sort.Sort(sorter)
@@ -249,7 +250,7 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
 		}
 		break
 	}
-	if e.indexPlan.Desc {
+	if e.indexPlan.Desc && !e.supportDesc {
 		// Reverse tasks order.
 		for i := 0; i < len(e.tasks)/2; i++ {
 			j := len(e.tasks) - i - 1
@@ -287,6 +288,8 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	selIdxReq.Limit = e.indexPlan.LimitCount
+	selIdxReq.OrderBy = make([]*tipb.ByItem, 0)
+	selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)

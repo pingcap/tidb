@@ -191,6 +191,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	}
 	tbl, _ := b.is.TableByID(v.Table.ID)
 	client := txn.GetClient()
+	supportDesc := client.SupportRequestType(kv.ReqTypeIndex, kv.ReqSubTypeDesc)
 	var memDB bool
 	switch v.Fields()[0].DBName.L {
 	case "information_schema", "performance_schema":
@@ -199,9 +200,10 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) && txn.IsReadOnly() {
 		log.Debug("xapi select index")
 		e := &XSelectIndexExec{
-			table:     tbl,
-			ctx:       b.ctx,
-			indexPlan: v,
+			table:       tbl,
+			ctx:         b.ctx,
+			indexPlan:   v,
+			supportDesc: supportDesc,
 		}
 		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
 		if where != nil {
@@ -235,7 +237,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
 	x := b.buildFilter(e, v.FilterConditions)
-	if v.Desc {
+	if v.Desc && !supportDesc {
 		x = &ReverseExec{Src: x}
 	}
 	return x
