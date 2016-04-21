@@ -408,7 +408,7 @@ limit		{l}{i}{m}{i}{t}
 local		{l}{o}{c}{a}{l}
 locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
-lower		{l}{o}{w}{e}{r}
+lower		{l}{o}{w}{e}{r}|{l}{c}{a}{s}{e}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
 max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
@@ -485,7 +485,7 @@ unique		{u}{n}{i}{q}{u}{e}
 unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
-upper		{u}{p}{p}{e}{r}
+upper		{u}{p}{p}{e}{r}|{u}{c}{a}{s}{e}
 utc_date	{u}{t}{c}_{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
