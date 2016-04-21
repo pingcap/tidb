@@ -499,6 +499,7 @@ import (
 	Operand			"operand"
 	OptFull			"Full or empty"
 	OptInteger		"Optional Integer keyword"
+	OptTable		"Optional table keyword"
 	Order			"ORDER BY clause optional collation specification"
 	OrderBy			"ORDER BY clause"
 	ByItem			"BY item"
@@ -4018,9 +4019,11 @@ TableOptionList:
 		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
 	}
 
+OptTable:
+	{} | "TABLE"
 
 TruncateTableStmt:
-	"TRUNCATE" ObjectType TableName
+	"TRUNCATE" OptTable TableName
 	{
 		$$ = &ast.TruncateTableStmt{Table: $3.(*ast.TableName)}
 	}
