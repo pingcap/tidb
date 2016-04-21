@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"strings"
 )
 
 // Error instances.
@@ -77,6 +78,10 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalAnd(expr)
 	case tipb.ExprType_Or:
 		return e.evalOr(expr)
+	case tipb.ExprType_Like:
+		return e.evalLike(expr)
+	case tipb.ExprType_Not:
+		return e.evalNot(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -318,4 +323,104 @@ func (e *Evaluator) evalTwoChildren(expr *tipb.Expr) (left, right types.Datum, e
 		return types.Datum{}, types.Datum{}, errors.Trace(err)
 	}
 	return
+}
+
+func (e *Evaluator) evalLike(expr *tipb.Expr) (types.Datum, error) {
+	target, pattern, err := e.evalTwoChildren(expr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if target.Kind() == types.KindNull || pattern.Kind() == types.KindNull {
+		return types.Datum{}, nil
+	}
+	targetStr, err := target.ToString()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	patternStr, err := pattern.ToString()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if containsAlphabet(patternStr) {
+		patternStr = strings.ToLower(patternStr)
+		targetStr = strings.ToLower(targetStr)
+	}
+	mType, trimmedPattern := matchType(patternStr)
+	var matched bool
+	switch mType {
+	case matchExact:
+		matched = targetStr == trimmedPattern
+	case matchPrefix:
+		matched = strings.HasPrefix(targetStr, trimmedPattern)
+	case matchSuffix:
+		matched = strings.HasSuffix(targetStr, trimmedPattern)
+	case matchMiddle:
+		matched = strings.Index(targetStr, trimmedPattern) != -1
+	}
+	if matched {
+		return types.NewIntDatum(1), nil
+	}
+	return types.NewIntDatum(0), nil
+}
+
+func containsAlphabet(s string) bool {
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			return true
+		}
+	}
+	return false
+}
+
+func matchType(pattern string) (tp int, trimmed string) {
+	switch len(pattern) {
+	case 0:
+		return matchExact, pattern
+	case 1:
+		if pattern[0] == '%' {
+			return matchMiddle, ""
+		}
+		return matchExact, pattern
+	default:
+		first := pattern[0]
+		last := pattern[len(pattern)-1]
+		if first == '%' {
+			if last == '%' {
+				return matchMiddle, pattern[1 : len(pattern)-1]
+			}
+			return matchSuffix, pattern[1:]
+		}
+		if last == '%' {
+			return matchPrefix, pattern[:len(pattern)-1]
+		}
+		return matchExact, pattern
+	}
+}
+
+const (
+	matchExact  = 1
+	matchPrefix = 2
+	matchSuffix = 3
+	matchMiddle = 4
+)
+
+func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 1 {
+		return types.Datum{}, ErrInvalid.Gen("NOT need 1 operand, got %d", len(expr.Children))
+	}
+	d, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if d.Kind() == types.KindNull {
+		return d, nil
+	}
+	boolVal, err := d.ToBool()
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if boolVal == 1 {
+		return types.NewIntDatum(0), nil
+	}
+	return types.NewIntDatum(1), nil
 }

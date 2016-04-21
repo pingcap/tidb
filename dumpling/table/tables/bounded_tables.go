@@ -52,12 +52,12 @@ type BoundedTable struct {
 	meta         *model.TableInfo
 
 	records  []unsafe.Pointer
-	capacity int32
-	cursor   int32
+	capacity int64
+	cursor   int64
 }
 
 // BoundedTableFromMeta creates a Table instance from model.TableInfo.
-func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capacity int32) table.Table {
+func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capacity int64) table.Table {
 	columns := make([]*column.Col, 0, len(tblInfo.Columns))
 	var pkHandleColumn *column.Col
 	for _, colInfo := range tblInfo.Columns {
@@ -74,7 +74,7 @@ func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capa
 }
 
 // newBoundedTable constructs a BoundedTable instance.
-func newBoundedTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator, capacity int32) *BoundedTable {
+func newBoundedTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator, capacity int64) *BoundedTable {
 	name := model.NewCIStr(tableName)
 	t := &BoundedTable{
 		ID:           tableID,
@@ -105,7 +105,7 @@ func (t *BoundedTable) Seek(ctx context.Context, handle int64) (int64, bool, err
 		// this is the first seek call.
 		result = (*boundedItem)(atomic.LoadPointer(&t.records[0]))
 	} else {
-		for i := int32(0); i < t.capacity; i++ {
+		for i := int64(0); i < t.capacity; i++ {
 			record := (*boundedItem)(atomic.LoadPointer(&t.records[i]))
 			if record == nil {
 				break
@@ -170,7 +170,7 @@ func (t *BoundedTable) FirstKey() kv.Key {
 // Truncate implements table.Table Truncate interface.
 func (t *BoundedTable) Truncate(ctx context.Context) error {
 	// just reset everything.
-	for i := int32(0); i < t.capacity; i++ {
+	for i := int64(0); i < t.capacity; i++ {
 		atomic.StorePointer(&t.records[i], unsafe.Pointer(nil))
 	}
 	t.cursor = 0
@@ -179,7 +179,7 @@ func (t *BoundedTable) Truncate(ctx context.Context) error {
 
 // UpdateRecord implements table.Table UpdateRecord interface.
 func (t *BoundedTable) UpdateRecord(ctx context.Context, h int64, oldData []types.Datum, newData []types.Datum, touched map[int]bool) error {
-	for i := int32(0); i < t.capacity; i++ {
+	for i := int64(0); i < t.capacity; i++ {
 		record := (*boundedItem)(atomic.LoadPointer(&t.records[i]))
 		if record == nil {
 			// A nil record means consecutive nil records.
@@ -210,8 +210,8 @@ func (t *BoundedTable) AddRecord(ctx context.Context, r []types.Datum) (int64, e
 			return invalidRecordID, errors.Trace(err)
 		}
 	}
-	cursor := atomic.AddInt32(&t.cursor, 1) - 1
-	index := int(cursor % t.capacity)
+	cursor := atomic.AddInt64(&t.cursor, 1) - 1
+	index := int64(cursor % t.capacity)
 	record := newBoundedItem(recordID+initialRecordID, r)
 	atomic.StorePointer(&t.records[index], unsafe.Pointer(record))
 	return recordID + initialRecordID, nil
@@ -220,7 +220,7 @@ func (t *BoundedTable) AddRecord(ctx context.Context, r []types.Datum) (int64, e
 // RowWithCols implements table.Table RowWithCols interface.
 func (t *BoundedTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]types.Datum, error) {
 	row := []types.Datum(nil)
-	for i := int32(0); i < t.capacity; i++ {
+	for i := int64(0); i < t.capacity; i++ {
 		record := (*boundedItem)(atomic.LoadPointer(&t.records[i]))
 		if record == nil {
 			// A nil record means consecutive nil records.
