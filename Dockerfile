@@ -3,7 +3,7 @@ FROM golang:1.6
 COPY . /go/src/github.com/pingcap/tidb
 
 RUN cd /go/src/github.com/pingcap/tidb && \
-    make godep && make server && \
+    make godep && make parser && make server && \
     mv tidb-server/tidb-server /tidb-server && \
     make clean
 
