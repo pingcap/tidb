@@ -1067,3 +1067,15 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 	result.Check(testkit.Rows("0 2", "0 1", "0 0", "1 2", "1 1", "1 0", "2 2", "2 1", "2 0"))
 	localstore.SupportDesc = true
 }
+
+func (s *testSuite) TestInSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert t values (1, 1), (2, 1)")
+	result := tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b from t as m2)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (1, 3, 5)")
+	result.Check(testkit.Rows("1"))
+}

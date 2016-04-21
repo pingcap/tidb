@@ -190,16 +190,11 @@ func (e *ExecuteExec) Close() error {
 
 // Build builds a prepared statement into an executor.
 func (e *ExecuteExec) Build() error {
-	vars := variable.GetSessionVars(e.Ctx)
-	if e.Name != "" {
-		e.ID = vars.PreparedStmtNameToID[e.Name]
-	}
-	v := vars.PreparedStmts[e.ID]
-	if v == nil {
+	prepared, id := getPreparedStmt(e.Ctx, e.Name, e.ID)
+	if prepared == nil {
 		return ErrStmtNotFound
 	}
-	prepared := v.(*Prepared)
-
+	e.ID = id
 	if len(prepared.Params) != len(e.UsingVars) {
 		return ErrWrongParamCount
 	}
@@ -235,6 +230,19 @@ func (e *ExecuteExec) Build() error {
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
 	return nil
+}
+
+// Get prepared statement by name or id and also returns the id if name is used.
+func getPreparedStmt(ctx context.Context, name string, id uint32) (*Prepared, uint32) {
+	vars := variable.GetSessionVars(ctx)
+	if name != "" {
+		id = vars.PreparedStmtNameToID[name]
+	}
+	v := vars.PreparedStmts[id]
+	if v == nil {
+		return nil, 0
+	}
+	return v.(*Prepared), id
 }
 
 // DeallocateExec represent a DEALLOCATE executor.

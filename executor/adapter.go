@@ -63,6 +63,22 @@ func (a *statement) IsDDL() bool {
 }
 
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
+	if execPlan, ok := a.plan.(*plan.Execute); ok {
+		// For execute plan, we need to get the underlying prepared statement node.
+		prepared, _ := getPreparedStmt(ctx, execPlan.Name, execPlan.ID)
+		if prepared == nil {
+			return nil, ErrStmtNotFound
+		}
+		a.node = prepared.Stmt
+	}
+
+	// Execute non-correlated subquery before build executor.
+	subExec := &subqueryExecutor{ctx: ctx}
+	a.node.Accept(subExec)
+	if subExec.err != nil {
+		return nil, errors.Trace(subExec.err)
+	}
+
 	b := newExecutorBuilder(ctx, a.is)
 	e := b.build(a.plan)
 	if b.err != nil {
@@ -75,14 +91,6 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			return nil, errors.Trace(err)
 		}
 		e = executorExec.StmtExec
-		a.node = executorExec.Stmt
-	}
-
-	// Execute independent subquery.
-	subExec := &subqueryExecutor{ctx: ctx}
-	a.node.Accept(subExec)
-	if subExec.err != nil {
-		return nil, errors.Trace(subExec.err)
 	}
 
 	if len(e.Fields()) == 0 {

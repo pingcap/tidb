@@ -558,6 +558,10 @@ func exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *ast.TableName) *tipb.
 		return likeToPBExpr(client, x, tn)
 	case *ast.UnaryOperationExpr:
 		return unaryToPBExpr(client, x, tn)
+	case *ast.PatternInExpr:
+		return patternInToPBExpr(client, x, tn)
+	case *ast.SubqueryExpr:
+		return subqueryToPBExpr(client, x)
 	default:
 		return nil
 	}
@@ -703,6 +707,9 @@ func likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName
 func unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.TableName) *tipb.Expr {
 	switch expr.Op {
 	case opcode.Not:
+		if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Not)) {
+			return nil
+		}
 	default:
 		return nil
 	}
@@ -711,4 +718,77 @@ func unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.Table
 		return nil
 	}
 	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{child}}
+}
+
+func subqueryToPBExpr(client kv.Client, expr *ast.SubqueryExpr) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
+		return nil
+	}
+	if expr.Correlated || !expr.Evaluated || len(expr.Query.GetResultFields()) != 1 ||
+		expr.Datum.Kind() != types.KindRow {
+		// We only push down evaluated non-correlated subquery which has only one field, and datum kind is row.
+		return nil
+	}
+	return datumsToValueList(expr.Datum.GetRow())
+}
+
+func patternInToPBExpr(client kv.Client, expr *ast.PatternInExpr, tn *ast.TableName) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
+		return nil
+	}
+	pbExpr := exprToPBExpr(client, expr.Expr, tn)
+	if pbExpr == nil {
+		return nil
+	}
+	var listExpr *tipb.Expr
+	if expr.Sel != nil {
+		listExpr = exprToPBExpr(client, expr.Sel, tn)
+	} else {
+		listExpr = exprListToPBExpr(client, expr.List, tn)
+	}
+	if listExpr == nil {
+		return nil
+	}
+	inExpr := &tipb.Expr{Tp: tipb.ExprType_In.Enum(), Children: []*tipb.Expr{pbExpr, listExpr}}
+	if !expr.Not {
+		return inExpr
+	}
+	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{inExpr}}
+}
+
+func exprListToPBExpr(client kv.Client, list []ast.ExprNode, tn *ast.TableName) *tipb.Expr {
+	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
+		return nil
+	}
+	// Only list of *ast.ValueExpr can be push down.
+	datums := make([]types.Datum, 0, len(list))
+	for _, v := range list {
+		x, ok := v.(*ast.ValueExpr)
+		if !ok {
+			return nil
+		}
+		if datumToPBExpr(client, x.Datum) == nil {
+			return nil
+		}
+		datums = append(datums, x.Datum)
+	}
+	return datumsToValueList(datums)
+}
+
+func datumsToValueList(datums []types.Datum) *tipb.Expr {
+	// Don't push value list that has different datum kind.
+	prevKind := types.KindNull
+	for _, d := range datums {
+		if prevKind == types.KindNull {
+			prevKind = d.Kind()
+		}
+		if d.Kind() != types.KindNull && d.Kind() != prevKind {
+			return nil
+		}
+	}
+	val, err := codec.EncodeValue(nil, datums...)
+	if err != nil {
+		return nil
+	}
+	return &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}
 }

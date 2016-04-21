@@ -349,3 +349,62 @@ func (s *testEvalSuite) TestLike(c *C) {
 		c.Check(res.GetInt64(), Equals, ca.result)
 	}
 }
+
+func (s *testEvalSuite) TestWhereIn(c *C) {
+	cases := []struct {
+		expr   *tipb.Expr
+		result interface{}
+	}{
+		{
+			expr:   inExpr(1, 1, 2),
+			result: true,
+		},
+		{
+			expr:   inExpr(1, 2, nil),
+			result: nil,
+		},
+		{
+			expr:   inExpr(nil, 1, nil),
+			result: nil,
+		},
+		{
+			expr:   inExpr(2, 1, nil),
+			result: nil,
+		},
+		{
+			expr:   inExpr("abc", "abc", "ab"),
+			result: true,
+		},
+		{
+			expr:   inExpr("abc", "aba", "bab"),
+			result: false,
+		},
+	}
+	ev := &Evaluator{}
+	for _, ca := range cases {
+		res, err := ev.Eval(ca.expr)
+		c.Check(err, IsNil)
+		if ca.result == nil {
+			c.Check(res.Kind(), Equals, types.KindNull)
+		} else {
+			c.Check(res.Kind(), Equals, types.KindInt64)
+			if ca.result == true {
+				c.Check(res.GetInt64(), Equals, int64(1))
+			} else {
+				c.Check(res.GetInt64(), Equals, int64(0))
+			}
+		}
+	}
+}
+
+func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
+	targetDatum := types.NewDatum(target)
+	var listDatums []types.Datum
+	for _, v := range list {
+		listDatums = append(listDatums, types.NewDatum(v))
+	}
+	targetExpr := datumExpr(targetDatum)
+	val, _ := codec.EncodeValue(nil, listDatums...)
+	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}
+	return &tipb.Expr{Tp: tipb.ExprType_In.Enum(), Children: []*tipb.Expr{targetExpr, listExpr}}
+}

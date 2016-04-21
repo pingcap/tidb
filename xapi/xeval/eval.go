@@ -14,12 +14,13 @@
 package xeval
 
 import (
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"strings"
 )
 
 // Error instances.
@@ -38,7 +39,9 @@ const (
 
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
-	Row map[int64]types.Datum // column values.
+	Row           map[int64]types.Datum // column values.
+	valueListMaps map[*tipb.Expr]map[string]struct{}
+	hasNullLists  []*tipb.Expr
 }
 
 // Eval evaluates expr to a Datum.
@@ -82,6 +85,8 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalLike(expr)
 	case tipb.ExprType_Not:
 		return e.evalNot(expr)
+	case tipb.ExprType_In:
+		return e.evalIn(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -423,4 +428,69 @@ func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
 		return types.NewIntDatum(0), nil
 	}
 	return types.NewIntDatum(1), nil
+}
+
+func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 2 {
+		return types.Datum{}, ErrInvalid.Gen("IN need 2 operand, got %d", len(expr.Children))
+	}
+	target, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if target.Kind() == types.KindNull {
+		return types.Datum{}, nil
+	}
+	valueListExpr := expr.Children[1]
+	if valueListExpr.GetTp() != tipb.ExprType_ValueList {
+		return types.Datum{}, ErrInvalid.Gen("the second children should be value list type")
+	}
+	if e.valueListMaps == nil {
+		e.valueListMaps = make(map[*tipb.Expr]map[string]struct{})
+	}
+	err = e.buildValueListMapIfNeeded(valueListExpr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	valListMap := e.valueListMaps[valueListExpr]
+	encoded, err := codec.EncodeValue(nil, target)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if _, ok := valListMap[string(encoded)]; ok {
+		return types.NewIntDatum(1), nil
+	}
+	for _, nullList := range e.hasNullLists {
+		if nullList == valueListExpr {
+			return types.Datum{}, nil
+		}
+	}
+	return types.NewIntDatum(0), nil
+}
+
+func (e *Evaluator) buildValueListMapIfNeeded(valueListExpr *tipb.Expr) error {
+	if e.valueListMaps[valueListExpr] != nil {
+		return nil
+	}
+	m := make(map[string]struct{})
+	e.valueListMaps[valueListExpr] = m
+	list, err := codec.Decode(valueListExpr.Val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// for int64, 9 bytes capacity is enough.
+	buf := make([]byte, 0, 9)
+	var hasNull bool
+	for _, v := range list {
+		if v.Kind() == types.KindNull {
+			hasNull = true
+		}
+		buf = buf[:0]
+		buf, err = codec.EncodeValue(buf, v)
+		m[string(buf)] = struct{}{}
+	}
+	if hasNull {
+		e.hasNullLists = append(e.hasNullLists, valueListExpr)
+	}
+	return nil
 }
