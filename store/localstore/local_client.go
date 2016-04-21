@@ -53,10 +53,6 @@ func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
 	return false
 }
 
-func (c *dbClient) SetSupportDesc(flag bool) {
-	SupportDesc = flag
-}
-
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_Float32,
@@ -184,7 +180,7 @@ func buildRegionTasks(client *dbClient, req *kv.Request) (tasks []*task) {
 		}
 	}
 	if req.Desc && SupportDesc {
-		for i := 0; i < len(tasks); i++ {
+		for i := 0; i < len(tasks)/2; i++ {
 			j := len(tasks) - i - 1
 			tasks[i], tasks[j] = tasks[j], tasks[i]
 		}
