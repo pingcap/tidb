@@ -410,6 +410,7 @@ locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
 lower		{l}{o}{w}{e}{r}|{l}{c}{a}{s}{e}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
+ltrim		{l}{t}{r}{i}{m}
 max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
 minute		{m}{i}{n}{u}{t}{e}
@@ -448,6 +449,7 @@ rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
 row 		{r}{o}{w}
 row_format	{r}{o}{w}_{f}{o}{r}{m}{a}{t}
+rtrim		{r}{t}{r}{i}{m}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 second		{s}{e}{c}{o}{n}{d}
@@ -868,6 +870,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {lower}			lval.item = string(l.val)
 			return lower
 {low_priority}		return lowPriority
+{ltrim}			lval.item = string(l.val)
+			return ltrim
 {max}			lval.item = string(l.val)
 			return max
 {max_rows}		lval.item = string(l.val)
@@ -953,6 +957,8 @@ redundant		lval.item = string(l.val)
 			return replace
 {references}		return references
 {rlike}			return rlike
+{rtrim}			lval.item = string(l.val)
+			return rtrim
 
 {sys_var}		lval.item = string(l.val)
 			return sysVar

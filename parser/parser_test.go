@@ -495,6 +495,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
+		{`SELECT LTRIM(' foo ');`, true},
+		{`SELECT RTRIM(' bar ');`, true},
+
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
 

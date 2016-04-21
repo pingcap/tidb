@@ -18,14 +18,19 @@
 package evaluator
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
 )
 
+// BuiltinFunc is the function signature for builtin functions
+type BuiltinFunc func([]types.Datum, context.Context) (types.Datum, error)
+
 // Func is for a builtin function.
 type Func struct {
 	// F is the specific calling function.
-	F func([]types.Datum, context.Context) (types.Datum, error)
+	F BuiltinFunc
 	// MinArgs is the minimal arguments needed,
 	MinArgs int
 	// MaxArgs is the maximal arguments needed, -1 for infinity.
@@ -80,10 +85,12 @@ var Funcs = map[string]Func{
 	"length":          {builtinLength, 1, 1},
 	"lower":           {builtinLower, 1, 1},
 	"lcase":           {builtinLower, 1, 1},
+	"ltrim":           {trimFn(strings.TrimLeft, spaceChars), 1, 1},
 	"repeat":          {builtinRepeat, 2, 2},
 	"upper":           {builtinUpper, 1, 1},
 	"ucase":           {builtinUpper, 1, 1},
 	"replace":         {builtinReplace, 3, 3},
+	"rtrim":           {trimFn(strings.TrimRight, spaceChars), 1, 1},
 	"strcmp":          {builtinStrcmp, 2, 2},
 	"convert":         {builtinConvert, 2, 2},
 	"substring":       {builtinSubstring, 2, 3},

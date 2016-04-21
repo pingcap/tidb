@@ -565,4 +565,28 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
+
+	for _, v := range []struct {
+		str, result interface{}
+		fn          string
+	}{
+		{"  ", "", "LTRIM"},
+		{"  ", "", "RTRIM"},
+		{"foo0", "foo0", "LTRIM"},
+		{"bar0", "bar0", "RTRIM"},
+		{"  foo1", "foo1", "LTRIM"},
+		{"bar1  ", "bar1", "RTRIM"},
+		{spaceChars + "foo2  ", "foo2  ", "LTRIM"},
+		{"  bar2" + spaceChars, "  bar2", "RTRIM"},
+		{nil, nil, "LTRIM"},
+		{nil, nil, "RTRIM"},
+	} {
+		f := &ast.FuncCallExpr{
+			FnName: model.NewCIStr(v.fn),
+			Args:   []ast.ExprNode{ast.NewValueExpr(v.str)},
+		}
+		r, err := Eval(ctx, f)
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+	}
 }

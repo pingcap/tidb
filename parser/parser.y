@@ -197,6 +197,7 @@ import (
 	lower 		"LOWER"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
+	ltrim		"LTRIM"
 	max		"MAX"
 	maxRows		"MAX_ROWS"
 	microsecond	"MICROSECOND"
@@ -245,6 +246,7 @@ import (
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
 	rsh		">>"
+	rtrim		"RTRIM"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
 	second		"SECOND"
@@ -2432,6 +2434,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"LTRIM" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"MICROSECOND" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2479,6 +2485,10 @@ FunctionCallNonKeyword:
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"RTRIM" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SECOND" '(' Expression ')'
 	{
