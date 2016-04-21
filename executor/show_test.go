@@ -78,6 +78,7 @@ type statistics struct {
 }
 
 func (s statistics) GetScope(status string) variable.ScopeFlag { return variable.DefaultScopeFlag }
+
 func (s statistics) Stats() (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	var a, b interface{}
