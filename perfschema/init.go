@@ -35,10 +35,10 @@ type columnInfo struct {
 const (
 	// Maximum concurrent number of elements in table events_xxx_current.
 	// TODO: make it configurable?
-	currentElemMax int32 = 1024
+	currentElemMax int64 = 1024
 	// Maximum allowed number of elements in table events_xxx_history.
 	// TODO: make it configurable?
-	historyElemMax int32 = 1024
+	historyElemMax int64 = 1024
 )
 
 var setupActorsCols = []columnInfo{
@@ -202,7 +202,7 @@ func createMemoryTable(meta *model.TableInfo, alloc autoid.Allocator) (table.Tab
 	return tbl, nil
 }
 
-func createBoundedTable(meta *model.TableInfo, alloc autoid.Allocator, capacity int32) table.Table {
+func createBoundedTable(meta *model.TableInfo, alloc autoid.Allocator, capacity int64) table.Table {
 	return tables.BoundedTableFromMeta(alloc, meta, capacity)
 }
 
