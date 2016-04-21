@@ -89,6 +89,7 @@ func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch v := in.(type) {
 	case *ast.SubqueryExpr:
 		if v.Evaluated && !v.UseOuterContext {
+			// Subquery do not use outer context should only evaluate once.
 			return in, true
 		}
 	case *ast.PatternInExpr, *ast.CompareSubqueryExpr:
@@ -147,8 +148,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		ok = e.row(v)
 	case *ast.SubqueryExpr:
 		ok = e.subqueryExpr(v)
-	case ast.SubqueryExec:
-		ok = e.subqueryExec(v)
 	case *ast.UnaryOperationExpr:
 		ok = e.unaryOperation(v)
 	case *ast.ValueExpr:
@@ -333,38 +332,33 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 // Get the value from v.SubQuery and set it to v.
 func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 	if v.SubqueryExec != nil {
-		v.SetDatum(*v.SubqueryExec.GetDatum())
+		rowCount := 2
+		if e.multipleRows {
+			rowCount = -1
+		} else if e.existRow {
+			rowCount = 1
+		}
+		rows, err := v.SubqueryExec.EvalRows(e.ctx, rowCount)
+		if err != nil {
+			e.err = errors.Trace(err)
+			return false
+		}
+		if e.multipleRows || e.existRow {
+			v.GetDatum().SetRow(rows)
+			v.Evaluated = true
+			return true
+		}
+		switch len(rows) {
+		case 0:
+			v.SetNull()
+		case 1:
+			v.SetDatum(rows[0])
+		default:
+			e.err = errors.New("Subquery returns more than 1 row")
+			return false
+		}
 	}
 	v.Evaluated = true
-	return true
-}
-
-// Do the real work to evaluate subquery.
-func (e *Evaluator) subqueryExec(v ast.SubqueryExec) bool {
-	rowCount := 2
-	if e.multipleRows {
-		rowCount = -1
-	} else if e.existRow {
-		rowCount = 1
-	}
-	rows, err := v.EvalRows(e.ctx, rowCount)
-	if err != nil {
-		e.err = errors.Trace(err)
-		return false
-	}
-	if e.multipleRows || e.existRow {
-		v.GetDatum().SetInterface(types.MakeDatums(rows...))
-		return true
-	}
-	switch len(rows) {
-	case 0:
-		v.GetDatum().SetNull()
-	case 1:
-		v.SetDatum(types.NewDatum(rows[0]))
-	default:
-		e.err = errors.New("Subquery returns more than 1 row")
-		return false
-	}
 	return true
 }
 
@@ -423,10 +417,7 @@ func (e *Evaluator) patternIn(n *ast.PatternInExpr) bool {
 		n.SetDatum(x)
 		return true
 	}
-	se := n.Sel.(*ast.SubqueryExpr)
-	sel := se.SubqueryExec
-
-	res := sel.GetDatum().GetRow()
+	res := n.Sel.GetDatum().GetRow()
 	x := e.checkInList(n.Not, lhs, res)
 	if e.err != nil {
 		return false

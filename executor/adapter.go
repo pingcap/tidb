@@ -46,6 +46,7 @@ func (a *recordSet) Close() error {
 type statement struct {
 	is   infoschema.InfoSchema
 	plan plan.Plan
+	node ast.Node
 }
 
 func (a *statement) OriginText() string {
@@ -73,6 +74,14 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			return nil, errors.Trace(err)
 		}
 		e = executorExec.StmtExec
+		a.node = executorExec.Stmt
+	}
+
+	// Execute independent subquery.
+	subExec := &subqueryExecutor{ctx: ctx}
+	a.node.Accept(subExec)
+	if subExec.err != nil {
+		return nil, errors.Trace(subExec.err)
 	}
 
 	if len(e.Fields()) == 0 {
@@ -99,4 +108,66 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		executor: e,
 		fields:   fs,
 	}, nil
+}
+
+// subqueryExecutor executes independent subquery.
+type subqueryExecutor struct {
+	ctx          context.Context
+	multipleRows bool
+	existRow     bool
+	err          error
+}
+
+func (e *subqueryExecutor) Enter(in ast.Node) (ast.Node, bool) {
+	switch in.(type) {
+	case *ast.ExistsSubqueryExpr:
+		e.existRow = true
+	case *ast.CompareSubqueryExpr:
+		e.multipleRows = true
+	case *ast.PatternInExpr:
+		e.multipleRows = true
+	}
+	return in, false
+}
+
+func (e *subqueryExecutor) Leave(in ast.Node) (ast.Node, bool) {
+	switch x := in.(type) {
+	case *ast.CompareSubqueryExpr:
+		e.multipleRows = false
+	case *ast.PatternInExpr:
+		e.multipleRows = false
+	case *ast.ExistsSubqueryExpr:
+		e.existRow = false
+	case *ast.SubqueryExpr:
+		if !x.UseOuterContext && x.SubqueryExec != nil {
+			rowCount := 2
+			if e.multipleRows {
+				rowCount = -1
+			} else if e.existRow {
+				rowCount = 1
+			}
+			rows, err := x.SubqueryExec.EvalRows(e.ctx, rowCount)
+			if err != nil {
+				e.err = errors.Trace(err)
+				return in, false
+			}
+			if e.multipleRows || e.existRow {
+				x.GetDatum().SetRow(rows)
+				x.Evaluated = true
+				return in, true
+			}
+			switch len(rows) {
+			case 0:
+				x.SetNull()
+			case 1:
+				x.SetDatum(rows[0])
+			default:
+				e.err = errors.New("Subquery returns more than 1 row")
+				return in, false
+			}
+			x.Evaluated = true
+			return in, true
+		}
+	}
+	return in, true
 }
