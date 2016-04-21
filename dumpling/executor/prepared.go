@@ -167,6 +167,7 @@ type ExecuteExec struct {
 	UsingVars []ast.ExprNode
 	ID        uint32
 	StmtExec  Executor
+	Stmt      ast.StmtNode
 }
 
 // Fields implements Executor Fields interface.
@@ -232,6 +233,7 @@ func (e *ExecuteExec) Build() error {
 		return errors.Trace(b.err)
 	}
 	e.StmtExec = stmtExec
+	e.Stmt = prepared.Stmt
 	return nil
 }
 
