@@ -319,8 +319,12 @@ func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectR
 	idxID := sel.IndexInfo.GetIndexId()
 	kvRanges := rs.extractKVRanges(tid, idxID, sel.Ranges)
 	var rows []*tipb.Row
+	desc := false
+	if sel.OrderBy != nil {
+		desc = *sel.OrderBy[0].Desc
+	}
 	for _, ran := range kvRanges {
-		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran)
+		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran, desc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -329,7 +333,7 @@ func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectR
 	return rows, nil
 }
 
-func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange) ([]*tipb.Row, error) {
+func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange, Desc bool) ([]*tipb.Row, error) {
 	var rows []*tipb.Row
 	seekKey := ran.StartKey
 	for {
@@ -370,6 +374,14 @@ func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.Ke
 		row := &tipb.Row{Handle: handleData, Data: data}
 		rows = append(rows, row)
 	}
+
+	if Desc && SupportDesc {
+		for i := 0; i < len(rows)/2; i++ {
+			j := len(rows) - i - 1
+			rows[i], rows[j] = rows[j], rows[i]
+		}
+	}
+
 	return rows, nil
 }
 
