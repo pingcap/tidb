@@ -4020,7 +4020,7 @@ TableOptionList:
 
 
 TruncateTableStmt:
-	"TRUNCATE" "TABLE" TableName
+	"TRUNCATE" ObjectType TableName
 	{
 		$$ = &ast.TruncateTableStmt{Table: $3.(*ast.TableName)}
 	}
