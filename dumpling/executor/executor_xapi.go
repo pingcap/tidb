@@ -288,7 +288,6 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
 	selIdxReq.Limit = e.indexPlan.LimitCount
-	selIdxReq.OrderBy = make([]*tipb.ByItem, 0)
 	selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
