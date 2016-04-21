@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 )
@@ -139,33 +140,12 @@ func (e *subqueryExecutor) Leave(in ast.Node) (ast.Node, bool) {
 	case *ast.ExistsSubqueryExpr:
 		e.existRow = false
 	case *ast.SubqueryExpr:
-		if !x.UseOuterContext && x.SubqueryExec != nil {
-			rowCount := 2
-			if e.multipleRows {
-				rowCount = -1
-			} else if e.existRow {
-				rowCount = 1
-			}
-			rows, err := x.SubqueryExec.EvalRows(e.ctx, rowCount)
+		if !x.UseOuterContext {
+			err := evaluator.EvalSubquery(e.ctx, x, e.multipleRows, e.existRow)
 			if err != nil {
 				e.err = errors.Trace(err)
 				return in, false
 			}
-			if e.multipleRows || e.existRow {
-				x.GetDatum().SetRow(rows)
-				x.Evaluated = true
-				return in, true
-			}
-			switch len(rows) {
-			case 0:
-				x.SetNull()
-			case 1:
-				x.SetDatum(rows[0])
-			default:
-				e.err = errors.New("Subquery returns more than 1 row")
-				return in, false
-			}
-			x.Evaluated = true
 			return in, true
 		}
 	}

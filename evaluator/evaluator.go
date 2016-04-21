@@ -331,22 +331,30 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 // Evaluate SubqueryExpr.
 // Get the value from v.SubQuery and set it to v.
 func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
+	err := EvalSubquery(e.ctx, v, e.multipleRows, e.existRow)
+	if err != nil {
+		e.err = errors.Trace(err)
+		return false
+	}
+	return true
+}
+
+func EvalSubquery(ctx context.Context, v *ast.SubqueryExpr, multipleRows, existRow bool) error {
 	if v.SubqueryExec != nil {
 		rowCount := 2
-		if e.multipleRows {
+		if multipleRows {
 			rowCount = -1
-		} else if e.existRow {
+		} else if existRow {
 			rowCount = 1
 		}
-		rows, err := v.SubqueryExec.EvalRows(e.ctx, rowCount)
+		rows, err := v.SubqueryExec.EvalRows(ctx, rowCount)
 		if err != nil {
-			e.err = errors.Trace(err)
-			return false
+			return errors.Trace(err)
 		}
-		if e.multipleRows || e.existRow {
+		if multipleRows || existRow {
 			v.GetDatum().SetRow(rows)
 			v.Evaluated = true
-			return true
+			return nil
 		}
 		switch len(rows) {
 		case 0:
@@ -354,12 +362,11 @@ func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 		case 1:
 			v.SetDatum(rows[0])
 		default:
-			e.err = errors.New("Subquery returns more than 1 row")
-			return false
+			return errors.New("Subquery returns more than 1 row")
 		}
 	}
 	v.Evaluated = true
-	return true
+	return nil
 }
 
 func (e *Evaluator) checkInList(not bool, in types.Datum, list []types.Datum) (d types.Datum) {
