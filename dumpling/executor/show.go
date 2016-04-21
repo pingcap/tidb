@@ -318,6 +318,10 @@ func (e *ShowExec) fetchShowStatus() error {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
 			continue
 		}
+		switch v.Value.(type) {
+		case []interface{}, nil:
+			v.Value = fmt.Sprintf("%v", v.Value)
+		}
 		value, err := types.ToString(v.Value)
 		if err != nil {
 			return errors.Trace(err)
