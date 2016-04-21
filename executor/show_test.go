@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -65,4 +66,25 @@ func (s *testSuite) TestShow(c *C) {
 	testSQL = `show tables like 'show\_test'`
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
+
+	var ss statistics
+	variable.RegisterStatistics(ss)
+	testSQL = "show status like 'character_set_results';"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), NotNil)
+}
+
+type statistics struct {
+}
+
+func (s statistics) GetScope(status string) variable.ScopeFlag { return variable.DefaultScopeFlag }
+
+func (s statistics) Stats() (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	var a, b interface{}
+	b = "123"
+	m["test_interface_nil"] = a
+	m["test_interface"] = b
+	m["test_interface_slice"] = []interface{}{"a", "b", "c"}
+	return m, nil
 }
