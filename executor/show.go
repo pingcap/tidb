@@ -319,10 +319,7 @@ func (e *ShowExec) fetchShowStatus() error {
 			continue
 		}
 		switch v.Value.(type) {
-		case []interface{}:
-			v.Value = fmt.Sprintf("%v", v.Value)
-		}
-		if v.Value == nil {
+		case []interface{}, nil:
 			v.Value = fmt.Sprintf("%v", v.Value)
 		}
 		value, err := types.ToString(v.Value)
