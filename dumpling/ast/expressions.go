@@ -250,10 +250,10 @@ type SubqueryExec interface {
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query           ResultSetNode
-	SubqueryExec    SubqueryExec
-	Evaluated       bool
-	UseOuterContext bool
+	Query        ResultSetNode
+	SubqueryExec SubqueryExec
+	Evaluated    bool
+	Correlated   bool
 }
 
 // Accept implements Node Accept interface.
