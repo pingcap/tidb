@@ -86,12 +86,7 @@ type Evaluator struct {
 
 // Enter implements ast.Visitor interface.
 func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch v := in.(type) {
-	case *ast.SubqueryExpr:
-		if v.Evaluated && !v.UseOuterContext {
-			// Subquery do not use outer context should only evaluate once.
-			return in, true
-		}
+	switch in.(type) {
 	case *ast.PatternInExpr, *ast.CompareSubqueryExpr:
 		e.multipleRows = true
 	case *ast.ExistsSubqueryExpr:
@@ -331,6 +326,10 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 // Evaluate SubqueryExpr.
 // Get the value from v.SubQuery and set it to v.
 func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
+	if v.Evaluated && !v.UseOuterContext {
+		// Subquery do not use outer context should only evaluate once.
+		return true
+	}
 	err := EvalSubquery(e.ctx, v, e.multipleRows, e.existRow)
 	if err != nil {
 		e.err = errors.Trace(err)
