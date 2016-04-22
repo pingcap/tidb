@@ -34,57 +34,7 @@ type subquery struct {
 	is   infoschema.InfoSchema
 }
 
-// SetDatum implements Expression interface.
-func (sq *subquery) SetDatum(datum types.Datum) {
-	sq.Datum = datum
-}
-
-// GetDatum implements Expression interface.
-func (sq *subquery) GetDatum() *types.Datum {
-	return &sq.Datum
-}
-
-// SetFlag implements Expression interface.
-func (sq *subquery) SetFlag(flag uint64) {
-	sq.flag = flag
-}
-
-// GetFlag implements Expression interface.
-func (sq *subquery) GetFlag() uint64 {
-	return sq.flag
-}
-
-// SetText implements Node interface.
-func (sq *subquery) SetText(text string) {
-	sq.text = text
-}
-
-// Text implements Node interface.
-func (sq *subquery) Text() string {
-	return sq.text
-}
-
-// SetType implements Expression interface.
-func (sq *subquery) SetType(tp *types.FieldType) {
-	sq.Type = tp
-}
-
-// GetType implements Expression interface.
-func (sq *subquery) GetType() *types.FieldType {
-	return sq.Type
-}
-
-func (sq *subquery) Accept(v ast.Visitor) (ast.Node, bool) {
-	// SubQuery is not a normal ExprNode.
-	newNode, skipChildren := v.Enter(sq)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	sq = newNode.(*subquery)
-	return v.Leave(sq)
-}
-
-func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, error) {
+func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]types.Datum, error) {
 	b := newExecutorBuilder(ctx, sq.is)
 	plan.Refine(sq.plan)
 	e := b.build(sq.plan)
@@ -107,7 +57,7 @@ func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, 
 	var (
 		err  error
 		row  *Row
-		rows = []interface{}{}
+		rows []types.Datum
 	)
 	for rowCount != 0 {
 		row, err = e.Next()
@@ -118,9 +68,11 @@ func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]interface{}, 
 			break
 		}
 		if len(row.Data) == 1 {
-			rows = append(rows, row.Data[0].GetValue())
+			rows = append(rows, row.Data[0])
 		} else {
-			rows = append(rows, types.DatumsToInterfaces(row.Data))
+			var d types.Datum
+			d.SetRow(row.Data)
+			rows = append(rows, d)
 		}
 		if rowCount > 0 {
 			rowCount--
