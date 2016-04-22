@@ -34,7 +34,7 @@ func TestString(t *testing.T) {
 
 	b = append(b, "abc"...)
 	if a != "aello world" {
-		t.Fatalf("a:%v, b%v", a, b)
+		t.Fatalf("a:%v, b:%v", a, b)
 	}
 }
 
