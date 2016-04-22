@@ -319,6 +319,10 @@ func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectR
 	idxID := sel.IndexInfo.GetIndexId()
 	kvRanges := rs.extractKVRanges(tid, idxID, sel.Ranges)
 	var rows []*tipb.Row
+	desc := false
+	if sel.OrderBy != nil {
+		desc = *sel.OrderBy[0].Desc
+	}
 	for _, ran := range kvRanges {
 		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran)
 		if err != nil {
@@ -326,6 +330,14 @@ func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectR
 		}
 		rows = append(rows, ranRows...)
 	}
+
+	if desc && SupportDesc {
+		for i := 0; i < len(rows)/2; i++ {
+			j := len(rows) - i - 1
+			rows[i], rows[j] = rows[j], rows[i]
+		}
+	}
+
 	return rows, nil
 }
 
@@ -370,6 +382,7 @@ func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.Ke
 		row := &tipb.Row{Handle: handleData, Data: data}
 		rows = append(rows, row)
 	}
+
 	return rows, nil
 }
 
