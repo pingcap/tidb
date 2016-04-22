@@ -29,7 +29,7 @@ func (p *testStatementSuit) TestUninitPS(c *C) {
 	// Run init()
 	ps := &perfSchema{}
 	// ps is uninitialized, all mTables are missing.
-	// This cound happened at the bootstrap stage.
+	// This may happen at the bootstrap stage.
 	// So we must make sure the following actions are safe.
 	err := ps.updateEventsStmtsCurrent(0, []types.Datum{})
 	c.Assert(err, IsNil)
