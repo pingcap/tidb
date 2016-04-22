@@ -34,10 +34,8 @@ func TestString(t *testing.T) {
 
 	b = append(b, "abc"...)
 	if a != "aello world" {
-		t.Fatal(a)
+		t.Fatalf("a:%v, b%v", a, b)
 	}
-	// For prevent ineffassign warning
-	_ = b
 }
 
 func TestByte(t *testing.T) {
