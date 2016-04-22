@@ -289,7 +289,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		if nr.useOuterContext {
 			// TODO: check this
 			// If there is a deep nest of subquery, there may be something wrong.
-			v.UseOuterContext = true
+			v.Correlated = true
 			nr.useOuterContext = false
 		}
 	case *ast.TruncateTableStmt:

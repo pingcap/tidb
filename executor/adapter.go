@@ -140,7 +140,7 @@ func (e *subqueryExecutor) Leave(in ast.Node) (ast.Node, bool) {
 	case *ast.ExistsSubqueryExpr:
 		e.existRow = false
 	case *ast.SubqueryExpr:
-		if !x.UseOuterContext {
+		if !x.Correlated {
 			err := evaluator.EvalSubquery(e.ctx, x, e.multipleRows, e.existRow)
 			if err != nil {
 				e.err = errors.Trace(err)

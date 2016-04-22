@@ -326,7 +326,7 @@ func (e *Evaluator) existsSubquery(v *ast.ExistsSubqueryExpr) bool {
 // Evaluate SubqueryExpr.
 // Get the value from v.SubQuery and set it to v.
 func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
-	if v.Evaluated && !v.UseOuterContext {
+	if v.Evaluated && !v.Correlated {
 		// Subquery do not use outer context should only evaluate once.
 		return true
 	}
