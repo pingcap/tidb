@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 )
@@ -46,6 +47,7 @@ func (a *recordSet) Close() error {
 type statement struct {
 	is   infoschema.InfoSchema
 	plan plan.Plan
+	node ast.Node
 }
 
 func (a *statement) OriginText() string {
@@ -73,6 +75,14 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 			return nil, errors.Trace(err)
 		}
 		e = executorExec.StmtExec
+		a.node = executorExec.Stmt
+	}
+
+	// Execute independent subquery.
+	subExec := &subqueryExecutor{ctx: ctx}
+	a.node.Accept(subExec)
+	if subExec.err != nil {
+		return nil, errors.Trace(subExec.err)
 	}
 
 	if len(e.Fields()) == 0 {
@@ -99,4 +109,45 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		executor: e,
 		fields:   fs,
 	}, nil
+}
+
+// subqueryExecutor executes independent subquery.
+type subqueryExecutor struct {
+	ctx          context.Context
+	multipleRows bool
+	existRow     bool
+	err          error
+}
+
+func (e *subqueryExecutor) Enter(in ast.Node) (ast.Node, bool) {
+	switch in.(type) {
+	case *ast.ExistsSubqueryExpr:
+		e.existRow = true
+	case *ast.CompareSubqueryExpr:
+		e.multipleRows = true
+	case *ast.PatternInExpr:
+		e.multipleRows = true
+	}
+	return in, false
+}
+
+func (e *subqueryExecutor) Leave(in ast.Node) (ast.Node, bool) {
+	switch x := in.(type) {
+	case *ast.CompareSubqueryExpr:
+		e.multipleRows = false
+	case *ast.PatternInExpr:
+		e.multipleRows = false
+	case *ast.ExistsSubqueryExpr:
+		e.existRow = false
+	case *ast.SubqueryExpr:
+		if !x.UseOuterContext {
+			err := evaluator.EvalSubquery(e.ctx, x, e.multipleRows, e.existRow)
+			if err != nil {
+				e.err = errors.Trace(err)
+				return in, false
+			}
+			return in, true
+		}
+	}
+	return in, true
 }
