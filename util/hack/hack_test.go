@@ -36,6 +36,8 @@ func TestString(t *testing.T) {
 	if a != "aello world" {
 		t.Fatal(a)
 	}
+	// For prevent ineffassign warning
+	_ = b
 }
 
 func TestByte(t *testing.T) {
