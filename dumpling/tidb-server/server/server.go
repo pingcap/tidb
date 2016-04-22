@@ -71,7 +71,7 @@ func (s *Server) releaseToken(token *Token) {
 	s.concurrentLimiter.Put(token)
 }
 
-// Generate a random string using ASCII characters but avoid seperator character.
+// Generate a random string using ASCII characters but avoid separator character.
 // See: https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
 func randomBuf(size int) []byte {
 	buf := make([]byte, size)

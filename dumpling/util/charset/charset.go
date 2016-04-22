@@ -93,7 +93,7 @@ func GetAllCharsets() []*Desc {
 }
 
 // ValidCharsetAndCollation checks the charset and the collation validity
-// and retuns a boolean.
+// and returns a boolean.
 func ValidCharsetAndCollation(cs string, co string) bool {
 	// We will use utf8 as a default charset.
 	if cs == "" {

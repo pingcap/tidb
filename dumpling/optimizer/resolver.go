@@ -78,7 +78,7 @@ type resolverContext struct {
 	// When visiting TableRefs, tables in this context are not available
 	// because it is being collected.
 	inTableRefs bool
-	// When visiting on conditon only tables in current join node are available.
+	// When visiting on condition only tables in current join node are available.
 	inOnCondition bool
 	// When visiting field list, fieldList in this context are not available.
 	inFieldList bool

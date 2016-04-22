@@ -135,7 +135,7 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 	return rows
 }
 
-// Rows is similar to RowsWithSep, use white space as seperator string.
+// Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return RowsWithSep(" ", args...)
 }

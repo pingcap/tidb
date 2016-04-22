@@ -28,7 +28,7 @@ import (
 // And in the same time, we do not want this interface becomes a general way to run sql statement.
 // We hope this could be used with some restrictions such as only allowing system tables as target,
 // do not allowing recursion call.
-// For more infomation please refer to the comments in session.ExecRestrictedSQL().
+// For more information please refer to the comments in session.ExecRestrictedSQL().
 // This is implemented in session.go.
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
