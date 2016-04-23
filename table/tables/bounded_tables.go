@@ -42,6 +42,9 @@ type boundedItem struct {
 
 // BoundedTable implements table.Table interface.
 type BoundedTable struct {
+	// cursor must be aligned in i386, or we will meet panic when calling atomic.AddInt64
+	// https://golang.org/src/sync/atomic/doc.go#L41
+	cursor      int64
 	ID          int64
 	Name        model.CIStr
 	Columns     []*column.Col
@@ -53,7 +56,6 @@ type BoundedTable struct {
 
 	records  []unsafe.Pointer
 	capacity int64
-	cursor   int64
 }
 
 // BoundedTableFromMeta creates a Table instance from model.TableInfo.
