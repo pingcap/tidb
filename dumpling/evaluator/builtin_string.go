@@ -463,6 +463,23 @@ func builtinTrim(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	return d, nil
 }
 
+// For LTRIM & RTRIM
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
+func trimFn(fn func(string, string) string, cutset string) BuiltinFunc {
+	return func(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+		if args[0].Kind() == types.KindNull {
+			return d, nil
+		}
+		str, err := args[0].ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetString(fn(str, cutset))
+		return d, nil
+	}
+}
+
 func trimLeft(str, remstr string) string {
 	for {
 		x := strings.TrimPrefix(str, remstr)

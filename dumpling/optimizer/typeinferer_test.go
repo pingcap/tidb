@@ -53,6 +53,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 
 		{"c1 is true", mysql.TypeLonglong, charset.CharsetBin},
 		{"c2 is null", mysql.TypeLonglong, charset.CharsetBin},
+		{"isnull(1/0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"cast(1 as decimal)", mysql.TypeNewDecimal, charset.CharsetBin},
 
 		{"1 and 1", mysql.TypeLonglong, charset.CharsetBin},
@@ -120,9 +121,14 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"CONCAT_WS('-', 'T', 'i', 'DB')", mysql.TypeVarString, "utf8"},
 		{"left('TiDB', 2)", mysql.TypeVarString, "utf8"},
 		{"lower('TiDB')", mysql.TypeVarString, "utf8"},
+		{"lcase('TiDB')", mysql.TypeVarString, "utf8"},
 		{"repeat('TiDB', 3)", mysql.TypeVarString, "utf8"},
 		{"replace('TiDB', 'D', 'd')", mysql.TypeVarString, "utf8"},
 		{"upper('TiDB')", mysql.TypeVarString, "utf8"},
+		{"ucase('TiDB')", mysql.TypeVarString, "utf8"},
+		{"trim(' TiDB ')", mysql.TypeVarString, "utf8"},
+		{"ltrim(' TiDB')", mysql.TypeVarString, "utf8"},
+		{"rtrim('TiDB ')", mysql.TypeVarString, "utf8"},
 		{"connection_id()", mysql.TypeLonglong, charset.CharsetBin},
 		{"if(1>2, 2, 3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"case c1 when null then 2 when 2 then 1.1 else 1 END", mysql.TypeNewDecimal, charset.CharsetBin},

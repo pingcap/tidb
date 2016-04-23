@@ -394,6 +394,7 @@ insert		{i}{n}{s}{e}{r}{t}
 interval	{i}{n}{t}{e}{r}{v}{a}{l}
 into		{i}{n}{t}{o}
 is		{i}{s}
+isnull		{i}{s}{n}{u}{l}{l}
 isolation	{i}{s}{o}{l}{a}{t}{i}{o}{n}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
@@ -408,7 +409,9 @@ local		{l}{o}{c}{a}{l}
 locate		{l}{o}{c}{a}{t}{e}
 lock		{l}{o}{c}{k}
 lower		{l}{o}{w}{e}{r}
+lcase		{l}{c}{a}{s}{e}
 low_priority	{l}{o}{w}_{p}{r}{i}{o}{r}{i}{t}{y}
+ltrim		{l}{t}{r}{i}{m}
 max_rows	{m}{a}{x}_{r}{o}{w}{s}
 microsecond	{m}{i}{c}{r}{o}{s}{e}{c}{o}{n}{d}
 minute		{m}{i}{n}{u}{t}{e}
@@ -447,6 +450,7 @@ rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
 row 		{r}{o}{w}
 row_format	{r}{o}{w}_{f}{o}{r}{m}{a}{t}
+rtrim		{r}{t}{r}{i}{m}
 schema		{s}{c}{h}{e}{m}{a}
 schemas		{s}{c}{h}{e}{m}{a}{s}
 second		{s}{e}{c}{o}{n}{d}
@@ -485,6 +489,7 @@ unlock		{u}{n}{l}{o}{c}{k}
 nullif		{n}{u}{l}{l}{i}{f}
 update		{u}{p}{d}{a}{t}{e}
 upper		{u}{p}{p}{e}{r}
+ucase		{u}{c}{a}{s}{e}
 utc_date	{u}{t}{c}_{d}{a}{t}{e}
 value		{v}{a}{l}{u}{e}
 values		{v}{a}{l}{u}{e}{s}
@@ -834,6 +839,8 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 			return ifKwd
 {ifnull}		lval.item = string(l.val)
 			return ifNull
+{isnull}		lval.item = string(l.val)
+			return isNull
 {ignore}		return ignore
 {index}			return index
 {inner} 		return inner
@@ -864,7 +871,11 @@ year_month		{y}{e}{a}{r}_{m}{o}{n}{t}{h}
 {lock}			return lock
 {lower}			lval.item = string(l.val)
 			return lower
+{lcase}			lval.item = string(l.val)
+			return lcase
 {low_priority}		return lowPriority
+{ltrim}			lval.item = string(l.val)
+			return ltrim
 {max}			lval.item = string(l.val)
 			return max
 {max_rows}		lval.item = string(l.val)
@@ -950,6 +961,8 @@ redundant		lval.item = string(l.val)
 			return replace
 {references}		return references
 {rlike}			return rlike
+{rtrim}			lval.item = string(l.val)
+			return rtrim
 
 {sys_var}		lval.item = string(l.val)
 			return sysVar
@@ -1007,6 +1020,8 @@ redundant		lval.item = string(l.val)
 {update}		return update
 {upper}			lval.item = string(l.val)
 			return upper
+{ucase}			lval.item = string(l.val)
+			return ucase
 {use}			return use
 {user}			lval.item = string(l.val)
 			return user
