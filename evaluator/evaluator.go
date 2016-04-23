@@ -78,20 +78,12 @@ func boolToInt64(v bool) int64 {
 
 // Evaluator is an ast Visitor that evaluates an expression.
 type Evaluator struct {
-	ctx          context.Context
-	err          error
-	multipleRows bool
-	existRow     bool
+	ctx context.Context
+	err error
 }
 
 // Enter implements ast.Visitor interface.
 func (e *Evaluator) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch in.(type) {
-	case *ast.PatternInExpr, *ast.CompareSubqueryExpr:
-		e.multipleRows = true
-	case *ast.ExistsSubqueryExpr:
-		e.existRow = true
-	}
 	return in, false
 }
 
@@ -111,12 +103,10 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.ColumnNameExpr:
 		ok = e.columnName(v)
 	case *ast.CompareSubqueryExpr:
-		e.multipleRows = false
 		ok = e.compareSubquery(v)
 	case *ast.DefaultExpr:
 		ok = e.defaultExpr(v)
 	case *ast.ExistsSubqueryExpr:
-		e.existRow = false
 		ok = e.existsSubquery(v)
 	case *ast.FuncCallExpr:
 		ok = e.funcCall(v)
@@ -131,7 +121,6 @@ func (e *Evaluator) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.ParenthesesExpr:
 		ok = e.parentheses(v)
 	case *ast.PatternInExpr:
-		e.multipleRows = false
 		ok = e.patternIn(v)
 	case *ast.PatternLikeExpr:
 		ok = e.patternLike(v)
@@ -330,7 +319,7 @@ func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 		// Subquery do not use outer context should only evaluate once.
 		return true
 	}
-	err := EvalSubquery(e.ctx, v, e.multipleRows, e.existRow)
+	err := EvalSubquery(e.ctx, v)
 	if err != nil {
 		e.err = errors.Trace(err)
 		return false
@@ -339,19 +328,19 @@ func (e *Evaluator) subqueryExpr(v *ast.SubqueryExpr) bool {
 }
 
 // EvalSubquery evaluates a subquery.
-func EvalSubquery(ctx context.Context, v *ast.SubqueryExpr, multipleRows, existRow bool) error {
+func EvalSubquery(ctx context.Context, v *ast.SubqueryExpr) error {
 	if v.SubqueryExec != nil {
 		rowCount := 2
-		if multipleRows {
+		if v.MultiRows {
 			rowCount = -1
-		} else if existRow {
+		} else if v.Exists {
 			rowCount = 1
 		}
 		rows, err := v.SubqueryExec.EvalRows(ctx, rowCount)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if multipleRows || existRow {
+		if v.MultiRows || v.Exists {
 			v.GetDatum().SetRow(rows)
 			v.Evaluated = true
 			return nil

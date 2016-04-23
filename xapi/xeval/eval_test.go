@@ -403,6 +403,7 @@ func inExpr(target interface{}, list ...interface{}) *tipb.Expr {
 	for _, v := range list {
 		listDatums = append(listDatums, types.NewDatum(v))
 	}
+	types.SortDatums(listDatums)
 	targetExpr := datumExpr(targetDatum)
 	val, _ := codec.EncodeValue(nil, listDatums...)
 	listExpr := &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}

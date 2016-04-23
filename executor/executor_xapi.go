@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -336,10 +337,10 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 
 // conditionsToPBExpr tries to convert filter conditions to a tipb.Expr.
 // not supported conditions will be returned in remained.
-func conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, tn *ast.TableName) (pbexpr *tipb.Expr,
+func (b *executorBuilder) conditionsToPBExpr(client kv.Client, exprs []ast.ExprNode, tn *ast.TableName) (pbexpr *tipb.Expr,
 	remained []ast.ExprNode) {
 	for _, expr := range exprs {
-		v := exprToPBExpr(client, expr, tn)
+		v := b.exprToPBExpr(client, expr, tn)
 		if v == nil {
 			remained = append(remained, expr)
 		} else {
@@ -544,30 +545,30 @@ func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 // exprToPBExpr converts an ast.ExprNode to a tipb.Expr, if not supported, nil will be returned.
-func exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) exprToPBExpr(client kv.Client, expr ast.ExprNode, tn *ast.TableName) *tipb.Expr {
 	switch x := expr.(type) {
 	case *ast.ValueExpr, *ast.ParamMarkerExpr:
-		return datumToPBExpr(client, *expr.GetDatum())
+		return b.datumToPBExpr(client, *expr.GetDatum())
 	case *ast.ColumnNameExpr:
-		return columnNameToPBExpr(client, x, tn)
+		return b.columnNameToPBExpr(client, x, tn)
 	case *ast.BinaryOperationExpr:
-		return binopToPBExpr(client, x, tn)
+		return b.binopToPBExpr(client, x, tn)
 	case *ast.ParenthesesExpr:
-		return exprToPBExpr(client, x.Expr, tn)
+		return b.exprToPBExpr(client, x.Expr, tn)
 	case *ast.PatternLikeExpr:
-		return likeToPBExpr(client, x, tn)
+		return b.likeToPBExpr(client, x, tn)
 	case *ast.UnaryOperationExpr:
-		return unaryToPBExpr(client, x, tn)
+		return b.unaryToPBExpr(client, x, tn)
 	case *ast.PatternInExpr:
-		return patternInToPBExpr(client, x, tn)
+		return b.patternInToPBExpr(client, x, tn)
 	case *ast.SubqueryExpr:
-		return subqueryToPBExpr(client, x)
+		return b.subqueryToPBExpr(client, x)
 	default:
 		return nil
 	}
 }
 
-func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.TableName) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
@@ -595,10 +596,10 @@ func columnNameToPBExpr(client kv.Client, column *ast.ColumnNameExpr, tn *ast.Ta
 	}
 	// If the column ID is in fields, it means the column is from an outer table,
 	// its value is available to use.
-	return datumToPBExpr(client, *column.Refer.Expr.GetDatum())
+	return b.datumToPBExpr(client, *column.Refer.Expr.GetDatum())
 }
 
-func datumToPBExpr(client kv.Client, d types.Datum) *tipb.Expr {
+func (b *executorBuilder) datumToPBExpr(client kv.Client, d types.Datum) *tipb.Expr {
 	var tp tipb.ExprType
 	var val []byte
 	switch d.Kind() {
@@ -631,7 +632,7 @@ func datumToPBExpr(client kv.Client, d types.Datum) *tipb.Expr {
 	return &tipb.Expr{Tp: tp.Enum(), Val: val}
 }
 
-func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.TableName) *tipb.Expr {
 	var tp tipb.ExprType
 	switch expr.Op {
 	case opcode.LT:
@@ -658,11 +659,11 @@ func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.Tabl
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	leftExpr := exprToPBExpr(client, expr.L, tn)
+	leftExpr := b.exprToPBExpr(client, expr.L, tn)
 	if leftExpr == nil {
 		return nil
 	}
-	rightExpr := exprToPBExpr(client, expr.R, tn)
+	rightExpr := b.exprToPBExpr(client, expr.R, tn)
 	if rightExpr == nil {
 		return nil
 	}
@@ -670,7 +671,7 @@ func binopToPBExpr(client kv.Client, expr *ast.BinaryOperationExpr, tn *ast.Tabl
 }
 
 // Only patterns like 'abc', '%abc', 'abc%', '%abc%' can be converted to *tipb.Expr for now.
-func likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName) *tipb.Expr {
 	if expr.Escape != '\\' {
 		return nil
 	}
@@ -689,11 +690,11 @@ func likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName
 			}
 		}
 	}
-	patternExpr := exprToPBExpr(client, expr.Pattern, tn)
+	patternExpr := b.exprToPBExpr(client, expr.Pattern, tn)
 	if patternExpr == nil {
 		return nil
 	}
-	targetExpr := exprToPBExpr(client, expr.Expr, tn)
+	targetExpr := b.exprToPBExpr(client, expr.Expr, tn)
 	if targetExpr == nil {
 		return nil
 	}
@@ -704,7 +705,7 @@ func likeToPBExpr(client kv.Client, expr *ast.PatternLikeExpr, tn *ast.TableName
 	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{likeExpr}}
 }
 
-func unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.TableName) *tipb.Expr {
 	switch expr.Op {
 	case opcode.Not:
 		if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_Not)) {
@@ -713,38 +714,46 @@ func unaryToPBExpr(client kv.Client, expr *ast.UnaryOperationExpr, tn *ast.Table
 	default:
 		return nil
 	}
-	child := exprToPBExpr(client, expr.V, tn)
+	child := b.exprToPBExpr(client, expr.V, tn)
 	if child == nil {
 		return nil
 	}
 	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{child}}
 }
 
-func subqueryToPBExpr(client kv.Client, expr *ast.SubqueryExpr) *tipb.Expr {
+func (b *executorBuilder) subqueryToPBExpr(client kv.Client, expr *ast.SubqueryExpr) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
 		return nil
 	}
-	if expr.Correlated || !expr.Evaluated || len(expr.Query.GetResultFields()) != 1 ||
-		expr.Datum.Kind() != types.KindRow {
-		// We only push down evaluated non-correlated subquery which has only one field, and datum kind is row.
+	if expr.Correlated || len(expr.Query.GetResultFields()) != 1 {
+		// We only push down evaluated non-correlated subquery which has only one field.
 		return nil
 	}
-	return datumsToValueList(expr.Datum.GetRow())
+	err := evaluator.EvalSubquery(b.ctx, expr)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	if expr.Datum.Kind() != types.KindRow {
+		// Do not push down datum kind is not row.
+		return nil
+	}
+	return b.datumsToValueList(expr.Datum.GetRow())
 }
 
-func patternInToPBExpr(client kv.Client, expr *ast.PatternInExpr, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) patternInToPBExpr(client kv.Client, expr *ast.PatternInExpr, tn *ast.TableName) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_In)) {
 		return nil
 	}
-	pbExpr := exprToPBExpr(client, expr.Expr, tn)
+	pbExpr := b.exprToPBExpr(client, expr.Expr, tn)
 	if pbExpr == nil {
 		return nil
 	}
 	var listExpr *tipb.Expr
 	if expr.Sel != nil {
-		listExpr = exprToPBExpr(client, expr.Sel, tn)
+		listExpr = b.exprToPBExpr(client, expr.Sel, tn)
 	} else {
-		listExpr = exprListToPBExpr(client, expr.List, tn)
+		listExpr = b.exprListToPBExpr(client, expr.List, tn)
 	}
 	if listExpr == nil {
 		return nil
@@ -756,7 +765,7 @@ func patternInToPBExpr(client kv.Client, expr *ast.PatternInExpr, tn *ast.TableN
 	return &tipb.Expr{Tp: tipb.ExprType_Not.Enum(), Children: []*tipb.Expr{inExpr}}
 }
 
-func exprListToPBExpr(client kv.Client, list []ast.ExprNode, tn *ast.TableName) *tipb.Expr {
+func (b *executorBuilder) exprListToPBExpr(client kv.Client, list []ast.ExprNode, tn *ast.TableName) *tipb.Expr {
 	if !client.SupportRequestType(kv.ReqTypeSelect, int64(tipb.ExprType_ValueList)) {
 		return nil
 	}
@@ -767,15 +776,15 @@ func exprListToPBExpr(client kv.Client, list []ast.ExprNode, tn *ast.TableName) 
 		if !ok {
 			return nil
 		}
-		if datumToPBExpr(client, x.Datum) == nil {
+		if b.datumToPBExpr(client, x.Datum) == nil {
 			return nil
 		}
 		datums = append(datums, x.Datum)
 	}
-	return datumsToValueList(datums)
+	return b.datumsToValueList(datums)
 }
 
-func datumsToValueList(datums []types.Datum) *tipb.Expr {
+func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 	// Don't push value list that has different datum kind.
 	prevKind := types.KindNull
 	for _, d := range datums {
@@ -786,8 +795,14 @@ func datumsToValueList(datums []types.Datum) *tipb.Expr {
 			return nil
 		}
 	}
+	err := types.SortDatums(datums)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 	val, err := codec.EncodeValue(nil, datums...)
 	if err != nil {
+		b.err = errors.Trace(err)
 		return nil
 	}
 	return &tipb.Expr{Tp: tipb.ExprType_ValueList.Enum(), Val: val}

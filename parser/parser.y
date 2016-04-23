@@ -1539,7 +1539,9 @@ Factor:
 	}
 |	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
-		$$ = &ast.CompareSubqueryExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: $4.(*ast.SubqueryExpr), All: $3.(bool)}
+		sq := $4.(*ast.SubqueryExpr)
+		sq.MultiRows = true
+		$$ = &ast.CompareSubqueryExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: sq, All: $3.(bool)}
 	}
 |	PredicateExpr
 
@@ -1598,7 +1600,9 @@ PredicateExpr:
 	}
 |	PrimaryFactor NotOpt "IN" SubSelect
 	{
-		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: $2.(bool), Sel: $4.(*ast.SubqueryExpr)}
+		sq := $4.(*ast.SubqueryExpr)
+		sq.MultiRows = true
+		$$ = &ast.PatternInExpr{Expr: $1.(ast.ExprNode), Not: $2.(bool), Sel: sq}
 	}
 |	PrimaryFactor NotOpt "BETWEEN" PrimaryFactor "AND" PredicateExpr
 	{
@@ -2084,7 +2088,9 @@ Operand:
 	}
 |	"EXISTS" SubSelect
 	{
-		$$ = &ast.ExistsSubqueryExpr{Sel: $2.(*ast.SubqueryExpr)}
+		sq := $2.(*ast.SubqueryExpr)
+		sq.Exists = true
+		$$ = &ast.ExistsSubqueryExpr{Sel: sq}
 	}
 
 OrderBy:

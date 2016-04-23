@@ -145,7 +145,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 			ctx:       b.ctx,
 			tablePlan: v,
 		}
-		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		where, remained := b.conditionsToPBExpr(client, v.FilterConditions, v.TableName)
 		if where != nil {
 			e.where = where
 		}
@@ -205,7 +205,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 			indexPlan:   v,
 			supportDesc: supportDesc,
 		}
-		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		where, remained := b.conditionsToPBExpr(client, v.FilterConditions, v.TableName)
 		if where != nil {
 			e.where = where
 		}

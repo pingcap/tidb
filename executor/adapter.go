@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/optimizer/plan"
 )
@@ -47,7 +46,6 @@ func (a *recordSet) Close() error {
 type statement struct {
 	is   infoschema.InfoSchema
 	plan plan.Plan
-	node ast.Node
 }
 
 func (a *statement) OriginText() string {
@@ -63,22 +61,6 @@ func (a *statement) IsDDL() bool {
 }
 
 func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
-	if execPlan, ok := a.plan.(*plan.Execute); ok {
-		// For execute plan, we need to get the underlying prepared statement node.
-		prepared, _ := getPreparedStmt(ctx, execPlan.Name, execPlan.ID)
-		if prepared == nil {
-			return nil, ErrStmtNotFound
-		}
-		a.node = prepared.Stmt
-	}
-
-	// Execute non-correlated subquery before build executor.
-	subExec := &subqueryExecutor{ctx: ctx}
-	a.node.Accept(subExec)
-	if subExec.err != nil {
-		return nil, errors.Trace(subExec.err)
-	}
-
 	b := newExecutorBuilder(ctx, a.is)
 	e := b.build(a.plan)
 	if b.err != nil {
@@ -117,45 +99,4 @@ func (a *statement) Exec(ctx context.Context) (ast.RecordSet, error) {
 		executor: e,
 		fields:   fs,
 	}, nil
-}
-
-// subqueryExecutor executes independent subquery.
-type subqueryExecutor struct {
-	ctx          context.Context
-	multipleRows bool
-	existRow     bool
-	err          error
-}
-
-func (e *subqueryExecutor) Enter(in ast.Node) (ast.Node, bool) {
-	switch in.(type) {
-	case *ast.ExistsSubqueryExpr:
-		e.existRow = true
-	case *ast.CompareSubqueryExpr:
-		e.multipleRows = true
-	case *ast.PatternInExpr:
-		e.multipleRows = true
-	}
-	return in, false
-}
-
-func (e *subqueryExecutor) Leave(in ast.Node) (ast.Node, bool) {
-	switch x := in.(type) {
-	case *ast.CompareSubqueryExpr:
-		e.multipleRows = false
-	case *ast.PatternInExpr:
-		e.multipleRows = false
-	case *ast.ExistsSubqueryExpr:
-		e.existRow = false
-	case *ast.SubqueryExpr:
-		if !x.Correlated {
-			err := evaluator.EvalSubquery(e.ctx, x, e.multipleRows, e.existRow)
-			if err != nil {
-				e.err = errors.Trace(err)
-				return in, false
-			}
-			return in, true
-		}
-	}
-	return in, true
 }

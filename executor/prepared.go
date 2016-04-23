@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -190,11 +191,16 @@ func (e *ExecuteExec) Close() error {
 
 // Build builds a prepared statement into an executor.
 func (e *ExecuteExec) Build() error {
-	prepared, id := getPreparedStmt(e.Ctx, e.Name, e.ID)
-	if prepared == nil {
+	vars := variable.GetSessionVars(e.Ctx)
+	if e.Name != "" {
+		e.ID = vars.PreparedStmtNameToID[e.Name]
+	}
+	v := vars.PreparedStmts[e.ID]
+	if v == nil {
 		return ErrStmtNotFound
 	}
-	e.ID = id
+	prepared := v.(*Prepared)
+
 	if len(prepared.Params) != len(e.UsingVars) {
 		return ErrWrongParamCount
 	}
@@ -204,6 +210,7 @@ func (e *ExecuteExec) Build() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Errorf("using var %v", val)
 		prepared.Params[i].SetDatum(val)
 	}
 
@@ -230,19 +237,6 @@ func (e *ExecuteExec) Build() error {
 	e.StmtExec = stmtExec
 	e.Stmt = prepared.Stmt
 	return nil
-}
-
-// Get prepared statement by name or id and also returns the id if name is used.
-func getPreparedStmt(ctx context.Context, name string, id uint32) (*Prepared, uint32) {
-	vars := variable.GetSessionVars(ctx)
-	if name != "" {
-		id = vars.PreparedStmtNameToID[name]
-	}
-	v := vars.PreparedStmts[id]
-	if v == nil {
-		return nil, 0
-	}
-	return v.(*Prepared), id
 }
 
 // DeallocateExec represent a DEALLOCATE executor.
