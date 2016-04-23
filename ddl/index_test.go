@@ -155,7 +155,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	h, err = t.AddRecord(ctx, types.MakeDatums(1, 1, 1))
+	_, err = t.AddRecord(ctx, types.MakeDatums(1, 1, 1))
 	c.Assert(err, IsNil)
 }
 

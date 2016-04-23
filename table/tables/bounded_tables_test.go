@@ -115,6 +115,6 @@ func (ts *testBoundedTableSuite) TestBoundedBasic(c *C) {
 	c.Assert(vals[0].GetString(), Equals, "abc")
 
 	c.Assert(tb.Truncate(ctx), IsNil)
-	row, err = tb.Row(ctx, rid)
+	_, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
 }
