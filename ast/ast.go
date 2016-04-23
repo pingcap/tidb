@@ -55,7 +55,7 @@ const (
 // ExprNode is a node that can be evaluated.
 // Name of implementations should have 'Expr' suffix.
 type ExprNode interface {
-	// Node is embeded in ExprNode.
+	// Node is embedded in ExprNode.
 	Node
 	// SetType sets evaluation type to the expression.
 	SetType(tp *types.FieldType)
