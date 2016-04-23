@@ -59,10 +59,6 @@ func TestSimpleArenaAllocator(t *testing.T) {
 	if arena.off != 0 || cap(arena.arena) != 1000 {
 		t.Error("off or cap not match")
 	}
-
-	if cap(arena.arena) != 1000 {
-		t.Error("cap not match")
-	}
 }
 
 func TestStdAllocator(t *testing.T) {
