@@ -76,7 +76,7 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 }
 
-// Infomation Schema Name.
+// Information Schema Name.
 const (
 	Name = "INFORMATION_SCHEMA"
 )

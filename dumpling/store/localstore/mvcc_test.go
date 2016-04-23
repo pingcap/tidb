@@ -132,7 +132,7 @@ func (t *testMvccSuite) TestMvccPutAndDel(c *C) {
 	})
 	txn, _ = t.s.Begin()
 	txn.Set(encodeInt(0), []byte("v"))
-	v, err = txn.Get(encodeInt(0))
+	_, err = txn.Get(encodeInt(0))
 	c.Assert(err, IsNil)
 	txn.Commit()
 
@@ -191,7 +191,7 @@ func (t *testMvccSuite) TestSnapshotGet(c *C) {
 	// Get version not exists
 	minVerSnapshot, err := t.s.GetSnapshot(kv.MinVersion)
 	c.Assert(err, IsNil)
-	b, err = minVerSnapshot.Get(testKey)
+	_, err = minVerSnapshot.Get(testKey)
 	c.Assert(err, NotNil)
 }
 

@@ -116,6 +116,6 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Truncate(ctx), IsNil)
-	row, err = tb.Row(ctx, rid)
+	_, err = tb.Row(ctx, rid)
 	c.Assert(err, NotNil)
 }

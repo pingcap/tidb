@@ -346,6 +346,7 @@ func (s *testPlanSuite) TestBestPlan(c *C) {
 		c.Assert(err, IsNil)
 
 		err = Refine(p)
+		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s cost %v", ca.sql, EstimateCost(p)))
 	}
 }
