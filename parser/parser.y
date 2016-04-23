@@ -179,6 +179,7 @@ import (
 	interval	"INTERVAL"
 	into		"INTO"
 	is		"IS"
+	isNull		"ISNULL"
 	isolation	"ISOLATION"
 	join		"JOIN"
 	key		"KEY"
@@ -194,8 +195,10 @@ import (
 	locate		"LOCATE"
 	lock		"LOCK"
 	lower 		"LOWER"
+	lcase 		"LCASE"
 	lowPriority	"LOW_PRIORITY"
 	lsh		"<<"
+	ltrim		"LTRIM"
 	max		"MAX"
 	maxRows		"MAX_ROWS"
 	microsecond	"MICROSECOND"
@@ -244,6 +247,7 @@ import (
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
 	rsh		">>"
+	rtrim		"RTRIM"
 	schema		"SCHEMA"
 	schemas		"SCHEMAS"
 	second		"SECOND"
@@ -284,6 +288,7 @@ import (
 	unsigned	"UNSIGNED"
 	update		"UPDATE"
 	upper 		"UPPER"
+	ucase 		"UCASE"
 	use		"USE"
 	user		"USER"
 	using		"USING"
@@ -1838,9 +1843,9 @@ UnReservedKeyword:
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
-|	"IFNULL" | "LENGTH" | "LOCATE" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
+|	"IFNULL" | "ISNULL" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
 |	"POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen
-|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" |	"YEARWEEK"
+|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
 
 /************************************************************************************
  *
@@ -2405,6 +2410,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
+|	"ISNULL" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"LENGTH" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
@@ -2424,6 +2433,14 @@ FunctionCallNonKeyword:
 		}
 	}
 |	"LOWER" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"LCASE" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"LTRIM" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
@@ -2474,6 +2491,10 @@ FunctionCallNonKeyword:
 	{
 		args := []ast.ExprNode{$3.(ast.ExprNode), $5.(ast.ExprNode), $7.(ast.ExprNode)}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"RTRIM" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"SECOND" '(' Expression ')'
 	{
@@ -2558,6 +2579,10 @@ FunctionCallNonKeyword:
 		}
 	}
 |	"UPPER" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
+|	"UCASE" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}

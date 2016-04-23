@@ -397,6 +397,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT ASCII(""), ASCII("A"), ASCII(1);`, true},
 
 		{`SELECT LOWER("A"), UPPER("a")`, true},
+		{`SELECT LCASE("A"), UCASE("a")`, true},
 
 		{`SELECT REPLACE('www.mysql.com', 'w', 'Ww')`, true},
 
@@ -494,6 +495,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT TRIM(LEADING 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(BOTH 'x' FROM 'xxxbarxxx');`, true},
 		{`SELECT TRIM(TRAILING 'xyz' FROM 'barxxyz');`, true},
+		{`SELECT LTRIM(' foo ');`, true},
+		{`SELECT RTRIM(' bar ');`, true},
+
 		// Repeat
 		{`SELECT REPEAT("a", 10);`, true},
 
