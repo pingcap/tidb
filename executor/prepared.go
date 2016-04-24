@@ -17,7 +17,6 @@ import (
 	"sort"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -210,7 +209,6 @@ func (e *ExecuteExec) Build() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Errorf("using var %v", val)
 		prepared.Params[i].SetDatum(val)
 	}
 
