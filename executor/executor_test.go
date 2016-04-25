@@ -1080,9 +1080,11 @@ func (s *testSuite) TestInSubquery(c *C) {
 	result.Check(testkit.Rows("2"))
 	tk.MustExec(`prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)'`)
 	tk.MustExec("set @a = 1")
-	tk.MustQuery("select @a").Check(testkit.Rows("1"))
 	result = tk.MustQuery(`execute stmt1 using @a;`)
 	result.Check(testkit.Rows("2"))
+	tk.MustExec("set @a = 0")
+	result = tk.MustQuery(`execute stmt1 using @a;`)
+	result.Check(testkit.Rows("1"))
 
 	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (1, 3, 5)")
 	result.Check(testkit.Rows("1"))

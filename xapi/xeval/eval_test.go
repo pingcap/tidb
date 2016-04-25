@@ -360,6 +360,10 @@ func (s *testEvalSuite) TestWhereIn(c *C) {
 			result: true,
 		},
 		{
+			expr:   inExpr(1, 1, nil),
+			result: true,
+		},
+		{
 			expr:   inExpr(1, 2, nil),
 			result: nil,
 		},
