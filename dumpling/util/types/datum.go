@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	"sort"
 )
 
 // Kind constants.
@@ -1446,4 +1447,33 @@ func EqualDatums(a []Datum, b []Datum) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// SortDatums sorts a slice of datum.
+func SortDatums(datums []Datum) error {
+	sorter := datumsSorter{datums: datums}
+	sort.Sort(&sorter)
+	return sorter.err
+}
+
+type datumsSorter struct {
+	datums []Datum
+	err    error
+}
+
+func (ds *datumsSorter) Len() int {
+	return len(ds.datums)
+}
+
+func (ds *datumsSorter) Less(i, j int) bool {
+	cmp, err := ds.datums[i].CompareDatum(ds.datums[j])
+	if err != nil {
+		ds.err = errors.Trace(err)
+		return true
+	}
+	return cmp < 0
+}
+
+func (ds *datumsSorter) Swap(i, j int) {
+	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
