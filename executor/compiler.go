@@ -50,7 +50,6 @@ func (c *Compiler) Compile(ctx context.Context, node ast.StmtNode) (ast.Statemen
 	sa := &statement{
 		is:   is,
 		plan: p,
-		node: node,
 	}
 	return sa, nil
 }
