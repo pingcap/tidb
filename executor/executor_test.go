@@ -1088,4 +1088,9 @@ func (s *testSuite) TestInSubquery(c *C) {
 
 	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (1, 3, 5)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a float)")
+	tk.MustExec("insert t1 values (281.37)")
+	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
 }
