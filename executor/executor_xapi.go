@@ -147,7 +147,7 @@ type XSelectIndexExec struct {
 }
 
 // BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
-var BaseLookupTableTaskSize = 256
+var BaseLookupTableTaskSize = 512
 
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
 var MaxLookupTableTaskSize = 2048
