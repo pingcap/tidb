@@ -827,11 +827,10 @@ func (e *SelectLockExec) Close() error {
 
 // LimitExec represents limit executor
 type LimitExec struct {
-	Src        Executor
-	Offset     uint64
-	Count      uint64
-	Idx        uint64
-	upperBound uint64
+	Src    Executor
+	Offset uint64
+	Count  uint64
+	Idx    uint64
 }
 
 // Fields implements Executor Fields interface.
@@ -851,7 +850,7 @@ func (e *LimitExec) Next() (*Row, error) {
 		}
 		e.Idx++
 	}
-	if e.Idx >= e.upperBound {
+	if e.Idx >= e.Count+e.Offset {
 		return nil, nil
 	}
 	srcRow, err := e.Src.Next()
