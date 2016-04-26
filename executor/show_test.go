@@ -94,6 +94,10 @@ func (s *testSuite) TestForeignKeyInShowCreateTable(c *C) {
 	tk.MustExec("use test")
 	testSQL := `drop table if exists show_test`
 	tk.MustExec(testSQL)
+	testSQL = `drop table if exists t1`
+	tk.MustExec(testSQL)
+	testSQL = `CREATE TABLE t1 (id int PRIMARY KEY AUTO_INCREMENT)`
+	tk.MustExec(testSQL)
 
 	testSQL = "create table show_test (`id` int PRIMARY KEY AUTO_INCREMENT, FOREIGN KEY `fk` (`id`) REFERENCES `t1` (`a`) ON DELETE CASCADE ON UPDATE CASCADE) ENGINE=InnoDB"
 	tk.MustExec(testSQL)

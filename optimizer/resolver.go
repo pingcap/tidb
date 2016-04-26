@@ -100,8 +100,6 @@ type resolverContext struct {
 	inCreateOrDropTable bool
 	// When visiting show statement.
 	inShow bool
-	// When visiting constraint foreign key.
-	inConstraintForeignKey bool
 }
 
 // currentContext gets the current resolverContext.
@@ -150,11 +148,6 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		}
 	case *ast.AlterTableStmt:
 		nr.pushContext()
-	case *ast.AlterTableSpec:
-		if v.Tp == ast.AlterTableAddConstraint && v.Constraint.Tp == ast.ConstraintForeignKey {
-			ctx := nr.currentContext()
-			ctx.inConstraintForeignKey = true
-		}
 	case *ast.ByItem:
 		if _, ok := v.Expr.(*ast.ColumnNameExpr); !ok {
 			// If ByItem is not a single column name expression,
@@ -236,11 +229,6 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 		}
 	case *ast.AlterTableStmt:
 		nr.popContext()
-	case *ast.AlterTableSpec:
-		if v.Tp == ast.AlterTableAddConstraint && v.Constraint.Tp == ast.ConstraintForeignKey {
-			ctx := nr.currentContext()
-			ctx.inConstraintForeignKey = false
-		}
 	case *ast.TableName:
 		nr.handleTableName(v)
 	case *ast.ColumnNameExpr:
@@ -331,7 +319,7 @@ func (nr *nameResolver) handleTableName(tn *ast.TableName) {
 		tn.Schema = nr.DefaultSchema
 	}
 	ctx := nr.currentContext()
-	if ctx.inCreateOrDropTable || ctx.inConstraintForeignKey {
+	if ctx.inCreateOrDropTable {
 		// The table may not exist in create table or drop table statement.
 		// Skip resolving the table to avoid error.
 		return
