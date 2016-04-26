@@ -53,7 +53,7 @@ type perfSchema struct {
 	dbInfo      *model.DBInfo
 	tables      map[string]*model.TableInfo
 	mTables     map[string]table.Table // Memory tables for perfSchema
-	stmtHandles map[uint64]int64
+	stmtHandles []int64
 }
 
 var _ PerfSchema = (*perfSchema)(nil)

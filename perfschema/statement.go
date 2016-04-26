@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -253,13 +254,14 @@ func (ps *perfSchema) updateEventsStmtsCurrent(connID uint64, record []types.Dat
 	if tbl == nil {
 		return nil
 	}
-	handle, ok := ps.stmtHandles[connID]
-	if !ok {
+	index := connID % uint64(currentElemMax)
+	handle := atomic.LoadInt64(&ps.stmtHandles[index])
+	if handle == 0 {
 		newHandle, err := tbl.AddRecord(nil, record)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ps.stmtHandles[connID] = newHandle
+		atomic.StoreInt64(&ps.stmtHandles[index], newHandle)
 		return nil
 	}
 	err := tbl.UpdateRecord(nil, handle, nil, record, nil)
