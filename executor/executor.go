@@ -831,7 +831,7 @@ type LimitExec struct {
 	Offset     uint64
 	Count      uint64
 	Idx        uint64
-	upperCount uint64
+	upperBound uint64
 }
 
 // Fields implements Executor Fields interface.
@@ -851,7 +851,7 @@ func (e *LimitExec) Next() (*Row, error) {
 		}
 		e.Idx++
 	}
-	if e.Idx >= e.upperCount {
+	if e.Idx >= e.upperBound {
 		return nil, nil
 	}
 	srcRow, err := e.Src.Next()
