@@ -43,15 +43,13 @@ TARGET = ""
 all: godep parser build test check
 
 godep:
-	go get google.golang.org/grpc
-	git -C $$(echo $(GOPATH)|cut -d':' -f1)/src/google.golang.org/grpc checkout dec33edc378cf4971a2741cfd86ed70a644d6ba3
 	go get github.com/tools/godep
-	go get github.com/pingcap/go-hbase
-	go get github.com/pingcap/go-themis
-	go get github.com/pingcap/tso/client
-	go get github.com/pingcap/pd/pd-client
-	go get github.com/pingcap/ticlient
-	go get github.com/pingcap/tipb/go-tipb
+	go get -d github.com/pingcap/go-hbase
+	go get -d github.com/pingcap/go-themis
+	go get -d github.com/pingcap/tso/client
+	go get -d github.com/pingcap/pd/pd-client
+	go get -d github.com/pingcap/ticlient
+	go get -d github.com/pingcap/tipb/go-tipb
 
 build:
 	$(GO) build
@@ -60,11 +58,11 @@ install:
 	$(GO) install ./...
 
 update:
-	go get -u github.com/pingcap/go-hbase
-	go get -u github.com/pingcap/go-themis
-	go get -u github.com/pingcap/tso/client
-	go get -u github.com/pingcap/ticlient
-	go get -u github.com/pingcap/tipb/go-tipb
+	go get -u -d github.com/pingcap/go-hbase
+	go get -u -d github.com/pingcap/go-themis
+	go get -u -d github.com/pingcap/tso/client
+	go get -u -d github.com/pingcap/ticlient
+	go get -u -d github.com/pingcap/tipb/go-tipb
 
 TEMP_FILE = temp_parser_file
 
