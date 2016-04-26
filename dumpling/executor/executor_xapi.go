@@ -146,8 +146,11 @@ type XSelectIndexExec struct {
 	indexOrder map[int64]int
 }
 
-// LookupTableTaskLimit represents max number of handles for a lookupTableTask.
-var LookupTableTaskLimit = 256
+// BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
+var BaseLookupTableTaskSize = 1024
+
+// MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
+var MaxLookupTableTaskSize = 1024
 
 type lookupTableTask struct {
 	handles []int64
@@ -233,23 +236,34 @@ func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
 }
 
 func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
-	e.tasks = make([]*lookupTableTask, 0, (len(handles)/LookupTableTaskLimit)+1)
-	for {
-		if len(handles) > LookupTableTaskLimit {
-			task := &lookupTableTask{
-				handles: handles[:LookupTableTaskLimit],
-			}
-			e.tasks = append(e.tasks, task)
-			handles = handles[LookupTableTaskLimit:]
-			continue
+	// Build tasks with increasing batch size.
+	var taskSizes []int
+	total := len(handles)
+	batchSize := BaseLookupTableTaskSize
+	for total > 0 {
+		if batchSize > total {
+			batchSize = total
 		}
-		if len(handles) > 0 {
-			task := &lookupTableTask{
-				handles: handles,
-			}
-			e.tasks = append(e.tasks, task)
+		taskSizes = append(taskSizes, batchSize)
+		total -= batchSize
+		if batchSize < MaxLookupTableTaskSize {
+			batchSize *= 2
 		}
-		break
+	}
+	if e.indexPlan.Desc && !e.supportDesc {
+		// Reverse tasks sizes.
+		for i := 0; i < len(taskSizes)/2; i++ {
+			j := len(taskSizes) - i - 1
+			taskSizes[i], taskSizes[j] = taskSizes[j], taskSizes[i]
+		}
+	}
+	e.tasks = make([]*lookupTableTask, len(taskSizes))
+	for i, size := range taskSizes {
+		task := &lookupTableTask{
+			handles: handles[:size],
+		}
+		handles = handles[size:]
+		e.tasks[i] = task
 	}
 	if e.indexPlan.Desc && !e.supportDesc {
 		// Reverse tasks order.
