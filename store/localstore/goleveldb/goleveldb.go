@@ -63,24 +63,6 @@ func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	return iter.Key(), iter.Value(), nil
 }
 
-func (d *db) MultiSeek(keys [][]byte) []*engine.MSeekResult {
-	iter := d.DB.NewIterator(&util.Range{Start: []byte{0x0}}, nil)
-	defer iter.Release()
-
-	res := make([]*engine.MSeekResult, 0, len(keys))
-	for _, k := range keys {
-		if ok := iter.Seek(k); !ok {
-			res = append(res, &engine.MSeekResult{Err: engine.ErrNotFound})
-		} else {
-			res = append(res, &engine.MSeekResult{
-				Key:   append([]byte(nil), iter.Key()...),
-				Value: append([]byte(nil), iter.Value()...),
-			})
-		}
-	}
-	return res
-}
-
 func (d *db) Commit(b engine.Batch) error {
 	batch, ok := b.(*leveldb.Batch)
 	if !ok {

@@ -35,13 +35,10 @@ var (
 type op int
 
 const (
-	opSeek = iota + 1
-	opCommit
+	opCommit = iota + 1
 )
 
 const (
-	maxSeekWorkers = 3
-
 	lowerWaterMark = 10 // second
 )
 
@@ -72,20 +69,7 @@ type commitArgs struct {
 // Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 // if such key is not found.
 func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
-	c := &command{
-		op:   opSeek,
-		args: &seekArgs{key: key},
-		done: make(chan error, 1),
-	}
-
-	s.commandCh <- c
-	err := <-c.done
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	reply := c.reply.(*seekReply)
-	return reply.key, reply.value, nil
+	return s.db.Seek(key)
 }
 
 // Commit writes the changed data in Batch.
@@ -105,42 +89,8 @@ func (s *dbStore) CommitTxn(txn *dbTxn) error {
 	return errors.Trace(err)
 }
 
-func (s *dbStore) seekWorker(wg *sync.WaitGroup, seekCh chan *command) {
-	defer wg.Done()
-	for {
-		var pending []*command
-		select {
-		case cmd, ok := <-seekCh:
-			if !ok {
-				return
-			}
-			pending = append(pending, cmd)
-		L:
-			for {
-				select {
-				case cmd, ok := <-seekCh:
-					if !ok {
-						break L
-					}
-					pending = append(pending, cmd)
-				default:
-					break L
-				}
-			}
-		}
-
-		s.doSeek(pending)
-	}
-}
-
 func (s *dbStore) scheduler() {
 	closed := false
-	seekCh := make(chan *command, 1000)
-	wgSeekWorkers := &sync.WaitGroup{}
-	wgSeekWorkers.Add(maxSeekWorkers)
-	for i := 0; i < maxSeekWorkers; i++ {
-		go s.seekWorker(wgSeekWorkers, seekCh)
-	}
 
 	segmentIndex := int64(0)
 
@@ -155,16 +105,11 @@ func (s *dbStore) scheduler() {
 				continue
 			}
 			switch cmd.op {
-			case opSeek:
-				seekCh <- cmd
 			case opCommit:
 				s.doCommit(cmd)
 			}
 		case <-s.closeCh:
 			closed = true
-			// notify seek worker to exit
-			close(seekCh)
-			wgSeekWorkers.Wait()
 			s.wg.Done()
 		case <-tick.C:
 			segmentIndex = segmentIndex % s.recentUpdates.SegmentCount()
@@ -243,23 +188,6 @@ func (s *dbStore) doCommit(cmd *command) {
 	err = s.writeBatch(b)
 	s.unLockKeys(txn)
 	cmd.done <- errors.Trace(err)
-}
-
-func (s *dbStore) doSeek(seekCmds []*command) {
-	keys := make([][]byte, 0, len(seekCmds))
-	for _, cmd := range seekCmds {
-		keys = append(keys, cmd.args.(*seekArgs).key)
-	}
-
-	results := s.db.MultiSeek(keys)
-
-	for i, cmd := range seekCmds {
-		reply := &seekReply{}
-		var err error
-		reply.key, reply.value, err = results[i].Key, results[i].Value, results[i].Err
-		cmd.reply = reply
-		cmd.done <- errors.Trace(err)
-	}
 }
 
 func (s *dbStore) NewBatch() engine.Batch {
@@ -459,6 +387,7 @@ func (s *dbStore) writeBatch(b engine.Batch) error {
 func (s *dbStore) newBatch() engine.Batch {
 	return s.db.NewBatch()
 }
+
 func (s *dbStore) unLockKeys(txn *dbTxn) error {
 	for k := range txn.lockedKeys {
 		if tid, ok := s.keysLocked[k]; !ok || tid != txn.tid {
