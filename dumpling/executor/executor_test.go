@@ -575,6 +575,47 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testSuite) TestSelectLimit(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "select_limit")
+
+	tk.MustExec("insert INTO select_limit VALUES (3, \"hello\");")
+	tk.CheckExecResult(1, 0)
+	tk.MustExec("insert INTO select_limit VALUES (4, \"hello\");")
+	tk.CheckExecResult(1, 0)
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select * from select_limit limit 1;")
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 0;")
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
+	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
+	rowStr4 := fmt.Sprintf("%v %v", 4, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3, rowStr4))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 1;")
+	r.Check(testkit.Rows(rowStr2, rowStr3, rowStr4))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
+	r.Check(testkit.Rows(rowStr4))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+}
+
 func (s *testSuite) TestSelectOrderBy(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)

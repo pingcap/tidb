@@ -850,8 +850,7 @@ func (e *LimitExec) Next() (*Row, error) {
 		}
 		e.Idx++
 	}
-	// Negative Limit means no limit.
-	if e.Count >= 0 && e.Idx >= e.Offset+e.Count {
+	if e.Idx >= e.Count+e.Offset {
 		return nil, nil
 	}
 	srcRow, err := e.Src.Next()
