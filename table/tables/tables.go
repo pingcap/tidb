@@ -50,7 +50,6 @@ type Table struct {
 	publicColumns   []*column.Col
 	writableColumns []*column.Col
 	indices         []*column.IndexedCol
-	fks             []*column.ForeignKey
 	recordPrefix    kv.Key
 	indexPrefix     kv.Key
 	alloc           autoid.Allocator
@@ -89,12 +88,6 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		t.indices = append(t.indices, idx)
 	}
 
-	for _, fkInfo := range tblInfo.ForeignKeys {
-		fk := &column.ForeignKey{
-			FKInfo: *fkInfo,
-		}
-		t.fks = append(t.fks, fk)
-	}
 	t.meta = tblInfo
 	return t, nil
 }
@@ -120,8 +113,8 @@ func (t *Table) Indices() []*column.IndexedCol {
 }
 
 // ForeignKeys implements table.Table ForeignKeys interface.
-func (t *Table) ForeignKeys() []*column.ForeignKey {
-	return t.fks
+func (t *Table) ForeignKeys() []*model.FKInfo {
+	return t.meta.ForeignKeys
 }
 
 // Meta implements table.Table Meta interface.

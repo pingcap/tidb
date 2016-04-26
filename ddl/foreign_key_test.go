@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -87,7 +86,7 @@ func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func getForeignKey(t table.Table, name string) *column.ForeignKey {
+func getForeignKey(t table.Table, name string) *model.FKInfo {
 	for _, fk := range t.ForeignKeys() {
 		// only public foreign key can be read.
 		if fk.State != model.StatePublic {

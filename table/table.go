@@ -50,7 +50,7 @@ type Table interface {
 	Indices() []*column.IndexedCol
 
 	// ForeignKeys returns the foreign keys of the table.
-	ForeignKeys() []*column.ForeignKey
+	ForeignKeys() []*model.FKInfo
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key

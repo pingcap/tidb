@@ -127,7 +127,7 @@ func (t *MemoryTable) Indices() []*column.IndexedCol {
 }
 
 // ForeignKeys implements table.Table ForeignKeys interface.
-func (t *MemoryTable) ForeignKeys() []*column.ForeignKey {
+func (t *MemoryTable) ForeignKeys() []*model.FKInfo {
 	return nil
 }
 

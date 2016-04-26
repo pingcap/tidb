@@ -140,7 +140,7 @@ func (t *BoundedTable) Indices() []*column.IndexedCol {
 }
 
 // ForeignKeys implements table.Table ForeignKeys interface.
-func (t *BoundedTable) ForeignKeys() []*column.ForeignKey {
+func (t *BoundedTable) ForeignKeys() []*model.FKInfo {
 	return nil
 }
 
