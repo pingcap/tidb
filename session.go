@@ -110,7 +110,6 @@ const unlimitedRetryCnt = -1
 
 type session struct {
 	txn         kv.Transaction // Current transaction
-	args        []interface{}  // Statement execution args, this should be cleaned up after exec
 	values      map[fmt.Stringer]interface{}
 	store       kv.Storage
 	sid         int64

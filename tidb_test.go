@@ -41,13 +41,11 @@ func TestT(t *testing.T) {
 var _ = Suite(&testMainSuite{})
 
 type testMainSuite struct {
-	dbName string
-
+	dbName         string
 	createDBSQL    string
 	dropDBSQL      string
 	useDBSQL       string
 	createTableSQL string
-	insertSQL      string
 	selectSQL      string
 }
 

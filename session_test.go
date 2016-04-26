@@ -45,7 +45,6 @@ type testSessionSuite struct {
 	useDBSQL       string
 	createTableSQL string
 	dropTableSQL   string
-	insertSQL      string
 	selectSQL      string
 }
 
