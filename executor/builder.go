@@ -351,7 +351,7 @@ func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.Src())
 
 	upperCount := v.Count + v.Offset
-	// If v.Offset value is 0, then v.Count the max value is math.MaxUint64,
+	// If v.Offset value is 0, then the max value of v.Count is math.MaxUint64,
 	// so it doesn't need to do special treatment for upperCount.
 	if v.Offset != 0 {
 		// It means math.MaxUint64 less then (v.Count + v.Offset).
