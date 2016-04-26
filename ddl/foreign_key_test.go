@@ -87,7 +87,7 @@ func testDropForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo,
 }
 
 func getForeignKey(t table.Table, name string) *model.FKInfo {
-	for _, fk := range t.ForeignKeys() {
+	for _, fk := range t.Meta().ForeignKeys {
 		// only public foreign key can be read.
 		if fk.State != model.StatePublic {
 			continue

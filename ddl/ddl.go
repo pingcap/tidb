@@ -643,11 +643,18 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 
 func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
+	fkNames := map[string]bool{}
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			// Ignore foreign key.
+			if constr.Name != "" {
+				nameLower := strings.ToLower(constr.Name)
+				if fkNames[nameLower] {
+					return infoschema.ErrForeignKeyExists.Gen("CREATE TABLE: duplicate foreign key %s", constr.Name)
+				}
+				fkNames[nameLower] = true
+			}
 			continue
 		}
 		if constr.Name != "" {
@@ -662,20 +669,24 @@ func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	// Set empty constraint names.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			if constr.Name == "" {
-				i, err := d.genGlobalID()
-				if err != nil {
-					return err
+			if constr.Name == "" && len(constr.Keys) > 0 {
+				colName := constr.Keys[0].Column.Name.L
+				constrName := colName
+				i := 2
+				for fkNames[constrName] {
+					constrName = fmt.Sprintf("fk_%s_%d", colName, i)
+					i++
 				}
-				constr.Name = fmt.Sprintf("fk_%d", i)
+				constr.Name = constrName
+				fkNames[constrName] = true
 			}
 			continue
 		}
 		if constr.Name == "" && len(constr.Keys) > 0 {
-			colName := constr.Keys[0].Column.Name.O
+			colName := constr.Keys[0].Column.Name.L
 			constrName := colName
 			i := 2
-			for constrNames[strings.ToLower(constrName)] {
+			for constrNames[constrName] {
 				// We loop forever until we find constrName that haven't been used.
 				constrName = fmt.Sprintf("%s_%d", colName, i)
 				i++

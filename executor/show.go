@@ -404,7 +404,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
-	for _, fk := range tb.ForeignKeys() {
+	for _, fk := range tb.Meta().ForeignKeys {
 		if fk.State != model.StatePublic {
 			continue
 		}

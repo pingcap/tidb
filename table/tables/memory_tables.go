@@ -126,11 +126,6 @@ func (t *MemoryTable) Indices() []*column.IndexedCol {
 	return nil
 }
 
-// ForeignKeys implements table.Table ForeignKeys interface.
-func (t *MemoryTable) ForeignKeys() []*model.FKInfo {
-	return nil
-}
-
 // Meta implements table.Table Meta interface.
 func (t *MemoryTable) Meta() *model.TableInfo {
 	return t.meta

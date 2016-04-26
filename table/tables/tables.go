@@ -112,11 +112,6 @@ func (t *Table) Indices() []*column.IndexedCol {
 	return t.indices
 }
 
-// ForeignKeys implements table.Table ForeignKeys interface.
-func (t *Table) ForeignKeys() []*model.FKInfo {
-	return t.meta.ForeignKeys
-}
-
 // Meta implements table.Table Meta interface.
 func (t *Table) Meta() *model.TableInfo {
 	return t.meta
