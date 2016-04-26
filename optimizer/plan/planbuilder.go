@@ -315,7 +315,7 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 			bestPlan = v
 			lowestCost = cost
 		}
-		if cost < lowestCost {
+		if cost <= lowestCost {
 			bestPlan = v
 			lowestCost = cost
 		}
