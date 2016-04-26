@@ -46,11 +46,11 @@ func (s *testSuite) SetUpSuite(c *C) {
 	store, err := tidb.NewStore("memory://test/test")
 	c.Assert(err, IsNil)
 	s.store = store
-	executor.LookupTableTaskLimit = 2
+	executor.BaseLookupTableTaskSize = 2
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	executor.LookupTableTaskLimit = 256
+	executor.BaseLookupTableTaskSize = 512
 	s.store.Close()
 }
 
