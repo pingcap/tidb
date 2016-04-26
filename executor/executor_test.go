@@ -50,7 +50,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	executor.BaseLookupTableTaskSize = 256
+	executor.BaseLookupTableTaskSize = 512
 	s.store.Close()
 }
 
