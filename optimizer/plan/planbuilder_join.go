@@ -209,7 +209,7 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 		p.filterRate *= filterRate
 		return true
 	}
-	if p.inner.attachCondition(condition, append(availablePaths, p.outer)) {
+	if p.inner.attachCondition(condition, availablePaths) {
 		p.filterRate *= filterRate
 		return true
 	}
@@ -602,12 +602,11 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	path := b.buildBasicJoinPath(sel.From.TableRefs, nrfinder.nullRejectTables)
 	rfs := path.resultFields()
 
+	var filterConditions []ast.ExprNode
 	whereConditions := splitWhere(sel.Where)
 	for _, whereCond := range whereConditions {
 		if !path.attachCondition(whereCond, nil) {
-			// TODO: Find a better way to handle this condition.
-			path.conditions = append(path.conditions, whereCond)
-			log.Warnf("Failed to attach where condtion in %s", sel.Text())
+			filterConditions = append(filterConditions, whereCond)
 		}
 	}
 	path.extractEqualConditon()
@@ -615,6 +614,12 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	path.optimizeJoinOrder(nil)
 	p := b.buildPlanFromJoinPath(path)
 	p.SetFields(rfs)
+	if filterConditions != nil {
+		filterPlan := &Filter{Conditions: filterConditions}
+		filterPlan.SetSrc(p)
+		filterPlan.SetFields(p.Fields())
+		return filterPlan
+	}
 	return p
 }
 

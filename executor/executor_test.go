@@ -1047,6 +1047,19 @@ func (s *testSuite) TestJoin(c *C) {
 		result := tk.MustQuery(ca.sql)
 		result.Check(ca.result)
 	}
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	result := tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows("1 1 <nil> <nil>"))
+	result = tk.MustQuery("select * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows("<nil> <nil> 1 1"))
+	result = tk.MustQuery("select * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows())
 }
 
 func (s *testSuite) TestIndexScan(c *C) {
