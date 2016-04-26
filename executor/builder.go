@@ -349,6 +349,10 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.Src())
+
+	if v.Count > math.MaxUint64-v.Offset {
+		v.Count = math.MaxUint64 - v.Offset
+	}
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,
