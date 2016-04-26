@@ -333,7 +333,7 @@ var setupTimersRecords [][]types.Datum
 func (ps *perfSchema) initialize() (err error) {
 	ps.tables = make(map[string]*model.TableInfo)
 	ps.mTables = make(map[string]table.Table, len(ps.tables))
-	ps.stmtHandles = make(map[uint64]int64)
+	ps.stmtHandles = make([]int64, currentElemMax)
 
 	allColDefs := [][]columnInfo{
 		setupActorsCols,

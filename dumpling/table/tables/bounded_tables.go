@@ -35,6 +35,10 @@ const (
 	invalidRecordID int64 = 0
 )
 
+var (
+	errOpNotSupported = errors.New("Operation not supported")
+)
+
 type boundedItem struct {
 	handle int64
 	data   []types.Datum
@@ -263,7 +267,7 @@ func (t *BoundedTable) LockRow(ctx context.Context, h int64, forRead bool) error
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *BoundedTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
 	// not supported, BoundedTable is TRUNCATE only
-	return nil
+	return errOpNotSupported
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.
