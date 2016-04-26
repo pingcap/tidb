@@ -493,6 +493,10 @@ func checkIn(target types.Datum, list []types.Datum) (bool, error) {
 }
 
 func (e *Evaluator) decodeValueList(valueListExpr *tipb.Expr) (*decodedValueList, error) {
+	if len(valueListExpr.Val) == 0 {
+		// Empty value list.
+		return &decodedValueList{}, nil
+	}
 	if e.valueLists == nil {
 		e.valueLists = make(map[*tipb.Expr]*decodedValueList)
 	}
