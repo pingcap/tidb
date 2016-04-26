@@ -23,7 +23,7 @@ const (
 	HalfRangeCount   = 4000
 	MiddleRangeCount = 100
 	RowCost          = 1.0
-	IndexCost        = 2.0
+	IndexCost        = 1.1
 	SortCost         = 2.0
 	FilterRate       = 0.5
 )
@@ -98,7 +98,7 @@ func (c *costEstimator) indexScan(v *IndexScan) {
 	} else {
 		v.rowCount = math.Min(rowCount, v.limit)
 	}
-	v.totalCost = v.rowCount * RowCost
+	v.totalCost = v.rowCount * IndexCost
 }
 
 // EstimateCost estimates the cost of the plan.
