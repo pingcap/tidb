@@ -24,11 +24,11 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/ticlient"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
+	"github.com/pingcap/tidb/ticlient"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
 )

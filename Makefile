@@ -32,6 +32,7 @@ GO        := $(GODEP) go
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
+PACKAGES  := $$(go list ./...| grep -vE 'ticlient')
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
@@ -48,7 +49,7 @@ godep:
 	go get -d github.com/pingcap/go-themis
 	go get -d github.com/pingcap/tso/client
 	go get -d github.com/pingcap/pd/pd-client
-	go get -d github.com/pingcap/ticlient
+	go get -d gopkg.in/fatih/pool.v2
 	go get -d github.com/pingcap/tipb/go-tipb
 
 build:
@@ -61,7 +62,6 @@ update:
 	go get -u -d github.com/pingcap/go-hbase
 	go get -u -d github.com/pingcap/go-themis
 	go get -u -d github.com/pingcap/tso/client
-	go get -u -d github.com/pingcap/ticlient
 	go get -u -d github.com/pingcap/tipb/go-tipb
 
 TEMP_FILE = temp_parser_file
@@ -121,16 +121,19 @@ todo:
 test: gotest
 
 gotest:
-	$(GO) test -cover ./...
+	$(GO) test -cover $(PACKAGES)
 
 race:
-	$(GO) test --race -cover ./...
+	$(GO) test --race -cover $(PACKAGES)
 
 ddl_test:
 	$(GO) test ./ddl/... -skip_ddl=false
 
 ddl_race_test:
 	$(GO) test --race ./ddl/... -skip_ddl=false
+
+ticlient_test:
+	$(GO) test ./ticlient/...
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
