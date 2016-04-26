@@ -1,13 +1,12 @@
 # Quick Start
 
-#### Run TiDB with docker
+#### Run TiDB with Docker
 
-You can quickly test TiDB with docker, the source repository contains the Dockerfile which
-contains local tidb-server.
+You can quickly test TiDB with Docker, the source repository contains the Dockerfile which contains local tidb-server.
 
-Or you can pull TiDB docker image contains HBase standalone and then run TiDB as a distributed database in a docker container.
+Or you can pull TiDB Docker image contains HBase standalone and then run TiDB as a distributed database in a Docker container.
 
-To install docker on your system, you can read the document on https://docs.docker.com/
+To install Docker on your system, you can read the document on https://docs.docker.com/
 
 ```
 docker pull pingcap/tidb:latest
@@ -22,7 +21,7 @@ Then you can use official mysql client to connect to TiDB.
 mysql -h 127.0.0.1 -P 4000 -u root -D test
 ```
 
-Notice: OSX user may use `docker-machine ip` to connect it.
+Notice: OS X user may use `docker-machine ip` to connect it.
 
 #### __Run TiDB on HBase__
 
@@ -64,7 +63,7 @@ The default server port is `4000` and can be changed by flag `-P <port>`.
 
 Run `./tidb-server -h` to see more flag options.
 
-After you started tidb-server, you can use official mysql client to connect to TiDB.
+After you started tidb-server, you can use official `mysql` client to connect to TiDB.
 
 ```
 mysql -h 127.0.0.1 -P 4000 -u root -D test
