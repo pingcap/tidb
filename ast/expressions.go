@@ -254,6 +254,8 @@ type SubqueryExpr struct {
 	SubqueryExec SubqueryExec
 	Evaluated    bool
 	Correlated   bool
+	MultiRows    bool
+	Exists       bool
 }
 
 // Accept implements Node Accept interface.

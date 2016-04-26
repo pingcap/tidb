@@ -145,7 +145,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 			ctx:       b.ctx,
 			tablePlan: v,
 		}
-		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		where, remained := b.conditionsToPBExpr(client, v.FilterConditions, v.TableName)
 		if where != nil {
 			e.where = where
 		}
@@ -205,7 +205,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 			indexPlan:   v,
 			supportDesc: supportDesc,
 		}
-		where, remained := conditionsToPBExpr(client, v.FilterConditions, v.TableName)
+		where, remained := b.conditionsToPBExpr(client, v.FilterConditions, v.TableName)
 		if where != nil {
 			e.where = where
 		}
@@ -349,6 +349,10 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.Src())
+
+	if v.Count > math.MaxUint64-v.Offset {
+		v.Count = math.MaxUint64 - v.Offset
+	}
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,

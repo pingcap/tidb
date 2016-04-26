@@ -14,12 +14,14 @@
 package xeval
 
 import (
+	"sort"
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"strings"
 )
 
 // Error instances.
@@ -38,7 +40,13 @@ const (
 
 // Evaluator evaluates tipb.Expr.
 type Evaluator struct {
-	Row map[int64]types.Datum // column values.
+	Row        map[int64]types.Datum // column values.
+	valueLists map[*tipb.Expr]*decodedValueList
+}
+
+type decodedValueList struct {
+	values  []types.Datum
+	hasNull bool
 }
 
 // Eval evaluates expr to a Datum.
@@ -82,6 +90,8 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalLike(expr)
 	case tipb.ExprType_Not:
 		return e.evalNot(expr)
+	case tipb.ExprType_In:
+		return e.evalIn(expr)
 	}
 	return types.Datum{}, nil
 }
@@ -423,4 +433,88 @@ func (e *Evaluator) evalNot(expr *tipb.Expr) (types.Datum, error) {
 		return types.NewIntDatum(0), nil
 	}
 	return types.NewIntDatum(1), nil
+}
+
+func (e *Evaluator) evalIn(expr *tipb.Expr) (types.Datum, error) {
+	if len(expr.Children) != 2 {
+		return types.Datum{}, ErrInvalid.Gen("IN need 2 operand, got %d", len(expr.Children))
+	}
+	target, err := e.Eval(expr.Children[0])
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if target.Kind() == types.KindNull {
+		return types.Datum{}, nil
+	}
+	valueListExpr := expr.Children[1]
+	if valueListExpr.GetTp() != tipb.ExprType_ValueList {
+		return types.Datum{}, ErrInvalid.Gen("the second children should be value list type")
+	}
+	decoded, err := e.decodeValueList(valueListExpr)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	in, err := checkIn(target, decoded.values)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	if in {
+		return types.NewDatum(1), nil
+	}
+	if decoded.hasNull {
+		return types.Datum{}, nil
+	}
+	return types.NewDatum(0), nil
+}
+
+// The value list is in sorted order so we can do a binary search.
+func checkIn(target types.Datum, list []types.Datum) (bool, error) {
+	var outerErr error
+	n := sort.Search(len(list), func(i int) bool {
+		val := list[i]
+		cmp, err := val.CompareDatum(target)
+		if err != nil {
+			outerErr = errors.Trace(err)
+			return false
+		}
+		return cmp >= 0
+	})
+	if outerErr != nil {
+		return false, errors.Trace(outerErr)
+	}
+	if n < 0 || n >= len(list) {
+		return false, nil
+	}
+	cmp, err := list[n].CompareDatum(target)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return cmp == 0, nil
+}
+
+func (e *Evaluator) decodeValueList(valueListExpr *tipb.Expr) (*decodedValueList, error) {
+	if len(valueListExpr.Val) == 0 {
+		// Empty value list.
+		return &decodedValueList{}, nil
+	}
+	if e.valueLists == nil {
+		e.valueLists = make(map[*tipb.Expr]*decodedValueList)
+	}
+	decoded := e.valueLists[valueListExpr]
+	if decoded != nil {
+		return decoded, nil
+	}
+	list, err := codec.Decode(valueListExpr.Val)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var hasNull bool
+	for _, v := range list {
+		if v.Kind() == types.KindNull {
+			hasNull = true
+		}
+	}
+	decoded = &decodedValueList{values: list, hasNull: hasNull}
+	e.valueLists[valueListExpr] = decoded
+	return decoded, nil
 }

@@ -575,6 +575,47 @@ func (s *testSuite) TestSelectWithoutFrom(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testSuite) TestSelectLimit(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	s.fillData(tk, "select_limit")
+
+	tk.MustExec("insert INTO select_limit VALUES (3, \"hello\");")
+	tk.CheckExecResult(1, 0)
+	tk.MustExec("insert INTO select_limit VALUES (4, \"hello\");")
+	tk.CheckExecResult(1, 0)
+
+	tk.MustExec("begin")
+	r := tk.MustQuery("select * from select_limit limit 1;")
+	rowStr1 := fmt.Sprintf("%v %v", 1, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 0;")
+	rowStr2 := fmt.Sprintf("%v %v", 2, []byte("hello"))
+	rowStr3 := fmt.Sprintf("%v %v", 3, []byte("hello"))
+	rowStr4 := fmt.Sprintf("%v %v", 4, []byte("hello"))
+	r.Check(testkit.Rows(rowStr1, rowStr2, rowStr3, rowStr4))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 1;")
+	r.Check(testkit.Rows(rowStr2, rowStr3, rowStr4))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
+	r.Check(testkit.Rows(rowStr4))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+}
+
 func (s *testSuite) TestSelectOrderBy(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
@@ -1066,4 +1107,31 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 	result = tk.MustQuery("select b, a from t order by b, a desc")
 	result.Check(testkit.Rows("0 2", "0 1", "0 0", "1 2", "1 1", "1 0", "2 2", "2 1", "2 0"))
 	localstore.SupportDesc = true
+}
+
+func (s *testSuite) TestInSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert t values (1, 1), (2, 1)")
+	result := tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b from t as m2)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)", 1)
+	result.Check(testkit.Rows("2"))
+	tk.MustExec(`prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)'`)
+	tk.MustExec("set @a = 1")
+	result = tk.MustQuery(`execute stmt1 using @a;`)
+	result.Check(testkit.Rows("2"))
+	tk.MustExec("set @a = 0")
+	result = tk.MustQuery(`execute stmt1 using @a;`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery("select m1.a from t as m1 where m1.a in (1, 3, 5)")
+	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a float)")
+	tk.MustExec("insert t1 values (281.37)")
+	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
 }
