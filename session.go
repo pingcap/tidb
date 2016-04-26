@@ -486,7 +486,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		if !s.isAutocommit(s) {
 			variable.GetSessionVars(s).SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
-		log.Infof("New txn:%s in session:%d", s.txn, s.sid)
+		log.Debugf("New txn:%s in session:%d", s.txn, s.sid)
 		return s.txn, nil
 	}
 	if forceNew {
