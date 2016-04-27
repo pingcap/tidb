@@ -352,6 +352,10 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) {
 		err = d.onCreateIndex(t, job)
 	case model.ActionDropIndex:
 		err = d.onDropIndex(t, job)
+	case model.ActionAddForeignKey:
+		err = d.onCreateForeignKey(t, job)
+	case model.ActionDropForeignKey:
+		err = d.onDropForeignKey(t, job)
 	default:
 		// invalid job, cancel it.
 		job.State = model.JobCancelled

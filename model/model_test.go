@@ -59,12 +59,13 @@ func (*testSuite) TestClone(c *C) {
 	}
 
 	table := &TableInfo{
-		ID:      1,
-		Name:    NewCIStr("t"),
-		Charset: "utf8",
-		Collate: "utf8",
-		Columns: []*ColumnInfo{column},
-		Indices: []*IndexInfo{index},
+		ID:          1,
+		Name:        NewCIStr("t"),
+		Charset:     "utf8",
+		Collate:     "utf8",
+		Columns:     []*ColumnInfo{column},
+		Indices:     []*IndexInfo{index},
+		ForeignKeys: []*FKInfo{},
 	}
 
 	dbInfo := &DBInfo{

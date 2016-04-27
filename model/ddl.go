@@ -34,6 +34,8 @@ const (
 	ActionDropColumn
 	ActionAddIndex
 	ActionDropIndex
+	ActionAddForeignKey
+	ActionDropForeignKey
 )
 
 func (action ActionType) String() string {
@@ -54,6 +56,10 @@ func (action ActionType) String() string {
 		return "add index"
 	case ActionDropIndex:
 		return "drop index"
+	case ActionAddForeignKey:
+		return "add foreign key"
+	case ActionDropForeignKey:
+		return "drop foreign key"
 	default:
 		return "none"
 	}

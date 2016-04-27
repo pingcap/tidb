@@ -67,6 +67,8 @@ var (
 	ErrInvalidColumnState = terror.ClassDDL.New(codeInvalidColumnState, "invalid column state")
 	// ErrInvalidIndexState returns for invalid index state.
 	ErrInvalidIndexState = terror.ClassDDL.New(codeInvalidIndexState, "invalid index state")
+	// ErrInvalidForeignKeyState returns for invalid foreign key state.
+	ErrInvalidForeignKeyState = terror.ClassDDL.New(codeInvalidForeignKeyState, "invalid foreign key state")
 
 	// ErrColumnBadNull returns for a bad null value.
 	ErrColumnBadNull = terror.ClassDDL.New(codeBadNull, "column cann't be null")
@@ -639,39 +641,68 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkConstraintNames(constraints []*ast.Constraint) error {
+func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
+	if name == "" {
+		return nil
+	}
+	nameLower := strings.ToLower(name)
+	if namesMap[nameLower] {
+		if foreign {
+			return infoschema.ErrForeignKeyExists.Gen("CREATE TABLE: duplicate foreign key %s", name)
+		}
+		return infoschema.ErrIndexExists.Gen("CREATE TABLE: duplicate key %s", name)
+	}
+	namesMap[nameLower] = true
+	return nil
+}
+
+func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
+	if constr.Name == "" && len(constr.Keys) > 0 {
+		colName := constr.Keys[0].Column.Name.L
+		constrName := colName
+		i := 2
+		for namesMap[constrName] {
+			// We loop forever until we find constrName that haven't been used.
+			if foreign {
+				constrName = fmt.Sprintf("fk_%s_%d", colName, i)
+			} else {
+				constrName = fmt.Sprintf("%s_%d", colName, i)
+			}
+			i++
+		}
+		constr.Name = constrName
+		namesMap[constrName] = true
+	}
+}
+
+func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
+	fkNames := map[string]bool{}
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			// Ignore foreign key.
-			continue
-		}
-		if constr.Name != "" {
-			nameLower := strings.ToLower(constr.Name)
-			if constrNames[nameLower] {
-				return infoschema.ErrIndexExists.Gen("CREATE TABLE: duplicate key %s", constr.Name)
+			err := checkDuplicateConstraint(fkNames, constr.Name, true)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			constrNames[nameLower] = true
+		} else {
+			err := checkDuplicateConstraint(constrNames, constr.Name, false)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
-		if constr.Name == "" && len(constr.Keys) > 0 {
-			colName := constr.Keys[0].Column.Name.O
-			constrName := colName
-			i := 2
-			for constrNames[strings.ToLower(constrName)] {
-				// We loop forever until we find constrName that haven't been used.
-				constrName = fmt.Sprintf("%s_%d", colName, i)
-				i++
-			}
-			constr.Name = constrName
-			constrNames[constrName] = true
+		if constr.Tp == ast.ConstraintForeignKey {
+			setEmptyConstraintName(fkNames, constr, true)
+		} else {
+			setEmptyConstraintName(constrNames, constr, false)
 		}
 	}
+
 	return nil
 }
 
@@ -687,6 +718,33 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		tbInfo.Columns = append(tbInfo.Columns, &v.ColumnInfo)
 	}
 	for _, constr := range constraints {
+		if constr.Tp == ast.ConstraintForeignKey {
+			for _, fk := range tbInfo.ForeignKeys {
+				if fk.Name.L == strings.ToLower(constr.Name) {
+					return nil, infoschema.ErrForeignKeyExists.Gen("foreign key %s already exists.", constr.Name)
+				}
+			}
+			var fk model.FKInfo
+			fk.Name = model.NewCIStr(constr.Name)
+			fk.RefTable = constr.Refer.Table.Name
+			fk.State = model.StatePublic
+			for _, key := range constr.Keys {
+				fk.Cols = append(fk.Cols, key.Column.Name)
+			}
+			for _, key := range constr.Refer.IndexColNames {
+				fk.RefCols = append(fk.RefCols, key.Column.Name)
+			}
+			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
+			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
+			if len(fk.Cols) != len(fk.RefCols) {
+				return nil, infoschema.ErrForeignKeyNotMatch.Gen("foreign key not match keys len %d, refkeys len %d .", len(fk.Cols), len(fk.RefCols))
+			}
+			if len(fk.Cols) == 0 {
+				return nil, infoschema.ErrForeignKeyNotMatch.Gen("foreign key should have one key at least.")
+			}
+			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, &fk)
+			continue
+		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
 			if len(constr.Keys) == 1 {
 				key := constr.Keys[0]
@@ -765,7 +823,7 @@ func (d *ddl) CreateTable(ctx context.Context, ident ast.Ident, colDefs []*ast.C
 		return errors.Trace(err)
 	}
 
-	err = checkConstraintNames(newConstraints)
+	err = d.checkConstraintNames(newConstraints)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -850,9 +908,13 @@ func (d *ddl) AlterTable(ctx context.Context, ident ast.Ident, specs []*ast.Alte
 				err = d.CreateIndex(ctx, ident, false, model.NewCIStr(constr.Name), spec.Constraint.Keys)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 				err = d.CreateIndex(ctx, ident, true, model.NewCIStr(constr.Name), spec.Constraint.Keys)
+			case ast.ConstraintForeignKey:
+				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			default:
 				// nothing to do now.
 			}
+		case ast.AlterTableDropForeignKey:
+			err = d.DropForeignKey(ctx, ident, model.NewCIStr(spec.Name))
 		default:
 			// nothing to do now.
 		}
@@ -1005,6 +1067,88 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	return errors.Trace(err)
 }
 
+func (d *ddl) buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+	fkID, err := d.genGlobalID()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var fkInfo model.FKInfo
+	fkInfo.ID = fkID
+	fkInfo.Name = fkName
+	fkInfo.RefTable = refer.Table.Name
+
+	fkInfo.Cols = make([]model.CIStr, len(keys))
+	for i, key := range keys {
+		fkInfo.Cols[i] = key.Column.Name
+	}
+
+	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexColNames))
+	for i, key := range refer.IndexColNames {
+		fkInfo.RefCols[i] = key.Column.Name
+	}
+
+	fkInfo.OnDelete = int(refer.OnDelete.ReferOpt)
+	fkInfo.OnUpdate = int(refer.OnUpdate.ReferOpt)
+
+	return &fkInfo, nil
+
+}
+
+func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+	}
+
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+
+	fkInfo, err := d.buildFKInfo(fkName, keys, refer)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionAddForeignKey,
+		Args:     []interface{}{fkInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.hook.OnChanged(err)
+	return errors.Trace(err)
+
+}
+
+func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIStr) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
+	}
+
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists)
+	}
+
+	job := &model.Job{
+		SchemaID: schema.ID,
+		TableID:  t.Meta().ID,
+		Type:     model.ActionDropForeignKey,
+		Args:     []interface{}{fkName},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.hook.OnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) DropIndex(ctx context.Context, ti ast.Ident, indexName model.CIStr) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -1052,10 +1196,11 @@ const (
 	codeWaitReorgTimeout                     = 7
 	codeInvalidStoreVer                      = 8
 
-	codeInvalidDBState     = 100
-	codeInvalidTableState  = 101
-	codeInvalidColumnState = 102
-	codeInvalidIndexState  = 103
+	codeInvalidDBState         = 100
+	codeInvalidTableState      = 101
+	codeInvalidColumnState     = 102
+	codeInvalidIndexState      = 103
+	codeInvalidForeignKeyState = 104
 
 	codeCantDropColWithIndex = 201
 	codeUnsupportedAddColumn = 202

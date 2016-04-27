@@ -360,7 +360,7 @@ import (
 	uint16Type	"uint16"
 	uint32Type	"uint32"
 	uint64Type	"uint64"
-	uint8Type	"uint8",
+	uint8Type	"uint8"
 	float32Type	"float32"
 	float64Type	"float64"
 	boolType	"BOOL"
@@ -379,6 +379,12 @@ import (
 	dayMinute 		"DAY_MINUTE"
 	dayHour			"DAY_HOUR"
 	yearMonth		"YEAR_MONTH"
+
+	restrict	"RESTRICT"
+	cascade		"CASCADE"
+	no		"NO"
+	action		"ACTION"
+
 
 %type   <item>
 	AdminStmt		"Check table statement or show ddl statement"
@@ -525,6 +531,9 @@ import (
 	PrivLevel		"Privilege scope"
 	PrivType		"Privilege type"
 	ReferDef		"Reference definition"
+	OnDeleteOpt		"optional ON DELETE clause"
+	OnUpdateOpt		"optional ON UPDATE clause"
+	ReferOpt		"reference option"
 	RegexpSym		"REGEXP or RLIKE"
 	ReplaceIntoStmt		"REPLACE INTO statement"
 	ReplacePriority		"replace statement priority"
@@ -648,6 +657,7 @@ import (
 %left   join inner cross left right full
 /* A dummy token to force the priority of TableRef production in a join. */
 %left   tableRefPriority
+%precedence lowerThanOn
 %precedence on
 %left 	oror or
 %left 	xor
@@ -1077,9 +1087,58 @@ ConstraintElem:
 	}
 
 ReferDef:
-	"REFERENCES" TableName '(' IndexColNameList ')'
+	"REFERENCES" TableName '(' IndexColNameList ')' OnDeleteOpt OnUpdateOpt
 	{
-		$$ = &ast.ReferenceDef{Table: $2.(*ast.TableName), IndexColNames: $4.([]*ast.IndexColName)}
+		var onDeleteOpt *ast.OnDeleteOpt
+		if $6 != nil {
+			onDeleteOpt = $6.(*ast.OnDeleteOpt)
+		}
+		var onUpdateOpt *ast.OnUpdateOpt
+		if $7 != nil {
+			onUpdateOpt = $7.(*ast.OnUpdateOpt)
+		}
+		$$ = &ast.ReferenceDef{
+			Table: $2.(*ast.TableName),
+			IndexColNames: $4.([]*ast.IndexColName),
+			OnDelete: onDeleteOpt,
+			OnUpdate: onUpdateOpt,
+		}
+	}
+
+OnDeleteOpt:
+	{
+		$$ = &ast.OnDeleteOpt{}
+	} %prec lowerThanOn
+|	"ON" "DELETE" ReferOpt
+	{
+		$$ = &ast.OnDeleteOpt{ReferOpt: $3.(ast.ReferOptionType)}
+	}
+
+OnUpdateOpt:
+	{
+		$$ = &ast.OnUpdateOpt{}
+	} %prec lowerThanOn
+|	"ON" "UPDATE" ReferOpt
+	{
+		$$ = &ast.OnUpdateOpt{ReferOpt: $3.(ast.ReferOptionType)}
+	}
+
+ReferOpt:
+	"RESTRICT"
+	{
+		$$ = ast.ReferOptionRestrict
+	}
+|	"CASCADE"
+	{
+		$$ = ast.ReferOptionCascade
+	}
+|	"SET" "NULL"
+	{
+		$$ = ast.ReferOptionSetNull
+	}
+|	"NO" "ACTION"
+	{
+		$$ = ast.ReferOptionNoAction
 	}
 
 /*
