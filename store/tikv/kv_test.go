@@ -23,7 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/tikv/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 )
 
 type testKvSuite struct {
