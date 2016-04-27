@@ -39,15 +39,18 @@ type tikvTxn struct {
 	DONOTCOMMIT bool
 }
 
-func newTiKVTxn(store *tikvStore) *tikvTxn {
-	startTS, _ := store.oracle.GetTimestamp()
+func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
+	startTS, err := store.oracle.GetTimestamp()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	ver := kv.NewVersion(startTS)
 	return &tikvTxn{
 		us:      kv.NewUnionStore(newTiKVSnapshot(store, ver)),
 		store:   store,
 		startTS: startTS,
 		valid:   true,
-	}
+	}, nil
 }
 
 // Implement transaction interface.
