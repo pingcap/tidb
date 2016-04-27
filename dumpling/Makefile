@@ -100,6 +100,10 @@ check:
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 
+errcheck:
+	go get github.com/kisielk/errcheck
+	errcheck -blank ./...
+
 deps:
 	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
 		sort | uniq | grep -E '[^/]+\.[^/]+/' |grep -v "pingcap/tidb" | \
