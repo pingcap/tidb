@@ -74,8 +74,11 @@ func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
 		s.mu.Unlock()
 		return nil, nil, ErrDBClosed
 	}
+	s.wg.Add(1)
 	s.mu.Unlock()
-	return s.db.Seek(key)
+	key, val, err := s.db.Seek(key)
+	s.wg.Done()
+	return key, val, err
 }
 
 // Commit writes the changed data in Batch.
