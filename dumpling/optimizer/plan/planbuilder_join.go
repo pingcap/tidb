@@ -113,8 +113,9 @@ func newOuterJoinPath(isRightJoin bool, leftPath, rightPath *joinPath, on *ast.O
 		conditions := splitWhere(on.Expr)
 		availablePaths := []*joinPath{outerJoin.outer}
 		for _, con := range conditions {
-			if !outerJoin.inner.attachCondition(con, availablePaths) {
+			if !outerJoin.inner.attachCondition(con, availablePaths, true) {
 				log.Errorf("Inner failed to attach ON condition")
+				outerJoin.conditions = append(outerJoin.conditions, con)
 			}
 		}
 	}
@@ -146,7 +147,7 @@ func newInnerJoinPath(leftPath, rightPath *joinPath, on *ast.OnCondition) *joinP
 	if on != nil {
 		conditions := splitWhere(on.Expr)
 		for _, con := range conditions {
-			if !innerJoin.attachCondition(con, nil) {
+			if !innerJoin.attachCondition(con, nil, true) {
 				innerJoin.conditions = append(innerJoin.conditions, con)
 			}
 		}
@@ -173,7 +174,8 @@ func (p *joinPath) resultFields() []*ast.ResultField {
 
 // attachCondition tries to attach a condition as deep as possible.
 // availablePaths are paths join before this path.
-func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joinPath) (attached bool) {
+// onCond represents whether the conditions is from current join's on condition. The on condition from other joins is treated as where condition.
+func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joinPath, onCond bool) (attached bool) {
 	filterRate := guesstimateFilterRate(condition)
 	// table
 	if p.table != nil || p.subquery != nil {
@@ -189,7 +191,7 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 	// inner join
 	if len(p.inners) > 0 {
 		for _, in := range p.inners {
-			if in.attachCondition(condition, availablePaths) {
+			if in.attachCondition(condition, availablePaths, false) {
 				p.filterRate *= filterRate
 				return true
 			}
@@ -205,11 +207,13 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 	}
 
 	// outer join
-	if p.outer.attachCondition(condition, availablePaths) {
+	if p.outer.attachCondition(condition, availablePaths, false) {
 		p.filterRate *= filterRate
 		return true
 	}
-	if p.inner.attachCondition(condition, append(availablePaths, p.outer)) {
+	// can't attach any where condition
+	if onCond && p.inner.attachCondition(condition, availablePaths, false) {
+		log.Infof("condition %v", condition)
 		p.filterRate *= filterRate
 		return true
 	}
@@ -474,7 +478,7 @@ func (p *joinPath) reattach(pathMap map[*joinPath]bool, availablePaths []*joinPa
 		for _, con := range p.conditions {
 			var attached bool
 			for path := range pathMap {
-				if path.attachCondition(con, availablePaths) {
+				if path.attachCondition(con, availablePaths, true) {
 					attached = true
 					break
 				}
@@ -602,12 +606,11 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	path := b.buildBasicJoinPath(sel.From.TableRefs, nrfinder.nullRejectTables)
 	rfs := path.resultFields()
 
+	var filterConditions []ast.ExprNode
 	whereConditions := splitWhere(sel.Where)
 	for _, whereCond := range whereConditions {
-		if !path.attachCondition(whereCond, nil) {
-			// TODO: Find a better way to handle this condition.
-			path.conditions = append(path.conditions, whereCond)
-			log.Warnf("Failed to attach where condtion in %s", sel.Text())
+		if !path.attachCondition(whereCond, nil, false) {
+			filterConditions = append(filterConditions, whereCond)
 		}
 	}
 	path.extractEqualConditon()
@@ -615,6 +618,12 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	path.optimizeJoinOrder(nil)
 	p := b.buildPlanFromJoinPath(path)
 	p.SetFields(rfs)
+	if filterConditions != nil {
+		filterPlan := &Filter{Conditions: filterConditions}
+		filterPlan.SetSrc(p)
+		filterPlan.SetFields(p.Fields())
+		return filterPlan
+	}
 	return p
 }
 
