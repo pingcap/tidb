@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/ngaut/log"
 )
 
 var _ = Suite(&testSessionSuite{})
@@ -57,6 +58,7 @@ func (s *testSessionSuite) SetUpSuite(c *C) {
 	s.dropTableSQL = `Drop TABLE if exists t;`
 	s.createTableSQL = `CREATE TABLE t(id TEXT);`
 	s.selectSQL = `SELECT * from t;`
+	log.SetLevelByString("error")
 }
 
 func (s *testSessionSuite) TearDownSuite(c *C) {
