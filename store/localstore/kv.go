@@ -69,6 +69,12 @@ type commitArgs struct {
 // Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 // if such key is not found.
 func (s *dbStore) Seek(key []byte) ([]byte, []byte, error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, ErrDBClosed
+	}
+	s.mu.Unlock()
 	return s.db.Seek(key)
 }
 
