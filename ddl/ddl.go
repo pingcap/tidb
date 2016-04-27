@@ -1067,7 +1067,7 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	return errors.Trace(err)
 }
 
-func (d *ddl) buildFkInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+func (d *ddl) buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
 	fkID, err := d.genGlobalID()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1107,7 +1107,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	fkInfo, err := d.buildFkInfo(fkName, keys, refer)
+	fkInfo, err := d.buildFKInfo(fkName, keys, refer)
 	if err != nil {
 		return errors.Trace(err)
 	}
