@@ -57,7 +57,7 @@ func (d *db) NewBatch() engine.Batch {
 func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	iter := d.DB.NewIterator(&util.Range{Start: startKey}, nil)
 	defer iter.Release()
-	if ok := iter.Next(); !ok {
+	if ok := iter.First(); !ok {
 		return nil, nil, errors.Trace(engine.ErrNotFound)
 	}
 	return iter.Key(), iter.Value(), nil

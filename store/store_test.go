@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
@@ -59,9 +60,11 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 
 	cacheS, _ := tidb.NewStore(fmt.Sprintf("%s://%s", *testStore, *testStorePath))
 	c.Assert(cacheS, Equals, store)
+	log.SetLevelByString("warn")
 }
 
 func (s *testKVSuite) TearDownSuite(c *C) {
+	log.SetLevelByString("debug")
 	err := s.s.Close()
 	c.Assert(err, IsNil)
 }
