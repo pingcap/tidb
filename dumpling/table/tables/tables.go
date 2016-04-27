@@ -87,6 +87,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		t.indices = append(t.indices, idx)
 	}
+
 	t.meta = tblInfo
 	return t, nil
 }

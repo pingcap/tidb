@@ -403,6 +403,34 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			buf.WriteString(",\n")
 		}
 	}
+
+	for _, fk := range tb.Meta().ForeignKeys {
+		if fk.State != model.StatePublic {
+			continue
+		}
+
+		buf.WriteString("\n")
+		cols := make([]string, 0, len(fk.Cols))
+		for _, c := range fk.Cols {
+			cols = append(cols, c.L)
+		}
+
+		refCols := make([]string, 0, len(fk.RefCols))
+		for _, c := range fk.Cols {
+			refCols = append(refCols, c.L)
+		}
+
+		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.L, strings.Join(cols, "`,`")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.L, strings.Join(refCols, "`,`")))
+
+		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
+		}
+
+		if ast.ReferOptionType(fk.OnUpdate) != ast.ReferOptionNoOption {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
+		}
+	}
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")

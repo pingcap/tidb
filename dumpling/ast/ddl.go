@@ -128,6 +128,8 @@ type ReferenceDef struct {
 
 	Table         *TableName
 	IndexColNames []*IndexColName
+	OnDelete      *OnDeleteOpt
+	OnUpdate      *OnUpdateOpt
 }
 
 // Accept implements Node Accept interface.
@@ -149,6 +151,75 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 		}
 		n.IndexColNames[i] = node.(*IndexColName)
 	}
+	onDelete, ok := n.OnDelete.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OnDelete = onDelete.(*OnDeleteOpt)
+	onUpdate, ok := n.OnUpdate.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OnUpdate = onUpdate.(*OnUpdateOpt)
+	return v.Leave(n)
+}
+
+// ReferOptionType is the type for refer options.
+type ReferOptionType int
+
+// Refer option types.
+const (
+	ReferOptionNoOption ReferOptionType = iota
+	ReferOptionRestrict
+	ReferOptionCascade
+	ReferOptionSetNull
+	ReferOptionNoAction
+)
+
+// String implements fmt.Stringer interface.
+func (r ReferOptionType) String() string {
+	switch r {
+	case ReferOptionRestrict:
+		return "RESTRICT"
+	case ReferOptionCascade:
+		return "CASCADE"
+	case ReferOptionSetNull:
+		return "SET NULL"
+	case ReferOptionNoAction:
+		return "NO ACTION"
+	}
+	return ""
+}
+
+// OnDeleteOpt is used for optional on delete clause.
+type OnDeleteOpt struct {
+	node
+	ReferOpt ReferOptionType
+}
+
+// Accept implements Node Accept interface.
+func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OnDeleteOpt)
+	return v.Leave(n)
+}
+
+// OnUpdateOpt is used for optional on update clause.
+type OnUpdateOpt struct {
+	node
+	ReferOpt ReferOptionType
+}
+
+// Accept implements Node Accept interface.
+func (n *OnUpdateOpt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OnUpdateOpt)
 	return v.Leave(n)
 }
 

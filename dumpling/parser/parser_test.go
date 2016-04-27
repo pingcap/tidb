@@ -755,6 +755,24 @@ func (s *testParserSuite) TestDDL(c *C) {
 		INDEX FK_a3t0m9apja9jmrn60uab30pqd USING BTREE (user_id) comment ''
 		) ENGINE=InnoDB AUTO_INCREMENT=95 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
 		{`create table t (c int KEY);`, true},
+		{`CREATE TABLE address (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		create_at datetime NOT NULL,
+		deleted tinyint(1) NOT NULL,
+		update_at datetime NOT NULL,
+		version bigint(20) DEFAULT NULL,
+		address varchar(128) NOT NULL,
+		address_detail varchar(128) NOT NULL,
+		cellphone varchar(16) NOT NULL,
+		latitude double NOT NULL,
+		longitude double NOT NULL,
+		name varchar(16) NOT NULL,
+		sex tinyint(1) NOT NULL,
+		user_id bigint(20) NOT NULL,
+		PRIMARY KEY (id),
+		CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id) ON DELETE CASCADE ON UPDATE NO ACTION,
+		INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
+		) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;`, true},
 	}
 	s.RunTest(c, table)
 }
