@@ -102,7 +102,7 @@ check:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	errcheck ./...
+	errcheck -blank ./...
 
 deps:
 	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
