@@ -1094,7 +1094,7 @@ ReferDef:
 			onDeleteOpt = $6.(*ast.OnDeleteOpt)
 		}
 		var onUpdateOpt *ast.OnUpdateOpt
-		if $6 != nil {
+		if $7 != nil {
 			onUpdateOpt = $7.(*ast.OnUpdateOpt)
 		}
 		$$ = &ast.ReferenceDef{

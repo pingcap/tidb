@@ -641,6 +641,40 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
+	if name == "" {
+		return nil
+	}
+	nameLower := strings.ToLower(name)
+	if namesMap[nameLower] {
+		if foreign {
+			return infoschema.ErrForeignKeyExists.Gen("CREATE TABLE: duplicate foreign key %s", name)
+		}
+		return infoschema.ErrIndexExists.Gen("CREATE TABLE: duplicate key %s", name)
+	}
+	namesMap[nameLower] = true
+	return nil
+}
+
+func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
+	if constr.Name == "" && len(constr.Keys) > 0 {
+		colName := constr.Keys[0].Column.Name.L
+		constrName := colName
+		i := 2
+		for namesMap[constrName] {
+			// We loop forever until we find constrName that haven't been used.
+			if foreign {
+				constrName = fmt.Sprintf("fk_%s_%d", colName, i)
+			} else {
+				constrName = fmt.Sprintf("%s_%d", colName, i)
+			}
+			i++
+		}
+		constr.Name = constrName
+		namesMap[constrName] = true
+	}
+}
+
 func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
 	fkNames := map[string]bool{}
@@ -648,53 +682,27 @@ func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			if constr.Name != "" {
-				nameLower := strings.ToLower(constr.Name)
-				if fkNames[nameLower] {
-					return infoschema.ErrForeignKeyExists.Gen("CREATE TABLE: duplicate foreign key %s", constr.Name)
-				}
-				fkNames[nameLower] = true
+			err := checkDuplicateConstraint(fkNames, constr.Name, true)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			continue
-		}
-		if constr.Name != "" {
-			nameLower := strings.ToLower(constr.Name)
-			if constrNames[nameLower] {
-				return infoschema.ErrIndexExists.Gen("CREATE TABLE: duplicate key %s", constr.Name)
+		} else {
+			err := checkDuplicateConstraint(constrNames, constr.Name, false)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			constrNames[nameLower] = true
 		}
 	}
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
 		if constr.Tp == ast.ConstraintForeignKey {
-			if constr.Name == "" && len(constr.Keys) > 0 {
-				colName := constr.Keys[0].Column.Name.L
-				constrName := colName
-				i := 2
-				for fkNames[constrName] {
-					constrName = fmt.Sprintf("fk_%s_%d", colName, i)
-					i++
-				}
-				constr.Name = constrName
-				fkNames[constrName] = true
-			}
-			continue
-		}
-		if constr.Name == "" && len(constr.Keys) > 0 {
-			colName := constr.Keys[0].Column.Name.L
-			constrName := colName
-			i := 2
-			for constrNames[constrName] {
-				// We loop forever until we find constrName that haven't been used.
-				constrName = fmt.Sprintf("%s_%d", colName, i)
-				i++
-			}
-			constr.Name = constrName
-			constrNames[constrName] = true
+			setEmptyConstraintName(fkNames, constr, true)
+		} else {
+			setEmptyConstraintName(constrNames, constr, false)
 		}
 	}
+
 	return nil
 }
 
@@ -1059,6 +1067,34 @@ func (d *ddl) CreateIndex(ctx context.Context, ti ast.Ident, unique bool, indexN
 	return errors.Trace(err)
 }
 
+func (d *ddl) buildFkInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+	fkID, err := d.genGlobalID()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var fkInfo model.FKInfo
+	fkInfo.ID = fkID
+	fkInfo.Name = fkName
+	fkInfo.RefTable = refer.Table.Name
+
+	fkInfo.Cols = make([]model.CIStr, len(keys))
+	for i, key := range keys {
+		fkInfo.Cols[i] = key.Column.Name
+	}
+
+	fkInfo.RefCols = make([]model.CIStr, len(refer.IndexColNames))
+	for i, key := range refer.IndexColNames {
+		fkInfo.RefCols[i] = key.Column.Name
+	}
+
+	fkInfo.OnDelete = int(refer.OnDelete.ReferOpt)
+	fkInfo.OnUpdate = int(refer.OnUpdate.ReferOpt)
+
+	return &fkInfo, nil
+
+}
+
 func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) error {
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
@@ -1071,7 +1107,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 		return errors.Trace(infoschema.ErrTableNotExists)
 	}
 
-	fkID, err := d.genGlobalID()
+	fkInfo, err := d.buildFkInfo(fkName, keys, refer)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1080,7 +1116,7 @@ func (d *ddl) CreateForeignKey(ctx context.Context, ti ast.Ident, fkName model.C
 		SchemaID: schema.ID,
 		TableID:  t.Meta().ID,
 		Type:     model.ActionAddForeignKey,
-		Args:     []interface{}{fkName, fkID, keys, refer.Table, refer.IndexColNames, refer.OnDelete.ReferOpt, refer.OnUpdate.ReferOpt},
+		Args:     []interface{}{fkInfo},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1093,7 +1129,7 @@ func (d *ddl) DropForeignKey(ctx context.Context, ti ast.Ident, fkName model.CIS
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		return infoschema.ErrDatabaseNotExists.Gen("database %s not exists", ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)

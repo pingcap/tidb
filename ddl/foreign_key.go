@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -28,38 +27,12 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	var (
-		fkInfo   model.FKInfo
-		fkName   model.CIStr
-		fkID     int64
-		keys     []*ast.IndexColName
-		refTable *ast.TableName
-		refKeys  []*ast.IndexColName
-		onDelete ast.ReferOptionType
-		onUpdate ast.ReferOptionType
-	)
-	err = job.DecodeArgs(&fkName, &fkID, &keys, &refTable, &refKeys, &onDelete, &onUpdate)
+	var fkInfo model.FKInfo
+	err = job.DecodeArgs(&fkInfo)
 	if err != nil {
 		job.State = model.JobCancelled
 		return errors.Trace(err)
 	}
-
-	fkInfo.ID = fkID
-	fkInfo.Cols = make([]model.CIStr, len(keys))
-	for i, key := range keys {
-		fkInfo.Cols[i] = key.Column.Name
-	}
-
-	fkInfo.Name = fkName
-	fkInfo.RefTable = refTable.Name
-	fkInfo.RefCols = make([]model.CIStr, len(refKeys))
-	for i, key := range refKeys {
-		fkInfo.RefCols[i] = key.Column.Name
-	}
-
-	fkInfo.OnDelete = int(onDelete)
-	fkInfo.OnUpdate = int(onUpdate)
-
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 
 	_, err = t.GenSchemaVersion()
@@ -69,6 +42,7 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 
 	switch fkInfo.State {
 	case model.StateNone:
+		// We just support record the foreign key, so we just make it public.
 		// none -> public
 		job.SchemaState = model.StatePublic
 		fkInfo.State = model.StatePublic
@@ -87,7 +61,6 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) error {
 func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 	schemaID := job.SchemaID
 	tblInfo, err := d.getTableInfo(t, job)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -120,7 +93,6 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 			nfks = append(nfks, fk)
 		}
 	}
-
 	tblInfo.ForeignKeys = nfks
 
 	_, err = t.GenSchemaVersion()
@@ -130,6 +102,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) error {
 
 	switch fkInfo.State {
 	case model.StatePublic:
+		// We just support record the foreign key, so we just make it none.
 		// public -> none
 		job.SchemaState = model.StateNone
 		fkInfo.State = model.StateNone

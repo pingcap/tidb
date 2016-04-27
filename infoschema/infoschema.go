@@ -40,9 +40,9 @@ var (
 	// ErrColumnNotExists returns for column not exists.
 	ErrColumnNotExists = terror.ClassSchema.New(codeColumnNotExists, "field not exists")
 	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = terror.ClassSchema.New(codeForeignKeyNotMatch, "foreign key not match")
+	ErrForeignKeyNotMatch = terror.ClassSchema.New(codeCannotAddForeign, "foreign key not match")
 	// ErrForeignKeyExists returns for foreign key exists.
-	ErrForeignKeyExists = terror.ClassSchema.New(codeForeignKeyExists, "foreign key already exists")
+	ErrForeignKeyExists = terror.ClassSchema.New(codeCannotAddForeign, "foreign key already exists")
 	// ErrForeignKeyNotExists returns for foreign key not exists.
 	ErrForeignKeyNotExists = terror.ClassSchema.New(codeForeignKeyNotExists, "foreign key not exists")
 	// ErrDatabaseExists returns for database already exists.
@@ -461,9 +461,8 @@ const (
 	codeTableNotExists                   = 1146
 	codeColumnNotExists                  = 1054
 
-	codeForeignKeyNotMatch  = 1055
-	codeForeignKeyExists    = 1056
-	codeForeignKeyNotExists = 1057
+	codeCannotAddForeign    = 1215
+	codeForeignKeyNotExists = 1091
 
 	codeDatabaseExists = 1007
 	codeTableExists    = 1050
@@ -474,15 +473,17 @@ const (
 
 func init() {
 	schemaMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeDBDropExists:      mysql.ErrDBDropExists,
-		codeDatabaseNotExists: mysql.ErrBadDB,
-		codeTableNotExists:    mysql.ErrNoSuchTable,
-		codeColumnNotExists:   mysql.ErrBadField,
-		codeDatabaseExists:    mysql.ErrDBCreateExists,
-		codeTableExists:       mysql.ErrTableExists,
-		codeBadTable:          mysql.ErrBadTable,
-		codeColumnExists:      mysql.ErrDupFieldName,
-		codeIndexExists:       mysql.ErrDupIndex,
+		codeDBDropExists:        mysql.ErrDBDropExists,
+		codeDatabaseNotExists:   mysql.ErrBadDB,
+		codeTableNotExists:      mysql.ErrNoSuchTable,
+		codeColumnNotExists:     mysql.ErrBadField,
+		codeCannotAddForeign:    mysql.ErrCannotAddForeign,
+		codeForeignKeyNotExists: mysql.ErrCantDropFieldOrKey,
+		codeDatabaseExists:      mysql.ErrDBCreateExists,
+		codeTableExists:         mysql.ErrTableExists,
+		codeBadTable:            mysql.ErrBadTable,
+		codeColumnExists:        mysql.ErrDupFieldName,
+		codeIndexExists:         mysql.ErrDupIndex,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 }

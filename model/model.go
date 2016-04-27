@@ -181,18 +181,14 @@ type FKInfo struct {
 	State    SchemaState `json:"state"`
 }
 
-// Clone clones FKInfo
+// Clone clones FKInfo.
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
 	nfk.RefCols = make([]CIStr, len(fk.RefCols))
 	nfk.Cols = make([]CIStr, len(fk.Cols))
-	for i := range fk.RefCols {
-		nfk.RefCols[i] = fk.RefCols[i]
-	}
-	for i := range fk.Cols {
-		nfk.Cols[i] = fk.Cols[i]
-	}
+	copy(nfk.RefCols, fk.RefCols)
+	copy(nfk.Cols, fk.Cols)
 
 	return &nfk
 }
