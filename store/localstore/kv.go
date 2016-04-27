@@ -162,7 +162,8 @@ func (s *dbStore) tryLock(txn *dbTxn) (err error) {
 
 func (s *dbStore) doCommit(cmd *command) {
 	txn := cmd.txn
-	curVer, err := globalVersionProvider.CurrentVersion()
+	// Get preWrite version.
+	preWriteVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -171,11 +172,9 @@ func (s *dbStore) doCommit(cmd *command) {
 		cmd.done <- errors.Trace(err)
 		return
 	}
-	// Update commit version.
-	txn.version = curVer
 	b := s.db.NewBatch()
 	txn.us.WalkBuffer(func(k kv.Key, value []byte) error {
-		mvccKey := MvccEncodeVersionKey(kv.Key(k), curVer)
+		mvccKey := MvccEncodeVersionKey(kv.Key(k), preWriteVer)
 		if len(value) == 0 { // Deleted marker
 			b.Put(mvccKey, nil)
 			s.compactor.OnDelete(k)
@@ -186,6 +185,11 @@ func (s *dbStore) doCommit(cmd *command) {
 		return nil
 	})
 	err = s.writeBatch(b)
+	// Update commit version.
+	txn.version, err = globalVersionProvider.CurrentVersion()
+	if err != nil {
+		log.Fatal(err)
+	}
 	s.unLockKeys(txn)
 	cmd.done <- errors.Trace(err)
 }
