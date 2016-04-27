@@ -174,6 +174,7 @@ func (p *joinPath) resultFields() []*ast.ResultField {
 
 // attachCondition tries to attach a condition as deep as possible.
 // availablePaths are paths join before this path.
+// onCond represents whether the conditions is from current join's on condition. The on condition from other joins is treated as where condition.
 func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joinPath, onCond bool) (attached bool) {
 	filterRate := guesstimateFilterRate(condition)
 	// table
