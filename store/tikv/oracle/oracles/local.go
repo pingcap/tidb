@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/ticlient/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 const epochShiftBits = 18

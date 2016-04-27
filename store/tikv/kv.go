@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ticlient
+package tikv
 
 import (
 	"fmt"
@@ -27,8 +27,8 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/ticlient/oracle"
-	"github.com/pingcap/tidb/ticlient/oracle/oracles"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 )
 
 type storeCache struct {

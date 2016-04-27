@@ -11,8 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package ticlient provides tcp connection to kvserver.
-package ticlient
+// package tikv provides tcp connection to kvserver.
+package tikv
 
 import (
 	"net"

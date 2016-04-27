@@ -19,7 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/pd/pd-client"
-	"github.com/pingcap/tidb/ticlient/oracle"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ oracle.Oracle = &pdOracle{}

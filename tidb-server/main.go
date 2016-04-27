@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
-	"github.com/pingcap/tidb/ticlient"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tidb-server/server"
 	"github.com/pingcap/tidb/util/printer"
 )
@@ -46,7 +46,7 @@ var (
 func main() {
 	tidb.RegisterStore("hbase", hbasekv.Driver{})
 	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
-	tidb.RegisterStore("tikv", ticlient.Driver{})
+	tidb.RegisterStore("tikv", tikv.Driver{})
 
 	metric.RunMetric(3 * time.Second)
 	printer.PrintTiDBInfo()

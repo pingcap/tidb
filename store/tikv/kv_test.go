@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ticlient
+package tikv
 
 import (
 	"fmt"
@@ -23,7 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/ticlient/oracle/oracles"
+	"github.com/pingcap/tidb/tikv/oracle/oracles"
 )
 
 type testKvSuite struct {
