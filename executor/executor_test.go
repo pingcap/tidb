@@ -1047,6 +1047,38 @@ func (s *testSuite) TestJoin(c *C) {
 		result := tk.MustQuery(ca.sql)
 		result.Check(ca.result)
 	}
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	result := tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows("1 1 <nil> <nil>"))
+	result = tk.MustQuery("select * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows("<nil> <nil> 1 1"))
+	result = tk.MustQuery("select * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 where t1.c1 = 3 or false")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1")
+	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+
+	tk.MustExec("create table t1 (c1 int, c2 int)")
+	tk.MustExec("create table t2 (c1 int, c2 int)")
+	tk.MustExec("create table t3 (c1 int, c2 int)")
+
+	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
+	tk.MustExec("insert into t2 values (1,1), (3,3), (5,5)")
+	tk.MustExec("insert into t3 values (1,1), (5,5), (9,9)")
+
+	result = tk.MustQuery("select * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;")
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> 5 5", "<nil> <nil> <nil> <nil> 9 9", "1 1 1 1 1 1"))
 }
 
 func (s *testSuite) TestIndexScan(c *C) {

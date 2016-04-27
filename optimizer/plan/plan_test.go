@@ -588,7 +588,7 @@ func (s *testPlanSuite) TestJoinPath(c *C) {
 		},
 		{
 			"select * from t1 left join t2 on 1 where t2.c1 != 0 or t1.c1 != 0",
-			"OuterJoin{Table(t1)->Table(t2)}->Fields",
+			"OuterJoin{Table(t1)->Table(t2)}->Filter->Fields",
 		},
 		{
 			"select * from t1 left join t2 on t1.i1 = t2.i1 where t1.i1 = 1",
