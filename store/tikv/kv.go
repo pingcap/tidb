@@ -121,7 +121,12 @@ func (s *tikvStore) getRegion(k []byte) (*requestRegion, error) {
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return newTiKVTxn(s), nil
+
+	txn, err := newTiKVTxn(s)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return txn, nil
 }
 
 func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
