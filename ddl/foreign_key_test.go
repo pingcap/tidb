@@ -48,26 +48,35 @@ func (s *testForeighKeySuite) TearDownSuite(c *C) {
 
 func testCreateForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
-	Keys := make([]*ast.IndexColName, len(keys))
+	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
-		col := &ast.ColumnName{Name: model.NewCIStr(key)}
-		ic := &ast.IndexColName{Column: col}
-		Keys[i] = ic
+		Keys[i] = model.NewCIStr(key)
 	}
-	RefTable := &ast.TableName{Name: model.NewCIStr(refTable)}
-	RefKeys := make([]*ast.IndexColName, len(refKeys))
+
+	RefTable := model.NewCIStr(refTable)
+	RefKeys := make([]model.CIStr, len(refKeys))
 	for i, key := range refKeys {
-		col := &ast.ColumnName{Name: model.NewCIStr(key)}
-		ic := &ast.IndexColName{Column: col}
-		RefKeys[i] = ic
+		RefKeys[i] = model.NewCIStr(key)
 	}
+
 	fkID, err := d.genGlobalID()
 	c.Assert(err, IsNil)
+	fkInfo := &model.FKInfo{
+		ID:       fkID,
+		Name:     FKName,
+		RefTable: RefTable,
+		RefCols:  RefKeys,
+		Cols:     Keys,
+		OnDelete: int(onDelete),
+		OnUpdate: int(onUpdate),
+		State:    model.StateNone,
+	}
+
 	job := &model.Job{
 		SchemaID: dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddForeignKey,
-		Args:     []interface{}{FKName, fkID, Keys, RefTable, RefKeys, onDelete, onUpdate},
+		Args:     []interface{}{fkInfo},
 	}
 	err = d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -111,8 +120,10 @@ func (s *testForeighKeySuite) testForeignKeyExist(c *C, t table.Table, name stri
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
-	tblInfo := testTableInfo(c, d, "t", 3)
+	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(c, d)
+	testCreateSchema(c, ctx, d, s.dbInfo)
+	tblInfo := testTableInfo(c, d, "t", 3)
 
 	_, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
@@ -130,7 +141,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-		s.testForeignKeyExist(c, t, "c1", true)
+		s.testForeignKeyExist(c, t, "c1_fk", true)
 		checkOK = true
 	}
 
@@ -145,27 +156,33 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	err = ctx.FinishTxn(false)
 	c.Assert(err, IsNil)
+	c.Assert(checkOK, IsTrue)
 
+	checkOK = false
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.State != model.JobDone {
 			return
 		}
-
 		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-		s.testForeignKeyExist(c, t, "c1", true)
+		s.testForeignKeyExist(c, t, "c1_fk", false)
 		checkOK = true
 	}
-
-	d.hook = tc
 
 	d.close()
 	d.start()
 
 	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
 	testCheckJobDone(c, d, job, false)
+	c.Assert(checkOK, IsTrue)
 
 	_, err = ctx.GetTxn(true)
 	c.Assert(err, IsNil)
+
+	tc.onJobUpdated = func(job *model.Job) {
+	}
+
+	d.close()
+	d.start()
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
