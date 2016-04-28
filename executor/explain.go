@@ -109,7 +109,7 @@ func (e *ExplainExec) Next() (*Row, error) {
 
 func (e *ExplainExec) fetchRows() {
 	visitor := &explainVisitor{id: 1}
-	e.StmtPlan.Accept(visitor)
+	visitor.explain(e.StmtPlan)
 	for _, entry := range visitor.entries {
 		row := &Row{}
 		row.Data = types.MakeDatums(
@@ -146,7 +146,7 @@ type explainVisitor struct {
 	entries []*explainEntry
 }
 
-func (v *explainVisitor) Enter(p plan.Plan) (plan.Plan, bool) {
+func (v *explainVisitor) explain(p plan.Plan) {
 	switch x := p.(type) {
 	case *plan.TableScan:
 		v.entries = append(v.entries, v.newEntryForTableScan(x))
@@ -155,11 +155,10 @@ func (v *explainVisitor) Enter(p plan.Plan) (plan.Plan, bool) {
 	case *plan.Sort:
 		v.sort = true
 	}
-	return p, false
-}
 
-func (v *explainVisitor) Leave(p plan.Plan) (plan.Plan, bool) {
-	return p, true
+	for _, c := range p.GetChildren() {
+		v.explain(c)
+	}
 }
 
 func (v *explainVisitor) newEntryForTableScan(p *plan.TableScan) *explainEntry {
