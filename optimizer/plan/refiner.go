@@ -16,6 +16,7 @@ package plan
 import (
 	"math"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -32,7 +33,7 @@ func refine(in Plan) error {
 	for _, c := range in.GetChildren() {
 		e := refine(c)
 		if e != nil {
-			err = e
+			err = errors.Trace(e)
 		}
 	}
 	switch x := in.(type) {
@@ -72,7 +73,7 @@ func buildIndexRange(p *IndexScan) error {
 	} else if p.AccessEqualCount < len(p.AccessConditions) {
 		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 	}
-	return rb.err
+	return errors.Trace(rb.err)
 }
 
 func buildTableRange(p *TableScan) error {

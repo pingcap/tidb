@@ -595,7 +595,9 @@ func pushLimit(p Plan, limit *ast.Limit) {
 		x.LimitCount = &limitCount
 	default:
 		child := x.GetChildByIndex(0)
-		pushLimit(child, limit)
+		if child != nil {
+			pushLimit(child, limit)
+		}
 	}
 }
 

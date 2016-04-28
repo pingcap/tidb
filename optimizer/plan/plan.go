@@ -35,17 +35,17 @@ type Plan interface {
 	RowCount() float64
 	// SetLimit is used to push limit to upstream to estimate the cost.
 	SetLimit(limit float64)
-
+	// AddParent means append a parent for plan.
 	AddParent(parent Plan)
-
+	// AddChild means append a parent for plan.
 	AddChild(children Plan)
-
+	// Retrieve parent by index.
 	GetParentByIndex(index int) Plan
-
+	// Retrieve child by index.
 	GetChildByIndex(index int) Plan
-
+	// Get all the parents.
 	GetParents() []Plan
-
+	// Get all the children.
 	GetChildren() []Plan
 }
 
@@ -95,18 +95,21 @@ func (p *basePlan) SetFields(fields []*ast.ResultField) {
 	p.fields = fields
 }
 
+// AddParent implements Plan AddParent interface.
 func (p *basePlan) AddParent(parent Plan) {
 	if parent != nil {
 		p.parents = append(p.parents, parent)
 	}
 }
 
+// AddChild implements Plan AddChild interface.
 func (p *basePlan) AddChild(child Plan) {
 	if child != nil {
 		p.children = append(p.children, child)
 	}
 }
 
+// GetParentByIndex implements Plan GetParentByIndex interface.
 func (p *basePlan) GetParentByIndex(index int) (parent Plan) {
 	if index < len(p.parents) && index >= 0 {
 		return p.parents[index]
@@ -114,6 +117,7 @@ func (p *basePlan) GetParentByIndex(index int) (parent Plan) {
 	return nil
 }
 
+// GetChildByIndex implements Plan GetChildByIndex interface.
 func (p *basePlan) GetChildByIndex(index int) (parent Plan) {
 	if index < len(p.children) && index >= 0 {
 		return p.children[index]
@@ -121,10 +125,12 @@ func (p *basePlan) GetChildByIndex(index int) (parent Plan) {
 	return nil
 }
 
+// GetParents implements Plan GetParents interface.
 func (p *basePlan) GetParents() []Plan {
 	return p.parents
 }
 
+// GetChildren implements Plan GetChildren interface.
 func (p *basePlan) GetChildren() []Plan {
 	return p.children
 }
