@@ -83,6 +83,8 @@ type RowKeyEntry struct {
 	Tbl table.Table
 	// Row key.
 	Handle int64
+	// Table alias name.
+	TableAsName *model.CIStr
 }
 
 // Executor executes a query.
@@ -654,6 +656,7 @@ func (e *JoinInnerExec) Next() (*Row, error) {
 			e.cursor++
 			continue
 		}
+
 		var match = true
 		if e.Condition != nil {
 			match, err = evaluator.EvalBool(e.ctx, e.Condition)

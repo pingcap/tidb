@@ -623,6 +623,54 @@ func (s *testSessionSuite) TestIssue1089(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIssue1135(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
+	mustExecSQL(c, se, "delete m1 from t m2,t m1 where m1.F1>1;")
+	r := mustExecSQL(c, se, "select * from t;")
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, []interface{}{'1'})
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
+	mustExecSQL(c, se, "delete m1 from t m1,t m2 where m1.F1>m2.F1;")
+	r = mustExecSQL(c, se, "select * from t;")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, []interface{}{'1'})
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
+	mustExecSQL(c, se, "delete m1 from t m1,t m2 where true and m1.F1<2;")
+	r = mustExecSQL(c, se, "select * from t;")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, []interface{}{'2'})
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
+	mustExecSQL(c, se, "delete m1 from t m1,t m2 where false;")
+	r = mustExecSQL(c, se, "select * from t;")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, []interface{}{'1'})
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, []interface{}{'2'})
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)

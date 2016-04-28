@@ -81,7 +81,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 				j++
 			}
 		}
-		return resultRowToRow(e.table, h, fullRowData), nil
+		return resultRowToRow(e.table, h, fullRowData, e.Fields()), nil
 	}
 }
 
@@ -98,8 +98,16 @@ func (e *XSelectTableExec) Close() error {
 	return nil
 }
 
-func resultRowToRow(t table.Table, h int64, data []types.Datum) *Row {
-	entry := &RowKeyEntry{Handle: h, Tbl: t}
+func resultRowToRow(t table.Table, h int64, data []types.Datum, fields []*ast.ResultField) *Row {
+	var tableAsName model.CIStr
+	if len(fields) > 0 {
+		tableAsName = fields[0].TableAsName
+	}
+	entry := &RowKeyEntry{
+		Handle:      h,
+		Tbl:         t,
+		TableAsName: &tableAsName}
+
 	return &Row{Data: data, RowKeys: []*RowKeyEntry{entry}}
 }
 
@@ -546,7 +554,7 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 				j++
 			}
 		}
-		row := resultRowToRow(t, h, fullRowData)
+		row := resultRowToRow(t, h, fullRowData, e.Fields())
 		rows = append(rows, row)
 	}
 	return rows, nil
