@@ -43,8 +43,6 @@ TARGET = ""
 
 all: parser build test check
 
-	rm -rf vendor && ln -s tidb-server/vendor vendor
-
 build:
 	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) build
