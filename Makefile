@@ -28,41 +28,32 @@ else
   GOLINT  := golint
 endif
 
-GO        := $(GODEP) go
+GO        := GO15VENDOREXPERIMENT="1" go
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE 'tikv')
+PACKAGES  := $$(go list ./...| grep -vE 'tikv|vendor')
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 
 TARGET = ""
 
-.PHONY: godep deps all build install update parser clean todo test gotest interpreter server
+.PHONY: all build install update parser clean todo test gotest interpreter server
 
-all: godep parser build test check
+all: parser build test check
 
-godep:
-	go get github.com/tools/godep
-	go get -d github.com/pingcap/go-hbase
-	go get -d github.com/pingcap/go-themis
-	go get -d github.com/pingcap/tso/client
-	go get -d github.com/pingcap/pd/pd-client
-	go get -d gopkg.in/fatih/pool.v2
-	go get -d github.com/pingcap/tipb/go-tipb
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 
 build:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) build
+	rm -rf vendor
 
 install:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) install ./...
-
-update:
-	go get -u -d github.com/pingcap/go-hbase
-	go get -u -d github.com/pingcap/go-themis
-	go get -u -d github.com/pingcap/tso/client
-	go get -u -d github.com/pingcap/tipb/go-tipb
+	rm -rf vendor
 
 TEMP_FILE = temp_parser_file
 
@@ -92,29 +83,21 @@ check:
 	go get github.com/golang/lint/golint
 
 	@echo "vet"
-	@ go tool vet . 2>&1 | grep -vE 'Godeps|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet . 2>&1 | grep -vE 'vendor|parser/scanner.*unreachable code' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "vet --shadow"
-	@ go tool vet --shadow . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ go tool vet --shadow . 2>&1 | grep -vE 'vendor|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "golint"
-	@ $(GOLINT) ./... 2>&1 | grep -vE 'LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ $(GOLINT) ./... 2>&1 | grep -vE 'vendor|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l . 2>&1 | grep -vE 'Godeps|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
+	@ gofmt -s -l . 2>&1 | grep -vE 'vendor|parser/parser.go|parser/scanner.go' | awk '{print} END{if(NR>0) {exit 1}}'
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	errcheck -blank ./...
-
-deps:
-	go list -f '{{range .Deps}}{{printf "%s\n" .}}{{end}}{{range .TestImports}}{{printf "%s\n" .}}{{end}}' ./... | \
-		sort | uniq | grep -E '[^/]+\.[^/]+/' |grep -v "pingcap/tidb" | \
-		awk 'BEGIN{ print "#!/bin/bash" }{ printf("go get -u %s\n", $$1) }' > deps.sh
-	chmod +x deps.sh
-	bash deps.sh
+	errcheck -blank $(PACKAGES)
 
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
-	rm -f deps.sh
 
 todo:
 	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/scanner.l parser/parser.y || true
@@ -125,26 +108,40 @@ todo:
 test: gotest
 
 gotest:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test -cover $(PACKAGES)
+	rm -rf vendor
 
 race:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test --race -cover $(PACKAGES)
+	rm -rf vendor
 
 ddl_test:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test ./ddl/... -skip_ddl=false
+	rm -rf vendor
 
 ddl_race_test:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test --race ./ddl/... -skip_ddl=false
+	rm -rf vendor
 
 tikv_test:
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test ./store/tikv/...
+	rm -rf vendor
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 
 server:
 ifeq ($(TARGET), "")
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'
+	rm -rf vendor
 else
+	rm -rf vendor && ln -s tidb-server/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)'
+	rm -rf vendor
 endif
