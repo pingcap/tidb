@@ -41,9 +41,9 @@ const (
 func (s *dbStore) Seek(key []byte, startTS uint64) ([]byte, []byte, error) {
 	for {
 		var conflict bool
-		s.mu.Lock()
+		s.mu.RLock()
 		if s.closed {
-			s.mu.Unlock()
+			s.mu.RUnlock()
 			return nil, nil, ErrDBClosed
 		}
 		if s.committingTS != 0 && s.committingTS < startTS {
@@ -52,7 +52,7 @@ func (s *dbStore) Seek(key []byte, startTS uint64) ([]byte, []byte, error) {
 		} else {
 			s.wg.Add(1)
 		}
-		s.mu.Unlock()
+		s.mu.RUnlock()
 		if conflict {
 			// Wait for committing to be finished and try again.
 			time.Sleep(time.Microsecond)
@@ -205,7 +205,7 @@ type dbStore struct {
 	compactor *localstoreCompactor
 	wg        sync.WaitGroup
 
-	mu           sync.Mutex
+	mu           sync.RWMutex
 	closed       bool
 	committingTS uint64
 
@@ -296,12 +296,12 @@ func (s *dbStore) UUID() string {
 }
 
 func (s *dbStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
-	s.mu.Lock()
+	s.mu.RLock()
 	if s.closed {
-		s.mu.Unlock()
+		s.mu.RUnlock()
 		return nil, ErrDBClosed
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	currentVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
@@ -324,12 +324,12 @@ func (s *dbStore) CurrentVersion() (kv.Version, error) {
 
 // Begin transaction
 func (s *dbStore) Begin() (kv.Transaction, error) {
-	s.mu.Lock()
+	s.mu.RLock()
 	if s.closed {
-		s.mu.Unlock()
+		s.mu.RUnlock()
 		return nil, ErrDBClosed
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	beginVer, err := globalVersionProvider.CurrentVersion()
 	if err != nil {
