@@ -31,6 +31,8 @@ var _ = Suite(&testForeighKeySuite{})
 type testForeighKeySuite struct {
 	store  kv.Storage
 	dbInfo *model.DBInfo
+	d      *ddl
+	ctx    context.Context
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
@@ -46,7 +48,7 @@ func (s *testForeighKeySuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func testCreateForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -59,7 +61,7 @@ func testCreateForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInf
 		RefKeys[i] = model.NewCIStr(key)
 	}
 
-	fkID, err := d.genGlobalID()
+	fkID, err := s.d.genGlobalID()
 	c.Assert(err, IsNil)
 	fkInfo := &model.FKInfo{
 		ID:       fkID,
@@ -73,12 +75,12 @@ func testCreateForeignKey(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInf
 	}
 
 	job := &model.Job{
-		SchemaID: dbInfo.ID,
+		SchemaID: s.dbInfo.ID,
 		TableID:  tblInfo.ID,
 		Type:     model.ActionAddForeignKey,
 		Args:     []interface{}{fkInfo},
 	}
-	err = d.doDDLJob(ctx, job)
+	err = s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
@@ -120,8 +122,10 @@ func (s *testForeighKeySuite) testForeignKeyExist(c *C, t table.Table, name stri
 func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
 	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	s.d = d
 	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
 	ctx := testNewContext(c, d)
+	s.ctx = ctx
 	testCreateSchema(c, ctx, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
 
@@ -150,7 +154,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	d.close()
 	d.start()
 
-	job := testCreateForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
+	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 
 	testCheckJobDone(c, d, job, true)
 
