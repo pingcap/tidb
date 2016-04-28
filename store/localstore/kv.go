@@ -125,6 +125,10 @@ func (s *dbStore) doCommit(txn *dbTxn) error {
 		committing := s.committingTS != 0
 		if !closed && !committing {
 			commitVer, err = globalVersionProvider.CurrentVersion()
+			if err != nil {
+				s.mu.Unlock()
+				return errors.Trace(err)
+			}
 			s.committingTS = commitVer.Ver
 			s.wg.Add(1)
 		}
