@@ -43,17 +43,11 @@ TARGET = ""
 
 all: parser build test check
 
-	rm -rf vendor && ln -s tidb-server/vendor vendor
-
 build:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) build
-	rm -rf vendor
 
 install:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) install ./...
-	rm -rf vendor
 
 TEMP_FILE = temp_parser_file
 
@@ -108,40 +102,26 @@ todo:
 test: gotest
 
 gotest:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test -cover $(PACKAGES)
-	rm -rf vendor
 
 race:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test --race -cover $(PACKAGES)
-	rm -rf vendor
 
 ddl_test:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test ./ddl/... -skip_ddl=false
-	rm -rf vendor
 
 ddl_race_test:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test --race ./ddl/... -skip_ddl=false
-	rm -rf vendor
 
 tikv_test:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	$(GO) test ./store/tikv/...
-	rm -rf vendor
 
 interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 
 server:
 ifeq ($(TARGET), "")
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'
-	rm -rf vendor
 else
-	rm -rf vendor && ln -s tidb-server/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)'
-	rm -rf vendor
 endif
