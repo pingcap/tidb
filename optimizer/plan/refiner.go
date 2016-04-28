@@ -24,29 +24,26 @@ import (
 
 // Refine tries to build index or table range.
 func Refine(p Plan) error {
-	r := refiner{}
-	p.Accept(&r)
-	return r.err
+	return refine(p)
 }
 
-type refiner struct {
-	err error
-}
-
-func (r *refiner) Enter(in Plan) (Plan, bool) {
-	return in, false
-}
-
-func (r *refiner) Leave(in Plan) (Plan, bool) {
+func refine(in Plan) error {
+	var err error
+	for _, c := range in.GetChildren() {
+		e := refine(c)
+		if e != nil {
+			err = e
+		}
+	}
 	switch x := in.(type) {
 	case *IndexScan:
-		r.buildIndexRange(x)
+		err = buildIndexRange(x)
 	case *Limit:
 		x.SetLimit(0)
 	case *TableScan:
-		r.buildTableRange(x)
+		err = buildTableRange(x)
 	}
-	return in, r.err == nil
+	return err
 }
 
 var fullRange = []rangePoint{
@@ -54,7 +51,7 @@ var fullRange = []rangePoint{
 	{value: types.MaxValueDatum()},
 }
 
-func (r *refiner) buildIndexRange(p *IndexScan) {
+func buildIndexRange(p *IndexScan) error {
 	rb := rangeBuilder{}
 	if p.AccessEqualCount > 0 {
 		// Build ranges for equal access conditions.
@@ -75,14 +72,13 @@ func (r *refiner) buildIndexRange(p *IndexScan) {
 	} else if p.AccessEqualCount < len(p.AccessConditions) {
 		p.Ranges = rb.appendIndexRanges(p.Ranges, rangePoints)
 	}
-	r.err = rb.err
-	return
+	return rb.err
 }
 
-func (r *refiner) buildTableRange(p *TableScan) {
+func buildTableRange(p *TableScan) error {
 	if len(p.AccessConditions) == 0 {
 		p.Ranges = []TableRange{{math.MinInt64, math.MaxInt64}}
-		return
+		return nil
 	}
 	rb := rangeBuilder{}
 	rangePoints := fullRange
@@ -90,7 +86,7 @@ func (r *refiner) buildTableRange(p *TableScan) {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 	}
 	p.Ranges = rb.buildTableRanges(rangePoints)
-	r.err = rb.err
+	return rb.err
 }
 
 // conditionChecker checks if this condition can be pushed to index plan.
