@@ -39,8 +39,6 @@ type DB interface {
 	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 	// if such key is not found.
 	Seek(key []byte) ([]byte, []byte, error)
-	// MultiSeek seeks multiple keys from the engine.
-	MultiSeek(keys [][]byte) []*MSeekResult
 	// NewBatch creates a Batch for writing.
 	NewBatch() Batch
 	// Commit writes the changed data in Batch.

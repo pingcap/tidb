@@ -64,7 +64,7 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 	// EOF
 	for {
 		mvccKey := MvccEncodeVersionKey(key, s.version)
-		mvccK, v, err := s.store.Seek([]byte(mvccKey)) // search for [3...EOF)
+		mvccK, v, err := s.store.Seek([]byte(mvccKey), s.version.Ver) // search for [3...EOF)
 		if err != nil {
 			if terror.ErrorEqual(err, engine.ErrNotFound) { // EOF
 				return nil, nil, errors.Trace(kv.ErrNotExist)
