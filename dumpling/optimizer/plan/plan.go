@@ -23,9 +23,6 @@ import (
 // It is created from ast.Node first, then optimized by optimizer,
 // then used by executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Accept a visitor, implementation should call Visitor.Enter first,
-	// then call children Accept methods, finally call Visitor.Leave.
-	Accept(v Visitor) (out Plan, ok bool)
 	// Fields returns the result fields of the plan.
 	Fields() []*ast.ResultField
 	// SetFields sets the results fields of the plan.
@@ -38,27 +35,18 @@ type Plan interface {
 	RowCount() float64
 	// SetLimit is used to push limit to upstream to estimate the cost.
 	SetLimit(limit float64)
-}
-
-// WithSrcPlan is a Plan has a source Plan.
-type WithSrcPlan interface {
-	Plan
-	Src() Plan
-	SetSrc(src Plan)
-}
-
-// Visitor visits a Plan.
-type Visitor interface {
-	// Enter is called before visit children.
-	// The out plan should be of exactly the same type as the in plan.
-	// if skipChildren is true, the children should not be visited.
-	Enter(in Plan) (out Plan, skipChildren bool)
-
-	// Leave is called after children has been visited, the out Plan can
-	// be another type, this is different than ast.Visitor Leave, because
-	// Plans only contain children plans as Plan interface type, so it is safe
-	// to return a different type of plan.
-	Leave(in Plan) (out Plan, ok bool)
+	// AddParent means append a parent for plan.
+	AddParent(parent Plan)
+	// AddChild means append a parent for plan.
+	AddChild(children Plan)
+	// Retrieve parent by index.
+	GetParentByIndex(index int) Plan
+	// Retrieve child by index.
+	GetChildByIndex(index int) Plan
+	// Get all the parents.
+	GetParents() []Plan
+	// Get all the children.
+	GetChildren() []Plan
 }
 
 // basePlan implements base Plan interface.
@@ -69,6 +57,9 @@ type basePlan struct {
 	totalCost   float64
 	rowCount    float64
 	limit       float64
+
+	parents  []Plan
+	children []Plan
 }
 
 // StartupCost implements Plan StartupCost interface.
@@ -104,24 +95,42 @@ func (p *basePlan) SetFields(fields []*ast.ResultField) {
 	p.fields = fields
 }
 
-// srcPlan implements base PlanWithSrc interface.
-type planWithSrc struct {
-	basePlan
-	src Plan
+// AddParent implements Plan AddParent interface.
+func (p *basePlan) AddParent(parent Plan) {
+	if parent != nil {
+		p.parents = append(p.parents, parent)
+	}
 }
 
-// Src implements PlanWithSrc interface.
-func (p *planWithSrc) Src() Plan {
-	return p.src
+// AddChild implements Plan AddChild interface.
+func (p *basePlan) AddChild(child Plan) {
+	if child != nil {
+		p.children = append(p.children, child)
+	}
 }
 
-// SetSrc implements PlanWithSrc interface.
-func (p *planWithSrc) SetSrc(src Plan) {
-	p.src = src
+// GetParentByIndex implements Plan GetParentByIndex interface.
+func (p *basePlan) GetParentByIndex(index int) (parent Plan) {
+	if index < len(p.parents) && index >= 0 {
+		return p.parents[index]
+	}
+	return nil
 }
 
-// SetLimit implements Plan interface.
-func (p *planWithSrc) SetLimit(limit float64) {
-	p.limit = limit
-	p.src.SetLimit(limit)
+// GetChildByIndex implements Plan GetChildByIndex interface.
+func (p *basePlan) GetChildByIndex(index int) (parent Plan) {
+	if index < len(p.children) && index >= 0 {
+		return p.children[index]
+	}
+	return nil
+}
+
+// GetParents implements Plan GetParents interface.
+func (p *basePlan) GetParents() []Plan {
+	return p.parents
+}
+
+// GetChildren implements Plan GetChildren interface.
+func (p *basePlan) GetChildren() []Plan {
+	return p.children
 }

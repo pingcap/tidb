@@ -213,7 +213,6 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 	}
 	// can't attach any where condition
 	if onCond && p.inner.attachCondition(condition, availablePaths, false) {
-		log.Infof("condition %v", condition)
 		p.filterRate *= filterRate
 		return true
 	}
@@ -620,7 +619,7 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	p.SetFields(rfs)
 	if filterConditions != nil {
 		filterPlan := &Filter{Conditions: filterConditions}
-		filterPlan.SetSrc(p)
+		filterPlan.AddChild(p)
 		filterPlan.SetFields(p.Fields())
 		return filterPlan
 	}
@@ -738,6 +737,8 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 			Outer: b.buildPlanFromJoinPath(path.outer),
 			Inner: b.buildPlanFromJoinPath(path.inner),
 		}
+		join.AddChild(join.Outer)
+		join.AddChild(join.Inner)
 		if path.rightJoin {
 			join.SetFields(append(join.Inner.Fields(), join.Outer.Fields()...))
 		} else {
@@ -747,8 +748,10 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 	}
 	join := &JoinInner{}
 	for _, in := range path.inners {
-		join.Inners = append(join.Inners, b.buildPlanFromJoinPath(in))
+		inPlan := b.buildPlanFromJoinPath(in)
+		join.Inners = append(join.Inners, inPlan)
 		join.fields = append(join.fields, in.resultFields()...)
+		join.AddChild(inPlan)
 	}
 	join.Conditions = path.conditions
 	for _, equiv := range path.eqConds {
@@ -814,7 +817,7 @@ func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 		return p
 	}
 	filterPlan := &Filter{Conditions: path.conditions}
-	filterPlan.SetSrc(p)
+	filterPlan.AddChild(p)
 	filterPlan.SetFields(p.Fields())
 	return filterPlan
 }
