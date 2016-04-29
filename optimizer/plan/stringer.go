@@ -21,25 +21,20 @@ import (
 
 // ToString explains a Plan, returns description string.
 func ToString(p Plan) string {
-	var e stringer
-	p.Accept(&e)
-	return strings.Join(e.strs, "->")
+	strs, _ := toString(p, []string{}, []int{})
+	return strings.Join(strs, "->")
 }
 
-type stringer struct {
-	strs []string
-	idxs []int
-}
-
-func (e *stringer) Enter(in Plan) (Plan, bool) {
+func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
 	case *JoinOuter, *JoinInner:
-		e.idxs = append(e.idxs, len(e.strs))
+		idxs = append(idxs, len(strs))
 	}
-	return in, false
-}
 
-func (e *stringer) Leave(in Plan) (Plan, bool) {
+	for _, c := range in.GetChildren() {
+		strs, idxs = toString(c, strs, idxs)
+	}
+
 	var str string
 	switch x := in.(type) {
 	case *CheckTable:
@@ -79,19 +74,19 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 			str += fmt.Sprintf(" + Limit(%v)", *x.LimitCount)
 		}
 	case *JoinOuter:
-		last := len(e.idxs) - 1
-		idx := e.idxs[last]
-		children := e.strs[idx:]
-		e.strs = e.strs[:idx]
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
 		str = "OuterJoin{" + strings.Join(children, "->") + "}"
-		e.idxs = e.idxs[:last]
+		idxs = idxs[:last]
 	case *JoinInner:
-		last := len(e.idxs) - 1
-		idx := e.idxs[last]
-		children := e.strs[idx:]
-		e.strs = e.strs[:idx]
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
 		str = "InnerJoin{" + strings.Join(children, "->") + "}"
-		e.idxs = e.idxs[:last]
+		idxs = idxs[:last]
 	case *Aggregate:
 		str = "Aggregate"
 	case *Distinct:
@@ -99,6 +94,6 @@ func (e *stringer) Leave(in Plan) (Plan, bool) {
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
-	e.strs = append(e.strs, str)
-	return in, true
+	strs = append(strs, str)
+	return strs, idxs
 }

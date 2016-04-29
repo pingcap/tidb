@@ -437,12 +437,12 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 	}
 	if !pushOrder(p, sel.OrderBy.Items) {
 		np := &Sort{ByItems: sel.OrderBy.Items}
-		np.SetSrc(p)
+		np.AddChild(p)
 		p = np
 	}
 	if sel.Limit != nil {
 		np := &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
-		np.SetSrc(p)
+		np.AddChild(p)
 		np.SetLimit(0)
 		p = np
 	}
@@ -453,14 +453,14 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 	selectLock := &SelectLock{
 		Lock: lock,
 	}
-	selectLock.SetSrc(src)
+	selectLock.AddChild(src)
 	selectLock.SetFields(src.Fields())
 	return selectLock
 }
 
 func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Plan {
 	selectFields := &SelectFields{}
-	selectFields.SetSrc(src)
+	selectFields.AddChild(src)
 	selectFields.SetFields(fields)
 	return selectFields
 }
@@ -470,7 +470,7 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 	aggPlan := &Aggregate{
 		AggFuncs: aggFuncs,
 	}
-	aggPlan.SetSrc(src)
+	aggPlan.AddChild(src)
 	if src != nil {
 		aggPlan.SetFields(src.Fields())
 	}
@@ -484,7 +484,7 @@ func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
 	p := &Having{
 		Conditions: splitWhere(having.Expr),
 	}
-	p.SetSrc(src)
+	p.AddChild(src)
 	p.SetFields(src.Fields())
 	return p
 }
@@ -493,7 +493,7 @@ func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
 	sort := &Sort{
 		ByItems: byItems,
 	}
-	sort.SetSrc(src)
+	sort.AddChild(src)
 	sort.SetFields(src.Fields())
 	return sort
 }
@@ -507,7 +507,7 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 		s.ExecLimit = li
 		return s
 	}
-	li.SetSrc(src)
+	li.AddChild(src)
 	li.SetFields(src.Fields())
 	return li
 }
@@ -593,8 +593,11 @@ func pushLimit(p Plan, limit *ast.Limit) {
 	case *TableScan:
 		limitCount := int64(limit.Offset + limit.Count)
 		x.LimitCount = &limitCount
-	case WithSrcPlan:
-		pushLimit(x.Src(), limit)
+	default:
+		child := x.GetChildByIndex(0)
+		if child != nil {
+			pushLimit(child, limit)
+		}
 	}
 }
 
@@ -664,8 +667,11 @@ func pushOrder(p Plan, items []*ast.ByItem) bool {
 	case *Sort:
 		// Sort plan should not be checked here as there should only be one sort plan in a plan tree.
 		return false
-	case WithSrcPlan:
-		return pushOrder(x.Src(), items)
+	default:
+		child := x.GetChildByIndex(0)
+		if child != nil {
+			return pushOrder(child, items)
+		}
 	}
 	return false
 }
@@ -728,6 +734,9 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 	var p Plan
 	p = &Union{
 		Selects: sels,
+		basePlan: basePlan{
+			children: sels,
+		},
 	}
 	unionFields := union.GetResultFields()
 	for _, sel := range sels {
@@ -776,7 +785,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 
 func (b *planBuilder) buildDistinct(src Plan) Plan {
 	d := &Distinct{}
-	d.src = src
+	d.AddChild(src)
 	d.SetFields(src.Fields())
 	return d
 }
@@ -804,7 +813,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	if b.err != nil {
 		return nil
 	}
-	return &Update{OrderedList: orderedList, SelectPlan: p}
+	return &Update{OrderedList: orderedList, SelectPlan: p, basePlan: basePlan{children: []Plan{p}}}
 }
 
 func (b *planBuilder) buildUpdateLists(list []*ast.Assignment, fields []*ast.ResultField) []*ast.Assignment {
@@ -847,6 +856,7 @@ func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 		Tables:       tables,
 		IsMultiTable: del.IsMultiTable,
 		SelectPlan:   p,
+		basePlan:     basePlan{children: []Plan{p}},
 	}
 }
 
@@ -918,7 +928,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		filter := &Filter{Conditions: conditions}
-		filter.SetSrc(p)
+		filter.AddChild(p)
 		p = filter
 	}
 	return p
@@ -940,6 +950,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	if insert.Select != nil {
 		insertPlan.SelectPlan = b.build(insert.Select)
+		insertPlan.AddChild(insertPlan.SelectPlan)
 		if b.err != nil {
 			return nil
 		}
@@ -960,6 +971,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		return nil
 	}
 	p := &Explain{StmtPlan: targetPlan}
+	p.AddChild(targetPlan)
 	p.SetFields(buildExplainFields())
 	return p
 }
