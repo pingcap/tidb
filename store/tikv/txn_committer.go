@@ -113,7 +113,7 @@ func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func([][]byte) error) e
 }
 
 func (c *txnCommitter) keyValueSize(key []byte) int {
-	size := len(key)
+	size := c.keySize(key)
 	if mutation := c.mutations[string(key)]; mutation != nil {
 		size += len(mutation.Value)
 	}
@@ -287,6 +287,8 @@ func (c *txnCommitter) Commit() error {
 	return nil
 }
 
+// TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's
+// Key+Value size below 512KB.
 const txnCommitBatchSize = 512 * 1024
 
 // batchIterfn wraps an iteration function and returns a new one that iterates
