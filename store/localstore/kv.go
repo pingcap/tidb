@@ -36,15 +36,13 @@ const (
 	lowerWaterMark = 10 // second
 )
 
-// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
-// if such key is not found.
-func (s *dbStore) Seek(key []byte, startTS uint64) ([]byte, []byte, error) {
+func (s *dbStore) prepareSeek(startTS uint64) error {
 	for {
 		var conflict bool
 		s.mu.RLock()
 		if s.closed {
 			s.mu.RUnlock()
-			return nil, nil, ErrDBClosed
+			return ErrDBClosed
 		}
 		if s.committingTS != 0 && s.committingTS < startTS {
 			// We not sure if we can read the committing value,
@@ -58,12 +56,31 @@ func (s *dbStore) Seek(key []byte, startTS uint64) ([]byte, []byte, error) {
 			time.Sleep(time.Microsecond)
 			continue
 		}
-		// No conflict, safe to seek.
-		break
+		return nil
+	}
+}
+
+// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
+// if such key is not found.
+func (s *dbStore) Seek(key []byte, startTS uint64) ([]byte, []byte, error) {
+	err := s.prepareSeek(startTS)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	key, val, err := s.db.Seek(key)
 	s.wg.Done()
 	return key, val, err
+}
+
+// SeekReverse searches for the first key in the engine which is less than key in byte order.
+// Returns (nil, nil, ErrNotFound) if such key is not found.
+func (s *dbStore) SeekReverse(key []byte, startTS uint64) ([]byte, []byte, error) {
+	err := s.prepareSeek(startTS)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	s.wg.Done()
+	return s.db.SeekReverse(key)
 }
 
 // Commit writes the changed data in Batch.

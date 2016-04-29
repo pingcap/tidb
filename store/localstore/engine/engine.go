@@ -39,6 +39,9 @@ type DB interface {
 	// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
 	// if such key is not found.
 	Seek(key []byte) ([]byte, []byte, error)
+	// SeekReverse searches for the first key in the engine which is less than key in byte order, returns (nil, nil, ErrNotFound)
+	// if such key is not found. If key is nil, the last key is returned.
+	SeekReverse(key []byte) ([]byte, []byte, error)
 	// NewBatch creates a Batch for writing.
 	NewBatch() Batch
 	// Commit writes the changed data in Batch.

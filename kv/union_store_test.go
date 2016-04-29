@@ -87,6 +87,31 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
 }
 
+func (s *testUnionStoreSuite) TestSeekReverse(c *C) {
+	defer testleak.AfterTest(c)()
+	s.store.Set([]byte("1"), []byte("1"))
+	s.store.Set([]byte("2"), []byte("2"))
+	s.store.Set([]byte("3"), []byte("3"))
+
+	iter, err := s.us.SeekReverse(nil)
+	c.Assert(err, IsNil)
+	checkIterator(c, iter, [][]byte{[]byte("3"), []byte("2"), []byte("1")}, [][]byte{[]byte("3"), []byte("2"), []byte("1")})
+
+	iter, err = s.us.SeekReverse([]byte("3"))
+	c.Assert(err, IsNil)
+	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1")}, [][]byte{[]byte("2"), []byte("1")})
+
+	s.us.Set([]byte("0"), []byte("0"))
+	iter, err = s.us.SeekReverse([]byte("3"))
+	c.Assert(err, IsNil)
+	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1"), []byte("0")}, [][]byte{[]byte("2"), []byte("1"), []byte("0")})
+
+	s.us.Delete([]byte("1"))
+	iter, err = s.us.SeekReverse([]byte("3"))
+	c.Assert(err, IsNil)
+	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
+}
+
 func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))

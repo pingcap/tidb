@@ -50,7 +50,6 @@ func newTxn(s *dbStore, ver kv.Version) *dbTxn {
 }
 
 // Implement transaction interface
-
 func (txn *dbTxn) Get(k kv.Key) ([]byte, error) {
 	log.Debugf("[kv] get key:% x, txn:%d", k, txn.tid)
 	return txn.us.Get(k)

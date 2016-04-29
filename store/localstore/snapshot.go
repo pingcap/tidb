@@ -14,7 +14,10 @@
 package localstore
 
 import (
+	"bytes"
+
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/terror"
@@ -97,6 +100,34 @@ func (s *dbSnapshot) mvccSeek(key kv.Key, exact bool) (kv.Key, []byte, error) {
 	}
 }
 
+// reverseMvccSeek seeks for the first key in db which has a k < key and a version <=
+// snapshot's version, returns kv.ErrNotExist if such key is not found.
+func (s *dbSnapshot) reverseMvccSeek(key kv.Key) (kv.Key, []byte, error) {
+	for {
+		var mvccKey []byte
+		if len(key) != 0 {
+			mvccKey = MvccEncodeVersionKey(key, kv.MaxVersion)
+		}
+		revMvccKey, _, err := s.store.SeekReverse(mvccKey, s.version.Ver)
+		if err != nil {
+			if terror.ErrorEqual(err, engine.ErrNotFound) {
+				return nil, nil, kv.ErrNotExist
+			}
+			return nil, nil, errors.Trace(err)
+		}
+		revKey, _, err := MvccDecode(revMvccKey)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		resultKey, v, err := s.mvccSeek(revKey, true)
+		if terror.ErrorEqual(err, kv.ErrNotExist) {
+			key = revKey
+			continue
+		}
+		return resultKey, v, err
+	}
+}
+
 func (s *dbSnapshot) Get(key kv.Key) ([]byte, error) {
 	_, v, err := s.mvccSeek(key, true)
 	if err != nil {
@@ -120,27 +151,40 @@ func (s *dbSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 }
 
 func (s *dbSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	it, err := newDBIter(s, k)
+	it, err := newDBIter(s, k, false)
 	return it, errors.Trace(err)
 }
 
 func (s *dbSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	// TODO: implement Prev.
-	return nil, kv.ErrNotImplemented
+	it, err := newDBIter(s, k, true)
+	return it, errors.Trace(err)
 }
 
 func (s *dbSnapshot) Release() {
 }
 
 type dbIter struct {
-	s     *dbSnapshot
-	valid bool
-	k     kv.Key
-	v     []byte
+	s       *dbSnapshot
+	valid   bool
+	k       kv.Key
+	v       []byte
+	reverse bool
 }
 
-func newDBIter(s *dbSnapshot, startKey kv.Key) (*dbIter, error) {
-	k, v, err := s.mvccSeek(startKey, false)
+func newDBIter(s *dbSnapshot, key kv.Key, reverse bool) (*dbIter, error) {
+	var (
+		k   kv.Key
+		v   []byte
+		err error
+	)
+	if reverse {
+		k, v, err = s.reverseMvccSeek(key)
+		if bytes.Equal([]byte(k), []byte(key)) {
+			log.Errorf("rev seek got equal key %x", k)
+		}
+	} else {
+		k, v, err = s.mvccSeek(key, false)
+	}
 	if err != nil {
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			err = nil
@@ -149,15 +193,22 @@ func newDBIter(s *dbSnapshot, startKey kv.Key) (*dbIter, error) {
 	}
 
 	return &dbIter{
-		s:     s,
-		valid: true,
-		k:     k,
-		v:     v,
+		s:       s,
+		valid:   true,
+		k:       k,
+		v:       v,
+		reverse: reverse,
 	}, nil
 }
 
 func (it *dbIter) Next() error {
-	k, v, err := it.s.mvccSeek(it.k.Next(), false)
+	var k, v []byte
+	var err error
+	if it.reverse {
+		k, v, err = it.s.reverseMvccSeek(it.k)
+	} else {
+		k, v, err = it.s.mvccSeek(it.k.Next(), false)
+	}
 	if err != nil {
 		it.valid = false
 		if !terror.ErrorEqual(err, kv.ErrNotExist) {
