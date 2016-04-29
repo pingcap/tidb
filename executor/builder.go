@@ -67,7 +67,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.Explain:
 		return b.buildExplain(v)
 	case *plan.Filter:
-		src := b.build(v.Src())
+		src := b.build(v.GetChildByIndex(0))
 		return b.buildFilter(src, v.Conditions)
 	case *plan.Having:
 		return b.buildHaving(v)
@@ -293,7 +293,7 @@ func (b *executorBuilder) joinConditions(conditions []ast.ExprNode) ast.ExprNode
 }
 
 func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
-	src := b.build(v.Src())
+	src := b.build(v.GetChildByIndex(0))
 	if autocommit.ShouldAutocommit(b.ctx) {
 		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
 		// is disabled (either by beginning transaction with START TRANSACTION or by setting
@@ -310,7 +310,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.SelectLock) Executor {
 }
 
 func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
-	src := b.build(v.Src())
+	src := b.build(v.GetChildByIndex(0))
 	e := &SelectFieldsExec{
 		Src:          src,
 		ResultFields: v.Fields(),
@@ -320,7 +320,7 @@ func (b *executorBuilder) buildSelectFields(v *plan.SelectFields) Executor {
 }
 
 func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
-	src := b.build(v.Src())
+	src := b.build(v.GetChildByIndex(0))
 	e := &AggregateExec{
 		Src:          src,
 		ResultFields: v.Fields(),
@@ -332,12 +332,12 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 }
 
 func (b *executorBuilder) buildHaving(v *plan.Having) Executor {
-	src := b.build(v.Src())
+	src := b.build(v.GetChildByIndex(0))
 	return b.buildFilter(src, v.Conditions)
 }
 
 func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
-	src := b.build(v.Src())
+	src := b.build(v.GetChildByIndex(0))
 	e := &SortExec{
 		Src:     src,
 		ByItems: v.ByItems,
@@ -348,7 +348,7 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 }
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
-	src := b.build(v.Src())
+	src := b.build(v.GetChildByIndex(0))
 
 	if v.Count > math.MaxUint64-v.Offset {
 		v.Count = math.MaxUint64 - v.Offset
@@ -374,7 +374,7 @@ func (b *executorBuilder) buildUnion(v *plan.Union) Executor {
 }
 
 func (b *executorBuilder) buildDistinct(v *plan.Distinct) Executor {
-	return &DistinctExec{Src: b.build(v.Src())}
+	return &DistinctExec{Src: b.build(v.GetChildByIndex(0))}
 }
 
 func (b *executorBuilder) buildPrepare(v *plan.Prepare) Executor {

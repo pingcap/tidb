@@ -29,49 +29,46 @@ const (
 )
 
 // CostEstimator estimates the cost of a plan.
-type costEstimator struct {
-}
 
 // Enter implements Visitor Enter interface.
-func (c *costEstimator) Enter(p Plan) (Plan, bool) {
-	return p, false
-}
-
-// Leave implements Visitor Leave interface.
-func (c *costEstimator) Leave(p Plan) (Plan, bool) {
+func estimate(p Plan) {
+	var child Plan
+	for _, c := range p.GetChildren() {
+		estimate(c)
+		child = c
+	}
 	switch v := p.(type) {
 	case *IndexScan:
-		c.indexScan(v)
+		indexScan(v)
 	case *Limit:
-		v.rowCount = v.Src().RowCount()
-		v.startupCost = v.Src().StartupCost()
-		v.totalCost = v.Src().TotalCost()
+		v.rowCount = child.RowCount()
+		v.startupCost = child.StartupCost()
+		v.totalCost = child.TotalCost()
 	case *SelectFields:
-		if v.Src() != nil {
-			v.startupCost = v.Src().StartupCost()
-			v.rowCount = v.Src().RowCount()
-			v.totalCost = v.Src().TotalCost()
+		if child != nil {
+			v.startupCost = child.StartupCost()
+			v.rowCount = child.RowCount()
+			v.totalCost = child.TotalCost()
 		}
 	case *SelectLock:
-		v.startupCost = v.Src().StartupCost()
-		v.rowCount = v.Src().RowCount()
-		v.totalCost = v.Src().TotalCost()
+		v.startupCost = child.StartupCost()
+		v.rowCount = child.RowCount()
+		v.totalCost = child.TotalCost()
 	case *Sort:
 		// Sort plan must retrieve all the rows before returns the first row.
-		v.startupCost = v.Src().TotalCost() + v.Src().RowCount()*SortCost
+		v.startupCost = child.TotalCost() + child.RowCount()*SortCost
 		if v.limit == 0 {
-			v.rowCount = v.Src().RowCount()
+			v.rowCount = child.RowCount()
 		} else {
-			v.rowCount = math.Min(v.Src().RowCount(), v.limit)
+			v.rowCount = math.Min(child.RowCount(), v.limit)
 		}
 		v.totalCost = v.startupCost + v.rowCount*RowCost
 	case *TableScan:
-		c.tableScan(v)
+		tableScan(v)
 	}
-	return p, true
 }
 
-func (c *costEstimator) tableScan(v *TableScan) {
+func tableScan(v *TableScan) {
 	var rowCount float64 = FullRangeCount
 	for _, con := range v.AccessConditions {
 		rowCount *= guesstimateFilterRate(con)
@@ -86,7 +83,7 @@ func (c *costEstimator) tableScan(v *TableScan) {
 	v.totalCost = v.rowCount * RowCost
 }
 
-func (c *costEstimator) indexScan(v *IndexScan) {
+func indexScan(v *IndexScan) {
 	var rowCount float64 = FullRangeCount
 	for _, con := range v.AccessConditions {
 		rowCount *= guesstimateFilterRate(con)
@@ -103,7 +100,6 @@ func (c *costEstimator) indexScan(v *IndexScan) {
 
 // EstimateCost estimates the cost of the plan.
 func EstimateCost(p Plan) float64 {
-	var estimator costEstimator
-	p.Accept(&estimator)
+	estimate(p)
 	return p.TotalCost()
 }
