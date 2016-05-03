@@ -182,8 +182,8 @@ func (s *testSuite) TestPrevSeek(c *C) {
 
 	k, v, err = s.db.SeekReverse([]byte("b"))
 	c.Assert(err, NotNil)
-	c.Assert(string(k), Equals, "")
-	c.Assert(string(v), Equals, "")
+	c.Assert(k, IsNil)
+	c.Assert(v, IsNil)
 
 	k, v, err = s.db.SeekReverse([]byte("a"))
 	c.Assert(err, NotNil)
