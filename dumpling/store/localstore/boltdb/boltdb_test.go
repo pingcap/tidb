@@ -35,7 +35,7 @@ type testSuite struct {
 
 const testPath = "/tmp/test-tidb-boltdb"
 
-func (s *testSuite) SetUpSuite(c *C) {
+func (s *testSuite) SetUpTest(c *C) {
 	var (
 		d   Driver
 		err error
@@ -44,7 +44,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TearDownSuite(c *C) {
+func (s *testSuite) TearDownTest(c *C) {
 	s.db.Close()
 	os.Remove(testPath)
 }
@@ -147,6 +147,45 @@ func (s *testSuite) TestSeek(c *C) {
 	c.Assert(v, BytesEquals, []byte("2"))
 
 	k, v, err = s.db.Seek([]byte("c1"))
+	c.Assert(err, NotNil)
+	c.Assert(k, IsNil)
+	c.Assert(v, IsNil)
+}
+
+func (s *testSuite) TestPrevSeek(c *C) {
+	defer testleak.AfterTest(c)()
+	b := s.db.NewBatch()
+	b.Put([]byte("b"), []byte("1"))
+	b.Put([]byte("c"), []byte("2"))
+	err := s.db.Commit(b)
+	c.Assert(err, IsNil)
+
+	k, v, err := s.db.SeekReverse(nil)
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("c"))
+	c.Assert(v, BytesEquals, []byte("2"))
+
+	k, v, err = s.db.SeekReverse([]byte("d"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("c"))
+	c.Assert(v, BytesEquals, []byte("2"))
+
+	k, v, err = s.db.SeekReverse([]byte("c"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("b"))
+	c.Assert(v, BytesEquals, []byte("1"))
+
+	k, v, err = s.db.SeekReverse([]byte("bb"))
+	c.Assert(err, IsNil)
+	c.Assert(k, BytesEquals, []byte("b"))
+	c.Assert(v, BytesEquals, []byte("1"))
+
+	k, v, err = s.db.SeekReverse([]byte("b"))
+	c.Assert(err, NotNil)
+	c.Assert(k, IsNil)
+	c.Assert(v, IsNil)
+
+	k, v, err = s.db.SeekReverse([]byte("a"))
 	c.Assert(err, NotNil)
 	c.Assert(k, IsNil)
 	c.Assert(v, IsNil)

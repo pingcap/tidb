@@ -77,6 +77,33 @@ func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	return key, value, nil
 }
 
+func (d *db) SeekReverse(startKey []byte) ([]byte, []byte, error) {
+	var key, value []byte
+	err := d.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		c := b.Cursor()
+		var k, v []byte
+		if startKey == nil {
+			k, v = c.Last()
+		} else {
+			c.Seek(startKey)
+			k, v = c.Prev()
+		}
+		if k != nil {
+			key, value = bytes.CloneBytes(k), bytes.CloneBytes(v)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if key == nil {
+		return nil, nil, errors.Trace(engine.ErrNotFound)
+	}
+	return key, value, nil
+}
+
 func (d *db) NewBatch() engine.Batch {
 	return &batch{}
 }
