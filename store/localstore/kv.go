@@ -79,8 +79,9 @@ func (s *dbStore) SeekReverse(key []byte, startTS uint64) ([]byte, []byte, error
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	key, val, err := s.db.SeekReverse(key)
 	s.wg.Done()
-	return s.db.SeekReverse(key)
+	return key, val, err
 }
 
 // Commit writes the changed data in Batch.
