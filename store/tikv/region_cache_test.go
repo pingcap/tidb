@@ -188,7 +188,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	c.Assert(s.cache.regions, HasLen, 1)
 }
 
-func (s *testRegionCacheSuite) TestNextPeer(c *C) {
+func (s *testRegionCacheSuite) TestNextStore(c *C) {
 	region, err := s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(region.curStoreIdx, Equals, 0)
