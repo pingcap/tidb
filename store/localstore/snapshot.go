@@ -14,10 +14,7 @@
 package localstore
 
 import (
-	"bytes"
-
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/terror"
@@ -179,9 +176,6 @@ func newDBIter(s *dbSnapshot, key kv.Key, reverse bool) (*dbIter, error) {
 	)
 	if reverse {
 		k, v, err = s.reverseMvccSeek(key)
-		if bytes.Equal([]byte(k), []byte(key)) {
-			log.Errorf("rev seek got equal key %x", k)
-		}
 	} else {
 		k, v, err = s.mvccSeek(key, false)
 	}
