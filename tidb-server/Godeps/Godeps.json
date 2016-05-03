@@ -155,43 +155,43 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "50ccf55d2930f378d3803be9d040c6e6928b5d47"
+			"Rev": "de315368031e2c446f06d90db2971627c040bbb1"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
