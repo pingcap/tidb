@@ -153,11 +153,12 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 	}
 
 	e := &TableScanExec{
-		t:          table,
-		fields:     v.Fields(),
-		ctx:        b.ctx,
-		ranges:     v.Ranges,
-		seekHandle: math.MinInt64,
+		t:           table,
+		tableAsName: v.TableAsName,
+		fields:      v.Fields(),
+		ctx:         b.ctx,
+		ranges:      v.Ranges,
+		seekHandle:  math.MinInt64,
 	}
 	return b.buildFilter(e, v.FilterConditions)
 }
@@ -211,6 +212,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		}
 		return b.buildFilter(e, remained)
 	}
+
 	var idx *column.IndexedCol
 	for _, val := range tbl.Indices() {
 		if val.IndexInfo.Name.L == v.Index.Name.L {
@@ -219,12 +221,13 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		}
 	}
 	e := &IndexScanExec{
-		tbl:        tbl,
-		idx:        idx,
-		fields:     v.Fields(),
-		ctx:        b.ctx,
-		Desc:       v.Desc,
-		valueTypes: make([]*types.FieldType, len(idx.Columns)),
+		tbl:         tbl,
+		tableAsName: v.TableAsName,
+		idx:         idx,
+		fields:      v.Fields(),
+		ctx:         b.ctx,
+		Desc:        v.Desc,
+		valueTypes:  make([]*types.FieldType, len(idx.Columns)),
 	}
 
 	for i, ic := range idx.Columns {

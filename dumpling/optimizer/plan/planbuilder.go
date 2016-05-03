@@ -341,6 +341,13 @@ func (b *planBuilder) buildTableDual(sel *ast.SelectStmt) Plan {
 	return dual
 }
 
+func getTableAsName(fields []*ast.ResultField) *model.CIStr {
+	if len(fields) > 0 {
+		return &fields[0].TableAsName
+	}
+	return nil
+}
+
 func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 	tn := path.table
 	p := &TableScan{
@@ -350,6 +357,7 @@ func (b *planBuilder) buildTableScanPlan(path *joinPath) Plan {
 	// Equal condition contains a column from previous joined table.
 	p.RefAccess = len(path.eqConds) > 0
 	p.SetFields(tn.GetResultFields())
+	p.TableAsName = getTableAsName(p.Fields())
 	var pkName model.CIStr
 	if p.Table.PKIsHandle {
 		for _, colInfo := range p.Table.Columns {
@@ -378,6 +386,7 @@ func (b *planBuilder) buildIndexScanPlan(index *model.IndexInfo, path *joinPath)
 	ip := &IndexScan{Table: tn.TableInfo, Index: index, TableName: tn}
 	ip.RefAccess = len(path.eqConds) > 0
 	ip.SetFields(tn.GetResultFields())
+	ip.TableAsName = getTableAsName(ip.Fields())
 
 	condMap := map[ast.ExprNode]bool{}
 	for _, con := range path.conditions {
