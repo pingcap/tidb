@@ -187,6 +187,11 @@ func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
 	return pairs
 }
 
+func regionContains(startKey []byte, endKey []byte, key []byte) bool {
+	return bytes.Compare(startKey, key) <= 0 &&
+		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
+}
+
 // Scan reads up to limit numbers of Pairs from a key.
 func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
 	s.mu.RLock()
