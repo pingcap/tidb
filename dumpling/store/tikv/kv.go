@@ -183,15 +183,15 @@ func (s *tikvStore) SendKVReq(req *pb.Request, region *requestRegion) (*pb.Respo
 		req.Context = region.GetContext()
 		resp, err := client.SendKVReq(req)
 		if err != nil {
-			log.Warnf("send tikv request error: %v, try next peer later", err)
-			s.regionCache.NextPeer(region.GetID())
+			log.Warnf("send tikv request error: %v, try next store later", err)
+			s.regionCache.NextStore(region.GetID())
 			continue
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			// Retry if error is `NotLeader`.
 			if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 				log.Warnf("tikv reports `NotLeader`: %s, retry later", notLeader.String())
-				s.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
+				s.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeaderStoreId())
 				continue
 			}
 			// For other errors, we only drop cache here.

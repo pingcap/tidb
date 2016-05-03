@@ -90,7 +90,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, uint64(3))
-	c.Assert(r.curPeerIdx, Equals, 1)
+	c.Assert(r.curStoreIdx, Equals, 1)
 	c.Assert(r.GetAddress(), Equals, "addr2")
 }
 
@@ -106,7 +106,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, uint64(3))
-	c.Assert(r.curPeerIdx, Equals, 0)
+	c.Assert(r.curStoreIdx, Equals, 0)
 	c.Assert(r.GetAddress(), Equals, "addr4")
 }
 
@@ -188,31 +188,31 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	c.Assert(s.cache.regions, HasLen, 1)
 }
 
-func (s *testRegionCacheSuite) TestNextPeer(c *C) {
+func (s *testRegionCacheSuite) TestNextStore(c *C) {
 	region, err := s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	c.Assert(region.curPeerIdx, Equals, 0)
+	c.Assert(region.curStoreIdx, Equals, 0)
 
-	s.cache.NextPeer(3)
+	s.cache.NextStore(3)
 	region, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	c.Assert(region.curPeerIdx, Equals, 1)
+	c.Assert(region.curStoreIdx, Equals, 1)
 
-	s.cache.NextPeer(3)
+	s.cache.NextStore(3)
 	region, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	// Out of range of Peers, so get Region again and pick Peers[0] as leader.
-	c.Assert(region.curPeerIdx, Equals, 0)
+	// Out of range of Stores, so get Region again and pick Stores[0] as leader.
+	c.Assert(region.curStoreIdx, Equals, 0)
 
 	s.pd.removeRegion(3)
-	// regionCache still has more Peers, so pick next peer.
-	s.cache.NextPeer(3)
+	// regionCache still has more Stores, so pick next store.
+	s.cache.NextStore(3)
 	region, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	c.Assert(region.curPeerIdx, Equals, 1)
+	c.Assert(region.curStoreIdx, Equals, 1)
 
 	// region 3 is removed so can't get Region from pd.
-	s.cache.NextPeer(3)
+	s.cache.NextStore(3)
 	region, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, NotNil)
 	c.Assert(region, IsNil)
@@ -243,19 +243,12 @@ func (c *mockPDClient) removeStore(id uint64) {
 	delete(c.stores, id)
 }
 
-func (c *mockPDClient) setRegion(id uint64, startKey, endKey []byte, peers []uint64) {
-	var metaPeers []*metapb.Peer
-	for _, id := range peers {
-		metaPeers = append(metaPeers, &metapb.Peer{
-			Id:      proto.Uint64(id),
-			StoreId: proto.Uint64(id),
-		})
-	}
+func (c *mockPDClient) setRegion(id uint64, startKey, endKey []byte, stores []uint64) {
 	c.regions[id] = &metapb.Region{
 		Id:       proto.Uint64(id),
 		StartKey: startKey,
 		EndKey:   endKey,
-		Peers:    metaPeers,
+		StoreIds: stores,
 	}
 }
 
