@@ -694,3 +694,47 @@ func (s *testPlanSuite) TestMultiColumnIndex(c *C) {
 		c.Assert(idxScan.Ranges[0].LowVal, HasLen, ca.usedColumnCount)
 	}
 }
+
+func (s *testPlanSuite) TestIndexHint(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		sql     string
+		explain string
+	}{
+		{
+			"select * from t1 force index (i1) where t1.i1 > 0 and t1.i2 = 0",
+			"Index(t1.i1)->Fields",
+		},
+		{
+			"select * from t1 use index (i1) where t1.i1 > 0 and t1.i2 = 0",
+			"Index(t1.i1)->Fields",
+		},
+		{
+			"select * from t1 ignore index (i2) where t1.i1 > 0 and t1.i2 = 0",
+			"Index(t1.i1)->Fields",
+		},
+		{
+			"select * from t1 use index (i1, i2) where t1.i1 > 0 and t1.i2 between 0 and 2 and t1.i3 = 0",
+			"Index(t1.i2)->Fields",
+		},
+		{
+			"select * from t1 ignore index (i1, i2, i3) where t1.i1 = 0 and t1.i2 = 0 and t1.i3 = 0",
+			"Table(t1)->Fields",
+		},
+		{
+			"select * from t1 use index () where t1.i1 = 0 and t1.i2 = 0 and t1.i3 = 0",
+			"Table(t1)->Fields",
+		},
+	}
+	for _, ca := range cases {
+		comment := Commentf("for %s", ca.sql)
+		s, err := parser.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		stmt := s.(*ast.SelectStmt)
+		mockJoinResolve(c, stmt)
+		ast.SetFlag(stmt)
+		p, err := BuildPlan(stmt, nil)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.explain, comment)
+	}
+}
