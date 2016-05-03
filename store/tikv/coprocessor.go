@@ -167,17 +167,17 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		}
 		resp, err := client.SendCopReq(req)
 		if err != nil {
-			it.store.regionCache.NextPeer(task.region.GetID())
+			it.store.regionCache.NextStore(task.region.GetID())
 			err = it.rebuildCurrentTask()
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			log.Warnf("send coprocessor request error: %v, try next peer later", err)
+			log.Warnf("send coprocessor request error: %v, try next store later", err)
 			continue
 		}
 		if e := resp.GetRegionError(); e != nil {
 			if notLeader := e.GetNotLeader(); notLeader != nil {
-				it.store.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
+				it.store.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeaderStoreId())
 			} else {
 				it.store.regionCache.DropRegion(task.region.GetID())
 			}

@@ -57,72 +57,69 @@ func (c *RegionCache) DropRegion(regionID uint64) {
 	delete(c.regions, regionID)
 }
 
-// NextPeer picks next peer as new leader, if out of range of peers delete region.
-func (c *RegionCache) NextPeer(regionID uint64) {
+// NextStore picks next store as new leader, if out of range of stores delete region.
+func (c *RegionCache) NextStore(regionID uint64) {
 	// A and B get the same region and current leader is 1, they both will pick
-	// peer 2 as leader.
+	// store 2 as leader.
 	c.mu.RLock()
 	region, ok := c.regions[regionID]
 	c.mu.RUnlock()
 	if !ok {
 		return
 	}
-	if leader, err := region.NextPeer(); err != nil {
+	if leader, err := region.NextStore(); err != nil {
 		c.mu.Lock()
 		delete(c.regions, regionID)
 		c.mu.Unlock()
 	} else {
-		c.UpdateLeader(regionID, leader.GetId())
+		c.UpdateLeader(regionID, leader)
 	}
 }
 
-// UpdateLeader update some region cache with newer leader info.
-func (c *RegionCache) UpdateLeader(regionID, leaderID uint64) {
+// UpdateLeader update some region cache with newer leader store ID.
+func (c *RegionCache) UpdateLeader(regionID, leaderStoreID uint64) {
 	c.mu.RLock()
 	old, ok := c.regions[regionID]
 	c.mu.RUnlock()
 	if !ok {
-		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderID)
+		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
 		return
 	}
 	var (
-		peer  *metapb.Peer
 		store *metapb.Store
 		err   error
 	)
 
-	curPeerIdx := -1
-	for idx, p := range old.meta.Peers {
-		if p.GetId() == leaderID {
-			peer = p
+	curStoreIdx := -1
+	for idx, storeID := range old.meta.StoreIds {
+		if storeID == leaderStoreID {
 			// No need update leader.
-			if idx == old.curPeerIdx {
+			if idx == old.curStoreIdx {
 				return
 			}
-			curPeerIdx = idx
+			curStoreIdx = idx
 			break
 		}
 	}
-	if peer != nil {
-		store, err = c.pdClient.GetStore(peer.GetStoreId())
+	if curStoreIdx != -1 {
+		store, err = c.pdClient.GetStore(leaderStoreID)
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.regions, regionID)
 
-	if peer == nil || err != nil {
-		// Can't find the peer in cache, or error occurs when loading
+	if curStoreIdx == -1 || err != nil {
+		// Can't find the store in cache, or error occurs when loading
 		// store from PD.
 		// Leave the region deleted, it will be filled later.
 		return
 	}
 
 	c.regions[regionID] = &Region{
-		meta:       old.meta,
-		peer:       peer,
-		addr:       store.GetAddress(),
-		curPeerIdx: curPeerIdx,
+		meta:        old.meta,
+		addr:        store.GetAddress(),
+		curStoreIdx: curStoreIdx,
 	}
 }
 
@@ -139,28 +136,27 @@ func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 	return nil
 }
 
-// loadRegion get region from pd client, and pick the random peer as leader.
+// loadRegion get region from pd client, and pick the random store as leader.
 func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	meta, err := c.pdClient.GetRegion(key)
 	if err != nil {
 		// We assume PD will recover soon.
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
-	if len(meta.Peers) == 0 {
-		return nil, errors.New("receive Region with no peer")
+	if len(meta.StoreIds) == 0 {
+		return nil, errors.New("receive Region with no store")
 	}
-	curPeerIdx := 0
-	peer := meta.Peers[curPeerIdx]
-	store, err := c.pdClient.GetStore(peer.GetStoreId())
+	curStoreIdx := 0
+	storeID := meta.StoreIds[curStoreIdx]
+	store, err := c.pdClient.GetStore(storeID)
 	if err != nil {
 		// We assume PD will recover soon.
 		return nil, errors.Annotate(err, txnRetryableMark)
 	}
 	region := &Region{
-		meta:       meta,
-		peer:       peer,
-		addr:       store.GetAddress(),
-		curPeerIdx: curPeerIdx,
+		meta:        meta,
+		addr:        store.GetAddress(),
+		curStoreIdx: curStoreIdx,
 	}
 
 	c.mu.Lock()
@@ -175,10 +171,9 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 
 // Region store region info. Region is a readonly class.
 type Region struct {
-	meta       *metapb.Region
-	peer       *metapb.Peer
-	addr       string
-	curPeerIdx int
+	meta        *metapb.Region
+	addr        string
+	curStoreIdx int
 }
 
 // GetID return id.
@@ -206,7 +201,6 @@ func (r *Region) GetContext() *kvrpcpb.Context {
 	return &kvrpcpb.Context{
 		RegionId:    r.meta.Id,
 		RegionEpoch: r.meta.RegionEpoch,
-		Peer:        r.peer,
 	}
 }
 
@@ -217,13 +211,13 @@ func (r *Region) Contains(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) < 0 || len(r.meta.GetEndKey()) == 0)
 }
 
-// NextPeer picks next peer as leader, if out of range return error.
-func (r *Region) NextPeer() (*metapb.Peer, error) {
-	nextPeerIdx := r.curPeerIdx + 1
-	if nextPeerIdx >= len(r.meta.Peers) {
-		return nil, errors.New("out of range of peer")
+// NextStore picks next store as leader, if out of range return error.
+func (r *Region) NextStore() (uint64, error) {
+	nextStoreIdx := r.curStoreIdx + 1
+	if nextStoreIdx >= len(r.meta.StoreIds) {
+		return 0, errors.New("out of range of store")
 	}
-	return r.meta.Peers[nextPeerIdx], nil
+	return r.meta.StoreIds[nextStoreIdx], nil
 }
 
 // regionMissBackoff is for region cache miss retry.
