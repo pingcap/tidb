@@ -12,9 +12,6 @@ type dbClient struct {
 	regionInfo []*regionInfo
 }
 
-// SupportDesc represents whether kv engine support read index reversely.
-var SupportDesc = true
-
 func (c *dbClient) Send(req *kv.Request) kv.Response {
 	it := &response{
 		client:      c,
@@ -44,9 +41,7 @@ func (c *dbClient) SupportRequestType(reqType, subType int64) bool {
 		return supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeIndex:
 		switch subType {
-		case kv.ReqSubTypeDesc:
-			return SupportDesc
-		case kv.ReqSubTypeBasic:
+		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
 			return true
 		}
 	}
@@ -180,7 +175,7 @@ func buildRegionTasks(client *dbClient, req *kv.Request) (tasks []*task) {
 			infoCursor++
 		}
 	}
-	if req.Desc && SupportDesc {
+	if req.Desc {
 		for i := 0; i < len(tasks)/2; i++ {
 			j := len(tasks) - i - 1
 			tasks[i], tasks[j] = tasks[j], tasks[i]

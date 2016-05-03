@@ -25,14 +25,16 @@ type UnionIter struct {
 
 	curIsDirty bool
 	isValid    bool
+	reverse    bool
 }
 
-func newUnionIter(dirtyIt Iterator, snapshotIt Iterator) *UnionIter {
+func newUnionIter(dirtyIt Iterator, snapshotIt Iterator, reverse bool) *UnionIter {
 	it := &UnionIter{
 		dirtyIt:       dirtyIt,
 		snapshotIt:    snapshotIt,
 		dirtyValid:    dirtyIt.Valid(),
 		snapshotValid: snapshotIt.Valid(),
+		reverse:       reverse,
 	}
 	it.updateCur()
 	return it
@@ -78,6 +80,9 @@ func (iter *UnionIter) updateCur() {
 			snapshotKey := iter.snapshotIt.Key()
 			dirtyKey := iter.dirtyIt.Key()
 			cmp := dirtyKey.Cmp(snapshotKey)
+			if iter.reverse {
+				cmp = -cmp
+			}
 			// if equal, means both have value
 			if cmp == 0 {
 				if len(iter.dirtyIt.Value()) == 0 {
