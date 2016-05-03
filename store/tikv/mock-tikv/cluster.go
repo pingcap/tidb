@@ -14,7 +14,6 @@
 package mocktikv
 
 import (
-	"bytes"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -26,11 +25,11 @@ import (
 // 1) Region: A Region is a fragment of TiKV's data whose range is [start, end).
 //    The data of a Region is duplicated to multiple Peers and distributed in
 //    multiple Stores.
-// 2) Peer: A Peer is a replica of a Region's data. All peers of a Region forms
+// 2) Peer: A Peer is a replica of a Region's data. All peers of a Region form
 //    a group, each group elects a Leader to provide services.
 // 3) Store: A Store is a storage/service node. Try to think it as a TiKV server
-//    process. It only responds to client's request if the request's Region's
-//    leader Peer is on the Store.
+//    process. Only the store with request's Region's leader Peer could respond
+//    to client's request.
 type Cluster struct {
 	mu      sync.RWMutex
 	id      uint64
@@ -39,7 +38,7 @@ type Cluster struct {
 }
 
 // NewCluster creates an empty cluster. It needs to be bootstrapped before
-// service.
+// providing service.
 func NewCluster() *Cluster {
 	return &Cluster{
 		stores:  make(map[uint64]*Store),
@@ -125,10 +124,6 @@ func (c *Cluster) GetRegion(regionID uint64) (*metapb.Region, uint64) {
 	return proto.Clone(r.meta).(*metapb.Region), r.leader
 }
 
-func regionContains(startKey, endKey, key []byte) bool {
-	return bytes.Compare(key, startKey) >= 0 && (endKey == nil || bytes.Compare(key, endKey) < 0)
-}
-
 // GetRegionByKey returns the Region whose range contains the key.
 func (c *Cluster) GetRegionByKey(key []byte) *metapb.Region {
 	c.mu.RLock()
@@ -144,37 +139,37 @@ func (c *Cluster) GetRegionByKey(key []byte) *metapb.Region {
 
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
 // bootstrap.
-func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderPeer uint64) {
+func (c *Cluster) Bootstrap(regionID uint64, storeIDs []uint64, leaderStoreID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.regions[regionID] = newRegion(regionID, storeIDs, peerIDs, leaderPeer)
+	c.regions[regionID] = newRegion(regionID, storeIDs, leaderStoreID)
 }
 
 // AddPeer adds a new Peer for the Region on the Store.
-func (c *Cluster) AddPeer(regionID, storeID, peerID uint64) {
+func (c *Cluster) AddPeer(regionID, storeID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.regions[regionID].addPeer(storeID, peerID)
+	c.regions[regionID].addPeer(storeID)
 }
 
 // RemovePeer removes the Peer from the Region. Note that if the Peer is leader,
 // the Region will have no leader before calling ChangeLeader().
-func (c *Cluster) RemovePeer(regionID uint64, peerID uint64) {
+func (c *Cluster) RemovePeer(regionID, storeID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.regions[regionID].removePeer(peerID)
+	c.regions[regionID].removePeer(storeID)
 }
 
 // ChangeLeader sets the Region's leader Peer. Caller should guarantee the Peer
 // exists.
-func (c *Cluster) ChangeLeader(regionID, leaderID uint64) {
+func (c *Cluster) ChangeLeader(regionID, leaderStoreID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.regions[regionID].changeLeader(leaderID)
+	c.regions[regionID].changeLeader(leaderStoreID)
 }
 
 // GiveUpLeader sets the Region's leader to 0. The Region will have no leader
@@ -184,11 +179,11 @@ func (c *Cluster) GiveUpLeader(regionID uint64) {
 }
 
 // Split splits a Region at the key and creates new Region.
-func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, newPeerIDs []uint64, leaderPeer uint64) {
+func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, leaderStoreID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	newRegion := c.regions[regionID].split(newRegionID, key, newPeerIDs, leaderPeer)
+	newRegion := c.regions[regionID].split(newRegionID, key, leaderStoreID)
 	c.regions[newRegionID] = newRegion
 }
 
@@ -198,50 +193,38 @@ type Region struct {
 	leader uint64
 }
 
-func newRegion(regionID uint64, storeIDs, peerIDs []uint64, leaderPeer uint64) *Region {
+func newRegion(regionID uint64, storeIDs []uint64, leaderStoreID uint64) *Region {
 	meta := &metapb.Region{
-		Id: proto.Uint64(regionID),
-	}
-	for i := range storeIDs {
-		meta.Peers = append(meta.Peers, &metapb.Peer{
-			Id:      proto.Uint64(peerIDs[i]),
-			StoreId: proto.Uint64(storeIDs[i]),
-		})
+		Id:       proto.Uint64(regionID),
+		StoreIds: storeIDs,
 	}
 	return &Region{
 		meta:   meta,
-		leader: leaderPeer,
+		leader: leaderStoreID,
 	}
 }
 
-func (r *Region) addPeer(storeID, peerID uint64) {
-	r.meta.Peers = append(r.meta.Peers, &metapb.Peer{
-		Id:      proto.Uint64(peerID),
-		StoreId: proto.Uint64(storeID),
-	})
+func (r *Region) addPeer(storeID uint64) {
+	r.meta.StoreIds = append(r.meta.StoreIds, storeID)
 	r.incConfVer()
 }
 
-func (r *Region) removePeer(peerID uint64) {
-	for i, peer := range r.meta.Peers {
-		if peer.GetId() == peerID {
-			r.meta.Peers = append(r.meta.Peers[:i], r.meta.Peers[i+1:]...)
+func (r *Region) removePeer(storeID uint64) {
+	for i, id := range r.meta.StoreIds {
+		if id == storeID {
+			r.meta.StoreIds = append(r.meta.StoreIds[:i], r.meta.StoreIds[i+1:]...)
 			break
 		}
 	}
 	r.incConfVer()
 }
 
-func (r *Region) changeLeader(leaderID uint64) {
-	r.leader = leaderID
+func (r *Region) changeLeader(leaderStoreID uint64) {
+	r.leader = leaderStoreID
 }
 
-func (r *Region) split(newRegionID uint64, key []byte, newPeerIDs []uint64, leaderPeer uint64) *Region {
-	var storeIDs []uint64
-	for _, peer := range r.meta.Peers {
-		storeIDs = append(storeIDs, peer.GetStoreId())
-	}
-	region := newRegion(newRegionID, storeIDs, newPeerIDs, leaderPeer)
+func (r *Region) split(newRegionID uint64, key []byte, leaderStoreID uint64) *Region {
+	region := newRegion(newRegionID, r.meta.StoreIds, leaderStoreID)
 	region.updateKeyRange(key, r.meta.EndKey)
 	r.updateKeyRange(r.meta.StartKey, key)
 	return region
