@@ -238,13 +238,14 @@ func (e *TableDualExec) Close() error {
 
 // TableScanExec represents a table scan executor.
 type TableScanExec struct {
-	t          table.Table
-	fields     []*ast.ResultField
-	iter       kv.Iterator
-	ctx        context.Context
-	ranges     []plan.TableRange // Disjoint close handle ranges.
-	seekHandle int64             // The handle to seek, should be initialized to math.MinInt64.
-	cursor     int               // The range cursor, used to locate to current range.
+	t           table.Table
+	tableAsName *model.CIStr
+	fields      []*ast.ResultField
+	iter        kv.Iterator
+	ctx         context.Context
+	ranges      []plan.TableRange // Disjoint close handle ranges.
+	seekHandle  int64             // The handle to seek, should be initialized to math.MinInt64.
+	cursor      int               // The range cursor, used to locate to current range.
 }
 
 // Fields implements Executor Fields interface.
@@ -335,8 +336,9 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 
 	// Put rowKey to the tail of record row
 	rke := &RowKeyEntry{
-		Tbl:    e.t,
-		Handle: handle,
+		Tbl:         e.t,
+		Handle:      handle,
+		TableAsName: e.tableAsName,
 	}
 	row.RowKeys = append(row.RowKeys, rke)
 	return row, nil
@@ -483,14 +485,15 @@ func (e *IndexRangeExec) Close() error {
 
 // IndexScanExec represents an index scan executor.
 type IndexScanExec struct {
-	tbl        table.Table
-	idx        *column.IndexedCol
-	fields     []*ast.ResultField
-	Ranges     []*IndexRangeExec
-	Desc       bool
-	rangeIdx   int
-	ctx        context.Context
-	valueTypes []*types.FieldType
+	tbl         table.Table
+	tableAsName *model.CIStr
+	idx         *column.IndexedCol
+	fields      []*ast.ResultField
+	Ranges      []*IndexRangeExec
+	Desc        bool
+	rangeIdx    int
+	ctx         context.Context
+	valueTypes  []*types.FieldType
 }
 
 // Fields implements Executor Fields interface.
@@ -509,6 +512,9 @@ func (e *IndexScanExec) Next() (*Row, error) {
 		if row != nil {
 			for i, val := range row.Data {
 				e.fields[i].Expr.SetValue(val.GetValue())
+			}
+			for _, entry := range row.RowKeys {
+				entry.TableAsName = e.tableAsName
 			}
 			return row, nil
 		}

@@ -627,6 +627,11 @@ func (s *testSessionSuite) TestIssue1135(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
+	se1 := newSession(c, store, s.dbName+"1")
+
+	mustExecSQL(c, se1, "drop table if exists t")
+	mustExecSQL(c, se1, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se1, "insert into t (F1) values ('1'), ('4');")
 
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
@@ -634,15 +639,6 @@ func (s *testSessionSuite) TestIssue1135(c *C) {
 	mustExecSQL(c, se, "delete m1 from t m2,t m1 where m1.F1>1;")
 	r := mustExecSQL(c, se, "select * from t;")
 	row, err := r.Next()
-	c.Assert(err, IsNil)
-	match(c, row.Data, []interface{}{'1'})
-
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
-	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
-	mustExecSQL(c, se, "delete m1 from t m1,t m2 where m1.F1>m2.F1;")
-	r = mustExecSQL(c, se, "select * from t;")
-	row, err = r.Next()
 	c.Assert(err, IsNil)
 	match(c, row.Data, []interface{}{'1'})
 
@@ -666,6 +662,26 @@ func (s *testSessionSuite) TestIssue1135(c *C) {
 	row, err = r.Next()
 	c.Assert(err, IsNil)
 	match(c, row.Data, []interface{}{'2'})
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
+	mustExecSQL(c, se, "delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;")
+	r = mustExecSQL(c, se, "select * from t;")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	c.Assert(row, IsNil)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (F1 VARCHAR(30));")
+	mustExecSQL(c, se, "insert into t (F1) values ('1'), ('2');")
+	sql := fmt.Sprintf("delete %s.t from %s.t inner join %s.t where %s.t.F1 > %s.t.F1",
+		s.dbName+"1", s.dbName+"1", s.dbName, s.dbName+"1", s.dbName)
+	mustExecSQL(c, se1, sql)
+	r = mustExecSQL(c, se1, "select * from t;")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, []interface{}{'1'})
 
 	err = store.Close()
 	c.Assert(err, IsNil)

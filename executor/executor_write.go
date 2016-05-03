@@ -285,7 +285,7 @@ func (e *DeleteExec) Next() (*Row, error) {
 		return &Row{}, nil
 	}
 
-	tblMap := make(map[string]bool, len(e.Tables))
+	tblMap := make(map[int64][]string, len(e.Tables))
 	// Get table alias map.
 	tblNames := make(map[string]string)
 	if e.IsMultiTable {
@@ -304,7 +304,7 @@ func (e *DeleteExec) Next() (*Row, error) {
 			if !ok {
 				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
 			}
-			tblMap[t.Name.L] = true
+			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 		}
 	}
 
@@ -320,14 +320,8 @@ func (e *DeleteExec) Next() (*Row, error) {
 		}
 
 		for _, entry := range row.RowKeys {
-			if e.IsMultiTable {
-				name := entry.TableAsName.L
-				if len(name) == 0 {
-					name = entry.Tbl.Meta().Name.L
-				}
-				if _, ok := tblMap[name]; !ok {
-					continue
-				}
+			if e.IsMultiTable && !isMatchTableName(entry, tblMap) {
+				continue
 			}
 			if rowKeyMap[entry.Tbl] == nil {
 				rowKeyMap[entry.Tbl] = make(map[int64]struct{})
@@ -348,6 +342,28 @@ func (e *DeleteExec) Next() (*Row, error) {
 		}
 	}
 	return nil, nil
+}
+
+func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
+	var name string
+	if entry.TableAsName != nil {
+		name = entry.TableAsName.L
+	}
+	if len(name) == 0 {
+		name = entry.Tbl.Meta().Name.L
+	}
+
+	names, ok := tblMap[entry.Tbl.Meta().ID]
+	if !ok {
+		return false
+	}
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (table.Table, error) {
