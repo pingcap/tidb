@@ -59,7 +59,7 @@ func handleRequest(conn net.Conn, c *C) {
 func (s *testClientSuite) TestSendBySelf(c *C) {
 	l := startServer(":61234", c, handleRequest)
 	defer l.Close()
-	cli, err := NewPBClient(":61234")
+	cli, err := NewRPCClient(":61234")
 	c.Assert(err, IsNil)
 	req := new(pb.Request)
 	req.Type = pb.MessageType_CmdGet.Enum()
@@ -83,7 +83,7 @@ func closeRequest(conn net.Conn, c *C) {
 func (s *testClientSuite) TestRetryClose(c *C) {
 	l := startServer(":61235", c, closeRequest)
 	defer l.Close()
-	cli, err := NewPBClient(":61235")
+	cli, err := NewRPCClient(":61235")
 	c.Assert(err, IsNil)
 	req := new(pb.Request)
 	resp, err := cli.SendKVReq(req)
@@ -105,7 +105,7 @@ func readThenCloseRequest(conn net.Conn, c *C) {
 func (s *testClientSuite) TestRetryReadThenClose(c *C) {
 	l := startServer(":61236", c, readThenCloseRequest)
 	defer l.Close()
-	cli, err := NewPBClient(":61236")
+	cli, err := NewRPCClient(":61236")
 	c.Assert(err, IsNil)
 	req := new(pb.Request)
 	req.Type = pb.MessageType_CmdGet.Enum()
