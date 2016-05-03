@@ -87,7 +87,7 @@ func (s *Scanner) Next() error {
 		ret, err := s.getData()
 		if err != nil {
 			log.Errorf("getData failed: %s", err)
-			s.valid = false
+			s.Close()
 			return errors.Trace(err)
 		}
 		s.cache = ret
