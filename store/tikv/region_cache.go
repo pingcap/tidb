@@ -91,8 +91,8 @@ func (c *RegionCache) UpdateLeader(regionID, leaderStoreID uint64) {
 	)
 
 	curStoreIdx := -1
-	for idx, id := range old.meta.StoreIds {
-		if id == leaderStoreID {
+	for idx, storeID := range old.meta.StoreIds {
+		if storeID == leaderStoreID {
 			// No need update leader.
 			if idx == old.curStoreIdx {
 				return
