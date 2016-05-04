@@ -37,12 +37,13 @@ import (
 
 // XSelectTableExec represents XAPI select executor.
 type XSelectTableExec struct {
-	table     table.Table
-	tablePlan *plan.TableScan
-	where     *tipb.Expr
-	ctx       context.Context
-	result    *xapi.SelectResult
-	subResult *xapi.SubResult
+	table       table.Table
+	tablePlan   *plan.TableScan
+	where       *tipb.Expr
+	ctx         context.Context
+	result      *xapi.SelectResult
+	subResult   *xapi.SubResult
+	supportDesc bool
 }
 
 // Next implements Executor Next interface.
@@ -118,8 +119,13 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Fields = resultFieldsToPBExpression(e.tablePlan.Fields())
 	selReq.Where = e.where
 	selReq.Ranges = tableRangesToPBRanges(e.tablePlan.Ranges)
-	selReq.Limit = e.tablePlan.LimitCount
-
+	if e.supportDesc {
+		if e.tablePlan.Desc {
+			selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.tablePlan.Desc})
+		}
+		// Limit can be pushed only if desc is supported.
+		selReq.Limit = e.tablePlan.LimitCount
+	}
 	columns := make([]*model.ColumnInfo, 0, len(e.tablePlan.Fields()))
 	for _, v := range e.tablePlan.Fields() {
 		if v.Referenced {
@@ -220,6 +226,8 @@ func (e *XSelectIndexExec) Close() error {
 	return nil
 }
 
+// fetchHandle fetches all handles from the index.
+// this should be optimized to fetch handles in batch.
 func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
 	idxResult, err := e.doIndexRequest()
 	if err != nil {
@@ -306,8 +314,13 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	startTs := txn.StartTS()
 	selIdxReq.StartTs = &startTs
 	selIdxReq.IndexInfo = tablecodec.IndexToProto(e.table.Meta(), e.indexPlan.Index)
-	selIdxReq.Limit = e.indexPlan.LimitCount
-	selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
+	if len(e.indexPlan.FilterConditions) == 0 {
+		// Push limit to index request only if there is not filter conditions.
+		selIdxReq.Limit = e.indexPlan.LimitCount
+	}
+	if e.indexPlan.Desc {
+		selIdxReq.OrderBy = append(selIdxReq.OrderBy, &tipb.ByItem{Desc: &e.indexPlan.Desc})
+	}
 	fieldTypes := make([]*types.FieldType, len(e.indexPlan.Index.Columns))
 	for i, v := range e.indexPlan.Index.Columns {
 		fieldTypes[i] = &(e.table.Cols()[v.Offset].FieldType)
@@ -324,7 +337,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// TODO: add offset and limit.
+	// the handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selTableReq.StartTs = &startTs

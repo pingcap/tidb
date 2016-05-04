@@ -138,12 +138,14 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 	case "information_schema", "performance_schema":
 		memDB = true
 	}
+	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) && txn.IsReadOnly() {
 		log.Debug("xapi select table")
 		e := &XSelectTableExec{
-			table:     table,
-			ctx:       b.ctx,
-			tablePlan: v,
+			table:       table,
+			ctx:         b.ctx,
+			tablePlan:   v,
+			supportDesc: supportDesc,
 		}
 		where, remained := b.conditionsToPBExpr(client, v.FilterConditions, v.TableName)
 		if where != nil {
@@ -160,7 +162,11 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		ranges:      v.Ranges,
 		seekHandle:  math.MinInt64,
 	}
-	return b.buildFilter(e, v.FilterConditions)
+	x := b.buildFilter(e, v.FilterConditions)
+	if v.Desc && !supportDesc {
+		x = &ReverseExec{Src: x}
+	}
+	return x
 }
 
 func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
@@ -352,10 +358,6 @@ func (b *executorBuilder) buildSort(v *plan.Sort) Executor {
 
 func (b *executorBuilder) buildLimit(v *plan.Limit) Executor {
 	src := b.build(v.GetChildByIndex(0))
-
-	if v.Count > math.MaxUint64-v.Offset {
-		v.Count = math.MaxUint64 - v.Offset
-	}
 	e := &LimitExec{
 		Src:    src,
 		Offset: v.Offset,
