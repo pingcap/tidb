@@ -135,7 +135,7 @@ func (h *rpcHandler) onGet(req *kvrpcpb.CmdGetRequest) *kvrpcpb.CmdGetResponse {
 	val, err := h.mvccStore.Get(req.Key, req.GetVersion())
 	if err != nil {
 		return &kvrpcpb.CmdGetResponse{
-			Error: extractKeyError(err),
+			Error: convertToKeyError(err),
 		}
 	}
 	return &kvrpcpb.CmdGetResponse{
@@ -149,7 +149,7 @@ func (h *rpcHandler) onScan(req *kvrpcpb.CmdScanRequest) *kvrpcpb.CmdScanRespons
 	}
 	pairs := h.mvccStore.Scan(req.GetStartKey(), h.endKey, int(req.GetLimit()), req.GetVersion())
 	return &kvrpcpb.CmdScanResponse{
-		Pairs: extractPairs(pairs),
+		Pairs: convertToPbPairs(pairs),
 	}
 }
 
@@ -161,7 +161,7 @@ func (h *rpcHandler) onPrewrite(req *kvrpcpb.CmdPrewriteRequest) *kvrpcpb.CmdPre
 	}
 	errors := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion())
 	return &kvrpcpb.CmdPrewriteResponse{
-		Errors: extractKeyErrors(errors),
+		Errors: convertToKeyErrors(errors),
 	}
 }
 
@@ -173,7 +173,7 @@ func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitR
 	}
 	errors := h.mvccStore.Commit(req.Keys, req.GetStartVersion(), req.GetCommitVersion())
 	return &kvrpcpb.CmdCommitResponse{
-		Errors: []*kvrpcpb.KeyError{extractKeyError(errors)},
+		Errors: []*kvrpcpb.KeyError{convertToKeyError(errors)},
 	}
 }
 
@@ -187,7 +187,7 @@ func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdClean
 		if commitTS, ok := err.(ErrAlreadyCommitted); ok {
 			resp.CommitVersion = proto.Uint64(uint64(commitTS))
 		} else {
-			resp.Error = extractKeyError(err)
+			resp.Error = convertToKeyError(err)
 		}
 	}
 	return &resp
@@ -200,7 +200,7 @@ func (h *rpcHandler) onCommitThenGet(req *kvrpcpb.CmdCommitThenGetRequest) *kvrp
 	val, err := h.mvccStore.CommitThenGet(req.Key, req.GetLockVersion(), req.GetCommitVersion(), req.GetGetVersion())
 	if err != nil {
 		return &kvrpcpb.CmdCommitThenGetResponse{
-			Error: extractKeyError(err),
+			Error: convertToKeyError(err),
 		}
 	}
 	return &kvrpcpb.CmdCommitThenGetResponse{
@@ -215,7 +215,7 @@ func (h *rpcHandler) onRollbackThenGet(req *kvrpcpb.CmdRollbackThenGetRequest) *
 	val, err := h.mvccStore.RollbackThenGet(req.Key, req.GetLockVersion())
 	if err != nil {
 		return &kvrpcpb.CmdRollbackThenGetResponse{
-			Error: extractKeyError(err),
+			Error: convertToKeyError(err),
 		}
 	}
 	return &kvrpcpb.CmdRollbackThenGetResponse{
@@ -231,11 +231,11 @@ func (h *rpcHandler) onBatchGet(req *kvrpcpb.CmdBatchGetRequest) *kvrpcpb.CmdBat
 	}
 	pairs := h.mvccStore.BatchGet(req.Keys, req.GetVersion())
 	return &kvrpcpb.CmdBatchGetResponse{
-		Pairs: extractPairs(pairs),
+		Pairs: convertToPbPairs(pairs),
 	}
 }
 
-func extractKeyError(err error) *kvrpcpb.KeyError {
+func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if locked, ok := err.(*ErrLocked); ok {
 		return &kvrpcpb.KeyError{
 			Locked: &kvrpcpb.LockInfo{
@@ -255,15 +255,15 @@ func extractKeyError(err error) *kvrpcpb.KeyError {
 	}
 }
 
-func extractKeyErrors(errs []error) []*kvrpcpb.KeyError {
+func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
 	var errors []*kvrpcpb.KeyError
 	for _, err := range errs {
-		errors = append(errors, extractKeyError(err))
+		errors = append(errors, convertToKeyError(err))
 	}
 	return errors
 }
 
-func extractPairs(pairs []Pair) []*kvrpcpb.KvPair {
+func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 	var kvPairs []*kvrpcpb.KvPair
 	for _, p := range pairs {
 		var kvPair *kvrpcpb.KvPair
@@ -274,7 +274,7 @@ func extractPairs(pairs []Pair) []*kvrpcpb.KvPair {
 			}
 		} else {
 			kvPair = &kvrpcpb.KvPair{
-				Error: extractKeyError(p.Err),
+				Error: convertToKeyError(p.Err),
 			}
 		}
 		kvPairs = append(kvPairs, kvPair)

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/pd/pd-client"
 )
 
-// Use global variables to prevent pdClients creating duplicate timestamps.
+// Use global variables to prevent pdClients from creating duplicate timestamps.
 var (
 	tsMu       sync.Mutex
 	physicalTS int64
@@ -32,7 +32,7 @@ type pdClient struct {
 	cluster *Cluster
 }
 
-// NewPDClient creates a mock pd.Client that uses lock timestamp and meta data
+// NewPDClient creates a mock pd.Client that uses local timestamp and meta data
 // from a Cluster.
 func NewPDClient(cluster *Cluster) pd.Client {
 	return &pdClient{
@@ -45,7 +45,7 @@ func (c *pdClient) GetTS() (int64, int64, error) {
 	defer tsMu.Unlock()
 
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
-	if physicalTS == ts {
+	if physicalTS >= ts {
 		logicalTS++
 	} else {
 		physicalTS = ts
