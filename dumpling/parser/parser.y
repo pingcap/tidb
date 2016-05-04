@@ -2275,6 +2275,10 @@ FunctionCallConflict:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
 	}
+|	"MOD" '(' PrimaryFactor ',' PrimaryFactor ')'
+	{
+		$$ = &ast.BinaryOperationExpr{Op: opcode.Mod, L: $3.(ast.ExprNode), R: $5.(ast.ExprNode)}
+	}
 
 DistinctOpt:
 	{

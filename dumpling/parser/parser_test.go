@@ -370,6 +370,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT POW(-1, 1)", true},
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
+		{"SELECT MOD(10, 2);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
