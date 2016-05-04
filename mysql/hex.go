@@ -56,30 +56,53 @@ func (h Hex) ToString() string {
 	return string(b)
 }
 
-// ParseHex parses hexadecimal literal string.
-// The string format can be X'val', x'val' or 0xval.
-// val must in (0...9, a...z, A...Z).
-func ParseHex(s string) (Hex, error) {
+func uniformHexStrLit(s string) (string, error) {
 	if len(s) == 0 {
-		return Hex{}, errors.Errorf("invalid empty string for parsing hexadecimal literal")
+		return "", errors.Errorf("invalid empty string for parsing hexadecimal literal")
 	}
 
 	if s[0] == 'x' || s[0] == 'X' {
 		// format is x'val' or X'val'
 		s = strings.Trim(s[1:], "'")
 		if len(s)%2 != 0 {
-			return Hex{}, errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
+			return "", errors.Errorf("invalid hexadecimal format, must even numbers, but %d", len(s))
 		}
 		s = "0x" + s
 	} else if !strings.HasPrefix(s, "0x") {
 		// here means format is not x'val', X'val' or 0xval.
-		return Hex{}, errors.Errorf("invalid hexadecimal format %s", s)
+		return "", errors.Errorf("invalid hexadecimal format %s", s)
 	}
+	return s, nil
+}
 
+// ParseHex parses hexadecimal literal string.
+// The string format can be X'val', x'val' or 0xval.
+// val must in (0...9, a...f, A...F).
+func ParseHex(s string) (Hex, error) {
+	var err error
+	s, err = uniformHexStrLit(s)
+	if err != nil {
+		return Hex{}, errors.Trace(err)
+	}
 	n, err := strconv.ParseInt(s, 0, 64)
 	if err != nil {
 		return Hex{}, errors.Trace(err)
 	}
 
 	return Hex{Value: n}, nil
+}
+
+// ParseHexStr parses hexadecimal literal as string.
+// See: https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
+func ParseHexStr(s string) (string, error) {
+	var err error
+	s, err = uniformHexStrLit(s)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	bs, err := hex.DecodeString(s[2:])
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(bs), nil
 }
