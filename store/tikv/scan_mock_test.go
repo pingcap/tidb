@@ -94,7 +94,8 @@ func (s *testScanMockSuite) TestScanMultiRegions(c *C) {
 	expectResp4 := makeScanOkResp([]*KvPair{})
 	s.client.push(expectReq4, expectResp4)
 
-	scanner := newScanner(region4, startKey, txn.StartTS(), *snapshot, batchSize)
+	scanner, err := newScanner(region4, startKey, txn.StartTS(), *snapshot, batchSize)
+	c.Assert(err, IsNil)
 	for k := 'a'; k <= 'q'; k++ {
 		c.Assert([]byte(string(k)), BytesEquals, []byte(scanner.Key()))
 		if k < 'q' {
