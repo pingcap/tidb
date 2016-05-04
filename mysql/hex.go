@@ -77,7 +77,7 @@ func uniformHexStrLit(s string) (string, error) {
 
 // ParseHex parses hexadecimal literal string.
 // The string format can be X'val', x'val' or 0xval.
-// val must in (0...9, a...z, A...Z).
+// val must in (0...9, a...f, A...F).
 func ParseHex(s string) (Hex, error) {
 	var err error
 	s, err = uniformHexStrLit(s)
