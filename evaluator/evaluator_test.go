@@ -998,3 +998,21 @@ func (s *testEvaluatorSuite) TestEvaluatedFlag(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d, testutil.DatumEquals, types.NewIntDatum(3))
 }
+
+func (s *testEvaluatorSuite) TestMod(c *C) {
+	cases := []testCase{
+		{
+			exprStr:   "MOD(234, 10)",
+			resultStr: "4",
+		},
+		{
+			exprStr:   "MOD(29, 9)",
+			resultStr: "2",
+		},
+		{
+			exprStr:   "MOD(34.5, 3)",
+			resultStr: "1.5",
+		},
+	}
+	s.runTests(c, cases)
+}
