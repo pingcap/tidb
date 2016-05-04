@@ -266,7 +266,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 	}
 	if sel.Limit != nil {
 		if canPushLimit {
-			pushLimit(p, sel.Limit)
+			PushLimit(p, sel.Limit)
 		}
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
@@ -594,7 +594,8 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 	}
 }
 
-func pushLimit(p Plan, limit *ast.Limit) {
+// PushLimit tries to push limit count to the plan.
+func PushLimit(p Plan, limit *ast.Limit) {
 	switch x := p.(type) {
 	case *IndexScan:
 		limitCount := int64(limit.Offset + limit.Count)
@@ -605,7 +606,7 @@ func pushLimit(p Plan, limit *ast.Limit) {
 	default:
 		child := x.GetChildByIndex(0)
 		if child != nil {
-			pushLimit(child, limit)
+			PushLimit(child, limit)
 		}
 	}
 }
@@ -812,7 +813,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
-		pushLimit(p, sel.Limit)
+		PushLimit(p, sel.Limit)
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil
@@ -851,7 +852,7 @@ func (b *planBuilder) buildDelete(del *ast.DeleteStmt) Plan {
 		}
 	}
 	if sel.Limit != nil {
-		pushLimit(p, sel.Limit)
+		PushLimit(p, sel.Limit)
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
 			return nil

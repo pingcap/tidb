@@ -37,6 +37,7 @@ type subquery struct {
 func (sq *subquery) EvalRows(ctx context.Context, rowCount int) ([]types.Datum, error) {
 	b := newExecutorBuilder(ctx, sq.is)
 	plan.Refine(sq.plan)
+	plan.PushLimit(sq.plan, &ast.Limit{Count: 1})
 	e := b.build(sq.plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
