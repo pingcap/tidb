@@ -74,10 +74,16 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	if it.concurrency < 1 {
 		it.concurrency = 1
 	}
+	if it.concurrency > len(tasks) {
+		it.concurrency = len(tasks)
+	}
 	if it.req.KeepOrder {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
 	it.errChan = make(chan error, 1)
+	if len(it.tasks) == 0 {
+		it.Close()
+	}
 	it.run()
 	return it
 }
@@ -86,7 +92,6 @@ const (
 	taskNew int = iota
 	taskRunning
 	taskDone
-	taskFetched
 )
 
 // copTask contains a related Region and KeyRange for a kv.Request.
@@ -164,7 +169,6 @@ type copIterator struct {
 	tasks []*copTask
 
 	mu          sync.RWMutex
-	reqSent     int
 	respGot     int
 	concurrency int
 	respChan    chan *coprocessor.Response
@@ -172,13 +176,14 @@ type copIterator struct {
 	finished    bool
 }
 
+// Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
 	for {
 		if it.finished {
 			break
 		}
 		it.mu.Lock()
-		// Get task
+		// Find the next task to send.
 		var task *copTask
 		if it.req.Desc {
 			for i := len(it.tasks) - 1; i >= 0; i-- {
@@ -214,6 +219,7 @@ func (it *copIterator) work() {
 }
 
 func (it *copIterator) run() {
+	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		go it.work()
 	}
@@ -221,7 +227,6 @@ func (it *copIterator) run() {
 
 // Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
-	// TODO: Support `Concurrent` instruction in `kv.Request`.
 	if it.finished {
 		return nil, nil
 	}
@@ -229,6 +234,8 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		resp *coprocessor.Response
 		err  error
 	)
+	// If data order matters, repsone should be returned in the same order as copTask slice.
+	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
 		// Get next fetched resp from chan
 		select {
@@ -258,15 +265,16 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		it.Close()
 		return nil, err
 	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
 	it.respGot++
-	// TODO: Check this
 	if it.respGot == len(it.tasks) {
 		it.Close()
 	}
 	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
 }
 
-// Handle single task.
+// Handle single copTask.
 func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
 	var backoffErr error
 	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
@@ -323,17 +331,20 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 	return nil, errors.Trace(backoffErr)
 }
 
+// Rebuild current task. It may be split into multiple tasks (in region split scenario).
 func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if len(newTasks) == 0 {
-		// TODO: check this
+		// TODO: check this, this should never happend.
 		return nil
 	}
 	it.mu.Lock()
 	defer it.mu.Unlock()
+	// We should put the original task back to the original place in the task list.
+	// So the tasks can be handled in order.
 	var t *copTask
 	if it.req.Desc {
 		t = newTasks[len(newTasks)-1]
@@ -350,10 +361,8 @@ func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 	} else {
 		newTasks[0] = task
 	}
-
-	//fmt.Printf("tasks: %d, newTasks: %d, idx: %d\n", len(it.tasks), len(newTasks), task.idx)
 	it.tasks = append(it.tasks[:task.idx], append(newTasks, it.tasks[task.idx+1:]...)...)
-	// Update index
+	// Update index.
 	for i := task.idx; i < len(it.tasks); i++ {
 		it.tasks[i].idx = i
 	}
@@ -362,6 +371,8 @@ func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 
 func (it *copIterator) Close() error {
 	it.finished = true
+	close(it.respChan)
+	close(it.errChan)
 	return nil
 }
 
