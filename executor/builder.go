@@ -151,6 +151,10 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		if where != nil {
 			e.where = where
 		}
+		if len(remained) == 0 {
+			e.allFiltersPushed = true
+			return e
+		}
 		return b.buildFilter(e, remained)
 	}
 

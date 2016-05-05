@@ -37,13 +37,14 @@ import (
 
 // XSelectTableExec represents XAPI select executor.
 type XSelectTableExec struct {
-	table       table.Table
-	tablePlan   *plan.TableScan
-	where       *tipb.Expr
-	ctx         context.Context
-	result      *xapi.SelectResult
-	subResult   *xapi.SubResult
-	supportDesc bool
+	table            table.Table
+	tablePlan        *plan.TableScan
+	where            *tipb.Expr
+	ctx              context.Context
+	result           *xapi.SelectResult
+	subResult        *xapi.SubResult
+	supportDesc      bool
+	allFiltersPushed bool
 }
 
 // Next implements Executor Next interface.
@@ -124,7 +125,9 @@ func (e *XSelectTableExec) doRequest() error {
 			selReq.OrderBy = append(selReq.OrderBy, &tipb.ByItem{Desc: &e.tablePlan.Desc})
 		}
 		// Limit can be pushed only if desc is supported.
-		selReq.Limit = e.tablePlan.LimitCount
+		if e.allFiltersPushed {
+			selReq.Limit = e.tablePlan.LimitCount
+		}
 	}
 	columns := make([]*model.ColumnInfo, 0, len(e.tablePlan.Fields()))
 	for _, v := range e.tablePlan.Fields() {
