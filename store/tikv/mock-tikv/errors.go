@@ -32,14 +32,14 @@ func (e *ErrLocked) Error() string {
 type ErrRetryable string
 
 func (e ErrRetryable) Error() string {
-	return fmt.Sprintf("retryable: %v", e)
+	return fmt.Sprintf("retryable: %s", string(e))
 }
 
 // ErrAbort means something is wrong and client should abort the txn.
 type ErrAbort string
 
 func (e ErrAbort) Error() string {
-	return fmt.Sprintf("abort: %v", e)
+	return fmt.Sprintf("abort: %s", string(e))
 }
 
 // ErrAlreadyCommitted is returned specially when client tries to rollback a

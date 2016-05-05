@@ -31,10 +31,7 @@ type testSnapshotSuite struct {
 var _ = Suite(&testSnapshotSuite{})
 
 func (s *testSnapshotSuite) SetUpSuite(c *C) {
-	var d Driver
-	store, err := d.Open(fmt.Sprintf("tikv://%s%s?cluster=%d", *etcdAddrs, *pdLeaderPath, *clusterID))
-	c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = newTestStore(c)
 	s.prefix = fmt.Sprintf("snapshot_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, 100, 191)
 }
@@ -213,7 +210,7 @@ func equalByteDict(c *C, lhs, rhs map[string][]byte) {
 }
 
 func makeKeys(rowNum int, prefix string) []kv.Key {
-	keys := make([]kv.Key, rowNum)
+	keys := make([]kv.Key, 0, rowNum)
 	for i := 0; i < rowNum; i++ {
 		k := encodeKey(prefix, s08d("key", i))
 		keys = append(keys, k)
