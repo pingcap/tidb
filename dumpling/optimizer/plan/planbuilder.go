@@ -14,6 +14,9 @@
 package plan
 
 import (
+	"math"
+
+	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -597,11 +600,15 @@ func buildResultField(tableName, name string, tp byte, size int) *ast.ResultFiel
 func pushLimit(p Plan, limit *ast.Limit) {
 	switch x := p.(type) {
 	case *IndexScan:
-		limitCount := int64(limit.Offset + limit.Count)
-		x.LimitCount = &limitCount
+		limitCount := limit.Offset + limit.Count
+		if limitCount < math.MaxInt64 {
+			x.LimitCount = proto.Int64(int64(limitCount))
+		}
 	case *TableScan:
-		limitCount := int64(limit.Offset + limit.Count)
-		x.LimitCount = &limitCount
+		limitCount := limit.Offset + limit.Count
+		if limitCount < math.MaxInt64 {
+			x.LimitCount = proto.Int64(int64(limitCount))
+		}
 	default:
 		child := x.GetChildByIndex(0)
 		if child != nil {
@@ -653,9 +660,6 @@ func pushOrder(p Plan, items []*ast.ByItem) bool {
 		if len(items) != 1 || !x.Table.PKIsHandle {
 			return false
 		}
-		if items[0].Desc {
-			return false
-		}
 		var refer *ast.ResultField
 		switch x := items[0].Expr.(type) {
 		case *ast.ColumnNameExpr:
@@ -666,6 +670,7 @@ func pushOrder(p Plan, items []*ast.ByItem) bool {
 			return false
 		}
 		if mysql.HasPriKeyFlag(refer.Column.Flag) {
+			x.Desc = items[0].Desc
 			return true
 		}
 		return false
