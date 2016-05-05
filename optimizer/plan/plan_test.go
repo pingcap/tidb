@@ -725,6 +725,10 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			"select * from t1 use index () where t1.i1 = 0 and t1.i2 = 0 and t1.i3 = 0",
 			"Table(t1)->Fields",
 		},
+		{
+			"select * from t1 use index (i1) ignore index (i1) where t1.i1 = 0",
+			"Table(t1)->Fields",
+		},
 	}
 	for _, ca := range cases {
 		comment := Commentf("for %s", ca.sql)

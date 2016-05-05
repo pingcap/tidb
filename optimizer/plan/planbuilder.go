@@ -370,6 +370,7 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 			}
 		}
 	}
+	indices = removeIgnores(indices, ignores)
 	// If we have got FORCE or USE index hint, table scan is excluded.
 	if len(indices) != 0 {
 		return indices, false
@@ -388,6 +389,19 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 		}
 	}
 	return indices, true
+}
+
+func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
+	if len(ignores) == 0 {
+		return indices
+	}
+	var remainedIndices []*model.IndexInfo
+	for _, index := range indices {
+		if findIndexByName(ignores, index.Name) == nil {
+			remainedIndices = append(remainedIndices, index)
+		}
+	}
+	return remainedIndices
 }
 
 func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexInfo {
