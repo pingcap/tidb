@@ -171,10 +171,12 @@ func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitR
 			panic("onCommit: key not in region")
 		}
 	}
-	errors := h.mvccStore.Commit(req.Keys, req.GetStartVersion(), req.GetCommitVersion())
-	return &kvrpcpb.CmdCommitResponse{
-		Errors: []*kvrpcpb.KeyError{convertToKeyError(errors)},
+	var resp kvrpcpb.CmdCommitResponse
+	err := h.mvccStore.Commit(req.Keys, req.GetStartVersion(), req.GetCommitVersion())
+	if err != nil {
+		resp.Errors = []*kvrpcpb.KeyError{convertToKeyError(err)}
 	}
+	return &resp
 }
 
 func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdCleanupResponse {
@@ -258,7 +260,9 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 func convertToKeyErrors(errs []error) []*kvrpcpb.KeyError {
 	var errors []*kvrpcpb.KeyError
 	for _, err := range errs {
-		errors = append(errors, convertToKeyError(err))
+		if err != nil {
+			errors = append(errors, convertToKeyError(err))
+		}
 	}
 	return errors
 }

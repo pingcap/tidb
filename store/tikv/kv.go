@@ -62,16 +62,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ora, err := oracles.NewPdOracle(pdCli)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	s := &tikvStore{
-		uuid:        uuid,
-		oracle:      ora,
-		clients:     make(map[string]Client),
-		regionCache: NewRegionCache(pdCli),
-	}
+	s := newTikvStore(uuid, pdCli, NewRPCClient)
 	mc.cache[uuid] = s
 	return s, nil
 }
@@ -81,9 +72,20 @@ type tikvStore struct {
 	uuid   string
 	oracle oracle.Oracle
 	// addr => *Client
-	clients     map[string]Client
-	clientLock  sync.RWMutex
-	regionCache *RegionCache
+	clients       map[string]Client
+	clientFactory ClientFactory
+	clientLock    sync.RWMutex
+	regionCache   *RegionCache
+}
+
+func newTikvStore(uuid string, pdClient pd.Client, factory ClientFactory) *tikvStore {
+	return &tikvStore{
+		uuid:          uuid,
+		oracle:        oracles.NewPdOracle(pdClient),
+		clients:       make(map[string]Client),
+		clientFactory: factory,
+		regionCache:   NewRegionCache(pdClient),
+	}
 }
 
 func (s *tikvStore) getClient(addr string) (Client, error) {
@@ -97,7 +99,7 @@ func (s *tikvStore) getClient(addr string) (Client, error) {
 	s.clientLock.Lock()
 	defer s.clientLock.Unlock()
 
-	client, err := NewRPCClient(addr)
+	client, err := s.clientFactory(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -29,10 +29,7 @@ type testScanSuite struct {
 var _ = Suite(&testScanSuite{})
 
 func (s *testScanSuite) SetUpSuite(c *C) {
-	var d Driver
-	store, err := d.Open(fmt.Sprintf("tikv://%s%s?cluster=%d", *etcdAddrs, *pdLeaderPath, *clusterID))
-	c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = newTestStore(c)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1)
 }

@@ -39,6 +39,9 @@ type Client interface {
 	SendCopReq(req *coprocessor.Request) (*coprocessor.Response, error)
 }
 
+// ClientFactory is a function that creates a Client with server address.
+type ClientFactory func(string) (Client, error)
+
 // rpcClient connects kvserver to send Request by TCP.
 type rpcClient struct {
 	dst   string

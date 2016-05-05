@@ -19,14 +19,40 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/util/codec"
 )
 
 var (
+	withTiKV     = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 	etcdAddrs    = flag.String("etcd-addrs", "127.0.0.1:2379", "etcd addrs")
 	pdLeaderPath = flag.String("pd-path", "/pd", "PD leader path on etcd")
 	clusterID    = flag.Int("cluster", 1, "cluster ID")
 )
+
+func newTestStore(c *C) *tikvStore {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	if *withTiKV {
+		var d Driver
+		store, err := d.Open(fmt.Sprintf("tikv://%s%s?cluster=%d", *etcdAddrs, *pdLeaderPath, *clusterID))
+		c.Assert(err, IsNil)
+		return store.(*tikvStore)
+	}
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.NewMvccStore()
+	clientFactory := mockClientFactory(cluster, mvccStore)
+	return newTikvStore("mock-tikv-store", mocktikv.NewPDClient(cluster), clientFactory)
+}
+
+func mockClientFactory(cluster *mocktikv.Cluster, mvccStore *mocktikv.MvccStore) ClientFactory {
+	return func(addr string) (Client, error) {
+		return mocktikv.NewRPCClient(cluster, mvccStore, addr), nil
+	}
+}
 
 type testTiclientSuite struct {
 	store *tikvStore
@@ -38,10 +64,7 @@ type testTiclientSuite struct {
 var _ = Suite(&testTiclientSuite{})
 
 func (s *testTiclientSuite) SetUpSuite(c *C) {
-	var d Driver
-	store, err := d.Open(fmt.Sprintf("tikv://%s%s?cluster=%d", *etcdAddrs, *pdLeaderPath, *clusterID))
-	c.Assert(err, IsNil)
-	s.store = store.(*tikvStore)
+	s.store = newTestStore(c)
 	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
 }
 
