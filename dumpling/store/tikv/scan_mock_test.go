@@ -16,6 +16,7 @@ package tikv
 import (
 	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 )
@@ -64,6 +65,17 @@ func (s *testScanMockSuite) getRegion(c *C, startKey []byte) *requestRegion {
 	return region
 }
 
+func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
+	const batchSize = 10
+	txn, snapshot := s.beginTxn(c)
+	region := s.getRegion(c, []byte("a"))
+	expectReq := makeScanReq(region, "a", batchSize, txn.StartTS())
+	expectResp := makeScanStaleEpochResp()
+	s.client.push(expectReq, expectResp)
+	_, err := newScanner(region, []byte("a"), txn.StartTS(), *snapshot, batchSize)
+	c.Assert(err, NotNil)
+}
+
 func (s *testScanMockSuite) TestScanMultiRegions(c *C) {
 	const batchSize = 10
 	startKey := []byte("a")
@@ -94,7 +106,8 @@ func (s *testScanMockSuite) TestScanMultiRegions(c *C) {
 	expectResp4 := makeScanOkResp([]*KvPair{})
 	s.client.push(expectReq4, expectResp4)
 
-	scanner := newScanner(region4, startKey, txn.StartTS(), *snapshot, batchSize)
+	scanner, err := newScanner(region4, startKey, txn.StartTS(), *snapshot, batchSize)
+	c.Assert(err, IsNil)
 	for k := 'a'; k <= 'q'; k++ {
 		c.Assert([]byte(string(k)), BytesEquals, []byte(scanner.Key()))
 		if k < 'q' {
@@ -129,6 +142,16 @@ func makeScanOkResp(res []*KvPair) *pb.Response {
 		Type: pb.MessageType_CmdScan.Enum(),
 		CmdScanResp: &pb.CmdScanResponse{
 			Pairs: pairs,
+		},
+	}
+}
+
+func makeScanStaleEpochResp() *pb.Response {
+	return &pb.Response{
+		Type: pb.MessageType_CmdScan.Enum(),
+		RegionError: &errorpb.Error{
+			Message:    proto.String("stale epoch"),
+			StaleEpoch: &errorpb.StaleEpoch{},
 		},
 	}
 }

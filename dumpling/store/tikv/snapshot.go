@@ -215,8 +215,8 @@ func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	scanner := newScanner(region, k, s.version.Ver, *s, scanBatchSize)
-	return scanner, nil
+	scanner, err := newScanner(region, k, s.version.Ver, *s, scanBatchSize)
+	return scanner, errors.Trace(err)
 }
 
 // SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
