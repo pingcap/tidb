@@ -279,12 +279,12 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) Plan {
 func (b *planBuilder) buildFrom(sel *ast.SelectStmt) Plan {
 	from := sel.From.TableRefs
 	if from.Right == nil {
-		return b.buildSingleTable(sel)
+		return b.buildTableSource(sel)
 	}
 	return b.buildJoin(sel)
 }
 
-func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
+func (b *planBuilder) buildTableSource(sel *ast.SelectStmt) Plan {
 	from := sel.From.TableRefs
 	ts, ok := from.Left.(*ast.TableSource)
 	if !ok {
@@ -296,6 +296,8 @@ func (b *planBuilder) buildSingleTable(sel *ast.SelectStmt) Plan {
 	case *ast.TableName:
 	case *ast.SelectStmt:
 		bestPlan = b.buildSelect(v)
+	case *ast.UnionStmt:
+		bestPlan = b.buildUnion(v)
 	}
 	if bestPlan != nil {
 		return bestPlan
