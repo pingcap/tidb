@@ -122,21 +122,39 @@ func collectColumnsInWhere(expr *tipb.Expr, ctx *selectContext) error {
 }
 
 func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, error) {
-	kvRanges := rs.extractKVRanges(ctx.sel.TableInfo.GetTableId(), 0, ctx.sel.Ranges)
+	kvRanges, desc := rs.extractKVRanges(ctx.sel)
 	var rows []*tipb.Row
+	limit := int64(-1)
+	if ctx.sel.Limit != nil {
+		limit = ctx.sel.GetLimit()
+	}
 	for _, ran := range kvRanges {
-		ranRows, err := rs.getRowsFromRange(ctx, ran)
+		if limit == 0 {
+			break
+		}
+		ranRows, err := rs.getRowsFromRange(ctx, ran, limit, desc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		rows = append(rows, ranRows...)
+		limit -= int64(len(ranRows))
 	}
 	return rows, nil
 }
 
-func (rs *localRegion) extractKVRanges(tid int64, idxID int64, krans []*tipb.KeyRange) []kv.KeyRange {
-	var kvRanges []kv.KeyRange
-	for _, kran := range krans {
+// extractKVRanges extracts kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
+func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.KeyRange, desc bool) {
+	var (
+		tid   int64
+		idxID int64
+	)
+	if sel.IndexInfo != nil {
+		tid = sel.IndexInfo.GetTableId()
+		idxID = sel.IndexInfo.GetIndexId()
+	} else {
+		tid = sel.TableInfo.GetTableId()
+	}
+	for _, kran := range sel.Ranges {
 		var upperKey, lowerKey kv.Key
 		if idxID == 0 {
 			upperKey = tablecodec.EncodeRowKey(tid, kran.GetHigh())
@@ -167,10 +185,19 @@ func (rs *localRegion) extractKVRanges(tid int64, idxID int64, krans []*tipb.Key
 		}
 		kvRanges = append(kvRanges, kvr)
 	}
-	return kvRanges
+	if sel.OrderBy != nil {
+		desc = *sel.OrderBy[0].Desc
+	}
+	if desc {
+		reverseKVRanges(kvRanges)
+	}
+	return
 }
 
-func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange) ([]*tipb.Row, error) {
+func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit int64, desc bool) ([]*tipb.Row, error) {
+	if limit == 0 {
+		return nil, nil
+	}
 	var rows []*tipb.Row
 	if ran.IsPoint() {
 		_, err := ctx.txn.Get(ran.StartKey)
@@ -199,15 +226,41 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange) ([]
 		}
 		return rows, nil
 	}
-	seekKey := ran.StartKey
+	var seekKey kv.Key
+	if desc {
+		seekKey = ran.EndKey
+	} else {
+		seekKey = ran.StartKey
+	}
 	for {
-		it, err := ctx.txn.Seek(seekKey)
-		seekKey = it.Key().PrefixNext()
+		if limit == 0 {
+			break
+		}
+		var (
+			it  kv.Iterator
+			err error
+		)
+		if desc {
+			it, err = ctx.txn.SeekReverse(seekKey)
+		} else {
+			it, err = ctx.txn.Seek(seekKey)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !it.Valid() || it.Key().Cmp(ran.EndKey) >= 0 {
+		if !it.Valid() {
 			break
+		}
+		if desc {
+			if it.Key().Cmp(ran.StartKey) < 0 {
+				break
+			}
+			seekKey = it.Key()
+		} else {
+			if it.Key().Cmp(ran.EndKey) >= 0 {
+				break
+			}
+			seekKey = it.Key().PrefixNext()
 		}
 		h, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
@@ -226,6 +279,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange) ([]
 		}
 		if row != nil {
 			rows = append(rows, row)
+			limit--
 		}
 	}
 	return rows, nil
@@ -315,23 +369,22 @@ func toPBError(err error) *tipb.Error {
 }
 
 func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectRequest) ([]*tipb.Row, error) {
-	tid := sel.IndexInfo.GetTableId()
-	idxID := sel.IndexInfo.GetIndexId()
-	kvRanges := rs.extractKVRanges(tid, idxID, sel.Ranges)
+	kvRanges, desc := rs.extractKVRanges(sel)
 	var rows []*tipb.Row
-	desc := false
-	if sel.OrderBy != nil {
-		desc = *sel.OrderBy[0].Desc
-	}
-	if desc {
-		reverseKVRanges(kvRanges)
+	limit := int64(-1)
+	if sel.Limit != nil {
+		limit = sel.GetLimit()
 	}
 	for _, ran := range kvRanges {
-		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran, desc)
+		if limit == 0 {
+			break
+		}
+		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran, desc, limit)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		rows = append(rows, ranRows...)
+		limit -= int64(len(ranRows))
 	}
 	return rows, nil
 }
@@ -343,7 +396,7 @@ func reverseKVRanges(kvRanges []kv.KeyRange) {
 	}
 }
 
-func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange, desc bool) ([]*tipb.Row, error) {
+func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange, desc bool, limit int64) ([]*tipb.Row, error) {
 	var rows []*tipb.Row
 	var seekKey kv.Key
 	if desc {
@@ -352,6 +405,9 @@ func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.Ke
 		seekKey = ran.StartKey
 	}
 	for {
+		if limit == 0 {
+			break
+		}
 		var it kv.Iterator
 		var err error
 		if desc {
@@ -406,6 +462,7 @@ func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.Ke
 		}
 		row := &tipb.Row{Handle: handleData, Data: data}
 		rows = append(rows, row)
+		limit--
 	}
 
 	return rows, nil
