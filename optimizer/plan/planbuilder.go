@@ -348,14 +348,24 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 		return table.TableInfo.Indices, true
 	}
 	var hasUse bool
+	var ignores []*model.IndexInfo
 	for _, hint := range usableHints {
-		// Currently we don't distinguish Force and Use because our cost estimation is not reliable.
-		if hint.HintType == ast.HintForce || hint.HintType == ast.HintUse {
+		switch hint.HintType {
+		case ast.HintUse, ast.HintForce:
+			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
 			hasUse = true
 			for _, idxName := range hint.IndexNames {
 				idx := findIndexByName(table.TableInfo.Indices, idxName)
 				if idx != nil {
 					indices = append(indices, idx)
+				}
+			}
+		case ast.HintIgnore:
+			// Collect all the ignore index hints.
+			for _, idxName := range hint.IndexNames {
+				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				if idx != nil {
+					ignores = append(ignores, idx)
 				}
 			}
 		}
@@ -367,19 +377,6 @@ func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.I
 	if hasUse {
 		// Empty use hint means don't use any index.
 		return nil, true
-	}
-
-	var ignores []*model.IndexInfo
-	// Collect all the ignore index hints.
-	for _, hint := range usableHints {
-		if hint.HintType == ast.HintIgnore {
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(table.TableInfo.Indices, idxName)
-				if idx != nil {
-					ignores = append(ignores, idx)
-				}
-			}
-		}
 	}
 	if len(ignores) == 0 {
 		return table.TableInfo.Indices, true
