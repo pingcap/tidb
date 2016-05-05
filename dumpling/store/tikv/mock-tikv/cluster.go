@@ -216,6 +216,9 @@ func (r *Region) removePeer(storeID uint64) {
 			break
 		}
 	}
+	if r.leader == storeID {
+		r.leader = 0
+	}
 	r.incConfVer()
 }
 
