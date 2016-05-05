@@ -160,16 +160,17 @@ type XSelectIndexExec struct {
 }
 
 // BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
-var BaseLookupTableTaskSize = 1024
+var BaseLookupTableTaskSize = 256
 
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
-var MaxLookupTableTaskSize = 1024
+var MaxLookupTableTaskSize = 256
 
 type lookupTableTask struct {
 	handles []int64
 	rows    []*Row
 	cursor  int
 	done    bool
+	respCh  chan error
 }
 
 // Fields implements Executor Fields interface.
@@ -185,6 +186,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		e.buildTableTasks(handles)
+		e.runAllTableTasks()
 	}
 	for {
 		if e.taskCursor >= len(e.tasks) {
@@ -192,23 +194,9 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
-			sort.Sort(int64Slice(task.handles))
-			tblResult, err := e.doTableRequest(task.handles)
+			err := <-task.respCh
 			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !e.indexPlan.OutOfOrder {
-				// Restore the index order.
-				sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
-				if e.indexPlan.Desc && !e.supportDesc {
-					sort.Sort(sort.Reverse(sorter))
-				} else {
-					sort.Sort(sorter)
-				}
+				return nil, err
 			}
 			task.done = true
 		}
@@ -222,6 +210,37 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		e.taskCursor++
 	}
+}
+
+func (e *XSelectIndexExec) runAllTableTasks() {
+	for _, task := range e.tasks {
+		go func(t *lookupTableTask) {
+			err := e.executeTask(t)
+			t.respCh <- err
+		}(task)
+	}
+}
+
+func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
+	sort.Sort(int64Slice(task.handles))
+	tblResult, err := e.doTableRequest(task.handles)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !e.indexPlan.OutOfOrder {
+		// Restore the index order.
+		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
+		if e.indexPlan.Desc && !e.supportDesc {
+			sort.Sort(sort.Reverse(sorter))
+		} else {
+			sort.Sort(sorter)
+		}
+	}
+	return nil
 }
 
 // Close implements Executor Close interface.
@@ -276,6 +295,7 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
 	for i, size := range taskSizes {
 		task := &lookupTableTask{
 			handles: handles[:size],
+			respCh:  make(chan error, 1),
 		}
 		handles = handles[size:]
 		e.tasks[i] = task
