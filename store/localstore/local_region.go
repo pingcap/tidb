@@ -142,7 +142,7 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 	return rows, nil
 }
 
-// extractKVRanges extract kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
+// extractKVRanges extracts kv.KeyRanges slice from a SelectRequest, and also returns if it is in descending order.
 func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.KeyRange, desc bool) {
 	var (
 		tid   int64
