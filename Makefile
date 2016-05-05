@@ -15,14 +15,12 @@ old_versions := 0 1 2 3
 ifeq "$(major_version)" "$(filter $(major_version),$(old_versions))"
   # Old version of `make` installed. It fails to search golex/goyacc
   # by using the modified `PATH`, so we specify these commands with full path.
-  GODEP   = $$(which godep)
   GOLEX   = $$(which golex)
   GOYACC  = $$(which goyacc)
   GOLINT  = $$(which golint)
 else
   # After version 4, `make` could follow modified `PATH` to find
   # golex/goyacc correctly.
-  GODEP   := godep
   GOLEX   := golex
   GOYACC  := goyacc
   GOLINT  := golint
@@ -44,12 +42,12 @@ TARGET = ""
 all: parser build test check
 
 build:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) build
 	rm -rf vendor
 
 install:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) install ./...
 	rm -rf vendor
 
@@ -106,40 +104,42 @@ todo:
 test: gotest
 
 gotest:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test -cover $(PACKAGES)
 	rm -rf vendor
 
 race:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test --race -cover $(PACKAGES)
 	rm -rf vendor
 
 ddl_test:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test ./ddl/... -skip_ddl=false
 	rm -rf vendor
 
 ddl_race_test:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test --race ./ddl/... -skip_ddl=false
 	rm -rf vendor
 
 tikv_test:
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test ./store/tikv/...
 	rm -rf vendor
 
 interpreter:
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
+	rm -rf vendor
 
 server:
 ifeq ($(TARGET), "")
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'
 	rm -rf vendor
 else
-	rm -rf vendor && ln -s tidb-server/vendor vendor
+	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)'
 	rm -rf vendor
 endif
