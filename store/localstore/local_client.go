@@ -60,6 +60,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_Not,
 		tipb.ExprType_Like:
 		return true
+	case kv.ReqSubTypeDesc:
+		return true
 	default:
 		return false
 	}

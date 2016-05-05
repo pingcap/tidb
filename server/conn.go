@@ -42,6 +42,7 @@ import (
 	"net"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -254,8 +255,10 @@ func (cc *clientConn) dispatch(data []byte) error {
 
 	token := cc.server.getToken()
 
+	startTs := time.Now()
 	defer func() {
 		cc.server.releaseToken(token)
+		log.Debugf("[TIME_CMD] %v %d", time.Now().Sub(startTs), cmd)
 	}()
 
 	switch cmd {
@@ -363,6 +366,7 @@ func (cc *clientConn) writeEOF() error {
 }
 
 func (cc *clientConn) handleQuery(sql string) (err error) {
+	startTs := time.Now()
 	rs, err := cc.ctx.Execute(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -372,6 +376,7 @@ func (cc *clientConn) handleQuery(sql string) (err error) {
 	} else {
 		err = cc.writeOK()
 	}
+	log.Debugf("[TIME_QUERY] %v %s", time.Now().Sub(startTs), sql)
 	return errors.Trace(err)
 }
 

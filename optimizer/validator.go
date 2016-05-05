@@ -14,6 +14,8 @@
 package optimizer
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -78,6 +80,10 @@ func (v *validator) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.PatternInExpr:
 		v.checkSameColumns(append(x.List, x.Expr)...)
+	case *ast.Limit:
+		if x.Count > math.MaxUint64-x.Offset {
+			x.Count = math.MaxUint64 - x.Offset
+		}
 	}
 
 	return in, v.err == nil

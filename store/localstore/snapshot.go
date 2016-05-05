@@ -121,7 +121,7 @@ func (s *dbSnapshot) reverseMvccSeek(key kv.Key) (kv.Key, []byte, error) {
 			key = revKey
 			continue
 		}
-		return resultKey, v, err
+		return resultKey, v, errors.Trace(err)
 	}
 }
 
