@@ -329,14 +329,93 @@ func (b *planBuilder) buildTableSource(sel *ast.SelectStmt) Plan {
 }
 
 func (b *planBuilder) buildAllAccessMethodsPlan(path *joinPath) []Plan {
+	indices, includeTableScan := b.availableIndices(path.table)
 	var candidates []Plan
-	p := b.buildTableScanPlan(path)
-	candidates = append(candidates, p)
-	for _, index := range path.table.TableInfo.Indices {
+	if includeTableScan {
+		p := b.buildTableScanPlan(path)
+		candidates = append(candidates, p)
+	}
+	for _, index := range indices {
 		ip := b.buildIndexScanPlan(index, path)
 		candidates = append(candidates, ip)
 	}
 	return candidates
+}
+
+func (b *planBuilder) availableIndices(table *ast.TableName) (indices []*model.IndexInfo, includeTableScan bool) {
+	var usableHints []*ast.IndexHint
+	for _, hint := range table.IndexHints {
+		if hint.HintScope == ast.HintForScan {
+			usableHints = append(usableHints, hint)
+		}
+	}
+	if len(usableHints) == 0 {
+		return table.TableInfo.Indices, true
+	}
+	var hasUse bool
+	var ignores []*model.IndexInfo
+	for _, hint := range usableHints {
+		switch hint.HintType {
+		case ast.HintUse, ast.HintForce:
+			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
+			hasUse = true
+			for _, idxName := range hint.IndexNames {
+				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				if idx != nil {
+					indices = append(indices, idx)
+				}
+			}
+		case ast.HintIgnore:
+			// Collect all the ignore index hints.
+			for _, idxName := range hint.IndexNames {
+				idx := findIndexByName(table.TableInfo.Indices, idxName)
+				if idx != nil {
+					ignores = append(ignores, idx)
+				}
+			}
+		}
+	}
+	indices = removeIgnores(indices, ignores)
+	// If we have got FORCE or USE index hint, table scan is excluded.
+	if len(indices) != 0 {
+		return indices, false
+	}
+	if hasUse {
+		// Empty use hint means don't use any index.
+		return nil, true
+	}
+	if len(ignores) == 0 {
+		return table.TableInfo.Indices, true
+	}
+	for _, idx := range table.TableInfo.Indices {
+		// Exclude ignored index.
+		if findIndexByName(ignores, idx.Name) == nil {
+			indices = append(indices, idx)
+		}
+	}
+	return indices, true
+}
+
+func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
+	if len(ignores) == 0 {
+		return indices
+	}
+	var remainedIndices []*model.IndexInfo
+	for _, index := range indices {
+		if findIndexByName(ignores, index.Name) == nil {
+			remainedIndices = append(remainedIndices, index)
+		}
+	}
+	return remainedIndices
+}
+
+func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexInfo {
+	for _, idx := range indices {
+		if idx.Name.L == name.L {
+			return idx
+		}
+	}
+	return nil
 }
 
 func (b *planBuilder) buildTableDual(sel *ast.SelectStmt) Plan {
