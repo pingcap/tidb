@@ -284,12 +284,10 @@ func (e *DeleteExec) Next() (*Row, error) {
 	if e.IsMultiTable && len(e.Tables) == 0 {
 		return &Row{}, nil
 	}
-	tblIDMap := make(map[int64]bool, len(e.Tables))
+
+	tblMap := make(map[int64][]string, len(e.Tables))
 	// Get table alias map.
 	tblNames := make(map[string]string)
-
-	// Map for unique (Table, handle) pair.
-	rowKeyMap := make(map[table.Table]map[int64]struct{})
 	if e.IsMultiTable {
 		// Delete from multiple tables should consider table ident list.
 		fs := e.SelectExec.Fields()
@@ -306,9 +304,12 @@ func (e *DeleteExec) Next() (*Row, error) {
 			if !ok {
 				return nil, errors.Errorf("Unknown table '%s' in MULTI DELETE", t.Name.O)
 			}
-			tblIDMap[t.TableInfo.ID] = true
+			tblMap[t.TableInfo.ID] = append(tblMap[t.TableInfo.ID], t.Name.L)
 		}
 	}
+
+	// Map for unique (Table, handle) pair.
+	rowKeyMap := make(map[table.Table]map[int64]struct{})
 	for {
 		row, err := e.SelectExec.Next()
 		if err != nil {
@@ -319,11 +320,8 @@ func (e *DeleteExec) Next() (*Row, error) {
 		}
 
 		for _, entry := range row.RowKeys {
-			if e.IsMultiTable {
-				tid := entry.Tbl.Meta().ID
-				if _, ok := tblIDMap[tid]; !ok {
-					continue
-				}
+			if e.IsMultiTable && !isMatchTableName(entry, tblMap) {
+				continue
 			}
 			if rowKeyMap[entry.Tbl] == nil {
 				rowKeyMap[entry.Tbl] = make(map[int64]struct{})
@@ -344,6 +342,28 @@ func (e *DeleteExec) Next() (*Row, error) {
 		}
 	}
 	return nil, nil
+}
+
+func isMatchTableName(entry *RowKeyEntry, tblMap map[int64][]string) bool {
+	var name string
+	if entry.TableAsName != nil {
+		name = entry.TableAsName.L
+	}
+	if len(name) == 0 {
+		name = entry.Tbl.Meta().Name.L
+	}
+
+	names, ok := tblMap[entry.Tbl.Meta().ID]
+	if !ok {
+		return false
+	}
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (e *DeleteExec) getTable(ctx context.Context, tableName *ast.TableName) (table.Table, error) {

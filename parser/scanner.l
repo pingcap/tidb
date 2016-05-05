@@ -1266,8 +1266,14 @@ func (l *lexer) hex(lval *yySymType) int {
 	s := string(l.val)
 	h, err := mysql.ParseHex(s)
 	if err != nil {
-		l.errf("hexadecimal literal: %v", err)
-		return int(unicode.ReplacementChar)
+		// If parse hexadecimal literal to numerical value error, we should treat it as a string.
+		hexStr, err1 := mysql.ParseHexStr(s)
+		if err1 != nil {
+			l.errf("hex literal: %v", err)
+			return int(unicode.ReplacementChar)
+		}
+		lval.item = hexStr
+		return stringLit 
 	}
 	lval.item = h
 	return hexLit

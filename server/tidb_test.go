@@ -16,6 +16,7 @@ package server
 import (
 	"time"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 )
@@ -41,6 +42,8 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	ts.server = server
 	go ts.server.Run()
 	time.Sleep(time.Millisecond * 100)
+
+	log.SetLevelByString("error")
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {

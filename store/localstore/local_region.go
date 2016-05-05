@@ -323,38 +323,63 @@ func (rs *localRegion) getRowsFromIndexReq(txn kv.Transaction, sel *tipb.SelectR
 	if sel.OrderBy != nil {
 		desc = *sel.OrderBy[0].Desc
 	}
+	if desc {
+		reverseKVRanges(kvRanges)
+	}
 	for _, ran := range kvRanges {
-		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran)
+		ranRows, err := getIndexRowFromRange(sel.IndexInfo, txn, ran, desc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		rows = append(rows, ranRows...)
 	}
-
-	if desc && SupportDesc {
-		for i := 0; i < len(rows)/2; i++ {
-			j := len(rows) - i - 1
-			rows[i], rows[j] = rows[j], rows[i]
-		}
-	}
-
 	return rows, nil
 }
 
-func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange) ([]*tipb.Row, error) {
+func reverseKVRanges(kvRanges []kv.KeyRange) {
+	for i := 0; i < len(kvRanges)/2; i++ {
+		j := len(kvRanges) - i - 1
+		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
+	}
+}
+
+func getIndexRowFromRange(idxInfo *tipb.IndexInfo, txn kv.Transaction, ran kv.KeyRange, desc bool) ([]*tipb.Row, error) {
 	var rows []*tipb.Row
-	seekKey := ran.StartKey
+	var seekKey kv.Key
+	if desc {
+		seekKey = ran.EndKey
+	} else {
+		seekKey = ran.StartKey
+	}
 	for {
-		it, err := txn.Seek(seekKey)
-		// We have to update the seekKey here, because decoding may change the it.Key(), which should not be allowed.
-		// TODO: make sure decoding don't modify the original data.
-		seekKey = it.Key().PrefixNext()
-		if err != nil {
-			return nil, errors.Trace(err)
+		var it kv.Iterator
+		var err error
+		if desc {
+			it, err = txn.SeekReverse(seekKey)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			seekKey = it.Key()
+		} else {
+			it, err = txn.Seek(seekKey)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			seekKey = it.Key().PrefixNext()
 		}
-		if !it.Valid() || it.Key().Cmp(ran.EndKey) >= 0 {
+		if !it.Valid() {
 			break
 		}
+		if desc {
+			if it.Key().Cmp(ran.StartKey) < 0 {
+				break
+			}
+		} else {
+			if it.Key().Cmp(ran.EndKey) >= 0 {
+				break
+			}
+		}
+
 		datums, err := tablecodec.DecodeIndexKey(it.Key())
 		if err != nil {
 			return nil, errors.Trace(err)

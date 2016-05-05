@@ -63,6 +63,22 @@ func (d *db) Seek(startKey []byte) ([]byte, []byte, error) {
 	return iter.Key(), iter.Value(), nil
 }
 
+func (d *db) SeekReverse(key []byte) ([]byte, []byte, error) {
+	iter := d.DB.NewIterator(&util.Range{}, nil)
+	defer iter.Release()
+	if len(key) == 0 {
+		if ok := iter.Last(); !ok {
+			return nil, nil, engine.ErrNotFound
+		}
+		return iter.Key(), iter.Value(), nil
+	}
+	iter.Seek(key)
+	if ok := iter.Prev(); !ok {
+		return nil, nil, engine.ErrNotFound
+	}
+	return iter.Key(), iter.Value(), nil
+}
+
 func (d *db) Commit(b engine.Batch) error {
 	batch, ok := b.(*leveldb.Batch)
 	if !ok {

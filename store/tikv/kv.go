@@ -97,7 +97,7 @@ func (s *tikvStore) getClient(addr string) (Client, error) {
 	s.clientLock.Lock()
 	defer s.clientLock.Unlock()
 
-	client, err := NewPBClient(addr)
+	client, err := NewRPCClient(addr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

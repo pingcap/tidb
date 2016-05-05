@@ -65,8 +65,8 @@ func rpcBackoff() func() error {
 	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
 }
 
-// NewPBClient new client that sends protobuf, e.g.: NewPBClient("192.168.1.2:61234").
-func NewPBClient(srvHost string) (Client, error) {
+// NewRPCClient new client that sends protobuf to do RPC.
+func NewRPCClient(srvHost string) (Client, error) {
 	factory := func() (net.Conn, error) {
 		conn, err := net.DialTimeout("tcp", srvHost, connectTimeout)
 		if err != nil {
