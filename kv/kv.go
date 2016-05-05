@@ -128,6 +128,8 @@ type Request struct {
 	Data []byte
 	// Key Ranges
 	KeyRanges []KeyRange
+	// If KeepOrder is true, the response should be returned in order.
+	KeepOrder bool
 	// If desc is true, the request is sent in descending order.
 	Desc bool
 	// If concurrency is 1, it only sends the request to a single storage unit when

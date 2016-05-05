@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
+	"sync"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -64,26 +65,34 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 	if err != nil {
 		return copErrorResponse{err}
 	}
-	index := 0
-	if req.Desc {
-		index = len(tasks) - 1
-	}
-	return &copIterator{
+	it := &copIterator{
 		store: c.store,
 		req:   req,
 		tasks: tasks,
-		index: index,
 	}
+	it.run()
+	return it
 }
+
+const (
+	taskNew int = iota
+	taskRunning
+	taskDone
+	taskFetched
+)
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
 	region *Region
 	ranges []kv.KeyRange
+
+	status   int
+	idx      int // Index of task in the tasks slice.
+	respChan chan *coprocessor.Response
 }
 
 func (t *copTask) pbRanges() []*coprocessor.KeyRange {
-	var ranges []*coprocessor.KeyRange
+	ranges := make([]*coprocessor.KeyRange, 0, len(t.ranges))
 	for _, r := range t.ranges {
 		ranges = append(ranges, &coprocessor.KeyRange{
 			Start: r.StartKey,
@@ -116,8 +125,11 @@ func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask
 			return nil, errors.Trace(err)
 		}
 		last = &copTask{
+			idx:    len(tasks),
 			region: region,
+			status: taskNew,
 		}
+		last.respChan = make(chan *coprocessor.Response)
 		tasks = append(tasks, last)
 	}
 	if last.region.Contains(r.EndKey) || bytes.Equal(last.region.EndKey(), r.EndKey) {
@@ -142,19 +154,109 @@ type copIterator struct {
 	store *tikvStore
 	req   *kv.Request
 	tasks []*copTask
-	index int // index indicates the next task to be executed
+
+	mu          sync.RWMutex
+	reqSent     int
+	respGot     int
+	concurrency int
+	respChan    chan *coprocessor.Response
+	errChan     chan error
+	finished    bool
 }
 
+func (it *copIterator) work() {
+	for {
+		it.mu.Lock()
+		// Get task
+		var task *copTask
+		if it.req.Desc {
+			for i := len(it.tasks) - 1; i >= 0; i-- {
+				if it.tasks[i].status == taskNew {
+					task = it.tasks[i]
+					break
+				}
+			}
+		} else {
+			for _, t := range it.tasks {
+				if t.status == taskNew {
+					task = t
+					break
+				}
+			}
+		}
+		it.mu.Unlock()
+		if task == nil {
+			break
+		}
+		task.status = taskRunning
+		resp, err := it.handleTask(task)
+		if err != nil {
+			it.errChan <- err
+			break
+		}
+		if !it.req.KeepOrder {
+			it.respChan <- resp
+		} else {
+			task.respChan <- resp
+		}
+	}
+}
+
+func (it *copIterator) run() {
+	for i := 0; i < it.concurrency; i++ {
+		go it.work()
+	}
+}
+
+// Return next coprocessor result.
 func (it *copIterator) Next() (io.ReadCloser, error) {
 	// TODO: Support `Concurrent` instruction in `kv.Request`.
-
-	var backoffErr error
-	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
-		if it.index < 0 || it.index >= len(it.tasks) {
+	if it.finished {
+		return nil, nil
+	}
+	var (
+		resp *coprocessor.Response
+		err  error
+	)
+	if !it.req.KeepOrder {
+		// Get next fetched resp from chan
+		select {
+		case resp = <-it.respChan:
+		case err = <-it.errChan:
+		}
+	} else {
+		var task *copTask
+		for _, t := range it.tasks {
+			if t.status != taskDone {
+				task = t
+				break
+			}
+		}
+		if task == nil {
+			it.Close()
 			return nil, nil
 		}
-		task := it.tasks[it.index]
+		select {
+		case resp = <-task.respChan:
+		case err = <-it.errChan:
+		}
+	}
+	if err != nil {
+		it.Close()
+		return nil, err
+	}
+	it.respGot++
+	// TODO: Check this
+	if it.respGot == len(it.tasks) {
+		it.Close()
+	}
+	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
+}
 
+// Handle single task.
+func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
+	var backoffErr error
+	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
 		client, err := it.store.getClient(task.region.GetAddress())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -168,7 +270,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		resp, err := client.SendCopReq(req)
 		if err != nil {
 			it.store.regionCache.NextStore(task.region.GetID())
-			err = it.rebuildCurrentTask()
+			err = it.rebuildCurrentTask(task)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -181,7 +283,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 			} else {
 				it.store.regionCache.DropRegion(task.region.GetID())
 			}
-			err = it.rebuildCurrentTask()
+			err = it.rebuildCurrentTask(task)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -202,36 +304,51 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 			log.Warnf("coprocessor err: %v", err)
 			return nil, errors.Trace(err)
 		}
-
-		if it.req.Desc {
-			it.index--
-		} else {
-			it.index++
-		}
-
-		return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
+		task.status = taskDone
+		return resp, nil
 	}
-
 	return nil, errors.Trace(backoffErr)
 }
 
-func (it *copIterator) rebuildCurrentTask() error {
-	task := it.tasks[it.index]
+func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(newTasks) == 0 {
+		// TODO: check this
+		return nil
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	var t *copTask
 	if it.req.Desc {
-		it.tasks = append(it.tasks[:it.index], newTasks...)
-		it.index = len(it.tasks) - 1
+		t = newTasks[len(newTasks)-1]
 	} else {
-		it.tasks = append(newTasks, it.tasks[it.index+1:]...)
-		it.index = 0
+		t = newTasks[0]
+	}
+	task.region = t.region
+	task.ranges = t.ranges
+	close(t.respChan)
+	// We should keep the original channel, because someone may be waiting on the channel.
+	t.respChan = task.respChan
+	if it.req.Desc {
+		newTasks[len(newTasks)-1] = task
+	} else {
+		newTasks[0] = task
+	}
+
+	//fmt.Printf("tasks: %d, newTasks: %d, idx: %d\n", len(it.tasks), len(newTasks), task.idx)
+	it.tasks = append(it.tasks[:task.idx], append(newTasks, it.tasks[task.idx+1:]...)...)
+	// Update index
+	for i := task.idx; i < len(it.tasks); i++ {
+		it.tasks[i].idx = i
 	}
 	return nil
 }
 
 func (it *copIterator) Close() error {
+	it.finished = true
 	return nil
 }
 

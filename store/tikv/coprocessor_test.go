@@ -116,15 +116,15 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 			Desc: true,
 		},
 		tasks: tasks,
-		index: 1,
 	}
-	err = iter.rebuildCurrentTask()
+	err = iter.rebuildCurrentTask(iter.tasks[1])
 	c.Assert(err, IsNil)
 	c.Assert(iter.tasks, HasLen, 3)
 	s.taskEqual(c, iter.tasks[0], 1, "a", "m")
 	s.taskEqual(c, iter.tasks[1], 2, "m", "q")
 	s.taskEqual(c, iter.tasks[2], 3, "q", "z")
 
+	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "z"))
 	iter = &copIterator{
 		store: &tikvStore{
 			regionCache: cache,
@@ -133,13 +133,13 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 			Desc: false,
 		},
 		tasks: tasks,
-		index: 1,
 	}
-	err = iter.rebuildCurrentTask()
+	err = iter.rebuildCurrentTask(iter.tasks[2])
 	c.Assert(err, IsNil)
-	c.Assert(iter.tasks, HasLen, 2)
-	s.taskEqual(c, iter.tasks[0], 2, "m", "q")
-	s.taskEqual(c, iter.tasks[1], 3, "q", "z")
+	c.Assert(iter.tasks, HasLen, 3)
+	s.taskEqual(c, iter.tasks[0], 1, "a", "m")
+	s.taskEqual(c, iter.tasks[1], 2, "m", "q")
+	s.taskEqual(c, iter.tasks[2], 3, "q", "z")
 }
 
 func (s *testCoprocessorSuite) buildKeyRanges(keys ...string) []kv.KeyRange {
