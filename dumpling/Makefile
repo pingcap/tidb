@@ -30,7 +30,7 @@ GO        := GO15VENDOREXPERIMENT="1" go
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE 'tikv|vendor')
+PACKAGES  := $$(go list ./...| grep -vE 'vendor')
 
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
@@ -121,11 +121,6 @@ ddl_test:
 ddl_race_test:
 	rm -rf vendor && ln -s _vendor/vendor vendor
 	$(GO) test --race ./ddl/... -skip_ddl=false
-	rm -rf vendor
-
-tikv_test:
-	rm -rf vendor && ln -s _vendor/vendor vendor
-	$(GO) test ./store/tikv/...
 	rm -rf vendor
 
 interpreter:

@@ -33,10 +33,10 @@ type pdOracle struct {
 
 // NewPdOracle create an Oracle that uses a pd client source.
 // Refer https://github.com/pingcap/pd/blob/master/pd-client/client.go for more details.
-func NewPdOracle(pdClient pd.Client) (oracle.Oracle, error) {
+func NewPdOracle(pdClient pd.Client) oracle.Oracle {
 	return &pdOracle{
 		c: pdClient,
-	}, nil
+	}
 }
 
 // IsExpired returns whether lockTs+TTL is expired, both are ms.

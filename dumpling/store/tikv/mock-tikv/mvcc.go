@@ -46,6 +46,27 @@ func newEntry(key []byte) *mvccEntry {
 	}
 }
 
+func (e *mvccEntry) Clone() *mvccEntry {
+	var entry mvccEntry
+	entry.key = append([]byte(nil), e.key...)
+	for _, v := range e.values {
+		entry.values = append(entry.values, mvccValue{
+			startTS:  v.startTS,
+			commitTS: v.commitTS,
+			value:    append([]byte(nil), v.value...),
+		})
+	}
+	if e.lock != nil {
+		entry.lock = &mvccLock{
+			startTS: e.lock.startTS,
+			primary: append([]byte(nil), e.lock.primary...),
+			value:   append([]byte(nil), e.lock.value...),
+			op:      e.lock.op,
+		}
+	}
+	return &entry
+}
+
 func (e *mvccEntry) Less(than llrb.Item) bool {
 	return bytes.Compare(e.key, than.(*mvccEntry).key) < 0
 }
@@ -222,7 +243,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 
 func (s *MvccStore) getOrNewEntry(key []byte) *mvccEntry {
 	if item := s.tree.Get(newEntry(key)); item != nil {
-		return item.(*mvccEntry)
+		return item.(*mvccEntry).Clone()
 	}
 	return newEntry(key)
 }
