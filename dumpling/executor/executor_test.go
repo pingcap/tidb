@@ -931,6 +931,11 @@ func (s *testSuite) TestUnion(c *C) {
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
+	testSQL = `select * from (select id from union_test union select id from union_test) t;`
+	tk.MustExec("begin")
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1", "2"))
+
 	r = tk.MustQuery("select 1 union all select 1")
 	r.Check(testkit.Rows("1", "1"))
 
