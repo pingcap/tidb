@@ -44,14 +44,14 @@ TARGET = ""
 all: parser build test check
 
 build:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) build
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 install:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) install ./...
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 TEMP_FILE = temp_parser_file
 
@@ -106,40 +106,42 @@ todo:
 test: gotest
 
 gotest:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) test -cover $(PACKAGES)
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 race:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) test --race -cover $(PACKAGES)
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 ddl_test:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) test ./ddl/... -skip_ddl=false
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 ddl_race_test:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) test --race ./ddl/... -skip_ddl=false
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 tikv_test:
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	$(GO) test ./store/tikv/...
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 
 interpreter:
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
+	rm -rf vendor
 
 server:
 ifeq ($(TARGET), "")
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 else
-	[ -d vendor ] || mv tidb-server/vendor .
+	rm -rf vendor && ln -s Godeps/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)' -o '$(TARGET)'
-	[ -d tidb-server/vendor ] || mv vendor tidb-server/
+	rm -rf vendor
 endif
