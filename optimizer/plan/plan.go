@@ -37,7 +37,7 @@ type Plan interface {
 	SetLimit(limit float64)
 	// AddParent means append a parent for plan.
 	AddParent(parent Plan)
-	// AddChild means append a parent for plan.
+	// AddChild means append a child for plan.
 	AddChild(children Plan)
 	// Retrieve parent by index.
 	GetParentByIndex(index int) Plan
