@@ -36,7 +36,7 @@ type Scanner struct {
 	skipFirst    bool // Skip first row when get next data from same region.
 }
 
-func newScanner(region *requestRegion, startKey []byte, ver uint64, snapshot tikvSnapshot, batchSize int) *Scanner {
+func newScanner(region *requestRegion, startKey []byte, ver uint64, snapshot tikvSnapshot, batchSize int) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -44,7 +44,7 @@ func newScanner(region *requestRegion, startKey []byte, ver uint64, snapshot tik
 	if startKey == nil {
 		startKey = []byte("")
 	}
-	return &Scanner{
+	scanner := &Scanner{
 		StartKey:     startKey,
 		Version:      ver,
 		nextStartKey: startKey,
@@ -54,6 +54,11 @@ func newScanner(region *requestRegion, startKey []byte, ver uint64, snapshot tik
 		region:       region,
 		skipFirst:    false,
 	}
+	err := scanner.Next()
+	if kv.IsErrNotFound(err) {
+		return scanner, nil
+	}
+	return scanner, errors.Trace(err)
 }
 
 // Valid return valid.
@@ -120,11 +125,6 @@ func (s *Scanner) getCurrent() *resultRow {
 	ret := &resultRow{key: nil, value: nil}
 	if !s.valid {
 		return ret
-	}
-	if len(s.cache) == 0 {
-		if err := s.Next(); err != nil {
-			return ret
-		}
 	}
 	if s.idx >= len(s.cache) {
 		return ret
