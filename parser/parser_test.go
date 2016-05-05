@@ -370,6 +370,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT POW(-1, 1)", true},
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
+		{"SELECT MOD(10, 2);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
@@ -787,6 +788,7 @@ func (s *testParserSuite) TestType(c *C) {
 		{"SELECT x'0a', X'11', 0x11", true},
 		{"select x'0xaa'", false},
 		{"select 0X11", false},
+		{"select 0x4920616D2061206C6F6E672068657820737472696E67", true},
 
 		// For bit
 		{"select 0b01, 0b0, b'11', B'11'", true},
