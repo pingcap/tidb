@@ -340,7 +340,7 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// the handles are not in original index order, so we can't push limit here.
+	// The handles are not in original index order, so we can't push limit here.
 	selTableReq := new(tipb.SelectRequest)
 	startTs := txn.StartTS()
 	selTableReq.StartTs = &startTs
