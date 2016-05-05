@@ -66,10 +66,18 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
-		store: c.store,
-		req:   req,
-		tasks: tasks,
+		store:       c.store,
+		req:         req,
+		tasks:       tasks,
+		concurrency: req.Concurrency,
 	}
+	if it.concurrency < 1 {
+		it.concurrency = 1
+	}
+	if it.req.KeepOrder {
+		it.respChan = make(chan *coprocessor.Response, it.concurrency)
+	}
+	it.errChan = make(chan error, 1)
 	it.run()
 	return it
 }
@@ -166,6 +174,9 @@ type copIterator struct {
 
 func (it *copIterator) work() {
 	for {
+		if it.finished {
+			break
+		}
 		it.mu.Lock()
 		// Get task
 		var task *copTask
@@ -226,12 +237,14 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		}
 	} else {
 		var task *copTask
+		it.mu.Lock()
 		for _, t := range it.tasks {
 			if t.status != taskDone {
 				task = t
 				break
 			}
 		}
+		it.mu.Unlock()
 		if task == nil {
 			it.Close()
 			return nil, nil
