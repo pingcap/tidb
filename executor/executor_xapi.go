@@ -227,7 +227,7 @@ func (e *XSelectIndexExec) Close() error {
 }
 
 // fetchHandle fetches all handles from the index.
-// this should be optimized to fetch handles in batch.
+// This should be optimized to fetch handles in batch.
 func (e *XSelectIndexExec) fetchHandles() ([]int64, error) {
 	idxResult, err := e.doIndexRequest()
 	if err != nil {

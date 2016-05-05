@@ -195,11 +195,11 @@ func (rs *localRegion) extractKVRanges(sel *tipb.SelectRequest) (kvRanges []kv.K
 }
 
 func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit int64, desc bool) ([]*tipb.Row, error) {
+	if limit == 0 {
+		return nil, nil
+	}
 	var rows []*tipb.Row
 	if ran.IsPoint() {
-		if limit == 0 {
-			return nil, nil
-		}
 		_, err := ctx.txn.Get(ran.StartKey)
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil, nil
