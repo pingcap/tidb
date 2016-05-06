@@ -179,10 +179,11 @@ type copIterator struct {
 // Pick the next new copTask and send request to tikv-server.
 func (it *copIterator) work() {
 	for {
+		it.mu.Lock()
 		if it.finished {
+			it.mu.Lock()
 			break
 		}
-		it.mu.Lock()
 		// Find the next task to send.
 		var task *copTask
 		if it.req.Desc {
@@ -200,11 +201,12 @@ func (it *copIterator) work() {
 				}
 			}
 		}
-		it.mu.Unlock()
 		if task == nil {
+			it.mu.Unlock()
 			break
 		}
 		task.status = taskRunning
+		it.mu.Unlock()
 		resp, err := it.handleTask(task)
 		if err != nil {
 			it.errChan <- err
@@ -245,10 +247,19 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	} else {
 		var task *copTask
 		it.mu.Lock()
-		for _, t := range it.tasks {
-			if t.status != taskDone {
-				task = t
-				break
+		if it.req.Desc {
+			for i := len(it.tasks) - 1; i >= 0; i-- {
+				if it.tasks[i].status != taskDone {
+					task = it.tasks[i]
+					break
+				}
+			}
+		} else {
+			for _, t := range it.tasks {
+				if t.status != taskDone {
+					task = t
+					break
+				}
 			}
 		}
 		it.mu.Unlock()
@@ -290,6 +301,7 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		resp, err := client.SendCopReq(req)
 		if err != nil {
+			log.Warn("SendCopReq error: ", err)
 			it.store.regionCache.NextStore(task.region.GetID())
 			err = it.rebuildCurrentTask(task)
 			if err != nil {
