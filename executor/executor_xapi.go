@@ -160,10 +160,10 @@ type XSelectIndexExec struct {
 }
 
 // BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
-var BaseLookupTableTaskSize = 256
+var BaseLookupTableTaskSize = 1024
 
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
-var MaxLookupTableTaskSize = 256
+var MaxLookupTableTaskSize = 1024
 
 type lookupTableTask struct {
 	handles []int64
@@ -186,7 +186,9 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		e.buildTableTasks(handles)
-		e.runAllTableTasks()
+		if e.indexPlan.NoLimit {
+			e.runAllTableTasks()
+		}
 	}
 	for {
 		if e.taskCursor >= len(e.tasks) {
@@ -194,9 +196,16 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
-			err := <-task.respCh
-			if err != nil {
-				return nil, err
+			if e.indexPlan.NoLimit {
+				err := <-task.respCh
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				err := e.executeTask(task)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			task.done = true
 		}
@@ -352,7 +361,11 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, 1)
+	concurrency := 1
+	if e.indexPlan.OutOfOrder {
+		concurrency = 10
+	}
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
 }
 
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
