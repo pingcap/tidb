@@ -61,7 +61,7 @@ func supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(req *kv.Request) kv.Response {
-	tasks, err := buildCopTasks(c.store.regionCache, req.KeyRanges)
+	tasks, err := buildCopTasks(c.store.regionCache, req.KeyRanges, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -115,7 +115,7 @@ func (t *copTask) pbRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange) ([]*copTask, error) {
+func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
 	var tasks []*copTask
 	for _, r := range ranges {
 		var err error
@@ -123,7 +123,18 @@ func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange) ([]*copTask, error)
 			return nil, errors.Trace(err)
 		}
 	}
+	if desc {
+		reverseTasks(tasks)
+	}
 	return tasks, nil
+}
+
+func reverseTasks(tasks []*copTask) {
+	for i := 0; i < len(tasks)/2; i++ {
+		j := len(tasks) - i - 1
+		tasks[i], tasks[j] = tasks[j], tasks[i]
+		tasks[i].idx, tasks[j].idx = tasks[j].idx, tasks[i].idx
+	}
 }
 
 func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
@@ -186,19 +197,10 @@ func (it *copIterator) work() {
 		}
 		// Find the next task to send.
 		var task *copTask
-		if it.req.Desc {
-			for i := len(it.tasks) - 1; i >= 0; i-- {
-				if it.tasks[i].status == taskNew {
-					task = it.tasks[i]
-					break
-				}
-			}
-		} else {
-			for _, t := range it.tasks {
-				if t.status == taskNew {
-					task = t
-					break
-				}
+		for _, t := range it.tasks {
+			if t.status == taskNew {
+				task = t
+				break
 			}
 		}
 		if task == nil {
@@ -247,19 +249,10 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 	} else {
 		var task *copTask
 		it.mu.Lock()
-		if it.req.Desc {
-			for i := len(it.tasks) - 1; i >= 0; i-- {
-				if it.tasks[i].status != taskDone {
-					task = it.tasks[i]
-					break
-				}
-			}
-		} else {
-			for _, t := range it.tasks {
-				if t.status != taskDone {
-					task = t
-					break
-				}
+		for _, t := range it.tasks {
+			if t.status != taskDone {
+				task = t
+				break
 			}
 		}
 		it.mu.Unlock()
@@ -301,11 +294,10 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		resp, err := client.SendCopReq(req)
 		if err != nil {
-			log.Warn("SendCopReq error: ", err)
 			it.store.regionCache.NextStore(task.region.GetID())
-			err = it.rebuildCurrentTask(task)
-			if err != nil {
-				return nil, errors.Trace(err)
+			err1 := it.rebuildCurrentTask(task)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
 			log.Warnf("send coprocessor request error: %v, try next store later", err)
 			continue
@@ -337,6 +329,8 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 			log.Warnf("coprocessor err: %v", err)
 			return nil, errors.Trace(err)
 		}
+		it.mu.Lock()
+		defer it.mu.Unlock()
 		task.status = taskDone
 		return resp, nil
 	}
@@ -345,7 +339,7 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 
 // Rebuild current task. It may be split into multiple tasks (in region split scenario).
 func (it *copIterator) rebuildCurrentTask(task *copTask) error {
-	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges)
+	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -357,22 +351,11 @@ func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 	defer it.mu.Unlock()
 	// We should put the original task back to the original place in the task list.
 	// So the tasks can be handled in order.
-	var t *copTask
-	if it.req.Desc {
-		t = newTasks[len(newTasks)-1]
-	} else {
-		t = newTasks[0]
-	}
+	t := newTasks[0]
 	task.region = t.region
 	task.ranges = t.ranges
 	close(t.respChan)
-	// We should keep the original channel, because someone may be waiting on the channel.
-	t.respChan = task.respChan
-	if it.req.Desc {
-		newTasks[len(newTasks)-1] = task
-	} else {
-		newTasks[0] = task
-	}
+	newTasks[0] = task
 	it.tasks = append(it.tasks[:task.idx], append(newTasks, it.tasks[task.idx+1:]...)...)
 	// Update index.
 	for i := task.idx; i < len(it.tasks); i++ {
