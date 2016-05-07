@@ -44,7 +44,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
 		"curtime", "variables", "dayname", "version", "btree", "hash", "row_format", "dynamic", "fixed", "compressed",
-		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action",
+		"compact", "redundant", "sql_no_cache sql_no_cache", "sql_cache sql_cache", "action", "round",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -371,6 +371,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT RAND();", true},
 		{"SELECT RAND(1);", true},
 		{"SELECT MOD(10, 2);", true},
+		{"SELECT ROUND(-1.23);", true},
+		{"SELECT ROUND(1.23, 1);", true},
 
 		{"SELECT SUBSTR('Quadratically',5);", true},
 		{"SELECT SUBSTR('Quadratically',5, 3);", true},
