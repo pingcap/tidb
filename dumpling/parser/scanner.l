@@ -448,6 +448,7 @@ redundant	{r}{e}{d}{u}{n}{d}{a}{n}{t}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
+round		{r}{o}{u}{n}{d}
 row 		{r}{o}{w}
 row_format	{r}{o}{w}_{f}{o}{r}{m}{a}{t}
 rtrim		{r}{t}{r}{i}{m}
@@ -935,6 +936,8 @@ redundant		lval.item = string(l.val)
 {right}			return right
 {rollback}		lval.item = string(l.val)
 			return rollback
+{round}			lval.item = string(l.val)
+			return round
 {row}			lval.item = string(l.val)
 			return row
 {row_format}		lval.item = string(l.val)
