@@ -367,8 +367,6 @@ func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 
 func (it *copIterator) Close() error {
 	it.finished = true
-	close(it.respChan)
-	close(it.errChan)
 	return nil
 }
 

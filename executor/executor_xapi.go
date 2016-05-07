@@ -16,9 +16,11 @@ package executor
 import (
 	"math"
 	"sort"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -181,10 +183,12 @@ func (e *XSelectIndexExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
 	if e.tasks == nil {
+		startTs := time.Now()
 		handles, err := e.fetchHandles()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(handles))
 		e.buildTableTasks(handles)
 		limitCount := int64(-1)
 		if e.indexPlan.LimitCount != nil {
@@ -203,6 +207,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
+			startTs := time.Now()
 			if task.doneCh != nil {
 				err := <-task.doneCh
 				if err != nil {
@@ -215,6 +220,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 				}
 			}
 			task.done = true
+			log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
