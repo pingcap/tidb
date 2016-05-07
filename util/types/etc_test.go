@@ -275,6 +275,27 @@ func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
 	}
 }
 
+func (s *testTypeEtcSuite) TestRound(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Input  float64
+		Dec    int
+		Expect float64
+	}{
+		{-1.23, 0, -1},
+		{-1.58, 0, -2},
+		{1.58, 0, 2},
+		{1.298, 1, 1.3},
+		{1.298, 0, 1},
+		{23.298, -1, 20},
+	}
+
+	for _, t := range tbl {
+		f := Round(t.Input, t.Dec)
+		c.Assert(f, Equals, t.Expect)
+	}
+}
+
 func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {

@@ -244,6 +244,7 @@ import (
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
+	round		"ROUND"
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
 	rsh		">>"
@@ -1908,7 +1909,7 @@ NotKeywordToken:
 |	"DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
 |	"IFNULL" | "ISNULL" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
 |	"POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen
-|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 
 /************************************************************************************
  *
@@ -2670,6 +2671,10 @@ FunctionCallNonKeyword:
 |	"CONNECTION_ID" '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"ROUND" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
 
 DateArithOpt:

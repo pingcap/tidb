@@ -86,3 +86,28 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		c.Assert(err, NotNil)
 	}
 }
+
+func (s *testEvaluatorSuite) TestRound(c *C) {
+	defer testleak.AfterTest(c)()
+	tbl := []struct {
+		Arg []interface{}
+		Ret float64
+	}{
+		{[]interface{}{-1.23}, -1},
+		{[]interface{}{-1.23, 0}, -1},
+		{[]interface{}{-1.58}, -2},
+		{[]interface{}{1.58}, 2},
+		{[]interface{}{1.298, 1}, 1.3},
+		{[]interface{}{1.298}, 1},
+		{[]interface{}{1.298, 0}, 1},
+		{[]interface{}{23.298, -1}, 20},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, t := range Dtbl {
+		v, err := builtinRound(t["Arg"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Ret"][0])
+	}
+}
