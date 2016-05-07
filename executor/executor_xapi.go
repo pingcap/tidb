@@ -170,7 +170,7 @@ type lookupTableTask struct {
 	rows    []*Row
 	cursor  int
 	done    bool
-	respCh  chan error
+	doneCh  chan error
 }
 
 // Fields implements Executor Fields interface.
@@ -186,8 +186,15 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		e.buildTableTasks(handles)
+		limitCount := int64(-1)
+		if e.indexPlan.LimitCount != nil {
+			limitCount = *e.indexPlan.LimitCount
+		}
 		if e.indexPlan.NoLimit {
-			e.runAllTableTasks()
+			e.runTableTasks(len(e.tasks))
+		} else if limitCount > int64(BaseLookupTableTaskSize) {
+			concurentCount := limitCount/int64(BaseLookupTableTaskSize) + 1
+			e.runTableTasks(int(concurentCount))
 		}
 	}
 	for {
@@ -196,8 +203,8 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
-			if e.indexPlan.NoLimit {
-				err := <-task.respCh
+			if task.doneCh != nil {
+				err := <-task.doneCh
 				if err != nil {
 					return nil, err
 				}
@@ -221,11 +228,13 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 	}
 }
 
-func (e *XSelectIndexExec) runAllTableTasks() {
-	for _, task := range e.tasks {
+func (e *XSelectIndexExec) runTableTasks(n int) {
+	for i := 0; i < n && i < len(e.tasks); i++ {
+		task := e.tasks[i]
+		task.doneCh = make(chan error, 1)
 		go func(t *lookupTableTask) {
 			err := e.executeTask(t)
-			t.respCh <- err
+			t.doneCh <- err
 		}(task)
 	}
 }
@@ -304,7 +313,6 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
 	for i, size := range taskSizes {
 		task := &lookupTableTask{
 			handles: handles[:size],
-			respCh:  make(chan error, 1),
 		}
 		handles = handles[size:]
 		e.tasks[i] = task
