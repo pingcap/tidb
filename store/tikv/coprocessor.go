@@ -71,13 +71,14 @@ func (c *CopClient) Send(req *kv.Request) kv.Response {
 		tasks:       tasks,
 		concurrency: req.Concurrency,
 	}
-	if it.concurrency < 1 {
-		it.concurrency = 1
-	}
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
-	if it.req.KeepOrder {
+	if it.concurrency < 1 {
+		// Make sure that there is at least one worker.
+		it.concurrency = 1
+	}
+	if !it.req.KeepOrder {
 		it.respChan = make(chan *coprocessor.Response, it.concurrency)
 	}
 	it.errChan = make(chan error, 1)
@@ -153,7 +154,7 @@ func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask
 			region: region,
 			status: taskNew,
 		}
-		last.respChan = make(chan *coprocessor.Response)
+		last.respChan = make(chan *coprocessor.Response, 1)
 		tasks = append(tasks, last)
 	}
 	if last.region.Contains(r.EndKey) || bytes.Equal(last.region.EndKey(), r.EndKey) {
