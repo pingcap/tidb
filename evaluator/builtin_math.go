@@ -56,10 +56,8 @@ func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	if len(args) == 1 && args[0].Kind() != types.KindNull {
 		seed, err := args[0].ToInt64()
 		if err != nil {
-			d.SetNull()
 			return d, errors.Trace(err)
 		}
-
 		rand.Seed(seed)
 	}
 	d.SetFloat64(rand.Float64())
@@ -69,13 +67,11 @@ func builtinRand(args []types.Datum, _ context.Context) (d types.Datum, err erro
 func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x, err := args[0].ToFloat64()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
 	y, err := args[1].ToFloat64()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	d.SetFloat64(math.Pow(x, y))
@@ -86,7 +82,6 @@ func builtinPow(args []types.Datum, _ context.Context) (d types.Datum, err error
 func builtinRound(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	x, err := args[0].ToFloat64()
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -94,7 +89,6 @@ func builtinRound(args []types.Datum, _ context.Context) (d types.Datum, err err
 	if len(args) == 2 {
 		y, err1 := args[1].ToInt64()
 		if err1 != nil {
-			d.SetNull()
 			return d, errors.Trace(err1)
 		}
 		dec = int(y)
