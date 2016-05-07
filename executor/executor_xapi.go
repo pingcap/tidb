@@ -220,7 +220,11 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 				}
 			}
 			task.done = true
-			log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+			if task.doneCh != nil {
+				log.Debugf("[TIME_INDEX_TABLE_SCAN_CONCURRENTLY] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+			} else {
+				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+			}
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
