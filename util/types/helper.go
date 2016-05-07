@@ -32,11 +32,10 @@ func RoundFloat(f float64) float64 {
 	return math.Trunc(f + math.Copysign(0.5, f))
 }
 
-// Round rounds the argument X to D decimal places.
-// The rounding algorithm depends on the data type of X.
-// D defaults to 0 if not specified. D can be negative
-// to cause D digits left of the decimal point of the
-// value X to become zero.
+// Round rounds the argument f to dec decimal places.
+// dec defaults to 0 if not specified. dec can be negative
+// to cause dec digits left of the decimal point of the
+// value f to become zero.
 func Round(f float64, dec int) float64 {
 	shift := math.Pow10(dec)
 	f = f * shift
