@@ -60,6 +60,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 	for {
 		if e.subResult == nil {
 			var err error
+			startTs := time.Now()
 			e.subResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -67,6 +68,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			if e.subResult == nil {
 				return nil, nil
 			}
+			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
 		h, rowData, err := e.subResult.Next()
 		if err != nil {
