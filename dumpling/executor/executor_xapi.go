@@ -16,9 +16,11 @@ package executor
 import (
 	"math"
 	"sort"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -58,6 +60,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 	for {
 		if e.subResult == nil {
 			var err error
+			startTs := time.Now()
 			e.subResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -65,6 +68,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			if e.subResult == nil {
 				return nil, nil
 			}
+			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
 		h, rowData, err := e.subResult.Next()
 		if err != nil {
@@ -181,10 +185,12 @@ func (e *XSelectIndexExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
 	if e.tasks == nil {
+		startTs := time.Now()
 		handles, err := e.fetchHandles()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(handles))
 		e.buildTableTasks(handles)
 		limitCount := int64(-1)
 		if e.indexPlan.LimitCount != nil {
@@ -203,6 +209,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
+			startTs := time.Now()
 			if task.doneCh != nil {
 				err := <-task.doneCh
 				if err != nil {
@@ -215,6 +222,11 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 				}
 			}
 			task.done = true
+			if task.doneCh != nil {
+				log.Debugf("[TIME_INDEX_TABLE_SCAN_CONCURRENTLY] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+			} else {
+				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
+			}
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
