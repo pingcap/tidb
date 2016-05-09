@@ -170,6 +170,7 @@ type lookupTableTask struct {
 	rows    []*Row
 	cursor  int
 	done    bool
+	doneCh  chan error
 }
 
 // Fields implements Executor Fields interface.
@@ -185,6 +186,16 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		e.buildTableTasks(handles)
+		limitCount := int64(-1)
+		if e.indexPlan.LimitCount != nil {
+			limitCount = *e.indexPlan.LimitCount
+		}
+		if e.indexPlan.NoLimit {
+			e.runTableTasks(len(e.tasks))
+		} else if limitCount > int64(BaseLookupTableTaskSize) {
+			concurentCount := limitCount/int64(BaseLookupTableTaskSize) + 1
+			e.runTableTasks(int(concurentCount))
+		}
 	}
 	for {
 		if e.taskCursor >= len(e.tasks) {
@@ -192,22 +203,15 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
-			sort.Sort(int64Slice(task.handles))
-			tblResult, err := e.doTableRequest(task.handles)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !e.indexPlan.OutOfOrder {
-				// Restore the index order.
-				sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
-				if e.indexPlan.Desc && !e.supportDesc {
-					sort.Sort(sort.Reverse(sorter))
-				} else {
-					sort.Sort(sorter)
+			if task.doneCh != nil {
+				err := <-task.doneCh
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			} else {
+				err := e.executeTask(task)
+				if err != nil {
+					return nil, errors.Trace(err)
 				}
 			}
 			task.done = true
@@ -222,6 +226,39 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		e.taskCursor++
 	}
+}
+
+func (e *XSelectIndexExec) runTableTasks(n int) {
+	for i := 0; i < n && i < len(e.tasks); i++ {
+		task := e.tasks[i]
+		task.doneCh = make(chan error, 1)
+		go func(t *lookupTableTask) {
+			err := e.executeTask(t)
+			t.doneCh <- err
+		}(task)
+	}
+}
+
+func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
+	sort.Sort(int64Slice(task.handles))
+	tblResult, err := e.doTableRequest(task.handles)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !e.indexPlan.OutOfOrder {
+		// Restore the index order.
+		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
+		if e.indexPlan.Desc && !e.supportDesc {
+			sort.Sort(sort.Reverse(sorter))
+		} else {
+			sort.Sort(sorter)
+		}
+	}
+	return nil
 }
 
 // Close implements Executor Close interface.
@@ -332,7 +369,11 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, 1)
+	concurrency := 1
+	if e.indexPlan.OutOfOrder {
+		concurrency = 10
+	}
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
 }
 
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
