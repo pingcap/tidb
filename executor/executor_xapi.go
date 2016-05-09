@@ -167,7 +167,7 @@ type XSelectIndexExec struct {
 }
 
 // BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
-var BaseLookupTableTaskSize = 128
+var BaseLookupTableTaskSize = 1024
 
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
 var MaxLookupTableTaskSize = 1024
@@ -212,6 +212,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		} else if limitCount > int64(BaseLookupTableTaskSize) {
 			concurrency = int(limitCount/int64(BaseLookupTableTaskSize) + 1)
 		}
+		log.Debugf("[TIME_INDEX_TABLE_CONCURRENT_SCAN] start %d workers", concurrency)
 		e.runTableTasks(concurrency)
 	}
 	for {
@@ -259,8 +260,10 @@ func (e *XSelectIndexExec) pickAndExecTask() {
 		}
 		// Execute the picked task.
 		err := e.executeTask(task)
+		e.mu.Lock()
 		task.status = taskDone
 		task.doneCh <- err
+		e.mu.Unlock()
 	}
 }
 
