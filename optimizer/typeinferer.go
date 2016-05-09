@@ -258,6 +258,9 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	switch x.FnName.L {
 	case "abs", "ifnull", "nullif":
 		tp = x.Args[0].GetType()
+		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
+			tp = types.NewFieldType(mysql.TypeDouble)
+		}
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date":
