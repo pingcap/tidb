@@ -137,6 +137,9 @@ type IndexScan struct {
 	// OutOfOrder indicates if the index scan can return out of order.
 	OutOfOrder bool
 
+	// NoLimit indicates that this plan need fetch all the rows.
+	NoLimit bool
+
 	// TableName is used to distinguish the same table selected multiple times in different place,
 	// like 'select * from t where exists(select 1 from t as x where t.c < x.c)'
 	TableName *ast.TableName
