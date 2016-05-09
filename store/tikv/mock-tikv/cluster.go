@@ -187,6 +187,15 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, leaderStoreID 
 	c.regions[newRegionID] = newRegion
 }
 
+// Merge merges 2 Regions, their key ranges should be adjoining.
+func (c *Cluster) Merge(regionID1, regionID2 uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.regions[regionID1].merge(c.regions[regionID2].meta.GetEndKey())
+	delete(c.regions, regionID2)
+}
+
 // Region is the Region meta data.
 type Region struct {
 	meta   *metapb.Region
@@ -233,6 +242,11 @@ func (r *Region) split(newRegionID uint64, key []byte, leaderStoreID uint64) *Re
 	return region
 }
 
+func (r *Region) merge(endKey []byte) {
+	r.meta.EndKey = endKey
+	r.incVersion()
+}
+
 func (r *Region) updateKeyRange(start, end []byte) {
 	r.meta.StartKey = start
 	r.meta.EndKey = end
@@ -242,13 +256,13 @@ func (r *Region) updateKeyRange(start, end []byte) {
 func (r *Region) incConfVer() {
 	r.meta.RegionEpoch = &metapb.RegionEpoch{
 		ConfVer: proto.Uint64(r.meta.GetRegionEpoch().GetConfVer() + 1),
-		Version: r.meta.GetRegionEpoch().Version,
+		Version: proto.Uint64(r.meta.GetRegionEpoch().GetVersion()),
 	}
 }
 
 func (r *Region) incVersion() {
 	r.meta.RegionEpoch = &metapb.RegionEpoch{
-		ConfVer: r.meta.GetRegionEpoch().ConfVer,
+		ConfVer: proto.Uint64(r.meta.GetRegionEpoch().GetConfVer()),
 		Version: proto.Uint64(r.meta.GetRegionEpoch().GetVersion() + 1),
 	}
 }
