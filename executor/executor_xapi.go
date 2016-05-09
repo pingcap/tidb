@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -161,18 +162,27 @@ type XSelectIndexExec struct {
 	tasks      []*lookupTableTask
 	taskCursor int
 	indexOrder map[int64]int
+
+	mu sync.Mutex
 }
 
 // BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
-var BaseLookupTableTaskSize = 1024
+var BaseLookupTableTaskSize = 128
 
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
 var MaxLookupTableTaskSize = 1024
+
+const (
+	taskNew int = iota
+	taskRunning
+	taskDone
+)
 
 type lookupTableTask struct {
 	handles []int64
 	rows    []*Row
 	cursor  int
+	status  int
 	done    bool
 	doneCh  chan error
 }
@@ -196,12 +206,13 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		if e.indexPlan.LimitCount != nil {
 			limitCount = *e.indexPlan.LimitCount
 		}
+		concurrency := 2
 		if e.indexPlan.NoLimit {
-			e.runTableTasks(len(e.tasks))
+			concurrency = len(e.tasks)
 		} else if limitCount > int64(BaseLookupTableTaskSize) {
-			concurentCount := limitCount/int64(BaseLookupTableTaskSize) + 1
-			e.runTableTasks(int(concurentCount))
+			concurrency = int(limitCount/int64(BaseLookupTableTaskSize) + 1)
 		}
+		e.runTableTasks(concurrency)
 	}
 	for {
 		if e.taskCursor >= len(e.tasks) {
@@ -210,23 +221,12 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		task := e.tasks[e.taskCursor]
 		if !task.done {
 			startTs := time.Now()
-			if task.doneCh != nil {
-				err := <-task.doneCh
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			} else {
-				err := e.executeTask(task)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
+			err := <-task.doneCh
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 			task.done = true
-			if task.doneCh != nil {
-				log.Debugf("[TIME_INDEX_TABLE_SCAN_CONCURRENTLY] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
-			} else {
-				log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
-			}
+			log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
@@ -240,14 +240,33 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 	}
 }
 
+func (e *XSelectIndexExec) pickAndExecTask() {
+	for {
+		// Pick a new task.
+		e.mu.Lock()
+		var task *lookupTableTask
+		for _, t := range e.tasks {
+			if t.status == taskNew {
+				task = t
+				task.status = taskRunning
+				break
+			}
+		}
+		e.mu.Unlock()
+		if task == nil {
+			// No more task to run.
+			break
+		}
+		// Execute the picked task.
+		err := e.executeTask(task)
+		task.status = taskDone
+		task.doneCh <- err
+	}
+}
+
 func (e *XSelectIndexExec) runTableTasks(n int) {
 	for i := 0; i < n && i < len(e.tasks); i++ {
-		task := e.tasks[i]
-		task.doneCh = make(chan error, 1)
-		go func(t *lookupTableTask) {
-			err := e.executeTask(t)
-			t.doneCh <- err
-		}(task)
+		go e.pickAndExecTask()
 	}
 }
 
@@ -326,6 +345,7 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
 		task := &lookupTableTask{
 			handles: handles[:size],
 		}
+		task.doneCh = make(chan error, 1)
 		handles = handles[size:]
 		e.tasks[i] = task
 	}
