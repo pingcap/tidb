@@ -784,7 +784,8 @@ action		{a}{c}{t}{i}{o}{n}
 {desc}			return desc
 {describe}		return describe
 {drop}			return drop
-{disable}		return disable
+{disable}		lval.item = string(l.val)
+			return disable
 {distinct}		return distinct
 {div}			return div
 {do}			lval.item = string(l.val)
@@ -795,7 +796,8 @@ action		{a}{c}{t}{i}{o}{n}
 {dynamic}		lval.item = string(l.val)
 			return dynamic
 {else}			return elseKwd
-{enable}		return enable
+{enable}		lval.item = string(l.val)
+			return enable
 {end}			lval.item = string(l.val)
 			return end
 {engine}		lval.item = string(l.val)
