@@ -258,6 +258,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	switch x.FnName.L {
 	case "abs", "ifnull", "nullif":
 		tp = x.Args[0].GetType()
+		// TODO: We should cover all types.
 		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
 			tp = types.NewFieldType(mysql.TypeDouble)
 		}
