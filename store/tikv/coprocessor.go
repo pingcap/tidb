@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"io"
 	"io/ioutil"
+	"sync"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -60,30 +61,52 @@ func supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(req *kv.Request) kv.Response {
-	tasks, err := buildCopTasks(c.store.regionCache, req.KeyRanges)
+	tasks, err := buildCopTasks(c.store.regionCache, req.KeyRanges, req.Desc)
 	if err != nil {
 		return copErrorResponse{err}
 	}
-	index := 0
-	if req.Desc {
-		index = len(tasks) - 1
+	it := &copIterator{
+		store:       c.store,
+		req:         req,
+		tasks:       tasks,
+		concurrency: req.Concurrency,
 	}
-	return &copIterator{
-		store: c.store,
-		req:   req,
-		tasks: tasks,
-		index: index,
+	if it.concurrency > len(tasks) {
+		it.concurrency = len(tasks)
 	}
+	if it.concurrency < 1 {
+		// Make sure that there is at least one worker.
+		it.concurrency = 1
+	}
+	if !it.req.KeepOrder {
+		it.respChan = make(chan *coprocessor.Response, it.concurrency)
+	}
+	it.errChan = make(chan error, 1)
+	if len(it.tasks) == 0 {
+		it.Close()
+	}
+	it.run()
+	return it
 }
+
+const (
+	taskNew int = iota
+	taskRunning
+	taskDone
+)
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
 	region *Region
 	ranges []kv.KeyRange
+
+	status   int
+	idx      int // Index of task in the tasks slice.
+	respChan chan *coprocessor.Response
 }
 
 func (t *copTask) pbRanges() []*coprocessor.KeyRange {
-	var ranges []*coprocessor.KeyRange
+	ranges := make([]*coprocessor.KeyRange, 0, len(t.ranges))
 	for _, r := range t.ranges {
 		ranges = append(ranges, &coprocessor.KeyRange{
 			Start: r.StartKey,
@@ -93,7 +116,7 @@ func (t *copTask) pbRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange) ([]*copTask, error) {
+func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange, desc bool) ([]*copTask, error) {
 	var tasks []*copTask
 	for _, r := range ranges {
 		var err error
@@ -101,7 +124,18 @@ func buildCopTasks(cache *RegionCache, ranges []kv.KeyRange) ([]*copTask, error)
 			return nil, errors.Trace(err)
 		}
 	}
+	if desc {
+		reverseTasks(tasks)
+	}
 	return tasks, nil
+}
+
+func reverseTasks(tasks []*copTask) {
+	for i := 0; i < len(tasks)/2; i++ {
+		j := len(tasks) - i - 1
+		tasks[i], tasks[j] = tasks[j], tasks[i]
+		tasks[i].idx, tasks[j].idx = tasks[j].idx, tasks[i].idx
+	}
 }
 
 func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask, error) {
@@ -116,8 +150,11 @@ func appendTask(tasks []*copTask, cache *RegionCache, r kv.KeyRange) ([]*copTask
 			return nil, errors.Trace(err)
 		}
 		last = &copTask{
+			idx:    len(tasks),
 			region: region,
+			status: taskNew,
 		}
+		last.respChan = make(chan *coprocessor.Response, 1)
 		tasks = append(tasks, last)
 	}
 	if last.region.Contains(r.EndKey) || bytes.Equal(last.region.EndKey(), r.EndKey) {
@@ -142,19 +179,110 @@ type copIterator struct {
 	store *tikvStore
 	req   *kv.Request
 	tasks []*copTask
-	index int // index indicates the next task to be executed
+
+	mu          sync.RWMutex
+	respGot     int
+	concurrency int
+	respChan    chan *coprocessor.Response
+	errChan     chan error
+	finished    bool
 }
 
-func (it *copIterator) Next() (io.ReadCloser, error) {
-	// TODO: Support `Concurrent` instruction in `kv.Request`.
+// Pick the next new copTask and send request to tikv-server.
+func (it *copIterator) work() {
+	for {
+		it.mu.Lock()
+		if it.finished {
+			it.mu.Lock()
+			break
+		}
+		// Find the next task to send.
+		var task *copTask
+		for _, t := range it.tasks {
+			if t.status == taskNew {
+				task = t
+				break
+			}
+		}
+		if task == nil {
+			it.mu.Unlock()
+			break
+		}
+		task.status = taskRunning
+		it.mu.Unlock()
+		resp, err := it.handleTask(task)
+		if err != nil {
+			it.errChan <- err
+			break
+		}
+		if !it.req.KeepOrder {
+			it.respChan <- resp
+		} else {
+			task.respChan <- resp
+		}
+	}
+}
 
-	var backoffErr error
-	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
-		if it.index < 0 || it.index >= len(it.tasks) {
+func (it *copIterator) run() {
+	// Start it.concurrency number of workers to handle cop requests.
+	for i := 0; i < it.concurrency; i++ {
+		go it.work()
+	}
+}
+
+// Return next coprocessor result.
+func (it *copIterator) Next() (io.ReadCloser, error) {
+	if it.finished {
+		return nil, nil
+	}
+	var (
+		resp *coprocessor.Response
+		err  error
+	)
+	// If data order matters, repsone should be returned in the same order as copTask slice.
+	// Otherwise all responses are returned from a single channel.
+	if !it.req.KeepOrder {
+		// Get next fetched resp from chan
+		select {
+		case resp = <-it.respChan:
+		case err = <-it.errChan:
+		}
+	} else {
+		var task *copTask
+		it.mu.Lock()
+		for _, t := range it.tasks {
+			if t.status != taskDone {
+				task = t
+				break
+			}
+		}
+		it.mu.Unlock()
+		if task == nil {
+			it.Close()
 			return nil, nil
 		}
-		task := it.tasks[it.index]
+		select {
+		case resp = <-task.respChan:
+		case err = <-it.errChan:
+		}
+	}
+	if err != nil {
+		it.Close()
+		return nil, err
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	it.respGot++
+	if it.respGot == len(it.tasks) {
+		it.Close()
+	}
+	return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
+}
 
+// Handle single copTask.
+func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) {
+	var backoffErr error
+	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
 		client, err := it.store.getClient(task.region.GetAddress())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -168,9 +296,9 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		resp, err := client.SendCopReq(req)
 		if err != nil {
 			it.store.regionCache.NextStore(task.region.GetID())
-			err = it.rebuildCurrentTask()
-			if err != nil {
-				return nil, errors.Trace(err)
+			err1 := it.rebuildCurrentTask(task)
+			if err1 != nil {
+				return nil, errors.Trace(err1)
 			}
 			log.Warnf("send coprocessor request error: %v, try next store later", err)
 			continue
@@ -181,7 +309,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 			} else {
 				it.store.regionCache.DropRegion(task.region.GetID())
 			}
-			err = it.rebuildCurrentTask()
+			err = it.rebuildCurrentTask(task)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -202,36 +330,43 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 			log.Warnf("coprocessor err: %v", err)
 			return nil, errors.Trace(err)
 		}
-
-		if it.req.Desc {
-			it.index--
-		} else {
-			it.index++
-		}
-
-		return ioutil.NopCloser(bytes.NewBuffer(resp.Data)), nil
+		it.mu.Lock()
+		defer it.mu.Unlock()
+		task.status = taskDone
+		return resp, nil
 	}
-
 	return nil, errors.Trace(backoffErr)
 }
 
-func (it *copIterator) rebuildCurrentTask() error {
-	task := it.tasks[it.index]
-	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges)
+// Rebuild current task. It may be split into multiple tasks (in region split scenario).
+func (it *copIterator) rebuildCurrentTask(task *copTask) error {
+	newTasks, err := buildCopTasks(it.store.regionCache, task.ranges, it.req.Desc)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if it.req.Desc {
-		it.tasks = append(it.tasks[:it.index], newTasks...)
-		it.index = len(it.tasks) - 1
-	} else {
-		it.tasks = append(newTasks, it.tasks[it.index+1:]...)
-		it.index = 0
+	if len(newTasks) == 0 {
+		// TODO: check this, this should never happend.
+		return nil
+	}
+	it.mu.Lock()
+	defer it.mu.Unlock()
+	// We should put the original task back to the original place in the task list.
+	// So the tasks can be handled in order.
+	t := newTasks[0]
+	task.region = t.region
+	task.ranges = t.ranges
+	close(t.respChan)
+	newTasks[0] = task
+	it.tasks = append(it.tasks[:task.idx], append(newTasks, it.tasks[task.idx+1:]...)...)
+	// Update index.
+	for i := task.idx; i < len(it.tasks); i++ {
+		it.tasks[i].idx = i
 	}
 	return nil
 }
 
 func (it *copIterator) Close() error {
+	it.finished = true
 	return nil
 }
 
