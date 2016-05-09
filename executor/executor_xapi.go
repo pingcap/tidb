@@ -206,7 +206,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 			if task.doneCh != nil {
 				err := <-task.doneCh
 				if err != nil {
-					return nil, err
+					return nil, errors.Trace(err)
 				}
 			} else {
 				err := e.executeTask(task)
