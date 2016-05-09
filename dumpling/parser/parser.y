@@ -129,6 +129,7 @@ import (
 	deleteKwd	"DELETE"
 	desc		"DESC"
 	describe	"DESCRIBE"
+	disable		"DISABLE"
 	distinct	"DISTINCT"
 	div 		"DIV"
 	do		"DO"
@@ -137,6 +138,7 @@ import (
 	duplicate	"DUPLICATE"
 	dynamic		"DYNAMIC"
 	elseKwd		"ELSE"
+	enable		"ENABLE"
 	end		"END"
 	engine		"ENGINE"
 	engines		"ENGINES"
@@ -184,6 +186,7 @@ import (
 	join		"JOIN"
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
+	keys		"KEYS"
 	le		"<="
 	leading		"LEADING"
 	left		"LEFT"
@@ -756,6 +759,14 @@ AlterTableSpec:
 			Tp: ast.AlterTableDropForeignKey,
 			Name: $4.(string),
 		}
+	}
+|	"DISABLE" "KEYS"
+	{
+		$$ = &ast.AlterTableSpec{}
+	}
+|	"ENABLE" "KEYS"
+	{
+		$$ = &ast.AlterTableSpec{}
 	}
 
 KeyOrIndex:
@@ -1902,7 +1913,7 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE" | "ACTION"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
