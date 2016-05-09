@@ -262,8 +262,8 @@ func (e *XSelectIndexExec) pickAndExecTask() {
 		err := e.executeTask(task)
 		e.mu.Lock()
 		task.status = taskDone
-		task.doneCh <- err
 		e.mu.Unlock()
+		task.doneCh <- err
 	}
 }
 
