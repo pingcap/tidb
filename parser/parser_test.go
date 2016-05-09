@@ -241,6 +241,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE t DISABLE KEYS", true},
+		{"ALTER TABLE t ENABLE KEYS", true},
 
 		// from join
 		{"SELECT * from t1, t2, t3", true},
