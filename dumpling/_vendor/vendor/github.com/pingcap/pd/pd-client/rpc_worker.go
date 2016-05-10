@@ -11,6 +11,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/deadline"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/msgpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/util"
 	"github.com/twinj/uuid"
@@ -27,6 +28,9 @@ const (
 )
 
 const maxPipelineRequest = 10000
+
+// errInvalidResponse represents response message is invalid.
+var errInvalidResponse = errors.New("invalid response")
 
 type tsoRequest struct {
 	done     chan error
@@ -171,7 +175,7 @@ func newMsgID() uint64 {
 }
 
 func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Timestamp, error) {
-	req := pdpb.Request{
+	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
 			ClusterId: proto.Uint64(w.clusterID),
@@ -181,21 +185,14 @@ func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Time
 			Number: proto.Uint32(uint32(n)),
 		},
 	}
-	if err := util.WriteMessage(conn, newMsgID(), &req); err != nil {
-		return nil, errors.Errorf("[pd] rpc failed: %v", err)
-	}
-	conn.Flush()
-	var rsp pdpb.Response
-	if _, err := util.ReadMessage(conn, &rsp); err != nil {
-		return nil, errors.Errorf("[pd] rpc failed: %v", err)
-	}
-	if err := w.checkResponse(&rsp); err != nil {
+	resp, err := w.callRPC(conn, req)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if rsp.GetTso() == nil {
+	if resp.GetTso() == nil {
 		return nil, errors.New("[pd] tso filed in rpc response not set")
 	}
-	timestamps := rsp.GetTso().GetTimestamps()
+	timestamps := resp.GetTso().GetTimestamps()
 	if len(timestamps) != n {
 		return nil, errors.New("[pd] tso length in rpc response is incorrect")
 	}
@@ -203,7 +200,7 @@ func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Time
 }
 
 func (w *rpcWorker) getMetaFromRemote(conn *bufio.ReadWriter, metaReq *pdpb.GetMetaRequest) (*pdpb.GetMetaResponse, error) {
-	req := pdpb.Request{
+	req := &pdpb.Request{
 		Header: &pdpb.RequestHeader{
 			Uuid:      uuid.NewV4().Bytes(),
 			ClusterId: proto.Uint64(w.clusterID),
@@ -211,21 +208,37 @@ func (w *rpcWorker) getMetaFromRemote(conn *bufio.ReadWriter, metaReq *pdpb.GetM
 		CmdType: pdpb.CommandType_GetMeta.Enum(),
 		GetMeta: metaReq,
 	}
-	if err := util.WriteMessage(conn, newMsgID(), &req); err != nil {
+	resp, err := w.callRPC(conn, req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if resp.GetGetMeta() == nil {
+		return nil, errors.New("[pd] GetMeta filed in rpc response not set")
+	}
+	return resp.GetGetMeta(), nil
+}
+
+func (w *rpcWorker) callRPC(conn *bufio.ReadWriter, req *pdpb.Request) (*pdpb.Response, error) {
+	msg := &msgpb.Message{
+		MsgType: msgpb.MessageType_PdReq.Enum(),
+		PdReq:   req,
+	}
+	if err := util.WriteMessage(conn, newMsgID(), msg); err != nil {
 		return nil, errors.Errorf("[pd] rpc failed: %v", err)
 	}
 	conn.Flush()
-	var rsp pdpb.Response
-	if _, err := util.ReadMessage(conn, &rsp); err != nil {
+	if _, err := util.ReadMessage(conn, msg); err != nil {
 		return nil, errors.Errorf("[pd] rpc failed: %v", err)
 	}
-	if err := w.checkResponse(&rsp); err != nil {
+	if msg.GetMsgType() != msgpb.MessageType_PdResp {
+		return nil, errors.Trace(errInvalidResponse)
+	}
+	resp := msg.GetPdResp()
+	if err := w.checkResponse(resp); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if rsp.GetGetMeta() == nil {
-		return nil, errors.New("[pd] GetMeta filed in rpc response not set")
-	}
-	return rsp.GetGetMeta(), nil
+
+	return resp, nil
 }
 
 func (w *rpcWorker) checkResponse(resp *pdpb.Response) error {
