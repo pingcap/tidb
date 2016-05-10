@@ -187,7 +187,7 @@ func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, leaderStoreID 
 	c.regions[newRegionID] = newRegion
 }
 
-// Merge merges 2 Regions, their key ranges should be adjoining.
+// Merge merges 2 Regions, their key ranges should be adjacent.
 func (c *Cluster) Merge(regionID1, regionID2 uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
