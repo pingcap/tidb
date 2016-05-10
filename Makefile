@@ -123,6 +123,11 @@ ddl_race_test:
 	$(GO) test --race ./ddl/... -skip_ddl=false
 	rm -rf vendor
 
+tikv_integration_test:
+	rm -rf vendor && ln -s _vendor/vendor vendor
+	$(GO) test ./store/tikv/. -with-tikv=true
+	rm -rf vendor
+
 interpreter:
 	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
