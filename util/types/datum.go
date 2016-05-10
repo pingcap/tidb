@@ -641,54 +641,54 @@ func (d *Datum) ConvertTo(target *FieldType) (Datum, error) {
 }
 
 func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
-	var ret Datum
+	var (
+		f   float64
+		ret Datum
+		err error
+	)
 	switch d.k {
 	case KindNull:
 		return ret, nil
 	case KindInt64:
-		ret.SetFloat64(float64(d.GetInt64()))
+		f = float64(d.GetInt64())
 	case KindUint64:
-		ret.SetFloat64(float64(d.GetUint64()))
+		f = float64(d.GetUint64())
 	case KindFloat32, KindFloat64:
-		ret.SetFloat64(d.GetFloat64())
+		f = d.GetFloat64()
 	case KindString, KindBytes:
-		f, err := StrToFloat(d.GetString())
+		f, err = StrToFloat(d.GetString())
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		ret.SetFloat64(f)
 	case KindMysqlTime:
-		f, _ := d.GetMysqlTime().ToNumber().Float64()
-		ret.SetFloat64(f)
+		f, _ = d.GetMysqlTime().ToNumber().Float64()
 	case KindMysqlDuration:
-		f, _ := d.GetMysqlDuration().ToNumber().Float64()
-		ret.SetFloat64(f)
+		f, _ = d.GetMysqlDuration().ToNumber().Float64()
 	case KindMysqlDecimal:
-		f, _ := d.GetMysqlDecimal().Float64()
-		ret.SetFloat64(f)
+		f, _ = d.GetMysqlDecimal().Float64()
 	case KindMysqlHex:
-		ret.SetFloat64(d.GetMysqlHex().ToNumber())
+		f = d.GetMysqlHex().ToNumber()
 	case KindMysqlBit:
-		ret.SetFloat64(d.GetMysqlBit().ToNumber())
+		f = d.GetMysqlBit().ToNumber()
 	case KindMysqlSet:
-		ret.SetFloat64(d.GetMysqlSet().ToNumber())
+		f = d.GetMysqlSet().ToNumber()
 	case KindMysqlEnum:
-		ret.SetFloat64(d.GetMysqlEnum().ToNumber())
+		f = d.GetMysqlEnum().ToNumber()
 	default:
 		return invalidConv(d, target.Tp)
 	}
 	// For float and following double type, we will only truncate it for float(M, D) format.
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
-		x, err := TruncateFloat(ret.GetFloat64(), target.Flen, target.Decimal)
+		f, err = TruncateFloat(f, target.Flen, target.Decimal)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		if target.Tp == mysql.TypeFloat {
-			ret.SetFloat32(float32(x))
-		} else {
-			ret.SetFloat64(x)
-		}
+	}
+	if target.Tp == mysql.TypeFloat {
+		ret.SetFloat32(float32(f))
+	} else {
+		ret.SetFloat64(f)
 	}
 	return ret, nil
 }
