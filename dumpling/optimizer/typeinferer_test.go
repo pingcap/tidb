@@ -82,6 +82,7 @@ func (ts *testTypeInferrerSuite) TestInferType(c *C) {
 		{"count(c1)", mysql.TypeLonglong, charset.CharsetBin},
 		{"abs(1)", mysql.TypeLonglong, charset.CharsetBin},
 		{"abs(1.1)", mysql.TypeNewDecimal, charset.CharsetBin},
+		{"abs(cast(\"20150817015609\" as DATETIME))", mysql.TypeDouble, charset.CharsetBin},
 		{"IF(1>2,2,3)", mysql.TypeLonglong, charset.CharsetBin},
 		{"IFNULL(1,0)", mysql.TypeLonglong, charset.CharsetBin},
 		{"POW(2,2)", mysql.TypeDouble, charset.CharsetBin},
