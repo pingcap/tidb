@@ -35,7 +35,7 @@ func BootstrapWithMultiStores(cluster *Cluster, n int) (storeIDs []uint64, regio
 	return
 }
 
-// BoostrapWithMultiRegions initializes a Cluster with multiple Regions and 1
+// BootstrapWithMultiRegions initializes a Cluster with multiple Regions and 1
 // Store. The number of Regions will be len(splitKeys) + 1.
 func BootstrapWithMultiRegions(cluster *Cluster, splitKeys ...[]byte) (storeID uint64, regionIDs []uint64) {
 	var firstRegionID uint64

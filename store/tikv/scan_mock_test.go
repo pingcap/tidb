@@ -77,4 +77,3 @@ func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
 	_, err = newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)
 	c.Assert(err, NotNil)
 }
-
