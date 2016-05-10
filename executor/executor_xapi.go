@@ -901,10 +901,6 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 		if prevKind == types.KindNull {
 			prevKind = d.Kind()
 		}
-		if d.Kind() == types.KindFloat32 {
-			// Currently can not handle float32 value for value list.
-			return nil
-		}
 		if d.Kind() != types.KindNull && d.Kind() != prevKind {
 			return nil
 		}
