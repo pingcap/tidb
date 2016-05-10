@@ -650,7 +650,11 @@ func (d *Datum) convertToFloat(target *FieldType) (Datum, error) {
 	case KindUint64:
 		ret.SetFloat64(float64(d.GetUint64()))
 	case KindFloat32, KindFloat64:
-		ret.SetFloat64(d.GetFloat64())
+		if target.Tp == mysql.TypeFloat {
+			ret.SetFloat32(float32(d.GetFloat64()))
+		} else {
+			ret.SetFloat64(d.GetFloat64())
+		}
 	case KindString, KindBytes:
 		f, err := StrToFloat(d.GetString())
 		if err != nil {

@@ -399,6 +399,23 @@ func (s *testCodecSuite) TestFloatCodec(c *C) {
 		ret = bytes.Compare(b1, b2)
 		c.Assert(ret, Equals, -t.Ret)
 	}
+
+	// Test float32 and float64 flag.
+	var datum = types.NewFloat32Datum(281.37)
+	encoded, err := EncodeValue(nil, datum)
+	c.Assert(err, IsNil)
+	datums, err := Decode(encoded)
+	c.Assert(err, IsNil)
+	c.Assert(datums[0].Kind(), Equals, types.KindFloat32)
+	c.Assert(datums[0].GetFloat32(), Equals, float32(281.37))
+
+	datum = types.NewFloat64Datum(281.37)
+	encoded, err = EncodeValue(nil, datum)
+	c.Assert(err, IsNil)
+	datums, err = Decode(encoded)
+	c.Assert(err, IsNil)
+	c.Assert(datums[0].Kind(), Equals, types.KindFloat64)
+	c.Assert(datums[0].GetFloat64(), Equals, 281.37)
 }
 
 func (s *testCodecSuite) TestBytes(c *C) {
