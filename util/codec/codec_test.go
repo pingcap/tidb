@@ -46,7 +46,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 
 		{
 			types.MakeDatums(float32(1), float64(3.15), []byte("123"), "123"),
-			types.MakeDatums(float64(1), float64(3.15), []byte("123"), []byte("123")),
+			types.MakeDatums(float32(1), float64(3.15), []byte("123"), []byte("123")),
 		},
 		{
 			types.MakeDatums(uint64(1), float64(3.15), []byte("123"), int64(-1)),
@@ -80,7 +80,7 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		c.Assert(err, IsNil, comment)
 		args, err := Decode(b)
 		c.Assert(err, IsNil)
-		c.Assert(args, DeepEquals, t.Expect)
+		c.Assert(args, DeepEquals, t.Expect, comment)
 
 		b, err = EncodeValue(nil, t.Input...)
 		c.Assert(err, IsNil)

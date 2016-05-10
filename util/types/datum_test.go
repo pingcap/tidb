@@ -152,10 +152,16 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts *testTypeConvertSuite) TestFloat64ToFloat32(c *C) {
+func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
 	ft := NewFieldType(mysql.TypeFloat)
 	var datum = NewFloat64Datum(281.37)
 	converted, err := datum.ConvertTo(ft)
+	c.Assert(err, IsNil)
+	c.Assert(converted.Kind(), Equals, KindFloat32)
+	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
+
+	datum.SetString("281.37")
+	converted, err = datum.ConvertTo(ft)
 	c.Assert(err, IsNil)
 	c.Assert(converted.Kind(), Equals, KindFloat32)
 	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
