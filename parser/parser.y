@@ -70,6 +70,7 @@ import (
 	as		"AS"
 	asc		"ASC"
 	ascii		"ASCII"
+	assignmentEq	":="
 	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
@@ -663,6 +664,7 @@ import (
 %left   tableRefPriority
 %precedence lowerThanOn
 %precedence on
+%left	assignmentEq
 %left 	oror or
 %left 	xor
 %left 	andand and
@@ -3659,6 +3661,12 @@ VariableAssignment:
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode), IsGlobal: isGlobal, IsSystem: true}
 	}
 |	"USER_VAR" eq Expression
+	{
+		v := $1.(string)
+		v = strings.TrimPrefix(v, "@")
+		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
+	}
+|	"USER_VAR" assignmentEq Expression
 	{
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")

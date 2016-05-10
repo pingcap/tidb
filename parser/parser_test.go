@@ -119,6 +119,7 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	for _, t := range table {
+		fmt.Printf("********************* src:%v \n", t.src)
 		_, err := Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
 		if t.ok {
@@ -198,6 +199,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// set
 		// user defined
 		{"SET @a = 1", true},
+		{"SET @b := 1", true},
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},
