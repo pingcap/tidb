@@ -121,7 +121,11 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 	case *ValuesExpr:
 		x.SetFlag(FlagHasReference)
 	case *VariableExpr:
-		x.SetFlag(FlagHasVariable)
+		if x.Value == nil {
+			x.SetFlag(FlagHasVariable)
+		} else {
+			x.SetFlag(FlagHasVariable | x.Value.GetFlag())
+		}
 	}
 
 	return in, true

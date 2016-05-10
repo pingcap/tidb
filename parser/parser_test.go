@@ -119,7 +119,6 @@ type testCase struct {
 
 func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	for _, t := range table {
-		fmt.Printf("********************* src:%v \n", t.src)
 		_, err := Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
 		if t.ok {
