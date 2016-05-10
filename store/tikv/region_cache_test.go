@@ -14,13 +14,9 @@
 package tikv
 
 import (
-	"bytes"
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 )
 
@@ -209,65 +205,3 @@ func (s *testRegionCacheSuite) TestNextStore(c *C) {
 	// Out of range of Stores, so get Region again and pick Stores[0] as leader.
 	c.Assert(region.curStoreIdx, Equals, 0)
 }
-
-type mockPDClient struct {
-	ts      int64
-	stores  map[uint64]*metapb.Store
-	regions map[uint64]*metapb.Region
-}
-
-func newMockPDClient() *mockPDClient {
-	return &mockPDClient{
-		stores:  make(map[uint64]*metapb.Store),
-		regions: make(map[uint64]*metapb.Region),
-	}
-}
-
-func (c *mockPDClient) setStore(id uint64, addr string) {
-	c.stores[id] = &metapb.Store{
-		Id:      proto.Uint64(id),
-		Address: proto.String(addr),
-	}
-}
-
-func (c *mockPDClient) removeStore(id uint64) {
-	delete(c.stores, id)
-}
-
-func (c *mockPDClient) setRegion(id uint64, startKey, endKey []byte, stores []uint64) {
-	c.regions[id] = &metapb.Region{
-		Id:       proto.Uint64(id),
-		StartKey: startKey,
-		EndKey:   endKey,
-		StoreIds: stores,
-	}
-}
-
-func (c *mockPDClient) removeRegion(id uint64) {
-	delete(c.regions, id)
-}
-
-func (c *mockPDClient) GetTS() (int64, int64, error) {
-	c.ts++
-	return c.ts, 0, nil
-}
-
-func (c *mockPDClient) GetRegion(key []byte) (*metapb.Region, error) {
-	for _, r := range c.regions {
-		if bytes.Compare(r.GetStartKey(), key) <= 0 &&
-			(bytes.Compare(key, r.GetEndKey()) < 0 || len(r.GetEndKey()) == 0) {
-			return r, nil
-		}
-	}
-	return nil, errors.Errorf("region not found for key %q", key)
-}
-
-func (c *mockPDClient) GetStore(storeID uint64) (*metapb.Store, error) {
-	s, ok := c.stores[storeID]
-	if !ok {
-		return nil, errors.Errorf("store %d not found", storeID)
-	}
-	return s, nil
-}
-
-func (c *mockPDClient) Close() {}
