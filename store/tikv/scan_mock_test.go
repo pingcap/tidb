@@ -25,9 +25,7 @@ type testScanMockSuite struct {
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	store, cluster := createMockStoreCluster()
-	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("m"))
-
+	store := NewMockTikvStore()
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
@@ -55,9 +53,11 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 }
 
 func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
-	store, cluster := createMockStoreCluster()
+	cluster := mocktikv.NewCluster()
 	_, _, regionID := mocktikv.BootstrapWithSingleStore(cluster)
-
+	mvccStore := mocktikv.NewMvccStore()
+	clientFactory := mockClientFactory(cluster, mvccStore)
+	store := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(cluster), clientFactory)
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
@@ -72,7 +72,6 @@ func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
 	region, err := store.getRegion(nil)
 	c.Assert(err, IsNil)
-
 	newPeerID := cluster.AllocID()
 	cluster.Split(regionID, cluster.AllocID(), []byte("m"), []uint64{newPeerID}, newPeerID)
 	_, err = newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)

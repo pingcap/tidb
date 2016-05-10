@@ -39,7 +39,10 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	case kv.ReqTypeSelect:
 		return supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeIndex:
-		return subType == kv.ReqSubTypeBasic
+		switch subType {
+		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
+			return true
+		}
 	}
 	return false
 }
@@ -53,6 +56,8 @@ func supportExpr(exprType tipb.ExprType) bool {
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
+		return true
+	case kv.ReqSubTypeDesc:
 		return true
 	default:
 		return false

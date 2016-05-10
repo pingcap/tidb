@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -42,9 +43,15 @@ type testSuite struct {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
-	store, err := tidb.NewStore("memory://test/test")
-	c.Assert(err, IsNil)
-	s.store = store
+	useMockTikv := true
+	if useMockTikv {
+		s.store = tikv.NewMockTikvStore()
+		tidb.SetSchemaLease(0)
+	} else {
+		store, err := tidb.NewStore("memory://test/test")
+		c.Assert(err, IsNil)
+		s.store = store
+	}
 	executor.BaseLookupTableTaskSize = 2
 }
 

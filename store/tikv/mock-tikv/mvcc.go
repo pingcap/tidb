@@ -241,6 +241,36 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 	return pairs
 }
 
+func (s *MvccStore) Seek(key []byte, startTS uint64) Pair {
+	return s.doSeek(key, startTS, false)
+}
+
+func (s *MvccStore) SeekReverse(key []byte, startTS uint64) Pair {
+	return s.doSeek(key, startTS, true)
+}
+
+func (s *MvccStore) doSeek(key []byte, startTS uint64, reverse bool) Pair {
+	var pair Pair
+	iterator := func(item llrb.Item) bool {
+		k := item.(*mvccEntry).key
+		if reverse && bytes.Equal(k, key) {
+			return true
+		}
+		val, err := s.Get(k, startTS)
+		if val != nil || err != nil {
+			pair = Pair{Key: k, Value: val, Err: err}
+			return false
+		}
+		return true
+	}
+	if reverse {
+		s.tree.DescendLessOrEqual(newEntry(key), iterator)
+	} else {
+		s.tree.AscendGreaterOrEqual(newEntry(key), iterator)
+	}
+	return pair
+}
+
 func (s *MvccStore) getOrNewEntry(key []byte) *mvccEntry {
 	if item := s.tree.Get(newEntry(key)); item != nil {
 		return item.(*mvccEntry).Clone()
