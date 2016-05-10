@@ -27,10 +27,9 @@ const (
 	compactBytesFlag byte = 2
 	intFlag          byte = 3
 	uintFlag         byte = 4
-	float64Flag      byte = 5
+	floatFlag        byte = 5
 	decimalFlag      byte = 6
 	durationFlag     byte = 7
-	float32Flag      byte = 8
 	maxFlag          byte = 250
 )
 
@@ -43,11 +42,8 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 		case types.KindUint64:
 			b = append(b, uintFlag)
 			b = EncodeUint(b, val.GetUint64())
-		case types.KindFloat64:
-			b = append(b, float64Flag)
-			b = EncodeFloat(b, val.GetFloat64())
-		case types.KindFloat32:
-			b = append(b, float32Flag)
+		case types.KindFloat32, types.KindFloat64:
+			b = append(b, floatFlag)
 			b = EncodeFloat(b, val.GetFloat64())
 		case types.KindString, types.KindBytes:
 			b = encodeBytes(b, val.GetBytes(), comparable)
@@ -150,14 +146,10 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		var v uint64
 		b, v, err = DecodeUint(b)
 		d.SetUint64(v)
-	case float64Flag:
+	case floatFlag:
 		var v float64
 		b, v, err = DecodeFloat(b)
 		d.SetFloat64(v)
-	case float32Flag:
-		var v float64
-		b, v, err = DecodeFloat(b)
-		d.SetFloat32(float32(v))
 	case bytesFlag:
 		var v []byte
 		b, v, err = DecodeBytes(b)
