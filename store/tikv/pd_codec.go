@@ -24,10 +24,6 @@ type codecPDClient struct {
 	pd.Client
 }
 
-func (c *codecPDClient) GetTS() (int64, int64, error) {
-	return c.Client.GetTS()
-}
-
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
 func (c *codecPDClient) GetRegion(key []byte) (*metapb.Region, error) {
@@ -51,12 +47,4 @@ func (c *codecPDClient) GetRegion(key []byte) (*metapb.Region, error) {
 		region.EndKey = decoded
 	}
 	return region, nil
-}
-
-func (c *codecPDClient) GetStore(storeID uint64) (*metapb.Store, error) {
-	return c.Client.GetStore(storeID)
-}
-
-func (c *codecPDClient) Close() {
-	c.Client.Close()
 }
