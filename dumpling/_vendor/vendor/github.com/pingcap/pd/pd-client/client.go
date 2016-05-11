@@ -113,9 +113,8 @@ func (c *client) GetTS() (int64, int64, error) {
 }
 
 func (c *client) GetRegion(key []byte) (*metapb.Region, error) {
-	req := &metaRequest{
-		pbReq: &pdpb.GetMetaRequest{
-			MetaType:  pdpb.MetaType_RegionType.Enum(),
+	req := &regionRequest{
+		pbReq: &pdpb.GetRegionRequest{
 			RegionKey: key,
 		},
 		done: make(chan error),
@@ -135,10 +134,9 @@ func (c *client) GetRegion(key []byte) (*metapb.Region, error) {
 }
 
 func (c *client) GetStore(storeID uint64) (*metapb.Store, error) {
-	req := &metaRequest{
-		pbReq: &pdpb.GetMetaRequest{
-			MetaType: pdpb.MetaType_StoreType.Enum(),
-			StoreId:  proto.Uint64(storeID),
+	req := &storeRequest{
+		pbReq: &pdpb.GetStoreRequest{
+			StoreId: proto.Uint64(storeID),
 		},
 		done: make(chan error),
 	}
