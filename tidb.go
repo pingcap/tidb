@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/engine"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -289,6 +290,7 @@ func init() {
 	// Register default memory and goleveldb storage
 	RegisterLocalStore("memory", goleveldb.MemoryDriver{})
 	RegisterLocalStore("goleveldb", goleveldb.Driver{})
+	RegisterStore("tikv", tikv.Driver{})
 	// start pprof handlers
 	if EnablePprof {
 		go http.ListenAndServe(PprofAddr, nil)
