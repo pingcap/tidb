@@ -29,7 +29,7 @@ func (c *codecPDClient) GetTS() (int64, int64, error) {
 }
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
-// returned StartKey & EndKey from pd-server.
+// returned StartKey && EndKey from pd-server.
 func (c *codecPDClient) GetRegion(key []byte) (*metapb.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
 	region, err := c.Client.GetRegion(encodedKey)
