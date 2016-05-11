@@ -566,8 +566,7 @@ func (d Duration) String() string {
 }
 
 func (d Duration) formatFrac(frac int) string {
-	format := fmt.Sprintf("%%0%dd", d.Fsp)
-	s := fmt.Sprintf(format, frac)
+	s := fmt.Sprintf("%06d", frac)
 	return s[0:d.Fsp]
 }
 
