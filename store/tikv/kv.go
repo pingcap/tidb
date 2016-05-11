@@ -62,7 +62,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s := newTikvStore(uuid, pdCli, NewRPCClient)
+	s := newTikvStore(uuid, &codecPDClient{pdCli}, NewRPCClient)
 	mc.cache[uuid] = s
 	return s, nil
 }
