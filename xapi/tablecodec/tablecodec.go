@@ -295,6 +295,13 @@ func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
 	return keyRanges
 }
 
+func TruncateToRowKey(key kv.Key) kv.Key {
+	if len(key) > recordRowKeyLen {
+		return key[:recordRowKeyLen]
+	}
+	return key
+}
+
 type keyRangeSorter struct {
 	ranges []kv.KeyRange
 }
