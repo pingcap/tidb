@@ -40,7 +40,7 @@ func newTestStore(c *C) *tikvStore {
 		c.Assert(err, IsNil)
 		return store.(*tikvStore)
 	}
-	return NewMockTikvStore()
+	return NewMockTikvStore().(*tikvStore)
 }
 
 type testTiclientSuite struct {

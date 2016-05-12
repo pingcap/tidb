@@ -241,10 +241,14 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 	return pairs
 }
 
+// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
+// if such key is not found.
 func (s *MvccStore) Seek(key []byte, startTS uint64) Pair {
 	return s.doSeek(key, startTS, false)
 }
 
+// SeekReverse searches the engine in backward order for the first key-value pair which key is less than the key
+// in byte order, returns (nil, nil, ErrNotFound) if such key is not found. If key is nil, the last key is returned.
 func (s *MvccStore) SeekReverse(key []byte, startTS uint64) Pair {
 	return s.doSeek(key, startTS, true)
 }

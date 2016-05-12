@@ -89,7 +89,8 @@ func newTikvStore(uuid string, pdClient pd.Client, factory ClientFactory) *tikvS
 	}
 }
 
-func NewMockTikvStore() *tikvStore {
+// NewMockTikvStore creates a mocked tikv store.
+func NewMockTikvStore() kv.Storage {
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
