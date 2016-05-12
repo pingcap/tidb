@@ -15,6 +15,7 @@ package perfschema
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -58,6 +59,7 @@ const (
 
 var (
 	callerNames = make(map[EnumCallerName]string)
+	callerLock  = &sync.RWMutex{}
 )
 
 // addInstrument is used to add an item to setup_instruments table.

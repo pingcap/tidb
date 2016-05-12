@@ -151,7 +151,9 @@ func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumC
 	// - table setup_objects
 
 	var source string
+	callerLock.RLock()
 	source, ok = callerNames[callerName]
+	callerLock.RUnlock()
 	if !ok {
 		_, fileName, fileLine, ok := runtime.Caller(1)
 		if !ok {
@@ -160,7 +162,10 @@ func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumC
 			return nil
 		}
 		source = fmt.Sprintf("%s:%d", fileName, fileLine)
+
+		callerLock.Lock()
 		callerNames[callerName] = source
+		callerLock.Unlock()
 	}
 
 	return &StatementState{
