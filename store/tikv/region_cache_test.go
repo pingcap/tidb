@@ -69,7 +69,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.curStoreIdx, Equals, 1)
+	c.Assert(r.curPeerIdx, Equals, 1)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store2))
 }
 
@@ -88,7 +88,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.curStoreIdx, Equals, 0)
+	c.Assert(r.curPeerIdx, Equals, 0)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
 
 	// tikv-server reports `NotLeader` again.
@@ -97,7 +97,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.curStoreIdx, Equals, 2)
+	c.Assert(r.curPeerIdx, Equals, 2)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(store3))
 }
 
@@ -119,7 +119,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.curStoreIdx, Equals, 0)
+	c.Assert(r.curPeerIdx, Equals, 0)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
 
 	// tikv-server reports `NotLeader` again.
@@ -128,7 +128,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.curStoreIdx, Equals, 2)
+	c.Assert(r.curPeerIdx, Equals, 2)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(store3))
 }
 
@@ -189,19 +189,19 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	c.Assert(s.cache.regions, HasLen, 1)
 }
 
-func (s *testRegionCacheSuite) TestNextStore(c *C) {
+func (s *testRegionCacheSuite) TestNextPeer(c *C) {
 	region, err := s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	c.Assert(region.curStoreIdx, Equals, 0)
+	c.Assert(region.curPeerIdx, Equals, 0)
 
-	s.cache.NextStore(s.region1)
+	s.cache.NextPeer(s.region1)
 	region, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	c.Assert(region.curStoreIdx, Equals, 1)
+	c.Assert(region.curPeerIdx, Equals, 1)
 
-	s.cache.NextStore(s.region1)
+	s.cache.NextPeer(s.region1)
 	region, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	// Out of range of Stores, so get Region again and pick Stores[0] as leader.
-	c.Assert(region.curStoreIdx, Equals, 0)
+	// Out of range of Peers, so get Region again and pick Stores[0] as leader.
+	c.Assert(region.curPeerIdx, Equals, 0)
 }
