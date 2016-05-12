@@ -227,7 +227,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 		if !regionContains(startKey, endKey, k) {
 			return false
 		}
-		val, err := s.Get(k, startTS)
+		val, err := s.get(k, startTS)
 		if val != nil || err != nil {
 			pairs = append(pairs, Pair{
 				Key:   k,
