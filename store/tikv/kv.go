@@ -62,7 +62,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	s := newTikvStore(uuid, pdCli, NewRPCClient)
+	s := newTikvStore(uuid, &codecPDClient{pdCli}, NewRPCClient)
 	mc.cache[uuid] = s
 	return s, nil
 }
@@ -185,15 +185,15 @@ func (s *tikvStore) SendKVReq(req *pb.Request, region *requestRegion) (*pb.Respo
 		req.Context = region.GetContext()
 		resp, err := client.SendKVReq(req)
 		if err != nil {
-			log.Warnf("send tikv request error: %v, try next store later", err)
-			s.regionCache.NextStore(region.GetID())
+			log.Warnf("send tikv request error: %v, try next peer later", err)
+			s.regionCache.NextPeer(region.GetID())
 			continue
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			// Retry if error is `NotLeader`.
 			if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 				log.Warnf("tikv reports `NotLeader`: %s, retry later", notLeader.String())
-				s.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeaderStoreId())
+				s.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
 				continue
 			}
 			// For other errors, we only drop cache here.

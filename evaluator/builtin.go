@@ -48,6 +48,7 @@ var Funcs = map[string]Func{
 	"pow":   {builtinPow, 2, 2},
 	"power": {builtinPow, 2, 2},
 	"rand":  {builtinRand, 0, 1},
+	"round": {builtinRound, 1, 2},
 
 	// time functions
 	"curdate":           {builtinCurrentDate, 0, 0},

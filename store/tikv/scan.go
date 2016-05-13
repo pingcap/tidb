@@ -63,20 +63,23 @@ func newScanner(region *requestRegion, startKey []byte, ver uint64, snapshot tik
 
 // Valid return valid.
 func (s *Scanner) Valid() bool {
-	_ = s.getCurrent()
 	return s.valid
 }
 
 // Key return key.
 func (s *Scanner) Key() kv.Key {
-	ret := s.getCurrent()
-	return kv.Key(ret.key)
+	if s.valid {
+		return s.cache[s.idx].key
+	}
+	return nil
 }
 
 // Value return value.
 func (s *Scanner) Value() []byte {
-	ret := s.getCurrent()
-	return ret.value
+	if s.valid {
+		return s.cache[s.idx].value
+	}
+	return nil
 }
 
 // Next return next element.
@@ -113,6 +116,10 @@ func (s *Scanner) Next() error {
 		s.Close()
 		return kv.ErrNotExist
 	}
+	if err := s.resolveCurrentLock(); err != nil {
+		s.Close()
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -121,40 +128,25 @@ func (s *Scanner) Close() {
 	s.valid = false
 }
 
-func (s *Scanner) getCurrent() *resultRow {
-	ret := &resultRow{key: nil, value: nil}
-	if !s.valid {
-		return ret
+func (s *Scanner) resolveCurrentLock() error {
+	current := s.cache[s.idx]
+	if current.lock == nil {
+		return nil
 	}
-	if s.idx >= len(s.cache) {
-		return ret
-	}
-	if s.cache[s.idx] == nil {
-		return ret
-	}
-	ret = s.cache[s.idx]
-	if ret.lock == nil {
-		return ret
-	}
-
-	var err error
-	for tryCount := 1; tryCount <= maxGetCount; tryCount++ {
-		var val []byte
-		// This key is lock, try to cleanup and get it again.
-		if val, err = s.snapshot.handleKeyError(&pb.KeyError{Locked: ret.lock}); err != nil {
-			if terror.ErrorNotEqual(err, errInnerRetryable) {
-				log.Errorf("Get error[%s]", errors.ErrorStack(err))
+	var backoffErr error
+	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
+		val, err := s.snapshot.handleKeyError(&pb.KeyError{Locked: current.lock})
+		if err != nil {
+			if terror.ErrorEqual(err, errInnerRetryable) {
+				continue
 			}
-		} else {
-			ret.value = val
-			return ret
+			return errors.Trace(err)
 		}
+		current.key, current.value = current.lock.Key, val
+		current.lock = nil
+		return nil
 	}
-	if err != nil {
-		log.Errorf("Get current locked key failed: %s", err)
-		return ret
-	}
-	return ret
+	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 func (s *Scanner) getData() ([]*resultRow, error) {

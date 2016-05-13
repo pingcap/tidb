@@ -139,19 +139,22 @@ func (c *Cluster) GetRegionByKey(key []byte) *metapb.Region {
 
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
 // bootstrap.
-func (c *Cluster) Bootstrap(regionID uint64, storeIDs []uint64, leaderStoreID uint64) {
+func (c *Cluster) Bootstrap(regionID uint64, storeIDs, peerIDs []uint64, leaderStoreID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.regions[regionID] = newRegion(regionID, storeIDs, leaderStoreID)
+	if len(storeIDs) != len(peerIDs) {
+		panic("len(storeIDs) != len(peerIDs)")
+	}
+	c.regions[regionID] = newRegion(regionID, storeIDs, peerIDs, leaderStoreID)
 }
 
 // AddPeer adds a new Peer for the Region on the Store.
-func (c *Cluster) AddPeer(regionID, storeID uint64) {
+func (c *Cluster) AddPeer(regionID, storeID, peerID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.regions[regionID].addPeer(storeID)
+	c.regions[regionID].addPeer(peerID, storeID)
 }
 
 // RemovePeer removes the Peer from the Region. Note that if the Peer is leader,
@@ -179,12 +182,21 @@ func (c *Cluster) GiveUpLeader(regionID uint64) {
 }
 
 // Split splits a Region at the key and creates new Region.
-func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, leaderStoreID uint64) {
+func (c *Cluster) Split(regionID, newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	newRegion := c.regions[regionID].split(newRegionID, key, leaderStoreID)
+	newRegion := c.regions[regionID].split(newRegionID, key, peerIDs, leaderPeerID)
 	c.regions[newRegionID] = newRegion
+}
+
+// Merge merges 2 Regions, their key ranges should be adjacent.
+func (c *Cluster) Merge(regionID1, regionID2 uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.regions[regionID1].merge(c.regions[regionID2].meta.GetEndKey())
+	delete(c.regions, regionID2)
 }
 
 // Region is the Region meta data.
@@ -193,30 +205,44 @@ type Region struct {
 	leader uint64
 }
 
-func newRegion(regionID uint64, storeIDs []uint64, leaderStoreID uint64) *Region {
+func newPeerMeta(peerID, storeID uint64) *metapb.Peer {
+	return &metapb.Peer{
+		Id:      proto.Uint64(peerID),
+		StoreId: proto.Uint64(storeID),
+	}
+}
+
+func newRegion(regionID uint64, storeIDs, peerIDs []uint64, leaderPeerID uint64) *Region {
+	if len(storeIDs) != len(peerIDs) {
+		panic("len(storeIDs) != len(peerIds)")
+	}
+	var peers []*metapb.Peer
+	for i := range storeIDs {
+		peers = append(peers, newPeerMeta(peerIDs[i], storeIDs[i]))
+	}
 	meta := &metapb.Region{
-		Id:       proto.Uint64(regionID),
-		StoreIds: storeIDs,
+		Id:    proto.Uint64(regionID),
+		Peers: peers,
 	}
 	return &Region{
 		meta:   meta,
-		leader: leaderStoreID,
+		leader: leaderPeerID,
 	}
 }
 
-func (r *Region) addPeer(storeID uint64) {
-	r.meta.StoreIds = append(r.meta.StoreIds, storeID)
+func (r *Region) addPeer(peerID, storeID uint64) {
+	r.meta.Peers = append(r.meta.Peers, newPeerMeta(peerID, storeID))
 	r.incConfVer()
 }
 
-func (r *Region) removePeer(storeID uint64) {
-	for i, id := range r.meta.StoreIds {
-		if id == storeID {
-			r.meta.StoreIds = append(r.meta.StoreIds[:i], r.meta.StoreIds[i+1:]...)
+func (r *Region) removePeer(peerID uint64) {
+	for i, peer := range r.meta.Peers {
+		if peer.GetId() == peerID {
+			r.meta.Peers = append(r.meta.Peers[:i], r.meta.Peers[i+1:]...)
 			break
 		}
 	}
-	if r.leader == storeID {
+	if r.leader == peerID {
 		r.leader = 0
 	}
 	r.incConfVer()
@@ -226,11 +252,23 @@ func (r *Region) changeLeader(leaderStoreID uint64) {
 	r.leader = leaderStoreID
 }
 
-func (r *Region) split(newRegionID uint64, key []byte, leaderStoreID uint64) *Region {
-	region := newRegion(newRegionID, r.meta.StoreIds, leaderStoreID)
+func (r *Region) split(newRegionID uint64, key []byte, peerIDs []uint64, leaderPeerID uint64) *Region {
+	if len(r.meta.Peers) != len(peerIDs) {
+		panic("len(r.meta.Peers) != len(peerIDs)")
+	}
+	var storeIDs []uint64
+	for _, peer := range r.meta.Peers {
+		storeIDs = append(storeIDs, peer.GetStoreId())
+	}
+	region := newRegion(newRegionID, storeIDs, peerIDs, leaderPeerID)
 	region.updateKeyRange(key, r.meta.EndKey)
 	r.updateKeyRange(r.meta.StartKey, key)
 	return region
+}
+
+func (r *Region) merge(endKey []byte) {
+	r.meta.EndKey = endKey
+	r.incVersion()
 }
 
 func (r *Region) updateKeyRange(start, end []byte) {
@@ -242,13 +280,13 @@ func (r *Region) updateKeyRange(start, end []byte) {
 func (r *Region) incConfVer() {
 	r.meta.RegionEpoch = &metapb.RegionEpoch{
 		ConfVer: proto.Uint64(r.meta.GetRegionEpoch().GetConfVer() + 1),
-		Version: r.meta.GetRegionEpoch().Version,
+		Version: proto.Uint64(r.meta.GetRegionEpoch().GetVersion()),
 	}
 }
 
 func (r *Region) incVersion() {
 	r.meta.RegionEpoch = &metapb.RegionEpoch{
-		ConfVer: r.meta.GetRegionEpoch().ConfVer,
+		ConfVer: proto.Uint64(r.meta.GetRegionEpoch().GetConfVer()),
 		Version: proto.Uint64(r.meta.GetRegionEpoch().GetVersion() + 1),
 	}
 }

@@ -16,9 +16,36 @@ package mocktikv
 import "fmt"
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.
-func BootstrapWithSingleStore(cluster *Cluster) {
-	ids := cluster.AllocIDs(2)
-	storeID, regionID := ids[0], ids[1]
+func BootstrapWithSingleStore(cluster *Cluster) (storeID, peerID, regionID uint64) {
+	ids := cluster.AllocIDs(3)
+	storeID, peerID, regionID = ids[0], ids[1], ids[2]
 	cluster.AddStore(storeID, fmt.Sprintf("store%d", storeID))
-	cluster.Bootstrap(regionID, []uint64{storeID}, storeID)
+	cluster.Bootstrap(regionID, []uint64{storeID}, []uint64{peerID}, peerID)
+	return
+}
+
+// BootstrapWithMultiStores initializes a Cluster with 1 Region and n Stores.
+func BootstrapWithMultiStores(cluster *Cluster, n int) (storeIDs, peerIDs []uint64, regionID uint64, leaderPeer uint64) {
+	storeIDs = cluster.AllocIDs(n)
+	peerIDs = cluster.AllocIDs(n)
+	leaderPeer = peerIDs[0]
+	regionID = cluster.AllocID()
+	for _, storeID := range storeIDs {
+		cluster.AddStore(storeID, fmt.Sprintf("store%d", storeID))
+	}
+	cluster.Bootstrap(regionID, storeIDs, peerIDs, leaderPeer)
+	return
+}
+
+// BootstrapWithMultiRegions initializes a Cluster with multiple Regions and 1
+// Store. The number of Regions will be len(splitKeys) + 1.
+func BootstrapWithMultiRegions(cluster *Cluster, splitKeys ...[]byte) (storeID uint64, regionIDs, peerIDs []uint64) {
+	var firstRegionID, firstPeerID uint64
+	storeID, firstPeerID, firstRegionID = BootstrapWithSingleStore(cluster)
+	regionIDs = append([]uint64{firstRegionID}, cluster.AllocIDs(len(splitKeys))...)
+	peerIDs = append([]uint64{firstPeerID}, cluster.AllocIDs(len(splitKeys))...)
+	for i, k := range splitKeys {
+		cluster.Split(regionIDs[i], regionIDs[i+1], k, []uint64{peerIDs[i]}, peerIDs[i])
+	}
+	return
 }

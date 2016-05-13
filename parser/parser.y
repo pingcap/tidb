@@ -70,6 +70,7 @@ import (
 	as		"AS"
 	asc		"ASC"
 	ascii		"ASCII"
+	assignmentEq	":="
 	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
@@ -129,6 +130,7 @@ import (
 	deleteKwd	"DELETE"
 	desc		"DESC"
 	describe	"DESCRIBE"
+	disable		"DISABLE"
 	distinct	"DISTINCT"
 	div 		"DIV"
 	do		"DO"
@@ -137,6 +139,7 @@ import (
 	duplicate	"DUPLICATE"
 	dynamic		"DYNAMIC"
 	elseKwd		"ELSE"
+	enable		"ENABLE"
 	end		"END"
 	engine		"ENGINE"
 	engines		"ENGINES"
@@ -184,6 +187,7 @@ import (
 	join		"JOIN"
 	key		"KEY"
 	keyBlockSize	"KEY_BLOCK_SIZE"
+	keys		"KEYS"
 	le		"<="
 	leading		"LEADING"
 	left		"LEFT"
@@ -244,6 +248,7 @@ import (
 	right		"RIGHT"
 	rlike		"RLIKE"
 	rollback	"ROLLBACK"
+	round		"ROUND"
 	row 		"ROW"
 	rowFormat	"ROW_FORMAT"
 	rsh		">>"
@@ -660,6 +665,7 @@ import (
 %left   tableRefPriority
 %precedence lowerThanOn
 %precedence on
+%right  assignmentEq
 %left 	oror or
 %left 	xor
 %left 	andand and
@@ -756,6 +762,14 @@ AlterTableSpec:
 			Tp: ast.AlterTableDropForeignKey,
 			Name: $4.(string),
 		}
+	}
+|	"DISABLE" "KEYS"
+	{
+		$$ = &ast.AlterTableSpec{}
+	}
+|	"ENABLE" "KEYS"
+	{
+		$$ = &ast.AlterTableSpec{}
 	}
 
 KeyOrIndex:
@@ -1526,7 +1540,18 @@ NUM:
 	intLit
 
 Expression:
-	Expression logOr Expression %prec oror
+	"USER_VAR" assignmentEq Expression %prec assignmentEq
+	{
+		v := $1.(string)
+		v = strings.TrimPrefix(v, "@")
+		$$ = &ast.VariableExpr{
+				Name: 	  v,
+				IsGlobal: false,
+				IsSystem: false,
+				Value:	  $3.(ast.ExprNode),
+		}
+	}
+|	Expression logOr Expression %prec oror
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.OrOr, L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
 	}
@@ -1601,6 +1626,18 @@ Factor:
 |	Factor CompareOp PredicateExpr %prec eq
 	{
 		$$ = &ast.BinaryOperationExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
+	}
+|	Factor CompareOp "USER_VAR" assignmentEq PredicateExpr %prec assignmentEq
+	{
+		v := $3.(string)
+		v = strings.TrimPrefix(v, "@")
+		variable := &ast.VariableExpr{
+				Name: 	  v,
+				IsGlobal: false,
+				IsSystem: false,
+				Value:	  $5.(ast.ExprNode),
+		}
+		$$ = &ast.BinaryOperationExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: variable}
 	}
 |	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
@@ -1902,14 +1939,14 @@ UnReservedKeyword:
 |	"VALUE" | "WARNINGS" | "YEAR" |	"MODE" | "WEEK" | "ANY" | "SOME" | "USER" | "IDENTIFIED" | "COLLATION"
 |	"COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MAX_ROWS" | "MIN_ROWS"
 |	"NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "ESCAPE" | "GRANTS" | "FIELDS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION"
-|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE" | "REVERSE"
+|	"REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "SQL_NO_CACHE" | "ACTION" | "DISABLE" | "ENABLE" | "REVERSE"
 
 NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
 |	"IFNULL" | "ISNULL" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN" | "MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW"
 |	"POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE" | "SUBSTRING" %prec lowerThanLeftParen
-|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK"
+|	"SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION" | "WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 
 /************************************************************************************
  *
@@ -2675,6 +2712,10 @@ FunctionCallNonKeyword:
 |	"CONNECTION_ID" '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string))}
+	}
+|	"ROUND" '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: $3.([]ast.ExprNode)}
 	}
 
 DateArithOpt:
@@ -3648,6 +3689,12 @@ VariableAssignment:
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode), IsGlobal: isGlobal, IsSystem: true}
 	}
 |	"USER_VAR" eq Expression
+	{
+		v := $1.(string)
+		v = strings.TrimPrefix(v, "@")
+		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
+	}
+|	"USER_VAR" assignmentEq Expression
 	{
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")
