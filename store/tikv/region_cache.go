@@ -173,7 +173,7 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	return region, nil
 }
 
-// Region store region info. Region is a readonly class.
+// Region stores region info. Region is a readonly class.
 type Region struct {
 	meta       *metapb.Region
 	peer       *metapb.Peer
@@ -181,27 +181,27 @@ type Region struct {
 	curPeerIdx int
 }
 
-// GetID return id.
+// GetID returns id.
 func (r *Region) GetID() uint64 {
 	return r.meta.GetId()
 }
 
-// StartKey return StartKey.
+// StartKey returns StartKey.
 func (r *Region) StartKey() []byte {
 	return r.meta.StartKey
 }
 
-// EndKey return EndKey.
+// EndKey returns EndKey.
 func (r *Region) EndKey() []byte {
 	return r.meta.EndKey
 }
 
-// GetAddress return address.
+// GetAddress returns address.
 func (r *Region) GetAddress() string {
 	return r.addr
 }
 
-// GetContext construct kvprotopb.Context from region info.
+// GetContext constructs kvprotopb.Context from region info.
 func (r *Region) GetContext() *kvrpcpb.Context {
 	return &kvrpcpb.Context{
 		RegionId:    r.meta.Id,
