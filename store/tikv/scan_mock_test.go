@@ -56,7 +56,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 
 func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
 	store, cluster := createMockStoreCluster()
-	storeID, regionID := mocktikv.BootstrapWithSingleStore(cluster)
+	_, _, regionID := mocktikv.BootstrapWithSingleStore(cluster)
 
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
@@ -73,7 +73,8 @@ func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
 	region, err := store.getRegion(nil)
 	c.Assert(err, IsNil)
 
-	cluster.Split(regionID, cluster.AllocID(), []byte("m"), storeID)
+	newPeerID := cluster.AllocID()
+	cluster.Split(regionID, cluster.AllocID(), []byte("m"), []uint64{newPeerID}, newPeerID)
 	_, err = newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)
 	c.Assert(err, NotNil)
 }

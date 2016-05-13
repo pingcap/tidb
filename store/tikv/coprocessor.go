@@ -295,17 +295,17 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		resp, err := client.SendCopReq(req)
 		if err != nil {
-			it.store.regionCache.NextStore(task.region.GetID())
+			it.store.regionCache.NextPeer(task.region.GetID())
 			err1 := it.rebuildCurrentTask(task)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
-			log.Warnf("send coprocessor request error: %v, try next store later", err)
+			log.Warnf("send coprocessor request error: %v, try next peer later", err)
 			continue
 		}
 		if e := resp.GetRegionError(); e != nil {
 			if notLeader := e.GetNotLeader(); notLeader != nil {
-				it.store.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeaderStoreId())
+				it.store.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
 			} else {
 				it.store.regionCache.DropRegion(task.region.GetID())
 			}

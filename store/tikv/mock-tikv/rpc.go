@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 )
 
 type rpcHandler struct {
@@ -77,15 +78,17 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			},
 		}
 	}
-	var found bool
-	for _, id := range region.StoreIds {
-		if id == h.storeID {
-			found = true
-			break
+	var storePeer, leaderPeer *metapb.Peer
+	for _, p := range region.Peers {
+		if p.GetStoreId() == h.storeID {
+			storePeer = p
+		}
+		if p.GetId() == leaderID {
+			leaderPeer = p
 		}
 	}
-	// We got the Region, but not in current Store. Also return a NotFound.
-	if !found {
+	// The Store does not contain a Peer of the Region.
+	if storePeer == nil {
 		return &errorpb.Error{
 			Message: proto.String("region not found"),
 			RegionNotFound: &errorpb.RegionNotFound{
@@ -94,7 +97,7 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 	}
 	// No leader.
-	if leaderID == 0 {
+	if leaderPeer == nil {
 		return &errorpb.Error{
 			Message: proto.String("no leader"),
 			NotLeader: &errorpb.NotLeader{
@@ -102,13 +105,13 @@ func (h *rpcHandler) checkContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			},
 		}
 	}
-	// Leader is not this Store.
-	if leaderID != h.storeID {
+	// The Peer on the Store is not leader.
+	if storePeer.GetId() != leaderPeer.GetId() {
 		return &errorpb.Error{
 			Message: proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
-				RegionId:      proto.Uint64(ctx.GetRegionId()),
-				LeaderStoreId: proto.Uint64(leaderID),
+				RegionId: proto.Uint64(ctx.GetRegionId()),
+				Leader:   leaderPeer,
 			},
 		}
 	}
