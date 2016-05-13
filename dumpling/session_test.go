@@ -687,6 +687,54 @@ func (s *testSessionSuite) TestIssue1135(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIssue1114(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "set @tmp = 0")
+	mustExecSQL(c, se, "set @tmp := @tmp + 1")
+	r := mustExecSQL(c, se, "select @tmp")
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 1)
+
+	r = mustExecSQL(c, se, "select @tmp1 = 1, @tmp2 := 2")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, nil, 2)
+
+	r = mustExecSQL(c, se, "select @tmp1 := 11, @tmp2")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 11, 2)
+
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c int);")
+	mustExecSQL(c, se, "insert into t values (1),(2);")
+	mustExecSQL(c, se, "update t set c = 3 WHERE c = @var:= 1")
+	r = mustExecSQL(c, se, "select * from t")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 3)
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 2)
+
+	r = mustExecSQL(c, se, "select @tmp := count(*) from t")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 2)
+
+	r = mustExecSQL(c, se, "select @tmp := c-2 from t where c=3")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 1)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSessionSuite) TestSelectForUpdate(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)

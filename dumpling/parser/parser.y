@@ -70,6 +70,7 @@ import (
 	as		"AS"
 	asc		"ASC"
 	ascii		"ASCII"
+	assignmentEq	":="
 	at		"AT"
 	autoIncrement	"AUTO_INCREMENT"
 	avg		"AVG"
@@ -663,6 +664,7 @@ import (
 %left   tableRefPriority
 %precedence lowerThanOn
 %precedence on
+%right  assignmentEq
 %left 	oror or
 %left 	xor
 %left 	andand and
@@ -1537,7 +1539,18 @@ NUM:
 	intLit
 
 Expression:
-	Expression logOr Expression %prec oror
+	"USER_VAR" assignmentEq Expression %prec assignmentEq
+	{
+		v := $1.(string)
+		v = strings.TrimPrefix(v, "@")
+		$$ = &ast.VariableExpr{
+				Name: 	  v,
+				IsGlobal: false,
+				IsSystem: false,
+				Value:	  $3.(ast.ExprNode),
+		}
+	}
+|	Expression logOr Expression %prec oror
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.OrOr, L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
 	}
@@ -1612,6 +1625,18 @@ Factor:
 |	Factor CompareOp PredicateExpr %prec eq
 	{
 		$$ = &ast.BinaryOperationExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: $3.(ast.ExprNode)}
+	}
+|	Factor CompareOp "USER_VAR" assignmentEq PredicateExpr %prec assignmentEq
+	{
+		v := $3.(string)
+		v = strings.TrimPrefix(v, "@")
+		variable := &ast.VariableExpr{
+				Name: 	  v,
+				IsGlobal: false,
+				IsSystem: false,
+				Value:	  $5.(ast.ExprNode),
+		}
+		$$ = &ast.BinaryOperationExpr{Op: $2.(opcode.Op), L: $1.(ast.ExprNode), R: variable}
 	}
 |	Factor CompareOp AnyOrAll SubSelect %prec eq
 	{
@@ -3659,6 +3684,12 @@ VariableAssignment:
 		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode), IsGlobal: isGlobal, IsSystem: true}
 	}
 |	"USER_VAR" eq Expression
+	{
+		v := $1.(string)
+		v = strings.TrimPrefix(v, "@")
+		$$ = &ast.VariableAssignment{Name: v, Value: $3.(ast.ExprNode)}
+	}
+|	"USER_VAR" assignmentEq Expression
 	{
 		v := $1.(string)
 		v = strings.TrimPrefix(v, "@")
