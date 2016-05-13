@@ -577,6 +577,16 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	sessionVars := variable.GetSessionVars(e.ctx)
 	globalVars := variable.GetGlobalVarAccessor(e.ctx)
 	if !v.IsSystem {
+		if v.Value != nil && v.Value.GetDatum().Kind() != types.KindNull {
+			strVal, err := v.Value.GetDatum().ToString()
+			if err != nil {
+				e.err = errors.Trace(err)
+				return false
+			}
+			sessionVars.Users[name] = strings.ToLower(strVal)
+			v.SetString(strVal)
+			return true
+		}
 		// user vars
 		if value, ok := sessionVars.Users[name]; ok {
 			v.SetString(value)
