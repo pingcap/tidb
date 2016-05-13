@@ -40,9 +40,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	region, err := store.getRegion(nil)
-	c.Assert(err, IsNil)
-	scanner, err := newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)
+	scanner, err := newScanner(snapshot, []byte("a"), 10)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
@@ -70,11 +68,9 @@ func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	region, err := store.getRegion(nil)
-	c.Assert(err, IsNil)
 
 	newPeerID := cluster.AllocID()
 	cluster.Split(regionID, cluster.AllocID(), []byte("m"), []uint64{newPeerID}, newPeerID)
-	_, err = newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)
+	_, err = newScanner(snapshot, []byte("a"), 10)
 	c.Assert(err, NotNil)
 }

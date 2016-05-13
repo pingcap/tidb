@@ -24,34 +24,26 @@ import (
 
 // Scanner support tikv scan
 type Scanner struct {
-	StartKey     []byte // len(StartKey) == 0 stands for minimum key.
-	Version      uint64
-	nextStartKey []byte
-	valid        bool
-	snapshot     tikvSnapshot
-	cache        []*resultRow
-	idx          int
+	snapshot     *tikvSnapshot
 	batchSize    int
-	region       *requestRegion
+	valid        bool
+	cache        []*pb.KvPair
+	idx          int
+	nextStartKey []byte
 	skipFirst    bool // Skip first row when get next data from same region.
+	eof          bool
 }
 
-func newScanner(region *requestRegion, startKey []byte, ver uint64, snapshot tikvSnapshot, batchSize int) (*Scanner, error) {
+func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
 	}
-	if startKey == nil {
-		startKey = []byte("")
-	}
 	scanner := &Scanner{
-		StartKey:     startKey,
-		Version:      ver,
-		nextStartKey: startKey,
-		valid:        true,
 		snapshot:     snapshot,
 		batchSize:    batchSize,
-		region:       region,
+		valid:        true,
+		nextStartKey: startKey,
 		skipFirst:    false,
 	}
 	err := scanner.Next()
@@ -69,7 +61,7 @@ func (s *Scanner) Valid() bool {
 // Key return key.
 func (s *Scanner) Key() kv.Key {
 	if s.valid {
-		return s.cache[s.idx].key
+		return s.cache[s.idx].Key
 	}
 	return nil
 }
@@ -77,7 +69,7 @@ func (s *Scanner) Key() kv.Key {
 // Value return value.
 func (s *Scanner) Value() []byte {
 	if s.valid {
-		return s.cache[s.idx].value
+		return s.cache[s.idx].Value
 	}
 	return nil
 }
@@ -87,40 +79,32 @@ func (s *Scanner) Next() error {
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
-	s.idx++
-	for s.idx >= len(s.cache) {
-		if len(s.nextStartKey) == 0 {
-			break
+	for {
+		s.idx++
+		if s.idx >= len(s.cache) {
+			if s.eof {
+				s.Close()
+				return kv.ErrNotExist
+			}
+			err := s.getData()
+			if err != nil {
+				s.Close()
+				return errors.Trace(err)
+			}
+			if s.idx >= len(s.cache) {
+				continue
+			}
 		}
-		ret, err := s.getData()
-		if err != nil {
-			log.Errorf("getData failed: %s", err)
+		if err := s.resolveCurrentLock(); err != nil {
 			s.Close()
 			return errors.Trace(err)
 		}
-		s.cache = ret
-		if s.skipFirst {
-			s.idx = 1
-		} else {
-			s.idx = 0
+		if len(s.Value()) == 0 {
+			// nil stands for NotExist, go to next KV pair.
+			continue
 		}
-		if s.mayHasMoreRegionData() {
-			s.nextStartKey, s.skipFirst = s.cache[len(s.cache)-1].key, true
-		} else {
-			// There is no more data in this region, switch next.
-			s.nextStartKey, s.skipFirst = s.region.meta.GetEndKey(), false
-			break
-		}
+		return nil
 	}
-	if s.idx >= len(s.cache) {
-		s.Close()
-		return kv.ErrNotExist
-	}
-	if err := s.resolveCurrentLock(); err != nil {
-		s.Close()
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 // Close close iterator.
@@ -128,76 +112,93 @@ func (s *Scanner) Close() {
 	s.valid = false
 }
 
+func (s *Scanner) startTS() uint64 {
+	return s.snapshot.version.Ver
+}
+
 func (s *Scanner) resolveCurrentLock() error {
 	current := s.cache[s.idx]
-	if current.lock == nil {
+	if current.GetError() == nil {
 		return nil
 	}
 	var backoffErr error
 	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		val, err := s.snapshot.handleKeyError(&pb.KeyError{Locked: current.lock})
+		val, err := s.snapshot.handleKeyError(current.GetError())
 		if err != nil {
 			if terror.ErrorEqual(err, errInnerRetryable) {
 				continue
 			}
 			return errors.Trace(err)
 		}
-		current.key, current.value = current.lock.Key, val
-		current.lock = nil
+		current.Error = nil
+		current.Value = val
 		return nil
 	}
 	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
-func (s *Scanner) getData() ([]*resultRow, error) {
-	region, err := s.snapshot.store.getRegion(s.nextStartKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	s.region = region
-	req := &pb.Request{
-		Type: pb.MessageType_CmdScan.Enum(),
-		CmdScanReq: &pb.CmdScanRequest{
-			StartKey: []byte(s.nextStartKey),
-			Limit:    proto.Uint32(uint32(s.batchSize)),
-			Version:  proto.Uint64(s.Version),
-		},
-	}
+func (s *Scanner) getData() error {
+	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
 
-	log.Debugf("Seek nextStartKey[%q]", s.nextStartKey)
-	resp, err := s.snapshot.store.SendKVReq(req, region)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if regionErr := resp.GetRegionError(); regionErr != nil {
-		//TODO: retry internally
-		return nil, errors.Annotate(errors.New(regionErr.String()), txnRetryableMark)
-	}
-	cmdScanResp := resp.GetCmdScanResp()
-	if cmdScanResp == nil {
-		return nil, errors.Trace(errBodyMissing)
-	}
-	pairs := cmdScanResp.GetPairs()
-	ret := make([]*resultRow, len(pairs))
-	for i, pair := range pairs {
-		keyErr := pair.GetError()
-		if keyErr == nil {
-			ret[i] = &resultRow{
-				key:   pair.GetKey(),
-				value: pair.GetValue(),
-			}
+	var backoffErr error
+	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
+		region, err := s.snapshot.store.getRegion(s.nextStartKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		req := &pb.Request{
+			Type: pb.MessageType_CmdScan.Enum(),
+			CmdScanReq: &pb.CmdScanRequest{
+				StartKey: []byte(s.nextStartKey),
+				Limit:    proto.Uint32(uint32(s.batchSize)),
+				Version:  proto.Uint64(s.startTS()),
+			},
+		}
+		resp, err := s.snapshot.store.SendKVReq(req, region)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			log.Warnf("scanner getData failed: %v", regionErr.String())
 			continue
 		}
-		lockInfo, err := extractLockInfoFromKeyErr(keyErr)
-		if err != nil {
-			return nil, errors.Trace(err)
+		cmdScanResp := resp.GetCmdScanResp()
+		if cmdScanResp == nil {
+			return errors.Trace(errBodyMissing)
 		}
-		ret[i] = &resultRow{
-			key:  lockInfo.GetKey(),
-			lock: lockInfo,
+
+		kvPairs := cmdScanResp.Pairs
+		// Check if kvPair contains error, it must be a Lock.
+		for _, pair := range kvPairs {
+			if keyErr := pair.GetError(); keyErr != nil {
+				lock, err := extractLockInfoFromKeyErr(keyErr)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				pair.Key = lock.Key
+			}
 		}
+
+		// Update cache and idx.
+		s.cache = kvPairs
+		s.idx = 0
+		if s.skipFirst {
+			s.idx++
+		}
+
+		// Update nextStartKey and skipFirst.
+		if s.mayHasMoreRegionData() {
+			lastPair := kvPairs[len(kvPairs)-1]
+			s.nextStartKey, s.skipFirst = lastPair.GetKey(), true
+		} else if len(region.EndKey()) == 0 {
+			// No data in current Region, and no Region after this Region.
+			s.eof = true
+		} else {
+			s.nextStartKey, s.skipFirst = region.EndKey(), false
+		}
+		return nil
 	}
-	return ret, nil
+	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // mayHasMoreRegionData whether current region has more data.
@@ -205,10 +206,4 @@ func (s *Scanner) getData() ([]*resultRow, error) {
 // it will return false(only one row) next time.
 func (s *Scanner) mayHasMoreRegionData() bool {
 	return len(s.cache) == s.batchSize
-}
-
-type resultRow struct {
-	key   []byte
-	value []byte
-	lock  *pb.LockInfo
 }
