@@ -210,6 +210,31 @@ func (s *testEvaluatorSuite) TestLowerAndUpper(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestReverse(c *C) {
+	defer testleak.AfterTest(c)()
+	d, err := builtinReverse(types.MakeDatums([]interface{}{nil}...), nil)
+	c.Assert(err, IsNil)
+	c.Assert(d.Kind(), Equals, types.KindNull)
+
+	tbl := []struct {
+		Input  interface{}
+		Expect string
+	}{
+		{"abc", "cba"},
+		{"LIKE", "EKIL"},
+		{123, "321"},
+		{"", ""},
+	}
+
+	dtbl := tblToDtbl(tbl)
+
+	for _, t := range dtbl {
+		d, err = builtinReverse(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
