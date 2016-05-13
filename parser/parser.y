@@ -664,7 +664,7 @@ import (
 %left   tableRefPriority
 %precedence lowerThanOn
 %precedence on
-%left	assignmentEq
+%right  assignmentEq
 %left 	oror or
 %left 	xor
 %left 	andand and
