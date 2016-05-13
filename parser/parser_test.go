@@ -198,6 +198,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// set
 		// user defined
 		{"SET @a = 1", true},
+		{"SET @b := 1", true},
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},

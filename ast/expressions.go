@@ -724,6 +724,8 @@ type VariableExpr struct {
 	IsGlobal bool
 	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
+	// Value is the variable value.
+	Value ExprNode
 }
 
 // Accept implements Node Accept interface.
@@ -733,5 +735,14 @@ func (n *VariableExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*VariableExpr)
+	if n.Value == nil {
+		return v.Leave(n)
+	}
+
+	node, ok := n.Value.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Value = node.(ExprNode)
 	return v.Leave(n)
 }

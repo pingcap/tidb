@@ -653,6 +653,7 @@ action		{a}{c}{t}{i}{o}{n}
 "<<"			return lsh
 "<="			return le
 "=" 			return eq
+":="			return assignmentEq
 ">="			return ge
 "!="			return neq
 "<>"			return neq
