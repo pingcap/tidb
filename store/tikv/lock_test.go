@@ -52,12 +52,16 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 }
 
 func (s *testLockSuite) putAlphabets(c *C) {
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		s.putKV(c, []byte{ch}, []byte{ch})
+	}
+}
+
+func (s *testLockSuite) putKV(c *C, key, value []byte) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	for ch := byte('a'); ch <= byte('z'); ch++ {
-		err = txn.Set([]byte{ch}, []byte{ch})
-		c.Assert(err, IsNil)
-	}
+	err = txn.Set(key, value)
+	c.Assert(err, IsNil)
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 }
@@ -65,8 +69,9 @@ func (s *testLockSuite) putAlphabets(c *C) {
 func (s *testLockSuite) TestScanLockResolve(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.putAlphabets(c)
+	s.putKV(c, []byte("c"), []byte("cc"))
 	s.lockKey(c, []byte("c"), []byte("c"), []byte("zz"), []byte("zz"), true)
-	s.lockKey(c, []byte("d"), []byte("d"), []byte("zz"), []byte("zz"), false)
+	s.lockKey(c, []byte("d"), []byte("dd"), []byte("zz"), []byte("zz"), false)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
