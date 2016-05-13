@@ -27,7 +27,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	cluster := mocktikv.NewCluster()
-	_, regionIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 
 	tasks, err := buildCopTasks(cache, s.buildKeyRanges("a", "c"), false)
@@ -86,7 +86,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
 	cluster := mocktikv.NewCluster()
-	storeID, regionIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
+	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 
 	tasks, err := buildCopTasks(cache, s.buildKeyRanges("a", "z"), false)
@@ -98,7 +98,8 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// nil -- 'm' -- 'q' -- nil
 	// <-  0 -> <--1-> <-2-->
 	regionIDs = append(regionIDs, cluster.AllocID())
-	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), storeID)
+	peerIDs = append(peerIDs, cluster.AllocID())
+	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
 	cache.DropRegion(regionIDs[1])
 
 	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "z"), true)
