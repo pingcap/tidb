@@ -448,6 +448,7 @@ references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
 replace		{r}{e}{p}{l}{a}{c}{e}
 redundant	{r}{e}{d}{u}{n}{d}{a}{n}{t}
+reverse		{r}{e}{v}{e}{r}{s}{e}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
@@ -980,6 +981,8 @@ redundant		lval.item = string(l.val)
 {rlike}			return rlike
 {rtrim}			lval.item = string(l.val)
 			return rtrim
+{reverse}		lval.item = string(l.val)
+			return reverse
 
 {sys_var}		lval.item = string(l.val)
 			return sysVar
