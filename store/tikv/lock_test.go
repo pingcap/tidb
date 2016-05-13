@@ -70,8 +70,9 @@ func (s *testLockSuite) TestScanLockResolve(c *C) {
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.putAlphabets(c)
 	s.putKV(c, []byte("c"), []byte("cc"))
-	s.lockKey(c, []byte("c"), []byte("c"), []byte("zz"), []byte("zz"), true)
-	s.lockKey(c, []byte("d"), []byte("dd"), []byte("zz"), []byte("zz"), false)
+	s.lockKey(c, []byte("c"), []byte("c"), []byte("z1"), []byte("z1"), true)
+	s.lockKey(c, []byte("d"), []byte("dd"), []byte("z2"), []byte("z2"), false)
+	s.lockKey(c, []byte("foo"), []byte("foo"), []byte("z3"), []byte("z3"), false)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)

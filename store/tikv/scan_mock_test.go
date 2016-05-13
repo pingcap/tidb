@@ -51,26 +51,3 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	c.Assert(scanner.Next(), NotNil)
 	c.Assert(scanner.Valid(), IsFalse)
 }
-
-func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
-	store, cluster := createMockStoreCluster()
-	_, _, regionID := mocktikv.BootstrapWithSingleStore(cluster)
-
-	txn, err := store.Begin()
-	c.Assert(err, IsNil)
-	for ch := byte('a'); ch <= byte('z'); ch++ {
-		err = txn.Set([]byte{ch}, []byte{ch})
-		c.Assert(err, IsNil)
-	}
-	err = txn.Commit()
-	c.Assert(err, IsNil)
-
-	txn, err = store.Begin()
-	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-
-	newPeerID := cluster.AllocID()
-	cluster.Split(regionID, cluster.AllocID(), []byte("m"), []uint64{newPeerID}, newPeerID)
-	_, err = newScanner(snapshot, []byte("a"), 10)
-	c.Assert(err, NotNil)
-}
