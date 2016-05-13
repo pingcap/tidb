@@ -213,7 +213,7 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
 }
 
-// Scan reads up to limit numbers of Pairs from a key.
+// Scan reads up to limit numbers of Pairs that greater or equal to startKey and less than endKey.
 func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -241,38 +241,36 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 	return pairs
 }
 
-// Seek searches for the first key in the engine which is >= key in byte order, returns (nil, nil, ErrNotFound)
-// if such key is not found.
-func (s *MvccStore) Seek(key []byte, startTS uint64) Pair {
-	return s.doSeek(key, startTS, false)
-}
+// ReverseScan reads up to limit numbers of Pairs that greater or equal to startKey and less than endKey
+// in descending order.
+func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-// SeekReverse searches the engine in backward order for the first key-value pair which key is less than the key
-// in byte order, returns (nil, nil, ErrNotFound) if such key is not found. If key is nil, the last key is returned.
-func (s *MvccStore) SeekReverse(key []byte, startTS uint64) Pair {
-	return s.doSeek(key, startTS, true)
-}
-
-func (s *MvccStore) doSeek(key []byte, startTS uint64, reverse bool) Pair {
-	var pair Pair
+	var pairs []Pair
 	iterator := func(item llrb.Item) bool {
+		if len(pairs) >= limit {
+			return false
+		}
 		k := item.(*mvccEntry).key
-		if reverse && bytes.Equal(k, key) {
+		if bytes.Equal(k, endKey) {
 			return true
 		}
-		val, err := s.Get(k, startTS)
-		if val != nil || err != nil {
-			pair = Pair{Key: k, Value: val, Err: err}
+		if bytes.Compare(k, startKey) < 0 {
 			return false
+		}
+		val, err := s.get(k, startTS)
+		if val != nil || err != nil {
+			pairs = append(pairs, Pair{
+				Key:   k,
+				Value: val,
+				Err:   err,
+			})
 		}
 		return true
 	}
-	if reverse {
-		s.tree.DescendLessOrEqual(newEntry(key), iterator)
-	} else {
-		s.tree.AscendGreaterOrEqual(newEntry(key), iterator)
-	}
-	return pair
+	s.tree.DescendLessOrEqual(newEntry(endKey), iterator)
+	return pairs
 }
 
 func (s *MvccStore) getOrNewEntry(key []byte) *mvccEntry {

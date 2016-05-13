@@ -226,13 +226,17 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			break
 		}
 		var (
-			pair Pair
-			err  error
+			pairs []Pair
+			pair  Pair
+			err   error
 		)
 		if desc {
-			pair = h.mvccStore.SeekReverse(seekKey, ctx.sel.GetStartTs())
+			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
 		} else {
-			pair = h.mvccStore.Seek(seekKey, ctx.sel.GetStartTs())
+			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
+		}
+		if len(pairs) > 0 {
+			pair = pairs[0]
 		}
 		if pair.Err != nil {
 			// TODO: handle lock error.
@@ -384,14 +388,18 @@ func (h *rpcHandler) getIndexRowFromRange(sel *tipb.SelectRequest, ran kv.KeyRan
 		if limit == 0 {
 			break
 		}
-		var pair Pair
-		var err error
+		var (
+			pairs []Pair
+			pair  Pair
+			err   error
+		)
 		if desc {
-			pair = h.mvccStore.SeekReverse(seekKey, sel.GetStartTs())
-			seekKey = pair.Key
+			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, sel.GetStartTs())
 		} else {
-			pair = h.mvccStore.Seek(seekKey, sel.GetStartTs())
-			seekKey = kv.Key(pair.Key).PrefixNext()
+			pairs = h.mvccStore.Scan(seekKey, endKey, 1, sel.GetStartTs())
+		}
+		if len(pairs) > 0 {
+			pair = pairs[0]
 		}
 		if pair.Err != nil {
 			// TODO: handle lock error.
@@ -404,10 +412,12 @@ func (h *rpcHandler) getIndexRowFromRange(sel *tipb.SelectRequest, ran kv.KeyRan
 			if bytes.Compare(pair.Key, startKey) < 0 {
 				break
 			}
+			seekKey = pair.Key
 		} else {
 			if bytes.Compare(pair.Key, endKey) >= 0 {
 				break
 			}
+			seekKey = []byte(kv.Key(pair.Key).PrefixNext())
 		}
 
 		datums, err := tablecodec.DecodeIndexKey(pair.Key)
