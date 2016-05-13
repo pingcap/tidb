@@ -15,18 +15,16 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 )
 
 type testLockSuite struct {
-	store   *tikvStore
-	cluster *mocktikv.Cluster
+	store *tikvStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store, s.cluster = createMockStoreCluster()
+	s.store = NewMockTikvStore().(*tikvStore)
 }
 
 func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) {
@@ -67,7 +65,6 @@ func (s *testLockSuite) putKV(c *C, key, value []byte) {
 }
 
 func (s *testLockSuite) TestScanLockResolve(c *C) {
-	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.putAlphabets(c)
 	s.putKV(c, []byte("c"), []byte("cc"))
 	s.lockKey(c, []byte("c"), []byte("c"), []byte("zz"), []byte("zz"), true)
