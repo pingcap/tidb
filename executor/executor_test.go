@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -52,6 +53,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 		c.Assert(err, IsNil)
 		s.store = store
 	}
+	log.SetLevelByString("warn")
 	executor.BaseLookupTableTaskSize = 2
 }
 

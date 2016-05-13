@@ -206,7 +206,7 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		if e.indexPlan.LimitCount != nil {
 			limitCount = *e.indexPlan.LimitCount
 		}
-		concurrency := 2
+		concurrency := 1
 		if e.indexPlan.NoLimit {
 			concurrency = len(e.tasks)
 		} else if limitCount > int64(BaseLookupTableTaskSize) {
