@@ -97,9 +97,11 @@ type StatementState struct {
 	noGoodIndexUsed uint8
 }
 
+/*
 var (
 	stmtInfos = make(map[reflect.Type]*statementInfo)
 )
+*/
 
 func (ps *perfSchema) RegisterStatement(category, name string, elem interface{}) {
 	instrumentName := fmt.Sprintf("%s%s/%s", statementInstrumentPrefix, category, name)
@@ -110,7 +112,7 @@ func (ps *perfSchema) RegisterStatement(category, name string, elem interface{})
 		return
 	}
 
-	stmtInfos[reflect.TypeOf(elem)] = &statementInfo{
+	ps.stmtInfos[reflect.TypeOf(elem)] = &statementInfo{
 		key:  key,
 		name: instrumentName,
 	}
@@ -118,7 +120,7 @@ func (ps *perfSchema) RegisterStatement(category, name string, elem interface{})
 
 func (ps *perfSchema) StartStatement(sql string, connID uint64, callerName EnumCallerName, elem interface{}) *StatementState {
 	stmtType := reflect.TypeOf(elem)
-	info, ok := stmtInfos[stmtType]
+	info, ok := ps.stmtInfos[stmtType]
 	if !ok {
 		// just ignore, do nothing else.
 		log.Errorf("No instrument registered for statement %s", stmtType)
@@ -288,30 +290,31 @@ func (ps *perfSchema) appendEventsStmtsHistory(record []types.Datum) error {
 	return nil
 }
 
-func registerStatements() {
+func (ps *perfSchema) registerStatements() {
+	ps.stmtInfos = make(map[reflect.Type]*statementInfo)
 	// Existing instrument names are the same as MySQL 5.7
-	PerfHandle.RegisterStatement("sql", "alter_table", (*ast.AlterTableStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "begin", (*ast.BeginStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "commit", (*ast.CommitStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "create_db", (*ast.CreateDatabaseStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "create_index", (*ast.CreateIndexStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "create_table", (*ast.CreateTableStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "deallocate", (*ast.DeallocateStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "delete", (*ast.DeleteStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "do", (*ast.DoStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "drop_db", (*ast.DropDatabaseStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "drop_table", (*ast.DropTableStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "drop_index", (*ast.DropIndexStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "execute", (*ast.ExecuteStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "explain", (*ast.ExplainStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "insert", (*ast.InsertStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "prepare", (*ast.PrepareStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "rollback", (*ast.RollbackStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "select", (*ast.SelectStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "set", (*ast.SetStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "show", (*ast.ShowStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "truncate", (*ast.TruncateTableStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "union", (*ast.UnionStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "update", (*ast.UpdateStmt)(nil))
-	PerfHandle.RegisterStatement("sql", "use", (*ast.UseStmt)(nil))
+	ps.RegisterStatement("sql", "alter_table", (*ast.AlterTableStmt)(nil))
+	ps.RegisterStatement("sql", "begin", (*ast.BeginStmt)(nil))
+	ps.RegisterStatement("sql", "commit", (*ast.CommitStmt)(nil))
+	ps.RegisterStatement("sql", "create_db", (*ast.CreateDatabaseStmt)(nil))
+	ps.RegisterStatement("sql", "create_index", (*ast.CreateIndexStmt)(nil))
+	ps.RegisterStatement("sql", "create_table", (*ast.CreateTableStmt)(nil))
+	ps.RegisterStatement("sql", "deallocate", (*ast.DeallocateStmt)(nil))
+	ps.RegisterStatement("sql", "delete", (*ast.DeleteStmt)(nil))
+	ps.RegisterStatement("sql", "do", (*ast.DoStmt)(nil))
+	ps.RegisterStatement("sql", "drop_db", (*ast.DropDatabaseStmt)(nil))
+	ps.RegisterStatement("sql", "drop_table", (*ast.DropTableStmt)(nil))
+	ps.RegisterStatement("sql", "drop_index", (*ast.DropIndexStmt)(nil))
+	ps.RegisterStatement("sql", "execute", (*ast.ExecuteStmt)(nil))
+	ps.RegisterStatement("sql", "explain", (*ast.ExplainStmt)(nil))
+	ps.RegisterStatement("sql", "insert", (*ast.InsertStmt)(nil))
+	ps.RegisterStatement("sql", "prepare", (*ast.PrepareStmt)(nil))
+	ps.RegisterStatement("sql", "rollback", (*ast.RollbackStmt)(nil))
+	ps.RegisterStatement("sql", "select", (*ast.SelectStmt)(nil))
+	ps.RegisterStatement("sql", "set", (*ast.SetStmt)(nil))
+	ps.RegisterStatement("sql", "show", (*ast.ShowStmt)(nil))
+	ps.RegisterStatement("sql", "truncate", (*ast.TruncateTableStmt)(nil))
+	ps.RegisterStatement("sql", "union", (*ast.UnionStmt)(nil))
+	ps.RegisterStatement("sql", "update", (*ast.UpdateStmt)(nil))
+	ps.RegisterStatement("sql", "use", (*ast.UseStmt)(nil))
 }

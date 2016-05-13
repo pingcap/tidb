@@ -14,6 +14,8 @@
 package infoschema_test
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/juju/errors"
@@ -45,7 +47,8 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	handle := infoschema.NewHandle(store)
+	handle, err := infoschema.NewHandle(store)
+	c.Assert(err, IsNil)
 	dbName := model.NewCIStr("Test")
 	tbName := model.NewCIStr("T")
 	colName := model.NewCIStr("A")
@@ -192,6 +195,33 @@ func (*testSuite) TestT(c *C) {
 	col, ok = is.ColumnByName(model.NewCIStr("information_schema"), model.NewCIStr("files"), model.NewCIStr("FILE_TYPE"))
 	c.Assert(ok, IsTrue)
 	c.Assert(col, NotNil)
+}
+
+// Make sure it is safe to concurrently create handle on multiple stores.
+func (testSuite) TestConcurrent(c *C) {
+	storeCount := 5
+	stores := make([]kv.Storage, storeCount)
+	for i := 0; i < storeCount; i++ {
+		driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
+		store, err := driver.Open(fmt.Sprintf("memory_path_%d", i))
+		c.Assert(err, IsNil)
+		stores[i] = store
+	}
+	defer func() {
+		for _, store := range stores {
+			store.Close()
+		}
+	}()
+	var wg sync.WaitGroup
+	wg.Add(storeCount)
+	for _, store := range stores {
+		go func(s kv.Storage) {
+			defer wg.Done()
+			_, err := infoschema.NewHandle(s)
+			c.Assert(err, IsNil)
+		}(store)
+	}
+	wg.Wait()
 }
 
 func genGlobalID(store kv.Storage) (int64, error) {
