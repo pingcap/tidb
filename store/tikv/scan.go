@@ -30,7 +30,6 @@ type Scanner struct {
 	cache        []*pb.KvPair
 	idx          int
 	nextStartKey []byte
-	skipFirst    bool // Skip first row when get next data from same region.
 	eof          bool
 }
 
@@ -44,7 +43,6 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanne
 		batchSize:    batchSize,
 		valid:        true,
 		nextStartKey: startKey,
-		skipFirst:    false,
 	}
 	err := scanner.Next()
 	if kv.IsErrNotFound(err) {
@@ -168,7 +166,7 @@ func (s *Scanner) getData() error {
 		}
 
 		kvPairs := cmdScanResp.Pairs
-		// Check if kvPair contains error, it must be a Lock.
+		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
 			if keyErr := pair.GetError(); keyErr != nil {
 				lock, err := extractLockInfoFromKeyErr(keyErr)
@@ -179,31 +177,24 @@ func (s *Scanner) getData() error {
 			}
 		}
 
-		// Update cache and idx.
-		s.cache = kvPairs
-		s.idx = 0
-		if s.skipFirst {
-			s.idx++
+		s.cache, s.idx = kvPairs, 0
+		if len(kvPairs) < s.batchSize {
+			// No more data in current Region. Next getData() starts
+			// from current Region's endKey.
+			s.nextStartKey = region.EndKey()
+			if len(region.EndKey()) == 0 {
+				// Current Region is the last one.
+				s.eof = true
+			}
+			return nil
 		}
-
-		// Update nextStartKey and skipFirst.
-		if s.mayHasMoreRegionData() {
-			lastPair := kvPairs[len(kvPairs)-1]
-			s.nextStartKey, s.skipFirst = lastPair.GetKey(), true
-		} else if len(region.EndKey()) == 0 {
-			// No data in current Region, and no Region after this Region.
-			s.eof = true
-		} else {
-			s.nextStartKey, s.skipFirst = region.EndKey(), false
-		}
+		// next getData() starts from the last key in kvPairs (but skip
+		// it by appending a '\x00' to the key). Note that next getData()
+		// may get an empty response if the Region in fact does not have
+		// more data.
+		lastKey := kvPairs[len(kvPairs)-1].GetKey()
+		s.nextStartKey = kv.Key(lastKey).Next()
 		return nil
 	}
 	return errors.Annotate(backoffErr, txnRetryableMark)
-}
-
-// mayHasMoreRegionData whether current region has more data.
-// If region has multiple of batchSize exactly, it return true but
-// it will return false(only one row) next time.
-func (s *Scanner) mayHasMoreRegionData() bool {
-	return len(s.cache) == s.batchSize
 }
