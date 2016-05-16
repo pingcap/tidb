@@ -295,6 +295,14 @@ func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
 	return keyRanges
 }
 
+// TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
+func TruncateToRowKeyLen(key kv.Key) kv.Key {
+	if len(key) > recordRowKeyLen {
+		return key[:recordRowKeyLen]
+	}
+	return key
+}
+
 type keyRangeSorter struct {
 	ranges []kv.KeyRange
 }

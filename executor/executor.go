@@ -1262,6 +1262,9 @@ func (e *ReverseExec) Next() (*Row, error) {
 	}
 	row := e.rows[e.cursor]
 	e.cursor--
+	for i, field := range e.Src.Fields() {
+		field.Expr.SetDatum(row.Data[i])
+	}
 	return row, nil
 }
 
