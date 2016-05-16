@@ -151,3 +151,27 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	_, err = ToInt64(&invalidMockType{})
 	c.Assert(err, NotNil)
 }
+
+func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
+	ft := NewFieldType(mysql.TypeFloat)
+	var datum = NewFloat64Datum(281.37)
+	converted, err := datum.ConvertTo(ft)
+	c.Assert(err, IsNil)
+	c.Assert(converted.Kind(), Equals, KindFloat32)
+	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
+
+	datum.SetString("281.37")
+	converted, err = datum.ConvertTo(ft)
+	c.Assert(err, IsNil)
+	c.Assert(converted.Kind(), Equals, KindFloat32)
+	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
+
+	ft = NewFieldType(mysql.TypeDouble)
+	datum = NewFloat32Datum(281.37)
+	converted, err = datum.ConvertTo(ft)
+	c.Assert(err, IsNil)
+	c.Assert(converted.Kind(), Equals, KindFloat64)
+	// Convert to float32 and convert back to float64, we will get a different value.
+	c.Assert(converted.GetFloat64(), Not(Equals), 281.37)
+	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
+}

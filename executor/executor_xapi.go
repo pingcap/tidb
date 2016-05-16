@@ -16,9 +16,12 @@ package executor
 import (
 	"math"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -58,6 +61,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 	for {
 		if e.subResult == nil {
 			var err error
+			startTs := time.Now()
 			e.subResult, err = e.result.Next()
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -65,6 +69,7 @@ func (e *XSelectTableExec) Next() (*Row, error) {
 			if e.subResult == nil {
 				return nil, nil
 			}
+			log.Debugf("[TIME_TABLE_SCAN] %v", time.Now().Sub(startTs))
 		}
 		h, rowData, err := e.subResult.Next()
 		if err != nil {
@@ -157,6 +162,8 @@ type XSelectIndexExec struct {
 	tasks      []*lookupTableTask
 	taskCursor int
 	indexOrder map[int64]int
+
+	mu sync.Mutex
 }
 
 // BaseLookupTableTaskSize represents base number of handles for a lookupTableTask.
@@ -165,11 +172,19 @@ var BaseLookupTableTaskSize = 1024
 // MaxLookupTableTaskSize represents max number of handles for a lookupTableTask.
 var MaxLookupTableTaskSize = 1024
 
+const (
+	taskNew int = iota
+	taskRunning
+	taskDone
+)
+
 type lookupTableTask struct {
 	handles []int64
 	rows    []*Row
 	cursor  int
+	status  int
 	done    bool
+	doneCh  chan error
 }
 
 // Fields implements Executor Fields interface.
@@ -180,11 +195,25 @@ func (e *XSelectIndexExec) Fields() []*ast.ResultField {
 // Next implements Executor Next interface.
 func (e *XSelectIndexExec) Next() (*Row, error) {
 	if e.tasks == nil {
+		startTs := time.Now()
 		handles, err := e.fetchHandles()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		log.Debugf("[TIME_INDEX_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(handles))
 		e.buildTableTasks(handles)
+		limitCount := int64(-1)
+		if e.indexPlan.LimitCount != nil {
+			limitCount = *e.indexPlan.LimitCount
+		}
+		concurrency := 2
+		if e.indexPlan.NoLimit {
+			concurrency = len(e.tasks)
+		} else if limitCount > int64(BaseLookupTableTaskSize) {
+			concurrency = int(limitCount/int64(BaseLookupTableTaskSize) + 1)
+		}
+		log.Debugf("[TIME_INDEX_TABLE_CONCURRENT_SCAN] start %d workers", concurrency)
+		e.runTableTasks(concurrency)
 	}
 	for {
 		if e.taskCursor >= len(e.tasks) {
@@ -192,25 +221,13 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		task := e.tasks[e.taskCursor]
 		if !task.done {
-			sort.Sort(int64Slice(task.handles))
-			tblResult, err := e.doTableRequest(task.handles)
+			startTs := time.Now()
+			err := <-task.doneCh
 			if err != nil {
 				return nil, errors.Trace(err)
-			}
-			task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if !e.indexPlan.OutOfOrder {
-				// Restore the index order.
-				sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
-				if e.indexPlan.Desc && !e.supportDesc {
-					sort.Sort(sort.Reverse(sorter))
-				} else {
-					sort.Sort(sorter)
-				}
 			}
 			task.done = true
+			log.Debugf("[TIME_INDEX_TABLE_SCAN] time: %v handles: %d", time.Now().Sub(startTs), len(task.handles))
 		}
 		if task.cursor < len(task.rows) {
 			row := task.rows[task.cursor]
@@ -222,6 +239,60 @@ func (e *XSelectIndexExec) Next() (*Row, error) {
 		}
 		e.taskCursor++
 	}
+}
+
+func (e *XSelectIndexExec) pickAndExecTask() {
+	for {
+		// Pick a new task.
+		e.mu.Lock()
+		var task *lookupTableTask
+		for _, t := range e.tasks {
+			if t.status == taskNew {
+				task = t
+				task.status = taskRunning
+				break
+			}
+		}
+		e.mu.Unlock()
+		if task == nil {
+			// No more task to run.
+			break
+		}
+		// Execute the picked task.
+		err := e.executeTask(task)
+		e.mu.Lock()
+		task.status = taskDone
+		e.mu.Unlock()
+		task.doneCh <- err
+	}
+}
+
+func (e *XSelectIndexExec) runTableTasks(n int) {
+	for i := 0; i < n && i < len(e.tasks); i++ {
+		go e.pickAndExecTask()
+	}
+}
+
+func (e *XSelectIndexExec) executeTask(task *lookupTableTask) error {
+	sort.Sort(int64Slice(task.handles))
+	tblResult, err := e.doTableRequest(task.handles)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.rows, err = e.extractRowsFromTableResult(e.table, tblResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !e.indexPlan.OutOfOrder {
+		// Restore the index order.
+		sorter := &rowsSorter{order: e.indexOrder, rows: task.rows}
+		if e.indexPlan.Desc && !e.supportDesc {
+			sort.Sort(sort.Reverse(sorter))
+		} else {
+			sort.Sort(sorter)
+		}
+	}
+	return nil
 }
 
 // Close implements Executor Close interface.
@@ -277,6 +348,7 @@ func (e *XSelectIndexExec) buildTableTasks(handles []int64) {
 		task := &lookupTableTask{
 			handles: handles[:size],
 		}
+		task.doneCh = make(chan error, 1)
 		handles = handles[size:]
 		e.tasks[i] = task
 	}
@@ -332,7 +404,11 @@ func (e *XSelectIndexExec) doIndexRequest() (*xapi.SelectResult, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return xapi.Select(txn.GetClient(), selIdxReq, 1)
+	concurrency := 1
+	if e.indexPlan.OutOfOrder {
+		concurrency = 10
+	}
+	return xapi.Select(txn.GetClient(), selIdxReq, concurrency)
 }
 
 func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, error) {
@@ -824,10 +900,6 @@ func (b *executorBuilder) datumsToValueList(datums []types.Datum) *tipb.Expr {
 	for _, d := range datums {
 		if prevKind == types.KindNull {
 			prevKind = d.Kind()
-		}
-		if d.Kind() == types.KindFloat32 {
-			// Currently can not handle float32 value for value list.
-			return nil
 		}
 		if d.Kind() != types.KindNull && d.Kind() != prevKind {
 			return nil

@@ -85,7 +85,7 @@ var (
 	// EnablePprof indicates whether to enable HTTP Pprof or not.
 	EnablePprof = os.Getenv("TIDB_PPROF") != "0"
 	// PprofAddr is the pprof url.
-	PprofAddr = "localhost:8888"
+	PprofAddr = ":8888"
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped = make(map[string]bool)
 

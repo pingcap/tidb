@@ -526,6 +526,7 @@ out:
 }
 
 // buildPseudoSelectPlan pre-builds more complete plans that may affect total cost.
+// Also set OutOfOrder and NoLimit property.
 func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 	if sel.OrderBy == nil {
 		return p
@@ -534,6 +535,11 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 		return p
 	}
 	if !pushOrder(p, sel.OrderBy.Items) {
+		switch x := p.(type) {
+		case *IndexScan:
+			x.OutOfOrder = true
+			x.NoLimit = true
+		}
 		np := &Sort{ByItems: sel.OrderBy.Items}
 		np.AddChild(p)
 		p.AddParent(np)
@@ -545,6 +551,11 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 		p.AddParent(np)
 		np.SetLimit(0)
 		p = np
+	} else {
+		switch x := p.(type) {
+		case *IndexScan:
+			x.NoLimit = true
+		}
 	}
 	return p
 }

@@ -258,6 +258,10 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	switch x.FnName.L {
 	case "abs", "ifnull", "nullif":
 		tp = x.Args[0].GetType()
+		// TODO: We should cover all types.
+		if x.FnName.L == "abs" && tp.Tp == mysql.TypeDatetime {
+			tp = types.NewFieldType(mysql.TypeDouble)
+		}
 	case "pow", "power", "rand":
 		tp = types.NewFieldType(mysql.TypeDouble)
 	case "curdate", "current_date", "date":
@@ -277,7 +281,7 @@ func (v *typeInferrer) handleFuncCallExpr(x *ast.FuncCallExpr) {
 	case "dayname", "version", "database", "user", "current_user",
 		"concat", "concat_ws", "left", "lcase", "lower", "repeat",
 		"replace", "ucase", "upper", "convert", "substring",
-		"substring_index", "trim", "ltrim", "rtrim":
+		"substring_index", "trim", "ltrim", "rtrim", "reverse":
 		tp = types.NewFieldType(mysql.TypeVarString)
 		chs = v.defaultCharset
 	case "strcmp", "isnull":

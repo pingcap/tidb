@@ -351,11 +351,13 @@ desc		{d}{e}{s}{c}
 describe	{d}{e}{s}{c}{r}{i}{b}{e}
 distinct	{d}{i}{s}{t}{i}{n}{c}{t}
 div		{d}{i}{v}
+disable		{d}{i}{s}{a}{b}{l}{e}
 do		{d}{o}
 dual 		{d}{u}{a}{l}
 duplicate	{d}{u}{p}{l}{i}{c}{a}{t}{e}
 dynamic		{d}{y}{n}{a}{m}{i}{c}
 else		{e}{l}{s}{e}
+enable		{e}{n}{a}{b}{l}{e}
 end		{e}{n}{d}
 engine		{e}{n}{g}{i}{n}{e}
 engines		{e}{n}{g}{i}{n}{e}{s}
@@ -398,6 +400,7 @@ isnull		{i}{s}{n}{u}{l}{l}
 isolation	{i}{s}{o}{l}{a}{t}{i}{o}{n}
 join		{j}{o}{i}{n}
 key		{k}{e}{y}
+keys		{k}{e}{y}{s}
 key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
 leading		{l}{e}{a}{d}{i}{n}{g}
 left		{l}{e}{f}{t}
@@ -445,6 +448,7 @@ references	{r}{e}{f}{e}{r}{e}{n}{c}{e}{s}
 regexp		{r}{e}{g}{e}{x}{p}
 replace		{r}{e}{p}{l}{a}{c}{e}
 redundant	{r}{e}{d}{u}{n}{d}{a}{n}{t}
+reverse		{r}{e}{v}{e}{r}{s}{e}
 right		{r}{i}{g}{h}{t}
 rlike		{r}{l}{i}{k}{e}
 rollback	{r}{o}{l}{l}{b}{a}{c}{k}
@@ -650,6 +654,7 @@ action		{a}{c}{t}{i}{o}{n}
 "<<"			return lsh
 "<="			return le
 "=" 			return eq
+":="			return assignmentEq
 ">="			return ge
 "!="			return neq
 "<>"			return neq
@@ -781,6 +786,8 @@ action		{a}{c}{t}{i}{o}{n}
 {desc}			return desc
 {describe}		return describe
 {drop}			return drop
+{disable}		lval.item = string(l.val)
+			return disable
 {distinct}		return distinct
 {div}			return div
 {do}			lval.item = string(l.val)
@@ -791,6 +798,8 @@ action		{a}{c}{t}{i}{o}{n}
 {dynamic}		lval.item = string(l.val)
 			return dynamic
 {else}			return elseKwd
+{enable}		lval.item = string(l.val)
+			return enable
 {end}			lval.item = string(l.val)
 			return end
 {engine}		lval.item = string(l.val)
@@ -861,6 +870,7 @@ action		{a}{c}{t}{i}{o}{n}
 {key}			return key
 {key_block_size}	lval.item = string(l.val)
 			return keyBlockSize
+{keys}			return keys
 {leading}		return leading
 {left}			lval.item = string(l.val)
 			return left
@@ -971,6 +981,8 @@ redundant		lval.item = string(l.val)
 {rlike}			return rlike
 {rtrim}			lval.item = string(l.val)
 			return rtrim
+{reverse}		lval.item = string(l.val)
+			return reverse
 
 {sys_var}		lval.item = string(l.val)
 			return sysVar
