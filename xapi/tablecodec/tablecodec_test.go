@@ -17,8 +17,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/types"
 )
 
 func TestT(t *testing.T) {
@@ -41,4 +44,16 @@ func (s *testTableCodecSuite) TestTableCodec(c *C) {
 	h, err = DecodeRowKey(key)
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(2))
+}
+
+func (s *testTableCodecSuite) TestColumnToProto(c *C) {
+	defer testleak.AfterTest(c)()
+	// Make sure the Flag is set in tipb.ColumnInfo
+	tp := types.NewFieldType(mysql.TypeLong)
+	tp.Flag = 10
+	col := &model.ColumnInfo{
+		FieldType: *tp,
+	}
+	pc := columnToProto(col)
+	c.Assert(pc.GetFlag(), Equals, int32(10))
 }

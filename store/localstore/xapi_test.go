@@ -131,6 +131,7 @@ func (s *simpleTableInfo) toPBTableInfo() *tipb.TableInfo {
 	// It's ok to just use table ID for pk column ID, as it doesn't have a column kv.
 	pkColumn.ColumnId = tbInfo.TableId
 	pkColumn.PkHandle = proto.Bool(true)
+	pkColumn.Flag = proto.Int32(0)
 	tbInfo.Columns = append(tbInfo.Columns, pkColumn)
 	for i, colTp := range s.cTypes {
 		coInfo := &tipb.ColumnInfo{

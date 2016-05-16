@@ -203,6 +203,7 @@ func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 		Collation: proto.Int32(collationToProto(c.FieldType.Collate)),
 		ColumnLen: proto.Int32(int32(c.FieldType.Flen)),
 		Decimal:   proto.Int32(int32(c.FieldType.Decimal)),
+		Flag:      proto.Int32(int32(c.Flag)),
 		Elems:     c.Elems,
 	}
 	t := int32(c.FieldType.Tp)
