@@ -255,7 +255,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 			if it.Key().Cmp(ran.StartKey) < 0 {
 				break
 			}
-			seekKey = it.Key()
+			seekKey = tablecodec.TruncateToRowKeyLen(it.Key())
 		} else {
 			if it.Key().Cmp(ran.EndKey) >= 0 {
 				break
