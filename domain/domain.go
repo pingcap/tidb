@@ -109,6 +109,11 @@ func (do *Domain) Store() kv.Storage {
 
 // SetLease will reset the lease time for online DDL change.
 func (do *Domain) SetLease(lease time.Duration) {
+	if lease <= 0 {
+		log.Infof("[ddl] SetLease %v failed, so set default lease %v", lease, defaultLoadTime)
+		lease = defaultLoadTime
+	}
+
 	do.leaseCh <- lease
 
 	// let ddl to reset lease too.
@@ -196,14 +201,7 @@ func (do *Domain) mustReload() {
 	}
 }
 
-// check schema every 300 seconds default.
-const defaultLoadTime = 300 * time.Second
-
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	if lease <= 0 {
-		lease = defaultLoadTime
-	}
-
 	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
@@ -219,10 +217,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 			}
 		case newLease := <-do.leaseCh:
-			if newLease <= 0 {
-				newLease = defaultLoadTime
-			}
-
 			if lease == newLease {
 				// nothing to do
 				continue
@@ -251,6 +245,9 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
+// check schema every 300 seconds default.
+const defaultLoadTime = 300 * time.Second
+
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	d = &Domain{
@@ -259,6 +256,10 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)
+
+	if lease <= 0 {
+		lease = defaultLoadTime
+	}
 	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
 	d.mustReload()
 
