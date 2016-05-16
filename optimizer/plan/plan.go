@@ -39,6 +39,10 @@ type Plan interface {
 	AddParent(parent Plan)
 	// AddChild means append a child for plan.
 	AddChild(children Plan)
+	// ReplaceParent means replace a parent for another one.
+	ReplaceParent(parent, newPar Plan) error
+	// ReplaceChild means replace a child with another one.
+	ReplaceChild(children, newChild Plan) error
 	// Retrieve parent by index.
 	GetParentByIndex(index int) Plan
 	// Retrieve child by index.
@@ -97,16 +101,34 @@ func (p *basePlan) SetFields(fields []*ast.ResultField) {
 
 // AddParent implements Plan AddParent interface.
 func (p *basePlan) AddParent(parent Plan) {
-	if parent != nil {
-		p.parents = append(p.parents, parent)
-	}
+	p.parents = append(p.parents, parent)
 }
 
 // AddChild implements Plan AddChild interface.
 func (p *basePlan) AddChild(child Plan) {
-	if child != nil {
-		p.children = append(p.children, child)
+	p.children = append(p.children, child)
+}
+
+// ReplaceParent means replace a parent for another one.
+func (p *basePlan) ReplaceParent(parent, newPar Plan) error {
+	for i, par := range p.parents {
+		if par == parent {
+			p.parents[i] = newPar
+			return nil
+		}
 	}
+	return SystemInternalErrorType.Gen("RemoveParent Failed!")
+}
+
+// ReplaceChild means replace a child with another one.
+func (p *basePlan) ReplaceChild(child, newChild Plan) error {
+	for i, ch := range p.children {
+		if ch == child {
+			p.children[i] = newChild
+			return nil
+		}
+	}
+	return SystemInternalErrorType.Gen("RemoveChildren Failed!")
 }
 
 // GetParentByIndex implements Plan GetParentByIndex interface.

@@ -620,6 +620,7 @@ func (b *planBuilder) buildJoin(sel *ast.SelectStmt) Plan {
 	if filterConditions != nil {
 		filterPlan := &Filter{Conditions: filterConditions}
 		filterPlan.AddChild(p)
+		p.AddParent(filterPlan)
 		filterPlan.SetFields(p.Fields())
 		return filterPlan
 	}
@@ -738,7 +739,9 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 			Inner: b.buildPlanFromJoinPath(path.inner),
 		}
 		join.AddChild(join.Outer)
+		join.Outer.AddParent(join)
 		join.AddChild(join.Inner)
+		join.Inner.AddParent(join)
 		if path.rightJoin {
 			join.SetFields(append(join.Inner.Fields(), join.Outer.Fields()...))
 		} else {
@@ -752,6 +755,7 @@ func (b *planBuilder) buildPlanFromJoinPath(path *joinPath) Plan {
 		join.Inners = append(join.Inners, inPlan)
 		join.fields = append(join.fields, in.resultFields()...)
 		join.AddChild(inPlan)
+		inPlan.AddParent(join)
 	}
 	join.Conditions = path.conditions
 	for _, equiv := range path.eqConds {
@@ -818,6 +822,7 @@ func (b *planBuilder) buildSubqueryJoinPath(path *joinPath) Plan {
 	}
 	filterPlan := &Filter{Conditions: path.conditions}
 	filterPlan.AddChild(p)
+	p.AddParent(filterPlan)
 	filterPlan.SetFields(p.Fields())
 	return filterPlan
 }
