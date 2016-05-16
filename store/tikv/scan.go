@@ -157,7 +157,7 @@ func (s *Scanner) getData() error {
 			return errors.Trace(err)
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
-			log.Warnf("scanner getData failed: %v", regionErr.String())
+			log.Warnf("scanner getData failed: %s", regionErr)
 			continue
 		}
 		cmdScanResp := resp.GetCmdScanResp()
