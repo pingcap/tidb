@@ -14,8 +14,9 @@
 package perfschema
 
 import (
+	"reflect"
+
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
@@ -54,29 +55,20 @@ type perfSchema struct {
 	tables      map[string]*model.TableInfo
 	mTables     map[string]table.Table // Memory tables for perfSchema
 	stmtHandles []int64
+	stmtInfos   map[reflect.Type]*statementInfo
 }
 
 var _ PerfSchema = (*perfSchema)(nil)
 
-// PerfHandle is the only access point for the in-memory performance schema information
-var (
-	PerfHandle PerfSchema
-)
-
 // NewPerfHandle creates a new perfSchema on store.
-func NewPerfHandle() PerfSchema {
-	schema := PerfHandle.(*perfSchema)
+func NewPerfHandle() (PerfSchema, error) {
+	schema := &perfSchema{}
 	err := schema.initialize()
 	if err != nil {
-		log.Fatal(errors.ErrorStack(err))
+		return nil, errors.Trace(err)
 	}
-	registerStatements()
-	return PerfHandle
-}
-
-func init() {
-	schema := &perfSchema{}
-	PerfHandle = schema
+	schema.registerStatements()
+	return schema, nil
 }
 
 // perfschema error codes.

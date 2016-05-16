@@ -228,27 +228,45 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 
 // Handle handles information schema, including getting and setting.
 type Handle struct {
-	value atomic.Value
-	store kv.Storage
+	value     atomic.Value
+	store     kv.Storage
+	memSchema *memSchemaHandle
 }
 
 // NewHandle creates a new Handle.
-func NewHandle(store kv.Storage) *Handle {
+func NewHandle(store kv.Storage) (*Handle, error) {
 	h := &Handle{
 		store: store,
 	}
 	// init memory tables
-	initMemoryTables()
-	initPerfSchema()
-	return h
+	var err error
+	h.memSchema, err = newMemSchemaHandle()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return h, nil
 }
 
-func initPerfSchema() {
-	perfHandle = perfschema.NewPerfHandle()
+// Init memory schemas including infoschema and perfshcema.
+func newMemSchemaHandle() (*memSchemaHandle, error) {
+	h := &memSchemaHandle{
+		nameToTable: make(map[string]table.Table),
+	}
+	err := initMemoryTables(h)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	initMemoryTables(h)
+	h.perfHandle, err = perfschema.NewPerfHandle()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return h, nil
 }
 
-var (
-	// Information_Schema
+// memSchemaHandle is used to store memory schema information.
+type memSchemaHandle struct {
+	// Information Schema
 	isDB          *model.DBInfo
 	schemataTbl   table.Table
 	tablesTbl     table.Table
@@ -261,18 +279,17 @@ var (
 	profilingTbl  table.Table
 	partitionsTbl table.Table
 	nameToTable   map[string]table.Table
-
+	// Performance Schema
 	perfHandle perfschema.PerfSchema
-)
+}
 
-func initMemoryTables() error {
+func initMemoryTables(h *memSchemaHandle) error {
 	// Init Information_Schema
 	var (
 		err error
 		tbl table.Table
 	)
 	dbID := autoid.GenLocalSchemaID()
-	nameToTable = make(map[string]table.Table)
 	isTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		meta := buildTableMeta(name, cols)
@@ -286,26 +303,26 @@ func initMemoryTables() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		nameToTable[meta.Name.L] = tbl
+		h.nameToTable[meta.Name.L] = tbl
 	}
-	schemataTbl = nameToTable[strings.ToLower(tableSchemata)]
-	tablesTbl = nameToTable[strings.ToLower(tableTables)]
-	columnsTbl = nameToTable[strings.ToLower(tableColumns)]
-	statisticsTbl = nameToTable[strings.ToLower(tableStatistics)]
-	charsetTbl = nameToTable[strings.ToLower(tableCharacterSets)]
-	collationsTbl = nameToTable[strings.ToLower(tableCollations)]
+	h.schemataTbl = h.nameToTable[strings.ToLower(tableSchemata)]
+	h.tablesTbl = h.nameToTable[strings.ToLower(tableTables)]
+	h.columnsTbl = h.nameToTable[strings.ToLower(tableColumns)]
+	h.statisticsTbl = h.nameToTable[strings.ToLower(tableStatistics)]
+	h.charsetTbl = h.nameToTable[strings.ToLower(tableCharacterSets)]
+	h.collationsTbl = h.nameToTable[strings.ToLower(tableCollations)]
 
 	// CharacterSets/Collations contain static data. Init them now.
-	err = insertData(charsetTbl, dataForCharacterSets())
+	err = insertData(h.charsetTbl, dataForCharacterSets())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = insertData(collationsTbl, dataForColltions())
+	err = insertData(h.collationsTbl, dataForColltions())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// create db
-	isDB = &model.DBInfo{
+	h.isDB = &model.DBInfo{
 		ID:      dbID,
 		Name:    model.NewCIStr(Name),
 		Charset: mysql.DefaultCharset,
@@ -386,15 +403,15 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 		}
 	}
 	// Build Information_Schema
-	info.schemaNameToID[isDB.Name.L] = isDB.ID
-	info.schemas[isDB.ID] = isDB
-	for _, t := range isDB.Tables {
-		tbl, ok := nameToTable[t.Name.L]
+	info.schemaNameToID[h.memSchema.isDB.Name.L] = h.memSchema.isDB.ID
+	info.schemas[h.memSchema.isDB.ID] = h.memSchema.isDB
+	for _, t := range h.memSchema.isDB.Tables {
+		tbl, ok := h.memSchema.nameToTable[t.Name.L]
 		if !ok {
 			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
 		info.tables[t.ID] = tbl
-		tname := tableName{isDB.Name.L, t.Name.L}
+		tname := tableName{h.memSchema.isDB.Name.L, t.Name.L}
 		info.tableNameToID[tname] = t.ID
 		for _, c := range t.Columns {
 			info.columns[c.ID] = c
@@ -403,11 +420,11 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 	}
 
 	// Add Performance_Schema
-	psDB := perfHandle.GetDBMeta()
+	psDB := h.memSchema.perfHandle.GetDBMeta()
 	info.schemaNameToID[psDB.Name.L] = psDB.ID
 	info.schemas[psDB.ID] = psDB
 	for _, t := range psDB.Tables {
-		tbl, ok := perfHandle.GetTable(t.Name.O)
+		tbl, ok := h.memSchema.perfHandle.GetTable(t.Name.O)
 		if !ok {
 			return ErrTableNotExists.Gen("table `%s` is missing.", t.Name)
 		}
@@ -427,19 +444,19 @@ func (h *Handle) Set(newInfo []*model.DBInfo, schemaMetaVersion int64) error {
 		dbNames = append(dbNames, v.Name.L)
 		dbInfos = append(dbInfos, v)
 	}
-	err = refillTable(schemataTbl, dataForSchemata(dbNames))
+	err = refillTable(h.memSchema.schemataTbl, dataForSchemata(dbNames))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = refillTable(tablesTbl, dataForTables(dbInfos))
+	err = refillTable(h.memSchema.tablesTbl, dataForTables(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = refillTable(columnsTbl, dataForColumns(dbInfos))
+	err = refillTable(h.memSchema.columnsTbl, dataForColumns(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = refillTable(statisticsTbl, dataForStatistics(dbInfos))
+	err = refillTable(h.memSchema.statisticsTbl, dataForStatistics(dbInfos))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -452,6 +469,11 @@ func (h *Handle) Get() InfoSchema {
 	v := h.value.Load()
 	schema, _ := v.(InfoSchema)
 	return schema
+}
+
+// GetPerfHandle gets performance schema from handle.
+func (h *Handle) GetPerfHandle() perfschema.PerfSchema {
+	return h.memSchema.perfHandle
 }
 
 // Schema error codes.
