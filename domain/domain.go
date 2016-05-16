@@ -109,6 +109,11 @@ func (do *Domain) Store() kv.Storage {
 
 // SetLease will reset the lease time for online DDL change.
 func (do *Domain) SetLease(lease time.Duration) {
+	if lease <= 0 {
+		log.Infof("[ddl] SetLease %v failed, so do nothing", lease)
+		return
+	}
+
 	do.leaseCh <- lease
 
 	// let ddl to reset lease too.
@@ -219,10 +224,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 			}
 		case newLease := <-do.leaseCh:
-			if newLease <= 0 {
-				newLease = defaultLoadTime
-			}
-
 			if lease == newLease {
 				// nothing to do
 				continue
@@ -259,6 +260,7 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	}
 
 	d.infoHandle = infoschema.NewHandle(d.store)
+
 	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
 	d.mustReload()
 
