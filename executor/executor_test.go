@@ -1165,3 +1165,19 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
 }
+
+func (s *testSuite) TestDefaultNull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key auto_increment, b int default 1, c int)")
+	tk.MustExec("insert t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
+	tk.MustExec("update t set b = NULL where a = 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil> <nil>"))
+	tk.MustExec("update t set c = 1")
+	tk.MustQuery("select * from t ").Check(testkit.Rows("1 <nil> 1"))
+	tk.MustExec("delete from t where a = 1")
+	tk.MustExec("insert t (a) values (1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
+}
