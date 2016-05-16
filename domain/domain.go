@@ -205,10 +205,6 @@ func (do *Domain) mustReload() {
 const defaultLoadTime = 300 * time.Second
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	if lease <= 0 {
-		lease = defaultLoadTime
-	}
-
 	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
@@ -266,6 +262,13 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 
 	variable.RegisterStatistics(d)
 
+	// Only when the store is local that the lease value is 0.
+	// Set reload lease != 0 to ensure that loadSchemaInLoop can work normally.
+	// And if the store is local, reload lease is larger than ddl lease is ok.
+	// In addition of the above situation, reload lease is always equal to ddl lease.
+	if lease <= 0 {
+		lease = defaultLoadTime
+	}
 	go d.loadSchemaInLoop(lease)
 
 	return d, nil
