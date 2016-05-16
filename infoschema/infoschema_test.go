@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -42,6 +43,7 @@ type testSuite struct {
 }
 
 func (*testSuite) TestT(c *C) {
+	defer testleak.AfterTest(c)()
 	driver := localstore.Driver{Driver: goleveldb.MemoryDriver{}}
 	store, err := driver.Open("memory")
 	c.Assert(err, IsNil)
@@ -199,6 +201,7 @@ func (*testSuite) TestT(c *C) {
 
 // Make sure it is safe to concurrently create handle on multiple stores.
 func (testSuite) TestConcurrent(c *C) {
+	defer testleak.AfterTest(c)()
 	storeCount := 5
 	stores := make([]kv.Storage, storeCount)
 	for i := 0; i < storeCount; i++ {
