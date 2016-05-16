@@ -249,7 +249,7 @@ func (c *txnCommitter) cleanupSingleRegion(keys [][]byte) error {
 		err = c.cleanupKeys(keys)
 		return errors.Trace(err)
 	}
-	rollbackResp := resp.GetCmdCleanupResp()
+	rollbackResp := resp.GetCmdBatchRollbackResp()
 	if rollbackResp == nil {
 		return errors.Trace(errBodyMissing)
 	}
