@@ -323,7 +323,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
-	diffMsg := newDiffRetError("index", record1, nil)
+	diffMsg := newDiffRetError("index", record1, &RecordData{Handle: int64(3), Values: types.MakeDatums(nil)})
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
@@ -380,7 +380,7 @@ func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
 	err = CompareIndexData(txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
-	diffMsg = newDiffRetError("index", record1, nil)
+	diffMsg = newDiffRetError("index", record1, &RecordData{Handle: int64(4), Values: types.MakeDatums(nil)})
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	// current index data:
