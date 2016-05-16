@@ -372,6 +372,7 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 	var rs []ast.RecordSet
+	ph := sessionctx.GetDomain(s).PerfSchema()
 	for i, rst := range rawStmts {
 		st, err1 := Compile(s, rst)
 		if err1 != nil {
@@ -380,9 +381,9 @@ func (s *session) Execute(sql string) ([]ast.RecordSet, error) {
 			return nil, errors.Trace(err1)
 		}
 		id := variable.GetSessionVars(s).ConnectionID
-		s.stmtState = perfschema.PerfHandle.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
+		s.stmtState = ph.StartStatement(sql, id, perfschema.CallerNameSessionExecute, rawStmts[i])
 		r, err := runStmt(s, st)
-		perfschema.PerfHandle.EndStatement(s.stmtState)
+		ph.EndStatement(s.stmtState)
 		if err != nil {
 			log.Warnf("session:%v, err:%v", s, err)
 			return nil, errors.Trace(err)
