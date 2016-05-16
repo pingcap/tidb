@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// First byte in the encoded value which specifies the encoding type.
 const (
 	NilFlag          byte = 0
 	bytesFlag        byte = 1
