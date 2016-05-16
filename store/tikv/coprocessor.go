@@ -270,6 +270,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		case resp = <-task.respChan:
 		case err = <-it.errChan:
 		}
+		task.status = taskDone
 	}
 	if err != nil {
 		it.Close()
@@ -337,7 +338,6 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		it.mu.Lock()
 		defer it.mu.Unlock()
-		task.status = taskDone
 		return resp, nil
 	}
 	return nil, errors.Trace(backoffErr)
