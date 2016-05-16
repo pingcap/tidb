@@ -242,9 +242,7 @@ func NewHandle(store kv.Storage) (*Handle, error) {
 	var err error
 	h.memSchema, err = newMemSchemaHandle()
 	if err != nil {
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		return nil, errors.Trace(err)
 	}
 	return h, nil
 }

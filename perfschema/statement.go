@@ -97,12 +97,6 @@ type StatementState struct {
 	noGoodIndexUsed uint8
 }
 
-/*
-var (
-	stmtInfos = make(map[reflect.Type]*statementInfo)
-)
-*/
-
 func (ps *perfSchema) RegisterStatement(category, name string, elem interface{}) {
 	instrumentName := fmt.Sprintf("%s%s/%s", statementInstrumentPrefix, category, name)
 	key, err := ps.addInstrument(instrumentName)
