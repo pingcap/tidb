@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,44 +18,18 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-func removePlan(p Plan) error {
-	parents := p.GetParents()
-	children := p.GetChildren()
-	if len(parents) != 1 || len(children) != 1 {
-		return SystemInternalErrorType.Gen("can't remove this plan")
-	}
-	parent, child := parents[0], children[0]
-	err := parent.ReplaceChild(p, child)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = child.ReplaceParent(p, parent)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 func addFilter(p Plan, child Plan, conditions []ast.ExprNode) error {
 	filter := &Filter{Conditions: conditions}
-	filter.AddChild(child)
-	filter.AddParent(p)
-	err := child.ReplaceParent(p, filter)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = p.ReplaceChild(child, filter)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return InsertPlan(child, p, filter)
 }
 
-type columnSubstitute struct {
+// columnSubstituor substitutes the columns in filter to expressions in select fields.
+// e.g. Filter(a < 10) <- SelectFields(1 as a) ==> Select(1 as a) <- Filter(1 < 10).
+type columnSubstitutor struct {
 	fields []*ast.ResultField
 }
 
-func (cl *columnSubstitute) Enter(inNode ast.Node) (node ast.Node, ok bool) {
+func (cl *columnSubstitutor) Enter(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		match := false
@@ -75,7 +49,7 @@ func (cl *columnSubstitute) Enter(inNode ast.Node) (node ast.Node, ok bool) {
 	return inNode, true
 }
 
-func (cl *columnSubstitute) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		for _, field := range cl.fields {
@@ -86,38 +60,8 @@ func (cl *columnSubstitute) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	}
 	return inNode, true
 }
-func containsSubq(cond ast.ExprNode) (ok bool) {
-	switch v := cond.(type) {
-	case *ast.ValueExpr, *ast.ColumnNameExpr:
-		return false
-	case *ast.FuncCallExpr:
-		for _, arg := range v.Args {
-			if containsSubq(arg) {
-				return true
-			}
-		}
-		return false
-	case *ast.BinaryOperationExpr:
-		return containsSubq(v.L) || containsSubq(v.R)
-	case *ast.UnaryOperationExpr:
-		return containsSubq(v.V)
-	default:
-		return true
-	}
-}
 
-func extractCond(conds []ast.ExprNode) (ret []ast.ExprNode, subq []ast.ExprNode) {
-	for _, cond := range conds {
-		if containsSubq(cond) {
-			subq = append(subq, cond)
-		} else {
-			ret = append(ret, cond)
-		}
-	}
-	return ret, subq
-}
-
-// PredicatePushDown applies predicate push down to all kinds of plans, expected aggregation and union.
+// PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
 func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, err error) {
 	if len(p.GetChildren()) == 0 {
 		return predicates, nil
@@ -127,23 +71,22 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		v.attachCondition(predicates)
 		return predicates, nil
 	case *Filter:
-		conditions, subq := extractCond(v.Conditions)
+		conditions := v.Conditions
 		retConditions, err1 := PredicatePushDown(p.GetChildByIndex(0), append(conditions, predicates...))
-		retConditions = append(retConditions, subq...)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		if len(retConditions) > 0 {
 			v.Conditions = retConditions
 		} else {
-			err1 = removePlan(p)
+			err1 = RemovePlan(p)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
 		}
 		return ret, nil
 	case *Join:
-		//todo: add null rejecter
+		//TODO: add null rejecter
 		var leftCond, rightCond []ast.ExprNode
 		leftPlan := v.GetChildByIndex(0)
 		rightPlan := v.GetChildByIndex(1)
@@ -184,7 +127,7 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		}
 		return ret, nil
 	case *SelectFields:
-		cs := &columnSubstitute{fields: v.Fields()}
+		cs := &columnSubstitutor{fields: v.Fields()}
 		var push []ast.ExprNode
 		for _, cond := range predicates {
 			cond, ok := cond.Accept(cs)
@@ -219,7 +162,7 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		}
 		return ret, nil
 	default:
-		//todo: support union and sub queries when abandon result field.
+		//TODO: support union and sub queries when abandon result field.
 		for _, child := range v.GetChildren() {
 			_, err = PredicatePushDown(child, []ast.ExprNode{})
 			if err != nil {

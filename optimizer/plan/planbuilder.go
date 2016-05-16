@@ -541,14 +541,12 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 			x.NoLimit = true
 		}
 		np := &Sort{ByItems: sel.OrderBy.Items}
-		np.AddChild(p)
-		p.AddParent(np)
+		AddChild(np, p)
 		p = np
 	}
 	if sel.Limit != nil {
 		np := &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
-		np.AddChild(p)
-		p.AddParent(np)
+		AddChild(np, p)
 		np.SetLimit(0)
 		p = np
 	} else {
@@ -564,20 +562,14 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 	selectLock := &SelectLock{
 		Lock: lock,
 	}
-	if src != nil {
-		selectLock.AddChild(src)
-		src.AddParent(selectLock)
-	}
+	AddChild(selectLock, src)
 	selectLock.SetFields(src.Fields())
 	return selectLock
 }
 
 func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Plan {
 	selectFields := &SelectFields{}
-	if src != nil {
-		selectFields.AddChild(src)
-		src.AddParent(selectFields)
-	}
+	AddChild(selectFields, src)
 	selectFields.SetFields(fields)
 	return selectFields
 }
@@ -587,10 +579,7 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 	aggPlan := &Aggregate{
 		AggFuncs: aggFuncs,
 	}
-	if src != nil {
-		aggPlan.AddChild(src)
-		src.AddParent(aggPlan)
-	}
+	AddChild(aggPlan, src)
 	if src != nil {
 		aggPlan.SetFields(src.Fields())
 	}
@@ -604,7 +593,7 @@ func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
 	p := &Having{
 		Conditions: splitWhere(having.Expr),
 	}
-	p.AddChild(src)
+	AddChild(p, src)
 	src.AddParent(p)
 	p.SetFields(src.Fields())
 	return p
@@ -614,8 +603,7 @@ func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
 	sort := &Sort{
 		ByItems: byItems,
 	}
-	sort.AddChild(src)
-	src.AddParent(sort)
+	AddChild(sort, src)
 	sort.SetFields(src.Fields())
 	return sort
 }
@@ -629,8 +617,7 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 		s.ExecLimit = li
 		return s
 	}
-	li.AddChild(src)
-	src.AddParent(li)
+	AddChild(li, src)
 	li.SetFields(src.Fields())
 	return li
 }
@@ -910,7 +897,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 
 func (b *planBuilder) buildDistinct(src Plan) Plan {
 	d := &Distinct{}
-	d.AddChild(src)
+	AddChild(d, src)
 	src.AddParent(d)
 	d.SetFields(src.Fields())
 	return d
@@ -1054,8 +1041,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		filter := &Filter{Conditions: conditions}
-		filter.AddChild(p)
-		p.AddParent(filter)
+		AddChild(filter, p)
 		p = filter
 	}
 	return p
@@ -1077,10 +1063,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	if insert.Select != nil {
 		insertPlan.SelectPlan = b.build(insert.Select)
-		if insertPlan.SelectPlan != nil {
-			insertPlan.AddChild(insertPlan.SelectPlan)
-			insertPlan.SelectPlan.AddParent(insertPlan)
-		}
+		AddChild(insertPlan, insertPlan.SelectPlan)
 		if b.err != nil {
 			return nil
 		}
@@ -1101,10 +1084,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		return nil
 	}
 	p := &Explain{StmtPlan: targetPlan}
-	if targetPlan != nil {
-		p.AddChild(targetPlan)
-		targetPlan.AddParent(p)
-	}
+	AddChild(p, targetPlan)
 	p.SetFields(buildExplainFields())
 	return p
 }

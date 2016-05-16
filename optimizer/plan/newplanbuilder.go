@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,8 +14,6 @@
 package plan
 
 import (
-	"fmt"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -36,7 +34,7 @@ func (b *planBuilder) buildNewSinglePathPlan(node ast.ResultSetNode) Plan {
 		case *ast.UnionStmt:
 			return b.buildUnion(v)
 		case *ast.TableName:
-			//todo: select physical algorithm during cbo phase.
+			//TODO: select physical algorithm during cbo phase.
 			return b.buildNewTableScanPlan(v)
 		default:
 			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
@@ -57,30 +55,20 @@ func fromFields(col *ast.ColumnNameExpr, fields []*ast.ResultField) bool {
 	return false
 }
 
-func extractColumns(expr ast.ExprNode) (cols []*ast.ColumnNameExpr, ok bool) {
-	ok = true
+type columnsExtractor struct {
+	result []*ast.ColumnNameExpr
+}
+
+func (ce *columnsExtractor) Enter(expr ast.Node) (ret ast.Node, ok bool) {
 	switch v := expr.(type) {
-	case *ast.FuncCallExpr:
-		for _, arg := range v.Args {
-			argCols, ok := extractColumns(arg)
-			if !ok {
-				return nil, false
-			}
-			cols = append(cols, argCols...)
-		}
 	case *ast.ColumnNameExpr:
-		cols = append(cols, v)
-	case *ast.FuncCastExpr:
-		argCols, ok := extractColumns(v.Expr)
-		if !ok {
-			return nil, false
-		}
-		cols = append(cols, argCols...)
-	case *ast.ValueExpr:
-	default:
-		return nil, false
+		ce.result = append(ce.result, v)
 	}
-	return cols, ok
+	return expr, false
+}
+
+func (ce *columnsExtractor) Leave(expr ast.Node) (ret ast.Node, ok bool) {
+	return expr, false
 }
 
 func extractOnCondition(conditions []ast.ExprNode, left Plan, right Plan) (eqCond []ast.ExprNode, leftCond []ast.ExprNode, rightCond []ast.ExprNode, otherCond []ast.ExprNode) {
@@ -99,24 +87,21 @@ func extractOnCondition(conditions []ast.ExprNode, left Plan, right Plan) (eqCon
 				}
 			}
 		}
-		columns, ok := extractColumns(expr)
-		if ok {
-			allFromLeft, allFromRight := true, true
-			for _, col := range columns {
-				if fromFields(col, left.Fields()) {
-					allFromRight = false
-				} else {
-					allFromLeft = false
-				}
+		ce := &columnsExtractor{}
+		expr.Accept(ce)
+		columns := ce.result
+		allFromLeft, allFromRight := true, true
+		for _, col := range columns {
+			if fromFields(col, left.Fields()) {
+				allFromRight = false
+			} else {
+				allFromLeft = false
 			}
-			if allFromLeft {
-				leftCond = append(leftCond, expr)
-			}
-			if allFromRight {
-				rightCond = append(rightCond, expr)
-			} else if !allFromLeft {
-				otherCond = append(otherCond, expr)
-			}
+		}
+		if allFromRight {
+			rightCond = append(rightCond, expr)
+		} else if allFromLeft {
+			leftCond = append(leftCond, expr)
 		} else {
 			otherCond = append(otherCond, expr)
 		}
@@ -140,20 +125,16 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
-	joinPlan.AddChild(leftPlan)
-	joinPlan.AddChild(rightPlan)
-	leftPlan.AddParent(joinPlan)
-	rightPlan.AddParent(joinPlan)
+	AddChild(joinPlan, leftPlan)
+	AddChild(joinPlan, rightPlan)
 	joinPlan.SetFields(append(leftPlan.Fields(), rightPlan.Fields()...))
-	log.Infof(fmt.Sprintf("build join plan %v", joinPlan.GetChildren()))
 	return joinPlan
 }
 
 func (b *planBuilder) buildFilter(p Plan, where ast.ExprNode) Plan {
 	conditions := splitWhere(where)
 	filter := &Filter{Conditions: conditions}
-	filter.AddChild(p)
-	p.AddParent(filter)
+	AddChild(filter, p)
 	filter.SetFields(p.Fields())
 	return filter
 }

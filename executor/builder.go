@@ -122,7 +122,7 @@ func composeCondition(conditions []ast.ExprNode) ast.ExprNode {
 	}
 }
 
-//todo: select join algorithm during cbo phase
+//TODO: select join algorithm during cbo phase.
 func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	e := &HashJoinExec{
 		otherFilter: composeCondition(v.OtherConditions),
@@ -163,7 +163,7 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 		e.smallHashKey = leftHashKey
 		e.bigHashKey = rightHashKey
 	case plan.InnerJoin:
-		//todo: assume right table is the small one before cbo is realized.
+		//TODO: assume right table is the small one before cbo is realized.
 		e.outter = false
 		e.leftSmall = false
 		big, small = 0, 1

@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -118,7 +118,6 @@ func (e *HashJoinExec) Next() (*Row, error) {
 			e.bigExec.Close()
 			return nil, nil
 		}
-		hashcode, err := e.getHashKey(e.bigHashKey)
 		var matchedRows []*Row
 		bigMatched := true
 		if e.bigFilter != nil {
@@ -128,10 +127,14 @@ func (e *HashJoinExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 		if bigMatched {
+			hashcode, err := e.getHashKey(e.bigHashKey)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			// match eq condition
 			if rows, ok := e.hashTable[hashcode]; ok {
 				for _, smallRow := range rows {
-					//todo: remove result fields in order to reduce memory copy cost
+					//TODO: remove result fields in order to reduce memory copy cost.
 					startKey := 0
 					if !e.leftSmall {
 						startKey = len(bigRow.Data)
