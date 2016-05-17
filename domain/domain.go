@@ -110,7 +110,7 @@ func (do *Domain) Store() kv.Storage {
 // SetLease will reset the lease time for online DDL change.
 func (do *Domain) SetLease(lease time.Duration) {
 	if lease <= 0 {
-		log.Infof("[ddl] SetLease %v failed, so do nothing", lease)
+		log.Warnf("[ddl] SetLease %v failed, so do nothing", lease)
 		return
 	}
 
@@ -264,8 +264,8 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 
 	// Only when the store is local that the lease value is 0.
 	// Set reload lease != 0 to ensure that loadSchemaInLoop can work normally.
-	// And if the store is local, reload lease is larger than ddl lease is ok.
-	// In addition of the above situation, reload lease is always equal to ddl lease.
+	// Local store allows reload lease greater than ddl lease.
+	// For other stores, reload lease is always equal to ddl lease.
 	if lease <= 0 {
 		lease = defaultLoadTime
 	}
