@@ -27,36 +27,13 @@ func addFilter(p Plan, child Plan, conditions []ast.ExprNode) error {
 // e.g. Filter(a < 10) <- SelectFields(1 as a) ==> Select(1 as a) <- Filter(1 < 10).
 type columnSubstitutor struct {
 	fields []*ast.ResultField
-	match  bool
 }
 
 func (cl *columnSubstitutor) Enter(inNode ast.Node) (node ast.Node, skipChild bool) {
-	switch v := inNode.(type) {
-	case *ast.ColumnNameExpr:
-		match := false
-		for _, field := range cl.fields {
-			if field == v.Refer {
-				switch field.Expr.(type) {
-				//TODO: only allow substitute column to column currently, because Accept progress not support change type A to type B.
-				case *ast.ColumnNameExpr:
-					match = true
-				}
-				break
-			}
-		}
-		if !match {
-			cl.match = false
-			return inNode, true
-		}
-		return inNode, false
-	}
 	return inNode, false
 }
 
 func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	if !cl.match {
-		return inNode, false
-	}
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		for _, field := range cl.fields {
@@ -65,7 +42,7 @@ func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 			}
 		}
 	}
-	return inNode, true
+	return inNode, false
 }
 
 // PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
@@ -135,15 +112,34 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		}
 		return ret, nil
 	case *SelectFields:
-		cs := &columnSubstitutor{fields: v.Fields(), match: true}
+		cs := &columnSubstitutor{fields: v.Fields()}
 		var push []ast.ExprNode
 		for _, cond := range predicates {
-			cond, ok := cond.Accept(cs)
-			cond1, _ := cond.(ast.ExprNode)
+			ce := &columnsExtractor{}
+			ok := true
+			cond.Accept(ce)
+			for _, col := range ce.result {
+				match := false
+				for _, field := range v.Fields() {
+					if col.Refer == field {
+						switch field.Expr.(type) {
+						case *ast.ColumnNameExpr:
+							match = true
+						}
+						break
+					}
+				}
+				if !match {
+					ok = false
+					break
+				}
+			}
 			if ok {
-				push = append(push, cond1)
+				cond1, _ := cond.Accept(cs)
+				cond = cond1.(ast.ExprNode)
+				push = append(push, cond)
 			} else {
-				ret = append(ret, cond1)
+				ret = append(ret, cond)
 			}
 		}
 		restConds, err1 := PredicatePushDown(v.GetChildByIndex(0), push)
