@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -249,4 +250,21 @@ func (ts *testSuite) TestRowKeyCodec(c *C) {
 		_, err := tables.DecodeRecordKeyHandle(kv.Key(t))
 		c.Assert(err, NotNil)
 	}
+}
+
+func (ts *testSuite) TestUnsignedPK(c *C) {
+	defer testleak.AfterTest(c)()
+	_, err := ts.se.Execute("CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
+	c.Assert(err, IsNil)
+	ctx := ts.se.(context.Context)
+	dom := sessionctx.GetDomain(ctx)
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
+	c.Assert(err, IsNil)
+
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	c.Assert(err, IsNil)
+	row, err := tb.Row(ctx, rid)
+	c.Assert(err, IsNil)
+	c.Assert(len(row), Equals, 2)
+	c.Assert(row[0].Kind(), Equals, types.KindUint64)
 }

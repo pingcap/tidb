@@ -308,7 +308,12 @@ func (c *RPCClient) SendKVReq(req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
 
 // SendCopReq sends a coprocessor request to mock cluster.
 func (c *RPCClient) SendCopReq(req *coprocessor.Request) (*coprocessor.Response, error) {
-	return nil, errors.New("not implemented")
+	store := c.cluster.GetStoreByAddr(c.addr)
+	if store == nil {
+		return nil, errors.New("connect fail")
+	}
+	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
+	return handler.handleCopRequest(req)
 }
 
 // Close closes the client.

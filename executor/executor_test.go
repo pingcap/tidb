@@ -14,11 +14,13 @@
 package executor_test
 
 import (
+	"flag"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
@@ -26,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -41,10 +44,20 @@ type testSuite struct {
 	store kv.Storage
 }
 
+var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
+
 func (s *testSuite) SetUpSuite(c *C) {
-	store, err := tidb.NewStore("memory://test/test")
-	c.Assert(err, IsNil)
-	s.store = store
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.store = tikv.NewMockTikvStore()
+		tidb.SetSchemaLease(0)
+	} else {
+		store, err := tidb.NewStore("memory://test/test")
+		c.Assert(err, IsNil)
+		s.store = store
+	}
+	log.SetLevelByString("warn")
 	executor.BaseLookupTableTaskSize = 2
 }
 
@@ -1182,4 +1195,18 @@ func (s *testSuite) TestDefaultNull(c *C) {
 	tk.MustExec("delete from t where a = 1")
 	tk.MustExec("insert t (a) values (1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
+}
+
+func (s *testSuite) TestUsignedPKColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unsigned primary key, b int, c int, key idx_ba (b, c, a));")
+	tk.MustExec("insert t values (1, 1, 1)")
+	result := tk.MustQuery("select * from t;")
+	result.Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t set c=2 where a=1;")
+	result = tk.MustQuery("select * from t where b=1;")
+	result.Check(testkit.Rows("1 1 2"))
 }

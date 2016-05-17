@@ -638,7 +638,6 @@ func (e *XSelectIndexExec) extractRowsFromSubResult(t table.Table, subResult *xa
 		for i, field := range e.indexPlan.Fields() {
 			if field.Referenced {
 				fullRowData[i] = rowData[j]
-				field.Expr.SetDatum(fullRowData[i])
 				j++
 			}
 		}

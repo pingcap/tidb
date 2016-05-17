@@ -449,7 +449,11 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
-			v[i].SetInt64(h)
+			if mysql.HasUnsignedFlag(col.Flag) {
+				v[i].SetUint64(uint64(h))
+			} else {
+				v[i].SetInt64(h)
+			}
 			continue
 		}
 

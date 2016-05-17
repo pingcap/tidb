@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/terror"
@@ -95,6 +96,11 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 	// try reload if possible.
 	do.tryReload()
 	return do.infoHandle.Get()
+}
+
+// PerfSchema gets performance schema from domain.
+func (do *Domain) PerfSchema() perfschema.PerfSchema {
+	return do.infoHandle.GetPerfHandle()
 }
 
 // DDL gets DDL from domain.
@@ -257,8 +263,10 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 		store:   store,
 		leaseCh: make(chan time.Duration, 1),
 	}
-
-	d.infoHandle = infoschema.NewHandle(d.store)
+	d.infoHandle, err = infoschema.NewHandle(d.store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	d.ddl = ddl.NewDDL(d.store, d.infoHandle, &ddlCallback{do: d}, lease)
 	d.mustReload()
 

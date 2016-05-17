@@ -27,6 +27,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 )
@@ -85,6 +86,21 @@ func newTikvStore(uuid string, pdClient pd.Client, factory ClientFactory) *tikvS
 		clients:       make(map[string]Client),
 		clientFactory: factory,
 		regionCache:   NewRegionCache(pdClient),
+	}
+}
+
+// NewMockTikvStore creates a mocked tikv store.
+func NewMockTikvStore() kv.Storage {
+	cluster := mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(cluster)
+	mvccStore := mocktikv.NewMvccStore()
+	clientFactory := mockClientFactory(cluster, mvccStore)
+	return newTikvStore("mock-tikv-store", mocktikv.NewPDClient(cluster), clientFactory)
+}
+
+func mockClientFactory(cluster *mocktikv.Cluster, mvccStore *mocktikv.MvccStore) ClientFactory {
+	return func(addr string) (Client, error) {
+		return mocktikv.NewRPCClient(cluster, mvccStore, addr), nil
 	}
 }
 
