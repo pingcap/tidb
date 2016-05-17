@@ -323,7 +323,10 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 			} else {
 				key := tablecodec.EncodeColumnKey(tid, handle, colID)
 				data, err1 := ctx.txn.Get(key)
-				if err1 != nil {
+				if isDefaultNull(err1, col) {
+					row.Data = append(row.Data, codec.NilFlag)
+					continue
+				} else if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
 				row.Data = append(row.Data, data...)
@@ -344,7 +347,10 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error
 		} else {
 			key := tablecodec.EncodeColumnKey(tid, h, colID)
 			data, err := ctx.txn.Get(key)
-			if err != nil {
+			if isDefaultNull(err, col) {
+				ctx.eval.Row[colID] = types.Datum{}
+				continue
+			} else if err != nil {
 				return false, errors.Trace(err)
 			}
 			_, datum, err := codec.DecodeOne(data)
@@ -508,4 +514,8 @@ func buildLocalRegionServers(store *dbStore) []*localRegion {
 			endKey:   []byte("z"),
 		},
 	}
+}
+
+func isDefaultNull(err error, col *tipb.ColumnInfo) bool {
+	return terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(uint(col.GetFlag()))
 }

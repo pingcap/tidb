@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
@@ -329,7 +330,14 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				row.Data = append(row.Data, data...)
+				if data == nil {
+					if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+						return nil, errors.Trace(kv.ErrNotExist)
+					}
+					row.Data = append(row.Data, codec.NilFlag)
+				} else {
+					row.Data = append(row.Data, data...)
+				}
 			}
 		}
 	}
@@ -354,11 +362,18 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			_, datum, err := codec.DecodeOne(data)
-			if err != nil {
-				return false, errors.Trace(err)
+			if data == nil {
+				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
+					return false, errors.Trace(kv.ErrNotExist)
+				}
+				ctx.eval.Row[colID] = types.Datum{}
+			} else {
+				_, datum, err := codec.DecodeOne(data)
+				if err != nil {
+					return false, errors.Trace(err)
+				}
+				ctx.eval.Row[colID] = datum
 			}
-			ctx.eval.Row[colID] = datum
 		}
 	}
 	result, err := ctx.eval.Eval(ctx.sel.Where)
@@ -496,4 +511,8 @@ func decodeHandle(data []byte) (int64, error) {
 	buf := bytes.NewBuffer(data)
 	err := binary.Read(buf, binary.BigEndian, &h)
 	return h, errors.Trace(err)
+}
+
+func isDefaultNull(err error, col *tipb.ColumnInfo) bool {
+	return terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(uint(col.GetFlag()))
 }
