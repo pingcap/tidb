@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
@@ -304,8 +305,15 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 		return nil, errors.Trace(err)
 	}
 	for _, col := range columns {
-		if *col.PkHandle {
-			row.Data = append(row.Data, row.Handle...)
+		if col.GetPkHandle() {
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				row.Data, err = codec.EncodeValue(row.Data, types.NewUintDatum(uint64(handle)))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			} else {
+				row.Data = append(row.Data, row.Handle...)
+			}
 		} else {
 			colID := col.GetColumnId()
 			if ctx.whereColumns[colID] != nil {
@@ -335,7 +343,11 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 	tid := ctx.sel.TableInfo.GetTableId()
 	for colID, col := range ctx.whereColumns {
 		if col.GetPkHandle() {
-			ctx.eval.Row[colID] = types.NewIntDatum(handle)
+			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
+				ctx.eval.Row[colID] = types.NewUintDatum(uint64(handle))
+			} else {
+				ctx.eval.Row[colID] = types.NewIntDatum(handle)
+			}
 		} else {
 			key := tablecodec.EncodeColumnKey(tid, handle, colID)
 			data, err := h.mvccStore.Get(key, ctx.sel.GetStartTs())
