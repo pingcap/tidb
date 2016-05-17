@@ -1140,6 +1140,7 @@ func (s *testSuite) TestTableReverseOrder(c *C) {
 }
 
 func (s *testSuite) TestInSubquery(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1167,6 +1168,7 @@ func (s *testSuite) TestInSubquery(c *C) {
 }
 
 func (s *testSuite) TestDefaultNull(c *C) {
+	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
