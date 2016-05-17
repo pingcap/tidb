@@ -16,7 +16,6 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 )
 
 type testScanMockSuite struct {
@@ -25,9 +24,7 @@ type testScanMockSuite struct {
 var _ = Suite(&testScanMockSuite{})
 
 func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
-	store, cluster := createMockStoreCluster()
-	mocktikv.BootstrapWithMultiRegions(cluster, []byte("a"), []byte("m"))
-
+	store := NewMockTikvStore().(*tikvStore)
 	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
