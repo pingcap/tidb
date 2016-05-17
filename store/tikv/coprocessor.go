@@ -270,7 +270,9 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		case resp = <-task.respChan:
 		case err = <-it.errChan:
 		}
+		it.mu.Lock()
 		task.status = taskDone
+		it.mu.Unlock()
 	}
 	if err != nil {
 		it.Close()
@@ -336,8 +338,6 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 			log.Warnf("coprocessor err: %v", err)
 			return nil, errors.Trace(err)
 		}
-		it.mu.Lock()
-		defer it.mu.Unlock()
 		return resp, nil
 	}
 	return nil, errors.Trace(backoffErr)
