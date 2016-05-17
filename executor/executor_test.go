@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"flag"
 	"fmt"
 	"strings"
 	"testing"
@@ -43,8 +44,11 @@ type testSuite struct {
 	store kv.Storage
 }
 
+var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
+
 func (s *testSuite) SetUpSuite(c *C) {
-	useMockTikv := true
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
 	if useMockTikv {
 		s.store = tikv.NewMockTikvStore()
 		tidb.SetSchemaLease(0)
