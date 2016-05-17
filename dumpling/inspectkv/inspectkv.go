@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
@@ -395,7 +396,9 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) (
 
 		k := t.RecordKey(h, col)
 		data, err := txn.Get(k)
-		if err != nil {
+		if terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(col.Flag) {
+			continue
+		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
 
