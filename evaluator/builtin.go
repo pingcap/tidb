@@ -98,6 +98,7 @@ var Funcs = map[string]Func{
 	"substring_index": {builtinSubstringIndex, 3, 3},
 	"locate":          {builtinLocate, 2, 3},
 	"trim":            {builtinTrim, 1, 3},
+	"reverse":         {builtinReverse, 1, 1},
 
 	// information functions
 	"current_user":  {builtinCurrentUser, 0, 0},

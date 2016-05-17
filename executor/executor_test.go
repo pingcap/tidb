@@ -1139,6 +1139,19 @@ func (s *testSuite) TestIndexReverseOrder(c *C) {
 	result.Check(testkit.Rows("0 2", "0 1", "0 0", "1 2", "1 1", "1 0", "2 2", "2 1", "2 0"))
 }
 
+func (s *testSuite) TestTableReverseOrder(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key auto_increment, b int)")
+	tk.MustExec("insert t (b) values (1), (2), (3), (4), (5), (6), (7), (8), (9)")
+	result := tk.MustQuery("select b from t order by a desc")
+	result.Check(testkit.Rows("9", "8", "7", "6", "5", "4", "3", "2", "1"))
+	result = tk.MustQuery("select a from t where a <3 or (a >=6 and a < 8) order by a desc")
+	result.Check(testkit.Rows("7", "6", "2", "1"))
+}
+
 func (s *testSuite) TestInSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1164,4 +1177,18 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("create table t1 (a float)")
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
+}
+
+func (s *testSuite) TestUsignedPKColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unsigned primary key, b int, c int, key idx_ba (b, c, a));")
+	tk.MustExec("insert t values (1, 1, 1)")
+	result := tk.MustQuery("select * from t;")
+	result.Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t set c=2 where a=1;")
+	result = tk.MustQuery("select * from t where b=1;")
+	result.Check(testkit.Rows("1 1 2"))
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -255,7 +256,7 @@ func (rs *localRegion) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, lim
 			if it.Key().Cmp(ran.StartKey) < 0 {
 				break
 			}
-			seekKey = it.Key()
+			seekKey = tablecodec.TruncateToRowKeyLen(it.Key())
 		} else {
 			if it.Key().Cmp(ran.EndKey) >= 0 {
 				break
@@ -298,7 +299,18 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 	}
 	for _, col := range columns {
 		if *col.PkHandle {
-			row.Data = append(row.Data, row.Handle...)
+			if mysql.HasUnsignedFlag(uint(*col.Flag)) {
+				// PK column is Unsigned
+				var ud types.Datum
+				ud.SetUint64(uint64(handle))
+				uHandle, err1 := codec.EncodeValue(nil, ud)
+				if err1 != nil {
+					return nil, errors.Trace(err1)
+				}
+				row.Data = append(row.Data, uHandle...)
+			} else {
+				row.Data = append(row.Data, row.Handle...)
+			}
 		} else {
 			colID := col.GetColumnId()
 			if ctx.whereColumns[colID] != nil {

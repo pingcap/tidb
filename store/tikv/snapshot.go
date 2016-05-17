@@ -211,11 +211,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 
 // Seek return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	region, err := s.store.getRegion(k)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	scanner, err := newScanner(region, k, s.version.Ver, *s, scanBatchSize)
+	scanner, err := newScanner(s, k, scanBatchSize)
 	return scanner, errors.Trace(err)
 }
 

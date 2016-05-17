@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/types"
 	"golang.org/x/text/transform"
 )
@@ -165,6 +166,22 @@ func builtinLower(args []types.Datum, _ context.Context) (d types.Datum, err err
 			return d, errors.Trace(err)
 		}
 		d.SetString(strings.ToLower(s))
+		return d, nil
+	}
+}
+
+// See: https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
+func builtinReverse(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	x := args[0]
+	switch x.Kind() {
+	case types.KindNull:
+		return d, nil
+	default:
+		s, err := x.ToString()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		d.SetString(stringutil.Reverse(s))
 		return d, nil
 	}
 }

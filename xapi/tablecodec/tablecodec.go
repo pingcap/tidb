@@ -203,6 +203,7 @@ func columnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 		Collation: proto.Int32(collationToProto(c.FieldType.Collate)),
 		ColumnLen: proto.Int32(int32(c.FieldType.Flen)),
 		Decimal:   proto.Int32(int32(c.FieldType.Decimal)),
+		Flag:      proto.Int32(int32(c.Flag)),
 		Elems:     c.Elems,
 	}
 	t := int32(c.FieldType.Tp)
@@ -293,6 +294,14 @@ func EncodeIndexRanges(tid, idxID int64, rans []*tipb.KeyRange) []kv.KeyRange {
 		keyRanges = append(keyRanges, nr)
 	}
 	return keyRanges
+}
+
+// TruncateToRowKeyLen truncates the key to row key length if the key is longer than row key.
+func TruncateToRowKeyLen(key kv.Key) kv.Key {
+	if len(key) > recordRowKeyLen {
+		return key[:recordRowKeyLen]
+	}
+	return key
 }
 
 type keyRangeSorter struct {

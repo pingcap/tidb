@@ -16,7 +16,6 @@ package tikv
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 )
 
 type testScanMockSuite struct {
@@ -38,9 +37,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	region, err := store.getRegion(nil)
-	c.Assert(err, IsNil)
-	scanner, err := newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)
+	scanner, err := newScanner(snapshot, []byte("a"), 10)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
@@ -50,30 +47,4 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	}
 	c.Assert(scanner.Next(), NotNil)
 	c.Assert(scanner.Valid(), IsFalse)
-}
-
-func (s *testScanMockSuite) TestStaleRegionEpoch(c *C) {
-	cluster := mocktikv.NewCluster()
-	_, _, regionID := mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.NewMvccStore()
-	clientFactory := mockClientFactory(cluster, mvccStore)
-	store := newTikvStore("mock-tikv-store", mocktikv.NewPDClient(cluster), clientFactory)
-	txn, err := store.Begin()
-	c.Assert(err, IsNil)
-	for ch := byte('a'); ch <= byte('z'); ch++ {
-		err = txn.Set([]byte{ch}, []byte{ch})
-		c.Assert(err, IsNil)
-	}
-	err = txn.Commit()
-	c.Assert(err, IsNil)
-
-	txn, err = store.Begin()
-	c.Assert(err, IsNil)
-	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	region, err := store.getRegion(nil)
-	c.Assert(err, IsNil)
-	newPeerID := cluster.AllocID()
-	cluster.Split(regionID, cluster.AllocID(), []byte("m"), []uint64{newPeerID}, newPeerID)
-	_, err = newScanner(region, []byte("a"), txn.StartTS(), *snapshot, 10)
-	c.Assert(err, NotNil)
 }
