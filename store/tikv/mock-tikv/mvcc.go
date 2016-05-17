@@ -213,7 +213,7 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
 }
 
-// Scan reads up to limit numbers of Pairs that greater or equal to startKey and less than endKey.
+// Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
 func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -241,7 +241,7 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 	return pairs
 }
 
-// ReverseScan reads up to limit numbers of Pairs that greater or equal to startKey and less than endKey
+// ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
 // in descending order.
 func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
 	s.mu.RLock()
