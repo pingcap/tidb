@@ -20,36 +20,43 @@ import (
 
 func addFilter(p Plan, child Plan, conditions []ast.ExprNode) error {
 	filter := &Filter{Conditions: conditions}
-	return InsertPlan(child, p, filter)
+	return InsertPlan(p, child, filter)
 }
 
 // columnSubstituor substitutes the columns in filter to expressions in select fields.
 // e.g. Filter(a < 10) <- SelectFields(1 as a) ==> Select(1 as a) <- Filter(1 < 10).
 type columnSubstitutor struct {
 	fields []*ast.ResultField
+	match  bool
 }
 
-func (cl *columnSubstitutor) Enter(inNode ast.Node) (node ast.Node, ok bool) {
+func (cl *columnSubstitutor) Enter(inNode ast.Node) (node ast.Node, skipChild bool) {
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		match := false
 		for _, field := range cl.fields {
 			if field == v.Refer {
 				switch field.Expr.(type) {
+				//TODO: only allow substitute column to column currently, because Accept progress not support change type A to type B.
 				case *ast.ColumnNameExpr:
-				case *ast.ValueExpr:
-				default:
-					return nil, false
+					match = true
 				}
-				match = true
+				break
 			}
 		}
-		return node, match
+		if !match {
+			cl.match = false
+			return inNode, true
+		}
+		return inNode, false
 	}
-	return inNode, true
+	return inNode, false
 }
 
 func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	if !cl.match {
+		return inNode, false
+	}
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		for _, field := range cl.fields {
@@ -63,13 +70,10 @@ func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 
 // PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
 func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, err error) {
-	if len(p.GetChildren()) == 0 {
-		return predicates, nil
-	}
 	switch v := p.(type) {
 	case *TableScan:
 		v.attachCondition(predicates)
-		return predicates, nil
+		return ret, nil
 	case *Filter:
 		conditions := v.Conditions
 		retConditions, err1 := PredicatePushDown(p.GetChildByIndex(0), append(conditions, predicates...))
@@ -113,13 +117,17 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		if err2 != nil {
 			return nil, errors.Trace(err2)
 		}
-		err2 = addFilter(p, leftPlan, leftRet)
-		if err2 != nil {
-			return nil, errors.Trace(err2)
+		if len(leftRet) > 0 {
+			err2 = addFilter(p, leftPlan, leftRet)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
+			}
 		}
-		err2 = addFilter(p, rightPlan, rightRet)
-		if err2 != nil {
-			return nil, errors.Trace(err2)
+		if len(rightRet) > 0 {
+			err2 = addFilter(p, rightPlan, rightRet)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
+			}
 		}
 		if v.JoinType == InnerJoin {
 			v.EqualConditions = append(v.EqualConditions, equalCond...)
@@ -127,7 +135,7 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		}
 		return ret, nil
 	case *SelectFields:
-		cs := &columnSubstitutor{fields: v.Fields()}
+		cs := &columnSubstitutor{fields: v.Fields(), match: true}
 		var push []ast.ExprNode
 		for _, cond := range predicates {
 			cond, ok := cond.Accept(cs)
@@ -155,7 +163,7 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 			return nil, errors.Trace(err1)
 		}
 		if len(rest) > 0 {
-			addFilter(p, p.GetChildByIndex(0), rest)
+			err1 = addFilter(p, p.GetChildByIndex(0), rest)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}

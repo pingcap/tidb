@@ -36,6 +36,13 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 	return errors.Trace(resolver.Err)
 }
 
+// MockResolveName only serves for test
+func MockResolveName(node ast.Node, info infoschema.InfoSchema, defaultSchema string) error {
+	resolver := nameResolver{Info: info, Ctx: nil, DefaultSchema: model.NewCIStr(defaultSchema)}
+	node.Accept(&resolver)
+	return resolver.Err
+}
+
 // nameResolver is the visitor to resolve table name and column name.
 // In general, a reference can only refer to information that are available for it.
 // So children elements are visited in the order that previous elements make information
@@ -213,6 +220,8 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.pushContext()
 	case *ast.UpdateStmt:
 		nr.pushContext()
+		//	case *ast.
+	case *ast.TableName:
 	}
 	return inNode, false
 }

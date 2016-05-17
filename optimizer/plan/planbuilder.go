@@ -594,7 +594,6 @@ func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
 		Conditions: splitWhere(having.Expr),
 	}
 	AddChild(p, src)
-	src.AddParent(p)
 	p.SetFields(src.Fields())
 	return p
 }
@@ -898,7 +897,6 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 func (b *planBuilder) buildDistinct(src Plan) Plan {
 	d := &Distinct{}
 	AddChild(d, src)
-	src.AddParent(d)
 	d.SetFields(src.Fields())
 	return d
 }

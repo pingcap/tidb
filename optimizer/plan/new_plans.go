@@ -55,7 +55,7 @@ func AddChild(parent Plan, child Plan) {
 }
 
 // InsertPlan means inserting plan between two plans
-func InsertPlan(child Plan, parent Plan, insert Plan) error {
+func InsertPlan(parent Plan, child Plan, insert Plan) error {
 	err := child.ReplaceParent(parent, insert)
 	if err != nil {
 		return errors.Trace(err)

@@ -111,6 +111,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	}
 }
 
+// compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
 func composeCondition(conditions []ast.ExprNode) ast.ExprNode {
 	length := len(conditions)
 	if length == 0 {
@@ -118,7 +119,7 @@ func composeCondition(conditions []ast.ExprNode) ast.ExprNode {
 	} else if length == 1 {
 		return conditions[0]
 	} else {
-		return &ast.BinaryOperationExpr{Op: opcode.EQ, L: composeCondition(conditions[:length/2]), R: composeCondition(conditions[length/2:])}
+		return &ast.BinaryOperationExpr{Op: opcode.AndAnd, L: composeCondition(conditions[:length/2]), R: composeCondition(conditions[length/2:])}
 	}
 }
 

@@ -59,7 +59,7 @@ type columnsExtractor struct {
 	result []*ast.ColumnNameExpr
 }
 
-func (ce *columnsExtractor) Enter(expr ast.Node) (ret ast.Node, ok bool) {
+func (ce *columnsExtractor) Enter(expr ast.Node) (ret ast.Node, skipChildren bool) {
 	switch v := expr.(type) {
 	case *ast.ColumnNameExpr:
 		ce.result = append(ce.result, v)
@@ -67,8 +67,8 @@ func (ce *columnsExtractor) Enter(expr ast.Node) (ret ast.Node, ok bool) {
 	return expr, false
 }
 
-func (ce *columnsExtractor) Leave(expr ast.Node) (ret ast.Node, ok bool) {
-	return expr, false
+func (ce *columnsExtractor) Leave(expr ast.Node) (ret ast.Node, skipChildren bool) {
+	return expr, true
 }
 
 func extractOnCondition(conditions []ast.ExprNode, left Plan, right Plan) (eqCond []ast.ExprNode, leftCond []ast.ExprNode, rightCond []ast.ExprNode, otherCond []ast.ExprNode) {
