@@ -1165,3 +1165,17 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("insert t1 values (281.37)")
 	tk.MustQuery("select a from t1 where (a in (select a from t1))").Check(testkit.Rows("281.37"))
 }
+
+func (s *testSuite) TestUsignedPKColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int unsigned primary key, b int, c int, key idx_ba (b, c, a));")
+	tk.MustExec("insert t values (1, 1, 1)")
+	result := tk.MustQuery("select * from t;")
+	result.Check(testkit.Rows("1 1 1"))
+	tk.MustExec("update t set c=2 where a=1;")
+	result = tk.MustQuery("select * from t where b=1;")
+	result.Check(testkit.Rows("1 1 2"))
+}
