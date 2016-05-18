@@ -1210,3 +1210,28 @@ func (s *testSuite) TestUsignedPKColumn(c *C) {
 	result = tk.MustQuery("select * from t where b=1;")
 	result.Check(testkit.Rows("1 1 2"))
 }
+
+func (s *testSuite) TestDatumXAPI(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
+	tk.MustExec("insert t values (1.1, 1.1)")
+	tk.MustExec("insert t values (2.2, 2.2)")
+	tk.MustExec("insert t values (3.3, 3.3)")
+	result := tk.MustQuery("select * from t where a > 1.5")
+	result.Check(testkit.Rows("2.200000 2.2", "3.300000 3.3"))
+	result = tk.MustQuery("select * from t where b > 1.5")
+	result.Check(testkit.Rows("2.200000 2.2", "3.300000 3.3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a time(3), b time, index idx_a (a))")
+	tk.MustExec("insert t values ('11:11:11', '11:11:11')")
+	tk.MustExec("insert t values ('11:11:12', '11:11:12')")
+	tk.MustExec("insert t values ('11:11:13', '11:11:13')")
+	result = tk.MustQuery("select * from t where a > '11:11:11.5'")
+	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
+	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
+}

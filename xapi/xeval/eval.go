@@ -16,8 +16,10 @@ package xeval
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
@@ -66,6 +68,10 @@ func (e *Evaluator) Eval(expr *tipb.Expr) (types.Datum, error) {
 		return e.evalFloat(expr.Val, true)
 	case tipb.ExprType_Float64:
 		return e.evalFloat(expr.Val, false)
+	case tipb.ExprType_MysqlDecimal:
+		return e.evalDecimal(expr.Val)
+	case tipb.ExprType_MysqlDuration:
+		return e.evalDuration(expr.Val)
 	case tipb.ExprType_ColumnRef:
 		return e.evalColumnRef(expr.Val)
 	case tipb.ExprType_LT:
@@ -147,6 +153,26 @@ func (e *Evaluator) evalFloat(val []byte, f32 bool) (types.Datum, error) {
 		d.SetFloat64(f)
 	}
 	return d, nil
+}
+
+func (e *Evaluator) evalDecimal(val []byte) (types.Datum, error) {
+	var d types.Datum
+	_, dec, err := codec.DecodeDecimal(val)
+	if err != nil {
+		return d, ErrInvalid.Gen("invalid decimal % x", val)
+	}
+	d.SetMysqlDecimal(dec)
+	return d, ErrInvalid
+}
+
+func (e *Evaluator) evalDuration(val []byte) (types.Datum, error) {
+	var d types.Datum
+	_, i, err := codec.DecodeInt(val)
+	if err != nil {
+		return d, ErrInvalid.Gen("invalid duration %d", i)
+	}
+	d.SetMysqlDuration(mysql.Duration{Duration: time.Duration(i), Fsp: mysql.MaxFsp})
+	return d, ErrInvalid
 }
 
 func (e *Evaluator) evalLT(expr *tipb.Expr) (types.Datum, error) {
