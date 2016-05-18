@@ -145,12 +145,10 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 		}
 		b.err = ErrUnknownPlan.Gen("Invalid Join Equal Condition !!")
 	}
-	var big, small int
 	switch v.JoinType {
 	case plan.LeftOuterJoin:
 		e.outter = true
 		e.leftSmall = false
-		big, small = 0, 1
 		e.smallFilter = composeCondition(v.RightConditions)
 		e.bigFilter = composeCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
@@ -158,7 +156,6 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 	case plan.RightOuterJoin:
 		e.outter = true
 		e.leftSmall = true
-		big, small = 1, 0
 		e.smallFilter = composeCondition(v.LeftConditions)
 		e.bigFilter = composeCondition(v.RightConditions)
 		e.smallHashKey = leftHashKey
@@ -167,7 +164,6 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 		//TODO: assume right table is the small one before cbo is realized.
 		e.outter = false
 		e.leftSmall = false
-		big, small = 0, 1
 		e.smallFilter = composeCondition(v.RightConditions)
 		e.bigFilter = composeCondition(v.LeftConditions)
 		e.smallHashKey = rightHashKey
@@ -176,8 +172,13 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 		b.err = ErrUnknownPlan.Gen("Unknown Join Type !!")
 		return nil
 	}
-	e.smallExec = b.build(v.GetChildByIndex(small))
-	e.bigExec = b.build(v.GetChildByIndex(big))
+	if e.leftSmall {
+		e.smallExec = b.build(v.GetChildByIndex(0))
+		e.bigExec = b.build(v.GetChildByIndex(1))
+	} else {
+		e.smallExec = b.build(v.GetChildByIndex(1))
+		e.bigExec = b.build(v.GetChildByIndex(0))
+	}
 	return e
 }
 

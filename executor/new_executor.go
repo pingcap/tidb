@@ -43,23 +43,23 @@ func joinTwoRow(a *Row, b *Row) *Row {
 	return &Row{RowKeys: append(a.RowKeys, b.RowKeys...), Data: append(a.Data, b.Data...)}
 }
 
-func (e *HashJoinExec) getHashKey(exprs []ast.ExprNode) (string, error) {
+func (e *HashJoinExec) getHashKey(exprs []ast.ExprNode) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(exprs))
 	for _, expr := range exprs {
 		v, err := evaluator.Eval(e.ctx, expr)
 		if err != nil {
-			return "", errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		vals = append(vals, v)
 	}
 	if len(vals) == 0 {
-		return "SingleHashGroup", nil
+		return []byte{}, nil
 	}
 	result, err := codec.EncodeValue([]byte{}, vals...)
 	if err != nil {
-		return "", errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return string(result), err
+	return result, err
 }
 
 // Fields implements Executor Fields interface
@@ -73,41 +73,103 @@ func (e *HashJoinExec) Close() error {
 	return nil
 }
 
-// Next implements Executor Next interface
-func (e *HashJoinExec) Next() (*Row, error) {
-	if !e.prepared {
-		e.hashTable = make(map[string][]*Row)
-		for {
-			row, err := e.smallExec.Next()
+func (e *HashJoinExec) prepare() error {
+	e.hashTable = make(map[string][]*Row)
+	for {
+		row, err := e.smallExec.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if row == nil {
+			e.smallExec.Close()
+			e.prepared = true
+			break
+		}
+		matched := true
+		if e.smallFilter != nil {
+			matched, err = evaluator.EvalBool(e.ctx, e.smallFilter)
 			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if row == nil {
-				e.smallExec.Close()
-				e.prepared = true
-				break
-			}
-			matched := true
-			if e.smallFilter != nil {
-				matched, err = evaluator.EvalBool(e.ctx, e.smallFilter)
-			}
-			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if !matched {
 				continue
 			}
-			hashcode, err := e.getHashKey(e.smallHashKey)
-			if err != nil {
-				return nil, err
+		}
+		hashcode, err := e.getHashKey(e.smallHashKey)
+		if err != nil {
+			return err
+		}
+		if rows, ok := e.hashTable[string(hashcode)]; !ok {
+			e.hashTable[string(hashcode)] = []*Row{row}
+		} else {
+			e.hashTable[string(hashcode)] = append(rows, row)
+		}
+	}
+	e.prepared = true
+	return nil
+}
+
+func (e *HashJoinExec) constructMatchedRow(bigRow *Row) (matchedRows []*Row, err error) {
+	hashcode, err := e.getHashKey(e.bigHashKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// match eq condition
+	if rows, ok := e.hashTable[string(hashcode)]; ok {
+		for _, smallRow := range rows {
+			//TODO: remove result fields in order to reduce memory copy cost.
+			startKey := 0
+			if !e.leftSmall {
+				startKey = len(bigRow.Data)
 			}
-			if rows, ok := e.hashTable[hashcode]; !ok {
-				e.hashTable[hashcode] = []*Row{row}
-			} else {
-				e.hashTable[hashcode] = append(rows, row)
+			for i, data := range smallRow.Data {
+				e.fields[i+startKey].Expr.SetValue(data.GetValue())
+			}
+			otherMatched := true
+			if e.otherFilter != nil {
+				otherMatched, err = evaluator.EvalBool(e.ctx, e.otherFilter)
+			}
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if otherMatched {
+				if e.leftSmall {
+					matchedRows = append(matchedRows, joinTwoRow(smallRow, bigRow))
+				} else {
+					matchedRows = append(matchedRows, joinTwoRow(bigRow, smallRow))
+				}
 			}
 		}
-		e.prepared = true
+	}
+	return matchedRows, nil
+}
+
+func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row, err error) {
+	smallRow := &Row{
+		RowKeys: make([]*RowKeyEntry, len(e.smallExec.Fields())),
+		Data:    make([]types.Datum, len(e.smallExec.Fields())),
+	}
+	for _, data := range smallRow.Data {
+		data.SetNull()
+	}
+	if e.leftSmall {
+		returnRow = joinTwoRow(smallRow, bigRow)
+	} else {
+		returnRow = joinTwoRow(bigRow, smallRow)
+	}
+	for i, data := range returnRow.Data {
+		e.fields[i].Expr.SetValue(data.GetValue())
+	}
+	return returnRow, nil
+}
+
+// Next implements Executor Next interface
+func (e *HashJoinExec) Next() (*Row, error) {
+	if !e.prepared {
+		err := e.prepare()
+		if err != nil {
+			return nil, err
+		}
 	}
 	for {
 		bigRow, err := e.bigExec.Next()
@@ -122,41 +184,14 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		bigMatched := true
 		if e.bigFilter != nil {
 			bigMatched, err = evaluator.EvalBool(e.ctx, e.bigFilter)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if bigMatched {
-			hashcode, err := e.getHashKey(e.bigHashKey)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// match eq condition
-			if rows, ok := e.hashTable[hashcode]; ok {
-				for _, smallRow := range rows {
-					//TODO: remove result fields in order to reduce memory copy cost.
-					startKey := 0
-					if !e.leftSmall {
-						startKey = len(bigRow.Data)
-					}
-					for i, data := range smallRow.Data {
-						e.fields[i+startKey].Expr.SetValue(data.GetValue())
-					}
-					otherMatched := true
-					if e.otherFilter != nil {
-						otherMatched, err = evaluator.EvalBool(e.ctx, e.otherFilter)
-					}
-					if err != nil {
-						return nil, errors.Trace(err)
-					}
-					if otherMatched {
-						if e.leftSmall {
-							matchedRows = append(matchedRows, joinTwoRow(smallRow, bigRow))
-						} else {
-							matchedRows = append(matchedRows, joinTwoRow(bigRow, smallRow))
-						}
-					}
-				}
+		}
+		if bigMatched {
+			matchedRows, err = e.constructMatchedRow(bigRow)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		for _, row := range matchedRows {
@@ -166,23 +201,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 			return row, nil
 		}
 		if e.outter && len(matchedRows) == 0 {
-			smallRow := &Row{
-				RowKeys: make([]*RowKeyEntry, len(e.smallExec.Fields())),
-				Data:    make([]types.Datum, len(e.smallExec.Fields())),
-			}
-			for _, data := range smallRow.Data {
-				data.SetNull()
-			}
-			var returnRow *Row
-			if e.leftSmall {
-				returnRow = joinTwoRow(smallRow, bigRow)
-			} else {
-				returnRow = joinTwoRow(bigRow, smallRow)
-			}
-			for i, data := range returnRow.Data {
-				e.fields[i].Expr.SetValue(data.GetValue())
-			}
-			return returnRow, nil
+			return e.fillNullRow(bigRow)
 		}
 	}
 }

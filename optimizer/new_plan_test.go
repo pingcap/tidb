@@ -1,3 +1,16 @@
+// Copyright 2016 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package optimizer
 
 import (
@@ -61,7 +74,7 @@ func newMockResolve(node ast.Node) error {
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
 	}
-	is := infoschema.MockInfoSchema(table)
+	is := infoschema.MockInfoSchema([]*model.TableInfo{table})
 	return MockResolveName(node, is, "test")
 }
 
@@ -69,28 +82,39 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	plan.UseNewPlanner = true
 	defer testleak.AfterTest(c)()
 	cases := []struct {
-		sql  string
-		best string
+		sql   string
+		first string
+		best  string
 	}{
 		{
-			sql:  "select a from (select a from t where d = 0) k where k.a = 5",
-			best: "Range(t)->Fields->Fields",
+			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
+			first: "Table(t)->Fields->Filter->Fields",
+			best:  "Range(t)->Fields->Fields",
 		},
 		{
-			sql:  "select a from (select 1+2 as a from t where d = 0) k where k.a = 5",
-			best: "Table(t)->Fields->Filter->Fields",
+			sql:   "select a from (select 1+2 as a from t where d = 0) k where k.a = 5",
+			first: "Table(t)->Fields->Filter->Fields",
+			best:  "Table(t)->Fields->Filter->Fields",
 		},
 		{
-			sql:  "select a from (select d as a from t where d = 0) k where k.a = 5",
-			best: "Table(t)->Fields->Fields",
+			sql:   "select a from (select d as a from t where d = 0) k where k.a = 5",
+			first: "Table(t)->Fields->Filter->Fields",
+			best:  "Table(t)->Fields->Fields",
 		},
 		{
-			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
-			best: "Join{Table(t)->Range(t)}->Fields",
+			sql:   "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
+			first: "Join{Table(t)->Table(t)}->Filter->Fields",
+			best:  "Join{Table(t)->Range(t)}->Fields",
 		},
 		{
-			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
-			best: "Join{Table(t)->Table(t)}->Filter->Fields",
+			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
+			first: "Join{Table(t)->Table(t)}->Filter->Fields",
+			best:  "Join{Table(t)->Table(t)}->Filter->Fields",
+		},
+		{
+			sql:   "select * from t ta right outer join t tb on ta.d = tb.d and ta.a > 1 where tb.a = 0",
+			first: "Join{Table(t)->Table(t)}->Filter->Fields",
+			best:  "Join{Range(t)->Range(t)}->Fields",
 		},
 	}
 	for _, ca := range cases {
@@ -104,6 +128,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		p, err := plan.BuildPlan(stmt, nil)
 		c.Assert(err, IsNil)
+		c.Assert(plan.ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
 		_, err = plan.PredicatePushDown(p, []ast.ExprNode{})
 		c.Assert(err, IsNil)

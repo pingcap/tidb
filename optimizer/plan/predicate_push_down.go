@@ -24,7 +24,7 @@ func addFilter(p Plan, child Plan, conditions []ast.ExprNode) error {
 }
 
 // columnSubstituor substitutes the columns in filter to expressions in select fields.
-// e.g. Filter(a < 10) <- SelectFields(1 as a) ==> Select(1 as a) <- Filter(1 < 10).
+// e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 type columnSubstitutor struct {
 	fields []*ast.ResultField
 }

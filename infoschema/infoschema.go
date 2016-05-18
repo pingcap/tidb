@@ -102,16 +102,19 @@ type infoSchema struct {
 }
 
 // MockInfoSchema only serves for test
-func MockInfoSchema(tb *model.TableInfo) InfoSchema {
+func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaNameToID = make(map[string]int64)
-	result.schemaNameToID["test"] = 0
 	result.tableNameToID = make(map[tableName]int64)
-	result.tableNameToID[tableName{schema: "test", table: "t"}] = 0
 	result.schemas = make(map[int64]*model.DBInfo)
-	result.schemas[0] = &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: []*model.TableInfo{tb}}
 	result.tables = make(map[int64]table.Table)
-	result.tables[0] = table.MockTableFromMeta(tb)
+
+	result.schemaNameToID["test"] = 0
+	result.schemas[0] = &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	for i, tb := range tbList {
+		result.tableNameToID[tableName{schema: "test", table: tb.Name.L}] = int64(i)
+		result.tables[int64(i)] = table.MockTableFromMeta(tb)
+	}
 	return result
 }
 
