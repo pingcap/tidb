@@ -213,7 +213,7 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
 }
 
-// Scan reads up to limit numbers of Pairs from a key.
+// Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
 func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -238,6 +238,38 @@ func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []P
 		return true
 	}
 	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
+	return pairs
+}
+
+// ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
+// in descending order.
+func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var pairs []Pair
+	iterator := func(item llrb.Item) bool {
+		if len(pairs) >= limit {
+			return false
+		}
+		k := item.(*mvccEntry).key
+		if bytes.Equal(k, endKey) {
+			return true
+		}
+		if bytes.Compare(k, startKey) < 0 {
+			return false
+		}
+		val, err := s.get(k, startTS)
+		if val != nil || err != nil {
+			pairs = append(pairs, Pair{
+				Key:   k,
+				Value: val,
+				Err:   err,
+			})
+		}
+		return true
+	}
+	s.tree.DescendLessOrEqual(newEntry(endKey), iterator)
 	return pairs
 }
 

@@ -21,8 +21,9 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
+// First byte in the encoded value which specifies the encoding type.
 const (
-	nilFlag          byte = 0
+	NilFlag          byte = 0
 	bytesFlag        byte = 1
 	compactBytesFlag byte = 2
 	intFlag          byte = 3
@@ -69,7 +70,7 @@ func encode(b []byte, vals []types.Datum, comparable bool) ([]byte, error) {
 			b = append(b, uintFlag)
 			b = EncodeUint(b, uint64(val.GetMysqlSet().ToNumber()))
 		case types.KindNull:
-			b = append(b, nilFlag)
+			b = append(b, NilFlag)
 		case types.KindMinNotNull:
 			b = append(b, bytesFlag)
 		case types.KindMaxValue:
@@ -170,7 +171,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 			v := mysql.Duration{Duration: time.Duration(r), Fsp: mysql.MaxFsp}
 			d.SetValue(v)
 		}
-	case nilFlag:
+	case NilFlag:
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
 	}

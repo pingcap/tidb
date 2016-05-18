@@ -39,7 +39,10 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 	case kv.ReqTypeSelect:
 		return supportExpr(tipb.ExprType(subType))
 	case kv.ReqTypeIndex:
-		return subType == kv.ReqSubTypeBasic
+		switch subType {
+		case kv.ReqSubTypeDesc, kv.ReqSubTypeBasic:
+			return true
+		}
 	}
 	return false
 }
@@ -47,12 +50,15 @@ func (c *CopClient) SupportRequestType(reqType, subType int64) bool {
 func supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
+		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlDecimal,
 		tipb.ExprType_ColumnRef,
 		tipb.ExprType_And, tipb.ExprType_Or,
 		tipb.ExprType_LT, tipb.ExprType_LE, tipb.ExprType_EQ, tipb.ExprType_NE,
 		tipb.ExprType_GE, tipb.ExprType_GT, tipb.ExprType_NullEQ,
 		tipb.ExprType_In, tipb.ExprType_ValueList,
 		tipb.ExprType_Like, tipb.ExprType_Not:
+		return true
+	case kv.ReqSubTypeDesc:
 		return true
 	default:
 		return false
@@ -239,7 +245,7 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		resp *coprocessor.Response
 		err  error
 	)
-	// If data order matters, repsone should be returned in the same order as copTask slice.
+	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.req.KeepOrder {
 		// Get next fetched resp from chan
@@ -265,6 +271,9 @@ func (it *copIterator) Next() (io.ReadCloser, error) {
 		case resp = <-task.respChan:
 		case err = <-it.errChan:
 		}
+		it.mu.Lock()
+		task.status = taskDone
+		it.mu.Unlock()
 	}
 	if err != nil {
 		it.Close()
@@ -295,7 +304,7 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		resp, err := client.SendCopReq(req)
 		if err != nil {
-			it.store.regionCache.NextPeer(task.region.GetID())
+			it.store.regionCache.NextPeer(task.region.VerID())
 			err1 := it.rebuildCurrentTask(task)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
@@ -305,9 +314,9 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		if e := resp.GetRegionError(); e != nil {
 			if notLeader := e.GetNotLeader(); notLeader != nil {
-				it.store.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
+				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
 			} else {
-				it.store.regionCache.DropRegion(task.region.GetID())
+				it.store.regionCache.DropRegion(task.region.VerID())
 			}
 			err = it.rebuildCurrentTask(task)
 			if err != nil {
@@ -330,9 +339,6 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 			log.Warnf("coprocessor err: %v", err)
 			return nil, errors.Trace(err)
 		}
-		it.mu.Lock()
-		defer it.mu.Unlock()
-		task.status = taskDone
 		return resp, nil
 	}
 	return nil, errors.Trace(backoffErr)
