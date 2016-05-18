@@ -201,10 +201,8 @@ func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) e
 	if commitResp == nil {
 		return errors.Trace(errBodyMissing)
 	}
-	keyErrs := commitResp.GetErrors()
-	if len(keyErrs) > 0 {
-		// TODO: update proto field from repeated to optional. It will never return multiple errors.
-		err = errors.Errorf("commit failed: %v", keyErrs[0].String())
+	if keyErr := commitResp.GetError(); keyErr != nil {
+		err = errors.Errorf("commit failed: %v", keyErr.String())
 		if c.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
@@ -223,17 +221,29 @@ func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) e
 }
 
 func (c *txnCommitter) cleanupSingleRegion(regionID RegionVerID, keys [][]byte) error {
-	// TODO: add batch RPC call.
-	for _, k := range keys {
-		req := &pb.Request{
-			Type: pb.MessageType_CmdCleanup.Enum(),
-			CmdCleanupReq: &pb.CmdCleanupRequest{
-				Key:          k,
-				StartVersion: proto.Uint64(c.startTS),
-			},
-		}
-		c.store.SendKVReq(req, regionID)
-		// TODO: check response and retry
+	req := &pb.Request{
+		Type: pb.MessageType_CmdBatchRollback.Enum(),
+		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
+			Keys:         keys,
+			StartVersion: proto.Uint64(c.startTS),
+		},
+	}
+	resp, err := c.store.SendKVReq(req, regionID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if regionErr := resp.GetRegionError(); regionErr != nil {
+		err = c.cleanupKeys(keys)
+		return errors.Trace(err)
+	}
+	rollbackResp := resp.GetCmdBatchRollbackResp()
+	if rollbackResp == nil {
+		return errors.Trace(errBodyMissing)
+	}
+	if keyErr := rollbackResp.GetError(); keyErr != nil {
+		err = errors.Errorf("cleanup failed: %s", keyErr)
+		log.Errorf("txn failed cleanup key: %v", err)
+		return errors.Trace(err)
 	}
 	return nil
 }

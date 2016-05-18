@@ -177,7 +177,7 @@ func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitR
 	var resp kvrpcpb.CmdCommitResponse
 	err := h.mvccStore.Commit(req.Keys, req.GetStartVersion(), req.GetCommitVersion())
 	if err != nil {
-		resp.Errors = []*kvrpcpb.KeyError{convertToKeyError(err)}
+		resp.Error = convertToKeyError(err)
 	}
 	return &resp
 }
