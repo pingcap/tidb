@@ -314,6 +314,10 @@ func fetchRowColVals(txn kv.Transaction, t table.Table, handle int64, indexInfo 
 		k := t.RecordKey(handle, col)
 		data, err := txn.Get(k)
 		if err != nil {
+			if terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(col.Flag) {
+				vals = append(vals, types.Datum{})
+				continue
+			}
 			return nil, errors.Trace(err)
 		}
 		val, err := tables.DecodeValue(data, &col.FieldType)
