@@ -282,9 +282,7 @@ func (c *ddlCallback) OnChanged(err error) error {
 
 // NewDomain creates a new domain.
 func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
-	d = &Domain{
-		store: store,
-	}
+	d = &Domain{store: store}
 
 	d.infoHandle, err = infoschema.NewHandle(d.store)
 	if err != nil {
