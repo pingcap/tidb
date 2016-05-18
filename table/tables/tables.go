@@ -56,7 +56,7 @@ type Table struct {
 	meta            *model.TableInfo
 }
 
-// MockTableFromMeta only serves for test
+// MockTableFromMeta only serves for test.
 func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	return &Table{ID: 0, meta: tableInfo}
 }

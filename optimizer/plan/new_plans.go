@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 )
 
-// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin
+// JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
 type JoinType int
 
 const (
@@ -33,7 +33,7 @@ const (
 	// TODO: support semi join.
 )
 
-// Join is the logical join plan
+// Join is the logical join plan.
 type Join struct {
 	basePlan
 
@@ -45,7 +45,7 @@ type Join struct {
 	OtherConditions []ast.ExprNode
 }
 
-// AddChild for parent
+// AddChild for parent.
 func AddChild(parent Plan, child Plan) {
 	if child == nil || parent == nil {
 		return
@@ -54,7 +54,7 @@ func AddChild(parent Plan, child Plan) {
 	parent.AddChild(child)
 }
 
-// InsertPlan means inserting plan between two plans
+// InsertPlan means inserting plan between two plans.
 func InsertPlan(parent Plan, child Plan, insert Plan) error {
 	err := child.ReplaceParent(parent, insert)
 	if err != nil {
@@ -69,7 +69,7 @@ func InsertPlan(parent Plan, child Plan, insert Plan) error {
 	return err
 }
 
-// RemovePlan means removing a plan
+// RemovePlan means removing a plan.
 func RemovePlan(p Plan) error {
 	parents := p.GetParents()
 	children := p.GetChildren()

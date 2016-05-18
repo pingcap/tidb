@@ -101,7 +101,7 @@ type infoSchema struct {
 	schemaMetaVersion int64
 }
 
-// MockInfoSchema only serves for test
+// MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaNameToID = make(map[string]int64)

@@ -36,7 +36,7 @@ func ResolveName(node ast.Node, info infoschema.InfoSchema, ctx context.Context)
 	return errors.Trace(resolver.Err)
 }
 
-// MockResolveName only serves for test
+// MockResolveName only serves for test.
 func MockResolveName(node ast.Node, info infoschema.InfoSchema, defaultSchema string) error {
 	resolver := nameResolver{Info: info, Ctx: nil, DefaultSchema: model.NewCIStr(defaultSchema)}
 	node.Accept(&resolver)
