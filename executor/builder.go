@@ -240,7 +240,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		seekHandle:  math.MinInt64,
 	}
 	x := b.buildFilter(e, v.FilterConditions)
-	if v.Desc && !supportDesc {
+	if v.Desc {
 		x = &ReverseExec{Src: x}
 	}
 	return x
@@ -323,7 +323,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		e.Ranges[i] = b.buildIndexRange(e, val)
 	}
 	x := b.buildFilter(e, v.FilterConditions)
-	if v.Desc && !supportDesc {
+	if v.Desc {
 		x = &ReverseExec{Src: x}
 	}
 	return x

@@ -15,26 +15,32 @@ package tikv
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/mock-tikv"
 )
 
 type testLockSuite struct {
-	store   *tikvStore
-	cluster *mocktikv.Cluster
+	store *tikvStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store, s.cluster = createMockStoreCluster()
+	s.store = NewMockTikvStore().(*tikvStore)
 }
 
 func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) {
 	txn, err := newTiKVTxn(s.store)
 	c.Assert(err, IsNil)
-	err = txn.Set(key, value)
+	if len(value) > 0 {
+		err = txn.Set(key, value)
+	} else {
+		err = txn.Delete(key)
+	}
 	c.Assert(err, IsNil)
-	err = txn.Set(primaryKey, primaryValue)
+	if len(primaryValue) > 0 {
+		err = txn.Set(primaryKey, primaryValue)
+	} else {
+		err = txn.Delete(primaryKey)
+	}
 	c.Assert(err, IsNil)
 	committer, err := newTxnCommitter(txn)
 	c.Assert(err, IsNil)
@@ -67,11 +73,13 @@ func (s *testLockSuite) putKV(c *C, key, value []byte) {
 }
 
 func (s *testLockSuite) TestScanLockResolve(c *C) {
-	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.putAlphabets(c)
 	s.putKV(c, []byte("c"), []byte("cc"))
-	s.lockKey(c, []byte("c"), []byte("c"), []byte("zz"), []byte("zz"), true)
-	s.lockKey(c, []byte("d"), []byte("dd"), []byte("zz"), []byte("zz"), false)
+	s.lockKey(c, []byte("c"), []byte("c"), []byte("z1"), []byte("z1"), true)
+	s.lockKey(c, []byte("d"), []byte("dd"), []byte("z2"), []byte("z2"), false)
+	s.lockKey(c, []byte("foo"), []byte("foo"), []byte("z3"), []byte("z3"), false)
+	s.putKV(c, []byte("bar"), []byte("bar"))
+	s.lockKey(c, []byte("bar"), nil, []byte("z4"), []byte("z4"), true)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
