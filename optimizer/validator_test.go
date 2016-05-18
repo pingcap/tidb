@@ -51,6 +51,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"create table t(id decimal auto_increment, key (id))", true,
 			errors.New("Incorrect column specifier for column 'id'")},
 		{"create table t(id float auto_increment, key (id))", true, nil},
+		{"create table t(id int auto_increment) ENGINE=MYISAM", true, nil},
 	}
 	store, err := tidb.NewStore(tidb.EngineGoLevelDBMemory)
 	c.Assert(err, IsNil)

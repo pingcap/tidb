@@ -224,7 +224,10 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 		return p.table == table
 	}
 	if p.subquery != nil {
-		return p.asName.L == table.Name.L
+		if table != nil {
+			return p.asName.L == table.Name.L
+		}
+		return false
 	}
 	if len(p.inners) != 0 {
 		for _, in := range p.inners {
@@ -234,7 +237,6 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 		}
 		return false
 	}
-
 	return p.outer.containsTable(table) || p.inner.containsTable(table)
 }
 
