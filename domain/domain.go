@@ -42,7 +42,6 @@ type Domain struct {
 	leaseCh     chan time.Duration
 	lastLeaseTS int64 // nano seconds
 	m           sync.Mutex
-	wg          sync.WaitGroup
 }
 
 func (do *Domain) loadInfoSchema(txn kv.Transaction) (err error) {
@@ -115,30 +114,15 @@ func (do *Domain) Store() kv.Storage {
 
 // SetLease will reset the lease time for online DDL change.
 func (do *Domain) SetLease(lease time.Duration) {
-	if lease < 0 {
-		log.Warnf("[ddl] SetLease %v failed, so do nothing", lease)
+	if lease <= 0 {
+		log.Warnf("[ddl] set the current lease:%v into a new lease:%v failed, so do nothing",
+			do.ddl.GetLease(), lease)
 		return
 	}
 
-	do.m.Lock()
-	defer do.m.Unlock()
-	// It uses for test.
-	if lease == 0 {
-		log.Warnf("[ddl] SetLease: %v", lease)
-		if do.leaseCh != nil {
-			close(do.leaseCh)
-			do.wg.Wait()
-			// let ddl to reset lease too.
-			do.ddl.SetLease(lease)
-		}
-		return
-	}
 	if do.leaseCh == nil {
-		do.leaseCh = make(chan time.Duration, 1)
-		do.wg.Add(1)
-		go do.loadSchemaInLoop(lease)
-		// let ddl to reset lease too.
-		do.ddl.SetLease(lease)
+		log.Errorf("[ddl] set the current lease:%v into a new lease:%v failed, so do nothing",
+			do.ddl.GetLease(), lease)
 		return
 	}
 
@@ -232,7 +216,6 @@ func (do *Domain) mustReload() {
 const defaultLoadTime = 300 * time.Second
 
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
-	defer do.wg.Done()
 	ticker := time.NewTicker(lease)
 	defer ticker.Stop()
 
@@ -247,12 +230,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			} else if err != nil {
 				log.Fatalf("[ddl] reload schema err %v", errors.ErrorStack(err))
 			}
-		case newLease, ok := <-do.leaseCh:
-			if !ok {
-				do.leaseCh = nil
-				return
-			}
-
+		case newLease := <-do.leaseCh:
 			if lease == newLease {
 				// nothing to do
 				continue
@@ -298,7 +276,6 @@ func NewDomain(store kv.Storage, lease time.Duration) (d *Domain, err error) {
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if lease > 0 {
 		d.leaseCh = make(chan time.Duration, 1)
-		d.wg.Add(1)
 		go d.loadSchemaInLoop(lease)
 	}
 
