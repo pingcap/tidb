@@ -701,3 +701,69 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	d.close()
 	s.d.start()
 }
+
+func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
+	defer testleak.AfterTest(c)()
+	d := newDDL(s.store, nil, nil, 100*time.Millisecond)
+	tblInfo := testTableInfo(c, d, "t", 3)
+	// Change c2.DefaultValue to nil
+	tblInfo.Columns[1].DefaultValue = nil
+	ctx := testNewContext(c, d)
+
+	_, err := ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+
+	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+
+	// c2 is nil, which is not stored in kv.
+	row := types.MakeDatums(int64(1), nil, int(2))
+	handle, err := t.AddRecord(ctx, row)
+	c.Assert(err, IsNil)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	checkOK := false
+
+	tc := &testDDLCallback{}
+	tc.onJobUpdated = func(job *model.Job) {
+		if checkOK {
+			return
+		}
+
+		t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+		// Add index on c2.
+		indexCol := getIndex(t, "c2")
+		if indexCol == nil {
+			return
+		}
+		s.checkAddOrDropIndex(c, indexCol.State, d, tblInfo, handle, indexCol, row, false)
+		if indexCol.State == model.StatePublic {
+			checkOK = true
+		}
+	}
+
+	d.hook = tc
+
+	// Use local ddl for callback test.
+	s.d.close()
+	d.close()
+	d.start()
+
+	job := testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, true, "c2", "c2")
+	testCheckJobDone(c, d, job, true)
+
+	_, err = ctx.GetTxn(true)
+	c.Assert(err, IsNil)
+
+	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckJobDone(c, d, job, false)
+
+	err = ctx.FinishTxn(false)
+	c.Assert(err, IsNil)
+
+	d.close()
+	s.d.start()
+}
