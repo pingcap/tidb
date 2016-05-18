@@ -220,8 +220,6 @@ func (nr *nameResolver) Enter(inNode ast.Node) (outNode ast.Node, skipChildren b
 		nr.pushContext()
 	case *ast.UpdateStmt:
 		nr.pushContext()
-		//	case *ast.
-	case *ast.TableName:
 	}
 	return inNode, false
 }

@@ -46,7 +46,7 @@ type Join struct {
 }
 
 // AddChild for parent.
-func AddChild(parent Plan, child Plan) {
+func addChild(parent Plan, child Plan) {
 	if child == nil || parent == nil {
 		return
 	}

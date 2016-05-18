@@ -42,7 +42,7 @@ func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 			}
 		}
 	}
-	return inNode, false
+	return inNode, true
 }
 
 // PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
@@ -60,6 +60,9 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		if len(retConditions) > 0 {
 			v.Conditions = retConditions
 		} else {
+			if len(p.GetParents()) == 0 {
+				return ret, nil
+			}
 			err1 = RemovePlan(p)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
@@ -112,6 +115,9 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		}
 		return ret, nil
 	case *SelectFields:
+		if len(v.GetChildren()) == 0 {
+			return predicates, nil
+		}
 		cs := &columnSubstitutor{fields: v.Fields()}
 		var push []ast.ExprNode
 		for _, cond := range predicates {
@@ -166,6 +172,9 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 		}
 		return ret, nil
 	default:
+		if len(v.GetChildren()) == 0 {
+			return predicates, nil
+		}
 		//TODO: support union and sub queries when abandon result field.
 		for _, child := range v.GetChildren() {
 			_, err = PredicatePushDown(child, []ast.ExprNode{})

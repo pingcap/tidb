@@ -39,7 +39,7 @@ type Plan interface {
 	AddParent(parent Plan)
 	// AddChild means append a child for plan.
 	AddChild(children Plan)
-	// ReplaceParent means replace a parent for another one.
+	// ReplaceParent means replace a parent with another one.
 	ReplaceParent(parent, newPar Plan) error
 	// ReplaceChild means replace a child with another one.
 	ReplaceChild(children, newChild Plan) error

@@ -115,8 +115,11 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	}
 	leftPlan := b.buildNewSinglePathPlan(join.Left)
 	rightPlan := b.buildNewSinglePathPlan(join.Right)
-	onCondition := splitWhere(join.On.Expr)
-	eqCond, leftCond, rightCond, otherCond := extractOnCondition(onCondition, leftPlan, rightPlan)
+	var eqCond, leftCond, rightCond, otherCond []ast.ExprNode
+	if join.On != nil {
+		onCondition := splitWhere(join.On.Expr)
+		eqCond, leftCond, rightCond, otherCond = extractOnCondition(onCondition, leftPlan, rightPlan)
+	}
 	joinPlan := &Join{EqualConditions: eqCond, LeftConditions: leftCond, RightConditions: rightCond, OtherConditions: otherCond}
 	if join.Tp == ast.LeftJoin {
 		joinPlan.JoinType = LeftOuterJoin
@@ -125,8 +128,8 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	} else {
 		joinPlan.JoinType = InnerJoin
 	}
-	AddChild(joinPlan, leftPlan)
-	AddChild(joinPlan, rightPlan)
+	addChild(joinPlan, leftPlan)
+	addChild(joinPlan, rightPlan)
 	joinPlan.SetFields(append(leftPlan.Fields(), rightPlan.Fields()...))
 	return joinPlan
 }
@@ -134,7 +137,7 @@ func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 func (b *planBuilder) buildFilter(p Plan, where ast.ExprNode) Plan {
 	conditions := splitWhere(where)
 	filter := &Filter{Conditions: conditions}
-	AddChild(filter, p)
+	addChild(filter, p)
 	filter.SetFields(p.Fields())
 	return filter
 }

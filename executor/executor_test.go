@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -719,6 +719,8 @@ func (s *testSuite) TestSelectHaving(c *C) {
 	r.Check(testkit.Rows(rowStr))
 	tk.MustExec("commit")
 
+	r = tk.MustQuery("select * from select_having_test group by id having null is not null;")
+
 	tk.MustExec("drop table select_having_test")
 }
 
@@ -926,7 +928,6 @@ func (s *testSuite) TestUnion(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-
 	testSQL := `select 1 union select 0;`
 	tk.MustExec(testSQL)
 
@@ -1156,6 +1157,13 @@ func (s *testSuite) TestNewJoin(c *C) {
 
 	result = tk.MustQuery("select * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> 5 5", "<nil> <nil> <nil> <nil> 9 9", "1 1 1 1 1 1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("insert into t1 values (1), (1), (1)")
+	result = tk.MustQuery("select * from t1 a join t1 b on a.c1 = b.c1;")
+	result.Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1", "1 1"))
+
 	plan.UseNewPlanner = false
 }
 

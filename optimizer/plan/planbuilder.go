@@ -38,7 +38,7 @@ var (
 // Error codes.
 const (
 	CodeUnsupportedType terror.ErrCode = 1
-	SystemInternalError terror.ErrCode = 1
+	SystemInternalError terror.ErrCode = 2
 )
 
 // BuildPlan builds a plan from a node.
@@ -541,12 +541,12 @@ func (b *planBuilder) buildPseudoSelectPlan(p Plan, sel *ast.SelectStmt) Plan {
 			x.NoLimit = true
 		}
 		np := &Sort{ByItems: sel.OrderBy.Items}
-		AddChild(np, p)
+		addChild(np, p)
 		p = np
 	}
 	if sel.Limit != nil {
 		np := &Limit{Offset: sel.Limit.Offset, Count: sel.Limit.Count}
-		AddChild(np, p)
+		addChild(np, p)
 		np.SetLimit(0)
 		p = np
 	} else {
@@ -562,14 +562,14 @@ func (b *planBuilder) buildSelectLock(src Plan, lock ast.SelectLockType) *Select
 	selectLock := &SelectLock{
 		Lock: lock,
 	}
-	AddChild(selectLock, src)
+	addChild(selectLock, src)
 	selectLock.SetFields(src.Fields())
 	return selectLock
 }
 
 func (b *planBuilder) buildSelectFields(src Plan, fields []*ast.ResultField) Plan {
 	selectFields := &SelectFields{}
-	AddChild(selectFields, src)
+	addChild(selectFields, src)
 	selectFields.SetFields(fields)
 	return selectFields
 }
@@ -579,7 +579,7 @@ func (b *planBuilder) buildAggregate(src Plan, aggFuncs []*ast.AggregateFuncExpr
 	aggPlan := &Aggregate{
 		AggFuncs: aggFuncs,
 	}
-	AddChild(aggPlan, src)
+	addChild(aggPlan, src)
 	if src != nil {
 		aggPlan.SetFields(src.Fields())
 	}
@@ -593,7 +593,7 @@ func (b *planBuilder) buildHaving(src Plan, having *ast.HavingClause) Plan {
 	p := &Having{
 		Conditions: splitWhere(having.Expr),
 	}
-	AddChild(p, src)
+	addChild(p, src)
 	p.SetFields(src.Fields())
 	return p
 }
@@ -602,7 +602,7 @@ func (b *planBuilder) buildSort(src Plan, byItems []*ast.ByItem) Plan {
 	sort := &Sort{
 		ByItems: byItems,
 	}
-	AddChild(sort, src)
+	addChild(sort, src)
 	sort.SetFields(src.Fields())
 	return sort
 }
@@ -616,7 +616,7 @@ func (b *planBuilder) buildLimit(src Plan, limit *ast.Limit) Plan {
 		s.ExecLimit = li
 		return s
 	}
-	AddChild(li, src)
+	addChild(li, src)
 	li.SetFields(src.Fields())
 	return li
 }
@@ -840,7 +840,11 @@ func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 	sels := make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
-		sels[i] = b.buildSelect(sel)
+		if UseNewPlanner {
+			sels[i] = b.buildNewSelect(sel)
+		} else {
+			sels[i] = b.buildSelect(sel)
+		}
 	}
 	var p Plan
 	p = &Union{
@@ -876,6 +880,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 				uField.Column.Tp = f.Column.Tp
 			}
 		}
+		addChild(p, sel)
 	}
 	for _, v := range unionFields {
 		v.Expr.SetType(&v.Column.FieldType)
@@ -896,7 +901,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 
 func (b *planBuilder) buildDistinct(src Plan) Plan {
 	d := &Distinct{}
-	AddChild(d, src)
+	addChild(d, src)
 	d.SetFields(src.Fields())
 	return d
 }
@@ -1039,7 +1044,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 	}
 	if len(conditions) != 0 {
 		filter := &Filter{Conditions: conditions}
-		AddChild(filter, p)
+		addChild(filter, p)
 		p = filter
 	}
 	return p
@@ -1061,7 +1066,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	if insert.Select != nil {
 		insertPlan.SelectPlan = b.build(insert.Select)
-		AddChild(insertPlan, insertPlan.SelectPlan)
+		addChild(insertPlan, insertPlan.SelectPlan)
 		if b.err != nil {
 			return nil
 		}
@@ -1082,7 +1087,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 		return nil
 	}
 	p := &Explain{StmtPlan: targetPlan}
-	AddChild(p, targetPlan)
+	addChild(p, targetPlan)
 	p.SetFields(buildExplainFields())
 	return p
 }
