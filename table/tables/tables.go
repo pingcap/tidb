@@ -325,6 +325,10 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 		if col.IsPKHandleColumn(t.meta) {
 			continue
 		}
+		if col.DefaultValue == nil && r[col.Offset].Kind() == types.KindNull {
+			// Save storage space by not storing null value.
+			continue
+		}
 		var value types.Datum
 		if col.State == model.StateWriteOnly || col.State == model.StateWriteReorganization {
 			// if col is in write only or write reorganization state, we must add it with its default value.
@@ -445,13 +449,19 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([
 			return nil, errors.Errorf("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
-			v[i].SetInt64(h)
+			if mysql.HasUnsignedFlag(col.Flag) {
+				v[i].SetUint64(uint64(h))
+			} else {
+				v[i].SetInt64(h)
+			}
 			continue
 		}
 
 		k := t.RecordKey(h, col)
 		data, err := txn.Get(k)
-		if err != nil {
+		if terror.ErrorEqual(err, kv.ErrNotExist) && !mysql.HasNotNullFlag(col.Flag) {
+			continue
+		} else if err != nil {
 			return nil, errors.Trace(err)
 		}
 
