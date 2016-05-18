@@ -304,7 +304,7 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		resp, err := client.SendCopReq(req)
 		if err != nil {
-			it.store.regionCache.NextPeer(task.region.GetID())
+			it.store.regionCache.NextPeer(task.region.VerID())
 			err1 := it.rebuildCurrentTask(task)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
@@ -314,9 +314,9 @@ func (it *copIterator) handleTask(task *copTask) (*coprocessor.Response, error) 
 		}
 		if e := resp.GetRegionError(); e != nil {
 			if notLeader := e.GetNotLeader(); notLeader != nil {
-				it.store.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
+				it.store.regionCache.UpdateLeader(task.region.VerID(), notLeader.GetLeader().GetId())
 			} else {
-				it.store.regionCache.DropRegion(task.region.GetID())
+				it.store.regionCache.DropRegion(task.region.VerID())
 			}
 			err = it.rebuildCurrentTask(task)
 			if err != nil {

@@ -140,7 +140,7 @@ func (s *Scanner) getData() error {
 
 	var backoffErr error
 	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := s.snapshot.store.getRegion(s.nextStartKey)
+		region, err := s.snapshot.store.regionCache.GetRegion(s.nextStartKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -152,7 +152,7 @@ func (s *Scanner) getData() error {
 				Version:  proto.Uint64(s.startTS()),
 			},
 		}
-		resp, err := s.snapshot.store.SendKVReq(req, region)
+		resp, err := s.snapshot.store.SendKVReq(req, region.VerID())
 		if err != nil {
 			return errors.Trace(err)
 		}
