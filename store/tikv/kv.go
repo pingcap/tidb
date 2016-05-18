@@ -243,17 +243,6 @@ func parsePath(path string) (etcdAddrs []string, pdPath string, clusterID uint64
 	return
 }
 
-type requestRegion struct {
-	*Region
-	// lookupKey is used for getting region meta.
-	lookupKey []byte
-}
-
-// GetLookupKey return lookupKey.
-func (r *requestRegion) GetLookupKey() []byte {
-	return r.lookupKey
-}
-
 func init() {
 	mc.cache = make(map[string]*tikvStore)
 	rand.Seed(time.Now().UnixNano())

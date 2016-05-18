@@ -126,7 +126,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	// Store2 does not exist any more, causes a reload from PD.
 	r, err = s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(r.curPeerIdx, Equals, 0)
