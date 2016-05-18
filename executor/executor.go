@@ -57,6 +57,7 @@ var (
 	ErrStmtNotFound    = terror.ClassExecutor.New(CodeStmtNotFound, "Prepared statement not found")
 	ErrSchemaChanged   = terror.ClassExecutor.New(CodeSchemaChanged, "Schema has changed")
 	ErrWrongParamCount = terror.ClassExecutor.New(CodeWrongParamCount, "Wrong parameter count")
+	ErrRowKeyCount     = terror.ClassExecutor.New(CodeRowKeyCount, "Wrong row key entry count")
 )
 
 // Error codes.
@@ -66,6 +67,7 @@ const (
 	CodeStmtNotFound    terror.ErrCode = 3
 	CodeSchemaChanged   terror.ErrCode = 4
 	CodeWrongParamCount terror.ErrCode = 5
+	CodeRowKeyCount     terror.ErrCode = 6
 )
 
 // Row represents a record row.

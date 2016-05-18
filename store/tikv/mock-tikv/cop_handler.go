@@ -264,7 +264,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			if bytes.Compare(pair.Key, startKey) < 0 {
 				break
 			}
-			seekKey = pair.Key
+			seekKey = []byte(tablecodec.TruncateToRowKeyLen(kv.Key(pair.Key)))
 		} else {
 			if bytes.Compare(pair.Key, endKey) >= 0 {
 				break

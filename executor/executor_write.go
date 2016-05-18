@@ -240,6 +240,10 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	dirtyDB := getDirtyDB(ctx)
+	tid := t.Meta().ID
+	dirtyDB.DeleteRow(tid, h)
+	dirtyDB.AddRow(tid, h, newData)
 
 	// Record affected rows.
 	if !onDuplicateUpdate {
@@ -375,6 +379,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	if err != nil {
 		return errors.Trace(err)
 	}
+	getDirtyDB(ctx).DeleteRow(t.Meta().ID, h)
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return nil
 }
@@ -450,6 +455,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		h, err := e.Table.AddRecord(e.ctx, row)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
+			getDirtyDB(e.ctx).AddRow(e.Table.Meta().ID, h, row)
 			continue
 		}
 
@@ -859,6 +865,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row)
 		if err1 == nil {
+			getDirtyDB(e.ctx).AddRow(e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -884,6 +891,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
+		getDirtyDB(e.ctx).DeleteRow(e.Table.Meta().ID, h)
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
 	}
 	e.finished = true
