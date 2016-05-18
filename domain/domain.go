@@ -124,6 +124,7 @@ func (do *Domain) SetLease(lease time.Duration) {
 	defer do.m.Unlock()
 	// It uses for test.
 	if lease == 0 {
+		log.Warnf("[ddl] SetLease: %v", lease)
 		if do.leaseCh != nil {
 			close(do.leaseCh)
 			do.wg.Wait()
