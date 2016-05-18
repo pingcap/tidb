@@ -24,6 +24,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
@@ -124,18 +125,6 @@ func (s *tikvStore) getClient(addr string) (Client, error) {
 	return client, nil
 }
 
-// getRegion returns Region by key.
-func (s *tikvStore) getRegion(k []byte) (*requestRegion, error) {
-	region, err := s.regionCache.GetRegion(k)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &requestRegion{
-		Region:    region,
-		lookupKey: k,
-	}, nil
-}
-
 func (s *tikvStore) Begin() (kv.Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -186,13 +175,18 @@ func (s *tikvStore) CurrentVersion() (kv.Version, error) {
 // sendKVReq sends req to tikv server. It will retry internally to find the right
 // region leader if i) fails to establish a connection to server or ii) server
 // returns `NotLeader`.
-func (s *tikvStore) SendKVReq(req *pb.Request, region *requestRegion) (*pb.Response, error) {
+func (s *tikvStore) SendKVReq(req *pb.Request, regionID RegionVerID) (*pb.Response, error) {
 	var backoffErr error
 	for backoff := rpcBackoff(); backoffErr == nil; backoffErr = backoff() {
-		var err error
-		region, err = s.getRegion(region.GetLookupKey())
-		if err != nil {
-			return nil, errors.Trace(err)
+		region := s.regionCache.GetRegionByVerID(regionID)
+		if region == nil {
+			// If the region is not found in cache, it must be out
+			// of date and already be cleaned up. We can skip the
+			// RPC by returning RegionError directly.
+			return &pb.Response{
+				Type:        req.GetType().Enum(),
+				RegionError: &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}},
+			}, nil
 		}
 		client, err := s.getClient(region.GetAddress())
 		if err != nil {
@@ -202,20 +196,20 @@ func (s *tikvStore) SendKVReq(req *pb.Request, region *requestRegion) (*pb.Respo
 		resp, err := client.SendKVReq(req)
 		if err != nil {
 			log.Warnf("send tikv request error: %v, try next peer later", err)
-			s.regionCache.NextPeer(region.GetID())
+			s.regionCache.NextPeer(region.VerID())
 			continue
 		}
 		if regionErr := resp.GetRegionError(); regionErr != nil {
 			// Retry if error is `NotLeader`.
 			if notLeader := regionErr.GetNotLeader(); notLeader != nil {
 				log.Warnf("tikv reports `NotLeader`: %s, retry later", notLeader.String())
-				s.regionCache.UpdateLeader(notLeader.GetRegionId(), notLeader.GetLeader().GetId())
+				s.regionCache.UpdateLeader(region.VerID(), notLeader.GetLeader().GetId())
 				continue
 			}
 			// For other errors, we only drop cache here.
 			// Because caller may need to re-split the request.
 			log.Warnf("tikv reports region error: %v", resp.GetRegionError())
-			s.regionCache.DropRegion(req.GetContext().GetRegionId())
+			s.regionCache.DropRegion(region.VerID())
 			return resp, nil
 		}
 		if resp.GetType() != req.GetType() {

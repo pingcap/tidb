@@ -100,7 +100,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	regionIDs = append(regionIDs, cluster.AllocID())
 	peerIDs = append(peerIDs, cluster.AllocID())
 	cluster.Split(regionIDs[1], regionIDs[2], []byte("q"), []uint64{peerIDs[2]}, storeID)
-	cache.DropRegion(regionIDs[1])
+	cache.DropRegion(tasks[1].region.VerID())
 
 	tasks, err = buildCopTasks(cache, s.buildKeyRanges("a", "z"), true)
 	c.Assert(err, IsNil)
