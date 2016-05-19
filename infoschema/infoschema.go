@@ -101,6 +101,23 @@ type infoSchema struct {
 	schemaMetaVersion int64
 }
 
+// MockInfoSchema only serves for test.
+func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
+	result := &infoSchema{}
+	result.schemaNameToID = make(map[string]int64)
+	result.tableNameToID = make(map[tableName]int64)
+	result.schemas = make(map[int64]*model.DBInfo)
+	result.tables = make(map[int64]table.Table)
+
+	result.schemaNameToID["test"] = 0
+	result.schemas[0] = &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	for i, tb := range tbList {
+		result.tableNameToID[tableName{schema: "test", table: tb.Name.L}] = int64(i)
+		result.tables[int64(i)] = table.MockTableFromMeta(tb)
+	}
+	return result
+}
+
 var _ InfoSchema = (*infoSchema)(nil)
 
 type tableName struct {

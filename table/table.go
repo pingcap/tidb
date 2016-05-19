@@ -123,3 +123,6 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 
 	return types.NewDatum(col.DefaultValue), true, nil
 }
+
+// MockTableFromMeta only serves for test.
+var MockTableFromMeta func(tableInfo *model.TableInfo) Table

@@ -91,7 +91,6 @@ func (e *Evaluator) handleAndAnd(o *ast.BinaryOperationExpr) bool {
 
 func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 	leftDatum := o.L.GetDatum()
-	righDatum := o.R.GetDatum()
 	if leftDatum.Kind() != types.KindNull {
 		x, err := leftDatum.ToBool()
 		if err != nil {
@@ -103,6 +102,7 @@ func (e *Evaluator) handleOrOr(o *ast.BinaryOperationExpr) bool {
 			return true
 		}
 	}
+	righDatum := o.R.GetDatum()
 	if righDatum.Kind() != types.KindNull {
 		y, err := righDatum.ToBool()
 		if err != nil {

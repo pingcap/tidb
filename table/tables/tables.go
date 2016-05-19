@@ -56,6 +56,11 @@ type Table struct {
 	meta            *model.TableInfo
 }
 
+// MockTableFromMeta only serves for test.
+func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
+	return &Table{ID: 0, meta: tableInfo}
+}
+
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
@@ -886,4 +891,5 @@ func FindIndexByColName(t table.Table, name string) *column.IndexedCol {
 
 func init() {
 	table.TableFromMeta = TableFromMeta
+	table.MockTableFromMeta = MockTableFromMeta
 }
