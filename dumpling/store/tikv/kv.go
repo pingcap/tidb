@@ -96,7 +96,8 @@ func NewMockTikvStore() kv.Storage {
 	mocktikv.BootstrapWithSingleStore(cluster)
 	mvccStore := mocktikv.NewMvccStore()
 	clientFactory := mockClientFactory(cluster, mvccStore)
-	return newTikvStore("mock-tikv-store", mocktikv.NewPDClient(cluster), clientFactory)
+	uuid := fmt.Sprintf("mock-tikv-store-:%v", time.Now().Unix())
+	return newTikvStore(uuid, mocktikv.NewPDClient(cluster), clientFactory)
 }
 
 func mockClientFactory(cluster *mocktikv.Cluster, mvccStore *mocktikv.MvccStore) ClientFactory {

@@ -579,6 +579,13 @@ const (
 	retryEmptyHistoryList = "RetryEmptyHistoryList"
 )
 
+func chooseMinLease(n1 time.Duration, n2 time.Duration) time.Duration {
+	if n1 <= n2 {
+		return n1
+	}
+	return n2
+}
+
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
 	s := &session{
@@ -611,7 +618,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 		// bootstrap quickly, after bootstrapped, we will reset the lease time.
 		// TODO: Using a bootstap tool for doing this may be better later.
 		if !localstore.IsLocalStore(store) {
-			sessionctx.GetDomain(s).SetLease(100 * time.Millisecond)
+			sessionctx.GetDomain(s).SetLease(chooseMinLease(100*time.Millisecond, schemaLease))
 		}
 
 		s.initing = true
