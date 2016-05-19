@@ -29,15 +29,23 @@ type RegionCache struct {
 	pdClient pd.Client
 	mu       sync.RWMutex
 	// TODO: store in array and use binary search
-	regions map[uint64]*Region
+	regions map[RegionVerID]*Region
 }
 
 // NewRegionCache new region cache.
 func NewRegionCache(pdClient pd.Client) *RegionCache {
 	return &RegionCache{
 		pdClient: pdClient,
-		regions:  make(map[uint64]*Region),
+		regions:  make(map[RegionVerID]*Region),
 	}
+}
+
+// GetRegionByVerID finds a Region by Region's verID.
+func (c *RegionCache) GetRegionByVerID(id RegionVerID) *Region {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.regions[id]
 }
 
 // GetRegion find in cache, or get new region.
@@ -50,38 +58,34 @@ func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
 }
 
 // DropRegion remove some region cache.
-func (c *RegionCache) DropRegion(regionID uint64) {
+func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	delete(c.regions, regionID)
+	delete(c.regions, id)
 }
 
 // NextPeer picks next peer as new leader, if out of range of peers delete region.
-func (c *RegionCache) NextPeer(regionID uint64) {
+func (c *RegionCache) NextPeer(id RegionVerID) {
 	// A and B get the same region and current leader is 1, they both will pick
 	// peer 2 as leader.
-	c.mu.RLock()
-	region, ok := c.regions[regionID]
-	c.mu.RUnlock()
-	if !ok {
+	region := c.GetRegionByVerID(id)
+	if region == nil {
 		return
 	}
 	if leader, err := region.NextPeer(); err != nil {
 		c.mu.Lock()
-		delete(c.regions, regionID)
+		delete(c.regions, id)
 		c.mu.Unlock()
 	} else {
-		c.UpdateLeader(regionID, leader.GetId())
+		c.UpdateLeader(id, leader.GetId())
 	}
 }
 
 // UpdateLeader update some region cache with newer leader info.
-func (c *RegionCache) UpdateLeader(regionID, leaderID uint64) {
-	c.mu.RLock()
-	old, ok := c.regions[regionID]
-	c.mu.RUnlock()
-	if !ok {
+func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
+	old := c.GetRegionByVerID(regionID)
+	if old == nil {
 		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderID)
 		return
 	}
@@ -166,10 +170,10 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if r, ok := c.regions[region.GetID()]; ok {
+	if r, ok := c.regions[region.VerID()]; ok {
 		return r, nil
 	}
-	c.regions[region.GetID()] = region
+	c.regions[region.VerID()] = region
 	return region, nil
 }
 
@@ -184,6 +188,22 @@ type Region struct {
 // GetID returns id.
 func (r *Region) GetID() uint64 {
 	return r.meta.GetId()
+}
+
+// RegionVerID is a unique ID that can identify a Region at a specific version.
+type RegionVerID struct {
+	id      uint64
+	confVer uint64
+	ver     uint64
+}
+
+// VerID returns the Region's RegionVerID.
+func (r *Region) VerID() RegionVerID {
+	return RegionVerID{
+		id:      r.meta.GetId(),
+		confVer: r.meta.GetRegionEpoch().GetConfVer(),
+		ver:     r.meta.GetRegionEpoch().GetVersion(),
+	}
 }
 
 // StartKey returns StartKey.

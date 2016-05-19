@@ -82,15 +82,15 @@ func (c *txnCommitter) primary() []byte {
 	return c.keys[0]
 }
 
-func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func([][]byte) error) error {
-	groups := make(map[uint64][][]byte)
-	var primaryRegionID uint64
+func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func(RegionVerID, [][]byte) error) error {
+	groups := make(map[RegionVerID][][]byte)
+	var primaryRegionID RegionVerID
 	for _, k := range keys {
-		region, err := c.store.getRegion(k)
+		region, err := c.store.regionCache.GetRegion(k)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		id := region.GetID()
+		id := region.VerID()
 		if bytes.Compare(k, c.primary()) == 0 {
 			primaryRegionID = id
 		}
@@ -98,14 +98,14 @@ func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func([][]byte) error) e
 	}
 
 	// Make sure the group that contains primary key goes first.
-	if primaryRegionID != 0 {
-		if err := f(groups[primaryRegionID]); err != nil {
+	if primaryRegionID.id != 0 {
+		if err := f(primaryRegionID, groups[primaryRegionID]); err != nil {
 			return errors.Trace(err)
 		}
 		delete(groups, primaryRegionID)
 	}
-	for _, g := range groups {
-		if err := f(g); err != nil {
+	for id, g := range groups {
+		if err := f(id, g); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -124,7 +124,7 @@ func (c *txnCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *txnCommitter) prewriteSingleRegion(keys [][]byte) error {
+func (c *txnCommitter) prewriteSingleRegion(regionID RegionVerID, keys [][]byte) error {
 	mutations := make([]*pb.Mutation, len(keys))
 	for i, k := range keys {
 		mutations[i] = c.mutations[string(k)]
@@ -140,11 +140,7 @@ func (c *txnCommitter) prewriteSingleRegion(keys [][]byte) error {
 
 	var backoffErr error
 	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := c.store.getRegion(keys[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
-		resp, err := c.store.SendKVReq(req, region)
+		resp, err := c.store.SendKVReq(req, regionID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -182,7 +178,7 @@ func (c *txnCommitter) prewriteSingleRegion(keys [][]byte) error {
 	return errors.Annotate(backoffErr, txnRetryableMark)
 }
 
-func (c *txnCommitter) commitSingleRegion(keys [][]byte) error {
+func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdCommit.Enum(),
 		CmdCommitReq: &pb.CmdCommitRequest{
@@ -192,11 +188,7 @@ func (c *txnCommitter) commitSingleRegion(keys [][]byte) error {
 		},
 	}
 
-	region, err := c.store.getRegion(keys[0])
-	if err != nil {
-		return errors.Trace(err)
-	}
-	resp, err := c.store.SendKVReq(req, region)
+	resp, err := c.store.SendKVReq(req, regionID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -209,10 +201,8 @@ func (c *txnCommitter) commitSingleRegion(keys [][]byte) error {
 	if commitResp == nil {
 		return errors.Trace(errBodyMissing)
 	}
-	keyErrs := commitResp.GetErrors()
-	if len(keyErrs) > 0 {
-		// TODO: update proto field from repeated to optional. It will never return multiple errors.
-		err = errors.Errorf("commit failed: %v", keyErrs[0].String())
+	if keyErr := commitResp.GetError(); keyErr != nil {
+		err = errors.Errorf("commit failed: %v", keyErr.String())
 		if c.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
@@ -230,22 +220,30 @@ func (c *txnCommitter) commitSingleRegion(keys [][]byte) error {
 	return nil
 }
 
-func (c *txnCommitter) cleanupSingleRegion(keys [][]byte) error {
-	// TODO: add batch RPC call.
-	for _, k := range keys {
-		req := &pb.Request{
-			Type: pb.MessageType_CmdCleanup.Enum(),
-			CmdCleanupReq: &pb.CmdCleanupRequest{
-				Key:          k,
-				StartVersion: proto.Uint64(c.startTS),
-			},
-		}
-		region, err := c.store.getRegion(k)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.store.SendKVReq(req, region)
-		// TODO: check response and retry
+func (c *txnCommitter) cleanupSingleRegion(regionID RegionVerID, keys [][]byte) error {
+	req := &pb.Request{
+		Type: pb.MessageType_CmdBatchRollback.Enum(),
+		CmdBatchRollbackReq: &pb.CmdBatchRollbackRequest{
+			Keys:         keys,
+			StartVersion: proto.Uint64(c.startTS),
+		},
+	}
+	resp, err := c.store.SendKVReq(req, regionID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if regionErr := resp.GetRegionError(); regionErr != nil {
+		err = c.cleanupKeys(keys)
+		return errors.Trace(err)
+	}
+	rollbackResp := resp.GetCmdBatchRollbackResp()
+	if rollbackResp == nil {
+		return errors.Trace(errBodyMissing)
+	}
+	if keyErr := rollbackResp.GetError(); keyErr != nil {
+		err = errors.Errorf("cleanup failed: %s", keyErr)
+		log.Errorf("txn failed cleanup key: %v", err)
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -293,15 +291,15 @@ const txnCommitBatchSize = 512 * 1024
 
 // batchIterfn wraps an iteration function and returns a new one that iterates
 // keys by batch size.
-func batchIterFn(f func([][]byte) error, sizeFn func([]byte) int) func([][]byte) error {
-	return func(keys [][]byte) error {
+func batchIterFn(f func(RegionVerID, [][]byte) error, sizeFn func([]byte) int) func(RegionVerID, [][]byte) error {
+	return func(id RegionVerID, keys [][]byte) error {
 		var start, end int
 		for start = 0; start < len(keys); start = end {
 			var size int
 			for end = start; end < len(keys) && size < txnCommitBatchSize; end++ {
 				size += sizeFn(keys[end])
 			}
-			if err := f(keys[start:end]); err != nil {
+			if err := f(id, keys[start:end]); err != nil {
 				return errors.Trace(err)
 			}
 		}
