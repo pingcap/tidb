@@ -103,10 +103,83 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildUnion(v)
 	case *plan.Update:
 		return b.buildUpdate(v)
+	case *plan.Join:
+		return b.buildJoin(v)
 	default:
 		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
 		return nil
 	}
+}
+
+// compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+func composeCondition(conditions []ast.ExprNode) ast.ExprNode {
+	length := len(conditions)
+	if length == 0 {
+		return nil
+	} else if length == 1 {
+		return conditions[0]
+	} else {
+		return &ast.BinaryOperationExpr{Op: opcode.AndAnd, L: composeCondition(conditions[:length/2]), R: composeCondition(conditions[length/2:])}
+	}
+}
+
+//TODO: select join algorithm during cbo phase.
+func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
+	e := &HashJoinExec{
+		otherFilter: composeCondition(v.OtherConditions),
+		prepared:    false,
+		fields:      v.Fields(),
+		ctx:         b.ctx,
+	}
+	var leftHashKey, rightHashKey []ast.ExprNode
+	for _, eqCond := range v.EqualConditions {
+		binop, ok := eqCond.(*ast.BinaryOperationExpr)
+		if ok && binop.Op == opcode.EQ {
+			ln, lOK := binop.L.(*ast.ColumnNameExpr)
+			rn, rOK := binop.R.(*ast.ColumnNameExpr)
+			if lOK && rOK {
+				leftHashKey = append(leftHashKey, ln)
+				rightHashKey = append(rightHashKey, rn)
+				continue
+			}
+		}
+		b.err = ErrUnknownPlan.Gen("Invalid Join Equal Condition !!")
+	}
+	switch v.JoinType {
+	case plan.LeftOuterJoin:
+		e.outter = true
+		e.leftSmall = false
+		e.smallFilter = composeCondition(v.RightConditions)
+		e.bigFilter = composeCondition(v.LeftConditions)
+		e.smallHashKey = rightHashKey
+		e.bigHashKey = leftHashKey
+	case plan.RightOuterJoin:
+		e.outter = true
+		e.leftSmall = true
+		e.smallFilter = composeCondition(v.LeftConditions)
+		e.bigFilter = composeCondition(v.RightConditions)
+		e.smallHashKey = leftHashKey
+		e.bigHashKey = rightHashKey
+	case plan.InnerJoin:
+		//TODO: assume right table is the small one before cbo is realized.
+		e.outter = false
+		e.leftSmall = false
+		e.smallFilter = composeCondition(v.RightConditions)
+		e.bigFilter = composeCondition(v.LeftConditions)
+		e.smallHashKey = rightHashKey
+		e.bigHashKey = leftHashKey
+	default:
+		b.err = ErrUnknownPlan.Gen("Unknown Join Type !!")
+		return nil
+	}
+	if e.leftSmall {
+		e.smallExec = b.build(v.GetChildByIndex(0))
+		e.bigExec = b.build(v.GetChildByIndex(1))
+	} else {
+		e.smallExec = b.build(v.GetChildByIndex(1))
+		e.bigExec = b.build(v.GetChildByIndex(0))
+	}
+	return e
 }
 
 func (b *executorBuilder) buildFilter(src Executor, conditions []ast.ExprNode) Executor {
