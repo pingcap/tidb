@@ -162,7 +162,7 @@ func (e *Evaluator) evalDecimal(val []byte) (types.Datum, error) {
 		return d, ErrInvalid.Gen("invalid decimal % x", val)
 	}
 	d.SetMysqlDecimal(dec)
-	return d, ErrInvalid
+	return d, nil
 }
 
 func (e *Evaluator) evalDuration(val []byte) (types.Datum, error) {
@@ -172,7 +172,7 @@ func (e *Evaluator) evalDuration(val []byte) (types.Datum, error) {
 		return d, ErrInvalid.Gen("invalid duration %d", i)
 	}
 	d.SetMysqlDuration(mysql.Duration{Duration: time.Duration(i), Fsp: mysql.MaxFsp})
-	return d, ErrInvalid
+	return d, nil
 }
 
 func (e *Evaluator) evalLT(expr *tipb.Expr) (types.Datum, error) {
