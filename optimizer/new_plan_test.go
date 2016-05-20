@@ -88,17 +88,17 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}{
 		{
 			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
-			first: "Table(t)->Fields->Filter->Fields",
+			first: "Table(t)->Filter->Fields->Filter->Fields",
 			best:  "Range(t)->Fields->Fields",
 		},
 		{
 			sql:   "select a from (select 1+2 as a from t where d = 0) k where k.a = 5",
-			first: "Table(t)->Fields->Filter->Fields",
+			first: "Table(t)->Filter->Fields->Filter->Fields",
 			best:  "Table(t)->Fields->Filter->Fields",
 		},
 		{
 			sql:   "select a from (select d as a from t where d = 0) k where k.a = 5",
-			first: "Table(t)->Fields->Filter->Fields",
+			first: "Table(t)->Filter->Fields->Filter->Fields",
 			best:  "Table(t)->Fields->Fields",
 		},
 		{
