@@ -138,6 +138,9 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		datum.SetValue(dur)
 		return datum, nil
 	case mysql.TypeNewDecimal:
+		if datum.Kind() == types.KindMysqlDecimal {
+			return datum, nil
+		}
 		dec, err := mysql.ParseDecimal(datum.GetString())
 		if err != nil {
 			return datum, errors.Trace(err)
@@ -164,6 +167,26 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		return datum, nil
 	}
 	return datum, nil
+}
+
+// DecodeColumnValue decodes data to a Datum according to the column info.
+func DecodeColumnValue(data []byte, col *tipb.ColumnInfo) (types.Datum, error) {
+	_, d, err := codec.DecodeOne(data)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	ft := &types.FieldType{
+		Tp:      byte(col.GetTp()),
+		Flen:    int(col.GetColumnLen()),
+		Decimal: int(col.GetDecimal()),
+		Elems:   col.Elems,
+		Collate: mysql.Collations[uint8(col.GetCollation())],
+	}
+	colDatum, err := unflatten(d, ft)
+	if err != nil {
+		return types.Datum{}, errors.Trace(err)
+	}
+	return colDatum, nil
 }
 
 // EncodeIndexSeekKey encodes an index value to kv.Key.
