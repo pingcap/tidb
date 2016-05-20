@@ -686,8 +686,8 @@ func (b *executorBuilder) columnNameToPBExpr(client kv.Client, column *ast.Colum
 		return nil
 	}
 	switch column.Refer.Expr.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeDecimal, mysql.TypeNewDecimal, mysql.TypeGeometry,
-		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp, mysql.TypeYear:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeDecimal, mysql.TypeGeometry,
+		mysql.TypeDate, mysql.TypeNewDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeYear:
 		return nil
 	}
 	matched := false
@@ -732,6 +732,12 @@ func (b *executorBuilder) datumToPBExpr(client kv.Client, d types.Datum) *tipb.E
 	case types.KindFloat64:
 		tp = tipb.ExprType_Float64
 		val = codec.EncodeFloat(nil, d.GetFloat64())
+	case types.KindMysqlDuration:
+		tp = tipb.ExprType_MysqlDuration
+		val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal:
+		tp = tipb.ExprType_MysqlDecimal
+		val = codec.EncodeDecimal(nil, d.GetMysqlDecimal())
 	default:
 		return nil
 	}

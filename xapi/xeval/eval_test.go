@@ -15,8 +15,10 @@ package xeval
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -70,8 +72,12 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.Datum{},
 		},
 		{
-			datumExpr(types.Datum{}),
-			types.Datum{},
+			datumExpr(types.NewDurationDatum(mysql.Duration{Duration: time.Hour})),
+			types.NewDurationDatum(mysql.Duration{Duration: time.Hour}),
+		},
+		{
+			datumExpr(types.NewDecimalDatum(mysql.NewDecimalFromFloat(1.1))),
+			types.NewDecimalDatum(mysql.NewDecimalFromFloat(1.1)),
 		},
 		{
 			columnExpr(1),
@@ -261,6 +267,12 @@ func datumExpr(d types.Datum) *tipb.Expr {
 	case types.KindFloat64:
 		expr.Tp = tipb.ExprType_Float64.Enum()
 		expr.Val = codec.EncodeFloat(nil, d.GetFloat64())
+	case types.KindMysqlDuration:
+		expr.Tp = tipb.ExprType_MysqlDuration.Enum()
+		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
+	case types.KindMysqlDecimal:
+		expr.Tp = tipb.ExprType_MysqlDecimal.Enum()
+		expr.Val = codec.EncodeDecimal(nil, d.GetMysqlDecimal())
 	default:
 		expr.Tp = tipb.ExprType_Null.Enum()
 	}

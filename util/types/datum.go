@@ -1398,6 +1398,18 @@ func NewFloat32Datum(f float32) (d Datum) {
 	return d
 }
 
+// NewDurationDatum creates a new Datum from a mysql.Duration value.
+func NewDurationDatum(dur mysql.Duration) (d Datum) {
+	d.SetMysqlDuration(dur)
+	return d
+}
+
+// NewDecimalDatum creates a new Datum form a mysql.Decimal value.
+func NewDecimalDatum(dec mysql.Decimal) (d Datum) {
+	d.SetMysqlDecimal(dec)
+	return d
+}
+
 // MakeDatums creates datum slice from interfaces.
 func MakeDatums(args ...interface{}) []Datum {
 	datums := make([]Datum, len(args))
