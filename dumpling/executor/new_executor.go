@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-// HashJoinExec implements the hash join algorithm
+// HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	hashTable    map[string][]*Row
 	smallHashKey []ast.ExprNode
@@ -65,11 +65,8 @@ func (e *HashJoinExec) getHashKey(exprs []ast.ExprNode) ([]byte, error) {
 	if len(vals) == 0 {
 		return []byte{}, nil
 	}
-	result, err := codec.EncodeValue([]byte{}, vals...)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return result, err
+
+	return codec.EncodeValue([]byte{}, vals...)
 }
 
 // Fields implements Executor Fields interface.
@@ -96,6 +93,7 @@ func (e *HashJoinExec) prepare() error {
 			e.smallExec.Close()
 			break
 		}
+
 		matched := true
 		if e.smallFilter != nil {
 			matched, err = evaluator.EvalBool(e.ctx, e.smallFilter)
@@ -108,7 +106,7 @@ func (e *HashJoinExec) prepare() error {
 		}
 		hashcode, err := e.getHashKey(e.smallHashKey)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		if rows, ok := e.hashTable[string(hashcode)]; !ok {
 			e.hashTable[string(hashcode)] = []*Row{row}
@@ -116,6 +114,7 @@ func (e *HashJoinExec) prepare() error {
 			e.hashTable[string(hashcode)] = append(rows, row)
 		}
 	}
+
 	e.prepared = true
 	return nil
 }
@@ -125,33 +124,37 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	rows, ok := e.hashTable[string(hashcode)]
+	if !ok {
+		return
+	}
 	// match eq condition
-	if rows, ok := e.hashTable[string(hashcode)]; ok {
-		for _, smallRow := range rows {
-			//TODO: remove result fields in order to reduce memory copy cost.
-			otherMatched := true
-			if e.otherFilter != nil {
-				startKey := 0
-				if !e.leftSmall {
-					startKey = len(bigRow.Data)
-				}
-				for i, data := range smallRow.Data {
-					e.fields[i+startKey].Expr.SetValue(data.GetValue())
-				}
-				otherMatched, err = evaluator.EvalBool(e.ctx, e.otherFilter)
+	for _, smallRow := range rows {
+		//TODO: remove result fields in order to reduce memory copy cost.
+		otherMatched := true
+		if e.otherFilter != nil {
+			startKey := 0
+			if !e.leftSmall {
+				startKey = len(bigRow.Data)
 			}
-			if err != nil {
-				return nil, errors.Trace(err)
+			for i, data := range smallRow.Data {
+				e.fields[i+startKey].Expr.SetValue(data.GetValue())
 			}
-			if otherMatched {
-				if e.leftSmall {
-					matchedRows = append(matchedRows, joinTwoRow(smallRow, bigRow))
-				} else {
-					matchedRows = append(matchedRows, joinTwoRow(bigRow, smallRow))
-				}
+			otherMatched, err = evaluator.EvalBool(e.ctx, e.otherFilter)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if otherMatched {
+			if e.leftSmall {
+				matchedRows = append(matchedRows, joinTwoRow(smallRow, bigRow))
+			} else {
+				matchedRows = append(matchedRows, joinTwoRow(bigRow, smallRow))
 			}
 		}
 	}
+
 	return matchedRows, nil
 }
 
@@ -160,6 +163,7 @@ func (e *HashJoinExec) fillNullRow(bigRow *Row) (returnRow *Row, err error) {
 		RowKeys: make([]*RowKeyEntry, len(e.smallExec.Fields())),
 		Data:    make([]types.Datum, len(e.smallExec.Fields())),
 	}
+
 	for _, data := range smallRow.Data {
 		data.SetNull()
 	}
@@ -188,24 +192,26 @@ func (e *HashJoinExec) returnRecord() (ret *Row, ok bool) {
 // Next implements Executor Next interface.
 func (e *HashJoinExec) Next() (*Row, error) {
 	if !e.prepared {
-		err := e.prepare()
-		if err != nil {
-			return nil, err
+		if err := e.prepare(); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
+
 	row, ok := e.returnRecord()
 	if ok {
 		return row, nil
 	}
+
 	for {
 		bigRow, err := e.bigExec.Next()
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		if bigRow == nil {
 			e.bigExec.Close()
 			return nil, nil
 		}
+
 		var matchedRows []*Row
 		bigMatched := true
 		if e.bigFilter != nil {

@@ -30,7 +30,7 @@ func (b *planBuilder) buildNewSinglePathPlan(node ast.ResultSetNode) Plan {
 	case *ast.TableSource:
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
-			return b.buildSelect(v)
+			return b.buildNewSelect(v)
 		case *ast.UnionStmt:
 			return b.buildUnion(v)
 		case *ast.TableName:
