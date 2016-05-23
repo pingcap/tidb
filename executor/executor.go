@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/inspectkv"
@@ -317,7 +316,7 @@ func (e *TableScanExec) getRow(handle int64) (*Row, error) {
 	row := &Row{}
 	var err error
 
-	columns := make([]*column.Col, len(e.fields))
+	columns := make([]*table.Col, len(e.fields))
 	for i, v := range e.fields {
 		if v.Referenced {
 			columns[i] = e.t.Cols()[i]
@@ -364,7 +363,7 @@ type IndexRangeExec struct {
 	highVals    []types.Datum
 	highExclude bool
 
-	iter       kv.IndexIterator
+	iter       table.IndexIterator
 	skipLowCmp bool
 	finished   bool
 }
@@ -454,7 +453,7 @@ func indexCompare(idxKey []types.Datum, boundVals []types.Datum) (int, error) {
 func (e *IndexRangeExec) lookupRow(h int64) (*Row, error) {
 	row := &Row{}
 	var err error
-	columns := make([]*column.Col, len(e.scan.fields))
+	columns := make([]*table.Col, len(e.scan.fields))
 	for i, v := range e.scan.fields {
 		if v.Referenced {
 			columns[i] = e.scan.tbl.Cols()[i]
@@ -487,7 +486,7 @@ func (e *IndexRangeExec) Close() error {
 type IndexScanExec struct {
 	tbl         table.Table
 	tableAsName *model.CIStr
-	idx         *column.IndexedCol
+	idx         *table.IndexedCol
 	fields      []*ast.ResultField
 	Ranges      []*IndexRangeExec
 	Desc        bool

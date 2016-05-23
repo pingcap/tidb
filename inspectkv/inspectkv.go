@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -104,7 +103,7 @@ type RecordData struct {
 
 // GetIndexRecordsCount returns the total number of the index records from startVals.
 // If startVals = nil, returns the total number of the index records.
-func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum) (int64, error) {
+func GetIndexRecordsCount(txn kv.Transaction, kvIndex table.Index, startVals []types.Datum) (int64, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -129,7 +128,7 @@ func GetIndexRecordsCount(txn kv.Transaction, kvIndex kv.Index, startVals []type
 // It returns data and the next startVals until it doesn't have data, then returns data is nil and
 // the next startVals is the values which can't get data. If startVals = nil and limit = -1,
 // it returns the index data of the whole.
-func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum, limit int64) (
+func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Datum, limit int64) (
 	[]*RecordData, []types.Datum, error) {
 	it, _, err := kvIndex.Seek(txn, startVals)
 	if err != nil {
@@ -164,7 +163,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex kv.Index, startVals []types.Datum
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
-func CompareIndexData(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
+func CompareIndexData(txn kv.Transaction, t table.Table, idx *table.IndexedCol) error {
 	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
@@ -173,15 +172,15 @@ func CompareIndexData(txn kv.Transaction, t table.Table, idx *column.IndexedCol)
 	return checkRecordAndIndex(txn, t, idx)
 }
 
-func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
-	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
+func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedCol) error {
+	kvIndex := tables.NewIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	it, err := kvIndex.SeekFirst(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer it.Close()
 
-	cols := make([]*column.Col, len(idx.Columns))
+	cols := make([]*table.Col, len(idx.Columns))
 	for i, col := range idx.Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
@@ -212,15 +211,15 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *column.IndexedC
 	return nil
 }
 
-func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedCol) error {
-	cols := make([]*column.Col, len(idx.Columns))
+func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *table.IndexedCol) error {
+	cols := make([]*table.Col, len(idx.Columns))
 	for i, col := range idx.Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
 
 	startKey := t.RecordKey(0, nil)
-	kvIndex := kv.NewKVIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
-	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*column.Col) (bool, error) {
+	kvIndex := tables.NewIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
+	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Col) (bool, error) {
 		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
@@ -246,12 +245,12 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *column.IndexedC
 	return nil
 }
 
-func scanTableData(retriever kv.Retriever, t table.Table, cols []*column.Col, startHandle, limit int64) (
+func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Col, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	var records []*RecordData
 
 	startKey := t.RecordKey(startHandle, nil)
-	filterFunc := func(h int64, d []types.Datum, cols []*column.Col) (bool, error) {
+	filterFunc := func(h int64, d []types.Datum, cols []*table.Col) (bool, error) {
 		if limit != 0 {
 			r := &RecordData{
 				Handle: h,
@@ -317,7 +316,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	}
 
 	startKey := t.RecordKey(0, nil)
-	filterFunc := func(h int64, vals []types.Datum, cols []*column.Col) (bool, error) {
+	filterFunc := func(h int64, vals []types.Datum, cols []*table.Col) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
@@ -383,7 +382,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	return cnt, nil
 }
 
-func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) ([]types.Datum, error) {
+func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Col) ([]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col.State != model.StatePublic {
@@ -411,7 +410,7 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*column.Col) (
 	return v, nil
 }
 
-func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*column.Col,
+func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Col,
 	fn table.RecordIterFunc) error {
 	it, err := retriever.Seek(startKey)
 	if err != nil {

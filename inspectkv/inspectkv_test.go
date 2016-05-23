@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -216,7 +215,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
-	kvIndex := kv.NewKVIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
+	kvIndex := tables.NewIndex(tb.IndexPrefix(), indices[0].Name.L, indices[0].ID, indices[0].Unique)
 	idxRows, nextVals, err := ScanIndexData(txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
@@ -295,7 +294,7 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err.Error(), DeepEquals, "[inspectkv:2]handle:1 is repeated in data")
 }
 
-func (s *testSuite) testIndex(c *C, tb table.Table, idx *column.IndexedCol) {
+func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedCol) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 

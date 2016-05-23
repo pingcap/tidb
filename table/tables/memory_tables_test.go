@@ -16,7 +16,6 @@ package tables_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -97,7 +96,7 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Col) (bool, error) {
 		return true, nil
 	})
 
@@ -106,7 +105,7 @@ func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
-	cols := []*column.Col{tb.Cols()[1]}
+	cols := []*table.Col{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, rid, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)

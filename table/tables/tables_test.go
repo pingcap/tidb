@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
@@ -87,7 +87,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), map[int]bool{0: false, 1: true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Col) (bool, error) {
 		return true, nil
 	})
 
@@ -102,7 +102,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 2)
 	c.Assert(vals[0].GetInt64(), Equals, int64(1))
-	cols := []*column.Col{tb.Cols()[1]}
+	cols := []*table.Col{tb.Cols()[1]}
 	vals, err = tb.RowWithCols(ctx, 1, cols)
 	c.Assert(err, IsNil)
 	c.Assert(vals, HasLen, 1)

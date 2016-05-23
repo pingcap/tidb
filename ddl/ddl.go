@@ -26,7 +26,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/infoschema"
@@ -341,7 +340,7 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_unicode_ci"
 }
 
-func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *ast.Constraint) {
+func setColumnFlagWithConstraint(colMap map[string]*table.Col, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
@@ -389,9 +388,9 @@ func setColumnFlagWithConstraint(colMap map[string]*column.Col, v *ast.Constrain
 }
 
 func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint) ([]*column.Col, []*ast.Constraint, error) {
-	var cols []*column.Col
-	colMap := map[string]*column.Col{}
+	constraints []*ast.Constraint) ([]*table.Col, []*ast.Constraint, error) {
+	var cols []*table.Col
+	colMap := map[string]*table.Col{}
 	for i, colDef := range colDefs {
 		col, cts, err := d.buildColumnAndConstraint(ctx, i, colDef)
 		if err != nil {
@@ -410,7 +409,7 @@ func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.Col
 }
 
 func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
-	colDef *ast.ColumnDef) (*column.Col, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef) (*table.Col, []*ast.Constraint, error) {
 	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
@@ -436,9 +435,9 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
-func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*column.Col, []*ast.Constraint, error) {
+func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Col, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
-	col := &column.Col{
+	col := &table.Col{
 		ColumnInfo: model.ColumnInfo{
 			Offset:    offset,
 			Name:      colDef.Name.Name,
@@ -574,7 +573,7 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	return v.GetValue(), nil
 }
 
-func removeOnUpdateNowFlag(c *column.Col) {
+func removeOnUpdateNowFlag(c *table.Col) {
 	// For timestamp Col, if it is set null or default value,
 	// OnUpdateNowFlag should be removed.
 	if mysql.HasTimestampFlag(c.Flag) {
@@ -582,7 +581,7 @@ func removeOnUpdateNowFlag(c *column.Col) {
 	}
 }
 
-func setTimestampDefaultValue(c *column.Col, hasDefaultValue bool, setOnUpdateNow bool) {
+func setTimestampDefaultValue(c *table.Col, hasDefaultValue bool, setOnUpdateNow bool) {
 	if hasDefaultValue {
 		return
 	}
@@ -597,7 +596,7 @@ func setTimestampDefaultValue(c *column.Col, hasDefaultValue bool, setOnUpdateNo
 	}
 }
 
-func setNoDefaultValueFlag(c *column.Col, hasDefaultValue bool) {
+func setNoDefaultValueFlag(c *table.Col, hasDefaultValue bool) {
 	if hasDefaultValue {
 		return
 	}
@@ -612,7 +611,7 @@ func setNoDefaultValueFlag(c *column.Col, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(c *column.Col, hasDefaultValue bool) error {
+func checkDefaultValue(c *table.Col, hasDefaultValue bool) error {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -706,7 +705,7 @@ func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Col, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}
@@ -748,7 +747,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		if constr.Tp == ast.ConstraintPrimaryKey {
 			if len(constr.Keys) == 1 {
 				key := constr.Keys[0]
-				col := column.FindCol(cols, key.Column.Name.O)
+				col := table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
 					return nil, infoschema.ErrColumnNotExists.Gen("no such column: %v", key)
 				}
@@ -765,7 +764,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		// 2. add index
 		indexColumns := make([]*model.IndexColumn, 0, len(constr.Keys))
 		for _, key := range constr.Keys {
-			col := column.FindCol(cols, key.Column.Name.O)
+			col := table.FindCol(cols, key.Column.Name.O)
 			if col == nil {
 				return nil, infoschema.ErrColumnNotExists.Gen("no such column: %v", key)
 			}
@@ -784,7 +783,7 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*column.Col, constrai
 		case ast.ConstraintPrimaryKey:
 			idxInfo.Unique = true
 			idxInfo.Primary = true
-			idxInfo.Name = model.NewCIStr(column.PrimaryKeyName)
+			idxInfo.Name = model.NewCIStr(table.PrimaryKeyName)
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			idxInfo.Unique = true
 		}
@@ -959,7 +958,7 @@ func (d *ddl) AddColumn(ctx context.Context, ti ast.Ident, spec *ast.AlterTableS
 
 	// Check whether added column has existed.
 	colName := spec.Column.Name.Name.O
-	col := column.FindCol(t.Cols(), colName)
+	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.Gen("column %s already exists", colName)
 	}
@@ -998,7 +997,7 @@ func (d *ddl) DropColumn(ctx context.Context, ti ast.Ident, colName model.CIStr)
 	}
 
 	// Check whether dropped column has existed.
-	col := column.FindCol(t.Cols(), colName.L)
+	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return infoschema.ErrColumnNotExists.Gen("column %s doesn’t exist", colName.L)
 	}

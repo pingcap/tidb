@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -349,9 +348,9 @@ func dataForColumns(schemas []*model.DBInfo) [][]types.Datum {
 	return rows
 }
 
-func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
+func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	rows := [][]types.Datum{}
-	for i, col := range table.Columns {
+	for i, col := range tbl.Columns {
 		colLen := col.Flen
 		if colLen == types.UnspecifiedLength {
 			colLen = mysql.GetDefaultFieldLength(col.Tp)
@@ -361,7 +360,7 @@ func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 			decimal = 0
 		}
 		columnType := col.FieldType.CompactStr()
-		columnDesc := column.NewColDesc(&column.Col{ColumnInfo: *col})
+		columnDesc := table.NewColDesc(&table.Col{ColumnInfo: *col})
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
@@ -369,7 +368,7 @@ func dataForColumnsInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		record := types.MakeDatums(
 			catalogVal,                           // TABLE_CATALOG
 			schema.Name.O,                        // TABLE_SCHEMA
-			table.Name.O,                         // TABLE_NAME
+			tbl.Name.O,                           // TABLE_NAME
 			col.Name.O,                           // COLUMN_NAME
 			i+1,                                  // ORIGINAL_POSITION
 			columnDefault,                        // COLUMN_DEFAULT

@@ -18,7 +18,6 @@ import (
 	"unsafe"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -51,8 +50,8 @@ type BoundedTable struct {
 	cursor      int64
 	ID          int64
 	Name        model.CIStr
-	Columns     []*column.Col
-	pkHandleCol *column.Col
+	Columns     []*table.Col
+	pkHandleCol *table.Col
 
 	recordPrefix kv.Key
 	alloc        autoid.Allocator
@@ -64,10 +63,10 @@ type BoundedTable struct {
 
 // BoundedTableFromMeta creates a Table instance from model.TableInfo.
 func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capacity int64) table.Table {
-	columns := make([]*column.Col, 0, len(tblInfo.Columns))
-	var pkHandleColumn *column.Col
+	columns := make([]*table.Col, 0, len(tblInfo.Columns))
+	var pkHandleColumn *table.Col
 	for _, colInfo := range tblInfo.Columns {
-		col := &column.Col{ColumnInfo: *colInfo}
+		col := &table.Col{ColumnInfo: *colInfo}
 		columns = append(columns, col)
 		if col.IsPKHandleColumn(tblInfo) {
 			pkHandleColumn = col
@@ -80,7 +79,7 @@ func BoundedTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo, capa
 }
 
 // newBoundedTable constructs a BoundedTable instance.
-func newBoundedTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator, capacity int64) *BoundedTable {
+func newBoundedTable(tableID int64, tableName string, cols []*table.Col, alloc autoid.Allocator, capacity int64) *BoundedTable {
 	name := model.NewCIStr(tableName)
 	t := &BoundedTable{
 		ID:           tableID,
@@ -135,7 +134,7 @@ func (t *BoundedTable) Seek(ctx context.Context, handle int64) (int64, bool, err
 }
 
 // Indices implements table.Table Indices interface.
-func (t *BoundedTable) Indices() []*column.IndexedCol {
+func (t *BoundedTable) Indices() []*table.IndexedCol {
 	return nil
 }
 
@@ -145,7 +144,7 @@ func (t *BoundedTable) Meta() *model.TableInfo {
 }
 
 // Cols implements table.Table Cols interface.
-func (t *BoundedTable) Cols() []*column.Col {
+func (t *BoundedTable) Cols() []*table.Col {
 	return t.Columns
 }
 
@@ -160,7 +159,7 @@ func (t *BoundedTable) IndexPrefix() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *BoundedTable) RecordKey(h int64, col *column.Col) kv.Key {
+func (t *BoundedTable) RecordKey(h int64, col *table.Col) kv.Key {
 	colID := int64(0)
 	if col != nil {
 		colID = col.ID
@@ -224,7 +223,7 @@ func (t *BoundedTable) AddRecord(ctx context.Context, r []types.Datum) (int64, e
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *BoundedTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]types.Datum, error) {
+func (t *BoundedTable) RowWithCols(ctx context.Context, h int64, cols []*table.Col) ([]types.Datum, error) {
 	row := []types.Datum(nil)
 	for i := int64(0); i < t.capacity; i++ {
 		record := (*boundedItem)(atomic.LoadPointer(&t.records[i]))
@@ -285,7 +284,7 @@ func (t *BoundedTable) RebaseAutoID(newBase int64, isSetStep bool) error {
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *BoundedTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*column.Col,
+func (t *BoundedTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Col,
 	fn table.RecordIterFunc) error {
 	return nil
 }

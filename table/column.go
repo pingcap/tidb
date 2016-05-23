@@ -1,4 +1,4 @@
-// Copyright 2013 The ql Authors. All rights reserved.
+// Copyright 2016 The ql Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
@@ -15,14 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package column
+package table
 
 import (
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
@@ -39,7 +38,7 @@ const PrimaryKeyName = "PRIMARY"
 // IndexedCol defines an index with info.
 type IndexedCol struct {
 	model.IndexInfo
-	X kv.Index
+	X Index
 }
 
 // String implements fmt.Stringer interface.
