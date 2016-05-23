@@ -267,7 +267,7 @@ func (us *UnionScanExec) buildAndSortAddedRows(t table.Table, asName *model.CISt
 		sort.Sort(us)
 	}
 	if us.sortErr != nil {
-		return us.sortErr
+		return errors.Trace(us.sortErr)
 	}
 	return nil
 }
