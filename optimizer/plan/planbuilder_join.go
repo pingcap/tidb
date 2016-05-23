@@ -220,14 +220,14 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 }
 
 func (p *joinPath) containsTable(table *ast.TableName) bool {
+	if table == nil {
+		return false
+	}
 	if p.table != nil {
 		return p.table == table
 	}
 	if p.subquery != nil {
-		if table != nil {
-			return p.asName.L == table.Name.L
-		}
-		return false
+		return p.asName.L == table.Name.L
 	}
 	if len(p.inners) != 0 {
 		for _, in := range p.inners {
