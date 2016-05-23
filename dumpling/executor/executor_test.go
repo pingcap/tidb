@@ -1304,3 +1304,12 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	result = tk.MustQuery("select * from t where b > '11:11:11.5'")
 	result.Check(testkit.Rows("11:11:12 11:11:12", "11:11:13 11:11:13"))
 }
+
+func (s *testSuite) TestJoinPanic(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists events")
+	tk.MustExec("create table events (clock int, source int)")
+	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+}
