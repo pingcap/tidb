@@ -220,6 +220,9 @@ func (p *joinPath) attachCondition(condition ast.ExprNode, availablePaths []*joi
 }
 
 func (p *joinPath) containsTable(table *ast.TableName) bool {
+	if table == nil {
+		return false
+	}
 	if p.table != nil {
 		return p.table == table
 	}
@@ -234,7 +237,6 @@ func (p *joinPath) containsTable(table *ast.TableName) bool {
 		}
 		return false
 	}
-
 	return p.outer.containsTable(table) || p.inner.containsTable(table)
 }
 
