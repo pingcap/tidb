@@ -141,6 +141,25 @@ func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
 	return nil
 }
 
+func (e *mvccEntry) FastCommit(mutation *kvrpcpb.Mutation, startTS, commitTS uint64) error {
+	if len(e.values) > 0 {
+		if e.values[0].commitTS >= startTS {
+			return ErrRetryable("write conflict")
+		}
+	}
+	if e.lock != nil {
+		return e.lockErr()
+	}
+	if mutation.GetOp() != kvrpcpb.Op_Lock {
+		e.values = append([]mvccValue{{
+			startTS:  startTS,
+			commitTS: commitTS,
+			value:    mutation.Value,
+		}}, e.values...)
+	}
+	return nil
+}
+
 func (e *mvccEntry) Rollback(startTS uint64) error {
 	if e.lock == nil || e.lock.startTS != startTS {
 		if commitTS, ok := e.checkTxnCommitted(startTS); ok {
@@ -292,13 +311,22 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var errs []error
+	var (
+		errs []error
+		ents []*mvccEntry
+	)
 	for _, m := range mutations {
 		entry := s.getOrNewEntry(m.Key)
 		err := entry.Prewrite(m, startTS, primary)
-		s.submit(entry)
-		errs = append(errs, err)
+		if err != nil {
+			errs = append(errs, err)
+			if _, ok := err.(*ErrLocked); !ok {
+				return errs
+			}
+		}
+		ents = append(ents, entry)
 	}
+	s.submit(ents...)
 	return errs
 }
 
@@ -318,6 +346,30 @@ func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
 	}
 	s.submit(ents...)
 	return nil
+}
+
+// FastCommit commits mutations to the MvccStore (1PC).
+func (s *MvccStore) FastCommit(mutations []*kvrpcpb.Mutation, startTS, commitTS uint64) []error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var (
+		errs []error
+		ents []*mvccEntry
+	)
+	for _, m := range mutations {
+		entry := s.getOrNewEntry(m.Key)
+		err := entry.FastCommit(m, startTS, commitTS)
+		if err != nil {
+			errs = append(errs, err)
+			if _, ok := err.(*ErrLocked); !ok {
+				return errs
+			}
+		}
+		ents = append(ents, entry)
+	}
+	s.submit(ents...)
+	return errs
 }
 
 // CommitThenGet is a shortcut for Commit+Get, often used when resolving lock.
