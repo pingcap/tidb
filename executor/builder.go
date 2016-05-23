@@ -600,6 +600,8 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	}
 }
 
+// buildUnionScanExec builds a union scan executor, the src Executor is either
+// *XSelectTableExec or *XSelectIndexExec.
 func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
 	us := &UnionScanExec{ctx: b.ctx, Src: src}
 	switch x := src.(type) {
