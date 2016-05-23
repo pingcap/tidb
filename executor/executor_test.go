@@ -1293,7 +1293,28 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "2 3", "3 4", "4 8", "6 8", "7 6"))
 	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "3 4", "2 3", "1 5"))
 	tk.MustQuery("select * from t order by b").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
-	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))
+	// Delete a snapshot row and a dirty row.
+	tk.MustExec("delete from t where a = 2 or a = 3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "4 8", "6 8", "7 6"))
+	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "1 5"))
+	tk.MustQuery("select * from t order by b").Check(testkit.Rows("1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5"))
+	// Add deleted row back.
+	tk.MustExec("insert t values (2, 3), (3, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 5", "2 3", "3 4", "4 8", "6 8", "7 6"))
+	tk.MustQuery("select * from t order by a desc").Check(testkit.Rows("7 6", "6 8", "4 8", "3 4", "2 3", "1 5"))
+	tk.MustQuery("select * from t order by b").Check(testkit.Rows("2 3", "3 4", "1 5", "7 6", "4 8", "6 8"))
+	tk.MustQuery("select * from t order by b desc").Check(testkit.Rows("6 8", "4 8", "7 6", "1 5", "3 4", "2 3"))
+	// Truncate Table
+	tk.MustExec("truncate table t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert t values (1, 2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert t values (3, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 4"))
+	tk.Exec("abort")
 }
 
 func (s *testSuite) TestDatumXAPI(c *C) {

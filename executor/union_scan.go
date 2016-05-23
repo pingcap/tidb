@@ -16,7 +16,7 @@ type dirtyDB struct {
 	tables map[int64]*dirtyTable
 }
 
-func (udb *dirtyDB) AddRow(tid, handle int64, row []types.Datum) {
+func (udb *dirtyDB) addRow(tid, handle int64, row []types.Datum) {
 	dt := udb.getDirtyTable(tid)
 	for i := range row {
 		if row[i].Kind() == types.KindString {
@@ -26,13 +26,13 @@ func (udb *dirtyDB) AddRow(tid, handle int64, row []types.Datum) {
 	dt.addedRows[handle] = row
 }
 
-func (udb *dirtyDB) DeleteRow(tid int64, handle int64) {
+func (udb *dirtyDB) deleteRow(tid int64, handle int64) {
 	dt := udb.getDirtyTable(tid)
 	delete(dt.addedRows, handle)
 	dt.deletedRows[handle] = struct{}{}
 }
 
-func (udb *dirtyDB) TruncateTable(tid int64) {
+func (udb *dirtyDB) truncateTable(tid int64) {
 	dt := udb.getDirtyTable(tid)
 	dt.addedRows = make(map[int64][]types.Datum)
 	dt.truncated = true
@@ -88,9 +88,10 @@ type UnionScanExec struct {
 	desc      bool
 	condition ast.ExprNode
 
-	addedRows []*Row
-	cursor    int
-	sortErr   error
+	addedRows   []*Row
+	cursor      int
+	sortErr     error
+	snapshotRow *Row
 }
 
 // Fields implements Executor Fields interface.
@@ -101,65 +102,98 @@ func (us *UnionScanExec) Fields() []*ast.ResultField {
 // Next implements Execution Next interface.
 func (us *UnionScanExec) Next() (*Row, error) {
 	for {
-		snapshotRow, err := us.Src.Next()
+		snapshotRow, err := us.getSnapshotRow()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		var addedRow *Row
-		if us.cursor < len(us.addedRows) {
-			addedRow = us.addedRows[us.cursor]
-		}
-		if us.dirty.truncated || snapshotRow == nil {
-			if addedRow != nil {
-				for i, field := range us.Src.Fields() {
-					field.Expr.SetDatum(addedRow.Data[i])
-				}
-				us.cursor++
-				return addedRow, nil
+		addedRow := us.getAddedRow()
+		var row *Row
+		if addedRow == nil {
+			row = snapshotRow
+		} else if snapshotRow == nil {
+			row = addedRow
+		} else {
+			row, err = us.pickRow(addedRow, snapshotRow)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
+		}
+		if row == nil {
 			return nil, nil
 		}
-		if addedRow == nil {
-			return snapshotRow, nil
-		}
-		if len(snapshotRow.RowKeys) != 1 {
-			return nil, ErrRowKeyCount
-		}
-		snapshotHandle := snapshotRow.RowKeys[0].Handle
-		if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
-			continue
-		}
-		if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
-			// If src handle appears in added rows, it means there is conflict and the transaction will fail to
-			// commit, but for simplicity, we don't handle it here.
-			continue
-		}
-		addedCmpSrc, err := us.compare(addedRow, snapshotRow)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// Compare result will never be 0.
-		var retRow *Row
-		if us.desc {
-			if addedCmpSrc < 0 {
-				retRow = snapshotRow
-			} else {
-				retRow = addedRow
-				us.cursor++
-			}
+		if row == snapshotRow {
+			us.snapshotRow = nil
 		} else {
-			if addedCmpSrc < 0 {
-				retRow = addedRow
-				us.cursor++
-			} else {
-				retRow = snapshotRow
-			}
+			us.cursor++
 		}
 		for i, field := range us.Src.Fields() {
-			field.Expr.SetDatum(retRow.Data[i])
+			field.Expr.SetDatum(row.Data[i])
 		}
-		return retRow, nil
+		return row, nil
 	}
+}
+
+func (us *UnionScanExec) getSnapshotRow() (*Row, error) {
+	if us.dirty.truncated {
+		return nil, nil
+	}
+	var err error
+	if us.snapshotRow == nil {
+		for {
+			us.snapshotRow, err = us.Src.Next()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if us.snapshotRow == nil {
+				break
+			}
+			if len(us.snapshotRow.RowKeys) != 1 {
+				return nil, ErrRowKeyCount
+			}
+			snapshotHandle := us.snapshotRow.RowKeys[0].Handle
+			if _, ok := us.dirty.deletedRows[snapshotHandle]; ok {
+				continue
+			}
+			if _, ok := us.dirty.addedRows[snapshotHandle]; ok {
+				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
+				// commit, but for simplicity, we don't handle it here.
+				continue
+			}
+			break
+		}
+	}
+	return us.snapshotRow, nil
+}
+
+func (us *UnionScanExec) getAddedRow() *Row {
+	var addedRow *Row
+	if us.cursor < len(us.addedRows) {
+		addedRow = us.addedRows[us.cursor]
+	}
+	return addedRow
+}
+
+func (us *UnionScanExec) pickRow(a, b *Row) (*Row, error) {
+	addedCmpSrc, err := us.compare(a, b)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var row *Row
+	// Compare result will never be 0.
+	if us.desc {
+		if addedCmpSrc < 0 {
+			row = b
+		} else {
+			row = a
+		}
+	} else {
+		if addedCmpSrc < 0 {
+			row = a
+		} else {
+			row = b
+		}
+	}
+	return row, nil
 }
 
 // Close implements Executor Close interface.

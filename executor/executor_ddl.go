@@ -85,7 +85,7 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	getDirtyDB(e.ctx).TruncateTable(table.Meta().ID)
+	getDirtyDB(e.ctx).truncateTable(table.Meta().ID)
 	return nil
 }
 
