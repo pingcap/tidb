@@ -298,7 +298,7 @@ func (c *txnCommitter) Commit() error {
 }
 
 func (c *txnCommitter) fastCommit() (bool, error) {
-	// Check if all keys are located on the same.
+	// Check if all keys are located in the same region.
 	var regionID RegionVerID
 	for _, k := range c.keys {
 		region, err := c.store.regionCache.GetRegion(k)
