@@ -14,44 +14,39 @@
 package plan
 
 import (
+	"fmt"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
-func addFilter(p Plan, child Plan, conditions []ast.ExprNode) error {
-	filter := &Filter{Conditions: conditions}
+func addFilter(p Plan, child Plan, conditions []expression.Expression) error {
+	filter := &Selection{Conditions: conditions}
+	filter.SetSchema(child.GetSchema())
 	return InsertPlan(p, child, filter)
 }
 
-// columnSubstituor substitutes the columns in filter to expressions in select fields.
+// columnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
-type columnSubstitutor struct {
-	fields []*ast.ResultField
-}
-
-func (cl *columnSubstitutor) Enter(inNode ast.Node) (node ast.Node, skipChild bool) {
-	return inNode, false
-}
-
-func (cl *columnSubstitutor) Leave(inNode ast.Node) (node ast.Node, ok bool) {
-	switch v := inNode.(type) {
-	case *ast.ColumnNameExpr:
-		for _, field := range cl.fields {
-			if v.Refer == field {
-				return field.Expr, true
-			}
+func columnSubstitute(expr expression.Expression, schema expression.Schema, newExprs []expression.Expression) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		id := schema.GetIndex(v)
+		return newExprs[id]
+	case *expression.ScalarFunction:
+		for i, arg := range v.Args {
+			v.Args[i] = columnSubstitute(arg, schema, newExprs)
 		}
 	}
-	return inNode, true
+	return expr
 }
 
 // PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
-func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, err error) {
+func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expression.Expression, err error) {
 	switch v := p.(type) {
 	case *TableScan:
 		v.attachCondition(predicates)
 		return ret, nil
-	case *Filter:
+	case *Selection:
 		conditions := v.Conditions
 		retConditions, err1 := PredicatePushDown(p.GetChildByIndex(0), append(conditions, predicates...))
 		if err1 != nil {
@@ -68,10 +63,10 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 				return nil, errors.Trace(err1)
 			}
 		}
-		return ret, nil
+		return
 	case *Join:
 		//TODO: add null rejecter
-		var leftCond, rightCond []ast.ExprNode
+		var leftCond, rightCond []expression.Expression
 		leftPlan := v.GetChildByIndex(0)
 		rightPlan := v.GetChildByIndex(1)
 		equalCond, leftPushCond, rightPushCond, otherCond := extractOnCondition(predicates, leftPlan, rightPlan)
@@ -113,37 +108,24 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 			v.EqualConditions = append(v.EqualConditions, equalCond...)
 			v.OtherConditions = append(v.OtherConditions, otherCond...)
 		}
-		return ret, nil
-	case *SelectFields:
+		return
+	case *Projection:
 		if len(v.GetChildren()) == 0 {
 			return predicates, nil
 		}
-		cs := &columnSubstitutor{fields: v.Fields()}
-		var push []ast.ExprNode
+		var push []expression.Expression
 		for _, cond := range predicates {
-			ce := &columnsExtractor{}
-			ok := true
-			cond.Accept(ce)
-			for _, col := range ce.result {
-				match := false
-				for _, field := range v.Fields() {
-					if col.Refer == field {
-						switch field.Expr.(type) {
-						case *ast.ColumnNameExpr:
-							match = true
-						}
-						break
-					}
-				}
-				if !match {
-					ok = false
+			canSubstitute := true
+			extractedCols := extractColumn(cond, make([]*expression.Column, 0))
+			for _, col := range extractedCols {
+				id := v.GetSchema().GetIndex(col)
+				if _, ok := v.exprs[id].(*expression.ScalarFunction); ok {
+					canSubstitute = false
 					break
 				}
 			}
-			if ok {
-				cond1, _ := cond.Accept(cs)
-				cond = cond1.(ast.ExprNode)
-				push = append(push, cond)
+			if canSubstitute {
+				push = append(push, columnSubstitute(cond, v.GetSchema(), v.exprs))
 			} else {
 				ret = append(ret, cond)
 			}
@@ -158,7 +140,7 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 				return nil, errors.Trace(err1)
 			}
 		}
-		return ret, nil
+		return
 	case *Sort, *Limit, *Distinct:
 		rest, err1 := PredicatePushDown(p.GetChildByIndex(0), predicates)
 		if err1 != nil {
@@ -170,18 +152,22 @@ func PredicatePushDown(p Plan, predicates []ast.ExprNode) (ret []ast.ExprNode, e
 				return nil, errors.Trace(err1)
 			}
 		}
-		return ret, nil
-	default:
-		if len(v.GetChildren()) == 0 {
-			return predicates, nil
-		}
-		//TODO: support union and sub queries when abandon result field.
-		for _, child := range v.GetChildren() {
-			_, err = PredicatePushDown(child, []ast.ExprNode{})
-			if err != nil {
-				return nil, errors.Trace(err)
+		return
+	case *Union:
+		for _, proj := range v.Selects {
+			for _, cond := range predicates {
+				newCond := columnSubstitute(cond, v.GetSchema(), proj.GetSchema())
+				retCond, err := PredicatePushDown(proj, newCond)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if len(retCond) != 0 {
+					addFilter(v, proj, retCond)
+				}
 			}
 		}
-		return predicates, nil
+		return
+	default:
+		return predicates, errors.New(fmt.Sprintf("Unkown type %T.", v))
 	}
 }

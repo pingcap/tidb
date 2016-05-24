@@ -16,7 +16,10 @@ package plan
 import (
 	"math"
 
+	"fmt"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
 // Plan is a description of an execution flow.
@@ -51,6 +54,12 @@ type Plan interface {
 	GetParents() []Plan
 	// Get all the children.
 	GetChildren() []Plan
+	// Set the schema.
+	SetSchema(schema expression.Schema) error
+	// Get the schema.
+	GetSchema() expression.Schema
+	// Get ID.
+	GetID() string
 }
 
 // basePlan implements base Plan interface.
@@ -64,6 +73,31 @@ type basePlan struct {
 
 	parents  []Plan
 	children []Plan
+
+	schema expression.Schema
+	id     string
+}
+
+func (p *basePlan) GetID() string {
+	return p.id
+}
+
+func (p *basePlan) SetSchema(schema expression.Schema) error {
+	for i, col1 := range schema {
+		for j := 0; j < i; j++ {
+			col2 := schema[j]
+			if col1.DbName.L == col2.DbName.L && col1.TblName.L == col2.TblName.L && col1.ColName.L == col2.ColName.L {
+				return errors.New(fmt.Sprintf("Duplicate column %s.", col2.ColName.L))
+			}
+		}
+	}
+	p.schema = make([]*expression.Column, 0, len(schema))
+	p.schema = append(p.schema, schema)
+	return nil
+}
+
+func (p *basePlan) GetSchema() expression.Schema {
+	return p.schema
 }
 
 // StartupCost implements Plan StartupCost interface.

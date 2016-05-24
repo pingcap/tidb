@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -112,6 +113,34 @@ var Funcs = map[string]Func{
 	"if":     {builtinIf, 3, 3},
 	"ifnull": {builtinIfNull, 2, 2},
 	"nullif": {builtinNullIf, 2, 2},
+
+	// only used by new plan
+	"andand":     {builtinAndAnd, 2, 2},
+	"oror":       {builtinOrOr, 2, 2},
+	"logicxor":   {builtinLogicXor, 2, 2},
+	"lt":         {compareFuncFactory(opcode.LT), 2, 2},
+	"gt":         {compareFuncFactory(opcode.GT), 2, 2},
+	"le":         {compareFuncFactory(opcode.LE), 2, 2},
+	"ge":         {compareFuncFactory(opcode.GE), 2, 2},
+	"eq":         {compareFuncFactory(opcode.EQ), 2, 2},
+	"nulleq":     {compareFuncFactory(opcode.NullEQ), 2, 2},
+	"and":        {bitOpFactory(opcode.And), 2, 2},
+	"or":         {bitOpFactory(opcode.Or), 2, 2},
+	"xor":        {bitOpFactory(opcode.Xor), 2, 2},
+	"rightshift": {bitOpFactory(opcode.RightShift), 2, 2},
+	"leftshift":  {bitOpFactory(opcode.LeftShift), 2, 2},
+	"plus":       {arithmeticFuncFactory(opcode.Plus), 2, 2},
+	"minus":      {arithmeticFuncFactory(opcode.Minus), 2, 2},
+	"mul":        {arithmeticFuncFactory(opcode.Mul), 2, 2},
+	"div":        {arithmeticFuncFactory(opcode.Div), 2, 2},
+	"mod":        {arithmeticFuncFactory(opcode.Mod), 2, 2},
+	"intdiv":     {arithmeticFuncFactory(opcode.IntDiv), 2, 2},
+	"not":        {unaryOpFactory(opcode.Not), 1, 1},
+	"bitneg":     {unaryOpFactory(opcode.BitNeg), 1, 1},
+	"unaryplus":  {unaryOpFactory(opcode.Plus), 1, 1},
+	"unaryminus": {unaryOpFactory(opcode.Minus), 1, 1},
+	"case":       {CaseWhenFactory(true), 3, -1},
+	"when":       {CaseWhenFactory(false), 2, -1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce

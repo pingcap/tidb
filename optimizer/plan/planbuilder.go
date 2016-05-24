@@ -16,6 +16,7 @@ package plan
 import (
 	"math"
 
+	"github.com/coreos/etcd/pkg/idutil"
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
@@ -56,6 +57,7 @@ type planBuilder struct {
 	hasAgg bool
 	sb     SubQueryBuilder
 	obj    interface{}
+	id     int32
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -90,7 +92,7 @@ func (b *planBuilder) build(node ast.Node) Plan {
 		return b.buildPrepare(x)
 	case *ast.SelectStmt:
 		if UseNewPlanner {
-			return b.buildNewSelect(x)
+			return b.buildNewSelect(x, model.NewCIStr(""))
 		}
 		return b.buildSelect(x)
 	case *ast.UnionStmt:
@@ -821,7 +823,7 @@ func (se *subqueryVisitor) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 	switch x := in.(type) {
 	case *ast.SubqueryExpr:
 		p := se.builder.build(x.Query)
-		// The expr pointor is copyed into ResultField when running name resolver.
+		// The expr pointer is copied into ResultField when running name resolver.
 		// So we can not just replace the expr node in AST. We need to put SubQuery into the expr.
 		// See: optimizer.nameResolver.createResultFields()
 		x.SubqueryExec = se.builder.sb.Build(p)
@@ -840,11 +842,7 @@ func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 	sels := make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
-		if UseNewPlanner {
-			sels[i] = b.buildNewSelect(sel)
-		} else {
-			sels[i] = b.buildSelect(sel)
-		}
+		sels[i] = b.buildSelect(sel)
 	}
 	var p Plan
 	p = &Union{

@@ -130,9 +130,11 @@ type DateArithInterval struct {
 	Interval ExprNode
 }
 
+type AggrFuncType string
+
 const (
 	// AggFuncCount is the name of Count function.
-	AggFuncCount = "count"
+	AggFuncCount AggrFuncType = "count"
 	// AggFuncSum is the name of Sum function.
 	AggFuncSum = "sum"
 	// AggFuncAvg is the name of Avg function.
@@ -217,7 +219,7 @@ func (n *AggregateFuncExpr) GetContext() *AggEvaluateContext {
 	if _, ok := n.contextPerGroupMap[n.CurrentGroup]; !ok {
 		c := &AggEvaluateContext{}
 		if n.Distinct {
-			c.distinctChecker = distinct.CreateDistinctChecker()
+			c.DistinctChecker = distinct.CreateDistinctChecker()
 		}
 		n.contextPerGroupMap[n.CurrentGroup] = c
 	}
@@ -235,7 +237,7 @@ func (n *AggregateFuncExpr) updateCount() error {
 		vals = append(vals, value)
 	}
 	if n.Distinct {
-		d, err := ctx.distinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(vals)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -249,14 +251,14 @@ func (n *AggregateFuncExpr) updateCount() error {
 
 func (n *AggregateFuncExpr) updateFirstRow() error {
 	ctx := n.GetContext()
-	if ctx.evaluated {
+	if ctx.Evaluated {
 		return nil
 	}
 	if len(n.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	ctx.Value = n.Args[0].GetValue()
-	ctx.evaluated = true
+	ctx.Evaluated = true
 	return nil
 }
 
@@ -266,9 +268,9 @@ func (n *AggregateFuncExpr) updateMaxMin(max bool) error {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
 	v := n.Args[0].GetValue()
-	if !ctx.evaluated {
+	if !ctx.Evaluated {
 		ctx.Value = v
-		ctx.evaluated = true
+		ctx.Evaluated = true
 		return nil
 	}
 	c, err := types.Compare(ctx.Value, v)
@@ -296,7 +298,7 @@ func (n *AggregateFuncExpr) updateSum() error {
 		return nil
 	}
 	if n.Distinct {
-		d, err := ctx.distinctChecker.Check([]interface{}{value})
+		d, err := ctx.DistinctChecker.Check([]interface{}{value})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -324,7 +326,7 @@ func (n *AggregateFuncExpr) updateGroupConcat() error {
 		vals = append(vals, value)
 	}
 	if n.Distinct {
-		d, err := ctx.distinctChecker.Check(vals)
+		d, err := ctx.DistinctChecker.Check(vals)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -394,11 +396,11 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 	return n, true
 }
 
-// AggEvaluateContext is used to store intermediate result when caculation aggregate functions.
+// AggEvaluateContext is used to store intermediate result when calculating aggregate functions.
 type AggEvaluateContext struct {
-	distinctChecker *distinct.Checker
+	DistinctChecker *distinct.Checker
 	Count           int64
 	Value           interface{}
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
-	evaluated       bool
+	Evaluated       bool
 }

@@ -15,7 +15,7 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -39,10 +39,31 @@ type Join struct {
 
 	JoinType JoinType
 
-	EqualConditions []ast.ExprNode
-	LeftConditions  []ast.ExprNode
-	RightConditions []ast.ExprNode
-	OtherConditions []ast.ExprNode
+	EqualConditions []expression.Expression
+	LeftConditions  []expression.Expression
+	RightConditions []expression.Expression
+	OtherConditions []expression.Expression
+}
+
+// SelectFields represents a select fields plan.
+type Projection struct {
+	basePlan
+	exprs []expression.Expression
+}
+
+type Aggregation struct {
+	basePlan
+	AggFuncs     []expression.AggregationFunction
+	GroupByItems []expression.Expression
+}
+
+type Selection struct {
+	basePlan
+
+	// Originally the WHERE or ON condition is parsed into a single expression,
+	// but after we converted to CNF(Conjunctive normal form), it can be
+	// split into a list of AND conditions.
+	Conditions []expression.Expression
 }
 
 // AddChild for parent.
