@@ -212,7 +212,7 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		memDB = true
 	}
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
-	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) && txn.IsReadOnly() {
+	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 		log.Debug("xapi select table")
 		e := &XSelectTableExec{
 			table:       table,
@@ -226,9 +226,14 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 		}
 		if len(remained) == 0 {
 			e.allFiltersPushed = true
-			return e
 		}
-		return b.buildFilter(e, remained)
+		var ex Executor
+		if txn.IsReadOnly() {
+			ex = e
+		} else {
+			ex = b.buildUnionScanExec(e)
+		}
+		return b.buildFilter(ex, remained)
 	}
 
 	e := &TableScanExec{
@@ -281,7 +286,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 	case "information_schema", "performance_schema":
 		memDB = true
 	}
-	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) && txn.IsReadOnly() {
+	if !memDB && client.SupportRequestType(kv.ReqTypeIndex, 0) {
 		log.Debug("xapi select index")
 		e := &XSelectIndexExec{
 			table:       tbl,
@@ -293,7 +298,13 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		if where != nil {
 			e.where = where
 		}
-		return b.buildFilter(e, remained)
+		var ex Executor
+		if txn.IsReadOnly() {
+			ex = e
+		} else {
+			ex = b.buildUnionScanExec(e)
+		}
+		return b.buildFilter(ex, remained)
 	}
 
 	var idx *column.IndexedCol
@@ -587,4 +598,28 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 		StmtPlan: v.StmtPlan,
 		fields:   v.Fields(),
 	}
+}
+
+// buildUnionScanExec builds a union scan executor, the src Executor is either
+// *XSelectTableExec or *XSelectIndexExec.
+func (b *executorBuilder) buildUnionScanExec(src Executor) *UnionScanExec {
+	us := &UnionScanExec{ctx: b.ctx, Src: src}
+	switch x := src.(type) {
+	case *XSelectTableExec:
+		us.desc = x.tablePlan.Desc
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.condition = b.joinConditions(append(x.tablePlan.AccessConditions, x.tablePlan.FilterConditions...))
+		us.buildAndSortAddedRows(x.table, x.tablePlan.TableAsName)
+	case *XSelectIndexExec:
+		us.desc = x.indexPlan.Desc
+		for _, ic := range x.indexPlan.Index.Columns {
+			us.usedIndex = append(us.usedIndex, ic.Offset)
+		}
+		us.dirty = getDirtyDB(b.ctx).getDirtyTable(x.table.Meta().ID)
+		us.condition = b.joinConditions(append(x.indexPlan.AccessConditions, x.indexPlan.FilterConditions...))
+		us.buildAndSortAddedRows(x.table, x.indexPlan.TableAsName)
+	default:
+		b.err = ErrUnknownPlan
+	}
+	return us
 }
