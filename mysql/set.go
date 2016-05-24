@@ -57,7 +57,7 @@ func ParseSetName(elems []string, name string) (Set, error) {
 		if _, ok := marked[key]; ok {
 			value |= (1 << uint64(i))
 			delete(marked, key)
-			items = append(items, key)
+			items = append(items, n)
 		}
 	}
 
