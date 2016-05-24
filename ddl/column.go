@@ -17,7 +17,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -355,7 +354,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return nil
 			}
 
-			backfillKey := t.RecordKey(handle, &column.Col{ColumnInfo: *columnInfo})
+			backfillKey := t.RecordKey(handle, &table.Column{ColumnInfo: *columnInfo})
 			backfillValue, err := txn.Get(backfillKey)
 			if err != nil && !kv.IsErrNotFound(err) {
 				return errors.Trace(err)
@@ -400,7 +399,7 @@ func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInf
 	version := reorgInfo.SnapshotVer
 	seekHandle := reorgInfo.Handle
 
-	col := &column.Col{ColumnInfo: *colInfo}
+	col := &table.Column{ColumnInfo: *colInfo}
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {

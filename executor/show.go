@@ -21,7 +21,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -194,7 +193,7 @@ func (e *ShowExec) fetchShowColumns() error {
 			continue
 		}
 
-		desc := column.NewColDesc(col)
+		desc := table.NewColDesc(col)
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
@@ -341,7 +340,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
-	var pkCol *column.Col
+	var pkCol *table.Column
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if mysql.HasAutoIncrementFlag(col.Flag) {
