@@ -155,47 +155,47 @@
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "3fbd1bd783b716df32ad1c78c58e9aa0750919c0"
+			"Rev": "a5847fa1711e9871dd9f363d40ca7de143fe24d4"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
-			"Rev": "0845734139d16f5f15e10514e5c70a6705223120"
+			"Rev": "30c3c9f04994590226bf2322631c83f9a78ddede"
 		},
 		{
 			"ImportPath": "github.com/pingcap/tipb/go-tipb",

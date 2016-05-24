@@ -218,7 +218,7 @@ func (w *rpcWorker) getTSFromRemote(conn *bufio.ReadWriter, n int) ([]*pdpb.Time
 		},
 		CmdType: pdpb.CommandType_Tso.Enum(),
 		Tso: &pdpb.TsoRequest{
-			Number: proto.Uint32(uint32(n)),
+			Count: proto.Uint32(uint32(n)),
 		},
 	}
 	resp, err := w.callRPC(conn, req)
