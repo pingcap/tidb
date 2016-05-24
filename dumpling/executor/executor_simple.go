@@ -217,13 +217,13 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) error {
-	err := e.ctx.FinishTxn(false)
+	err := e.ctx.CommitTxn()
 	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
-	err := e.ctx.FinishTxn(true)
+	err := e.ctx.RollbackTxn()
 	variable.GetSessionVars(e.ctx).SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }

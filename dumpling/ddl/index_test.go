@@ -91,7 +91,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(c, s.d)
-	defer ctx.FinishTxn(true)
+	defer ctx.RollbackTxn()
 
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
@@ -106,7 +106,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	i := int64(0)
@@ -188,7 +188,7 @@ func (s *testIndexSuite) checkIndexKVExist(c *C, ctx context.Context, t table.Ta
 	c.Assert(err, IsNil)
 	c.Assert(exist, Equals, isExist)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 }
 
@@ -579,7 +579,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -623,7 +623,7 @@ func (s *testIndexSuite) TestAddIndex(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	d.close()
@@ -647,13 +647,13 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	job := testCreateIndex(c, ctx, s.d, s.dbInfo, tblInfo, true, "c1_uni", "c1")
 	testCheckJobDone(c, d, job, true)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -694,7 +694,7 @@ func (s *testIndexSuite) TestDropIndex(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	d.close()
@@ -721,7 +721,7 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -760,7 +760,7 @@ func (s *testIndexSuite) TestAddIndexWithNullColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	d.close()

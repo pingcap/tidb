@@ -301,7 +301,7 @@ func (c *driverConn) Commit() error {
 		return errors.Trace(err)
 	}
 
-	err = c.s.FinishTxn(false)
+	err = c.s.CommitTxn()
 	return errors.Trace(err)
 }
 
