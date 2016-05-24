@@ -1,4 +1,4 @@
-// Copyright 2013 The ql Authors. All rights reserved.
+// Copyright 2016 The ql Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSES/QL-LICENSE file.
 
@@ -15,35 +15,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package column
+package table
 
 import (
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/types"
 )
 
-// Col provides meta data describing a table column.
-type Col struct {
+// Column provides meta data describing a table column.
+type Column struct {
 	model.ColumnInfo
 }
 
 // PrimaryKeyName defines primary key name.
 const PrimaryKeyName = "PRIMARY"
 
-// IndexedCol defines an index with info.
-type IndexedCol struct {
+// IndexedColumn defines an index with info.
+type IndexedColumn struct {
 	model.IndexInfo
-	X kv.Index
+	X Index
 }
 
 // String implements fmt.Stringer interface.
-func (c *Col) String() string {
+func (c *Column) String() string {
 	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}
 	if mysql.HasAutoIncrementFlag(c.Flag) {
 		ans = append(ans, "AUTO_INCREMENT")
@@ -55,7 +54,7 @@ func (c *Col) String() string {
 }
 
 // FindCol finds column in cols by name.
-func FindCol(cols []*Col, name string) *Col {
+func FindCol(cols []*Column, name string) *Column {
 	for _, col := range cols {
 		if strings.EqualFold(col.Name.O, name) {
 			return col
@@ -65,8 +64,8 @@ func FindCol(cols []*Col, name string) *Col {
 }
 
 // FindCols finds columns in cols by names.
-func FindCols(cols []*Col, names []string) ([]*Col, error) {
-	var rcols []*Col
+func FindCols(cols []*Column, names []string) ([]*Column, error) {
+	var rcols []*Column
 	for _, name := range names {
 		col := FindCol(cols, name)
 		if col != nil {
@@ -80,8 +79,8 @@ func FindCols(cols []*Col, names []string) ([]*Col, error) {
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
-func FindOnUpdateCols(cols []*Col) []*Col {
-	var rcols []*Col
+func FindOnUpdateCols(cols []*Column) []*Column {
+	var rcols []*Column
 	for _, col := range cols {
 		if mysql.HasOnUpdateNowFlag(col.Flag) {
 			rcols = append(rcols, col)
@@ -92,7 +91,7 @@ func FindOnUpdateCols(cols []*Col) []*Col {
 }
 
 // CastValues casts values based on columns type.
-func CastValues(ctx context.Context, rec []types.Datum, cols []*Col) (err error) {
+func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err error) {
 	for _, c := range cols {
 		var converted types.Datum
 		converted, err = rec[c.Offset].ConvertTo(&c.FieldType)
@@ -120,7 +119,7 @@ type ColDesc struct {
 const defaultPrivileges string = "select,insert,update,references"
 
 // GetTypeDesc gets the description for column type.
-func (c *Col) GetTypeDesc() string {
+func (c *Column) GetTypeDesc() string {
 	desc := c.FieldType.CompactStr()
 	if mysql.HasUnsignedFlag(c.Flag) {
 		desc += " UNSIGNED"
@@ -129,7 +128,7 @@ func (c *Col) GetTypeDesc() string {
 }
 
 // NewColDesc returns a new ColDesc for a column.
-func NewColDesc(col *Col) *ColDesc {
+func NewColDesc(col *Column) *ColDesc {
 	// TODO: if we have no primary key and a unique index which's columns are all not null
 	// we will set these columns' flag as PriKeyFlag
 	// see https://dev.mysql.com/doc/refman/5.7/en/show-columns.html
@@ -181,7 +180,7 @@ func ColDescFieldNames(full bool) []string {
 }
 
 // CheckOnce checks if there are duplicated column names in cols.
-func CheckOnce(cols []*Col) error {
+func CheckOnce(cols []*Column) error {
 	m := map[string]struct{}{}
 	for _, col := range cols {
 		name := col.Name
@@ -197,7 +196,7 @@ func CheckOnce(cols []*Col) error {
 }
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
-func (c *Col) CheckNotNull(data types.Datum) error {
+func (c *Column) CheckNotNull(data types.Datum) error {
 	if mysql.HasNotNullFlag(c.Flag) && data.Kind() == types.KindNull {
 		return errors.Errorf("Column %s can't be null.", c.Name)
 	}
@@ -205,12 +204,12 @@ func (c *Col) CheckNotNull(data types.Datum) error {
 }
 
 // IsPKHandleColumn checks if the column is primary key handle column.
-func (c *Col) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
+func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
 }
 
 // CheckNotNull checks if row has nil value set to a column with NotNull flag set.
-func CheckNotNull(cols []*Col, row []types.Datum) error {
+func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
 			return errors.Trace(err)
@@ -220,7 +219,7 @@ func CheckNotNull(cols []*Col, row []types.Datum) error {
 }
 
 // FetchValues fetches indexed values from a row.
-func (idx *IndexedCol) FetchValues(r []types.Datum) ([]types.Datum, error) {
+func (idx *IndexedColumn) FetchValues(r []types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(idx.Columns))
 	for i, ic := range idx.Columns {
 		if ic.Offset < 0 || ic.Offset > len(r) {

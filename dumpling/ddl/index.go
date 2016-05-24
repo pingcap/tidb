@@ -416,7 +416,7 @@ func lockRow(txn kv.Transaction, t table.Table, h int64) error {
 }
 
 func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, handles []int64, reorgInfo *reorgInfo) error {
-	kvX := kv.NewKVIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
+	kvX := tables.NewIndex(t.IndexPrefix(), indexInfo.Name.L, indexInfo.ID, indexInfo.Unique)
 
 	for _, handle := range handles {
 		log.Debug("[ddl] building index...", handle)
@@ -473,7 +473,7 @@ func (d *ddl) backfillTableIndex(t table.Table, indexInfo *model.IndexInfo, hand
 }
 
 func (d *ddl) dropTableIndex(t table.Table, indexInfo *model.IndexInfo) error {
-	prefix := kv.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
+	prefix := tables.GenIndexPrefix(t.IndexPrefix(), indexInfo.ID)
 	err := d.delKeysWithPrefix(prefix)
 
 	return errors.Trace(err)

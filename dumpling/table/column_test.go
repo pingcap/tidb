@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package column
+package table
 
 import (
 	"testing"
@@ -33,7 +33,7 @@ type testColumnSuite struct{}
 
 func (s *testColumnSuite) TestString(c *C) {
 	defer testleak.AfterTest(c)()
-	col := &Col{
+	col := &Column{
 		model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeTiny),
 			State:     model.StatePublic,
@@ -78,7 +78,7 @@ func (s *testColumnSuite) TestString(c *C) {
 
 func (s *testColumnSuite) TestFind(c *C) {
 	defer testleak.AfterTest(c)()
-	cols := []*Col{
+	cols := []*Column{
 		newCol("a"),
 		newCol("b"),
 		newCol("c"),
@@ -93,7 +93,7 @@ func (s *testColumnSuite) TestCheck(c *C) {
 	defer testleak.AfterTest(c)()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
-	cols := []*Col{col, col}
+	cols := []*Column{col, col}
 	CheckOnce(cols)
 	cols = cols[:1]
 	CheckNotNull(cols, types.MakeDatums(nil))
@@ -112,8 +112,8 @@ func (s *testColumnSuite) TestDesc(c *C) {
 	ColDescFieldNames(true)
 }
 
-func newCol(name string) *Col {
-	return &Col{
+func newCol(name string) *Column {
+	return &Column{
 		model.ColumnInfo{
 			Name:  model.NewCIStr(name),
 			State: model.StatePublic,

@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,24 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv_test
+package tables_test
 
 import (
 	"io"
-	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/localstore"
 	"github.com/pingcap/tidb/store/localstore/goleveldb"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testIndexSuite{})
 
@@ -51,7 +47,7 @@ func (s *testIndexSuite) TearDownSuite(c *C) {
 
 func (s *testIndexSuite) TestIndex(c *C) {
 	defer testleak.AfterTest(c)()
-	index := kv.NewKVIndex([]byte("i"), "test", 0, false)
+	index := tables.NewIndex([]byte("i"), "test", 0, false)
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
@@ -121,7 +117,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	err = txn.Commit()
 	c.Assert(err, IsNil)
 
-	index = kv.NewKVIndex([]byte("j"), "test", 1, true)
+	index = tables.NewIndex([]byte("j"), "test", 1, true)
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
@@ -149,7 +145,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	defer testleak.AfterTest(c)()
-	index := kv.NewKVIndex([]byte("i"), "test", 1, false)
+	index := tables.NewIndex([]byte("i"), "test", 1, false)
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -158,7 +154,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	err = index.Create(txn, values, 1)
 	c.Assert(err, IsNil)
 
-	index2 := kv.NewKVIndex([]byte("i"), "test", 1, false)
+	index2 := tables.NewIndex([]byte("i"), "test", 1, false)
 	iter, hit, err := index2.Seek(txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)
 	defer iter.Close()
