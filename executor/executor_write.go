@@ -482,8 +482,8 @@ func (e *InsertExec) Close() error {
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
-func (e *InsertValues) getColumns(tableCols []*table.Col) ([]*table.Col, error) {
-	var cols []*table.Col
+func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, error) {
+	var cols []*table.Column
 	var err error
 
 	if len(e.Setlist) > 0 {
@@ -541,7 +541,7 @@ func (e *InsertValues) fillValueList() error {
 	return nil
 }
 
-func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Col) error {
+func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Column) error {
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
@@ -559,7 +559,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (e *InsertValues) getColumnDefaultValues(cols []*table.Col) (map[string]types.Datum, error) {
+func (e *InsertValues) getColumnDefaultValues(cols []*table.Column) (map[string]types.Datum, error) {
 	defaultValMap := map[string]types.Datum{}
 	for _, col := range cols {
 		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
@@ -572,7 +572,7 @@ func (e *InsertValues) getColumnDefaultValues(cols []*table.Col) (map[string]typ
 	return defaultValMap, nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Col) (rows [][]types.Datum, err error) {
+func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
@@ -598,7 +598,7 @@ func (e *InsertValues) getRows(cols []*table.Col) (rows [][]types.Datum, err err
 	return
 }
 
-func (e *InsertValues) getRow(cols []*table.Col, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
 	var err error
 	for i, expr := range list {
@@ -625,7 +625,7 @@ func (e *InsertValues) getRow(cols []*table.Col, list []ast.ExprNode, defaultVal
 	return e.fillRowData(cols, vals)
 }
 
-func (e *InsertValues) getRowsSelect(cols []*table.Col) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if len(e.SelectExec.Fields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
@@ -649,7 +649,7 @@ func (e *InsertValues) getRowsSelect(cols []*table.Col) ([][]types.Datum, error)
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*table.Col, vals []types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
@@ -671,7 +671,7 @@ func (e *InsertValues) fillRowData(cols []*table.Col, vals []types.Datum) ([]typ
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
-	var defaultValueCols []*table.Col
+	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
 		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull &&
@@ -769,7 +769,7 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	return nil
 }
 
-func findColumnByName(t table.Table, name string) (*table.Col, error) {
+func findColumnByName(t table.Table, name string) (*table.Column, error) {
 	_, tableName, colName := splitQualifiedName(name)
 	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)

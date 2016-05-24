@@ -29,24 +29,24 @@ import (
 )
 
 // RecordIterFunc is used for low-level record iteration.
-type RecordIterFunc func(h int64, rec []types.Datum, cols []*Col) (more bool, err error)
+type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx context.Context, startKey kv.Key, cols []*Col, fn RecordIterFunc) error
+	IterRecords(ctx context.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx context.Context, h int64, cols []*Col) ([]types.Datum, error)
+	RowWithCols(ctx context.Context, h int64, cols []*Column) ([]types.Datum, error)
 
 	// Row returns a row for all columns.
 	Row(ctx context.Context, h int64) ([]types.Datum, error)
 
 	// Cols returns the columns of the table which is used in select.
-	Cols() []*Col
+	Cols() []*Column
 
 	// Indices returns the indices of the table.
-	Indices() []*IndexedCol
+	Indices() []*IndexedColumn
 
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
@@ -58,7 +58,7 @@ type Table interface {
 	FirstKey() kv.Key
 
 	// RecordKey returns the key in KV storage for the column.
-	RecordKey(h int64, col *Col) kv.Key
+	RecordKey(h int64, col *Column) kv.Key
 
 	// Truncate truncates the table.
 	Truncate(ctx context.Context) (err error)

@@ -360,7 +360,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			decimal = 0
 		}
 		columnType := col.FieldType.CompactStr()
-		columnDesc := table.NewColDesc(&table.Col{ColumnInfo: *col})
+		columnDesc := table.NewColDesc(&table.Column{ColumnInfo: *col})
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)

@@ -340,7 +340,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
-	var pkCol *table.Col
+	var pkCol *table.Column
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if mysql.HasAutoIncrementFlag(col.Flag) {

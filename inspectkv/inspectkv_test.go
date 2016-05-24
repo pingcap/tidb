@@ -294,7 +294,7 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	c.Assert(err.Error(), DeepEquals, "[inspectkv:2]handle:1 is repeated in data")
 }
 
-func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedCol) {
+func (s *testSuite) testIndex(c *C, tb table.Table, idx *table.IndexedColumn) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 

@@ -177,14 +177,14 @@ LOOP:
 	ctx := s.s.(context.Context)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Col) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles[h] = struct{}{}
 		return true, nil
 	})
 	c.Assert(err, IsNil)
 
 	// check in index
-	var nidx *table.IndexedCol
+	var nidx *table.IndexedColumn
 	for _, tidx := range t.Indices() {
 		if tidx.Name.L == "c3_index" {
 			nidx = tidx
@@ -229,7 +229,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 	t := s.testGetTable(c, "t1")
-	var c3idx *table.IndexedCol
+	var c3idx *table.IndexedColumn
 	for _, tidx := range t.Indices() {
 		if tidx.Name.L == "c3_index" {
 			c3idx = tidx
@@ -273,7 +273,7 @@ LOOP:
 	handles := make(map[int64]struct{})
 
 	t = s.testGetTable(c, "t1")
-	var nidx *table.IndexedCol
+	var nidx *table.IndexedColumn
 	for _, tidx := range t.Indices() {
 		if tidx.Name.L == "c3_index" {
 			nidx = tidx
@@ -381,7 +381,7 @@ LOOP:
 	i := 0
 	j := 0
 	defer ctx.FinishTxn(true)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Col) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		// c4 must be -1 or > 0
 		v, err1 := types.ToInt64(data[3].GetValue())
@@ -462,7 +462,7 @@ LOOP:
 	i := 0
 	t = s.testGetTable(c, "t2")
 	// check c4 does not exist
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Col) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		k := t.RecordKey(h, col)
 		_, err1 := txn.Get(k)

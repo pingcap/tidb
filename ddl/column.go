@@ -354,7 +354,7 @@ func (d *ddl) backfillColumnData(t table.Table, columnInfo *model.ColumnInfo, ha
 				return nil
 			}
 
-			backfillKey := t.RecordKey(handle, &table.Col{ColumnInfo: *columnInfo})
+			backfillKey := t.RecordKey(handle, &table.Column{ColumnInfo: *columnInfo})
 			backfillValue, err := txn.Get(backfillKey)
 			if err != nil && !kv.IsErrNotFound(err) {
 				return errors.Trace(err)
@@ -399,7 +399,7 @@ func (d *ddl) dropTableColumn(t table.Table, colInfo *model.ColumnInfo, reorgInf
 	version := reorgInfo.SnapshotVer
 	seekHandle := reorgInfo.Handle
 
-	col := &table.Col{ColumnInfo: *colInfo}
+	col := &table.Column{ColumnInfo: *colInfo}
 	for {
 		handles, err := d.getSnapshotRows(t, version, seekHandle)
 		if err != nil {

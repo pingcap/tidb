@@ -296,7 +296,7 @@ func (b *executorBuilder) buildIndexScan(v *plan.IndexScan) Executor {
 		return b.buildFilter(e, remained)
 	}
 
-	var idx *table.IndexedCol
+	var idx *table.IndexedColumn
 	for _, val := range tbl.Indices() {
 		if val.IndexInfo.Name.L == v.Index.Name.L {
 			idx = val

@@ -340,7 +340,7 @@ func getDefaultCharsetAndCollate() (string, string) {
 	return "utf8", "utf8_unicode_ci"
 }
 
-func setColumnFlagWithConstraint(colMap map[string]*table.Col, v *ast.Constraint) {
+func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
@@ -388,9 +388,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Col, v *ast.Constraint
 }
 
 func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint) ([]*table.Col, []*ast.Constraint, error) {
-	var cols []*table.Col
-	colMap := map[string]*table.Col{}
+	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
+	var cols []*table.Column
+	colMap := map[string]*table.Column{}
 	for i, colDef := range colDefs {
 		col, cts, err := d.buildColumnAndConstraint(ctx, i, colDef)
 		if err != nil {
@@ -409,7 +409,7 @@ func (d *ddl) buildColumnsAndConstraints(ctx context.Context, colDefs []*ast.Col
 }
 
 func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
-	colDef *ast.ColumnDef) (*table.Col, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	// Set charset.
 	if len(colDef.Tp.Charset) == 0 {
 		switch colDef.Tp.Tp {
@@ -435,9 +435,9 @@ func (d *ddl) buildColumnAndConstraint(ctx context.Context, offset int,
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
-func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Col, []*ast.Constraint, error) {
+func columnDefToCol(ctx context.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
 	constraints := []*ast.Constraint{}
-	col := &table.Col{
+	col := &table.Column{
 		ColumnInfo: model.ColumnInfo{
 			Offset:    offset,
 			Name:      colDef.Name.Name,
@@ -573,7 +573,7 @@ func getDefaultValue(ctx context.Context, c *ast.ColumnOption, tp byte, fsp int)
 	return v.GetValue(), nil
 }
 
-func removeOnUpdateNowFlag(c *table.Col) {
+func removeOnUpdateNowFlag(c *table.Column) {
 	// For timestamp Col, if it is set null or default value,
 	// OnUpdateNowFlag should be removed.
 	if mysql.HasTimestampFlag(c.Flag) {
@@ -581,7 +581,7 @@ func removeOnUpdateNowFlag(c *table.Col) {
 	}
 }
 
-func setTimestampDefaultValue(c *table.Col, hasDefaultValue bool, setOnUpdateNow bool) {
+func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdateNow bool) {
 	if hasDefaultValue {
 		return
 	}
@@ -596,7 +596,7 @@ func setTimestampDefaultValue(c *table.Col, hasDefaultValue bool, setOnUpdateNow
 	}
 }
 
-func setNoDefaultValueFlag(c *table.Col, hasDefaultValue bool) {
+func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	if hasDefaultValue {
 		return
 	}
@@ -611,7 +611,7 @@ func setNoDefaultValueFlag(c *table.Col, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(c *table.Col, hasDefaultValue bool) error {
+func checkDefaultValue(c *table.Column, hasDefaultValue bool) error {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -705,7 +705,7 @@ func (d *ddl) checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Col, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
 	}

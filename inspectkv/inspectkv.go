@@ -163,7 +163,7 @@ func ScanIndexData(txn kv.Transaction, kvIndex table.Index, startVals []types.Da
 // CompareIndexData compares index data one by one.
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
-func CompareIndexData(txn kv.Transaction, t table.Table, idx *table.IndexedCol) error {
+func CompareIndexData(txn kv.Transaction, t table.Table, idx *table.IndexedColumn) error {
 	err := checkIndexAndRecord(txn, t, idx)
 	if err != nil {
 		return errors.Trace(err)
@@ -172,7 +172,7 @@ func CompareIndexData(txn kv.Transaction, t table.Table, idx *table.IndexedCol) 
 	return checkRecordAndIndex(txn, t, idx)
 }
 
-func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedCol) error {
+func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedColumn) error {
 	kvIndex := tables.NewIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
 	it, err := kvIndex.SeekFirst(txn)
 	if err != nil {
@@ -180,7 +180,7 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedCo
 	}
 	defer it.Close()
 
-	cols := make([]*table.Col, len(idx.Columns))
+	cols := make([]*table.Column, len(idx.Columns))
 	for i, col := range idx.Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
@@ -211,15 +211,15 @@ func checkIndexAndRecord(txn kv.Transaction, t table.Table, idx *table.IndexedCo
 	return nil
 }
 
-func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *table.IndexedCol) error {
-	cols := make([]*table.Col, len(idx.Columns))
+func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *table.IndexedColumn) error {
+	cols := make([]*table.Column, len(idx.Columns))
 	for i, col := range idx.Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
 
 	startKey := t.RecordKey(0, nil)
 	kvIndex := tables.NewIndex(t.IndexPrefix(), idx.Name.L, idx.ID, idx.Unique)
-	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Col) (bool, error) {
+	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		isExist, h2, err := kvIndex.Exist(txn, vals1, h1)
 		if terror.ErrorEqual(err, kv.ErrKeyExists) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
@@ -245,12 +245,12 @@ func checkRecordAndIndex(txn kv.Transaction, t table.Table, idx *table.IndexedCo
 	return nil
 }
 
-func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Col, startHandle, limit int64) (
+func scanTableData(retriever kv.Retriever, t table.Table, cols []*table.Column, startHandle, limit int64) (
 	[]*RecordData, int64, error) {
 	var records []*RecordData
 
 	startKey := t.RecordKey(startHandle, nil)
-	filterFunc := func(h int64, d []types.Datum, cols []*table.Col) (bool, error) {
+	filterFunc := func(h int64, d []types.Datum, cols []*table.Column) (bool, error) {
 		if limit != 0 {
 			r := &RecordData{
 				Handle: h,
@@ -316,7 +316,7 @@ func CompareTableRecord(txn kv.Transaction, t table.Table, data []*RecordData, e
 	}
 
 	startKey := t.RecordKey(0, nil)
-	filterFunc := func(h int64, vals []types.Datum, cols []*table.Col) (bool, error) {
+	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
@@ -382,7 +382,7 @@ func GetTableRecordsCount(txn kv.Transaction, t table.Table, startHandle int64) 
 	return cnt, nil
 }
 
-func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Col) ([]types.Datum, error) {
+func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col.State != model.StatePublic {
@@ -410,7 +410,7 @@ func rowWithCols(txn kv.Retriever, t table.Table, h int64, cols []*table.Col) ([
 	return v, nil
 }
 
-func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Col,
+func iterRecords(retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	it, err := retriever.Seek(startKey)
 	if err != nil {
