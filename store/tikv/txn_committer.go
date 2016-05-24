@@ -124,15 +124,19 @@ func (c *txnCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
-func (c *txnCommitter) prewriteSingleRegion(regionID RegionVerID, keys [][]byte) error {
+func (c *txnCommitter) constructMutations(keys [][]byte) []*pb.Mutation {
 	mutations := make([]*pb.Mutation, len(keys))
 	for i, k := range keys {
 		mutations[i] = c.mutations[string(k)]
 	}
+	return mutations
+}
+
+func (c *txnCommitter) prewriteSingleRegion(regionID RegionVerID, keys [][]byte) error {
 	req := &pb.Request{
 		Type: pb.MessageType_CmdPrewrite.Enum(),
 		CmdPrewriteReq: &pb.CmdPrewriteRequest{
-			Mutations:    mutations,
+			Mutations:    c.constructMutations(keys),
 			PrimaryLock:  c.primary(),
 			StartVersion: proto.Uint64(c.startTS),
 		},
@@ -261,7 +265,15 @@ func (c *txnCommitter) cleanupKeys(keys [][]byte) error {
 }
 
 func (c *txnCommitter) Commit() error {
-	err := c.prewriteKeys(c.keys)
+	ok, err := c.fastCommit()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
+		return nil
+	}
+
+	err = c.prewriteKeys(c.keys)
 	if err != nil {
 		log.Warnf("txn commit failed on prewrite: %v", err)
 		c.cleanupKeys(c.writtenKeys)
@@ -283,6 +295,82 @@ func (c *txnCommitter) Commit() error {
 		log.Warnf("txn commit succeed with error: %v", err)
 	}
 	return nil
+}
+
+func (c *txnCommitter) fastCommit() (bool, error) {
+	// Check if all keys are located on the same.
+	var regionID RegionVerID
+	for _, k := range c.keys {
+		region, err := c.store.regionCache.GetRegion(k)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if regionID.id == 0 {
+			regionID = region.VerID()
+		}
+		if regionID != region.VerID() {
+			return false, nil
+		}
+	}
+
+	// Make sure the Request packet is not too big.
+	mutations := c.constructMutations(c.keys)
+	var sz int
+	for _, m := range mutations {
+		sz += len(m.GetKey()) + len(m.GetValue())
+		if sz > txnCommitBatchSize {
+			return false, nil
+		}
+	}
+
+	commitTS, err := c.store.oracle.GetTimestamp()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	c.commitTS = commitTS
+
+	req := &pb.Request{
+		Type: pb.MessageType_CmdFastCommit.Enum(),
+		CmdFastCommitReq: &pb.CmdFastCommitRequest{
+			Mutations:     mutations,
+			StartVersion:  proto.Uint64(c.startTS),
+			CommitVersion: proto.Uint64(c.commitTS),
+		},
+	}
+
+	var backoffErr error
+	for backoff := txnLockBackoff(); backoffErr == nil; backoffErr = backoff() {
+		resp, err := c.store.SendKVReq(req, regionID)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if regionErr := resp.GetRegionError(); regionErr != nil {
+			// For region error, it maybe not safe to retry fastCommit.
+			// Fallback to 2PC.
+			return false, nil
+		}
+		fastCommitResp := resp.GetCmdFastCommitResp()
+		if fastCommitResp == nil {
+			return false, errors.Trace(errBodyMissing)
+		}
+		keyErrs := fastCommitResp.GetErrors()
+		if len(keyErrs) == 0 {
+			return true, nil
+		}
+		for _, keyErr := range keyErrs {
+			lockInfo, err := extractLockInfoFromKeyErr(keyErr)
+			if err != nil {
+				// It could be `Retryable` or `Abort`.
+				return false, errors.Trace(err)
+			}
+			lock := newLock(c.store, lockInfo.GetPrimaryLock(), lockInfo.GetLockVersion(), lockInfo.GetKey(), c.startTS)
+			_, err = lock.cleanup()
+			if err != nil && terror.ErrorNotEqual(err, errInnerRetryable) {
+				return false, errors.Trace(err)
+			}
+		}
+	}
+	return false, errors.Annotate(backoffErr, txnRetryableMark)
 }
 
 // TiKV recommends each RPC packet should be less than ~1MB. We keep each packet's

@@ -55,6 +55,8 @@ func (h *rpcHandler) handleRequest(req *kvrpcpb.Request) *kvrpcpb.Response {
 		resp.CmdPrewriteResp = h.onPrewrite(req.CmdPrewriteReq)
 	case kvrpcpb.MessageType_CmdCommit:
 		resp.CmdCommitResp = h.onCommit(req.CmdCommitReq)
+	case kvrpcpb.MessageType_CmdFastCommit:
+		resp.CmdFastCommitResp = h.onFastCommit(req.CmdFastCommitReq)
 	case kvrpcpb.MessageType_CmdCleanup:
 		resp.CmdCleanupResp = h.onCleanup(req.CmdCleanupReq)
 	case kvrpcpb.MessageType_CmdCommitThenGet:
@@ -182,6 +184,18 @@ func (h *rpcHandler) onCommit(req *kvrpcpb.CmdCommitRequest) *kvrpcpb.CmdCommitR
 	return &resp
 }
 
+func (h *rpcHandler) onFastCommit(req *kvrpcpb.CmdFastCommitRequest) *kvrpcpb.CmdFastCommitResponse {
+	for _, m := range req.Mutations {
+		if !h.keyInRegion(m.Key) {
+			panic("onFastCommit: key not in region")
+		}
+	}
+	errors := h.mvccStore.FastCommit(req.Mutations, req.GetStartVersion(), req.GetCommitVersion())
+	return &kvrpcpb.CmdFastCommitResponse{
+		Errors: convertToKeyErrors(errors),
+	}
+}
+
 func (h *rpcHandler) onCleanup(req *kvrpcpb.CmdCleanupRequest) *kvrpcpb.CmdCleanupResponse {
 	if !h.keyInRegion(req.Key) {
 		panic("onCleanup: key not in region")
@@ -303,7 +317,7 @@ func (c *RPCClient) SendKVReq(req *kvrpcpb.Request) (*kvrpcpb.Response, error) {
 		return nil, errors.New("connect fail")
 	}
 	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
-	return handler.handleRequest(req), nil
+	return handler.handleRequest(proto.Clone(req).(*kvrpcpb.Request)), nil
 }
 
 // SendCopReq sends a coprocessor request to mock cluster.
@@ -313,7 +327,7 @@ func (c *RPCClient) SendCopReq(req *coprocessor.Request) (*coprocessor.Response,
 		return nil, errors.New("connect fail")
 	}
 	handler := newRPCHandler(c.cluster, c.mvccStore, store.GetId())
-	return handler.handleCopRequest(req)
+	return handler.handleCopRequest(proto.Clone(req).(*coprocessor.Request))
 }
 
 // Close closes the client.
