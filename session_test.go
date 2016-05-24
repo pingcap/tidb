@@ -2093,7 +2093,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se.GetGlobalSysVar(se, varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue1)
-	c.Assert(se.FinishTxn(false), IsNil)
+	c.Assert(se.CommitTxn(), IsNil)
 
 	// Change global variable value in another session
 	se1 := newSession(c, store, s.dbName).(*session)
@@ -2105,7 +2105,7 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	v, err = se1.GetGlobalSysVar(se1, varName)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, varValue2)
-	c.Assert(se1.FinishTxn(false), IsNil)
+	c.Assert(se1.CommitTxn(), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(se, varName)

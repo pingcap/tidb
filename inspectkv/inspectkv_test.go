@@ -185,7 +185,7 @@ func (s *testSuite) TestScan(c *C) {
 	indices := tb.Indices()
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(10, 11))
 	c.Assert(err, IsNil)
-	s.ctx.FinishTxn(false)
+	s.ctx.CommitTxn()
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20), int64(21))}
@@ -197,7 +197,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	_, err = tb.AddRecord(s.ctx, record2.Values)
 	c.Assert(err, IsNil)
-	s.ctx.FinishTxn(false)
+	s.ctx.CommitTxn()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 

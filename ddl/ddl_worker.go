@@ -27,7 +27,7 @@ import (
 
 func (d *ddl) doDDLJob(ctx context.Context, job *model.Job) error {
 	// for every DDL, we must commit current transaction.
-	if err := ctx.FinishTxn(false); err != nil {
+	if err := ctx.CommitTxn(); err != nil {
 		return errors.Trace(err)
 	}
 

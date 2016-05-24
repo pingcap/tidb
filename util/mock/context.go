@@ -60,7 +60,7 @@ func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
 		return c.txn, err
 	}
 	if forceNew {
-		err = c.FinishTxn(false)
+		err = c.CommitTxn()
 		if err != nil {
 			return nil, err
 		}
@@ -71,8 +71,7 @@ func (c *Context) GetTxn(forceNew bool) (kv.Transaction, error) {
 	return c.txn, nil
 }
 
-// FinishTxn implements context.Context FinishTxn interface.
-func (c *Context) FinishTxn(rollback bool) error {
+func (c *Context) finishTxn(rollback bool) error {
 	if c.txn == nil {
 		return nil
 	}
@@ -83,6 +82,16 @@ func (c *Context) FinishTxn(rollback bool) error {
 	}
 
 	return c.txn.Commit()
+}
+
+// CommitTxn implements context.Context CommitTxn interface.
+func (c *Context) CommitTxn() error {
+	return c.finishTxn(false)
+}
+
+// RollbackTxn implements context.Context RollbackTxn interface.
+func (c *Context) RollbackTxn() error {
+	return c.finishTxn(true)
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.

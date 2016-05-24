@@ -106,8 +106,9 @@ func testDropColumn(c *C, ctx context.Context, d *ddl, dbInfo *model.DBInfo, tbl
 func (s *testColumnSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
-	ctx := testNewContext(c, s.d)
-	defer ctx.FinishTxn(true)
+	var ctx context.Context
+	ctx = testNewContext(c, s.d)
+	defer ctx.RollbackTxn()
 
 	testCreateTable(c, ctx, s.d, s.dbInfo, tblInfo)
 
@@ -119,7 +120,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.FinishTxn(false)
+	err := ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	i := int64(0)
@@ -155,7 +156,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
 	c.Assert(err, IsNil)
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 	values, err := t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
@@ -274,7 +275,7 @@ func (s *testColumnSuite) checkColumnKVExist(c *C, ctx context.Context, t table.
 		c.Assert(err, NotNil)
 	}
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 }
 
@@ -519,7 +520,7 @@ func (s *testColumnSuite) checkPublicColumn(c *C, ctx context.Context, d *ddl, t
 	})
 	c.Assert(i, Equals, int64(1))
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 	s.testGetColumn(c, t, col.Name.L, true)
 }
@@ -567,7 +568,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	handle, err := t.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	colName := "c4"
@@ -610,7 +611,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	d.close()
@@ -636,7 +637,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	handle, err := t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -677,7 +678,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	d.close()

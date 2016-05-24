@@ -197,7 +197,7 @@ LOOP:
 	idx := tables.NewIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.FinishTxn(true)
+	defer ctx.RollbackTxn()
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -285,7 +285,7 @@ LOOP:
 	idx := tables.NewIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.FinishTxn(true)
+	defer ctx.RollbackTxn()
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -380,7 +380,7 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	defer ctx.FinishTxn(true)
+	defer ctx.RollbackTxn()
 	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		// c4 must be -1 or > 0
@@ -457,7 +457,7 @@ LOOP:
 
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.FinishTxn(false)
+	defer ctx.CommitTxn()
 
 	i := 0
 	t = s.testGetTable(c, "t2")

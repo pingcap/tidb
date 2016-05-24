@@ -110,11 +110,10 @@ func (c *MockContext) fillTxn() error {
 	return nil
 }
 
-func (c *MockContext) FinishTxn(rollback bool) error {
+func (c *MockContext) CommitTxn() error {
 	if c.txn == nil {
 		return nil
 	}
-
 	return c.txn.Commit()
 }
 
@@ -126,7 +125,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	c.Assert(err, IsNil)
 	err = DelKeyWithPrefix(txn, encodeInt(ctx.prefix))
 	c.Assert(err, IsNil)
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()

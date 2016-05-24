@@ -134,7 +134,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -158,7 +158,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	testCheckJobDone(c, d, job, true)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 	c.Assert(checkOK, IsTrue)
 
@@ -191,7 +191,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
 	d.close()
