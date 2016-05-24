@@ -57,7 +57,7 @@ func (c *reorgContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 	return c.txn, nil
 }
 
-func (c *reorgContext) FinishTxn(rollback bool) error {
+func (c *reorgContext) finishTxn(rollback bool) error {
 	if c.txn == nil {
 		return nil
 	}
@@ -72,6 +72,14 @@ func (c *reorgContext) FinishTxn(rollback bool) error {
 	c.txn = nil
 
 	return errors.Trace(err)
+}
+
+func (c *reorgContext) RollbackTxn() error {
+	return c.finishTxn(true)
+}
+
+func (c *reorgContext) CommitTxn() error {
+	return c.finishTxn(false)
 }
 
 func (c *reorgContext) SetValue(key fmt.Stringer, value interface{}) {

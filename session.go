@@ -55,7 +55,8 @@ type Session interface {
 	AffectedRows() uint64                        // Affected rows by latest executed stmt
 	Execute(sql string) ([]ast.RecordSet, error) // Execute a sql statement
 	String() string                              // For debug
-	FinishTxn(rollback bool) error
+	CommitTxn() error
+	RollbackTxn() error
 	// For execute prepare statement in binary protocol
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// Execute a prepared statement
@@ -154,7 +155,7 @@ func (s *session) SetConnectionID(connectionID uint64) {
 	variable.GetSessionVars(s).ConnectionID = connectionID
 }
 
-func (s *session) FinishTxn(rollback bool) error {
+func (s *session) finishTxn(rollback bool) error {
 	// transaction has already been committed or rolled back
 	if s.txn == nil {
 		return nil
@@ -189,6 +190,14 @@ func (s *session) FinishTxn(rollback bool) error {
 	s.resetHistory()
 	s.cleanRetryInfo()
 	return nil
+}
+
+func (s *session) CommitTxn() error {
+	return s.finishTxn(false)
+}
+
+func (s *session) RollbackTxn() error {
+	return s.finishTxn(true)
 }
 
 func (s *session) String() string {
@@ -228,7 +237,7 @@ func (s *session) Retry() error {
 	retryCnt := 0
 	for {
 		s.resetHistory()
-		s.FinishTxn(true)
+		s.RollbackTxn()
 		success := true
 		variable.GetSessionVars(s).RetryInfo.ResetOffset()
 		for _, sr := range nh.history {
@@ -245,7 +254,7 @@ func (s *session) Retry() error {
 			}
 		}
 		if success {
-			err = s.FinishTxn(false)
+			err = s.CommitTxn()
 			if !kv.IsRetryableError(err) {
 				break
 			}
@@ -490,7 +499,7 @@ func (s *session) GetTxn(forceNew bool) (kv.Transaction, error) {
 		return s.txn, nil
 	}
 	if forceNew {
-		err = s.FinishTxn(false)
+		err = s.CommitTxn()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -521,7 +530,7 @@ func (s *session) ClearValue(key fmt.Stringer) {
 
 // Close function does some clean work when session end.
 func (s *session) Close() error {
-	return s.FinishTxn(true)
+	return s.RollbackTxn()
 }
 
 func (s *session) getPassword(name, host string) (string, error) {

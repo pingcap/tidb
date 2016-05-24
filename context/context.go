@@ -24,8 +24,11 @@ type Context interface {
 	// GetTxn gets a transaction for further execution.
 	GetTxn(forceNew bool) (kv.Transaction, error)
 
-	// FinishTxn commits or rolls back the current transaction.
-	FinishTxn(rollback bool) error
+	// RollbackTxn rolls back the current transaction.
+	RollbackTxn() error
+
+	// CommitTxn commits the current transaction.
+	CommitTxn() error
 
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
