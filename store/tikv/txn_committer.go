@@ -206,11 +206,11 @@ func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) e
 		if c.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
-			log.Errorf("txn failed commit key after primary key committed: %v", err)
+			log.Errorf("txn failed commit key after primary key committed: %v, tid: %d", err, c.startTS)
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
-		log.Warnf("txn failed commit primary key: %v, retry later", err)
+		log.Warnf("txn failed commit primary key: %v, retry later, tid: %d", err, c.startTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
@@ -242,7 +242,7 @@ func (c *txnCommitter) cleanupSingleRegion(regionID RegionVerID, keys [][]byte) 
 	}
 	if keyErr := rollbackResp.GetError(); keyErr != nil {
 		err = errors.Errorf("cleanup failed: %s", keyErr)
-		log.Errorf("txn failed cleanup key: %v", err)
+		log.Errorf("txn failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
 	return nil
@@ -263,7 +263,7 @@ func (c *txnCommitter) cleanupKeys(keys [][]byte) error {
 func (c *txnCommitter) Commit() error {
 	err := c.prewriteKeys(c.keys)
 	if err != nil {
-		log.Warnf("txn commit failed on prewrite: %v", err)
+		log.Warnf("txn commit failed on prewrite: %v, tid: %d", err, c.startTS)
 		c.cleanupKeys(c.writtenKeys)
 		return errors.Trace(err)
 	}
@@ -280,7 +280,7 @@ func (c *txnCommitter) Commit() error {
 			c.cleanupKeys(c.writtenKeys)
 			return errors.Trace(err)
 		}
-		log.Warnf("txn commit succeed with error: %v", err)
+		log.Warnf("txn commit succeed with error: %v, tid: %d", err, c.startTS)
 	}
 	return nil
 }
