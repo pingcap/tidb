@@ -160,8 +160,7 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
 		}
-		curPeerIdx := 0
-		peer := meta.Peers[curPeerIdx]
+		peer := meta.Peers[0]
 		store, err := c.pdClient.GetStore(peer.GetStoreId())
 		if err != nil {
 			log.Warnf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err)
@@ -171,7 +170,7 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 			meta:       meta,
 			peer:       peer,
 			addr:       store.GetAddress(),
-			curPeerIdx: curPeerIdx,
+			curPeerIdx: 0,
 		}
 		break
 	}
