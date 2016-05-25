@@ -79,6 +79,19 @@ func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum
 	return d, nil
 }
 
+func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if len(args) == 1 {
+		id, err := args[0].ToInt64()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
+	}
+
+	d.SetUint64(variable.GetSessionVars(ctx).LastInsertInfo.ID)
+	return
+}
+
 func builtinVersion(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	d.SetString(mysql.ServerVersion)
 	return d, nil

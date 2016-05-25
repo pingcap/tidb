@@ -396,9 +396,11 @@ func (e *DeleteExec) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow    int
-	ctx        context.Context
-	SelectExec Executor
+	currRow      int
+	rebase       bool
+	lastInsertID int64
+	ctx          context.Context
+	SelectExec   Executor
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
@@ -465,6 +467,8 @@ func (e *InsertExec) Next() (*Row, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	e.setLastInsertID()
 	e.finished = true
 	return nil, nil
 }
@@ -676,6 +680,33 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	return row, nil
 }
 
+func (e *InsertValues) setLastInsertID() {
+	defer func() {
+		variable.GetSessionVars(e.ctx).LastInsertInfo.LastTableID = e.Table.Meta().ID
+	}()
+	if e.lastInsertID == 0 {
+		return
+	}
+
+	vars := variable.GetSessionVars(e.ctx)
+	if e.rebase {
+		vars.LastInsertInfo.Base = uint64(e.lastInsertID)
+		e.rebase = false
+		return
+	}
+	if vars.LastInsertInfo.LastTableID != e.Table.Meta().ID {
+		vars.LastInsertInfo.ID = uint64(e.lastInsertID)
+		vars.LastInsertInfo.Base = 0
+		return
+	}
+	if vars.LastInsertInfo.Base != 0 {
+		vars.SetLastInsertID(vars.LastInsertInfo.Base + 1)
+		vars.LastInsertInfo.Base = 0
+	} else {
+		vars.LastInsertInfo.ID++
+	}
+}
+
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
 	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
@@ -697,6 +728,10 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
+				e.rebase = true
+				e.lastInsertID = val
+			}
 			if val != 0 {
 				e.Table.RebaseAutoID(val, true)
 				continue
@@ -714,12 +749,9 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(recordID)
-			// Notes: incompatible with mysql
-			// MySQL will set last insert id to the first row, as follows:
-			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-			// `insert t (c1) values(1),(2),(3);`
-			// Last insert id will be 1, not 3.
-			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+			if e.currRow == 0 {
+				e.lastInsertID = recordID
+			}
 			// It's used for retry.
 			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
 				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
@@ -893,6 +925,8 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
 	}
+
+	e.setLastInsertID()
 	e.finished = true
 	return nil, nil
 }
