@@ -16,7 +16,6 @@ package kv
 import (
 	"strings"
 
-	"github.com/pingcap/go-themis"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 )
@@ -82,7 +81,6 @@ func IsRetryableError(err error) bool {
 	if terror.ErrorEqual(err, ErrRetryable) ||
 		terror.ErrorEqual(err, ErrLockConflict) ||
 		terror.ErrorEqual(err, ErrConditionNotMatch) ||
-		terror.ErrorEqual(err, themis.ErrRetryable) ||
 		// HBase exception message will tell you if you should retry or not
 		strings.Contains(err.Error(), "try again later") {
 		return true

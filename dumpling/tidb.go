@@ -214,7 +214,6 @@ func RegisterLocalStore(name string, driver engine.Driver) error {
 // Examples:
 //    goleveldb://relative/path
 //    boltdb:///absolute/path
-//    hbase://zk1,zk2,zk3/hbasetbl?tso=127.0.0.1:1234
 //
 // The engine should be registered before creating storage.
 func NewStore(path string) (kv.Storage, error) {

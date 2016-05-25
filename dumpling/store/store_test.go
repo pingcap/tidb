@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	testStore     = flag.String("teststore", "memory", "test store name, [memory, goleveldb, boltdb, hbase]")
+	testStore     = flag.String("teststore", "memory", "test store name, [memory, goleveldb, boltdb]")
 	testStorePath = flag.String("testpath", "testkv", "test storage path")
 )
 

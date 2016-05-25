@@ -27,14 +27,13 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
 )
 
 var (
-	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, hbase, boltdb, tikv]")
+	store      = flag.String("store", "goleveldb", "registered store name, [memory, goleveldb, boltdb, tikv]")
 	storePath  = flag.String("path", "/tmp/tidb", "tidb storage path")
 	logLevel   = flag.String("L", "debug", "log level: info, debug, warn, error, fatal")
 	port       = flag.String("P", "4000", "mp server port")
@@ -44,7 +43,6 @@ var (
 )
 
 func main() {
-	tidb.RegisterStore("hbase", hbasekv.Driver{})
 	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
 	tidb.RegisterStore("tikv", tikv.Driver{})
 
