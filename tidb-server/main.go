@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/metric"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/store/hbase"
 	"github.com/pingcap/tidb/store/localstore/boltdb"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/printer"
@@ -44,7 +43,6 @@ var (
 )
 
 func main() {
-	tidb.RegisterStore("hbase", hbasekv.Driver{})
 	tidb.RegisterLocalStore("boltdb", boltdb.Driver{})
 	tidb.RegisterStore("tikv", tikv.Driver{})
 
