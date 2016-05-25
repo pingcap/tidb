@@ -605,12 +605,24 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 	}
 
 	if !v.IsGlobal {
-		if value, ok := sessionVars.Systems[name]; ok {
-			v.SetString(value)
-			return true
+		d := sessionVars.GetSystemVar(name)
+		if d.Kind() == types.KindNull {
+			// Get global system variable and fill it in session.
+			globalVal, err := globalVars.GetGlobalSysVar(e.ctx, name)
+			if err != nil {
+				e.err = errors.Trace(err)
+				return false
+			}
+			d.SetString(globalVal)
+			err = sessionVars.SetSystemVar(name, d)
+			if err != nil {
+				e.err = errors.Trace(err)
+				return false
+			}
 		}
+		v.SetDatum(d)
+		return true
 	}
-
 	value, err := globalVars.GetGlobalSysVar(e.ctx, name)
 	if err != nil {
 		e.err = errors.Trace(err)

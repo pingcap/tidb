@@ -112,6 +112,77 @@ func (s *testColumnSuite) TestDesc(c *C) {
 	ColDescFieldNames(true)
 }
 
+func (s *testColumnSuite) TestGetZeroValue(c *C) {
+	cases := []struct {
+		ft    *types.FieldType
+		value types.Datum
+	}{
+		{
+			types.NewFieldType(mysql.TypeLong),
+			types.NewIntDatum(0),
+		},
+		{
+			&types.FieldType{
+				Tp:   mysql.TypeLonglong,
+				Flag: mysql.UnsignedFlag,
+			},
+			types.NewUintDatum(0),
+		},
+		{
+			types.NewFieldType(mysql.TypeFloat),
+			types.NewFloat32Datum(0),
+		},
+		{
+			types.NewFieldType(mysql.TypeDouble),
+			types.NewFloat64Datum(0),
+		},
+		{
+			types.NewFieldType(mysql.TypeNewDecimal),
+			types.NewDecimalDatum(mysql.NewDecimalFromInt(0, 0)),
+		},
+		{
+			types.NewFieldType(mysql.TypeVarchar),
+			types.NewStringDatum(""),
+		},
+		{
+			types.NewFieldType(mysql.TypeBlob),
+			types.NewBytesDatum([]byte{}),
+		},
+		{
+			types.NewFieldType(mysql.TypeDuration),
+			types.NewDurationDatum(mysql.ZeroDuration),
+		},
+		{
+			types.NewFieldType(mysql.TypeDatetime),
+			types.NewDatum(mysql.ZeroDatetime),
+		},
+		{
+			types.NewFieldType(mysql.TypeTimestamp),
+			types.NewDatum(mysql.ZeroTimestamp),
+		},
+		{
+			types.NewFieldType(mysql.TypeDate),
+			types.NewDatum(mysql.ZeroDate),
+		},
+		{
+			types.NewFieldType(mysql.TypeBit),
+			types.NewDatum(mysql.Bit{Value: 0, Width: mysql.MinBitWidth}),
+		},
+		{
+			types.NewFieldType(mysql.TypeSet),
+			types.NewDatum(mysql.Set{}),
+		},
+	}
+	for _, ca := range cases {
+		colInfo := &model.ColumnInfo{FieldType: *ca.ft}
+		zv := getZeroValue(colInfo)
+		c.Assert(zv.Kind(), Equals, ca.value.Kind())
+		cmp, err := zv.CompareDatum(ca.value)
+		c.Assert(err, IsNil)
+		c.Assert(cmp, Equals, 0)
+	}
+}
+
 func newCol(name string) *Column {
 	return &Column{
 		model.ColumnInfo{
