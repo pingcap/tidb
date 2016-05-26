@@ -236,7 +236,7 @@ func (s *testSessionSuite) TestPrimaryKeyAutoincrement(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSessionSuite) TestAutoincrementID(c *C) {
+func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
@@ -396,6 +396,69 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIssue1118(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+	c.Assert(se.(*session).txn, IsNil)
+
+	// insert
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
+	mustExecSQL(c, se, "insert into t set c2 = 11")
+	r := mustExecSQL(c, se, "select last_insert_id()")
+	row, err := r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 1)
+	mustExecSQL(c, se, "insert into t (c2) values (22), (33), (44)")
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 2)
+	mustExecSQL(c, se, "insert into t (c1, c2) values (10, 55)")
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 2)
+
+	// replace
+	mustExecSQL(c, se, "replace t (c2) values(66)")
+	r = mustExecSQL(c, se, "select * from t")
+	rows, err := GetRows(r)
+	c.Assert(err, IsNil)
+	matches(c, rows, [][]interface{}{{1, 11}, {2, 22}, {3, 33}, {4, 44}, {10, 55}, {11, 66}})
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 11)
+
+	// update
+	mustExecSQL(c, se, "update t set c1=last_insert_id(c1 + 100)")
+	r = mustExecSQL(c, se, "select * from t")
+	rows, err = GetRows(r)
+	c.Assert(err, IsNil)
+	matches(c, rows, [][]interface{}{{101, 11}, {102, 22}, {103, 33}, {104, 44}, {110, 55}, {111, 66}})
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 111)
+	mustExecSQL(c, se, "insert into t (c2) values (77)")
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 112)
+
+	// drop
+	mustExecSQL(c, se, "drop table t")
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 112)
+
+	err = store.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSessionSuite) TestIssue827(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
@@ -436,7 +499,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID := se.LastInsertID()
-	c.Assert(lastInsertID+3, Equals, currLastInsertID)
+	c.Assert(lastInsertID+5, Equals, currLastInsertID)
 
 	// insert set
 	lastInsertID = se.LastInsertID()
@@ -462,7 +525,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID = se.LastInsertID()
-	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// replace
 	lastInsertID = se.LastInsertID()
@@ -488,7 +551,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID = se.LastInsertID()
-	c.Assert(lastInsertID+3, Equals, currLastInsertID)
+	c.Assert(lastInsertID+1, Equals, currLastInsertID)
 
 	// update
 	lastInsertID = se.LastInsertID()
@@ -515,7 +578,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID = se.LastInsertID()
-	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// prepare
 	lastInsertID = se.LastInsertID()

@@ -27,7 +27,6 @@ import (
 )
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-
 func builtinDatabase(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
 	s := db.GetCurrentSchema(ctx)
 	if s == "" {
@@ -77,6 +76,20 @@ func builtinConnectionID(args []types.Datum, ctx context.Context) (d types.Datum
 
 	d.SetUint64(data.ConnectionID)
 	return d, nil
+}
+
+// See: http://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id
+func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	if len(args) == 1 {
+		id, err := args[0].ToInt64()
+		if err != nil {
+			return d, errors.Trace(err)
+		}
+		variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
+	}
+
+	d.SetUint64(variable.GetSessionVars(ctx).LastInsertID)
+	return
 }
 
 func builtinVersion(args []types.Datum, ctx context.Context) (d types.Datum, err error) {

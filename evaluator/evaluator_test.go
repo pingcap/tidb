@@ -640,6 +640,31 @@ func (s *testEvaluatorSuite) TestIsTruth(c *C) {
 	s.runTests(c, cases)
 }
 
+func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
+	defer testleak.AfterTest(c)()
+	cases := []struct {
+		exprStr   []ast.ExprNode
+		resultStr string
+	}{
+		{nil, "0"},
+		{[]ast.ExprNode{ast.NewValueExpr(1)}, "1"},
+	}
+
+	ctx := mock.NewContext()
+	variable.BindSessionVars(ctx)
+	c.Log(ctx)
+	for _, ca := range cases {
+		expr := &ast.FuncCallExpr{
+			FnName: model.NewCIStr("last_insert_id"),
+			Args:   ca.exprStr,
+		}
+		val, err := Eval(ctx, expr)
+		c.Assert(err, IsNil)
+		valStr := fmt.Sprintf("%v", val.GetValue())
+		c.Assert(valStr, Equals, ca.resultStr, Commentf("for %s", ca.exprStr))
+	}
+}
+
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
