@@ -396,14 +396,14 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSessionSuite) TestLastInsertID(c *C) {
+func (s *testSessionSuite) TestIssue1118(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
+	c.Assert(se.(*session).txn, IsNil)
 
 	// insert
 	mustExecSQL(c, se, "drop table if exists t")
-	c.Assert(se.(*session).txn, IsNil)
 	mustExecSQL(c, se, "create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
 	mustExecSQL(c, se, "insert into t set c2 = 11")
 	r := mustExecSQL(c, se, "select last_insert_id()")
@@ -443,6 +443,13 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	c.Assert(err, IsNil)
 	match(c, row.Data, 111)
 	mustExecSQL(c, se, "insert into t (c2) values (77)")
+	r = mustExecSQL(c, se, "select last_insert_id()")
+	row, err = r.Next()
+	c.Assert(err, IsNil)
+	match(c, row.Data, 112)
+
+	// drop
+	mustExecSQL(c, se, "drop table t")
 	r = mustExecSQL(c, se, "select last_insert_id()")
 	row, err = r.Next()
 	c.Assert(err, IsNil)
@@ -492,7 +499,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID := se.LastInsertID()
-	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+	c.Assert(lastInsertID+5, Equals, currLastInsertID)
 
 	// insert set
 	lastInsertID = se.LastInsertID()
@@ -518,7 +525,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID = se.LastInsertID()
-	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// replace
 	lastInsertID = se.LastInsertID()
@@ -571,7 +578,7 @@ func (s *testSessionSuite) TestIssue827(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, DeepEquals, expect)
 	currLastInsertID = se.LastInsertID()
-	c.Assert(lastInsertID+1, Equals, currLastInsertID)
+	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// prepare
 	lastInsertID = se.LastInsertID()

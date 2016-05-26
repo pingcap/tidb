@@ -60,9 +60,8 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 
 // LastInsertInfo saves last insert information.
 type LastInsertInfo struct {
-	LastTableID int64
-	Base        uint64
-	ID          uint64
+	Base uint64
+	ID   uint64
 }
 
 // SessionVars is to handle user-defined or global variables in current session.

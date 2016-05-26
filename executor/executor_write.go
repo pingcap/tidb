@@ -681,29 +681,23 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 }
 
 func (e *InsertValues) setLastInsertID() {
-	defer func() {
-		variable.GetSessionVars(e.ctx).LastInsertInfo.LastTableID = e.Table.Meta().ID
-	}()
 	if e.lastInsertID == 0 {
 		return
 	}
 
 	vars := variable.GetSessionVars(e.ctx)
+	// When setting auto-increment ID, the last insert id will rebase and not change in this inserting,
+	// At the next inserting the last insert id value is (rebase + 1).
 	if e.rebase {
 		vars.LastInsertInfo.Base = uint64(e.lastInsertID)
 		e.rebase = false
-		return
-	}
-	if vars.LastInsertInfo.LastTableID != e.Table.Meta().ID {
-		vars.LastInsertInfo.ID = uint64(e.lastInsertID)
-		vars.LastInsertInfo.Base = 0
 		return
 	}
 	if vars.LastInsertInfo.Base != 0 {
 		vars.SetLastInsertID(vars.LastInsertInfo.Base + 1)
 		vars.LastInsertInfo.Base = 0
 	} else {
-		vars.LastInsertInfo.ID++
+		vars.LastInsertInfo.ID = uint64(e.lastInsertID)
 	}
 }
 
@@ -749,6 +743,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(recordID)
+			// It's compatible with mysql. So it sets last insert id to the first row.
 			if e.currRow == 0 {
 				e.lastInsertID = recordID
 			}
