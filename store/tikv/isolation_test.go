@@ -170,7 +170,7 @@ func (s *testIsolationSuite) TestReadWriteConflict(c *C) {
 	// Check all reads got the value committed before it's startTS.
 	var i, j int
 	for ; i < len(writes); i++ {
-		for ; j < len(reads) && reads[j].startTS < writes[i].commitTS; j++ {
+		for ; j < len(reads); j++ {
 			w, r := writes[i], reads[j]
 			if r.startTS >= w.commitTS {
 				break
