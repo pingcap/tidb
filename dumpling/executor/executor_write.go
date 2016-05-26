@@ -396,9 +396,10 @@ func (e *DeleteExec) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow    int
-	ctx        context.Context
-	SelectExec Executor
+	currRow      int
+	lastInsertID uint64
+	ctx          context.Context
+	SelectExec   Executor
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
@@ -464,6 +465,10 @@ func (e *InsertExec) Next() (*Row, error) {
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	if e.lastInsertID != 0 {
+		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
 	}
 	e.finished = true
 	return nil, nil
@@ -714,12 +719,10 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(recordID)
-			// Notes: incompatible with mysql
-			// MySQL will set last insert id to the first row, as follows:
-			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-			// `insert t (c1) values(1),(2),(3);`
-			// Last insert id will be 1, not 3.
-			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+			// It's compatible with mysql. So it sets last insert id to the first row.
+			if e.currRow == 0 {
+				e.lastInsertID = uint64(recordID)
+			}
 			// It's used for retry.
 			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
 				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
@@ -892,6 +895,10 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		}
 		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+	}
+
+	if e.lastInsertID != 0 {
+		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
 	}
 	e.finished = true
 	return nil, nil
