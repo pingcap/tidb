@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/tikv/mock-tikv"
@@ -62,6 +63,20 @@ func (s *testRegionCacheSuite) TestDropStore(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(r, IsNil)
 	c.Assert(s.cache.regions, HasLen, 0)
+}
+
+func (s *testRegionCacheSuite) TestDropStoreRetry(c *C) {
+	s.cluster.RemoveStore(s.store1)
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(time.Millisecond * 10)
+		s.cluster.AddStore(s.store1, s.storeAddr(s.store1))
+		close(done)
+	}()
+	r, err := s.cache.GetRegion([]byte("a"))
+	c.Assert(err, IsNil)
+	c.Assert(r.GetID(), Equals, s.region1)
+	<-done
 }
 
 func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {

@@ -145,26 +145,37 @@ func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 
 // loadRegion get region from pd client, and pick the random peer as leader.
 func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
-	meta, err := c.pdClient.GetRegion(key)
-	if err != nil {
-		// We assume PD will recover soon.
-		return nil, errors.Annotate(err, txnRetryableMark)
+	var region *Region
+	var backoffErr error
+	for backoff := pdBackoff(); backoffErr == nil; backoffErr = backoff() {
+		meta, err := c.pdClient.GetRegion(key)
+		if err != nil {
+			log.Warnf("loadRegion from PD failed, key: %q, err: %v", key, err)
+			continue
+		}
+		if meta == nil {
+			log.Warnf("region not found for key %q", key)
+			continue
+		}
+		if len(meta.Peers) == 0 {
+			return nil, errors.New("receive Region with no peer")
+		}
+		peer := meta.Peers[0]
+		store, err := c.pdClient.GetStore(peer.GetStoreId())
+		if err != nil {
+			log.Warnf("loadStore from PD failed, key %q, storeID: %d, err: %v", key, peer.GetStoreId(), err)
+			continue
+		}
+		region = &Region{
+			meta:       meta,
+			peer:       peer,
+			addr:       store.GetAddress(),
+			curPeerIdx: 0,
+		}
+		break
 	}
-	if len(meta.Peers) == 0 {
-		return nil, errors.New("receive Region with no peer")
-	}
-	curPeerIdx := 0
-	peer := meta.Peers[curPeerIdx]
-	store, err := c.pdClient.GetStore(peer.GetStoreId())
-	if err != nil {
-		// We assume PD will recover soon.
-		return nil, errors.Annotate(err, txnRetryableMark)
-	}
-	region := &Region{
-		meta:       meta,
-		peer:       peer,
-		addr:       store.GetAddress(),
-		curPeerIdx: curPeerIdx,
+	if backoffErr != nil {
+		return nil, errors.Annotate(backoffErr, txnRetryableMark)
 	}
 
 	c.mu.Lock()
@@ -254,4 +265,14 @@ func regionMissBackoff() func() error {
 		sleepCap  = 1
 	)
 	return NewBackoff(maxRetry, sleepBase, sleepCap, NoJitter)
+}
+
+// pdBackoff is for PD RPC retry.
+func pdBackoff() func() error {
+	const (
+		maxRetry  = 5
+		sleepBase = 500
+		sleepCap  = 1000
+	)
+	return NewBackoff(maxRetry, sleepBase, sleepCap, EqualJitter)
 }
