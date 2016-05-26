@@ -240,6 +240,7 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	defer testleak.AfterTest(c)()
 	store := newStore(c, s.dbName)
 	se := newSession(c, store, s.dbName)
+
 	mustExecSQL(c, se, "drop table if exists t")
 	mustExecSQL(c, se, "create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	mustExecSQL(c, se, "insert t values ()")
@@ -253,8 +254,13 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	mustExecSQL(c, se, "insert t () values ()")
 	c.Assert(se.LastInsertID(), Greater, lastID)
 	mustExecSQL(c, se, "insert t () select 100")
-	mustExecSQL(c, se, s.dropDBSQL)
 
+	mustExecSQL(c, se, "drop table if exists t")
+	mustExecSQL(c, se, "create table t (i tinyint unsigned not null auto_increment, primary key (i));")
+	mustExecSQL(c, se, "insert into t set i = 254;")
+	mustExecSQL(c, se, "insert t values ()")
+
+	mustExecSQL(c, se, s.dropDBSQL)
 	err := store.Close()
 	c.Assert(err, IsNil)
 }
