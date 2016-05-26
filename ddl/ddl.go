@@ -752,7 +752,8 @@ func (d *ddl) buildTableInfo(tableName model.CIStr, cols []*table.Column, constr
 					return nil, infoschema.ErrColumnNotExists.Gen("no such column: %v", key)
 				}
 				switch col.Tp {
-				case mysql.TypeLong, mysql.TypeLonglong:
+				case mysql.TypeLong, mysql.TypeLonglong,
+					mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 					tbInfo.PKIsHandle = true
 					// Avoid creating index for PK handle column.
 					continue
