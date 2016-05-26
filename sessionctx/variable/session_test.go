@@ -46,5 +46,5 @@ func (*testSessionSuite) TestSession(c *C) {
 
 	// For last insert id
 	v.SetLastInsertID(uint64(1))
-	c.Assert(v.LastInsertInfo.ID, Equals, uint64(1))
+	c.Assert(v.LastInsertID, Equals, uint64(1))
 }

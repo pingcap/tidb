@@ -88,7 +88,7 @@ func builtinLastInsertID(args []types.Datum, ctx context.Context) (d types.Datum
 		variable.GetSessionVars(ctx).SetLastInsertID(uint64(id))
 	}
 
-	d.SetUint64(variable.GetSessionVars(ctx).LastInsertInfo.ID)
+	d.SetUint64(variable.GetSessionVars(ctx).LastInsertID)
 	return
 }
 

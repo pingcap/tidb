@@ -397,8 +397,7 @@ func (e *DeleteExec) Close() error {
 // InsertValues is the data to insert.
 type InsertValues struct {
 	currRow      int
-	rebase       bool
-	lastInsertID int64
+	lastInsertID uint64
 	ctx          context.Context
 	SelectExec   Executor
 
@@ -468,7 +467,9 @@ func (e *InsertExec) Next() (*Row, error) {
 		}
 	}
 
-	e.setLastInsertID()
+	if e.lastInsertID != 0 {
+		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
+	}
 	e.finished = true
 	return nil, nil
 }
@@ -680,27 +681,6 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]
 	return row, nil
 }
 
-func (e *InsertValues) setLastInsertID() {
-	if e.lastInsertID == 0 {
-		return
-	}
-
-	vars := variable.GetSessionVars(e.ctx)
-	// When setting auto-increment ID, the last insert id will rebase and not change in this inserting,
-	// At the next inserting the last insert id value is (rebase + 1).
-	if e.rebase {
-		vars.LastInsertInfo.Base = uint64(e.lastInsertID)
-		e.rebase = false
-		return
-	}
-	if vars.LastInsertInfo.Base != 0 {
-		vars.SetLastInsertID(vars.LastInsertInfo.Base + 1)
-		vars.LastInsertInfo.Base = 0
-	} else {
-		vars.LastInsertInfo.ID = uint64(e.lastInsertID)
-	}
-}
-
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
 	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
@@ -722,10 +702,6 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
-				e.rebase = true
-				e.lastInsertID = val
-			}
 			if val != 0 {
 				e.Table.RebaseAutoID(val, true)
 				continue
@@ -745,7 +721,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 			row[i].SetInt64(recordID)
 			// It's compatible with mysql. So it sets last insert id to the first row.
 			if e.currRow == 0 {
-				e.lastInsertID = recordID
+				e.lastInsertID = uint64(recordID)
 			}
 			// It's used for retry.
 			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
@@ -921,7 +897,9 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
 	}
 
-	e.setLastInsertID()
+	if e.lastInsertID != 0 {
+		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
+	}
 	e.finished = true
 	return nil, nil
 }

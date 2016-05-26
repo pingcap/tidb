@@ -135,7 +135,7 @@ func (s *session) Status() uint16 {
 }
 
 func (s *session) LastInsertID() uint64 {
-	return variable.GetSessionVars(s).LastInsertInfo.ID
+	return variable.GetSessionVars(s).LastInsertID
 }
 
 func (s *session) AffectedRows() uint64 {

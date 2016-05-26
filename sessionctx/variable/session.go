@@ -58,12 +58,6 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
 	return id, nil
 }
 
-// LastInsertInfo saves last insert information.
-type LastInsertInfo struct {
-	Base uint64
-	ID   uint64
-}
-
 // SessionVars is to handle user-defined or global variables in current session.
 type SessionVars struct {
 	// user-defined variables
@@ -80,9 +74,9 @@ type SessionVars struct {
 	RetryInfo *RetryInfo
 
 	// following variables are special for current session
-	Status         uint16
-	LastInsertInfo *LastInsertInfo
-	AffectedRows   uint64
+	Status       uint16
+	LastInsertID uint64
+	AffectedRows uint64
 
 	// Client capability
 	ClientCapability uint32
@@ -115,7 +109,6 @@ func BindSessionVars(ctx context.Context) {
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
 		RetryInfo:            &RetryInfo{},
-		LastInsertInfo:       &LastInsertInfo{},
 	}
 
 	ctx.SetValue(sessionVarsKey, v)
@@ -154,7 +147,7 @@ func GetCharsetInfo(ctx context.Context) (charset, collation string) {
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
-	s.LastInsertInfo.ID = insertID
+	s.LastInsertID = insertID
 }
 
 // SetAffectedRows saves the affected rows to the session context.
