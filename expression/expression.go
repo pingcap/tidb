@@ -15,22 +15,27 @@ package expression
 
 import (
 	"fmt"
-	"github.com/coreos/etcd/cmd/vendor/golang.org/x/net/context"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
 )
 
-type aggrMapper map[*ast.AggregateFuncExpr]int
-
-func ExpressionRewrite(expr ast.ExprNode, schema Schema, AggrMapper aggrMapper) (newExpr Expression, err error) {
-	er := &expressionRewriter{curTop: 0, schema: schema, aggrMap: AggrMapper}
+// Rewrite rewrites ast to Expression.
+func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr Expression, err error) {
+	er := &expressionRewriter{schema: schema, aggrMap: AggrMapper}
+	log.Infof(fmt.Sprintf("expr %T, schema %v", expr, schema))
 	expr.Accept(er)
+	if er.err != nil {
+		return nil, errors.Trace(er.err)
+	}
 	if len(er.ctxStack) != 1 {
-		err = errors.New(fmt.Sprintf("context len %v is invalid", len(er.ctxStack)))
+		err = fmt.Errorf("context len %v is invalid", len(er.ctxStack))
+		return nil, errors.Trace(err)
 	}
 	return er.ctxStack[0], nil
 }
@@ -38,19 +43,45 @@ func ExpressionRewrite(expr ast.ExprNode, schema Schema, AggrMapper aggrMapper) 
 type expressionRewriter struct {
 	ctxStack []Expression
 	schema   Schema
-	curTop   int
 	err      error
-	aggrMap  aggrMapper
+	aggrMap  map[*ast.AggregateFuncExpr]int
 }
 
+// Expression represents all scalar expression in SQL.
 type Expression interface {
+	// Eval evaluates a expression through a row.
 	Eval(row []types.Datum) (types.Datum, error)
+
+	// Get the expression return type.
 	GetType() types.FieldType
+
+	// DeepCopy copies a expression totally.
 	DeepCopy() Expression
+
+	// ToString converts a expression into a string.
+	ToString() string
 }
 
+// EvalBool evaluates expression to a boolean value.
+func EvalBool(expr Expression, row []types.Datum) (bool, error) {
+	data, err := expr.Eval(row)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if data.Kind() == types.KindNull {
+		return false, nil
+	}
+
+	i, err := data.ToBool()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return i != 0, nil
+}
+
+// Column represents a column.
 type Column struct {
-	FromID  int
+	FromID  string
 	ColName model.CIStr
 	DbName  model.CIStr
 	TblName model.CIStr
@@ -60,49 +91,71 @@ type Column struct {
 	Index int
 }
 
+// ToString implements Expression interface.
+func (col *Column) ToString() string {
+	result := col.ColName.L
+	if col.TblName.L != "" {
+		result = col.TblName.L + "." + result
+	}
+	if col.DbName.L != "" {
+		result = col.DbName.L + "." + result
+	}
+	return result
+}
+
 // GetType implements Expression interface.
 func (col *Column) GetType() types.FieldType {
 	return col.RetType
 }
 
-func (col *Column) Eval(row []types.Datum) (types.Datum, error) {
+// Eval implements Expression interface.
+func (col *Column) Eval(row []types.Datum) (d types.Datum, err error) {
 	if col.Index >= 0 && col.Index <= len(row) {
-		return errors.New("Index out of range!")
+		return d, errors.New("Index out of range!")
 	}
 	return row[col.Index], nil
 }
 
+// DeepCopy implements Expression interface.
 func (col *Column) DeepCopy() Expression {
 	return &Column{FromID: col.FromID, ColName: col.ColName, DbName: col.DbName, TblName: col.TblName, RetType: col.RetType, Index: col.Index}
 }
 
+// Schema stands for the row schema get from input.
 type Schema []*Column
 
-func (s *Schema) FindColumn(astCol ast.ColumnName) (*Column, error) {
+// FindColumn replace a ast column to a expression column.
+func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s {
-		if (dbName.L == "" || dbName.L == col.DbName.L) && (tblName == "" || tblName == col.TblName.L) && (colName == col.ColName.L) {
-			if idx != i {
-				return nil, errors.New(fmt.Sprintf("Column '%s' is ambiguous", astCol.Text()))
+		log.Infof("s coln %s %s %s", col.DbName.L, col.TblName.L, col.ColName.L)
+		if (dbName.L == "" || dbName.L == col.DbName.L) && (tblName.L == "" || tblName.L == col.TblName.L) && (colName.L == col.ColName.L) {
+			if idx != -1 {
+				return nil, fmt.Errorf("Column '%s' is ambiguous", colName.L)
 			}
+			idx = i
 		}
 	}
 	if idx == -1 {
-		return nil, errors.New(fmt.Sprintf("Unknown column %d.", astCol.Text()))
+		return nil, fmt.Errorf("Unknown column %s %s %s.", dbName.L, tblName.L, colName.L)
 	}
 	return s[idx], nil
 }
 
-func (s *Schema) GetIndex(col *Column) int {
+// GetIndex finds the index for a column
+func (s Schema) GetIndex(col *Column) int {
+	log.Infof("find col %s %s", col.FromID, col.ColName.L)
 	for i, c := range s {
-		if c.FromID == col.FromID && c.ColName == col.ColName {
+		log.Infof("target col %s %s", c.FromID, c.ColName.L)
+		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
 			return i
 		}
 	}
 	return -1
 }
 
+// ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
 	Args     []Expression
 	FuncName model.CIStr
@@ -111,10 +164,41 @@ type ScalarFunction struct {
 	ctx      context.Context
 }
 
-func NewFunction(funcName string, args []Expression) *ScalarFunction {
-	return &ScalarFunction{Args: args, FuncName: funcName, function: evaluator.Funcs[funcName].F}
+// ToString implements Expression interface.
+func (sf *ScalarFunction) ToString() string {
+	result := sf.FuncName.L + "("
+	for _, arg := range sf.Args {
+		result += arg.ToString()
+		result += ","
+	}
+	result += ")"
+	return result
 }
 
+// NewFunction creates a new scalar function.
+func NewFunction(funcName model.CIStr, args []Expression) *ScalarFunction {
+	return &ScalarFunction{Args: args, FuncName: funcName, function: evaluator.Funcs[funcName.L].F}
+}
+
+//Schema2Exprs converts []*Column to []Expression.
+func Schema2Exprs(schema Schema) []Expression {
+	result := make([]Expression, 0, len(schema))
+	for _, col := range schema {
+		result = append(result, col)
+	}
+	return result
+}
+
+//ScalarFuncs2Exprs converts []*ScalarFunction to []Expression.
+func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
+	result := make([]Expression, 0, len(funcs))
+	for _, col := range funcs {
+		result = append(result, col)
+	}
+	return result
+}
+
+// DeepCopy implements Expression interface.
 func (sf *ScalarFunction) DeepCopy() Expression {
 	newFunc := &ScalarFunction{FuncName: sf.FuncName, function: sf.function, ctx: sf.ctx, retType: sf.retType}
 	for _, arg := range sf.Args {
@@ -128,7 +212,7 @@ func (sf *ScalarFunction) GetType() types.FieldType {
 	return sf.retType
 }
 
-// GetType implements Expression interface.
+// Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
 	args := make([]types.Datum, len(sf.Args))
 	for _, arg := range sf.Args {
@@ -136,31 +220,40 @@ func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
 		if err != nil {
 			args = append(args, result)
 		} else {
-			return nil, err
+			return types.Datum{}, err
 		}
 	}
 	return sf.function(args, sf.ctx)
 }
 
+// Constant stands for a constant value.
 type Constant struct {
 	value   types.Datum
 	retType types.FieldType
 }
 
+// ToString implements Expression interface.
+func (c *Constant) ToString() string {
+	return fmt.Sprintf("%v", c.value.GetValue())
+}
+
+// DeepCopy implements Expression interface.
 func (c *Constant) DeepCopy() Expression {
 	return &Constant{value: c.value, retType: c.retType}
 }
 
+// GetType implements Expression interface.
 func (c *Constant) GetType() types.FieldType {
 	return c.retType
 }
 
+// Eval implements Expression interface.
 func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
 	return c.value, nil
 }
 
+// Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChildren bool) {
-	er.curTop++
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
 		index, ok := -1, false
@@ -177,13 +270,14 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 	return inNode, false
 }
 
+// Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool) {
-	er.curTop--
+	length := len(er.ctxStack)
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
 	case *ast.FuncCallExpr:
 		function := &ScalarFunction{FuncName: v.FnName}
-		for i := er.curTop; i < len(er.ctxStack); i++ {
+		for i := length - len(v.Args); i < length; i++ {
 			function.Args = append(function.Args, er.ctxStack[i])
 		}
 		f := evaluator.Funcs[v.FnName.L]
@@ -192,7 +286,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			return retNode, false
 		}
 		function.function = f.F
-		er.ctxStack = er.ctxStack[:er.curTop]
+		er.ctxStack = er.ctxStack[:length-len(v.Args)]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.ColumnName:
 		column, err := er.schema.FindColumn(v)
@@ -205,29 +299,21 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 	case *ast.ValueExpr:
 		value := &Constant{value: v.Datum}
 		er.ctxStack = append(er.ctxStack, value)
-	case *ast.FuncCastExpr:
-		function := &ScalarFunction{FuncName: "cast", Args: []types.Datum{er.ctxStack[er.curTop]}}
-		er.ctxStack = er.ctxStack[:er.curTop]
-		function.function = evaluator.CastFactory(v.Tp)
-		er.ctxStack = append(er.ctxStack, function)
 	case *ast.IsNullExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop]}, FuncName: "isnull"}
-		f, ok := evaluator.Funcs[function.FuncName]
+		function := &ScalarFunction{
+			Args:     []Expression{er.ctxStack[length-1]},
+			FuncName: model.NewCIStr("isnull"),
+		}
+		f, ok := evaluator.Funcs[function.FuncName.L]
 		if !ok {
 			er.err = errors.New("Can't find function!")
 			return retNode, false
 		}
 		function.function = f.F
-		er.ctxStack = er.ctxStack[:er.curTop]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.IsTruthExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop]}, FuncName: "istruth"}
-		f := evaluator.IsTruthFactory(v.Not, v.True)
-		function.function = f
-		er.ctxStack = er.ctxStack[:er.curTop]
+		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.BinaryOperationExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop], er.ctxStack[er.curTop+1]}}
+		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-2], er.ctxStack[length-1]}}
 		switch v.Op {
 		case opcode.EQ:
 			function.FuncName = model.NewCIStr("EQ")
@@ -258,17 +344,17 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		case opcode.IntDiv:
 			function.FuncName = model.NewCIStr("intdiv")
 		}
-		f, ok := evaluator.Funcs[function.FuncName]
+		f, ok := evaluator.Funcs[function.FuncName.L]
 		if !ok {
 			er.err = errors.New("Can't find function!")
 			return retNode, false
 		}
 		function.function = f.F
-		function.retType = types.KindInt64
-		er.ctxStack = er.ctxStack[:er.curTop]
+		function.retType.Tp = types.KindInt64
+		er.ctxStack = er.ctxStack[:length-2]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.UnaryOperationExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop]}}
+		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-1]}}
 		switch v.Op {
 		case opcode.Not:
 			function.FuncName = model.NewCIStr("not")
@@ -279,39 +365,10 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		case opcode.Minus:
 			function.FuncName = model.NewCIStr("unaryminus")
 		}
-		er.ctxStack = er.ctxStack[:er.curTop]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.PatternRegexpExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop], er.ctxStack[er.curTop+1]}}
-		function.FuncName = "rlike"
-		function.function = evaluator.RLikeFactory(v)
-		function.retType = types.KindString
-		er.ctxStack = er.ctxStack[:er.curTop]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.PatternLikeExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop], er.ctxStack[er.curTop+1]}}
-		function.FuncName = "like"
-		function.function = evaluator.LikeFactory(v)
-		function.retType = types.KindString
-		er.ctxStack = er.ctxStack[:er.curTop]
-		er.ctxStack = append(er.ctxStack, function)
-	case *ast.CaseExpr:
-		function := ScalarFunction{Args: []Expression{er.ctxStack[er.curTop], er.ctxStack[er.curTop+1]}}
-		if v.Value == nil {
-			function.FuncName = "when"
-		} else {
-			function.FuncName = "case"
-		}
-		f, ok := evaluator.Funcs[function.FuncName]
-		if !ok {
-			er.err = errors.New("Can't find function!")
-			return retNode, false
-		}
-		function.function = f.F
-		er.ctxStack = er.ctxStack[:er.curTop]
+		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 	default:
-		er.err = errors.New(fmt.Sprintf("UnkownType: %T", v))
+		er.err = fmt.Errorf("UnkownType: %T", v)
 	}
 	return inNode, true
 }

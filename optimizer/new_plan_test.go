@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -88,33 +89,43 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}{
 		{
 			sql:   "select a from (select a from t where d = 0) k where k.a = 5",
-			first: "Table(t)->Filter->Fields->Filter->Fields",
-			best:  "Range(t)->Fields->Fields",
+			first: "DataScan(t)->Selection->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Projection->Projection",
 		},
 		{
 			sql:   "select a from (select 1+2 as a from t where d = 0) k where k.a = 5",
-			first: "Table(t)->Filter->Fields->Filter->Fields",
-			best:  "Table(t)->Fields->Filter->Fields",
+			first: "DataScan(t)->Selection->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Projection->Selection->Projection",
 		},
 		{
 			sql:   "select a from (select d as a from t where d = 0) k where k.a = 5",
-			first: "Table(t)->Filter->Fields->Filter->Fields",
-			best:  "Table(t)->Fields->Fields",
+			first: "DataScan(t)->Selection->Projection->Selection->Projection",
+			best:  "DataScan(t)->Selection->Projection->Projection",
 		},
 		{
 			sql:   "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
-			first: "Join{Table(t)->Table(t)}->Filter->Fields",
-			best:  "Join{Table(t)->Range(t)}->Fields",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select * from t ta join t tb on ta.d = tb.d where ta.d > 1 and tb.a = 0",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
 		},
 		{
 			sql:   "select * from t ta left outer join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
-			first: "Join{Table(t)->Table(t)}->Filter->Fields",
-			best:  "Join{Table(t)->Table(t)}->Filter->Fields",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
 		},
 		{
 			sql:   "select * from t ta right outer join t tb on ta.d = tb.d and ta.a > 1 where tb.a = 0",
-			first: "Join{Table(t)->Table(t)}->Filter->Fields",
-			best:  "Join{Range(t)->Range(t)}->Fields",
+			first: "Join{DataScan(t)->DataScan(t)}->Selection->Projection",
+			best:  "Join{DataScan(t)->Selection->DataScan(t)->Selection}->Projection",
+		},
+		{
+			sql:   "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
+			first: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Selection->Projection",
+			best:  "UnionAll{DataScan(t)->Selection->Projection->DataScan(t)->Selection->Projection->DataScan(t)->Selection->Projection}->Projection",
 		},
 	}
 	for _, ca := range cases {
@@ -130,9 +141,9 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, ca.first, Commentf("for %s", ca.sql))
 
-		_, err = plan.PredicatePushDown(p, []ast.ExprNode{})
+		_, err = plan.PredicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		err = plan.Refine(p)
+		err = plan.ColumnPruning(p)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}

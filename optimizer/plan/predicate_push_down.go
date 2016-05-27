@@ -16,6 +16,7 @@ package plan
 import (
 	"fmt"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -43,9 +44,8 @@ func columnSubstitute(expr expression.Expression, schema expression.Schema, newE
 // PredicatePushDown applies predicate push down to all kinds of plans, except aggregation and union.
 func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expression.Expression, err error) {
 	switch v := p.(type) {
-	case *TableScan:
-		v.attachCondition(predicates)
-		return ret, nil
+	case *NewTableScan:
+		return predicates, nil
 	case *Selection:
 		conditions := v.Conditions
 		retConditions, err1 := PredicatePushDown(p.GetChildByIndex(0), append(conditions, predicates...))
@@ -73,22 +73,24 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 		if v.JoinType == LeftOuterJoin {
 			rightCond = v.RightConditions
 			leftCond = leftPushCond
-			ret = append(equalCond, otherCond...)
+			ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 			ret = append(ret, rightPushCond...)
 		} else if v.JoinType == RightOuterJoin {
 			leftCond = v.LeftConditions
 			rightCond = rightPushCond
-			ret = append(equalCond, otherCond...)
+			ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 			ret = append(ret, leftPushCond...)
 		} else {
 			leftCond = append(v.LeftConditions, leftPushCond...)
 			rightCond = append(v.RightConditions, rightPushCond...)
 		}
+		log.Infof(fmt.Sprintf("left len %d right len %d", len(leftCond), len(rightCond)))
 		leftRet, err1 := PredicatePushDown(leftPlan, leftCond)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		rightRet, err2 := PredicatePushDown(rightPlan, rightCond)
+		log.Infof(fmt.Sprintf("left len %d right len %d", len(leftRet), len(rightRet)))
 		if err2 != nil {
 			return nil, errors.Trace(err2)
 		}
@@ -155,19 +157,22 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 		return
 	case *Union:
 		for _, proj := range v.Selects {
+			newExprs := make([]expression.Expression, 0, len(predicates))
 			for _, cond := range predicates {
-				newCond := columnSubstitute(cond, v.GetSchema(), proj.GetSchema())
-				retCond, err := PredicatePushDown(proj, newCond)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if len(retCond) != 0 {
-					addFilter(v, proj, retCond)
-				}
+				newCond := columnSubstitute(cond.DeepCopy(), v.GetSchema(), expression.Schema2Exprs(proj.GetSchema()))
+				newExprs = append(newExprs, newCond)
+			}
+			retCond, err := PredicatePushDown(proj, newExprs)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if len(retCond) != 0 {
+				addFilter(v, proj, retCond)
 			}
 		}
 		return
+	//TODO: support aggregation.
 	default:
-		return predicates, errors.New(fmt.Sprintf("Unkown type %T.", v))
+		return predicates, fmt.Errorf("Unkown type %T.", v)
 	}
 }

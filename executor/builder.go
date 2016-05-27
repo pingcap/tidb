@@ -20,6 +20,7 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -112,14 +113,14 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 }
 
 // compose CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func composeCondition(conditions []ast.ExprNode) ast.ExprNode {
+func composeCondition(conditions []expression.Expression) expression.Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
 	} else if length == 1 {
 		return conditions[0]
 	} else {
-		return &ast.BinaryOperationExpr{Op: opcode.AndAnd, L: composeCondition(conditions[:length/2]), R: composeCondition(conditions[length/2:])}
+		return expression.NewFunction(model.NewCIStr("eq"), []expression.Expression{composeCondition(conditions[0 : length/2]), composeCondition(conditions[length/2:])})
 	}
 }
 
@@ -131,12 +132,11 @@ func (b *executorBuilder) buildJoin(v *plan.Join) Executor {
 		fields:      v.Fields(),
 		ctx:         b.ctx,
 	}
-	var leftHashKey, rightHashKey []ast.ExprNode
+	var leftHashKey, rightHashKey []*expression.Column
 	for _, eqCond := range v.EqualConditions {
-		binop, ok := eqCond.(*ast.BinaryOperationExpr)
-		if ok && binop.Op == opcode.EQ {
-			ln, lOK := binop.L.(*ast.ColumnNameExpr)
-			rn, rOK := binop.R.(*ast.ColumnNameExpr)
+		if eqCond.FuncName.L == "eq" {
+			ln, lOK := eqCond.Args[0].(*expression.Column)
+			rn, rOK := eqCond.Args[1].(*expression.Column)
 			if lOK && rOK {
 				leftHashKey = append(leftHashKey, ln)
 				rightHashKey = append(rightHashKey, rn)

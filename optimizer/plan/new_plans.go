@@ -16,6 +16,7 @@ package plan
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -39,24 +40,26 @@ type Join struct {
 
 	JoinType JoinType
 
-	EqualConditions []expression.Expression
+	EqualConditions []*expression.ScalarFunction
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression
 }
 
-// SelectFields represents a select fields plan.
+// Projection represents a select fields plan.
 type Projection struct {
 	basePlan
 	exprs []expression.Expression
 }
 
+// Aggregation represents a aggregate plan.
 type Aggregation struct {
 	basePlan
 	AggFuncs     []expression.AggregationFunction
 	GroupByItems []expression.Expression
 }
 
+// Selection means a filter.
 type Selection struct {
 	basePlan
 
@@ -64,6 +67,35 @@ type Selection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+}
+
+// NewTableScan represents a tablescan without condition push down.
+type NewTableScan struct {
+	basePlan
+
+	Table  *model.TableInfo
+	Desc   bool
+	Ranges []TableRange
+
+	// RefAccess indicates it references a previous joined table, used in explain.
+	RefAccess bool
+
+	// AccessConditions can be used to build index range.
+	AccessConditions []expression.Expression
+
+	// FilterConditions can be used to filter result.
+	FilterConditions []expression.Expression
+
+	TableAsName *model.CIStr
+
+	LimitCount *int64
+}
+
+func (ts *NewTableScan) attachCondition(conditions []expression.Expression) {
+	for _, con := range conditions {
+		//TODO: implement refiner for expression.
+		ts.FilterConditions = append(ts.FilterConditions, con)
+	}
 }
 
 // AddChild for parent.

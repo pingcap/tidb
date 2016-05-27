@@ -16,36 +16,42 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"github.com/gogo/protobuf/test/group"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
-	"golang.org/x/tools/go/gcimporter15/testdata"
 )
 
+// AggregationFunction stands for aggregate functions.
 type AggregationFunction interface {
-	Update(row []types.Datum, groupKey []byte)
+	// Update during executing.
+	Update(row []types.Datum, groupKey []byte) error
+
+	// GetGroupResult will be called when all data have been processed.
 	GetGroupResult(groupKey []byte) types.Datum
+
+	// GetArgs stands for getting all arguments.
+	GetArgs() []Expression
 }
 
-func NewAggrFunction(funcType ast.AggrFuncType, funcArgs []Expression) AggregationFunction {
+// NewAggrFunction creates a new AggregationFunction.
+func NewAggrFunction(funcType string, funcArgs []Expression) AggregationFunction {
 	switch funcType {
 	case ast.AggFuncSum:
-		return &sumFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &sumFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncCount:
-		return &countFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &countFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncAvg:
-		return &avgFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &avgFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &concatFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0), isMax: true}
+		return &maxMinFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}, isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0), isMax: false}
+		return &maxMinFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}, isMax: false}
 	case ast.AggFuncFirstRow:
-		return &firstRowFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &firstRowFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	}
 	return nil
 }
@@ -58,7 +64,12 @@ type aggrFunction struct {
 	resultMapper aggrCxtMapper
 }
 
-func (af *aggrFunction) GetContext(groupKey []byte) *ast.AggEvaluateContext {
+// GetArgs implements AggregationFunction interface.
+func (af *aggrFunction) GetArgs() []Expression {
+	return af.Args
+}
+
+func (af *aggrFunction) getContext(groupKey []byte) *ast.AggEvaluateContext {
 	ctx, ok := af.resultMapper[string(groupKey)]
 	if !ok {
 		ctx = &ast.AggEvaluateContext{}
@@ -71,7 +82,7 @@ func (af *aggrFunction) GetContext(groupKey []byte) *ast.AggEvaluateContext {
 }
 
 func (af *aggrFunction) updateSum(row []types.Datum, groupKey []byte) error {
-	ctx := af.GetContext(groupKey)
+	ctx := af.getContext(groupKey)
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -101,12 +112,14 @@ type sumFunction struct {
 	aggrFunction
 }
 
+// Update implements AggregationFunction interface.
 func (sf *sumFunction) Update(row []types.Datum, groupKey []byte) error {
 	return sf.updateSum(row, groupKey)
 }
 
+// GetGroupResult implements AggregationFunction interface.
 func (sf *sumFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetValue(sf.GetContext(groupKey).Value)
+	d.SetValue(sf.getContext(groupKey).Value)
 	return
 }
 
@@ -114,11 +127,12 @@ type countFunction struct {
 	aggrFunction
 }
 
+// Update implements AggregationFunction interface.
 func (cf *countFunction) Update(row []types.Datum, groupKey []byte) error {
-	ctx := cf.GetContext(groupKey)
-	var vals []types.Datum
+	ctx := cf.getContext(groupKey)
+	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]types.Datum, 0, len(cf.Args))
+		vals = make([]interface{}, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -129,7 +143,7 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte) error {
 			return nil
 		}
 		if cf.Distinct {
-			vals = append(vals, value)
+			vals = append(vals, value.GetValue())
 		}
 	}
 	if cf.Distinct {
@@ -145,9 +159,10 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte) error {
 	return nil
 }
 
-func (sf *countFunction) GetGroupResult(groupKey []byte) types.Datum {
+// GetGroupResult implements AggregationFunction interface.
+func (cf *countFunction) GetGroupResult(groupKey []byte) types.Datum {
 	d := types.Datum{}
-	d.SetInt64(sf.GetContext(groupKey).Count)
+	d.SetInt64(cf.getContext(groupKey).Count)
 	return d
 }
 
@@ -155,12 +170,14 @@ type avgFunction struct {
 	aggrFunction
 }
 
+// Update implements AggregationFunction interface.
 func (af *avgFunction) Update(row []types.Datum, groupKey []byte) error {
 	return af.updateSum(row, groupKey)
 }
 
+// GetGroupResult implements AggregationFunction interface.
 func (af *avgFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	ctx := af.GetContext(groupKey)
+	ctx := af.getContext(groupKey)
 	switch x := ctx.Value.(type) {
 	case float64:
 		t := x / float64(ctx.Count)
@@ -178,18 +195,19 @@ type concatFunction struct {
 	aggrFunction
 }
 
+// Update implements AggregationFunction interface.
 func (cf *concatFunction) Update(row []types.Datum, groupKey []byte) error {
-	ctx := cf.GetContext(groupKey)
-	vals := make([]types.Datum, 0, len(cf.Args))
+	ctx := cf.getContext(groupKey)
+	vals := make([]interface{}, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value == nil {
+		if value.GetValue() == nil {
 			return nil
 		}
-		vals = append(vals, value)
+		vals = append(vals, value.GetValue())
 	}
 	if cf.Distinct {
 		d, err := ctx.DistinctChecker.Check(vals)
@@ -213,8 +231,9 @@ func (cf *concatFunction) Update(row []types.Datum, groupKey []byte) error {
 	return nil
 }
 
+// GetGroupResult implements AggregationFunction interface.
 func (cf *concatFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	ctx := cf.GetContext(groupKey)
+	ctx := cf.getContext(groupKey)
 	if ctx.Buffer != nil {
 		d.SetString(ctx.Buffer.String())
 	} else {
@@ -228,17 +247,19 @@ type maxMinFunction struct {
 	isMax bool
 }
 
-func (mf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetValue(mf.GetContext(groupKey).Value)
+// GetGroupResult implements AggregationFunction interface.
+func (mmf *maxMinFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
+	d.SetValue(mmf.getContext(groupKey).Value)
 	return
 }
 
-func (af *maxMinFunction) Update(row []types.Datum, groupKey []byte) error {
-	ctx := af.GetContext(groupKey)
-	if len(af.Args) != 1 {
+// Update implements AggregationFunction interface.
+func (mmf *maxMinFunction) Update(row []types.Datum, groupKey []byte) error {
+	ctx := mmf.getContext(groupKey)
+	if len(mmf.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncMaxMin")
 	}
-	a := af.Args[0]
+	a := mmf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
@@ -251,7 +272,7 @@ func (af *maxMinFunction) Update(row []types.Datum, groupKey []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if (af.isMax && c == -1) || (!af.isMax && c == 1) {
+	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
 		ctx.Value = value.GetValue()
 	}
 	return nil
@@ -261,15 +282,16 @@ type firstRowFunction struct {
 	aggrFunction
 }
 
-func (af *firstRowFunction) Update(row []types.Datum, groupKey []byte) error {
-	ctx := af.GetContext(groupKey)
+// Update implements AggregationFunction interface.
+func (ff *firstRowFunction) Update(row []types.Datum, groupKey []byte) error {
+	ctx := ff.getContext(groupKey)
 	if ctx.Evaluated {
 		return nil
 	}
-	if len(af.Args) != 1 {
+	if len(ff.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncMaxMin")
 	}
-	value, err := af.Args[0].Eval(row)
+	value, err := ff.Args[0].Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,7 +300,8 @@ func (af *firstRowFunction) Update(row []types.Datum, groupKey []byte) error {
 	return nil
 }
 
+// GetGroupResult implements AggregationFunction interface.
 func (ff *firstRowFunction) GetGroupResult(groupKey []byte) (d types.Datum) {
-	d.SetValue(ff.GetContext(groupKey).Value)
+	d.SetValue(ff.getContext(groupKey).Value)
 	return
 }

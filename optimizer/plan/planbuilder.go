@@ -841,14 +841,11 @@ func (se *subqueryVisitor) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) Plan {
 	sels := make([]Plan, len(union.SelectList.Selects))
 	for i, sel := range union.SelectList.Selects {
-			sels[i] = b.buildSelect(sel)
+		sels[i] = b.buildSelect(sel)
 	}
 	var p Plan
 	p = &Union{
 		Selects: sels,
-		basePlan: basePlan{
-			children: sels,
-		},
 	}
 	unionFields := union.GetResultFields()
 	for _, sel := range sels {
