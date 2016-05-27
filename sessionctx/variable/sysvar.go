@@ -24,14 +24,13 @@ import (
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
 type ScopeFlag uint8
 
-// ScopeNone means the system variable can not be changed dynamically.
-const ScopeNone ScopeFlag = 0
-
 const (
+	// ScopeNone means the system variable can not be changed dynamically.
+	ScopeNone ScopeFlag = 0
 	// ScopeGlobal means the system variable can be changed globally.
-	ScopeGlobal ScopeFlag = 1 << iota
+	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
-	ScopeSession
+	ScopeSession ScopeFlag = 1 << 1
 )
 
 // SysVar is for system variable.
