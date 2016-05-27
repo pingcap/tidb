@@ -120,6 +120,7 @@ func (txn *tikvTxn) Commit() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	txn.commitTS = committer.commitTS
 	log.Debugf("[kv] finish commit txn %d", txn.StartTS())
 	return nil
 }
