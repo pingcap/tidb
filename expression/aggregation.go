@@ -16,36 +16,34 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"github.com/gogo/protobuf/test/group"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/distinct"
 	"github.com/pingcap/tidb/util/types"
-	"golang.org/x/tools/go/gcimporter15/testdata"
 )
 
 type AggregationFunction interface {
-	Update(row []types.Datum, groupKey []byte)
+	Update(row []types.Datum, groupKey []byte) error
 	GetGroupResult(groupKey []byte) types.Datum
 }
 
-func NewAggrFunction(funcType ast.AggrFuncType, funcArgs []Expression) AggregationFunction {
+func NewAggrFunction(funcType string, funcArgs []Expression) AggregationFunction {
 	switch funcType {
 	case ast.AggFuncSum:
-		return &sumFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &sumFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncCount:
-		return &countFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &countFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncAvg:
-		return &avgFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &avgFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &concatFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0), isMax: true}
+		return &maxMinFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}, isMax: true}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0), isMax: false}
+		return &maxMinFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}, isMax: false}
 	case ast.AggFuncFirstRow:
-		return &firstRowFunction{aggrFunction.Args: funcArgs, aggrFunction.resultMapper: make(aggrCxtMapper, 0)}
+		return &firstRowFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCxtMapper, 0)}}
 	}
 	return nil
 }
@@ -116,9 +114,9 @@ type countFunction struct {
 
 func (cf *countFunction) Update(row []types.Datum, groupKey []byte) error {
 	ctx := cf.GetContext(groupKey)
-	var vals []types.Datum
+	var vals []interface{}
 	if cf.Distinct {
-		vals = make([]types.Datum, 0, len(cf.Args))
+		vals = make([]interface{}, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
@@ -129,7 +127,7 @@ func (cf *countFunction) Update(row []types.Datum, groupKey []byte) error {
 			return nil
 		}
 		if cf.Distinct {
-			vals = append(vals, value)
+			vals = append(vals, value.GetValue())
 		}
 	}
 	if cf.Distinct {
@@ -180,16 +178,16 @@ type concatFunction struct {
 
 func (cf *concatFunction) Update(row []types.Datum, groupKey []byte) error {
 	ctx := cf.GetContext(groupKey)
-	vals := make([]types.Datum, 0, len(cf.Args))
+	vals := make([]interface{}, 0, len(cf.Args))
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value == nil {
+		if value.GetValue() == nil {
 			return nil
 		}
-		vals = append(vals, value)
+		vals = append(vals, value.GetValue())
 	}
 	if cf.Distinct {
 		d, err := ctx.DistinctChecker.Check(vals)

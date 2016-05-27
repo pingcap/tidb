@@ -16,8 +16,6 @@ package plan
 import (
 	"math"
 
-	"fmt"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 )
@@ -55,7 +53,7 @@ type Plan interface {
 	// Get all the children.
 	GetChildren() []Plan
 	// Set the schema.
-	SetSchema(schema expression.Schema) error
+	SetSchema(schema expression.Schema)
 	// Get the schema.
 	GetSchema() expression.Schema
 	// Get ID.
@@ -82,18 +80,8 @@ func (p *basePlan) GetID() string {
 	return p.id
 }
 
-func (p *basePlan) SetSchema(schema expression.Schema) error {
-	for i, col1 := range schema {
-		for j := 0; j < i; j++ {
-			col2 := schema[j]
-			if col1.DbName.L == col2.DbName.L && col1.TblName.L == col2.TblName.L && col1.ColName.L == col2.ColName.L {
-				return errors.New(fmt.Sprintf("Duplicate column %s.", col2.ColName.L))
-			}
-		}
-	}
-	p.schema = make([]*expression.Column, 0, len(schema))
-	p.schema = append(p.schema, schema)
-	return nil
+func (p *basePlan) SetSchema(schema expression.Schema) {
+	p.schema = schema
 }
 
 func (p *basePlan) GetSchema() expression.Schema {

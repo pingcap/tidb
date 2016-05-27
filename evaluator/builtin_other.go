@@ -2,19 +2,18 @@ package evaluator
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/types"
-	"regexp"
 )
 
 func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	leftDatum := args[0]
 	rightDatum := args[1]
 	if leftDatum.Kind() != types.KindNull {
-		x, err := leftDatum.ToBool()
+		var x int64
+		x, err = leftDatum.ToBool()
 		if err != nil {
 			err = errors.Trace(err)
 			return
@@ -25,7 +24,8 @@ func builtinAndAnd(args []types.Datum, _ context.Context) (d types.Datum, err er
 		}
 	}
 	if rightDatum.Kind() != types.KindNull {
-		y, err := rightDatum.ToBool()
+		var y int64
+		y, err = rightDatum.ToBool()
 		if err != nil {
 			err = errors.Trace(err)
 			return
@@ -46,7 +46,8 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	leftDatum := args[0]
 	rightDatum := args[1]
 	if leftDatum.Kind() != types.KindNull {
-		x, err := leftDatum.ToBool()
+		var x int64
+		x, err = leftDatum.ToBool()
 		if err != nil {
 			err = errors.Trace(err)
 			return
@@ -57,7 +58,8 @@ func builtinOrOr(args []types.Datum, _ context.Context) (d types.Datum, err erro
 		}
 	}
 	if rightDatum.Kind() != types.KindNull {
-		y, err := rightDatum.ToBool()
+		var y int64
+		y, err = rightDatum.ToBool()
 		if err != nil {
 			err = errors.Trace(err)
 			return
@@ -79,25 +81,25 @@ func builtinLogicXor(args []types.Datum, _ context.Context) (d types.Datum, err 
 	righDatum := args[1]
 	if leftDatum.Kind() == types.KindNull || righDatum.Kind() == types.KindNull {
 		d.SetNull()
-		return true
+		return
 	}
 	x, err := leftDatum.ToBool()
 	if err != nil {
 		err = errors.Trace(err)
-		return false
+		return
 	}
 
 	y, err := righDatum.ToBool()
 	if err != nil {
 		err = errors.Trace(err)
-		return false
+		return
 	}
 	if x == y {
 		d.SetInt64(zeroI64)
 	} else {
 		d.SetInt64(oneI64)
 	}
-	return true
+	return
 }
 
 func compareFuncFactory(op opcode.Op) BuiltinFunc {
@@ -115,7 +117,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 			} else {
 				d.SetNull()
 			}
-			return true
+			return
 		}
 
 		n, err := a.CompareDatum(b)
@@ -139,7 +141,7 @@ func compareFuncFactory(op opcode.Op) BuiltinFunc {
 		case opcode.NE:
 			result = n != 0
 		default:
-			return nil, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
+			return d, ErrInvalidOperation.Gen("invalid op %v in comparision operation", op)
 		}
 		if result {
 			d.SetInt64(oneI64)
@@ -156,7 +158,7 @@ func bitOpFactory(op opcode.Op) BuiltinFunc {
 
 		if a.Kind() == types.KindNull || b.Kind() == types.KindNull {
 			d.SetNull()
-			return true
+			return
 		}
 
 		x, err := a.ToInt64()
@@ -241,11 +243,12 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 		aDatum := args[0]
 		if aDatum.Kind() == types.KindNull {
 			d.SetNull()
-			return true
+			return
 		}
 		switch op {
 		case opcode.Not:
-			n, err := aDatum.ToBool()
+			var n int64
+			n, err = aDatum.ToBool()
 			if err != nil {
 				err = errors.Trace(err)
 			} else if n == 0 {
@@ -254,8 +257,9 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 				d.SetInt64(0)
 			}
 		case opcode.BitNeg:
+			var n int64
 			// for bit operation, we will use int64 first, then return uint64
-			n, err := aDatum.ToInt64()
+			n, err = aDatum.ToInt64()
 			if err != nil {
 				err = errors.Trace(err)
 				return
@@ -279,7 +283,7 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 				d = aDatum
 			default:
 				err = ErrInvalidOperation
-				return false
+				return
 			}
 		case opcode.Minus:
 			switch aDatum.Kind() {
@@ -319,164 +323,5 @@ func unaryOpFactory(op opcode.Op) BuiltinFunc {
 			return
 		}
 		return
-	}
-}
-
-func CastFactory(tp types.FieldType) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		arg := args[0]
-		if arg.Kind() == types.KindNull {
-			d.SetNull()
-			return
-		}
-		return arg.Cast(tp)
-	}
-}
-
-func IsTruthFactory(isNot bool, tr int64) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		var boolVal bool
-		if args[0].Kind() != types.KindNull {
-			val, err := args[0].ToBool()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if val == tr {
-				boolVal = true
-			}
-		}
-		if isNot {
-			boolVal = !boolVal
-		}
-		d.SetInt64(boolToInt64(boolVal))
-		return
-	}
-}
-
-func RLikeFactory(p *ast.PatternRegexpExpr) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		var sexpr string
-		if p.Sexpr != nil {
-			sexpr = *p.Sexpr
-		} else {
-			expr := args[0]
-			if expr.Kind() == types.KindNull {
-				d.SetNull()
-				return true
-			}
-			var err error
-			sexpr, err = expr.ToString()
-			if err != nil {
-				err = errors.Errorf("non-string Expression in LIKE: %v (Value of type %T)", expr, expr)
-				return false
-			}
-
-			if ast.IsConstant(p.Expr) {
-				p.Sexpr = new(string)
-				*p.Sexpr = sexpr
-			}
-		}
-
-		re := p.Re
-		if re == nil {
-			pattern := args[1]
-			if pattern.Kind() == types.KindNull {
-				p.SetNull()
-				return true
-			}
-			spattern, err := pattern.ToString()
-			if err != nil {
-				err = errors.Errorf("non-string pattern in LIKE: %v (Value of type %T)", pattern, pattern)
-				return false
-			}
-
-			if re, err = regexp.Compile(spattern); err != nil {
-				err = errors.Trace(err)
-				return
-			}
-
-			if ast.IsConstant(p.Pattern) {
-				p.Re = re
-			}
-		}
-		match := re.MatchString(sexpr)
-		if p.Not {
-			match = !match
-		}
-		p.SetInt64(boolToInt64(match))
-		return
-	}
-}
-
-func LikeFactory(p *ast.PatternLikeExpr) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		expr := args[0]
-		if expr.Kind() == types.KindNull {
-			p.SetNull()
-			return
-		}
-
-		sexpr, err := expr.ToString()
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
-
-		// We need to compile pattern if it has not been compiled or it is not static.
-		var needCompile = len(p.PatChars) == 0 || !ast.IsConstant(p.Pattern)
-		if needCompile {
-			pattern := args[1]
-			if pattern.Kind() == types.KindNull {
-				d.SetNull()
-				return
-			}
-			spattern, err := pattern.ToString()
-			if err != nil {
-				err = errors.Trace(err)
-				return
-			}
-			p.PatChars, p.PatTypes = compilePattern(spattern, p.Escape)
-		}
-		match := doMatch(sexpr, p.PatChars, p.PatTypes)
-		if p.Not {
-			match = !match
-		}
-		d.SetInt64(boolToInt64(match))
-		return
-	}
-}
-
-func CaseWhenFactory(caseFunc bool) BuiltinFunc {
-	return func(args []types.Datum, _ context.Context) (d types.Datum, err error) {
-		tmp := types.NewDatum(boolToInt64(true))
-		target := &tmp
-		var elseItem types.Datum
-		if caseFunc {
-			target = args[0]
-			args = args[1:]
-		}
-		if target.Kind() != types.KindNull {
-			for i := 0; i < len(args); i += 2 {
-				if i+1 >= len(args) {
-					elseItem = args[i]
-					break
-				}
-				cmp, err := target.CompareDatum(args[i])
-				if err != nil {
-					err = errors.Trace(err)
-					return
-				}
-				if cmp == 0 {
-					d.SetValue(args[i+1])
-					return true
-				}
-			}
-		}
-		if elseItem != nil {
-			d.SetValue(elseItem)
-		} else {
-			d.SetNull()
-		}
-		return true
 	}
 }

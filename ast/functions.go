@@ -130,11 +130,9 @@ type DateArithInterval struct {
 	Interval ExprNode
 }
 
-type AggrFuncType string
-
 const (
 	// AggFuncCount is the name of Count function.
-	AggFuncCount AggrFuncType = "count"
+	AggFuncCount = "count"
 	// AggFuncSum is the name of Sum function.
 	AggFuncSum = "sum"
 	// AggFuncAvg is the name of Avg function.

@@ -140,8 +140,6 @@ var Funcs = map[string]Func{
 	"bitneg":     {unaryOpFactory(opcode.BitNeg), 1, 1},
 	"unaryplus":  {unaryOpFactory(opcode.Plus), 1, 1},
 	"unaryminus": {unaryOpFactory(opcode.Minus), 1, 1},
-	"case":       {CaseWhenFactory(true), 3, -1},
-	"when":       {CaseWhenFactory(false), 2, -1},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
