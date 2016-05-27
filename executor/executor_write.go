@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/kv"
@@ -194,11 +193,11 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	}
 
 	// Check whether new value is valid.
-	if err := column.CastValues(ctx, newData, cols); err != nil {
+	if err := table.CastValues(ctx, newData, cols); err != nil {
 		return errors.Trace(err)
 	}
 
-	if err := column.CheckNotNull(cols, newData); err != nil {
+	if err := table.CheckNotNull(cols, newData); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -240,6 +239,10 @@ func updateRecord(ctx context.Context, h int64, oldData, newData []types.Datum, 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	dirtyDB := getDirtyDB(ctx)
+	tid := t.Meta().ID
+	dirtyDB.deleteRow(tid, h)
+	dirtyDB.addRow(tid, h, newData)
 
 	// Record affected rows.
 	if !onDuplicateUpdate {
@@ -375,6 +378,7 @@ func (e *DeleteExec) removeRow(ctx context.Context, t table.Table, h int64, data
 	if err != nil {
 		return errors.Trace(err)
 	}
+	getDirtyDB(ctx).deleteRow(t.Meta().ID, h)
 	variable.GetSessionVars(ctx).AddAffectedRows(1)
 	return nil
 }
@@ -392,9 +396,10 @@ func (e *DeleteExec) Close() error {
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	currRow    int
-	ctx        context.Context
-	SelectExec Executor
+	currRow      int
+	lastInsertID uint64
+	ctx          context.Context
+	SelectExec   Executor
 
 	Table     table.Table
 	Columns   []*ast.ColumnName
@@ -450,6 +455,7 @@ func (e *InsertExec) Next() (*Row, error) {
 		h, err := e.Table.AddRecord(e.ctx, row)
 		txn.DelOption(kv.PresumeKeyNotExists)
 		if err == nil {
+			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			continue
 		}
 
@@ -459,6 +465,10 @@ func (e *InsertExec) Next() (*Row, error) {
 		if err = e.onDuplicateUpdate(row, h, toUpdateColumns); err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	if e.lastInsertID != 0 {
+		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
 	}
 	e.finished = true
 	return nil, nil
@@ -483,8 +493,8 @@ func (e *InsertExec) Close() error {
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
 // See: https://dev.mysql.com/doc/refman/5.7/en/insert.html
-func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error) {
-	var cols []*column.Col
+func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, error) {
+	var cols []*table.Column
 	var err error
 
 	if len(e.Setlist) > 0 {
@@ -494,7 +504,7 @@ func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 			columns = append(columns, v.Column.Name.O)
 		}
 
-		cols, err = column.FindCols(tableCols, columns)
+		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
@@ -508,7 +518,7 @@ func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.O)
 		}
-		cols, err = column.FindCols(tableCols, columns)
+		cols, err = table.FindCols(tableCols, columns)
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
@@ -520,7 +530,7 @@ func (e *InsertValues) getColumns(tableCols []*column.Col) ([]*column.Col, error
 	}
 
 	// Check column whether is specified only once.
-	err = column.CheckOnce(cols)
+	err = table.CheckOnce(cols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -542,7 +552,7 @@ func (e *InsertValues) fillValueList() error {
 	return nil
 }
 
-func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*column.Col) error {
+func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, cols []*table.Column) error {
 	if insertValueCount != valueCount {
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
@@ -560,7 +570,7 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, num int, co
 	return nil
 }
 
-func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]types.Datum, error) {
+func (e *InsertValues) getColumnDefaultValues(cols []*table.Column) (map[string]types.Datum, error) {
 	defaultValMap := map[string]types.Datum{}
 	for _, col := range cols {
 		if value, ok, err := table.GetColDefaultValue(e.ctx, &col.ColumnInfo); ok {
@@ -573,7 +583,7 @@ func (e *InsertValues) getColumnDefaultValues(cols []*column.Col) (map[string]ty
 	return defaultValMap, nil
 }
 
-func (e *InsertValues) getRows(cols []*column.Col) (rows [][]types.Datum, err error) {
+func (e *InsertValues) getRows(cols []*table.Column) (rows [][]types.Datum, err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
 		return nil, errors.Trace(err)
@@ -599,7 +609,7 @@ func (e *InsertValues) getRows(cols []*column.Col) (rows [][]types.Datum, err er
 	return
 }
 
-func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) getRow(cols []*table.Column, list []ast.ExprNode, defaultVals map[string]types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(list))
 	var err error
 	for i, expr := range list {
@@ -626,7 +636,7 @@ func (e *InsertValues) getRow(cols []*column.Col, list []ast.ExprNode, defaultVa
 	return e.fillRowData(cols, vals)
 }
 
-func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]types.Datum, error) {
+func (e *InsertValues) getRowsSelect(cols []*table.Column) ([][]types.Datum, error) {
 	// process `insert|replace into ... select ... from ...`
 	if len(e.SelectExec.Fields()) != len(cols) {
 		return nil, errors.Errorf("Column count %d doesn't match value count %d", len(cols), len(e.SelectExec.Fields()))
@@ -650,7 +660,7 @@ func (e *InsertValues) getRowsSelect(cols []*column.Col) ([][]types.Datum, error
 	return rows, nil
 }
 
-func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) fillRowData(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	marked := make(map[int]struct{}, len(vals))
 	for i, v := range vals {
@@ -662,17 +672,17 @@ func (e *InsertValues) fillRowData(cols []*column.Col, vals []types.Datum) ([]ty
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = column.CastValues(e.ctx, row, cols); err != nil {
+	if err = table.CastValues(e.ctx, row, cols); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = column.CheckNotNull(e.Table.Cols(), row); err != nil {
+	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return row, nil
 }
 
 func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struct{}) error {
-	var defaultValueCols []*column.Col
+	var defaultValueCols []*table.Column
 	for i, c := range e.Table.Cols() {
 		// It's used for retry.
 		if mysql.HasAutoIncrementFlag(c.Flag) && row[i].Kind() == types.KindNull &&
@@ -709,12 +719,10 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 				return errors.Trace(err)
 			}
 			row[i].SetInt64(recordID)
-			// Notes: incompatible with mysql
-			// MySQL will set last insert id to the first row, as follows:
-			// `t(id int AUTO_INCREMENT, c1 int, PRIMARY KEY (id))`
-			// `insert t (c1) values(1),(2),(3);`
-			// Last insert id will be 1, not 3.
-			variable.GetSessionVars(e.ctx).SetLastInsertID(uint64(recordID))
+			// It's compatible with mysql. So it sets last insert id to the first row.
+			if e.currRow == 0 {
+				e.lastInsertID = uint64(recordID)
+			}
 			// It's used for retry.
 			if !variable.GetSessionVars(e.ctx).RetryInfo.Retrying {
 				variable.GetSessionVars(e.ctx).RetryInfo.AddAutoIncrementID(recordID)
@@ -729,7 +737,7 @@ func (e *InsertValues) initDefaultValues(row []types.Datum, marked map[int]struc
 
 		defaultValueCols = append(defaultValueCols, c)
 	}
-	if err := column.CastValues(e.ctx, row, defaultValueCols); err != nil {
+	if err := table.CastValues(e.ctx, row, defaultValueCols); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -770,13 +778,13 @@ func (e *InsertExec) onDuplicateUpdate(row []types.Datum, h int64, cols map[int]
 	return nil
 }
 
-func findColumnByName(t table.Table, name string) (*column.Col, error) {
+func findColumnByName(t table.Table, name string) (*table.Column, error) {
 	_, tableName, colName := splitQualifiedName(name)
 	if len(tableName) > 0 && tableName != t.Meta().Name.O {
 		return nil, errors.Errorf("unknown field %s.%s", tableName, colName)
 	}
 
-	c := column.FindCol(t.Cols(), colName)
+	c := table.FindCol(t.Cols(), colName)
 	if c == nil {
 		return nil, errors.Errorf("unknown field %s", colName)
 	}
@@ -859,6 +867,7 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row)
 		if err1 == nil {
+			getDirtyDB(e.ctx).addRow(e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -884,7 +893,12 @@ func (e *ReplaceExec) Next() (*Row, error) {
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
+		getDirtyDB(e.ctx).deleteRow(e.Table.Meta().ID, h)
 		variable.GetSessionVars(e.ctx).AddAffectedRows(1)
+	}
+
+	if e.lastInsertID != 0 {
+		variable.GetSessionVars(e.ctx).LastInsertID = e.lastInsertID
 	}
 	e.finished = true
 	return nil, nil

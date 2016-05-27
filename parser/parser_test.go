@@ -425,6 +425,10 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		// For cast with charset
 		{"SELECT *, CAST(data AS CHAR CHARACTER SET utf8) FROM t;", true},
 
+		// For last_insert_id
+		{"SELECT last_insert_id();", true},
+		{"SELECT last_insert_id(1);", true},
+
 		// For binary operator
 		{"SELECT binary 'a';", true},
 

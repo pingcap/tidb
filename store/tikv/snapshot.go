@@ -47,22 +47,22 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 }
 
 // makeBatchGetReqs splits each key into corresponding region.
-func (s *tikvSnapshot) makeBatchGetReqs(keys []kv.Key) (map[uint64]*batchGetRegion, error) {
+func (s *tikvSnapshot) makeBatchGetReqs(keys []kv.Key) (map[RegionVerID]*batchGetRegion, error) {
 	startTS := s.version.Ver
-	multiBatchGet := map[uint64]*batchGetRegion{}
+	multiBatchGet := map[RegionVerID]*batchGetRegion{}
 	for _, k := range keys {
-		region, err := s.store.getRegion(k)
+		region, err := s.store.regionCache.GetRegion(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		regionID := region.GetID()
+		regionID := region.VerID()
 		singleBatchGet, ok := multiBatchGet[regionID]
 		if !ok {
 			singleBatchGet = &batchGetRegion{
 				CmdBatchGetRequest: &pb.CmdBatchGetRequest{
 					Version: proto.Uint64(startTS),
 				},
-				region: region,
+				region: regionID,
 			}
 			multiBatchGet[regionID] = singleBatchGet
 		}
@@ -174,11 +174,11 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		txnBackoff    = txnLockBackoff()
 	)
 	for backoffErr == nil {
-		region, err := s.store.getRegion(k)
+		region, err := s.store.regionCache.GetRegion(k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := s.store.SendKVReq(req, region)
+		resp, err := s.store.SendKVReq(req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -274,5 +274,5 @@ func mergeResult(d1, d2 map[string][]byte) (map[string][]byte, error) {
 
 type batchGetRegion struct {
 	*pb.CmdBatchGetRequest
-	region *requestRegion
+	region RegionVerID
 }

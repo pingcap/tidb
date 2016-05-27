@@ -402,6 +402,7 @@ join		{j}{o}{i}{n}
 key		{k}{e}{y}
 keys		{k}{e}{y}{s}
 key_block_size	{k}{e}{y}_{b}{l}{o}{c}{k}_{s}{i}{z}{e}
+last_insert_id  {l}{a}{s}{t}_{i}{n}{s}{e}{r}{t}_{i}{d}
 leading		{l}{e}{a}{d}{i}{n}{g}
 left		{l}{e}{f}{t}
 length		{l}{e}{n}{g}{t}{h}
@@ -871,6 +872,8 @@ action		{a}{c}{t}{i}{o}{n}
 {key_block_size}	lval.item = string(l.val)
 			return keyBlockSize
 {keys}			return keys
+{last_insert_id}	lval.item = string(l.val)
+			return lastInsertID
 {leading}		return leading
 {left}			lval.item = string(l.val)
 			return left

@@ -353,7 +353,7 @@ func (rs *localRegion) evalWhereForRow(ctx *selectContext, h int64) (bool, error
 			} else if err != nil {
 				return false, errors.Trace(err)
 			}
-			_, datum, err := codec.DecodeOne(data)
+			datum, err := tablecodec.DecodeColumnValue(data, col)
 			if err != nil {
 				return false, errors.Trace(err)
 			}

@@ -52,6 +52,6 @@ func (s *testMockSuite) TestContext(c *C) {
 	_, err := ctx.GetTxn(false)
 	c.Assert(err, IsNil)
 
-	err = ctx.FinishTxn(false)
+	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 }

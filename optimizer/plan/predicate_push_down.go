@@ -65,7 +65,7 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 		}
 		return
 	case *Join:
-		//TODO: add null rejecter
+		//TODO: add null rejecter.
 		var leftCond, rightCond []expression.Expression
 		leftPlan := v.GetChildByIndex(0)
 		rightPlan := v.GetChildByIndex(1)

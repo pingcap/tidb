@@ -102,12 +102,13 @@ var Funcs = map[string]Func{
 	"reverse":         {builtinReverse, 1, 1},
 
 	// information functions
-	"current_user":  {builtinCurrentUser, 0, 0},
-	"database":      {builtinDatabase, 0, 0},
-	"found_rows":    {builtinFoundRows, 0, 0},
-	"user":          {builtinUser, 0, 0},
-	"connection_id": {builtinConnectionID, 0, 0},
-	"version":       {builtinVersion, 0, 0},
+	"current_user":   {builtinCurrentUser, 0, 0},
+	"database":       {builtinDatabase, 0, 0},
+	"found_rows":     {builtinFoundRows, 0, 0},
+	"user":           {builtinUser, 0, 0},
+	"connection_id":  {builtinConnectionID, 0, 0},
+	"last_insert_id": {builtinLastInsertID, 0, 1},
+	"version":        {builtinVersion, 0, 0},
 
 	// control functions
 	"if":     {builtinIf, 3, 3},

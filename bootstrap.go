@@ -158,7 +158,7 @@ func checkBootstrappedVar(s Session) (bool, error) {
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
 
-		if err = s.FinishTxn(false); err != nil {
+		if err = s.CommitTxn(); err != nil {
 			return false, errors.Trace(err)
 		}
 	}

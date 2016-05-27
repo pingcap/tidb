@@ -25,12 +25,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
 	_ "github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/types"
@@ -177,14 +177,14 @@ LOOP:
 	ctx := s.s.(context.Context)
 	t := s.testGetTable(c, "t1")
 	handles := make(map[int64]struct{})
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		handles[h] = struct{}{}
 		return true, nil
 	})
 	c.Assert(err, IsNil)
 
 	// check in index
-	var nidx *column.IndexedCol
+	var nidx *table.IndexedColumn
 	for _, tidx := range t.Indices() {
 		if tidx.Name.L == "c3_index" {
 			nidx = tidx
@@ -194,10 +194,10 @@ LOOP:
 	// Make sure there is index with name c3_index
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.ID, Greater, int64(0))
-	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
+	idx := tables.NewIndex(t.IndexPrefix(), "c3_index", nidx.ID, false)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.FinishTxn(true)
+	defer ctx.RollbackTxn()
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -229,7 +229,7 @@ func (s *testDBSuite) testDropIndex(c *C) {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 	t := s.testGetTable(c, "t1")
-	var c3idx *column.IndexedCol
+	var c3idx *table.IndexedColumn
 	for _, tidx := range t.Indices() {
 		if tidx.Name.L == "c3_index" {
 			c3idx = tidx
@@ -273,7 +273,7 @@ LOOP:
 	handles := make(map[int64]struct{})
 
 	t = s.testGetTable(c, "t1")
-	var nidx *column.IndexedCol
+	var nidx *table.IndexedColumn
 	for _, tidx := range t.Indices() {
 		if tidx.Name.L == "c3_index" {
 			nidx = tidx
@@ -282,10 +282,10 @@ LOOP:
 	}
 	// Make sure there is no index with name c3_index
 	c.Assert(nidx, IsNil)
-	idx := kv.NewKVIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
+	idx := tables.NewIndex(t.IndexPrefix(), "c3_index", c3idx.ID, false)
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.FinishTxn(true)
+	defer ctx.RollbackTxn()
 
 	it, err := idx.SeekFirst(txn)
 	c.Assert(err, IsNil)
@@ -380,8 +380,8 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	defer ctx.FinishTxn(true)
-	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
+	defer ctx.RollbackTxn()
+	err := t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		// c4 must be -1 or > 0
 		v, err1 := types.ToInt64(data[3].GetValue())
@@ -457,12 +457,12 @@ LOOP:
 
 	txn, err := ctx.GetTxn(true)
 	c.Assert(err, IsNil)
-	defer ctx.FinishTxn(false)
+	defer ctx.CommitTxn()
 
 	i := 0
 	t = s.testGetTable(c, "t2")
 	// check c4 does not exist
-	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*column.Col) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		k := t.RecordKey(h, col)
 		_, err1 := txn.Get(k)

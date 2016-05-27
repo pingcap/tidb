@@ -264,7 +264,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			if bytes.Compare(pair.Key, startKey) < 0 {
 				break
 			}
-			seekKey = pair.Key
+			seekKey = []byte(tablecodec.TruncateToRowKeyLen(kv.Key(pair.Key)))
 		} else {
 			if bytes.Compare(pair.Key, endKey) >= 0 {
 				break
@@ -368,11 +368,12 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 				}
 				ctx.eval.Row[colID] = types.Datum{}
 			} else {
-				_, datum, err := codec.DecodeOne(data)
+				var d types.Datum
+				d, err = tablecodec.DecodeColumnValue(data, col)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
-				ctx.eval.Row[colID] = datum
+				ctx.eval.Row[colID] = d
 			}
 		}
 	}

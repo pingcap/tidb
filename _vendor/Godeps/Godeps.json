@@ -1,7 +1,7 @@
 {
 	"ImportPath": "github.com/pingcap/tidb",
 	"GoVersion": "go1.6",
-	"GodepVersion": "v62",
+	"GodepVersion": "v63",
 	"Packages": [
 		"./..."
 	],
@@ -26,11 +26,6 @@
 			"Rev": "7161eeed8b7fa59551f8ad8ec71251be8579d5eb"
 		},
 		{
-			"ImportPath": "github.com/coreos/etcd/error",
-			"Comment": "v2.3.0-556-g7161eee",
-			"Rev": "7161eeed8b7fa59551f8ad8ec71251be8579d5eb"
-		},
-		{
 			"ImportPath": "github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes",
 			"Comment": "v2.3.0-556-g7161eee",
 			"Rev": "7161eeed8b7fa59551f8ad8ec71251be8579d5eb"
@@ -49,11 +44,6 @@
 			"ImportPath": "github.com/coreos/etcd/pkg/tlsutil",
 			"Comment": "v2.3.0-556-g7161eee",
 			"Rev": "7161eeed8b7fa59551f8ad8ec71251be8579d5eb"
-		},
-		{
-			"ImportPath": "github.com/coreos/go-etcd/etcd",
-			"Comment": "v2.0.0-38-g003851b",
-			"Rev": "003851be7bb0694fe3cc457a49529a19388ee7cf"
 		},
 		{
 			"ImportPath": "github.com/ghodss/yaml",
@@ -86,36 +76,8 @@
 			"Rev": "fae8f9dfd7048de16575b9d4c255278e38c28a4f"
 		},
 		{
-			"ImportPath": "github.com/ngaut/go-zookeeper/zk",
-			"Rev": "9c3719e318c7cfd072e41eb48cb71fcaa49d5e05"
-		},
-		{
 			"ImportPath": "github.com/ngaut/log",
 			"Rev": "37d3e0f43b4fe05429e1adb75e835bf31fc1bba6"
-		},
-		{
-			"ImportPath": "github.com/ngaut/pools",
-			"Rev": "6352e005618615ffaf1cb1c6622b8e91435751fe"
-		},
-		{
-			"ImportPath": "github.com/ngaut/sync2",
-			"Rev": "7a24ed77b2efb460c1468b7dc917821c66e80e55"
-		},
-		{
-			"ImportPath": "github.com/ngaut/tso/client",
-			"Rev": "3e62d377d3edbc20520c7934964615f8e91e27cd"
-		},
-		{
-			"ImportPath": "github.com/ngaut/tso/proto",
-			"Rev": "3e62d377d3edbc20520c7934964615f8e91e27cd"
-		},
-		{
-			"ImportPath": "github.com/ngaut/tso/util",
-			"Rev": "3e62d377d3edbc20520c7934964615f8e91e27cd"
-		},
-		{
-			"ImportPath": "github.com/ngaut/zkhelper",
-			"Rev": "6738bdc138d469112c6687fbfcfe049ccabd6a0a"
 		},
 		{
 			"ImportPath": "github.com/petar/GoLLRB/llrb",
@@ -130,68 +92,44 @@
 			"Rev": "ce8a2f822ab1e245a4eefcef2996531c79c943f1"
 		},
 		{
-			"ImportPath": "github.com/pingcap/go-hbase",
-			"Rev": "7a98d1fe4e9e115de8c77ae0e158c0d08732c550"
-		},
-		{
-			"ImportPath": "github.com/pingcap/go-hbase/iohelper",
-			"Rev": "7a98d1fe4e9e115de8c77ae0e158c0d08732c550"
-		},
-		{
-			"ImportPath": "github.com/pingcap/go-hbase/proto",
-			"Rev": "7a98d1fe4e9e115de8c77ae0e158c0d08732c550"
-		},
-		{
-			"ImportPath": "github.com/pingcap/go-themis",
-			"Rev": "dbb996606c1d1fe8571fd9ac6da2254c76d2c5c9"
-		},
-		{
-			"ImportPath": "github.com/pingcap/go-themis/oracle",
-			"Rev": "dbb996606c1d1fe8571fd9ac6da2254c76d2c5c9"
-		},
-		{
-			"ImportPath": "github.com/pingcap/go-themis/oracle/oracles",
-			"Rev": "dbb996606c1d1fe8571fd9ac6da2254c76d2c5c9"
-		},
-		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/coprocessor",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/errorpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/kvrpcpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/metapb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/msgpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/pdpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_cmdpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raft_serverpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/raftpb",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/kvproto/pkg/util",
-			"Rev": "f6f294b8d925beff4bc9b20ad3a438d3e77d930e"
+			"Rev": "3db71b3c57032f21532c1716a43524c117bf4e91"
 		},
 		{
 			"ImportPath": "github.com/pingcap/pd/pd-client",
@@ -256,10 +194,6 @@
 		{
 			"ImportPath": "github.com/twinj/uuid",
 			"Rev": "70cac2bcd273ef6a371bb96cde363d28b68734c3"
-		},
-		{
-			"ImportPath": "github.com/ugorji/go/codec",
-			"Rev": "a396ed22fc049df733440d90efe17475e3929ccb"
 		},
 		{
 			"ImportPath": "golang.org/x/net/context",

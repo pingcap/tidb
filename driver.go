@@ -171,7 +171,6 @@ func parseDriverDSN(dsn string) (params *driverParams, err error) {
 // Examples:
 //    goleveldb://relative/path/test
 //    boltdb:///absolute/path/test
-//    hbase://zk1,zk2,zk3/hbasetbl/test?tso=zk
 //
 // Open may return a cached connection (one previously closed), but doing so is
 // unnecessary; the sql package maintains a pool of idle connections for
@@ -301,7 +300,7 @@ func (c *driverConn) Commit() error {
 		return errors.Trace(err)
 	}
 
-	err = c.s.FinishTxn(false)
+	err = c.s.CommitTxn()
 	return errors.Trace(err)
 }
 

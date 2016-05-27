@@ -22,13 +22,13 @@ import (
 type JoinType int
 
 const (
-	// CrossJoin means Cartesian Product, but not used now
+	// CrossJoin means Cartesian Product, but not used now.
 	CrossJoin JoinType = iota
-	// InnerJoin means inner join
+	// InnerJoin means inner join.
 	InnerJoin
-	// LeftOuterJoin means left join
+	// LeftOuterJoin means left join.
 	LeftOuterJoin
-	// RightOuterJoin means right join
+	// RightOuterJoin means right join.
 	RightOuterJoin
 	// TODO: support semi join.
 )
@@ -87,7 +87,7 @@ func InsertPlan(parent Plan, child Plan, insert Plan) error {
 	}
 	insert.AddChild(child)
 	insert.AddParent(parent)
-	return err
+	return nil
 }
 
 // RemovePlan means removing a plan.
@@ -103,8 +103,5 @@ func RemovePlan(p Plan) error {
 		return errors.Trace(err)
 	}
 	err = child.ReplaceParent(p, parent)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return errors.Trace(err)
 }

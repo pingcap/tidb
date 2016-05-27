@@ -19,7 +19,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -157,7 +156,7 @@ func (e *GrantExec) checkAndInitColumnPriv(user string, host string, cols []*ast
 		return errors.Trace(err)
 	}
 	for _, c := range cols {
-		col := column.FindCol(tbl.Cols(), c.Name.L)
+		col := table.FindCol(tbl.Cols(), c.Name.L)
 		if col == nil {
 			return errors.Errorf("Unknown column: %s", c.Name.O)
 		}
@@ -267,7 +266,7 @@ func (e *GrantExec) grantColumnPriv(priv *ast.PrivElem, user *ast.UserSpec) erro
 	}
 	userName, host := parseUser(user.User)
 	for _, c := range priv.Cols {
-		col := column.FindCol(tbl.Cols(), c.Name.L)
+		col := table.FindCol(tbl.Cols(), c.Name.L)
 		if col == nil {
 			return errors.Errorf("Unknown column: %s", c)
 		}

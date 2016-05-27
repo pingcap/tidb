@@ -81,7 +81,12 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	if !ok {
 		return errors.New("table not found, should never happen")
 	}
-	return table.Truncate(e.ctx)
+	err := table.Truncate(e.ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	getDirtyDB(e.ctx).truncateTable(table.Meta().ID)
+	return nil
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {

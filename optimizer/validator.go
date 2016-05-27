@@ -15,6 +15,7 @@ package optimizer
 
 import (
 	"math"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -183,11 +184,16 @@ func (v *validator) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	if count < 1 {
 		return
 	}
-
 	if !isKey {
 		isKey = isConstraintKeyTp(stmt.Constraints, autoIncrementCol)
 	}
-	if !isKey || count > 1 {
+	autoIncrementMustBeKey := true
+	for _, opt := range stmt.Options {
+		if opt.Tp == ast.TableOptionEngine && strings.EqualFold(opt.StrValue, "MyISAM") {
+			autoIncrementMustBeKey = false
+		}
+	}
+	if (autoIncrementMustBeKey && !isKey) || count > 1 {
 		v.err = errors.New("Incorrect table definition; there can be only one auto column and it must be defined as a key")
 	}
 

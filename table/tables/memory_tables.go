@@ -19,7 +19,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/petar/GoLLRB/llrb"
-	"github.com/pingcap/tidb/column"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -65,8 +64,8 @@ func (k itemKey) Less(item llrb.Item) bool {
 type MemoryTable struct {
 	ID          int64
 	Name        model.CIStr
-	Columns     []*column.Col
-	pkHandleCol *column.Col
+	Columns     []*table.Column
+	pkHandleCol *table.Column
 
 	recordPrefix kv.Key
 	alloc        autoid.Allocator
@@ -78,10 +77,10 @@ type MemoryTable struct {
 
 // MemoryTableFromMeta creates a Table instance from model.TableInfo.
 func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
-	columns := make([]*column.Col, 0, len(tblInfo.Columns))
-	var pkHandleColumn *column.Col
+	columns := make([]*table.Column, 0, len(tblInfo.Columns))
+	var pkHandleColumn *table.Column
 	for _, colInfo := range tblInfo.Columns {
-		col := &column.Col{ColumnInfo: *colInfo}
+		col := &table.Column{ColumnInfo: *colInfo}
 		columns = append(columns, col)
 		if col.IsPKHandleColumn(tblInfo) {
 			pkHandleColumn = col
@@ -94,7 +93,7 @@ func MemoryTableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (tabl
 }
 
 // newMemoryTable constructs a MemoryTable instance.
-func newMemoryTable(tableID int64, tableName string, cols []*column.Col, alloc autoid.Allocator) *MemoryTable {
+func newMemoryTable(tableID int64, tableName string, cols []*table.Column, alloc autoid.Allocator) *MemoryTable {
 	name := model.NewCIStr(tableName)
 	t := &MemoryTable{
 		ID:           tableID,
@@ -122,7 +121,7 @@ func (t *MemoryTable) Seek(ctx context.Context, handle int64) (int64, bool, erro
 }
 
 // Indices implements table.Table Indices interface.
-func (t *MemoryTable) Indices() []*column.IndexedCol {
+func (t *MemoryTable) Indices() []*table.IndexedColumn {
 	return nil
 }
 
@@ -132,7 +131,7 @@ func (t *MemoryTable) Meta() *model.TableInfo {
 }
 
 // Cols implements table.Table Cols interface.
-func (t *MemoryTable) Cols() []*column.Col {
+func (t *MemoryTable) Cols() []*table.Column {
 	return t.Columns
 }
 
@@ -147,7 +146,7 @@ func (t *MemoryTable) IndexPrefix() kv.Key {
 }
 
 // RecordKey implements table.Table RecordKey interface.
-func (t *MemoryTable) RecordKey(h int64, col *column.Col) kv.Key {
+func (t *MemoryTable) RecordKey(h int64, col *table.Column) kv.Key {
 	colID := int64(0)
 	if col != nil {
 		colID = col.ID
@@ -206,7 +205,7 @@ func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum) (recordID 
 }
 
 // RowWithCols implements table.Table RowWithCols interface.
-func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*column.Col) ([]types.Datum, error) {
+func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	item := t.tree.Get(itemKey(h))
@@ -257,7 +256,7 @@ func (t *MemoryTable) RebaseAutoID(newBase int64, isSetStep bool) error {
 }
 
 // IterRecords implements table.Table IterRecords interface.
-func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*column.Col,
+func (t *MemoryTable) IterRecords(ctx context.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	return nil
 }

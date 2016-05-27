@@ -69,11 +69,11 @@ func (l *txnLock) cleanup() ([]byte, error) {
 	}
 	var backoffErr error
 	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := l.store.getRegion(l.pl.key)
+		region, err := l.store.regionCache.GetRegion(l.pl.key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := l.store.SendKVReq(req, region)
+		resp, err := l.store.SendKVReq(req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -108,11 +108,11 @@ func (l *txnLock) rollbackThenGet() ([]byte, error) {
 	}
 	var backoffErr error
 	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := l.store.getRegion(l.key)
+		region, err := l.store.regionCache.GetRegion(l.key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := l.store.SendKVReq(req, region)
+		resp, err := l.store.SendKVReq(req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -144,11 +144,11 @@ func (l *txnLock) commitThenGet(commitVersion uint64) ([]byte, error) {
 	}
 	var backoffErr error
 	for backoff := regionMissBackoff(); backoffErr == nil; backoffErr = backoff() {
-		region, err := l.store.getRegion(l.key)
+		region, err := l.store.regionCache.GetRegion(l.key)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		resp, err := l.store.SendKVReq(req, region)
+		resp, err := l.store.SendKVReq(req, region.VerID())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
