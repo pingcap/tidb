@@ -112,10 +112,9 @@ func CastValue(ctx context.Context, val types.Datum, col *Column) (casted types.
 	if err != nil {
 		if variable.GetSessionVars(ctx).StrictSQLMode {
 			return casted, errors.Trace(err)
-		} else {
-			// TODO: add warnings.
-			log.Warnf("cast value error %v", err)
 		}
+		// TODO: add warnings.
+		log.Warnf("cast value error %v", err)
 	}
 	return casted, nil
 }
