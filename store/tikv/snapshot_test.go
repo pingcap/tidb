@@ -188,7 +188,7 @@ func (s *testSnapshotSuite) TestMergeResultNil(c *C) {
 func (s *testSnapshotSuite) TestMergeResultConflict(c *C) {
 	d1 := makeDict([]string{"1", "2"})
 	d2 := makeDict([]string{"a", "foo", "1"})
-	d1, err := mergeResult(d1, d2)
+	_, err := mergeResult(d1, d2)
 	c.Assert(err, NotNil)
 }
 
