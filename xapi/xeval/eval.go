@@ -33,7 +33,7 @@ var (
 
 // Error codes.
 const (
-	CodeInvalid = 1
+	CodeInvalid = 3
 )
 
 const (
