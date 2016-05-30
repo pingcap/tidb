@@ -28,7 +28,7 @@ import (
 )
 
 var (
-	// ErrValueTruncated is used when a value has been truncated during convertion.
+	// ErrValueTruncated is used when a value has been truncated during conversion.
 	ErrValueTruncated = errors.New("value has been truncated")
 )
 
