@@ -52,9 +52,7 @@ func (*testSessionSuite) TestSession(c *C) {
 	v.SetSystemVar("autocommit", types.NewStringDatum("1"))
 	val := v.GetSystemVar("autocommit")
 	c.Assert(val.GetString(), Equals, "1")
-	v.SetSystemVar("autocommit", types.Datum{})
-	val = v.GetSystemVar("autocommit")
-	c.Assert(val.Kind(), Equals, types.KindNull)
+	c.Assert(v.SetSystemVar("autocommit", types.Datum{}), NotNil)
 
 	v.SetSystemVar("sql_mode", types.NewStringDatum("strict_trans_tables"))
 	val = v.GetSystemVar("sql_mode")

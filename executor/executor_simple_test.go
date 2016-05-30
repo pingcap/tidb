@@ -60,17 +60,20 @@ func (s *testSuite) TestSetVar(c *C) {
 	testSQL = "SET @@global.autocommit = 1;"
 	tk.MustExec(testSQL)
 
-	testSQL = "SET @@global.autocommit = null;"
-	tk.MustExec(testSQL)
+	// TODO: this test case should returns error.
+	// testSQL = "SET @@global.autocommit = null;"
+	// _, err := tk.Exec(testSQL)
+	// c.Assert(err, NotNil)
 
 	testSQL = "SET @@autocommit = 1;"
 	tk.MustExec(testSQL)
 
 	testSQL = "SET @@autocommit = null;"
-	tk.MustExec(testSQL)
+	_, err := tk.Exec(testSQL)
+	c.Assert(err, NotNil)
 
 	errTestSql := "SET @@date_format = 1;"
-	_, err := tk.Exec(errTestSql)
+	_, err = tk.Exec(errTestSql)
 	c.Assert(err, NotNil)
 
 	errTestSql = "SET @@rewriter_enabled = 1;"

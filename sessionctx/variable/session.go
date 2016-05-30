@@ -21,9 +21,15 @@ import (
 	"strings"
 )
 
-const codeCantGetValidID terror.ErrCode = 1
+const (
+	codeCantGetValidID terror.ErrCode = 1
+	codeCantSetToNull  terror.ErrCode = 2
+)
 
-var errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
+var (
+	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
+	errCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+)
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -197,8 +203,7 @@ func (s *SessionVars) SetCurrentUser(user string) {
 func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	key = strings.ToLower(key)
 	if value.Kind() == types.KindNull {
-		delete(s.systems, key)
-		return nil
+		return errCantSetToNull
 	}
 	sVal, err := value.ToString()
 	if err != nil {
