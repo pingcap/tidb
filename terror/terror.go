@@ -221,22 +221,12 @@ func (e *Error) getMySQLErrorCode() uint16 {
 }
 
 var (
-	// ErrCode to mysql error code map.
-	parserMySQLErrCodes     = map[ErrCode]uint16{}
-	executorMySQLErrCodes   = map[ErrCode]uint16{}
-	serverMySQLErrCodes     = map[ErrCode]uint16{}
-	expressionMySQLErrCodes = map[ErrCode]uint16{}
-
 	// ErrClassToMySQLCodes is the map of ErrClass to code-map.
 	ErrClassToMySQLCodes map[ErrClass](map[ErrCode]uint16)
 )
 
 func init() {
 	ErrClassToMySQLCodes = make(map[ErrClass](map[ErrCode]uint16))
-	ErrClassToMySQLCodes[ClassExecutor] = executorMySQLErrCodes
-	ErrClassToMySQLCodes[ClassExpression] = expressionMySQLErrCodes
-	ErrClassToMySQLCodes[ClassParser] = parserMySQLErrCodes
-	ErrClassToMySQLCodes[ClassServer] = serverMySQLErrCodes
 	defaultMySQLErrorCode = mysql.ErrUnknown
 }
 
