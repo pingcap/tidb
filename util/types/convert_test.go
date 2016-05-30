@@ -449,10 +449,10 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 	testStrToFloat(c, "", 0)
 	testStrToFloat(c, "-1", -1.0)
 	testStrToFloat(c, "1.11", 1.11)
-	testStrToFloat(c, "1.11.00", 0.0)
+	testStrToFloat(c, "1.11.00", 1.11)
 	testStrToFloat(c, "xx", 0.0)
 	testStrToFloat(c, "0x00", 0.0)
-	testStrToFloat(c, "11.xx", 0.0)
+	testStrToFloat(c, "11.xx", 11.0)
 	testStrToFloat(c, "xx.11", 0.0)
 }
 
@@ -620,4 +620,23 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(123, 5), "12300000")
 	signedAccept(c, mysql.TypeNewDecimal, mysql.NewDecimalFromInt(-123, -5), "-0.00123")
+}
+
+func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
+	cases := []struct {
+		orgin string
+		valid string
+	}{
+		{"-100", "-100"},
+		{"1abc", "1"},
+		{"-1-1", "-1"},
+		{"+1+1", "+1"},
+		{"123..34", "123."},
+		{"123.23E-10", "123.23E-10"},
+		{"1.1e1.3", "1.1e1"},
+		{"1.1e-13a", "1.1e-13"},
+	}
+	for _, ca := range cases {
+		c.Assert(getValidFloatPrefix(ca.orgin), Equals, ca.valid)
+	}
 }
