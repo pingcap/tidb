@@ -70,7 +70,6 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 		value = append([]byte(strconv.Itoa(int(mod.Int64()))), value...)
 	}
 
-	value = append([]byte("0."), value...)
 	value = bytes.TrimRight(value, "0")
 
 	expVal := exp + int64(d.Exponent())
@@ -128,6 +127,9 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 	if err != nil {
 		return r, d, errors.Trace(err)
 	}
+
+	// Set decimal point for value.
+	value = append([]byte("0."), value...)
 
 	// Set sign for value.
 	if valSign == negativeSign {
