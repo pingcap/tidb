@@ -219,7 +219,7 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	return nil
 }
 
-// GetSystemVar gets a system variable
+// GetSystemVar gets a system variable.
 func (s *SessionVars) GetSystemVar(key string) types.Datum {
 	var d types.Datum
 	key = strings.ToLower(key)
