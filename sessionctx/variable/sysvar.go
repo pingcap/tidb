@@ -26,11 +26,11 @@ type ScopeFlag uint8
 
 const (
 	// ScopeNone means the system variable can not be changed dynamically.
-	ScopeNone ScopeFlag = iota << 0
+	ScopeNone ScopeFlag = 0
 	// ScopeGlobal means the system variable can be changed globally.
-	ScopeGlobal
+	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
-	ScopeSession
+	ScopeSession ScopeFlag = 1 << 1
 )
 
 // SysVar is for system variable.
@@ -121,7 +121,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "skip_name_resolve", "OFF"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
-	{ScopeGlobal | ScopeSession, "sql_mode", "NO_ENGINE_SUBSTITUTION"},
+	{ScopeGlobal | ScopeSession, "sql_mode", "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},

@@ -72,6 +72,7 @@ const (
 	ClassStructure
 	ClassVariable
 	ClassXEval
+	ClassTable
 	// Add more as needed.
 )
 
@@ -110,6 +111,8 @@ func (ec ErrClass) String() string {
 		return "structure"
 	case ClassVariable:
 		return "variable"
+	case ClassTable:
+		return "table"
 	}
 	return strconv.Itoa(int(ec))
 }

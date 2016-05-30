@@ -27,6 +27,11 @@ import (
 	"github.com/pingcap/tidb/mysql"
 )
 
+var (
+	// ErrValueTruncated is used when a value has been truncated during convertion.
+	ErrValueTruncated = errors.New("value has been truncated")
+)
+
 // InvConv returns a failed conversion error.
 func invConv(val interface{}, tp byte) (interface{}, error) {
 	return nil, errors.Errorf("cannot convert %v (type %T) to type %s", val, val, TypeStr(tp))
@@ -257,11 +262,44 @@ func StrToFloat(str string) (float64, error) {
 	if len(str) == 0 {
 		return 0, nil
 	}
+	validStr := getValidFloatPrefix(str)
+	var err error
+	if validStr != str {
+		err = ErrValueTruncated
+	}
+	f, err2 := strconv.ParseFloat(validStr, 64)
+	if err == nil {
+		err = err2
+	}
+	return f, errors.Trace(err)
+}
 
-	// MySQL uses a very loose conversation, e.g, 123.abc -> 123
-	// We should do a trade off whether supporting this feature or using a strict mode.
-	// Now we use a strict mode.
-	return strconv.ParseFloat(str, 64)
+func getValidFloatPrefix(str string) string {
+	var (
+		hasDot bool
+		eIdx   = -1
+	)
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '-' || c == '+' {
+			if i != 0 && i != eIdx+1 {
+				return str[:i]
+			}
+		} else if c == '.' {
+			if hasDot {
+				return str[:i]
+			}
+			hasDot = true
+		} else if c == 'e' || c == 'E' {
+			if eIdx != -1 {
+				return str[:i]
+			}
+			eIdx = i
+		} else if c < '0' || c > '9' {
+			return str[:i]
+		}
+	}
+	return str
 }
 
 // ToInt64 converts an interface to an int64.

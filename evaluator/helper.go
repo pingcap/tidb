@@ -1,7 +1,6 @@
 package evaluator
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -119,20 +118,16 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 
 	// check whether use timestamp varibale
 	sessionVars := variable.GetSessionVars(ctx)
-	if v, ok := sessionVars.Systems["timestamp"]; ok {
-		if v != "" {
-			timestamp, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return time.Time{}, errors.Trace(err)
-			}
-
-			if timestamp <= 0 {
-				return value, nil
-			}
-
-			return time.Unix(timestamp, 0), nil
+	ts := sessionVars.GetSystemVar("timestamp")
+	if ts.Kind() != types.KindNull && ts.GetString() != "" {
+		timestamp, err := ts.ToInt64()
+		if err != nil {
+			return time.Time{}, errors.Trace(err)
 		}
+		if timestamp <= 0 {
+			return value, nil
+		}
+		return time.Unix(timestamp, 0), nil
 	}
-
 	return value, nil
 }
