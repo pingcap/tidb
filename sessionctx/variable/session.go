@@ -14,13 +14,22 @@
 package variable
 
 import (
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/types"
+	"strings"
 )
 
-const codeCantGetValidID terror.ErrCode = 1
+const (
+	codeCantGetValidID terror.ErrCode = 1
+	codeCantSetToNull  terror.ErrCode = 2
+)
 
-var errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
+var (
+	errCantGetValidID = terror.ClassVariable.New(codeCantGetValidID, "cannot get valid auto-increment id in retry")
+	errCantSetToNull  = terror.ClassVariable.New(codeCantSetToNull, "cannot set variable to null")
+)
 
 // RetryInfo saves retry information.
 type RetryInfo struct {
@@ -63,7 +72,7 @@ type SessionVars struct {
 	// user-defined variables
 	Users map[string]string
 	// system variables
-	Systems map[string]string
+	systems map[string]string
 	// prepared statement
 	PreparedStmts        map[uint32]interface{}
 	PreparedStmtNameToID map[string]uint32
@@ -89,6 +98,9 @@ type SessionVars struct {
 
 	// Current user
 	User string
+
+	// Strict SQL mode
+	StrictSQLMode bool
 }
 
 // sessionVarsKeyType is a dummy type to avoid naming collision in context.
@@ -105,12 +117,12 @@ const sessionVarsKey sessionVarsKeyType = 0
 func BindSessionVars(ctx context.Context) {
 	v := &SessionVars{
 		Users:                make(map[string]string),
-		Systems:              make(map[string]string),
+		systems:              make(map[string]string),
 		PreparedStmts:        make(map[uint32]interface{}),
 		PreparedStmtNameToID: make(map[string]uint32),
 		RetryInfo:            &RetryInfo{},
+		StrictSQLMode:        true,
 	}
-
 	ctx.SetValue(sessionVarsKey, v)
 }
 
@@ -139,8 +151,8 @@ const (
 // See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func GetCharsetInfo(ctx context.Context) (charset, collation string) {
 	sessionVars := GetSessionVars(ctx)
-	charset = sessionVars.Systems[characterSetConnection]
-	collation = sessionVars.Systems[collationConnection]
+	charset = sessionVars.systems[characterSetConnection]
+	collation = sessionVars.systems[collationConnection]
 	return
 }
 
@@ -185,4 +197,37 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 // SetCurrentUser saves the current user to the session context.
 func (s *SessionVars) SetCurrentUser(user string) {
 	s.User = user
+}
+
+// SetSystemVar sets a system variable.
+func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
+	key = strings.ToLower(key)
+	if value.Kind() == types.KindNull {
+		return errCantSetToNull
+	}
+	sVal, err := value.ToString()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if key == "sql_mode" {
+		sVal = strings.ToUpper(sVal)
+		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
+			s.StrictSQLMode = true
+		} else {
+			s.StrictSQLMode = false
+		}
+	}
+	s.systems[key] = sVal
+	return nil
+}
+
+// GetSystemVar gets a system variable.
+func (s *SessionVars) GetSystemVar(key string) types.Datum {
+	var d types.Datum
+	key = strings.ToLower(key)
+	sVal, ok := s.systems[key]
+	if ok {
+		d.SetString(sVal)
+	}
+	return d
 }

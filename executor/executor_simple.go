@@ -98,8 +98,14 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	// The server sets this variable whenever the default database changes.
 	// See: http://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_character_set_database
 	sessionVars := variable.GetSessionVars(e.ctx)
-	sessionVars.Systems[variable.CharsetDatabase] = dbinfo.Charset
-	sessionVars.Systems[variable.CollationDatabase] = dbinfo.Collate
+	err := sessionVars.SetSystemVar(variable.CharsetDatabase, types.NewStringDatum(dbinfo.Charset))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = sessionVars.SetSystemVar(variable.CollationDatabase, types.NewStringDatum(dbinfo.Collate))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -161,16 +167,13 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 			if sysVar.Scope&variable.ScopeSession == 0 {
 				return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
 			}
-			if value, err := evaluator.Eval(e.ctx, v.Value); err != nil {
+			value, err := evaluator.Eval(e.ctx, v.Value)
+			if err != nil {
 				return errors.Trace(err)
-			} else if value.Kind() == types.KindNull {
-				sessionVars.Systems[name] = ""
-			} else {
-				svalue, err := value.ToString()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				sessionVars.Systems[name] = fmt.Sprintf("%v", svalue)
+			}
+			err = sessionVars.SetSystemVar(name, value)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
@@ -179,8 +182,8 @@ func (e *SimpleExec) executeSet(s *ast.SetStmt) error {
 
 func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
 	collation := s.Collate
+	var err error
 	if len(collation) == 0 {
-		var err error
 		collation, err = charset.GetDefaultCollation(s.Charset)
 		if err != nil {
 			return errors.Trace(err)
@@ -188,9 +191,15 @@ func (e *SimpleExec) executeSetCharset(s *ast.SetCharsetStmt) error {
 	}
 	sessionVars := variable.GetSessionVars(e.ctx)
 	for _, v := range variable.SetNamesVariables {
-		sessionVars.Systems[v] = s.Charset
+		err = sessionVars.SetSystemVar(v, types.NewStringDatum(s.Charset))
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	sessionVars.Systems[variable.CollationConnection] = collation
+	err = sessionVars.SetSystemVar(variable.CollationConnection, types.NewStringDatum(collation))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
