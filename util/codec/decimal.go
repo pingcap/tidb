@@ -128,12 +128,11 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 		return r, d, errors.Trace(err)
 	}
 
-	// Set decimal point for value.
-	value = append([]byte("0."), value...)
-
-	// Set sign for value.
+	// Set decimal sign and point to value.
 	if valSign == negativeSign {
-		value = append([]byte{'-'}, value...)
+		value = append([]byte("-0."), value...)
+	} else {
+		value = append([]byte("0."), value...)
 	}
 
 	numberDecimal, err := mysql.ParseDecimal(string(value))
