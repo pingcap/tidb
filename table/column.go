@@ -21,9 +21,12 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/evaluator"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/types"
 )
 
@@ -94,13 +97,26 @@ func FindOnUpdateCols(cols []*Column) []*Column {
 func CastValues(ctx context.Context, rec []types.Datum, cols []*Column) (err error) {
 	for _, c := range cols {
 		var converted types.Datum
-		converted, err = rec[c.Offset].ConvertTo(&c.FieldType)
+		converted, err = CastValue(ctx, rec[c.Offset], c)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rec[c.Offset] = converted
 	}
 	return nil
+}
+
+// CastValue casts a value based on column type.
+func CastValue(ctx context.Context, val types.Datum, col *Column) (casted types.Datum, err error) {
+	casted, err = val.ConvertTo(&col.FieldType)
+	if err != nil {
+		if variable.GetSessionVars(ctx).StrictSQLMode {
+			return casted, errors.Trace(err)
+		}
+		// TODO: add warnings.
+		log.Warnf("cast value error %v", err)
+	}
+	return casted, nil
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
@@ -228,4 +244,76 @@ func (idx *IndexedColumn) FetchValues(r []types.Datum) ([]types.Datum, error) {
 		vals[i] = r[ic.Offset]
 	}
 	return vals, nil
+}
+
+// GetColDefaultValue gets default value of the column.
+func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, bool, error) {
+	// Check no default value flag.
+	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
+		err := ErrNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
+		if ctx != nil {
+			sessVars := variable.GetSessionVars(ctx)
+			if !sessVars.StrictSQLMode {
+				// TODO: add warning.
+				return getZeroValue(col), true, nil
+			}
+		}
+		return types.Datum{}, false, errors.Trace(err)
+	}
+
+	// Check and get timestamp/datetime default value.
+	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
+		if col.DefaultValue == nil {
+			return types.Datum{}, true, nil
+		}
+
+		value, err := evaluator.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
+		if err != nil {
+			return types.Datum{}, true, errors.Errorf("Field '%s' get default value fail - %s", col.Name, errors.Trace(err))
+		}
+		return value, true, nil
+	} else if col.Tp == mysql.TypeEnum {
+		// For enum type, if no default value and not null is set,
+		// the default value is the first element of the enum list
+		if col.DefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+			return types.NewDatum(col.FieldType.Elems[0]), true, nil
+		}
+	}
+
+	return types.NewDatum(col.DefaultValue), true, nil
+}
+
+func getZeroValue(col *model.ColumnInfo) types.Datum {
+	var d types.Datum
+	switch col.Tp {
+	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		if mysql.HasUnsignedFlag(col.Flag) {
+			d.SetUint64(0)
+		} else {
+			d.SetInt64(0)
+		}
+	case mysql.TypeFloat:
+		d.SetFloat32(0)
+	case mysql.TypeDouble:
+		d.SetFloat64(0)
+	case mysql.TypeNewDecimal:
+		d.SetMysqlDecimal(mysql.NewDecimalFromInt(0, 0))
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+		d.SetString("")
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		d.SetBytes([]byte{})
+	case mysql.TypeDuration:
+		d.SetMysqlDuration(mysql.ZeroDuration)
+	case mysql.TypeDate, mysql.TypeNewDate:
+		d.SetMysqlTime(mysql.ZeroDate)
+	case mysql.TypeTimestamp:
+		d.SetMysqlTime(mysql.ZeroTimestamp)
+	case mysql.TypeDatetime:
+		d.SetMysqlTime(mysql.ZeroDatetime)
+	case mysql.TypeBit:
+		d.SetMysqlBit(mysql.Bit{Value: 0, Width: mysql.MinBitWidth})
+	case mysql.TypeSet:
+		d.SetMysqlSet(mysql.Set{})
+	}
+	return d
 }

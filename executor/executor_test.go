@@ -1350,3 +1350,22 @@ func (s *testSuite) TestJoinPanic(c *C) {
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 }
+
+func (s *testSuite) TestSQLMode(c *C) {
+	defer testleak.AfterTest(c)()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a tinyint not null)")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	_, err := tk.Exec("insert t values ()")
+	c.Check(err, NotNil)
+
+	_, err = tk.Exec("insert t values ('1000')")
+	c.Check(err, NotNil)
+
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("insert t values ()")
+	tk.MustExec("insert t values (1000)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+}

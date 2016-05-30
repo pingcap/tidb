@@ -115,9 +115,9 @@ func SetSchemaLease(lease time.Duration) {
 // See: https://dev.mysql.com/doc/refman/5.7/en/charset-connection.html
 func getCtxCharsetInfo(ctx context.Context) (string, string) {
 	sessionVars := variable.GetSessionVars(ctx)
-	charset := sessionVars.Systems["character_set_connection"]
-	collation := sessionVars.Systems["collation_connection"]
-	return charset, collation
+	charset := sessionVars.GetSystemVar("character_set_connection")
+	collation := sessionVars.GetSystemVar("collation_connection")
+	return charset.GetString(), collation.GetString()
 }
 
 // Parse parses a query string to raw ast.StmtNode.
