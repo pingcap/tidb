@@ -258,7 +258,7 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 				return getZeroValue(col), true, nil
 			}
 		}
-		return types.Datum{}, false, err
+		return types.Datum{}, false, errors.Trace(err)
 	}
 
 	// Check and get timestamp/datetime default value.

@@ -196,17 +196,14 @@ func (s *SessionVars) SetCurrentUser(user string) {
 // SetSystemVar sets a system variable.
 func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	key = strings.ToLower(key)
-	var sVal string
-	var err error
 	if value.Kind() == types.KindNull {
 		delete(s.systems, key)
 		return nil
 	}
-	sVal, err = value.ToString()
+	sVal, err := value.ToString()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	key = strings.ToLower(key)
 	if key == "sql_mode" {
 		sVal = strings.ToUpper(sVal)
 		if strings.Contains(sVal, "STRICT_TRANS_TABLES") || strings.Contains(sVal, "STRICT_ALL_TABLES") {
