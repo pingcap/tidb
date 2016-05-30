@@ -597,20 +597,40 @@ func (e *Evaluator) variable(v *ast.VariableExpr) bool {
 		return true
 	}
 
-	_, ok := variable.SysVars[name]
+	sysVar, ok := variable.SysVars[name]
 	if !ok {
 		// select null sys vars is not permitted
 		e.err = variable.UnknownSystemVar.Gen("Unknown system variable '%s'", name)
 		return false
 	}
-
-	if !v.IsGlobal {
-		if value, ok := sessionVars.Systems[name]; ok {
-			v.SetString(value)
-			return true
-		}
+	if sysVar.Scope == variable.ScopeNone {
+		v.SetString(sysVar.Value)
+		return true
 	}
 
+	if !v.IsGlobal {
+		d := sessionVars.GetSystemVar(name)
+		if d.Kind() == types.KindNull {
+			if sysVar.Scope&variable.ScopeGlobal == 0 {
+				d.SetString(sysVar.Value)
+			} else {
+				// Get global system variable and fill it in session.
+				globalVal, err := globalVars.GetGlobalSysVar(e.ctx, name)
+				if err != nil {
+					e.err = errors.Trace(err)
+					return false
+				}
+				d.SetString(globalVal)
+				err = sessionVars.SetSystemVar(name, d)
+				if err != nil {
+					e.err = errors.Trace(err)
+					return false
+				}
+			}
+		}
+		v.SetDatum(d)
+		return true
+	}
 	value, err := globalVars.GetGlobalSysVar(e.ctx, name)
 	if err != nil {
 		e.err = errors.Trace(err)

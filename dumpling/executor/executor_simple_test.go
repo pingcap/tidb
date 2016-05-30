@@ -60,17 +60,20 @@ func (s *testSuite) TestSetVar(c *C) {
 	testSQL = "SET @@global.autocommit = 1;"
 	tk.MustExec(testSQL)
 
-	testSQL = "SET @@global.autocommit = null;"
-	tk.MustExec(testSQL)
+	// TODO: this test case should returns error.
+	// testSQL = "SET @@global.autocommit = null;"
+	// _, err := tk.Exec(testSQL)
+	// c.Assert(err, NotNil)
 
 	testSQL = "SET @@autocommit = 1;"
 	tk.MustExec(testSQL)
 
 	testSQL = "SET @@autocommit = null;"
-	tk.MustExec(testSQL)
+	_, err := tk.Exec(testSQL)
+	c.Assert(err, NotNil)
 
 	errTestSql := "SET @@date_format = 1;"
-	_, err := tk.Exec(errTestSql)
+	_, err = tk.Exec(errTestSql)
 	c.Assert(err, NotNil)
 
 	errTestSql = "SET @@rewriter_enabled = 1;"
@@ -109,13 +112,16 @@ func (s *testSuite) TestSetCharset(c *C) {
 	ctx := tk.Se.(context.Context)
 	sessionVars := variable.GetSessionVars(ctx)
 	for _, v := range variable.SetNamesVariables {
-		c.Assert(sessionVars.Systems[v] != "utf8", IsTrue)
+		sVar := sessionVars.GetSystemVar(v)
+		c.Assert(sVar.GetString() != "utf8", IsTrue)
 	}
 	tk.MustExec(`SET NAMES utf8`)
 	for _, v := range variable.SetNamesVariables {
-		c.Assert(sessionVars.Systems[v], Equals, "utf8")
+		sVar := sessionVars.GetSystemVar(v)
+		c.Assert(sVar.GetString(), Equals, "utf8")
 	}
-	c.Assert(sessionVars.Systems[variable.CollationConnection], Equals, "utf8_general_ci")
+	sVar := sessionVars.GetSystemVar(variable.CollationConnection)
+	c.Assert(sVar.GetString(), Equals, "utf8_general_ci")
 }
 
 func (s *testSuite) TestDo(c *C) {
