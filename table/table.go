@@ -137,7 +137,7 @@ const (
 
 	codeColumnCantNull  = 1048
 	codeUnknownColumn   = 1054
-	codeDuplicateColumn = 1060
+	codeDuplicateColumn = 1110
 	codeNoDefaultValue  = 1364
 )
 
@@ -145,7 +145,7 @@ func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
 		codeColumnCantNull:  mysql.ErrBadNull,
 		codeUnknownColumn:   mysql.ErrBadField,
-		codeDuplicateColumn: mysql.ErrDupFieldName,
+		codeDuplicateColumn: mysql.ErrFieldSpecifiedTwice,
 		codeNoDefaultValue:  mysql.ErrNoDefaultForField,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
