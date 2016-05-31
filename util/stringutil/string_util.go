@@ -25,11 +25,11 @@ const validEscapeChars = `0'"bntrz\\%_`
 
 // RemoveUselessBackslash removes backslashs which could be ignored in the string literal.
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-// " Each of these sequences begins with a backslash (“\”), known as the escape character.
-// MySQL recognizes the escape sequences shown in Table 9.1, “Special Character Escape Sequences”.
+// " Each of these sequences begins with a backslash ("\"), known as the escape character.
+// MySQL recognizes the escape sequences shown in Table 9.1, "Special Character Escape Sequences".
 // For all other escape sequences, backslash is ignored. That is, the escaped character is
-// interpreted as if it was not escaped. For example, “\x” is just “x”. These sequences are case sensitive.
-// For example, “\b” is interpreted as a backspace, but “\B” is interpreted as “B”."
+// interpreted as if it was not escaped. For example, "\x" is just "x". These sequences are case sensitive.
+// For example, "\b" is interpreted as a backspace, but "\B" is interpreted as "B"."
 func RemoveUselessBackslash(s string) string {
 	var (
 		buf bytes.Buffer
