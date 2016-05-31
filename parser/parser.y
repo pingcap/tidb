@@ -458,6 +458,7 @@ import (
 	ExpressionList		"expression list"
 	ExpressionListOpt	"expression list opt"
 	ExpressionListList	"expression list list"
+	ExpressionListListItem	"expression list list item"
 	Factor			"expression factor"
 	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
@@ -2018,21 +2019,19 @@ ValueSym:
 |	"VALUES"
 
 ExpressionListList:
-	'(' ')'
+	ExpressionListListItem
 	{
-		$$ = [][]ast.ExprNode{[]ast.ExprNode{}}
+		$$ = [][]ast.ExprNode{$1.([]ast.ExprNode)}
 	}
-|	'(' ')' ',' ExpressionListList
+|	ExpressionListList ',' ExpressionListListItem
 	{
-		$$ = append([][]ast.ExprNode{[]ast.ExprNode{}}, $4.([][]ast.ExprNode)...)
+		$$ = append($1.([][]ast.ExprNode), $3.([]ast.ExprNode))
 	}
-|	'(' ExpressionList ')'
+
+ExpressionListListItem:
+	'(' ExpressionListOpt ')'
 	{
-		$$ = [][]ast.ExprNode{$2.([]ast.ExprNode)}
-	}
-|	'(' ExpressionList ')' ',' ExpressionListList
-	{
-		$$ = append([][]ast.ExprNode{$2.([]ast.ExprNode)}, $5.([][]ast.ExprNode)...)
+		$$ = $2
 	}
 
 ColumnSetValue:
@@ -2180,14 +2179,14 @@ Operand:
 			Offset: yyS[yypt].offset,
 		}
 	}
-|	"ROW" '(' Expression ',' ExpressionList ')'
+|	"ROW" '(' ExpressionList ',' Expression ')'
 	{
-		values := append([]ast.ExprNode{$3.(ast.ExprNode)}, $5.([]ast.ExprNode)...)
+		values := append($3.([]ast.ExprNode), $5.(ast.ExprNode))
 		$$ = &ast.RowExpr{Values: values}
 	}
-|	'(' Expression ',' ExpressionList ')'
+|	'(' ExpressionList ',' Expression ')'
 	{
-		values := append([]ast.ExprNode{$2.(ast.ExprNode)}, $4.([]ast.ExprNode)...)
+		values := append($2.([]ast.ExprNode), $4.(ast.ExprNode))
 		$$ = &ast.RowExpr{Values: values}
 	}
 |	"EXISTS" SubSelect
