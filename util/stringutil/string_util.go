@@ -194,7 +194,7 @@ func Unquote(s string) (t string, err error) {
 	}
 	s = s[1 : n-1]
 	if quote == '`' {
-		if contains(s, '`') {
+		if strings.IndexByte(s, '`') != -1 {
 			return "", strconv.ErrSyntax
 		}
 		return s, nil
@@ -202,11 +202,11 @@ func Unquote(s string) (t string, err error) {
 	if quote != '"' && quote != '\'' {
 		return "", strconv.ErrSyntax
 	}
-	if contains(s, '\n') {
+	if strings.IndexByte(s, '\n') != -1 {
 		return "", strconv.ErrSyntax
 	}
 	// Avoid allocation. No need to convert if there is no '\'
-	if !contains(s, '\\') && !contains(s, quote) {
+	if strings.IndexByte(s, '\\') == -1 && strings.IndexByte(s, quote) == -1 {
 		switch quote {
 		case '"':
 			return s, nil
@@ -233,16 +233,6 @@ func Unquote(s string) (t string, err error) {
 		}
 	}
 	return string(buf), nil
-}
-
-// contains reports whether the string contains the byte c.
-func contains(s string, c byte) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == c {
-			return true
-		}
-	}
-	return false
 }
 
 func unhex(b byte) (v rune, ok bool) {
