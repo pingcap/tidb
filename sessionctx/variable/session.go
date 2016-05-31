@@ -207,7 +207,7 @@ func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 			return errCantSetToNull
 		}
 		delete(s.systems, key)
-		return
+		return nil
 	}
 	sVal, err := value.ToString()
 	if err != nil {

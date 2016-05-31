@@ -67,5 +67,5 @@ func (*testSessionSuite) TestSession(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
 
-	c.Assert(v.SetSystemVar("charachter_set_results", types.Datum{}), IsNil)
+	c.Assert(v.SetSystemVar("character_set_results", types.Datum{}), IsNil)
 }
