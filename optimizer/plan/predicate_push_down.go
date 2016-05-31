@@ -16,7 +16,6 @@ package plan
 import (
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -84,13 +83,11 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			leftCond = append(v.LeftConditions, leftPushCond...)
 			rightCond = append(v.RightConditions, rightPushCond...)
 		}
-		log.Infof(fmt.Sprintf("left len %d right len %d", len(leftCond), len(rightCond)))
 		leftRet, err1 := PredicatePushDown(leftPlan, leftCond)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
 		rightRet, err2 := PredicatePushDown(rightPlan, rightCond)
-		log.Infof(fmt.Sprintf("left len %d right len %d", len(leftRet), len(rightRet)))
 		if err2 != nil {
 			return nil, errors.Trace(err2)
 		}

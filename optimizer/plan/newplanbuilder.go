@@ -16,7 +16,6 @@ package plan
 import (
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -27,38 +26,8 @@ import (
 var UseNewPlanner = false
 
 func (b *planBuilder) allocID(p Plan) string {
-	switch p.(type) {
-	case *Projection:
-		b.id++
-		return fmt.Sprintf("prj_%d", b.id)
-	case *Selection:
-		b.id++
-		return fmt.Sprintf("fil_%d", b.id)
-	case *Aggregation:
-		b.id++
-		return fmt.Sprintf("gby_%d", b.id)
-	case *Join:
-		b.id++
-		return fmt.Sprintf("join_%d", b.id)
-	case *Union:
-		b.id++
-		return fmt.Sprintf("uni_%d", b.id)
-	case *Sort:
-		b.id++
-		return fmt.Sprintf("sort_%d", b.id)
-	case *Limit:
-		b.id++
-		return fmt.Sprintf("lim_%d", b.id)
-	case *Distinct:
-		b.id++
-		return fmt.Sprintf("dis_%d", b.id)
-	case *NewTableScan:
-		b.id++
-		return fmt.Sprintf("ts_%d", b.id)
-	default:
-		b.err = fmt.Errorf("Unknown type %T", p)
-		return ""
-	}
+	b.id++
+	return fmt.Sprintf("%T_%d", p, b.id)
 }
 
 func (b *planBuilder) buildAggregation(p Plan, aggrFuncList []*ast.AggregateFuncExpr, gby *ast.GroupByClause) Plan {
@@ -94,7 +63,7 @@ func (b *planBuilder) buildAggregation(p Plan, aggrFuncList []*ast.AggregateFunc
 	return aggr
 }
 
-func (b *planBuilder) buildNewSinglePathPlan(node ast.ResultSetNode) Plan {
+func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) Plan {
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildNewJoin(x)
@@ -106,7 +75,7 @@ func (b *planBuilder) buildNewSinglePathPlan(node ast.ResultSetNode) Plan {
 		case *ast.UnionStmt:
 			return b.buildNewUnion(v, asName)
 		case *ast.TableName:
-			//TODO: select physical algorithm during cbo phase.
+			// TODO: select physical algorithm during cbo phase.
 			return b.buildNewTableScanPlan(v, asName)
 		default:
 			b.err = ErrUnsupportedType.Gen("unsupported table source type %T", v)
@@ -156,7 +125,6 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 				allFromLeft = false
 			}
 		}
-		log.Infof(fmt.Sprintf("extract %s left %v right %v", expr.ToString(), allFromLeft, allFromRight))
 		if allFromRight {
 			rightCond = append(rightCond, expr)
 		} else if allFromLeft {
@@ -184,10 +152,10 @@ func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 
 func (b *planBuilder) buildNewJoin(join *ast.Join) Plan {
 	if join.Right == nil {
-		return b.buildNewSinglePathPlan(join.Left)
+		return b.buildResultSetNode(join.Left)
 	}
-	leftPlan := b.buildNewSinglePathPlan(join.Left)
-	rightPlan := b.buildNewSinglePathPlan(join.Right)
+	leftPlan := b.buildResultSetNode(join.Left)
+	rightPlan := b.buildResultSetNode(join.Right)
 	var eqCond []*expression.ScalarFunction
 	var leftCond, rightCond, otherCond []expression.Expression
 	if join.On != nil {
@@ -236,7 +204,6 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, asNam
 	schema := make(expression.Schema, 0, len(fields))
 	for _, field := range fields {
 		var tblName, colName model.CIStr
-		log.Infof(fmt.Sprintf("asname %s", asName.L))
 		if asName.L != "" {
 			tblName = asName
 		}
@@ -248,7 +215,6 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, asNam
 					newExpr := col.DeepCopy()
 					proj.exprs = append(proj.exprs, newExpr)
 					schemaCol := &expression.Column{FromID: proj.id, TblName: tblName, ColName: col.ColName}
-					log.Infof(fmt.Sprintf("%s schema col %s %s", proj.id, tblName.L, col.ColName.L))
 					schema = append(schema, schemaCol)
 				}
 			}
@@ -266,7 +232,6 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, asNam
 			} else {
 				colName = model.NewCIStr(field.Expr.Text())
 			}
-			log.Infof(fmt.Sprintf("%s schema col %s %s", proj.id, tblName.L, colName.L))
 			schemaCol := &expression.Column{FromID: proj.id, TblName: tblName, ColName: colName}
 			schema = append(schema, schemaCol)
 		}
@@ -295,7 +260,6 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt, asName model.CIStr) (p
 	p = u
 	firstSchema := make(expression.Schema, 0, len(sels[0].GetSchema()))
 	firstSchema = append(firstSchema, sels[0].GetSchema()...)
-	log.Infof("sel len %d child len %d", len(sels), len(p.GetChildren()))
 	for _, sel := range sels {
 		if len(firstSchema) != len(sel.GetSchema()) {
 			b.err = errors.New("The used SELECT statements have a different number of columns")
@@ -323,7 +287,6 @@ func (b *planBuilder) buildNewUnion(union *ast.UnionStmt, asName model.CIStr) (p
 		}
 		addChild(p, sel)
 	}
-	log.Infof("sel len %d child len %d", len(sels), len(p.GetChildren()))
 	for _, v := range firstSchema {
 		v.FromID = u.id
 		v.TblName = asName
@@ -472,11 +435,11 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt, asName model.CIStr) Pl
 	}
 	// Build subquery
 	// Convert subquery to expr with plan
-	//TODO: add subquery support.
+	// TODO: add subquery support.
 	//b.buildSubquery(sel)
 	var p Plan
 	if sel.From != nil {
-		p = b.buildNewSinglePathPlan(sel.From.TableRefs)
+		p = b.buildResultSetNode(sel.From.TableRefs)
 		if b.err != nil {
 			return nil
 		}
@@ -523,7 +486,7 @@ func (b *planBuilder) buildNewSelect(sel *ast.SelectStmt, asName model.CIStr) Pl
 			return nil
 		}
 	}
-	//TODO: implement push order during cbo
+	// TODO: implement push order during cbo
 	if sel.OrderBy != nil {
 		p = b.buildNewSort(p, sel.OrderBy.Items, orderMap)
 		if b.err != nil {
@@ -573,7 +536,6 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName, asName model.CISt
 			dbName = rf.DBName
 		}
 		colName = rf.Column.Name
-		log.Infof(fmt.Sprintf("%s schema col %s", p.id, colName.L))
 		schema = append(schema, &expression.Column{FromID: p.id, ColName: colName, TblName: tblName, DbName: dbName, RetType: rf.Column.FieldType})
 	}
 	p.SetSchema(schema)

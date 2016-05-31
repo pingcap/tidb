@@ -57,7 +57,7 @@ func joinTwoRow(a *Row, b *Row) *Row {
 func (e *HashJoinExec) getHashKey(exprs []*expression.Column, row *Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(exprs))
 	for _, expr := range exprs {
-		v, err := expr.Eval(row.Data)
+		v, err := expr.Eval(row.Data, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -97,7 +97,7 @@ func (e *HashJoinExec) prepare() error {
 
 		matched := true
 		if e.smallFilter != nil {
-			matched, err = expression.EvalBool(e.smallFilter, row.Data)
+			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -142,7 +142,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 			for i, data := range smallRow.Data {
 				e.fields[i+startKey].Expr.SetValue(data.GetValue())
 			}
-			otherMatched, err = expression.EvalBool(e.otherFilter, bigRow.Data)
+			otherMatched, err = expression.EvalBool(e.otherFilter, bigRow.Data, e.ctx)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -216,7 +216,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		var matchedRows []*Row
 		bigMatched := true
 		if e.bigFilter != nil {
-			bigMatched, err = expression.EvalBool(e.bigFilter, row.Data)
+			bigMatched, err = expression.EvalBool(e.bigFilter, row.Data, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

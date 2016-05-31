@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
@@ -28,14 +27,12 @@ import (
 // Rewrite rewrites ast to Expression.
 func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr Expression, err error) {
 	er := &expressionRewriter{schema: schema, aggrMap: AggrMapper}
-	log.Infof(fmt.Sprintf("expr %T, schema %v", expr, schema))
 	expr.Accept(er)
 	if er.err != nil {
 		return nil, errors.Trace(er.err)
 	}
 	if len(er.ctxStack) != 1 {
-		err = fmt.Errorf("context len %v is invalid", len(er.ctxStack))
-		return nil, errors.Trace(err)
+		return nil, fmt.Errorf("context len %v is invalid", len(er.ctxStack))
 	}
 	return er.ctxStack[0], nil
 }
@@ -50,7 +47,7 @@ type expressionRewriter struct {
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	// Eval evaluates a expression through a row.
-	Eval(row []types.Datum) (types.Datum, error)
+	Eval(row []types.Datum, ctx context.Context) (types.Datum, error)
 
 	// Get the expression return type.
 	GetType() types.FieldType
@@ -63,8 +60,8 @@ type Expression interface {
 }
 
 // EvalBool evaluates expression to a boolean value.
-func EvalBool(expr Expression, row []types.Datum) (bool, error) {
-	data, err := expr.Eval(row)
+func EvalBool(expr Expression, row []types.Datum, ctx context.Context) (bool, error) {
+	data, err := expr.Eval(row, ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -109,16 +106,14 @@ func (col *Column) GetType() types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row []types.Datum) (d types.Datum, err error) {
-	if col.Index >= 0 && col.Index <= len(row) {
-		return d, errors.New("Index out of range!")
-	}
+func (col *Column) Eval(row []types.Datum, _ context.Context) (d types.Datum, err error) {
 	return row[col.Index], nil
 }
 
 // DeepCopy implements Expression interface.
 func (col *Column) DeepCopy() Expression {
-	return &Column{FromID: col.FromID, ColName: col.ColName, DbName: col.DbName, TblName: col.TblName, RetType: col.RetType, Index: col.Index}
+	newCol := *col
+	return &newCol
 }
 
 // Schema stands for the row schema get from input.
@@ -129,7 +124,6 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s {
-		log.Infof("s coln %s %s %s", col.DbName.L, col.TblName.L, col.ColName.L)
 		if (dbName.L == "" || dbName.L == col.DbName.L) && (tblName.L == "" || tblName.L == col.TblName.L) && (colName.L == col.ColName.L) {
 			if idx != -1 {
 				return nil, fmt.Errorf("Column '%s' is ambiguous", colName.L)
@@ -145,9 +139,7 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 
 // GetIndex finds the index for a column
 func (s Schema) GetIndex(col *Column) int {
-	log.Infof("find col %s %s", col.FromID, col.ColName.L)
 	for i, c := range s {
-		log.Infof("target col %s %s", c.FromID, c.ColName.L)
 		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
 			return i
 		}
@@ -161,7 +153,6 @@ type ScalarFunction struct {
 	FuncName model.CIStr
 	retType  types.FieldType
 	function evaluator.BuiltinFunc
-	ctx      context.Context
 }
 
 // ToString implements Expression interface.
@@ -200,7 +191,7 @@ func ScalarFuncs2Exprs(funcs []*ScalarFunction) []Expression {
 
 // DeepCopy implements Expression interface.
 func (sf *ScalarFunction) DeepCopy() Expression {
-	newFunc := &ScalarFunction{FuncName: sf.FuncName, function: sf.function, ctx: sf.ctx, retType: sf.retType}
+	newFunc := &ScalarFunction{FuncName: sf.FuncName, function: sf.function, retType: sf.retType}
 	for _, arg := range sf.Args {
 		newFunc.Args = append(newFunc.Args, arg.DeepCopy())
 	}
@@ -213,17 +204,17 @@ func (sf *ScalarFunction) GetType() types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row []types.Datum) (types.Datum, error) {
+func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Datum, error) {
 	args := make([]types.Datum, len(sf.Args))
 	for _, arg := range sf.Args {
-		result, err := arg.Eval(row)
+		result, err := arg.Eval(row, ctx)
 		if err != nil {
 			args = append(args, result)
 		} else {
 			return types.Datum{}, err
 		}
 	}
-	return sf.function(args, sf.ctx)
+	return sf.function(args, ctx)
 }
 
 // Constant stands for a constant value.
@@ -239,7 +230,8 @@ func (c *Constant) ToString() string {
 
 // DeepCopy implements Expression interface.
 func (c *Constant) DeepCopy() Expression {
-	return &Constant{value: c.value, retType: c.retType}
+	con := *c
+	return &con
 }
 
 // GetType implements Expression interface.
@@ -248,7 +240,7 @@ func (c *Constant) GetType() types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ []types.Datum) (types.Datum, error) {
+func (c *Constant) Eval(_ []types.Datum, _ context.Context) (types.Datum, error) {
 	return c.value, nil
 }
 
