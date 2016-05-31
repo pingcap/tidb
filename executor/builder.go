@@ -120,7 +120,8 @@ func composeCondition(conditions []expression.Expression) expression.Expression 
 	} else if length == 1 {
 		return conditions[0]
 	} else {
-		return expression.NewFunction(model.NewCIStr("eq"), []expression.Expression{composeCondition(conditions[0 : length/2]), composeCondition(conditions[length/2:])})
+		eqStr, _ := opcode.Ops[opcode.EQ]
+		return expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{composeCondition(conditions[0 : length/2]), composeCondition(conditions[length/2:])})
 	}
 }
 

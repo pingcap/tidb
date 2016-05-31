@@ -143,7 +143,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 
 		_, err = plan.PredicatePushDown(p, []expression.Expression{})
 		c.Assert(err, IsNil)
-		err = plan.ColumnPruning(p)
+		err = plan.PruneColumnsAndResolveIndices(p)
 		c.Assert(err, IsNil)
 		c.Assert(plan.ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}

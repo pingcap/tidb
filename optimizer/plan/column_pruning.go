@@ -28,8 +28,8 @@ func retrieveIndex(cols []*expression.Column, schema expression.Schema) {
 	}
 }
 
-// ColumnPruning prune unused column and find index for columns.
-func ColumnPruning(p Plan) error {
+// PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
+func PruneColumnsAndResolveIndices(p Plan) error {
 	//TODO: Currently we only implement index retrieving, column pruning will be implemented later.
 	var cols []*expression.Column
 	switch v := p.(type) {
@@ -76,7 +76,7 @@ func ColumnPruning(p Plan) error {
 		}
 	}
 	for _, child := range p.GetChildren() {
-		err := ColumnPruning(child)
+		err := PruneColumnsAndResolveIndices(child)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -52,7 +52,7 @@ type Projection struct {
 	exprs []expression.Expression
 }
 
-// Aggregation represents a aggregate plan.
+// Aggregation represents an aggregate plan.
 type Aggregation struct {
 	basePlan
 	AggFuncs     []expression.AggregationFunction

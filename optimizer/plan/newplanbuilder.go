@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 )
 
 // UseNewPlanner means if use the new planner.
@@ -103,7 +104,8 @@ func extractColumn(expr expression.Expression, cols []*expression.Column) (resul
 func extractOnCondition(conditions []expression.Expression, left Plan, right Plan) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
-		if ok && binop.FuncName.L == "eq" {
+		eqStr, _ := opcode.Ops[opcode.EQ]
+		if ok && binop.FuncName.L == eqStr {
 			ln, lOK := binop.Args[0].(*expression.Column)
 			rn, rOK := binop.Args[1].(*expression.Column)
 			if lOK && rOK {
@@ -111,7 +113,7 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 					eqCond = append(eqCond, binop)
 					continue
 				} else if left.GetSchema().GetIndex(rn) != -1 && right.GetSchema().GetIndex(ln) != -1 {
-					eqCond = append(eqCond, expression.NewFunction(model.NewCIStr("eq"), []expression.Expression{rn, ln}))
+					eqCond = append(eqCond, expression.NewFunction(model.NewCIStr(eqStr), []expression.Expression{rn, ln}))
 					continue
 				}
 			}
@@ -136,10 +138,12 @@ func extractOnCondition(conditions []expression.Expression, left Plan, right Pla
 	return
 }
 
+// CNF means conjunctive normal form, e.g. a and b and c.
 func splitCNFItems(onExpr expression.Expression) []expression.Expression {
 	switch v := onExpr.(type) {
 	case *expression.ScalarFunction:
-		if v.FuncName.L == "andand" {
+		andandStr, _ := opcode.Ops[opcode.AndAnd]
+		if v.FuncName.L == andandStr {
 			var ret []expression.Expression
 			for _, arg := range v.Args {
 				ret = append(ret, splitCNFItems(arg)...)
@@ -214,7 +218,7 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, asNam
 				if (dbName.L == "" || dbName.L == col.DbName.L) && (colTblName.L == "" || colTblName.L == col.TblName.L) {
 					newExpr := col.DeepCopy()
 					proj.exprs = append(proj.exprs, newExpr)
-					schemaCol := &expression.Column{FromID: proj.id, TblName: tblName, ColName: col.ColName}
+					schemaCol := &expression.Column{FromID: proj.id, TblName: tblName, ColName: col.ColName, RetType: newExpr.GetType()}
 					schema = append(schema, schemaCol)
 				}
 			}
@@ -232,7 +236,7 @@ func (b *planBuilder) buildProjection(src Plan, fields []*ast.SelectField, asNam
 			} else {
 				colName = model.NewCIStr(field.Expr.Text())
 			}
-			schemaCol := &expression.Column{FromID: proj.id, TblName: tblName, ColName: colName}
+			schemaCol := &expression.Column{FromID: proj.id, TblName: tblName, ColName: colName, RetType: newExpr.GetType()}
 			schema = append(schema, schemaCol)
 		}
 	}
@@ -374,18 +378,12 @@ func (b *planBuilder) extractAggrFunc(sel *ast.SelectStmt) ([]*ast.AggregateFunc
 	// Extract agg funcs from orderby clause.
 	if sel.OrderBy != nil {
 		for _, item := range sel.OrderBy.Items {
-			n, ok := item.Expr.Accept(extractor)
+			_, ok := item.Expr.Accept(extractor)
 			if !ok {
 				b.err = errors.New("Failed to extract agg expr from orderby clause")
 				return nil, nil, nil, nil
 			}
-			item.Expr = n.(ast.ExprNode)
-			// If item is PositionExpr, we need to rebind it.
-			// For PositionExpr will refer to a ResultField in fieldlist.
-			// After extract AggExpr from fieldlist, it may be changed (See the code above).
-			if pe, ok := item.Expr.(*ast.PositionExpr); ok {
-				pe.Refer = sel.GetResultFields()[pe.N-1]
-			}
+			// TODO: support position error.
 		}
 	}
 	orderByAggrFuncs := extractor.AggFuncs
@@ -397,22 +395,12 @@ func (b *planBuilder) extractAggrFunc(sel *ast.SelectStmt) ([]*ast.AggregateFunc
 		sel.Fields.Fields = append(sel.Fields.Fields, field)
 	}
 
-	for _, f := range sel.GetResultFields() {
-		n, ok := f.Expr.Accept(extractor)
+	for _, f := range sel.Fields.Fields {
+		_, ok := f.Expr.Accept(extractor)
 		if !ok {
 			b.err = errors.New("Failed to extract agg expr!")
 			return nil, nil, nil, nil
 		}
-		ve, ok := f.Expr.(*ast.ValueExpr)
-		if ok && len(f.Column.Name.O) > 0 {
-			agg := &ast.AggregateFuncExpr{
-				F:    ast.AggFuncFirstRow,
-				Args: []ast.ExprNode{ve},
-			}
-			extractor.AggFuncs = append(extractor.AggFuncs, agg)
-			n = agg
-		}
-		f.Expr = n.(ast.ExprNode)
 	}
 	aggrList := extractor.AggFuncs
 	aggrList = append(aggrList, havingAggrFuncs...)
@@ -536,7 +524,7 @@ func (b *planBuilder) buildNewTableScanPlan(tn *ast.TableName, asName model.CISt
 			dbName = rf.DBName
 		}
 		colName = rf.Column.Name
-		schema = append(schema, &expression.Column{FromID: p.id, ColName: colName, TblName: tblName, DbName: dbName, RetType: rf.Column.FieldType})
+		schema = append(schema, &expression.Column{FromID: p.id, ColName: colName, TblName: tblName, DbName: dbName, RetType: &rf.Column.FieldType})
 	}
 	p.SetSchema(schema)
 	p.TableAsName = &asName

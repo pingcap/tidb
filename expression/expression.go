@@ -46,16 +46,16 @@ type expressionRewriter struct {
 
 // Expression represents all scalar expression in SQL.
 type Expression interface {
-	// Eval evaluates a expression through a row.
+	// Eval evaluates an expression through a row.
 	Eval(row []types.Datum, ctx context.Context) (types.Datum, error)
 
 	// Get the expression return type.
-	GetType() types.FieldType
+	GetType() *types.FieldType
 
-	// DeepCopy copies a expression totally.
+	// DeepCopy copies an expression totally.
 	DeepCopy() Expression
 
-	// ToString converts a expression into a string.
+	// ToString converts an expression into a string.
 	ToString() string
 }
 
@@ -82,7 +82,7 @@ type Column struct {
 	ColName model.CIStr
 	DbName  model.CIStr
 	TblName model.CIStr
-	RetType types.FieldType
+	RetType *types.FieldType
 
 	// only used during execution
 	Index int
@@ -101,7 +101,7 @@ func (col *Column) ToString() string {
 }
 
 // GetType implements Expression interface.
-func (col *Column) GetType() types.FieldType {
+func (col *Column) GetType() *types.FieldType {
 	return col.RetType
 }
 
@@ -119,7 +119,7 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
-// FindColumn replace a ast column to a expression column.
+// FindColumn replaces an ast column to an expression column.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
@@ -151,7 +151,8 @@ func (s Schema) GetIndex(col *Column) int {
 type ScalarFunction struct {
 	Args     []Expression
 	FuncName model.CIStr
-	retType  types.FieldType
+	// TODO: Implement type inference here, now we use ast's return type temporarily.
+	retType  *types.FieldType
 	function evaluator.BuiltinFunc
 }
 
@@ -199,7 +200,7 @@ func (sf *ScalarFunction) DeepCopy() Expression {
 }
 
 // GetType implements Expression interface.
-func (sf *ScalarFunction) GetType() types.FieldType {
+func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.retType
 }
 
@@ -220,7 +221,7 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 // Constant stands for a constant value.
 type Constant struct {
 	value   types.Datum
-	retType types.FieldType
+	retType *types.FieldType
 }
 
 // ToString implements Expression interface.
@@ -235,7 +236,7 @@ func (c *Constant) DeepCopy() Expression {
 }
 
 // GetType implements Expression interface.
-func (c *Constant) GetType() types.FieldType {
+func (c *Constant) GetType() *types.FieldType {
 	return c.retType
 }
 
@@ -278,6 +279,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 			return retNode, false
 		}
 		function.function = f.F
+		function.retType = v.Type
 		er.ctxStack = er.ctxStack[:length-len(v.Args)]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.ColumnName:
@@ -289,12 +291,13 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.ctxStack = append(er.ctxStack, column)
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause:
 	case *ast.ValueExpr:
-		value := &Constant{value: v.Datum}
+		value := &Constant{value: v.Datum, retType: v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.IsNullExpr:
 		function := &ScalarFunction{
 			Args:     []Expression{er.ctxStack[length-1]},
 			FuncName: model.NewCIStr("isnull"),
+			retType:  v.Type,
 		}
 		f, ok := evaluator.Funcs[function.FuncName.L]
 		if !ok {
@@ -305,48 +308,23 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.BinaryOperationExpr:
-		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-2], er.ctxStack[length-1]}}
-		switch v.Op {
-		case opcode.EQ:
-			function.FuncName = model.NewCIStr("EQ")
-		case opcode.AndAnd:
-			function.FuncName = model.NewCIStr("AndAnd")
-		case opcode.OrOr:
-			function.FuncName = model.NewCIStr("OrOr")
-		case opcode.LogicXor:
-			function.FuncName = model.NewCIStr("logicxor")
-		case opcode.LT:
-			function.FuncName = model.NewCIStr("lt")
-		case opcode.LE:
-			function.FuncName = model.NewCIStr("le")
-		case opcode.GT:
-			function.FuncName = model.NewCIStr("gt")
-		case opcode.GE:
-			function.FuncName = model.NewCIStr("ge")
-		case opcode.NullEQ:
-			function.FuncName = model.NewCIStr("nulleq")
-		case opcode.Plus:
-			function.FuncName = model.NewCIStr("plus")
-		case opcode.Minus:
-			function.FuncName = model.NewCIStr("minus")
-		case opcode.Mul:
-			function.FuncName = model.NewCIStr("mul")
-		case opcode.Div:
-			function.FuncName = model.NewCIStr("div")
-		case opcode.IntDiv:
-			function.FuncName = model.NewCIStr("intdiv")
+		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-2], er.ctxStack[length-1]}, retType: v.Type}
+		funcName, ok := opcode.Ops[v.Op]
+		if !ok {
+			er.err = fmt.Errorf("Unknown opcode %v", v.Op)
+			return retNode, false
 		}
+		function.FuncName = model.NewCIStr(funcName)
 		f, ok := evaluator.Funcs[function.FuncName.L]
 		if !ok {
 			er.err = errors.New("Can't find function!")
 			return retNode, false
 		}
 		function.function = f.F
-		function.retType.Tp = types.KindInt64
 		er.ctxStack = er.ctxStack[:length-2]
 		er.ctxStack = append(er.ctxStack, function)
 	case *ast.UnaryOperationExpr:
-		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-1]}}
+		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-1]}, retType: v.Type}
 		switch v.Op {
 		case opcode.Not:
 			function.FuncName = model.NewCIStr("not")
