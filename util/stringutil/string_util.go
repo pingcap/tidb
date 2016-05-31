@@ -15,8 +15,8 @@ package stringutil
 
 import (
 	"bytes"
-	"strings"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -137,7 +137,7 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 		}
 		s = s[n:]
 		if c == 'x' {
-		// single-byte string, possibly not UTF-8
+			// single-byte string, possibly not UTF-8
 			value = v
 			break
 		}
@@ -181,8 +181,8 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 
 // Unquote interprets s as a single-quoted, double-quoted,
 // or backquoted Go string literal, returning the string value
-// that s quotes. For example: test=`"\"\n"` (hex: 22 5c 22 5c 6e 22) 
-// should be converted to `"\n` (hex: 22 0a). 
+// that s quotes. For example: test=`"\"\n"` (hex: 22 5c 22 5c 6e 22)
+// should be converted to `"\n` (hex: 22 0a).
 func Unquote(s string) (t string, err error) {
 	n := len(s)
 	if n < 2 {

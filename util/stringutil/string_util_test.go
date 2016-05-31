@@ -71,7 +71,7 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 	table := []struct {
 		str    string
 		expect string
-		ok	bool
+		ok     bool
 	}{
 		{"", "", false},
 		{"'", "", false},
@@ -115,13 +115,12 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 	}
 }
 
-
 func (s *testStringUtilSuite) TestUnquoteChar(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		str    string
 		expect string
-		ok	bool
+		ok     bool
 	}{
 		{"", "", false},
 		{"'", "", false},
@@ -151,7 +150,6 @@ func (s *testStringUtilSuite) TestUnquoteChar(c *C) {
 		{`'"'`, "\"", true},
 		{`'\a\b\f\n\r\t\v\\\''`, "\a\b\f\n\r\t\v\\'", true},
 		{`' '`, " ", true},
-
 
 		{"``", ``, true},
 		{"`a`", `a`, true},
