@@ -63,6 +63,21 @@ func Reverse(s string) string {
 	return string(r)
 }
 
+// UnquoteChar decodes the first character or byte in the escaped string
+// or character literal represented by the string s.
+// It returns four values:
+//
+//1) value, the decoded Unicode code point or byte value;
+//2) multibyte, a boolean indicating whether the decoded character requires a multibyte UTF-8 representation;
+//3) tail, the remainder of the string after the character; and
+//4) an error that will be nil if the character is syntactically valid.
+//
+// The second argument, quote, specifies the type of literal being parsed
+// and therefore which escaped quote character is permitted.
+// If set to a single quote, it permits the sequence \' and disallows unescaped '.
+// If set to a double quote, it permits \" and disallows unescaped ".
+// If set to zero, it does not permit either escape and allows both quote characters to appear unescaped.
+// Diffrent with strconv.UnquoteChar, it permits unnecessary backslash.
 func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string, err error) {
 	// easy cases
 	switch c := s[0]; {
@@ -164,8 +179,10 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	return
 }
 
-// Convert SQL string value to literal, For example: test=`"\"\n"`
-// (hex: 22 5c 22 5c 6e 22) should be converted to `"\n` (hex: 22 0a). 
+// Unquote interprets s as a single-quoted, double-quoted,
+// or backquoted Go string literal, returning the string value
+// that s quotes. For example: test=`"\"\n"` (hex: 22 5c 22 5c 6e 22) 
+// should be converted to `"\n` (hex: 22 0a). 
 func Unquote(s string) (t string, err error) {
 	n := len(s)
 	if n < 2 {
