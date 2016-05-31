@@ -294,7 +294,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			continue
 		default:
-			err = errors.Errorf("Stmt Unknown FieldType %d", tp)
+			err = errUnknownFieldType.Gen("stmt unknown field type %d", tp)
 			return
 		}
 	}

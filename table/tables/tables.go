@@ -63,13 +63,13 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
-		return nil, errors.Errorf("table %s can't be in none state", tblInfo.Name)
+		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
 	}
 
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))
 	for _, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
-			return nil, errors.Errorf("column %s can't be in none state", colInfo.Name)
+			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
 		}
 
 		col := &table.Column{ColumnInfo: *colInfo}
@@ -80,7 +80,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
-			return nil, errors.Errorf("index %s can't be in none state", idxInfo.Name)
+			return nil, table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
 		}
 
 		idx := &table.IndexedColumn{
@@ -340,7 +340,7 @@ func (t *Table) AddRecord(ctx context.Context, r []types.Datum) (recordID int64,
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			value, err = value.ConvertTo(&col.FieldType)
+			value, err = table.CastValue(ctx, value, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -450,7 +450,7 @@ func (t *Table) RowWithCols(ctx context.Context, h int64, cols []*table.Column) 
 			continue
 		}
 		if col.State != model.StatePublic {
-			return nil, errors.Errorf("Cannot use none public column - %v", cols)
+			return nil, table.ErrColumnStateNonPublic.Gen("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
@@ -716,7 +716,7 @@ func EncodeRecordKey(tableID int64, h int64, columnID int64) kv.Key {
 func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, err error) {
 	k := key
 	if !key.HasPrefix(TablePrefix) {
-		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
+		return 0, 0, 0, table.ErrInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(TablePrefix):]
@@ -726,7 +726,7 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, columnID int64, e
 	}
 
 	if !key.HasPrefix(recordPrefixSep) {
-		return 0, 0, 0, errors.Errorf("invalid record key - %q", k)
+		return 0, 0, 0, table.ErrInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(recordPrefixSep):]
@@ -829,6 +829,9 @@ func unflatten(datum types.Datum, tp *types.FieldType) (types.Datum, error) {
 		dec, err := mysql.ParseDecimal(datum.GetString())
 		if err != nil {
 			return datum, errors.Trace(err)
+		}
+		if tp.Decimal >= 0 {
+			dec = dec.Truncate(int32(tp.Decimal))
 		}
 		datum.SetValue(dec)
 		return datum, nil

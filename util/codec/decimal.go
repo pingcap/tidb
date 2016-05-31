@@ -16,6 +16,7 @@ package codec
 import (
 	"bytes"
 	"math/big"
+	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
@@ -52,24 +53,24 @@ func EncodeDecimal(b []byte, d mysql.Decimal) []byte {
 	absVal := new(big.Int)
 	absVal.Abs(v)
 
-	value := []byte(absVal.String())
-
-	// Trim right side "0", like "12.34000" -> "12.34" or "0.1234000" -> "0.1234".
-	if d.Exponent() != 0 {
-		value = bytes.TrimRight(value, "0")
-	}
-
 	// Get exp and value, format is "value":"exp".
 	// like "12.34" -> "0.1234":"2".
 	// like "-0.01234" -> "-0.1234":"-1".
 	exp := int64(0)
 	div := big.NewInt(10)
+	mod := big.NewInt(0)
+	value := []byte{}
 	for ; ; exp++ {
 		if absVal.Sign() == 0 {
 			break
 		}
-		absVal = absVal.Div(absVal, div)
+
+		mod.Mod(absVal, div)
+		absVal.Div(absVal, div)
+		value = append([]byte(strconv.Itoa(int(mod.Int64()))), value...)
 	}
+
+	value = bytes.TrimRight(value, "0")
 
 	expVal := exp + int64(d.Exponent())
 	if valSign == negativeSign {
@@ -127,25 +128,19 @@ func DecodeDecimal(b []byte) ([]byte, mysql.Decimal, error) {
 		return r, d, errors.Trace(err)
 	}
 
-	// Generate decimal string value.
-	var decimalStr []byte
+	// Set decimal sign and point to value.
 	if valSign == negativeSign {
-		decimalStr = append(decimalStr, '-')
-	}
-
-	if expVal <= 0 {
-		// Like decimal "0.1234" or "0.01234".
-		decimalStr = append(decimalStr, '0')
-		decimalStr = append(decimalStr, '.')
-		decimalStr = append(decimalStr, bytes.Repeat([]byte{'0'}, -int(expVal))...)
-		decimalStr = append(decimalStr, value...)
+		value = append([]byte("-0."), value...)
 	} else {
-		// Like decimal "12.34".
-		decimalStr = append(decimalStr, value[:expVal]...)
-		decimalStr = append(decimalStr, '.')
-		decimalStr = append(decimalStr, value[expVal:]...)
+		value = append([]byte("0."), value...)
 	}
 
-	d, err = mysql.ParseDecimal(string(decimalStr))
-	return r, d, errors.Trace(err)
+	numberDecimal, err := mysql.ParseDecimal(string(value))
+	if err != nil {
+		return r, d, errors.Trace(err)
+	}
+
+	expDecimal := mysql.NewDecimalFromInt(1, int32(expVal))
+	d = numberDecimal.Mul(expDecimal)
+	return r, d, nil
 }

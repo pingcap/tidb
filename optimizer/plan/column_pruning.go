@@ -30,7 +30,7 @@ func retrieveIndex(cols []*expression.Column, schema expression.Schema) {
 
 // PruneColumnsAndResolveIndices prunes unused columns and resolves index for columns.
 func PruneColumnsAndResolveIndices(p Plan) error {
-	//TODO: Currently we only implement index retrieving, column pruning will be implemented later.
+	//TODO: Currently we only implement index resolving, column pruning will be implemented later.
 	var cols []*expression.Column
 	switch v := p.(type) {
 	case *Projection:

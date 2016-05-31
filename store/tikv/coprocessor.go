@@ -351,7 +351,7 @@ func (it *copIterator) rebuildCurrentTask(task *copTask) error {
 		return errors.Trace(err)
 	}
 	if len(newTasks) == 0 {
-		// TODO: check this, this should never happend.
+		// TODO: check this, this should never happen.
 		return nil
 	}
 	it.mu.Lock()

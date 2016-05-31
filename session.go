@@ -344,21 +344,25 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 
 // IsAutocommit checks if it is in the auto-commit mode.
 func (s *session) isAutocommit(ctx context.Context) bool {
-	autocommit, ok := variable.GetSessionVars(ctx).Systems["autocommit"]
-	if !ok {
+	sessionVar := variable.GetSessionVars(ctx)
+	autocommit := sessionVar.GetSystemVar("autocommit")
+	if autocommit.Kind() == types.KindNull {
 		if s.initing {
 			return false
 		}
-		var err error
-		autocommit, err = s.GetGlobalSysVar(ctx, "autocommit")
+		autocommitStr, err := s.GetGlobalSysVar(ctx, "autocommit")
 		if err != nil {
 			log.Errorf("Get global sys var error: %v", err)
 			return false
 		}
-		variable.GetSessionVars(ctx).Systems["autocommit"] = autocommit
-		ok = true
+		autocommit.SetString(autocommitStr)
+		err = sessionVar.SetSystemVar("autocommit", autocommit)
+		if err != nil {
+			log.Errorf("Set session sys var error: %v", err)
+		}
 	}
-	if ok && (autocommit == "ON" || autocommit == "on" || autocommit == "1") {
+	autocommitStr := autocommit.GetString()
+	if autocommitStr == "ON" || autocommitStr == "on" || autocommitStr == "1" {
 		variable.GetSessionVars(ctx).SetStatusFlag(mysql.ServerStatusAutocommit, true)
 		return true
 	}

@@ -180,7 +180,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		if x.L.GetType() != nil && x.R.GetType() != nil {
 			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
 			if xTp == mysql.TypeLonglong {
-				xTp = mysql.TypeDecimal
+				xTp = mysql.TypeNewDecimal
 			}
 			x.Type = types.NewFieldType(xTp)
 		}

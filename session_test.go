@@ -1983,6 +1983,17 @@ func (s *testSessionSuite) TestIssue893(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testSessionSuite) TestIssue1265(c *C) {
+	defer testleak.AfterTest(c)()
+	store := newStore(c, s.dbName)
+	se := newSession(c, store, s.dbName)
+
+	mustExecSQL(c, se, "drop table if exists t;")
+	mustExecSQL(c, se, "create table t (a decimal unique);")
+	mustExecSQL(c, se, "insert t values ('100');")
+	mustExecFailed(c, se, "insert t values ('1e2');")
+}
+
 // Testcase for session
 func (s *testSessionSuite) TestSession(c *C) {
 	defer testleak.AfterTest(c)()

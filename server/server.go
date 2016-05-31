@@ -41,11 +41,19 @@ import (
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 )
 
 var (
 	baseConnID uint32 = 10000
+)
+
+var (
+	errUnknownFieldType  = terror.ClassServer.New(codeUnknownFieldType, "unknown field type")
+	errInvalidPayloadLen = terror.ClassServer.New(codeInvalidPayloadLen, "invalid payload length")
+	errInvalidSequence   = terror.ClassServer.New(codeInvalidSequence, "invalid sequence")
+	errInvalidType       = terror.ClassServer.New(codeInvalidType, "invalid type")
 )
 
 // Server is the MySQL protocol server
@@ -219,3 +227,11 @@ type status struct {
 	Connections int    `json:"connections"`
 	Version     string `json:"version"`
 }
+
+// Server error codes.
+const (
+	codeUnknownFieldType  = 1
+	codeInvalidPayloadLen = 2
+	codeInvalidSequence   = 3
+	codeInvalidType       = 4
+)
