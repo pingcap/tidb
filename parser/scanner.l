@@ -1232,13 +1232,8 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	// TODO: performance issue.
 	s := string(l.stringLit)
 	l.stringLit = l.stringLit[0:0]
-	if pref == "'" {
-		s = strings.Replace(s, "\\'", "'", -1)    
-		s = strings.TrimSuffix(s, "'") + "\""
-		pref = "\""
-	} 
 	v := stringutil.RemoveUselessBackslash(pref+s)
-	v, err := strconv.Unquote(v)
+	v, err := stringutil.Unquote(v)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}
