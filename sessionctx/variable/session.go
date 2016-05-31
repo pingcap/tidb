@@ -203,7 +203,11 @@ func (s *SessionVars) SetCurrentUser(user string) {
 func (s *SessionVars) SetSystemVar(key string, value types.Datum) error {
 	key = strings.ToLower(key)
 	if value.Kind() == types.KindNull {
-		return errCantSetToNull
+		if key != "character_set_results" {
+			return errCantSetToNull
+		}
+		delete(s.systems, key)
+		return
 	}
 	sVal, err := value.ToString()
 	if err != nil {

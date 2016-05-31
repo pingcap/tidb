@@ -66,4 +66,6 @@ func (*testSessionSuite) TestSession(c *C) {
 	charset, collation := variable.GetCharsetInfo(ctx)
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
+
+	c.Assert(v.SetSystemVar("charachter_set_results", types.Datum{}), IsNil)
 }
