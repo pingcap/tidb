@@ -202,9 +202,6 @@ func Unquote(s string) (t string, err error) {
 	if quote != '"' && quote != '\'' {
 		return "", strconv.ErrSyntax
 	}
-	if strings.IndexByte(s, '\n') != -1 {
-		return "", strconv.ErrSyntax
-	}
 	// Avoid allocation. No need to convert if there is no '\'
 	if strings.IndexByte(s, '\\') == -1 && strings.IndexByte(s, quote) == -1 {
 		switch quote {
