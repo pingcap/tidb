@@ -74,7 +74,7 @@ func FindCols(cols []*Column, names []string) ([]*Column, error) {
 		if col != nil {
 			rcols = append(rcols, col)
 		} else {
-			return nil, errors.Errorf("unknown column %s", name)
+			return nil, errUnknownColumn.Gen("unknown column %s", name)
 		}
 	}
 
@@ -202,7 +202,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errors.Errorf("column specified twice - %s", name)
+			return errDuplicateColumn.Gen("column specified twice - %s", name)
 		}
 
 		m[name.L] = struct{}{}
@@ -214,7 +214,7 @@ func CheckOnce(cols []*Column) error {
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
 	if mysql.HasNotNullFlag(c.Flag) && data.Kind() == types.KindNull {
-		return errors.Errorf("Column %s can't be null.", c.Name)
+		return errColumnCantNull.Gen("Column %s can't be null.", c.Name)
 	}
 	return nil
 }
@@ -239,7 +239,7 @@ func (idx *IndexedColumn) FetchValues(r []types.Datum) ([]types.Datum, error) {
 	vals := make([]types.Datum, len(idx.Columns))
 	for i, ic := range idx.Columns {
 		if ic.Offset < 0 || ic.Offset > len(r) {
-			return nil, errors.New("Index column offset out of bound")
+			return nil, errIndexOutBound.Gen("Index column offset out of bound")
 		}
 		vals[i] = r[ic.Offset]
 	}
@@ -250,7 +250,7 @@ func (idx *IndexedColumn) FetchValues(r []types.Datum) ([]types.Datum, error) {
 func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum, bool, error) {
 	// Check no default value flag.
 	if mysql.HasNoDefaultValueFlag(col.Flag) && col.Tp != mysql.TypeEnum {
-		err := ErrNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
+		err := errNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
 		if ctx != nil {
 			sessVars := variable.GetSessionVars(ctx)
 			if !sessVars.StrictSQLMode {
@@ -269,7 +269,8 @@ func GetColDefaultValue(ctx context.Context, col *model.ColumnInfo) (types.Datum
 
 		value, err := evaluator.GetTimeValue(ctx, col.DefaultValue, col.Tp, col.Decimal)
 		if err != nil {
-			return types.Datum{}, true, errors.Errorf("Field '%s' get default value fail - %s", col.Name, errors.Trace(err))
+			return types.Datum{}, true, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
+				col.Name, errors.Trace(err))
 		}
 		return value, true, nil
 	} else if col.Tp == mysql.TypeEnum {

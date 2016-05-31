@@ -22,18 +22,36 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/types"
 )
 
 var (
-	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
+	// errNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "Field doesn't have a default value")
-)
+	errNoDefaultValue  = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
+	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
+	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
+	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
-const (
-	codeNoDefaultValue = 1
+	errGetDefaultFailed = terror.ClassTable.New(codeGetDefaultFailed, "get default value fail")
+	errIndexOutBound    = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
+
+	// ErrUnsupportedOp returns for unsupported operation.
+	ErrUnsupportedOp = terror.ClassTable.New(codeUnsupportedOp, "operation not supported")
+	// ErrRowNotFound returns for row not found.
+	ErrRowNotFound = terror.ClassTable.New(codeRowNotFound, "can not find the row")
+	// ErrTableStateCantNone returns for table none state.
+	ErrTableStateCantNone = terror.ClassTable.New(codeTableStateCantNone, "table can not be in none state")
+	// ErrColumnStateCantNone returns for column none state.
+	ErrColumnStateCantNone = terror.ClassTable.New(codeColumnStateCantNone, "column can not be in none state")
+	// ErrColumnStateNonPublic returns for column non-public state.
+	ErrColumnStateNonPublic = terror.ClassTable.New(codeColumnStateNonPublic, "can not use non-public column")
+	// ErrIndexStateCantNone returns for index none state.
+	ErrIndexStateCantNone = terror.ClassTable.New(codeIndexStateCantNone, "index can not be in none state")
+	// ErrInvalidRecordKey returns for invalid record key.
+	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -104,3 +122,31 @@ var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table,
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
+
+// Table error codes.
+const (
+	codeGetDefaultFailed     = 1
+	codeIndexOutBound        = 2
+	codeUnsupportedOp        = 3
+	codeRowNotFound          = 4
+	codeTableStateCantNone   = 5
+	codeColumnStateCantNone  = 6
+	codeColumnStateNonPublic = 7
+	codeIndexStateCantNone   = 8
+	codeInvalidRecordKey     = 9
+
+	codeColumnCantNull  = 1048
+	codeUnknownColumn   = 1054
+	codeDuplicateColumn = 1110
+	codeNoDefaultValue  = 1364
+)
+
+func init() {
+	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeColumnCantNull:  mysql.ErrBadNull,
+		codeUnknownColumn:   mysql.ErrBadField,
+		codeDuplicateColumn: mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:  mysql.ErrNoDefaultForField,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
+}
