@@ -830,6 +830,9 @@ func unflatten(datum types.Datum, tp *types.FieldType) (types.Datum, error) {
 		if err != nil {
 			return datum, errors.Trace(err)
 		}
+		if tp.Decimal >= 0 {
+			dec = dec.Truncate(int32(tp.Decimal))
+		}
 		datum.SetValue(dec)
 		return datum, nil
 	case mysql.TypeEnum:
