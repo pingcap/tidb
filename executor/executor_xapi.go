@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+const defaultConcurrency int = 10
+
 // XSelectTableExec represents XAPI select executor.
 type XSelectTableExec struct {
 	table            table.Table
@@ -144,7 +146,7 @@ func (e *XSelectTableExec) doRequest() error {
 		TableId: proto.Int64(e.table.Meta().ID),
 	}
 	selReq.TableInfo.Columns = tablecodec.ColumnsToProto(columns, e.table.Meta().PKIsHandle)
-	e.result, err = xapi.Select(txn.GetClient(), selReq, 1)
+	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}

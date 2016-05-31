@@ -28,12 +28,18 @@ func TestGetFieldLength(t *testing.T) {
 		{TypeBit, -1},
 		{TypeBlob, -1},
 		{TypeNull, -1},
+		{TypeNewDecimal, 10},
 	}
 
 	for _, test := range tbl {
 		l := GetDefaultFieldLength(test.Type)
 		if l != test.Length {
 			t.Fatalf("invalid field length %d != %d", l, test.Length)
+		}
+		if test.Type == TypeNewDecimal {
+			if dec := GetDefaultDecimal(test.Type); dec != 0 {
+				t.Fatalf("invalid field decimal %d", dec)
+			}
 		}
 	}
 }

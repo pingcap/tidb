@@ -145,11 +145,18 @@ func unflatten(datum types.Datum, ft *types.FieldType) (types.Datum, error) {
 		return datum, nil
 	case mysql.TypeNewDecimal:
 		if datum.Kind() == types.KindMysqlDecimal {
+			if ft.Decimal >= 0 {
+				dec := datum.GetMysqlDecimal().Truncate(int32(ft.Decimal))
+				datum.SetMysqlDecimal(dec)
+			}
 			return datum, nil
 		}
 		dec, err := mysql.ParseDecimal(datum.GetString())
 		if err != nil {
 			return datum, errors.Trace(err)
+		}
+		if ft.Decimal >= 0 {
+			dec = dec.Truncate(int32(ft.Decimal))
 		}
 		datum.SetValue(dec)
 		return datum, nil
