@@ -2179,14 +2179,14 @@ Operand:
 			Offset: yyS[yypt].offset,
 		}
 	}
-|	"ROW" '(' Expression ',' ExpressionList ')'
+|	"ROW" '(' ExpressionList ',' Expression ')'
 	{
-		values := append([]ast.ExprNode{$3.(ast.ExprNode)}, $5.([]ast.ExprNode)...)
+		values := append($3.([]ast.ExprNode), $5.(ast.ExprNode))
 		$$ = &ast.RowExpr{Values: values}
 	}
-|	'(' Expression ',' ExpressionList ')'
+|	'(' ExpressionList ',' Expression ')'
 	{
-		values := append([]ast.ExprNode{$2.(ast.ExprNode)}, $4.([]ast.ExprNode)...)
+		values := append($2.([]ast.ExprNode), $4.(ast.ExprNode))
 		$$ = &ast.RowExpr{Values: values}
 	}
 |	"EXISTS" SubSelect
