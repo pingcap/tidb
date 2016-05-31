@@ -944,3 +944,17 @@ func (s *testParserSuite) TestIndexHint(c *C) {
 	}
 	s.RunTest(c, table)
 }
+
+func (s *testParserSuite) TestEscape(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select """;`, false},
+		{`select """";`, true},
+		{`select "汉字";`, true},
+		{`select 'abc"def';`, true},
+		{`select 'a\r\n';`, true},
+		{`select "\a\r\n"`, true},
+		{`select "\xFF"`, true},
+	}
+	s.RunTest(c, table)
+}
