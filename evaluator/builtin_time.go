@@ -163,6 +163,9 @@ func builtinMonthName(args []types.Datum, _ context.Context) (types.Datum, error
 	mon := int(d.GetInt64())
 	if mon <= 0 || mon > len(mysql.MonthNames) {
 		d.SetNull()
+		if mon == 0 {
+			return d, nil
+		}
 		return d, errors.Errorf("no name for invalid month: %d.", mon)
 	}
 	d.SetString(mysql.MonthNames[mon-1])

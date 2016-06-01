@@ -136,7 +136,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}
 
 	dtblNil := tblToDtbl(tblNil)
-	for i, t := range dtblNil {
+	for _, t := range dtblNil {
 		args := t["Input"]
 		v, err := builtinYear(args, nil)
 		c.Assert(err, IsNil)
@@ -147,11 +147,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
 
 		v, err = builtinMonthName(args, nil)
-		if i == 0 {
-			c.Assert(err, IsNil)
-		} else {
-			c.Assert(err, NotNil)
-		}
+		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
 
 		v, err = builtinDayOfMonth(args, nil)
