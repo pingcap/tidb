@@ -163,7 +163,7 @@ func builtinMonthName(args []types.Datum, _ context.Context) (types.Datum, error
 	mon := int(d.GetInt64())
 	if mon <= 0 || mon > len(mysql.MonthNames) {
 		d.SetNull()
-		return d, nil
+		return d, errors.Trace(errors.Errorf("no name for invalid month: %d.", mon))
 	}
 	d.SetString(mysql.MonthNames[mon-1])
 
@@ -205,7 +205,8 @@ func builtinDayName(args []types.Datum, ctx context.Context) (types.Datum, error
 	}
 	weekday := d.GetInt64()
 	if (weekday < 0) || (weekday >= int64(len(mysql.WeekdayNames))) {
-		return d, errors.Errorf("no name for invalid weekday: %d.", weekday)
+		d.SetNull()
+		return d, errors.Trace(errors.Errorf("no name for invalid weekday: %d.", weekday))
 	}
 	d.SetString(mysql.WeekdayNames[weekday])
 	return d, nil
