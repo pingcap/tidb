@@ -15,10 +15,14 @@ package stringutil
 
 import (
 	"bytes"
-	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/juju/errors"
 )
+
+// ErrSyntax indicates that a value does not have the right syntax for the target type.
+var ErrSyntax = errors.New("invalid syntax")
 
 // See: https://dev.mysql.com/doc/refman/5.7/en/string-literals.html#character-escape-sequences
 const validEscapeChars = `0'"bntrz\\%_`
@@ -82,7 +86,7 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	// easy cases
 	switch c := s[0]; {
 	case c == quote && (quote == '\'' || quote == '"'):
-		err = strconv.ErrSyntax
+		err = errors.Trace(ErrSyntax)
 		return
 	case c >= utf8.RuneSelf:
 		r, size := utf8.DecodeRuneInString(s)
@@ -92,7 +96,7 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	}
 	// hard case: c is backslash
 	if len(s) <= 1 {
-		err = strconv.ErrSyntax
+		err = errors.Trace(ErrSyntax)
 		return
 	}
 	c := s[1]
@@ -124,13 +128,13 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 		}
 		var v rune
 		if len(s) < n {
-			err = strconv.ErrSyntax
+			err = errors.Trace(ErrSyntax)
 			return
 		}
 		for j := 0; j < n; j++ {
 			x, ok := unhex(s[j])
 			if !ok {
-				err = strconv.ErrSyntax
+				err = errors.Trace(ErrSyntax)
 				return
 			}
 			v = v<<4 | x
@@ -142,7 +146,7 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 			break
 		}
 		if v > utf8.MaxRune {
-			err = strconv.ErrSyntax
+			err = errors.Trace(ErrSyntax)
 			return
 		}
 		value = v
@@ -150,20 +154,20 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	case '0', '1', '2', '3', '4', '5', '6', '7':
 		v := rune(c) - '0'
 		if len(s) < 2 {
-			err = strconv.ErrSyntax
+			err = errors.Trace(ErrSyntax)
 			return
 		}
 		for j := 0; j < 2; j++ { // one digit already; two more
 			x := rune(s[j]) - '0'
 			if x < 0 || x > 7 {
-				err = strconv.ErrSyntax
+				err = errors.Trace(ErrSyntax)
 				return
 			}
 			v = (v << 3) | x
 		}
 		s = s[2:]
 		if v > 255 {
-			err = strconv.ErrSyntax
+			err = errors.Trace(ErrSyntax)
 			return
 		}
 		value = v
@@ -172,7 +176,7 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	case '\'', '"':
 		value = rune(c)
 	default:
-		err = strconv.ErrSyntax
+		err = errors.Trace(ErrSyntax)
 		return
 	}
 	tail = s
@@ -186,21 +190,21 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 func Unquote(s string) (t string, err error) {
 	n := len(s)
 	if n < 2 {
-		return "", strconv.ErrSyntax
+		return "", errors.Trace(ErrSyntax)
 	}
 	quote := s[0]
 	if quote != s[n-1] {
-		return "", strconv.ErrSyntax
+		return "", errors.Trace(ErrSyntax)
 	}
 	s = s[1 : n-1]
 	if quote == '`' {
 		if strings.IndexByte(s, '`') != -1 {
-			return "", strconv.ErrSyntax
+			return "", errors.Trace(ErrSyntax)
 		}
 		return s, nil
 	}
 	if quote != '"' && quote != '\'' {
-		return "", strconv.ErrSyntax
+		return "", errors.Trace(ErrSyntax)
 	}
 	// Avoid allocation. No need to convert if there is no '\'
 	if strings.IndexByte(s, '\\') == -1 && strings.IndexByte(s, quote) == -1 {
@@ -219,7 +223,7 @@ func Unquote(s string) (t string, err error) {
 	for len(s) > 0 {
 		c, multibyte, ss, err := UnquoteChar(s, quote)
 		if err != nil {
-			return "", err
+			return "", errors.Trace(err)
 		}
 		s = ss
 		if c < utf8.RuneSelf || !multibyte {
