@@ -20,6 +20,7 @@ package evaluator
 import (
 	"strings"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -113,6 +114,38 @@ var Funcs = map[string]Func{
 	"if":     {builtinIf, 3, 3},
 	"ifnull": {builtinIfNull, 2, 2},
 	"nullif": {builtinNullIf, 2, 2},
+
+	// only used by new plan
+	"&&":         {builtinEmpty, 2, 2},
+	"<<":         {builtinEmpty, 2, 2},
+	">>":         {builtinEmpty, 2, 2},
+	"||":         {builtinEmpty, 2, 2},
+	">=":         {builtinEmpty, 2, 2},
+	"<=":         {builtinEmpty, 2, 2},
+	"=":          {builtinEmpty, 2, 2},
+	"!=":         {builtinEmpty, 2, 2},
+	"<":          {builtinEmpty, 2, 2},
+	">":          {builtinEmpty, 2, 2},
+	"+":          {builtinEmpty, 2, 2},
+	"-":          {builtinEmpty, 2, 2},
+	"&":          {builtinEmpty, 2, 2},
+	"|":          {builtinEmpty, 2, 2},
+	"%":          {builtinEmpty, 2, 2},
+	"^":          {builtinEmpty, 2, 2},
+	"/":          {builtinEmpty, 2, 2},
+	"*":          {builtinEmpty, 2, 2},
+	"DIV":        {builtinEmpty, 2, 2},
+	"XOR":        {builtinEmpty, 2, 2},
+	"<=>":        {builtinEmpty, 2, 2},
+	"not":        {builtinEmpty, 1, 1},
+	"bitneg":     {builtinEmpty, 1, 1},
+	"unaryplus":  {builtinEmpty, 1, 1},
+	"unaryminus": {builtinEmpty, 1, 1},
+}
+
+// TODO: remove this when implementing executor.
+func builtinEmpty(args []types.Datum, ctx context.Context) (d types.Datum, err error) {
+	return d, errors.New("Not implemented yet.")
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
