@@ -27,7 +27,7 @@ func ToString(p Plan) string {
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	switch in.(type) {
-	case *JoinOuter, *JoinInner, *Join:
+	case *JoinOuter, *JoinInner, *Join, *Union:
 		idxs = append(idxs, len(strs))
 	}
 
@@ -94,6 +94,21 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
+	case *Union:
+		last := len(idxs) - 1
+		idx := idxs[last]
+		children := strs[idx:]
+		strs = strs[:idx]
+		str = "UnionAll{" + strings.Join(children, "->") + "}"
+		idxs = idxs[:last]
+	case *NewTableScan:
+		str = fmt.Sprintf("DataScan(%v)", x.Table.Name.L)
+	case *Selection:
+		str = "Selection"
+	case *Projection:
+		str = "Projection"
+	case *Aggregation:
+		str = "Aggr"
 	case *Aggregate:
 		str = "Aggregate"
 	case *Distinct:

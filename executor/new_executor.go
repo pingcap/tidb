@@ -17,7 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 )
@@ -25,20 +25,21 @@ import (
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {
 	hashTable    map[string][]*Row
-	smallHashKey []ast.ExprNode
-	bigHashKey   []ast.ExprNode
+	smallHashKey []*expression.Column
+	bigHashKey   []*expression.Column
 	smallExec    Executor
 	bigExec      Executor
 	prepared     bool
-	fields       []*ast.ResultField
 	ctx          context.Context
-	smallFilter  ast.ExprNode
-	bigFilter    ast.ExprNode
-	otherFilter  ast.ExprNode
-	outter       bool
-	leftSmall    bool
-	matchedRows  []*Row
-	cursor       int
+	smallFilter  expression.Expression
+	bigFilter    expression.Expression
+	otherFilter  expression.Expression
+	//TODO: remove fields when abandon old plan.
+	fields      []*ast.ResultField
+	outter      bool
+	leftSmall   bool
+	matchedRows []*Row
+	cursor      int
 }
 
 func joinTwoRow(a *Row, b *Row) *Row {
@@ -53,10 +54,10 @@ func joinTwoRow(a *Row, b *Row) *Row {
 	return ret
 }
 
-func (e *HashJoinExec) getHashKey(exprs []ast.ExprNode) ([]byte, error) {
+func (e *HashJoinExec) getHashKey(exprs []*expression.Column, row *Row) ([]byte, error) {
 	vals := make([]types.Datum, 0, len(exprs))
 	for _, expr := range exprs {
-		v, err := evaluator.Eval(e.ctx, expr)
+		v, err := expr.Eval(row.Data, e.ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -96,7 +97,7 @@ func (e *HashJoinExec) prepare() error {
 
 		matched := true
 		if e.smallFilter != nil {
-			matched, err = evaluator.EvalBool(e.ctx, e.smallFilter)
+			matched, err = expression.EvalBool(e.smallFilter, row.Data, e.ctx)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -104,7 +105,7 @@ func (e *HashJoinExec) prepare() error {
 				continue
 			}
 		}
-		hashcode, err := e.getHashKey(e.smallHashKey)
+		hashcode, err := e.getHashKey(e.smallHashKey, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -120,7 +121,7 @@ func (e *HashJoinExec) prepare() error {
 }
 
 func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, err error) {
-	hashcode, err := e.getHashKey(e.bigHashKey)
+	hashcode, err := e.getHashKey(e.bigHashKey, bigRow)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -141,7 +142,7 @@ func (e *HashJoinExec) constructMatchedRows(bigRow *Row) (matchedRows []*Row, er
 			for i, data := range smallRow.Data {
 				e.fields[i+startKey].Expr.SetValue(data.GetValue())
 			}
-			otherMatched, err = evaluator.EvalBool(e.ctx, e.otherFilter)
+			otherMatched, err = expression.EvalBool(e.otherFilter, bigRow.Data, e.ctx)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -215,7 +216,7 @@ func (e *HashJoinExec) Next() (*Row, error) {
 		var matchedRows []*Row
 		bigMatched := true
 		if e.bigFilter != nil {
-			bigMatched, err = evaluator.EvalBool(e.ctx, e.bigFilter)
+			bigMatched, err = expression.EvalBool(e.bigFilter, row.Data, e.ctx)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
