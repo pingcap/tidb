@@ -119,7 +119,7 @@ func (col *Column) DeepCopy() Expression {
 // Schema stands for the row schema get from input.
 type Schema []*Column
 
-// FindColumn replaces an ast column to an expression column.
+// FindColumn replaces an ast column with an expression column.
 func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
@@ -335,6 +335,12 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		case opcode.Minus:
 			function.FuncName = model.NewCIStr("unaryminus")
 		}
+		f, ok := evaluator.Funcs[function.FuncName.L]
+		if !ok {
+			er.err = errors.New("Can't find function!")
+			return retNode, false
+		}
+		function.function = f.F
 		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 	default:
