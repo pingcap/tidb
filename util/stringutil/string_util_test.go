@@ -65,3 +65,108 @@ func (s *testStringUtilSuite) TestReverse(c *C) {
 		c.Assert(x, Equals, t.expect)
 	}
 }
+
+func (s *testStringUtilSuite) TestUnquote(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		str    string
+		expect string
+		ok     bool
+	}{
+		{"", "", false},
+		{"'", "", false},
+		{`'abc"`, "", false},
+		{`abcdef`, "", false},
+		{`abcdea`, "", false},
+		{"```", "", false},
+		{"'abc'def'", "", false},
+
+		{`"abcdef"`, `abcdef`, true},
+		{`"abc'def"`, `abc'def`, true},
+		{`"汉字测试"`, `汉字测试`, true},
+		{`"☺"`, "☺", true},
+		{`"\xFF"`, "\xFF", true},
+		{`"\U00010111"`, "\U00010111", true},
+		{`"\U0001011111"`, "\U0001011111", true},
+		{`"\a\b\f\n\r\t\v\\\""`, "\a\b\f\n\r\t\v\\\"", true},
+
+		{`'abcdef'`, `abcdef`, true},
+		{`'"'`, "\"", true},
+		{`'\a\b\f\n\r\t\v\\\''`, "\a\b\f\n\r\t\v\\'", true},
+		{`' '`, " ", true},
+
+		{"``", ``, true},
+		{"`a`", `a`, true},
+		{"`abc`", `abc`, true},
+		{"`☺`", `☺`, true},
+		{"`hello world`", `hello world`, true},
+		{"`\\xFF`", `\xFF`, true},
+	}
+
+	for _, t := range table {
+		x, err := Unquote(t.str)
+		c.Assert(x, Equals, t.expect)
+		comment := Commentf("source %v", t.str)
+		if t.ok {
+			c.Assert(err, IsNil, comment)
+		} else {
+			c.Assert(err, NotNil, comment)
+		}
+	}
+}
+
+func (s *testStringUtilSuite) TestUnquoteChar(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []struct {
+		str    string
+		expect string
+		ok     bool
+	}{
+		{"", "", false},
+		{"'", "", false},
+		{`'abc"`, "", false},
+		{`abcdef`, "", false},
+		{`abcdea`, "", false},
+		{"```", "", false},
+		{"'abc'def'", "", false},
+		{`'abc\n\'`, "", false},
+		{`"abc\0"`, "", false},
+		{`"\098"`, "", false},
+		{`"\777"`, "", false},
+		{`"\汉字"`, "", false},
+
+		{`"abcdef"`, `abcdef`, true},
+		{`"abc'def"`, `abc'def`, true},
+		{`"汉字测试"`, `汉字测试`, true},
+		{`"☺"`, "☺", true},
+		{`"\u0011"`, "\u0011", true},
+		{`"\xFF"`, "\xFF", true},
+		{`"\U00010111"`, "\U00010111", true},
+		{`"\U0001011111"`, "\U0001011111", true},
+		{`"\a\b\f\n\r\t\v\\\""`, "\a\b\f\n\r\t\v\\\"", true},
+		{`"\066"`, "\066", true},
+
+		{`'abcdef'`, `abcdef`, true},
+		{`'"'`, "\"", true},
+		{`'\a\b\f\n\r\t\v\\\''`, "\a\b\f\n\r\t\v\\'", true},
+		{`' '`, " ", true},
+
+		{"``", ``, true},
+		{"`a`", `a`, true},
+		{"`abc`", `abc`, true},
+		{"`☺`", `☺`, true},
+		{"`hello world`", `hello world`, true},
+		{"`\\xFF`", `\xFF`, true},
+	}
+
+	for _, t := range table {
+		x, err := Unquote(t.str)
+		c.Assert(x, Equals, t.expect)
+		comment := Commentf("source %v", t.str)
+		if t.ok {
+			c.Assert(err, IsNil, comment)
+		} else {
+			c.Assert(err, NotNil, comment)
+		}
+	}
+}
