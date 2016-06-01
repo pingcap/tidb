@@ -66,6 +66,7 @@ var Funcs = map[string]Func{
 	"microsecond":       {builtinMicroSecond, 1, 1},
 	"minute":            {builtinMinute, 1, 1},
 	"month":             {builtinMonth, 1, 1},
+	"monthname":         {builtinMonthName, 1, 1},
 	"now":               {builtinNow, 0, 1},
 	"second":            {builtinSecond, 1, 1},
 	"sysdate":           {builtinSysDate, 0, 1},

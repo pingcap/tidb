@@ -471,6 +471,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT WEEK('2007-02-03', 0);", true},
 		{"SELECT WEEKOFYEAR('2007-02-03');", true},
 		{"SELECT MONTH('2007-02-03');", true},
+		{"SELECT MONTHNAME('2007-02-03');", true},
 		{"SELECT YEAR('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03', 0);", true},
