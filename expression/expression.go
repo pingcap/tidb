@@ -32,7 +32,7 @@ func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[*ast.AggregateFunc
 		return nil, errors.Trace(er.err)
 	}
 	if len(er.ctxStack) != 1 {
-		return nil, fmt.Errorf("context len %v is invalid", len(er.ctxStack))
+		return nil, errors.Errorf("context len %v is invalid", len(er.ctxStack))
 	}
 	return er.ctxStack[0], nil
 }
@@ -126,13 +126,13 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	for i, col := range s {
 		if (dbName.L == "" || dbName.L == col.DbName.L) && (tblName.L == "" || tblName.L == col.TblName.L) && (colName.L == col.ColName.L) {
 			if idx != -1 {
-				return nil, fmt.Errorf("Column '%s' is ambiguous", colName.L)
+				return nil, errors.Errorf("Column '%s' is ambiguous", colName.L)
 			}
 			idx = i
 		}
 	}
 	if idx == -1 {
-		return nil, fmt.Errorf("Unknown column %s %s %s.", dbName.L, tblName.L, colName.L)
+		return nil, errors.Errorf("Unknown column %s %s %s.", dbName.L, tblName.L, colName.L)
 	}
 	return s[idx], nil
 }
@@ -311,7 +311,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		function := &ScalarFunction{Args: []Expression{er.ctxStack[length-2], er.ctxStack[length-1]}, retType: v.Type}
 		funcName, ok := opcode.Ops[v.Op]
 		if !ok {
-			er.err = fmt.Errorf("Unknown opcode %v", v.Op)
+			er.err = errors.Errorf("Unknown opcode %v", v.Op)
 			return retNode, false
 		}
 		function.FuncName = model.NewCIStr(funcName)
@@ -344,7 +344,7 @@ func (er *expressionRewriter) Leave(inNode ast.Node) (retNode ast.Node, ok bool)
 		er.ctxStack = er.ctxStack[:length-1]
 		er.ctxStack = append(er.ctxStack, function)
 	default:
-		er.err = fmt.Errorf("UnkownType: %T", v)
+		er.err = errors.Errorf("UnkownType: %T", v)
 	}
 	return inNode, true
 }

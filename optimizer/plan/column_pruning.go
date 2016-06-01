@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 )
@@ -65,14 +64,14 @@ func PruneColumnsAndResolveIndices(p Plan) error {
 			cols = extractColumn(eqCond, cols)
 		}
 	default:
-		return fmt.Errorf("Unknown Type %T", v)
+		return errors.Errorf("Unknown Type %T", v)
 	}
 	for _, child := range p.GetChildren() {
 		retrieveIndex(cols, child.GetSchema())
 	}
 	for _, col := range cols {
 		if col.Index == -1 {
-			return fmt.Errorf("Can't find column %s", col.ColName.L)
+			return errors.Errorf("Can't find column %s", col.ColName.L)
 		}
 	}
 	for _, child := range p.GetChildren() {

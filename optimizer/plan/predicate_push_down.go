@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 )
@@ -170,6 +169,6 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 		return
 	//TODO: support aggregation.
 	default:
-		return predicates, fmt.Errorf("Unkown type %T.", v)
+		return predicates, errors.Errorf("Unkown type %T.", v)
 	}
 }
