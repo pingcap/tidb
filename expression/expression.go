@@ -137,7 +137,7 @@ func (s Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	return s[idx], nil
 }
 
-// GetIndex finds the index for a column
+// GetIndex finds the index for a column.
 func (s Schema) GetIndex(col *Column) int {
 	for i, c := range s {
 		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
@@ -212,7 +212,7 @@ func (sf *ScalarFunction) Eval(row []types.Datum, ctx context.Context) (types.Da
 		if err != nil {
 			args = append(args, result)
 		} else {
-			return types.Datum{}, err
+			return types.Datum{}, errors.Trace(err)
 		}
 	}
 	return sf.function(args, ctx)

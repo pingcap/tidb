@@ -15,6 +15,8 @@ package parser
 
 import (
 	"fmt"
+	"runtime"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -943,4 +945,14 @@ func (s *testParserSuite) TestIndexHint(c *C) {
 		{`select * from t use index for group by (idx1) use index for order by (idx2), t2`, true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
+	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
+	var oldStats, newStats runtime.MemStats
+	runtime.ReadMemStats(&oldStats)
+	_, err := ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	runtime.ReadMemStats(&newStats)
+	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
 }
