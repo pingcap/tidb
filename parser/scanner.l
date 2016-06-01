@@ -423,6 +423,7 @@ min_rows	{m}{i}{n}_{r}{o}{w}{s}
 mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
+monthname	{m}{o}{n}{t}{h}{n}{a}{m}{e}
 names		{n}{a}{m}{e}{s}
 national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
@@ -916,6 +917,8 @@ action		{a}{c}{t}{i}{o}{n}
 			return mode
 {month}			lval.item = string(l.val)
 			return month
+{monthname}		lval.item = string(l.val)
+			return monthname
 {names}			lval.item = string(l.val)
 			return names
 {national}		lval.item = string(l.val)
