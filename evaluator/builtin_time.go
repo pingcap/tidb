@@ -401,17 +401,14 @@ func builtinTime(args []types.Datum, _ context.Context) (d types.Datum, err erro
 		return
 	}
 
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	idx := strings.Index(str, ".")
 	fsp := 0
-	isDot := false
-	str := args[0].GetString()
-	for _, b := range str {
-		if b == '.' {
-			isDot = true
-			continue
-		}
-		if isDot {
-			fsp++
-		}
+	if idx != -1 && idx != 0 {
+		fsp = len(str) - idx - 1
 	}
 	fspD := types.NewIntDatum(int64(fsp))
 	if fsp, err = checkFsp(fspD); err != nil {
