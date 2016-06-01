@@ -73,12 +73,12 @@ func (p *packetIO) readPacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 	if length < 1 {
-		return nil, errors.Errorf("invalid payload length %d", length)
+		return nil, errInvalidPayloadLen.Gen("invalid payload length %d", length)
 	}
 
 	sequence := uint8(header[3])
 	if sequence != p.sequence {
-		return nil, errors.Errorf("invalid sequence %d != %d", sequence, p.sequence)
+		return nil, errInvalidSequence.Gen("invalid sequence %d != %d", sequence, p.sequence)
 	}
 
 	p.sequence++

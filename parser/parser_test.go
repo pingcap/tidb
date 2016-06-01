@@ -15,6 +15,8 @@ package parser
 
 import (
 	"fmt"
+	"runtime"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -471,6 +473,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT WEEK('2007-02-03', 0);", true},
 		{"SELECT WEEKOFYEAR('2007-02-03');", true},
 		{"SELECT MONTH('2007-02-03');", true},
+		{"SELECT MONTHNAME('2007-02-03');", true},
 		{"SELECT YEAR('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03');", true},
 		{"SELECT YEARWEEK('2007-02-03', 0);", true},
@@ -957,4 +960,14 @@ func (s *testParserSuite) TestEscape(c *C) {
 		{`select "\xFF"`, true},
 	}
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
+	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
+	var oldStats, newStats runtime.MemStats
+	runtime.ReadMemStats(&oldStats)
+	_, err := ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	runtime.ReadMemStats(&newStats)
+	c.Assert(int(newStats.TotalAlloc-oldStats.TotalAlloc), Less, 1024*500)
 }

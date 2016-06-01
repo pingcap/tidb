@@ -22,9 +22,15 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tipb/go-tipb"
+)
+
+var (
+	errInvalidRecordKey   = terror.ClassXEval.New(codeInvalidRecordKey, "invalid record key")
+	errInvalidColumnCount = terror.ClassXEval.New(codeInvalidColumnCount, "invalid column count")
 )
 
 var (
@@ -60,7 +66,7 @@ func EncodeColumnKey(tableID int64, handle int64, columnID int64) kv.Key {
 func DecodeRowKey(key kv.Key) (handle int64, err error) {
 	k := key
 	if !key.HasPrefix(tablePrefix) {
-		return 0, errors.Errorf("invalid record key - %q", k)
+		return 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(tablePrefix):]
@@ -71,7 +77,7 @@ func DecodeRowKey(key kv.Key) (handle int64, err error) {
 	}
 
 	if !key.HasPrefix(recordPrefixSep) {
-		return 0, errors.Errorf("invalid record key - %q", k)
+		return 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
 	key = key[len(recordPrefixSep):]
@@ -93,7 +99,7 @@ func DecodeValues(data []byte, fts []*types.FieldType, inIndex bool) ([]types.Da
 		return nil, errors.Trace(err)
 	}
 	if len(values) > len(fts) {
-		return nil, errors.Errorf("invalid column count %d is less than value count %d", len(fts), len(values))
+		return nil, errInvalidColumnCount.Gen("invalid column count %d is less than value count %d", len(fts), len(values))
 	}
 	if inIndex {
 		// We don't need to unflatten index columns for now.
@@ -352,3 +358,8 @@ func (r *keyRangeSorter) Less(i, j int) bool {
 func (r *keyRangeSorter) Swap(i, j int) {
 	r.ranges[i], r.ranges[j] = r.ranges[j], r.ranges[i]
 }
+
+const (
+	codeInvalidRecordKey   = 4
+	codeInvalidColumnCount = 5
+)

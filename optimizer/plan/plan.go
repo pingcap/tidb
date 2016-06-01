@@ -17,6 +17,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 )
 
 // Plan is a description of an execution flow.
@@ -51,6 +52,12 @@ type Plan interface {
 	GetParents() []Plan
 	// Get all the children.
 	GetChildren() []Plan
+	// Set the schema.
+	SetSchema(schema expression.Schema)
+	// Get the schema.
+	GetSchema() expression.Schema
+	// Get ID.
+	GetID() string
 }
 
 // basePlan implements base Plan interface.
@@ -64,6 +71,21 @@ type basePlan struct {
 
 	parents  []Plan
 	children []Plan
+
+	schema expression.Schema
+	id     string
+}
+
+func (p *basePlan) GetID() string {
+	return p.id
+}
+
+func (p *basePlan) SetSchema(schema expression.Schema) {
+	p.schema = schema
+}
+
+func (p *basePlan) GetSchema() expression.Schema {
+	return p.schema
 }
 
 // StartupCost implements Plan StartupCost interface.

@@ -1101,7 +1101,7 @@ func (s *testSuite) TestJoin(c *C) {
 }
 
 func (s *testSuite) TestNewJoin(c *C) {
-	plan.UseNewPlanner = true
+	plan.UseNewPlanner = false
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
