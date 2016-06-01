@@ -46,7 +46,7 @@ func convertToTime(arg types.Datum, tp byte) (d types.Datum, err error) {
 
 	if d.Kind() != types.KindMysqlTime {
 		d.SetNull()
-		return d, errors.Trace(errors.Errorf("need time type, but got %T", d.GetValue()))
+		return d, errors.Errorf("need time type, but got %T", d.GetValue())
 	}
 	return d, nil
 }
@@ -67,7 +67,7 @@ func convertToDuration(arg types.Datum, fsp int) (d types.Datum, err error) {
 
 	if d.Kind() != types.KindMysqlDuration {
 		d.SetNull()
-		return d, errors.Trace(errors.Errorf("need duration type, but got %T", d.GetValue()))
+		return d, errors.Errorf("need duration type, but got %T", d.GetValue())
 	}
 	return d, nil
 }
@@ -163,7 +163,7 @@ func builtinMonthName(args []types.Datum, _ context.Context) (types.Datum, error
 	mon := int(d.GetInt64())
 	if mon <= 0 || mon > len(mysql.MonthNames) {
 		d.SetNull()
-		return d, errors.Trace(errors.Errorf("no name for invalid month: %d.", mon))
+		return d, errors.Errorf("no name for invalid month: %d.", mon)
 	}
 	d.SetString(mysql.MonthNames[mon-1])
 
@@ -206,7 +206,7 @@ func builtinDayName(args []types.Datum, ctx context.Context) (types.Datum, error
 	weekday := d.GetInt64()
 	if (weekday < 0) || (weekday >= int64(len(mysql.WeekdayNames))) {
 		d.SetNull()
-		return d, errors.Trace(errors.Errorf("no name for invalid weekday: %d.", weekday))
+		return d, errors.Errorf("no name for invalid weekday: %d.", weekday)
 	}
 	d.SetString(mysql.WeekdayNames[weekday])
 	return d, nil
@@ -426,7 +426,7 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 
 	if val.Kind() != types.KindMysqlTime {
 		d.SetNull()
-		return d, errors.Trace(errors.Errorf("need time type, but got %T", val))
+		return d, errors.Errorf("need time type, but got %T", val)
 	}
 	t := val.GetMysqlTime()
 	n, err1 := mysql.ExtractTimeNum(unit, t)
