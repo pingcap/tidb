@@ -71,6 +71,7 @@ var Funcs = map[string]Func{
 	"now":               {builtinNow, 0, 1},
 	"second":            {builtinSecond, 1, 1},
 	"sysdate":           {builtinSysDate, 0, 1},
+	"time":              {builtinTime, 1, 1},
 	"utc_date":          {builtinUTCDate, 0, 0},
 	"week":              {builtinWeek, 1, 2},
 	"weekday":           {builtinWeekDay, 1, 1},

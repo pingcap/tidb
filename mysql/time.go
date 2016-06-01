@@ -395,7 +395,7 @@ func parseDatetime(str string, fsp int) (Time, error) {
 	)
 
 	seps := parseDateFormat(str)
-
+	fmt.Println("seps len:", len(seps))
 	switch len(seps) {
 	case 1:
 		// No delimiter.

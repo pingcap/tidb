@@ -441,6 +441,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now()", true},
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
+		{"SELECT time('01:02:03');", true},
 
 		// Select current_time
 		{"select current_time", true},
@@ -456,8 +457,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"SELECT HOUR('10:05:03');", true},
 
 		// for date, day, weekday
-		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT CURRENT_DATE, CURRENT_DATE(), CURDATE()", true},
+		{"SELECT DATE('2003-12-31 01:02:03');", true},
 		{"SELECT DAY('2007-02-03');", true},
 		{"SELECT DAYOFMONTH('2007-02-03');", true},
 		{"SELECT DAYOFWEEK('2007-02-03');", true},
