@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/evaluator"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -47,6 +48,12 @@ type SimpleExec struct {
 // Fields implements Executor Fields interface.
 func (e *SimpleExec) Fields() []*ast.ResultField {
 	return nil
+}
+
+// Schema implements Executor Schema interface.
+func (e *SimpleExec) Schema() expression.Schema {
+	return nil
+
 }
 
 // Next implements Execution Next interface.

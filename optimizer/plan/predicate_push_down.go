@@ -14,7 +14,9 @@
 package plan
 
 import (
+	"fmt"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/expression"
 )
 
@@ -117,13 +119,13 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			extractedCols := extractColumn(cond, make([]*expression.Column, 0))
 			for _, col := range extractedCols {
 				id := v.GetSchema().GetIndex(col)
-				if _, ok := v.exprs[id].(*expression.ScalarFunction); ok {
+				if _, ok := v.Exprs[id].(*expression.ScalarFunction); ok {
 					canSubstitute = false
 					break
 				}
 			}
 			if canSubstitute {
-				push = append(push, columnSubstitute(cond, v.GetSchema(), v.exprs))
+				push = append(push, columnSubstitute(cond, v.GetSchema(), v.Exprs))
 			} else {
 				ret = append(ret, cond)
 			}
@@ -139,7 +141,7 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 			}
 		}
 		return
-	case *Sort, *Limit, *Distinct:
+	case *NewSort, *Limit, *Distinct:
 		rest, err1 := PredicatePushDown(p.GetChildByIndex(0), predicates)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
@@ -168,7 +170,10 @@ func PredicatePushDown(p Plan, predicates []expression.Expression) (ret []expres
 		}
 		return
 	//TODO: support aggregation.
+	case *Aggregation, *Simple:
+		return predicates, nil
 	default:
-		return predicates, errors.Errorf("Unkown type %T.", v)
+		log.Warningf(fmt.Sprintf("Unknown Type %T in Predicate Pushdown", v))
+		return predicates, nil
 	}
 }

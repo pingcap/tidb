@@ -163,6 +163,8 @@ type AggregateFuncExpr struct {
 	// contextPerGroupMap is used to store aggregate evaluation context.
 	// Each entry for a group.
 	contextPerGroupMap map[string](*AggEvaluateContext)
+
+	IsCol bool
 }
 
 // Accept implements Node Accept interface.
@@ -350,8 +352,9 @@ func (n *AggregateFuncExpr) updateGroupConcat() error {
 type AggregateFuncExtractor struct {
 	inAggregateFuncExpr bool
 	// AggFuncs is the collected AggregateFuncExprs.
-	AggFuncs   []*AggregateFuncExpr
-	extracting bool
+	AggFuncs    []*AggregateFuncExpr
+	extracting  bool
+	InSelFields bool
 }
 
 // Enter implements Visitor interface.
@@ -387,6 +390,7 @@ func (a *AggregateFuncExtractor) Leave(n Node) (node Node, ok bool) {
 				Args: []ExprNode{v},
 			}
 			agg.SetFlag((v.GetFlag() | FlagHasAggregateFunc))
+			agg.IsCol = a.InSelFields
 			a.AggFuncs = append(a.AggFuncs, agg)
 			return agg, true
 		}

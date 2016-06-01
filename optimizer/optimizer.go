@@ -43,7 +43,7 @@ func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = plan.PruneColumnsAndResolveIndices(p)
+		_, err = plan.PruneColumnsAndResolveIndices(p, p.GetSchema())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
