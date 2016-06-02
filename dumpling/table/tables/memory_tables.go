@@ -177,7 +177,7 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []types
 // AddRecord implements table.Table AddRecord interface.
 func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
 	if t.pkHandleCol != nil {
-		recordID, err = types.ToInt64(r[t.pkHandleCol.Offset].GetValue())
+		recordID, err = r[t.pkHandleCol.Offset].ToInt64()
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

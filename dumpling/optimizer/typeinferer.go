@@ -240,8 +240,7 @@ func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
 
 func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 	if len(x.Args) == 1 {
-		a := x.Args[0].GetValue()
-		fsp, err := types.ToInt64(a)
+		fsp, err := x.Args[0].GetDatum().ToInt64()
 		if err != nil {
 			v.err = err
 		}
