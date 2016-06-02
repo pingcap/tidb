@@ -194,10 +194,11 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		Minute      int64
 		Second      int64
 		MicroSecond int64
+		Time        string
 	}{
-		{"10:10:10.123456", 10, 10, 10, 123456},
-		{"11:11:11.11", 11, 11, 11, 110000},
-		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000},
+		{"10:10:10.123456", 10, 10, 10, 123456, "10:10:10.123456"},
+		{"11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
+		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -217,6 +218,10 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		v, err = builtinMicroSecond(t["Input"], nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MicroSecond"][0])
+
+		v, err = builtinTime(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Time"][0])
 	}
 
 	// nil
@@ -236,9 +241,14 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
+	v, err = builtinTime(types.MakeDatums(nil), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
 	// test error
 	errTbl := []string{
 		"2011-11-11T10:10:10.11",
+		"2011-11-11 10:10:10.11.12",
 	}
 
 	for _, t := range errTbl {
@@ -253,6 +263,9 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		c.Assert(err, NotNil)
 
 		_, err = builtinMicroSecond(td, nil)
+		c.Assert(err, NotNil)
+
+		_, err = builtinTime(td, nil)
 		c.Assert(err, NotNil)
 	}
 }

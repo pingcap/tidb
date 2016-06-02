@@ -2672,6 +2672,10 @@ FunctionCallNonKeyword:
 		}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
 	}
+|	"TIME" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"TRIM" '(' Expression ')'
 	{
 		$$ = &ast.FuncCallExpr{
