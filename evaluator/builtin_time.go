@@ -395,6 +395,29 @@ func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, e
 	return convertToDuration(d, fsp)
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
+func builtinTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].Kind() == types.KindNull {
+		return
+	}
+
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	idx := strings.Index(str, ".")
+	fsp := 0
+	if idx != -1 {
+		fsp = len(str) - idx - 1
+	}
+	fspD := types.NewIntDatum(int64(fsp))
+	if fsp, err = checkFsp(fspD); err != nil {
+		return d, errors.Trace(err)
+	}
+
+	return convertToDuration(args[0], fsp)
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
 func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	year, month, day := time.Now().UTC().Date()
