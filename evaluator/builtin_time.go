@@ -407,7 +407,7 @@ func builtinTime(args []types.Datum, _ context.Context) (d types.Datum, err erro
 	}
 	idx := strings.Index(str, ".")
 	fsp := 0
-	if idx != -1 && idx != 0 {
+	if idx != -1 {
 		fsp = len(str) - idx - 1
 	}
 	fspD := types.NewIntDatum(int64(fsp))
