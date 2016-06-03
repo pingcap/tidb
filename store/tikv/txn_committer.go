@@ -85,10 +85,18 @@ func (c *txnCommitter) primary() []byte {
 func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func(RegionVerID, [][]byte) error) error {
 	groups := make(map[RegionVerID][][]byte)
 	var primaryRegionID RegionVerID
+	var lastRegion *Region
 	for _, k := range keys {
-		region, err := c.store.regionCache.GetRegion(k)
-		if err != nil {
-			return errors.Trace(err)
+		var region *Region
+		if lastRegion != nil && lastRegion.Contains(k) {
+			region = lastRegion
+		} else {
+			var err error
+			region, err = c.store.regionCache.GetRegion(k)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			lastRegion = region
 		}
 		id := region.VerID()
 		if bytes.Compare(k, c.primary()) == 0 {
