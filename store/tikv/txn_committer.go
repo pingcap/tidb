@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"sync"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -29,8 +30,9 @@ type txnCommitter struct {
 	startTS     uint64
 	keys        [][]byte
 	mutations   map[string]*pb.Mutation
-	writtenKeys [][]byte
 	commitTS    uint64
+	mu          sync.RWMutex
+	writtenKeys [][]byte
 	committed   bool
 }
 
@@ -112,12 +114,21 @@ func (c *txnCommitter) iterKeysByRegion(keys [][]byte, f func(RegionVerID, [][]b
 		}
 		delete(groups, primaryRegionID)
 	}
+	// Parallel all rest Regions.
+	// TODO: Stop sending other requests after receiving first error.
+	ch := make(chan error)
 	for id, g := range groups {
-		if err := f(id, g); err != nil {
-			return errors.Trace(err)
+		go func(id RegionVerID, g [][]byte) {
+			ch <- f(id, g)
+		}(id, g)
+	}
+	var err error
+	for i := 0; i < len(groups); i++ {
+		if e := <-ch; e != nil {
+			err = errors.Trace(e)
 		}
 	}
-	return nil
+	return err
 }
 
 func (c *txnCommitter) keyValueSize(key []byte) int {
@@ -167,6 +178,8 @@ func (c *txnCommitter) prewriteSingleRegion(regionID RegionVerID, keys [][]byte)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			// We need to cleanup all written keys if transaction aborts.
+			c.mu.Lock()
+			defer c.mu.Unlock()
 			c.writtenKeys = append(c.writtenKeys, keys...)
 			return nil
 		}
@@ -210,6 +223,8 @@ func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) e
 		return errors.Trace(errBodyMissing)
 	}
 	if keyErr := commitResp.GetError(); keyErr != nil {
+		c.mu.RLock()
+		defer c.mu.RUnlock()
 		err = errors.Errorf("commit failed: %v", keyErr.String())
 		if c.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
@@ -222,6 +237,8 @@ func (c *txnCommitter) commitSingleRegion(regionID RegionVerID, keys [][]byte) e
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	// Group that contains primary key is always the first.
 	// We mark transaction's status committed when we receive the first success response.
 	c.committed = true
