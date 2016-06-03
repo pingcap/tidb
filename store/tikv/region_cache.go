@@ -132,7 +132,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderID uint64) {
 func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 	var r *Region
 	c.sorted.DescendLessOrEqual(newRBSearchItem(key), func(item llrb.Item) bool {
-		r = item.(llrbItem).toRegion()
+		r = item.(*llrbItem).region
 		return false
 	})
 	if r == nil {
@@ -152,7 +152,7 @@ func (c *RegionCache) insertRegionToCache(r *Region) *Region {
 	}
 	old := c.sorted.ReplaceOrInsert(newRBItem(r))
 	if old != nil {
-		delete(c.regions, old.(llrbItem).toRegion().VerID())
+		delete(c.regions, old.(*llrbItem).region.VerID())
 	}
 	c.regions[r.VerID()] = r
 	return r
@@ -206,37 +206,25 @@ func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 
 // llrbItem is llrbTree's Item that uses []byte for compare.
 type llrbItem struct {
-	llrbKey
+	key    []byte
+	region *Region
 }
 
-func newRBItem(r *Region) llrbItem {
-	return llrbItem{r}
+func newRBItem(r *Region) *llrbItem {
+	return &llrbItem{
+		key:    r.StartKey(),
+		region: r,
+	}
 }
 
-func newRBSearchItem(key []byte) llrbItem {
-	return llrbItem{llrbSearchKey(key)}
+func newRBSearchItem(key []byte) *llrbItem {
+	return &llrbItem{
+		key: key,
+	}
 }
 
-func (item llrbItem) toRegion() *Region {
-	return item.llrbKey.(*Region)
-}
-
-func (item llrbItem) Less(other llrb.Item) bool {
-	return bytes.Compare(item.key(), other.(llrbItem).key()) < 0
-}
-
-type llrbKey interface {
-	key() []byte
-}
-
-type llrbSearchKey []byte
-
-func (key llrbSearchKey) key() []byte {
-	return key
-}
-
-func (r *Region) key() []byte {
-	return r.StartKey()
+func (item *llrbItem) Less(other llrb.Item) bool {
+	return bytes.Compare(item.key, other.(*llrbItem).key) < 0
 }
 
 // Region stores region info. Region is a readonly class.
