@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/juju/errors"
@@ -24,12 +25,15 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx/autocommit"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -426,7 +430,71 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		AggFuncs:     v.AggFuncs,
 		GroupByItems: v.GroupByItems,
 	}
-	return e
+	xSrc, ok := src.(XExecutor)
+	if !ok {
+		return e
+	}
+	txn, err := b.ctx.GetTxn(false)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	client := txn.GetClient()
+	if !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeAgg) {
+		return e
+	}
+	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
+		return e
+	}
+	// Convert aggregate function exprs to pb.
+	pbAggFuncs := make([]*tipb.Expr, 0, len(v.AggFuncs))
+	for _, af := range v.AggFuncs {
+		if af.Distinct {
+			// We do not support distinct push down.
+			return e
+		}
+		pbAggFunc := b.aggFuncToPBExpr(client, af, xSrc.GetTableName())
+		if pbAggFunc == nil {
+			return e
+		}
+		pbAggFuncs = append(pbAggFuncs, pbAggFunc)
+	}
+	pbByItems := make([]*tipb.ByItem, 0, len(v.GroupByItems))
+	// Convert groupby to pb
+	for _, item := range v.GroupByItems {
+		pbByItem := b.groupByItemToPB(client, item, xSrc.GetTableName())
+		if pbByItem == nil {
+			return e
+		}
+		pbByItems = append(pbByItems, pbByItem)
+	}
+	log.Debug("Use dist aggregate.")
+	// compose aggregate info
+	// We should infer fields type.
+	// Each agg item will be splited into two datum: count and value
+	// The first field should be group key.
+	fields := make([]*types.FieldType, 1+2*len(v.AggFuncs))
+	gk := types.NewFieldType(mysql.TypeBlob)
+	gk.Charset = charset.CharsetBin
+	gk.Collate = charset.CollationBin
+	fields[0] = gk
+	for i, agg := range v.AggFuncs {
+		ft := types.NewFieldType(mysql.TypeLonglong)
+		ft.Flen = 21
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
+		fields[2*i+1] = ft
+		fields[2*i+2] = agg.GetType()
+	}
+	fmt.Println("AggFields", len(fields))
+	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
+	xe := &XAggregateExec{
+		Src:          src,
+		ResultFields: v.Fields(),
+		ctx:          b.ctx,
+		AggFuncs:     v.AggFuncs,
+	}
+	return xe
 }
 
 func (b *executorBuilder) buildHaving(v *plan.Having) Executor {

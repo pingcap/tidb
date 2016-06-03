@@ -19,6 +19,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
+	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,9 +35,10 @@ var (
 
 // SelectResult is used to get response rows from SelectRequest.
 type SelectResult struct {
-	index  bool
-	fields []*types.FieldType
-	resp   kv.Response
+	index     bool
+	aggregate bool
+	fields    []*types.FieldType
+	resp      kv.Response
 }
 
 // Next returns the next row.
@@ -50,11 +52,18 @@ func (r *SelectResult) Next() (subResult *SubResult, err error) {
 		return nil, nil
 	}
 	subResult = &SubResult{
-		index:  r.index,
-		fields: r.fields,
-		reader: reader,
+		index:     r.index,
+		fields:    r.fields,
+		reader:    reader,
+		aggregate: r.aggregate,
 	}
 	return
+}
+
+// SetFields sets select result field types.
+func (r *SelectResult) SetFields(fields []*types.FieldType) {
+	r.fields = fields
+	r.aggregate = true
 }
 
 // Close closes SelectResult.
@@ -64,11 +73,12 @@ func (r *SelectResult) Close() error {
 
 // SubResult represents a subset of select result.
 type SubResult struct {
-	index  bool
-	fields []*types.FieldType
-	reader io.ReadCloser
-	resp   *tipb.SelectResponse
-	cursor int
+	index     bool
+	aggregate bool
+	fields    []*types.FieldType
+	reader    io.ReadCloser
+	resp      *tipb.SelectResponse
+	cursor    int
 }
 
 // Next returns the next row of the sub result.
@@ -89,6 +99,9 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 		if r.resp.Error != nil {
 			return 0, nil, errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
 		}
+		if r.resp.Aggs != nil {
+			log.Debugf("Find aggregate result: %v", r.resp.Aggs)
+		}
 	}
 	if r.cursor >= len(r.resp.Rows) {
 		return 0, nil, nil
@@ -104,12 +117,14 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 		// as caller will check if data is nil to finish iteration.
 		data = make([]types.Datum, 0)
 	}
-	handleBytes := row.GetHandle()
-	datums, err := codec.Decode(handleBytes)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
+	if !r.aggregate {
+		handleBytes := row.GetHandle()
+		datums, err := codec.Decode(handleBytes)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		handle = datums[0].GetInt64()
 	}
-	handle = datums[0].GetInt64()
 	r.cursor++
 	return
 }
@@ -131,11 +146,16 @@ func Select(client kv.Client, req *tipb.SelectRequest, concurrency int) (*Select
 		return nil, errors.New("client returns nil response")
 	}
 	result := &SelectResult{resp: resp}
-	if req.TableInfo != nil {
-		result.fields = tablecodec.ProtoColumnsToFieldTypes(req.TableInfo.Columns)
+	// If Aggregates is not nil, we should set result fields latter.
+	if len(req.Aggregates) == 0 {
+		if req.TableInfo != nil {
+			result.fields = tablecodec.ProtoColumnsToFieldTypes(req.TableInfo.Columns)
+		} else {
+			result.fields = tablecodec.ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
+			result.index = true
+		}
 	} else {
-		result.fields = tablecodec.ProtoColumnsToFieldTypes(req.IndexInfo.Columns)
-		result.index = true
+		result.aggregate = true
 	}
 	return result, nil
 }

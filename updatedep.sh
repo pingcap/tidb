@@ -10,7 +10,7 @@ fi
 
 mv _vendor/* .
 if [ $# -eq 1 ]; then
-    go get -u -v -d $1
+    #go get -u -v -d $1
     godep update $1
 elif [ $# -eq 0 ]; then
     go get -u -v -d github.com/pingcap/kvproto/pkg
