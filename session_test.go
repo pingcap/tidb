@@ -2234,7 +2234,7 @@ func (s *testSessionSuite) TestSqlLogicTestCase(c *C) {
 	mustExecMatch(c, se, sql, [][]interface{}{{"26"}})
 }
 
-func newSessionWithoutInit(c *C, store kv.Storage, dbName string) Session {
+func newSessionWithoutInit(c *C, store kv.Storage) *session {
 	s := &session{
 		values:      make(map[fmt.Stringer]interface{}),
 		store:       store,
@@ -2248,10 +2248,10 @@ func newSessionWithoutInit(c *C, store kv.Storage, dbName string) Session {
 func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	defer testleak.AfterTest(c)()
 	store := kv.NewMockStorage()
-	se := newSessionWithoutInit(c, store, s.dbName)
+	se := newSessionWithoutInit(c, store)
 	c.Assert(se, NotNil)
-	variable.BindSessionVars(se.(*session))
-	sv := variable.GetSessionVars(se.(*session))
+	variable.BindSessionVars(se)
+	sv := variable.GetSessionVars(se)
 	// Prevent getting variable value from storage.
 	sv.SetSystemVar("autocommit", types.NewDatum("ON"))
 
@@ -2259,7 +2259,7 @@ func (s *testSessionSuite) TestRetryAttempts(c *C) {
 	retryInfo := sv.RetryInfo
 	retryInfo.Retrying = true
 	retryInfo.Attempts = 10
-	tx, err := se.(*session).GetTxn(true)
+	tx, err := se.GetTxn(true)
 	c.Assert(tx, NotNil)
 	c.Assert(err, IsNil)
 	mtx, ok := tx.(kv.MockTxn)
