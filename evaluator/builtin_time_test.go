@@ -54,6 +54,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		Input      string
 		Year       int64
 		Month      int64
+		MonthName  string
 		DayOfMonth int64
 		DayOfWeek  int64
 		DayOfYear  int64
@@ -63,8 +64,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		WeekOfYear int64
 		YearWeek   int64
 	}{
-		{"2000-01-01", 2000, 1, 1, 7, 1, 5, "Saturday", 52, 52, 199952},
-		{"2011-11-11", 2011, 11, 11, 6, 315, 4, "Friday", 45, 45, 201145},
+		{"2000-01-01", 2000, 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, 199952},
+		{"2011-11-11", 2011, 11, "November", 11, 6, 315, 4, "Friday", 45, 45, 201145},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -77,6 +78,10 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		v, err = builtinMonth(args, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
+
+		v, err = builtinMonthName(args, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
 
 		v, err = builtinDayOfMonth(args, nil)
 		c.Assert(err, IsNil)
@@ -116,6 +121,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		Input      interface{}
 		Year       interface{}
 		Month      interface{}
+		MonthName  interface{}
 		DayOfMonth interface{}
 		DayOfWeek  interface{}
 		DayOfYear  interface{}
@@ -125,8 +131,8 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		WeekOfYear interface{}
 		YearWeek   interface{}
 	}{
-		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
-		{"0000-00-00", int64(0), int64(0), int64(0), nil, nil, nil, nil, nil, nil, nil},
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", int64(0), int64(0), nil, int64(0), nil, nil, nil, nil, nil, nil, nil},
 	}
 
 	dtblNil := tblToDtbl(tblNil)
@@ -139,6 +145,10 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		v, err = builtinMonth(args, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["Month"][0])
+
+		v, err = builtinMonthName(args, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
 
 		v, err = builtinDayOfMonth(args, nil)
 		c.Assert(err, IsNil)
@@ -184,10 +194,11 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		Minute      int64
 		Second      int64
 		MicroSecond int64
+		Time        string
 	}{
-		{"10:10:10.123456", 10, 10, 10, 123456},
-		{"11:11:11.11", 11, 11, 11, 110000},
-		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000},
+		{"10:10:10.123456", 10, 10, 10, 123456, "10:10:10.123456"},
+		{"11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
+		{"2010-10-10 11:11:11.11", 11, 11, 11, 110000, "11:11:11.11"},
 	}
 
 	dtbl := tblToDtbl(tbl)
@@ -207,6 +218,10 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		v, err = builtinMicroSecond(t["Input"], nil)
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, t["MicroSecond"][0])
+
+		v, err = builtinTime(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Time"][0])
 	}
 
 	// nil
@@ -226,9 +241,14 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 
+	v, err = builtinTime(types.MakeDatums(nil), nil)
+	c.Assert(err, IsNil)
+	c.Assert(v.Kind(), Equals, types.KindNull)
+
 	// test error
 	errTbl := []string{
 		"2011-11-11T10:10:10.11",
+		"2011-11-11 10:10:10.11.12",
 	}
 
 	for _, t := range errTbl {
@@ -243,6 +263,9 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		c.Assert(err, NotNil)
 
 		_, err = builtinMicroSecond(td, nil)
+		c.Assert(err, NotNil)
+
+		_, err = builtinTime(td, nil)
 		c.Assert(err, NotNil)
 	}
 }

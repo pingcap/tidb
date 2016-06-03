@@ -45,9 +45,8 @@ func convertToTime(arg types.Datum, tp byte) (d types.Datum, err error) {
 	}
 
 	if d.Kind() != types.KindMysqlTime {
-		err = errors.Errorf("need time type, but got %T", d.GetValue())
 		d.SetNull()
-		return d, err
+		return d, errors.Errorf("need time type, but got %T", d.GetValue())
 	}
 	return d, nil
 }
@@ -63,14 +62,12 @@ func convertToDuration(arg types.Datum, fsp int) (d types.Datum, err error) {
 	}
 
 	if d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 
 	if d.Kind() != types.KindMysqlDuration {
-		err = errors.Errorf("need duration type, but got %T", d.GetValue())
 		d.SetNull()
-		return d, err
+		return d, errors.Errorf("need duration type, but got %T", d.GetValue())
 	}
 	return d, nil
 }
@@ -89,7 +86,6 @@ func builtinDay(args []types.Datum, ctx context.Context) (types.Datum, error) {
 func builtinHour(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -103,7 +99,6 @@ func builtinHour(args []types.Datum, _ context.Context) (types.Datum, error) {
 func builtinMinute(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -117,7 +112,6 @@ func builtinMinute(args []types.Datum, _ context.Context) (types.Datum, error) {
 func builtinSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -131,7 +125,6 @@ func builtinSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 func builtinMicroSecond(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToDuration(args[0], mysql.MaxFsp)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -145,7 +138,6 @@ func builtinMicroSecond(args []types.Datum, _ context.Context) (types.Datum, err
 func builtinMonth(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -158,6 +150,26 @@ func builtinMonth(args []types.Datum, _ context.Context) (types.Datum, error) {
 	}
 	i = int64(t.Month())
 	d.SetInt64(i)
+	return d, nil
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
+func builtinMonthName(args []types.Datum, _ context.Context) (types.Datum, error) {
+	d, err := builtinMonth(args, nil)
+	if err != nil || d.Kind() == types.KindNull {
+		return d, errors.Trace(err)
+	}
+
+	mon := int(d.GetInt64())
+	if mon <= 0 || mon > len(mysql.MonthNames) {
+		d.SetNull()
+		if mon == 0 {
+			return d, nil
+		}
+		return d, errors.Errorf("no name for invalid month: %d.", mon)
+	}
+	d.SetString(mysql.MonthNames[mon-1])
+
 	return d, nil
 }
 
@@ -192,7 +204,6 @@ func builtinNow(args []types.Datum, _ context.Context) (d types.Datum, err error
 func builtinDayName(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	d, err := builtinWeekDay(args, ctx)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	weekday := d.GetInt64()
@@ -209,7 +220,6 @@ func builtinDayOfMonth(args []types.Datum, _ context.Context) (d types.Datum, er
 	// TODO: some invalid format like 2000-00-00 will return 0 too.
 	d, err = convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -228,7 +238,6 @@ func builtinDayOfMonth(args []types.Datum, _ context.Context) (d types.Datum, er
 func builtinDayOfWeek(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	d, err = convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -249,7 +258,6 @@ func builtinDayOfWeek(args []types.Datum, _ context.Context) (d types.Datum, err
 func builtinDayOfYear(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -269,7 +277,6 @@ func builtinDayOfYear(args []types.Datum, _ context.Context) (types.Datum, error
 func builtinWeek(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -292,7 +299,6 @@ func builtinWeek(args []types.Datum, _ context.Context) (types.Datum, error) {
 func builtinWeekDay(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -342,7 +348,6 @@ func builtinYear(args []types.Datum, _ context.Context) (types.Datum, error) {
 func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error) {
 	d, err := convertToTime(args[0], mysql.TypeDate)
 	if err != nil || d.Kind() == types.KindNull {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 
@@ -390,6 +395,29 @@ func builtinCurrentTime(args []types.Datum, _ context.Context) (d types.Datum, e
 	return convertToDuration(d, fsp)
 }
 
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time
+func builtinTime(args []types.Datum, _ context.Context) (d types.Datum, err error) {
+	if args[0].Kind() == types.KindNull {
+		return
+	}
+
+	str, err := args[0].ToString()
+	if err != nil {
+		return d, errors.Trace(err)
+	}
+	idx := strings.Index(str, ".")
+	fsp := 0
+	if idx != -1 {
+		fsp = len(str) - idx - 1
+	}
+	fspD := types.NewIntDatum(int64(fsp))
+	if fsp, err = checkFsp(fspD); err != nil {
+		return d, errors.Trace(err)
+	}
+
+	return convertToDuration(args[0], fsp)
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_utc-date
 func builtinUTCDate(args []types.Datum, _ context.Context) (d types.Datum, err error) {
 	year, month, day := time.Now().UTC().Date()
@@ -423,9 +451,8 @@ func builtinExtract(args []types.Datum, _ context.Context) (d types.Datum, err e
 	}
 
 	if val.Kind() != types.KindMysqlTime {
-		err = errors.Errorf("need time type, but got %T", val)
 		d.SetNull()
-		return d, err
+		return d, errors.Errorf("need time type, but got %T", val)
 	}
 	t := val.GetMysqlTime()
 	n, err1 := mysql.ExtractTimeNum(unit, t)
@@ -457,14 +484,12 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	// args[2] -> DateArithInterval
 	// health check for date and interval
 	if args[1].Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 	nodeDate := args[1]
 	nodeInterval := args[2].GetInterface().(ast.DateArithInterval)
 	nodeIntervalIntervalDatum := nodeInterval.Interval.GetDatum()
 	if nodeIntervalIntervalDatum.Kind() == types.KindNull {
-		d.SetNull()
 		return d, nil
 	}
 	// parse date
@@ -496,15 +521,12 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	resultField.Decimal = mysql.MaxFsp
 	value, err := nodeDate.ConvertTo(resultField)
 	if err != nil {
-		d.SetNull()
 		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %T", nodeDate)
 	}
 	if value.Kind() == types.KindNull {
-		d.SetNull()
 		return d, ErrInvalidOperation.Gen("DateArith invalid args, need date but get %v", value.GetValue())
 	}
 	if value.Kind() != types.KindMysqlTime {
-		d.SetNull()
 		return d, ErrInvalidOperation.Gen("DateArith need time type, but got %T", value.GetValue())
 	}
 	result := value.GetMysqlTime()
@@ -513,7 +535,6 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	if strings.ToLower(nodeInterval.Unit) == "day" {
 		day, err1 := parseDayInterval(*nodeIntervalIntervalDatum)
 		if err1 != nil {
-			d.SetNull()
 			return d, ErrInvalidOperation.Gen("DateArith invalid day interval, need int but got %T", nodeIntervalIntervalDatum.GetString())
 		}
 		interval = fmt.Sprintf("%d", day)
@@ -523,7 +544,6 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 		} else {
 			ii, err1 := nodeIntervalIntervalDatum.ToInt64()
 			if err1 != nil {
-				d.SetNull()
 				return d, errors.Trace(err1)
 			}
 			interval = fmt.Sprintf("%v", ii)
@@ -531,7 +551,6 @@ func builtinDateArith(args []types.Datum, ctx context.Context) (d types.Datum, e
 	}
 	year, month, day, duration, err := mysql.ExtractTimeValue(nodeInterval.Unit, interval)
 	if err != nil {
-		d.SetNull()
 		return d, errors.Trace(err)
 	}
 	op := args[0].GetInterface().(ast.DateArithType)

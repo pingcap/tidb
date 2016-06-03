@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/optimizer/plan"
@@ -38,7 +39,11 @@ func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan
 		return nil, errors.Trace(err)
 	}
 	if plan.UseNewPlanner {
-		_, err = plan.PredicatePushDown(p, []ast.ExprNode{})
+		_, err = plan.PredicatePushDown(p, []expression.Expression{})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		err = plan.PruneColumnsAndResolveIndices(p)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

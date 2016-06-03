@@ -34,10 +34,6 @@ const (
 	invalidRecordID int64 = 0
 )
 
-var (
-	errOpNotSupported = errors.New("Operation not supported")
-)
-
 type boundedItem struct {
 	handle int64
 	data   []types.Datum
@@ -205,7 +201,7 @@ func (t *BoundedTable) AddRecord(ctx context.Context, r []types.Datum) (int64, e
 	var recordID int64
 	var err error
 	if t.pkHandleCol != nil {
-		recordID, err = types.ToInt64(r[t.pkHandleCol.Offset].GetValue())
+		recordID, err = r[t.pkHandleCol.Offset].ToInt64()
 		if err != nil {
 			return invalidRecordID, errors.Trace(err)
 		}
@@ -237,7 +233,7 @@ func (t *BoundedTable) RowWithCols(ctx context.Context, h int64, cols []*table.C
 		}
 	}
 	if row == nil {
-		return nil, errRowNotFound
+		return nil, table.ErrRowNotFound
 	}
 	v := make([]types.Datum, len(cols))
 	for i, col := range cols {
@@ -266,7 +262,7 @@ func (t *BoundedTable) LockRow(ctx context.Context, h int64, forRead bool) error
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *BoundedTable) RemoveRecord(ctx context.Context, h int64, r []types.Datum) error {
 	// not supported, BoundedTable is TRUNCATE only
-	return errOpNotSupported
+	return table.ErrUnsupportedOp
 }
 
 // AllocAutoID implements table.Table AllocAutoID interface.

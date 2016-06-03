@@ -101,7 +101,8 @@ func CalculateSum(sum interface{}, v interface{}) (interface{}, error) {
 	case nil:
 		data = nil
 	default:
-		data, err = ToFloat64(v)
+		d := NewDatum(v)
+		data, err = d.ToFloat64()
 	}
 
 	if err != nil {

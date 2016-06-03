@@ -106,6 +106,16 @@ var (
 		"Saturday",
 		"Sunday",
 	}
+
+	// MonthNames lists names of months, which are used in builtin time function `monthname`.
+	MonthNames = []string{
+		"January", "February",
+		"March", "April",
+		"May", "June",
+		"July", "August",
+		"September", "October",
+		"November", "December",
+	}
 )
 
 // Time is the struct for handling datetime, timestamp and date.
@@ -385,7 +395,6 @@ func parseDatetime(str string, fsp int) (Time, error) {
 	)
 
 	seps := parseDateFormat(str)
-
 	switch len(seps) {
 	case 1:
 		// No delimiter.

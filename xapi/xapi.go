@@ -20,10 +20,16 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/types"
 	"github.com/pingcap/tidb/xapi/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
+)
+
+var (
+	errInvalidResp = terror.ClassXEval.New(codeInvalidResp, "invalid response")
+	errNilResp     = terror.ClassXEval.New(codeNilResp, "client returns nil response")
 )
 
 // SelectResult is used to get response rows from SelectRequest.
@@ -81,7 +87,7 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 			return 0, nil, errors.Trace(err)
 		}
 		if r.resp.Error != nil {
-			return 0, nil, errors.Errorf("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
+			return 0, nil, errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
 		}
 	}
 	if r.cursor >= len(r.resp.Rows) {
@@ -165,3 +171,9 @@ func composeRequest(req *tipb.SelectRequest, concurrency int) (*kv.Request, erro
 func SupportExpression(client kv.Client, expr *tipb.Expr) bool {
 	return false
 }
+
+// XAPI error codes.
+const (
+	codeInvalidResp = 1
+	codeNilResp     = 2
+)

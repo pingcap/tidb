@@ -1101,7 +1101,7 @@ func (s *testSuite) TestJoin(c *C) {
 }
 
 func (s *testSuite) TestNewJoin(c *C) {
-	plan.UseNewPlanner = true
+	plan.UseNewPlanner = false
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1325,11 +1325,11 @@ func (s *testSuite) TestDatumXAPI(c *C) {
 	tk.MustExec("create table t (a decimal(10,6), b decimal, index idx_b (b))")
 	tk.MustExec("insert t values (1.1, 1.1)")
 	tk.MustExec("insert t values (2.2, 2.2)")
-	tk.MustExec("insert t values (3.3, 3.3)")
+	tk.MustExec("insert t values (3.3, 2.7)")
 	result := tk.MustQuery("select * from t where a > 1.5")
-	result.Check(testkit.Rows("2.200000 2.2", "3.300000 3.3"))
+	result.Check(testkit.Rows("2.200000 2", "3.300000 3"))
 	result = tk.MustQuery("select * from t where b > 1.5")
-	result.Check(testkit.Rows("2.200000 2.2", "3.300000 3.3"))
+	result.Check(testkit.Rows("2.200000 2", "3.300000 3"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a time(3), b time, index idx_a (a))")

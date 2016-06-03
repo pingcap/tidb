@@ -180,7 +180,7 @@ func (v *typeInferrer) binaryOperation(x *ast.BinaryOperationExpr) {
 		if x.L.GetType() != nil && x.R.GetType() != nil {
 			xTp := mergeArithType(x.L.GetType().Tp, x.R.GetType().Tp)
 			if xTp == mysql.TypeLonglong {
-				xTp = mysql.TypeDecimal
+				xTp = mysql.TypeNewDecimal
 			}
 			x.Type = types.NewFieldType(xTp)
 		}
@@ -240,8 +240,7 @@ func (v *typeInferrer) handleValuesExpr(x *ast.ValuesExpr) {
 
 func (v *typeInferrer) getFsp(x *ast.FuncCallExpr) int {
 	if len(x.Args) == 1 {
-		a := x.Args[0].GetValue()
-		fsp, err := types.ToInt64(a)
+		fsp, err := x.Args[0].GetDatum().ToInt64()
 		if err != nil {
 			v.err = err
 		}

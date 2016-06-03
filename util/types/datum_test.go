@@ -147,9 +147,6 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	v, err := Convert(3.1415926, ft)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, v, int64(3))
-
-	_, err = ToInt64(&invalidMockType{})
-	c.Assert(err, NotNil)
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {

@@ -213,6 +213,7 @@ import (
 	mod 		"MOD"
 	mode		"MODE"
 	month		"MONTH"
+	monthname	"MONTHNAME"
 	names		"NAMES"
 	national	"NATIONAL"
 	neq		"!="
@@ -458,6 +459,7 @@ import (
 	ExpressionList		"expression list"
 	ExpressionListOpt	"expression list opt"
 	ExpressionListList	"expression list list"
+	ExpressionListListItem	"expression list list item"
 	Factor			"expression factor"
 	PredicateExpr		"Predicate expression factor"
 	Field			"field expression"
@@ -1946,7 +1948,7 @@ NotKeywordToken:
 	"ABS" | "ADDDATE" | "ADMIN" | "COALESCE" | "CONCAT" | "CONCAT_WS" | "CONNECTION_ID" | "CUR_TIME"| "COUNT" | "DAY"
 |	"DATE_ADD" | "DATE_SUB" | "DAYNAME" | "DAYOFMONTH" | "DAYOFWEEK" | "DAYOFYEAR" | "FOUND_ROWS" | "GROUP_CONCAT"| "HOUR"
 |	"IFNULL" | "ISNULL" | "LAST_INSERT_ID" | "LCASE" | "LENGTH" | "LOCATE" | "LOWER" | "LTRIM" | "MAX" | "MICROSECOND" | "MIN"
-|	"MINUTE" | "NULLIF" | "MONTH" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
+|	"MINUTE" | "NULLIF" | "MONTH" | "MONTHNAME" | "NOW" | "POW" | "POWER" | "RAND" | "SECOND" | "SQL_CALC_FOUND_ROWS" | "SUBDATE"
 |	"SUBSTRING" %prec lowerThanLeftParen | "SUBSTRING_INDEX" | "SUM" | "TRIM" | "RTRIM" | "UCASE" | "UPPER" | "VERSION"
 |	"WEEKDAY" | "WEEKOFYEAR" | "YEARWEEK" | "ROUND"
 
@@ -2018,21 +2020,19 @@ ValueSym:
 |	"VALUES"
 
 ExpressionListList:
-	'(' ')'
+	ExpressionListListItem
 	{
-		$$ = [][]ast.ExprNode{[]ast.ExprNode{}}
+		$$ = [][]ast.ExprNode{$1.([]ast.ExprNode)}
 	}
-|	'(' ')' ',' ExpressionListList
+|	ExpressionListList ',' ExpressionListListItem
 	{
-		$$ = append([][]ast.ExprNode{[]ast.ExprNode{}}, $4.([][]ast.ExprNode)...)
+		$$ = append($1.([][]ast.ExprNode), $3.([]ast.ExprNode))
 	}
-|	'(' ExpressionList ')'
+
+ExpressionListListItem:
+	'(' ExpressionListOpt ')'
 	{
-		$$ = [][]ast.ExprNode{$2.([]ast.ExprNode)}
-	}
-|	'(' ExpressionList ')' ',' ExpressionListList
-	{
-		$$ = append([][]ast.ExprNode{$2.([]ast.ExprNode)}, $5.([][]ast.ExprNode)...)
+		$$ = $2
 	}
 
 ColumnSetValue:
@@ -2180,14 +2180,14 @@ Operand:
 			Offset: yyS[yypt].offset,
 		}
 	}
-|	"ROW" '(' Expression ',' ExpressionList ')'
+|	"ROW" '(' ExpressionList ',' Expression ')'
 	{
-		values := append([]ast.ExprNode{$3.(ast.ExprNode)}, $5.([]ast.ExprNode)...)
+		values := append($3.([]ast.ExprNode), $5.(ast.ExprNode))
 		$$ = &ast.RowExpr{Values: values}
 	}
-|	'(' Expression ',' ExpressionList ')'
+|	'(' ExpressionList ',' Expression ')'
 	{
-		values := append([]ast.ExprNode{$2.(ast.ExprNode)}, $4.([]ast.ExprNode)...)
+		values := append($2.([]ast.ExprNode), $4.(ast.ExprNode))
 		$$ = &ast.RowExpr{Values: values}
 	}
 |	"EXISTS" SubSelect
@@ -2573,6 +2573,10 @@ FunctionCallNonKeyword:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
+|	"MONTHNAME" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
+	}
 |	"NOW" '(' ExpressionOpt ')'
 	{
 		args := []ast.ExprNode{}
@@ -2667,6 +2671,10 @@ FunctionCallNonKeyword:
 			args = append(args, $3.(ast.ExprNode))
 		}
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: args}
+	}
+|	"TIME" '(' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1.(string)), Args: []ast.ExprNode{$3.(ast.ExprNode)}}
 	}
 |	"TRIM" '(' Expression ')'
 	{

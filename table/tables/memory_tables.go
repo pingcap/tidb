@@ -27,10 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/types"
 )
 
-var (
-	errRowNotFound = errors.New("Can not find the row")
-)
-
 type itemKey int64
 
 type itemPair struct {
@@ -171,7 +167,7 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []types
 	defer t.mu.Unlock()
 	item := t.tree.Get(itemKey(h))
 	if item == nil {
-		return errRowNotFound
+		return table.ErrRowNotFound
 	}
 	pair := item.(*itemPair)
 	pair.data = newData
@@ -181,7 +177,7 @@ func (t *MemoryTable) UpdateRecord(ctx context.Context, h int64, oldData []types
 // AddRecord implements table.Table AddRecord interface.
 func (t *MemoryTable) AddRecord(ctx context.Context, r []types.Datum) (recordID int64, err error) {
 	if t.pkHandleCol != nil {
-		recordID, err = types.ToInt64(r[t.pkHandleCol.Offset].GetValue())
+		recordID, err = r[t.pkHandleCol.Offset].ToInt64()
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -210,7 +206,7 @@ func (t *MemoryTable) RowWithCols(ctx context.Context, h int64, cols []*table.Co
 	defer t.mu.RUnlock()
 	item := t.tree.Get(itemKey(h))
 	if item == nil {
-		return nil, errRowNotFound
+		return nil, table.ErrRowNotFound
 	}
 	row := item.(*itemPair).data
 	v := make([]types.Datum, len(cols))

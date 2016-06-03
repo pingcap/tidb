@@ -423,6 +423,7 @@ min_rows	{m}{i}{n}_{r}{o}{w}{s}
 mod 		{m}{o}{d}
 mode		{m}{o}{d}{e}
 month		{m}{o}{n}{t}{h}
+monthname	{m}{o}{n}{t}{h}{n}{a}{m}{e}
 names		{n}{a}{m}{e}{s}
 national	{n}{a}{t}{i}{o}{n}{a}{l}
 not		{n}{o}{t}
@@ -916,6 +917,8 @@ action		{a}{c}{t}{i}{o}{n}
 			return mode
 {month}			lval.item = string(l.val)
 			return month
+{monthname}		lval.item = string(l.val)
+			return monthname
 {names}			lval.item = string(l.val)
 			return names
 {national}		lval.item = string(l.val)
@@ -1232,13 +1235,8 @@ func (l *lexer) str(lval *yySymType, pref string) int {
 	// TODO: performance issue.
 	s := string(l.stringLit)
 	l.stringLit = l.stringLit[0:0]
-	if pref == "'" {
-		s = strings.Replace(s, "\\'", "'", -1)    
-		s = strings.TrimSuffix(s, "'") + "\""
-		pref = "\""
-	} 
 	v := stringutil.RemoveUselessBackslash(pref+s)
-	v, err := strconv.Unquote(v)
+	v, err := stringutil.Unquote(v)
 	if err != nil {
 		v = strings.TrimSuffix(s, pref)
 	}

@@ -462,7 +462,7 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		if startPoint.value.Kind() == types.KindNull || startPoint.value.Kind() == types.KindMinNotNull {
 			startPoint.value.SetInt64(math.MinInt64)
 		}
-		startInt, err := types.ToInt64(startPoint.value.GetValue())
+		startInt, err := startPoint.value.ToInt64()
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
@@ -482,7 +482,7 @@ func (r *rangeBuilder) buildTableRanges(rangePoints []rangePoint) []TableRange {
 		} else if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value.SetInt64(math.MaxInt64)
 		}
-		endInt, err := types.ToInt64(endPoint.value.GetValue())
+		endInt, err := endPoint.value.ToInt64()
 		if err != nil {
 			r.err = errors.Trace(err)
 			return tableRanges
