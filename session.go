@@ -236,7 +236,7 @@ func (s *session) Retry() error {
 	var err error
 	retryCnt := 0
 	for {
-		variable.GetSessionVars(s).RetryInfo.Attempts = retryCnt
+		variable.GetSessionVars(s).RetryInfo.Attempts = retryCnt + 1
 		s.resetHistory()
 		s.RollbackTxn()
 		success := true
