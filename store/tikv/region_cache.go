@@ -68,8 +68,7 @@ func (c *RegionCache) GetRegion(key []byte) (*Region, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.insertRegionToCache(r)
-	return c.getRegionFromCache(key), nil
+	return c.insertRegionToCache(r), nil
 }
 
 // DropRegion remove some region cache.
@@ -145,15 +144,18 @@ func (c *RegionCache) getRegionFromCache(key []byte) *Region {
 	return nil
 }
 
-func (c *RegionCache) insertRegionToCache(r *Region) {
-	if _, ok := c.regions[r.VerID()]; ok {
-		return
+// insertRegionToCache tries to insert the Region to cache. If there is an old
+// Region with the same VerID, it will return the old one instead.
+func (c *RegionCache) insertRegionToCache(r *Region) *Region {
+	if old, ok := c.regions[r.VerID()]; ok {
+		return old
 	}
 	old := c.sorted.ReplaceOrInsert(newRBItem(r))
 	if old != nil {
 		delete(c.regions, old.(llrbItem).toRegion().VerID())
 	}
 	c.regions[r.VerID()] = r
+	return r
 }
 
 func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
@@ -165,7 +167,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 	delete(c.regions, r.VerID())
 }
 
-// loadRegion loads region from pd client, and pick the first peer as leader.
+// loadRegion loads region from pd client, and picks the first peer as leader.
 func (c *RegionCache) loadRegion(key []byte) (*Region, error) {
 	var region *Region
 	var backoffErr error
