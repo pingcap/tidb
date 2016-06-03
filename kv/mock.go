@@ -18,7 +18,7 @@ type mockTxn struct {
 	opts map[Option]interface{}
 }
 
-// Always returns a retryable error
+// Always returns a retryable error.
 func (t *mockTxn) Commit() error {
 	return ErrRetryable
 }
@@ -79,7 +79,7 @@ func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
 
-// mockStorage is used to start a must commit-failed txn
+// mockStorage is used to start a must commit-failed txn.
 type mockStorage struct {
 }
 
