@@ -133,7 +133,7 @@ interpreter:
 	@cd interpreter && $(GO) build -ldflags '$(LDFLAGS)'
 	rm -rf vendor
 
-server:
+server: parser
 ifeq ($(TARGET), "")
 	rm -rf vendor && ln -s _vendor/vendor vendor
 	@cd tidb-server && $(GO) build -ldflags '$(LDFLAGS)'
