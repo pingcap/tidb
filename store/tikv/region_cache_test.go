@@ -48,13 +48,21 @@ func (s *testRegionCacheSuite) storeAddr(id uint64) string {
 	return fmt.Sprintf("store%d", id)
 }
 
+func (s *testRegionCacheSuite) checkCache(c *C, len int) {
+	c.Assert(s.cache.regions, HasLen, len)
+	c.Assert(s.cache.sorted.Len(), Equals, len)
+	for _, r := range s.cache.regions {
+		c.Assert(r, DeepEquals, s.cache.getRegionFromCache(r.StartKey()))
+	}
+}
+
 func (s *testRegionCacheSuite) TestSimple(c *C) {
 	r, err := s.cache.GetRegion([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
-	c.Assert(s.cache.regions, HasLen, 1)
+	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
@@ -62,7 +70,7 @@ func (s *testRegionCacheSuite) TestDropStore(c *C) {
 	r, err := s.cache.GetRegion([]byte("a"))
 	c.Assert(err, NotNil)
 	c.Assert(r, IsNil)
-	c.Assert(s.cache.regions, HasLen, 0)
+	s.checkCache(c, 0)
 }
 
 func (s *testRegionCacheSuite) TestDropStoreRetry(c *C) {
@@ -169,13 +177,13 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 
 	// tikv-server reports `NotInRegion`
 	s.cache.DropRegion(r.VerID())
-	c.Assert(s.cache.regions, HasLen, 0)
+	s.checkCache(c, 0)
 
 	r, err = s.cache.GetRegion([]byte("x"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, region2)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
-	c.Assert(s.cache.regions, HasLen, 1)
+	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestMerge(c *C) {
@@ -193,12 +201,12 @@ func (s *testRegionCacheSuite) TestMerge(c *C) {
 
 	// tikv-server reports `NotInRegion`
 	s.cache.DropRegion(r.VerID())
-	c.Assert(s.cache.regions, HasLen, 0)
+	s.checkCache(c, 0)
 
 	r, err = s.cache.GetRegion([]byte("x"))
 	c.Assert(err, IsNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(s.cache.regions, HasLen, 1)
+	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestReconnect(c *C) {
@@ -213,7 +221,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(r.GetAddress(), Equals, s.storeAddr(s.store1))
-	c.Assert(s.cache.regions, HasLen, 1)
+	s.checkCache(c, 1)
 }
 
 func (s *testRegionCacheSuite) TestNextPeer(c *C) {
