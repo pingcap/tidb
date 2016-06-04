@@ -184,6 +184,46 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestDateFormat(c *C) {
+	defer testleak.AfterTest(c)()
+
+	tblDate := []struct {
+		Input  []string
+		Expect interface{}
+	}{
+		{[]string{"2010-01-07 23:12:34.12345",
+			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%"},
+			"Jan January 01 1 7th 07 7 007 23 11 12 PM 11:12:34 PM 23:12:34 34 123450 01 01 01 01 Thu Thursday 4 2010 2010 2010 10 %"},
+		{[]string{"2012-12-21 23:12:34.123456",
+			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%"},
+			"Dec December 12 12 21st 21 21 356 23 11 12 PM 11:12:34 PM 23:12:34 34 123456 51 51 51 51 Fri Friday 5 2012 2012 2012 12 %"},
+		{[]string{"0000-01-01 00:00:00.123456",
+			// Functions week() and yearweek() don't support multi mode,
+			// so the result of "%U %u %V %Y" is different from MySQL.
+			"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %v %x %Y %y %%"},
+			"Jan January 01 1 1st 01 1 001 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 52 4294967295 0000 00 %"},
+		{[]string{"2016-09-3 00:59:59.123456",
+			"abc%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y!123 %%xyz"},
+			"abcSep September 09 9 3rd 03 3 247 0 12 59 AM 12:59:59 AM 00:59:59 59 123456 35 35 35 35 Sat Saturday 6 2016 2016 2016 16!123 %xyz"},
+	}
+	dtblDate := tblToDtbl(tblDate)
+
+	for i, t := range dtblDate {
+		v, err := builtinDateFormat(t["Input"], nil)
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Expect"][0], Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
+			v.GetValue(), t["Expect"][0].GetValue()))
+	}
+
+	// error
+	ds := types.MakeDatums("0000-01-00 00:00:00.123456",
+		"%b %M %m %c %D %d %e %j %k %h %i %p %r %T %s %f %U %u %V %v %a %W %w %X %x %Y %y %%")
+	_, err := builtinDateFormat(ds, nil)
+	// Some like dayofweek() doesn't support the date format like 2000-00-00 returns 0,
+	// so it returns an error.
+	c.Assert(err, NotNil)
+}
+
 func (s *testEvaluatorSuite) TestClock(c *C) {
 	defer testleak.AfterTest(c)()
 	// test hour, minute, second, micro second
