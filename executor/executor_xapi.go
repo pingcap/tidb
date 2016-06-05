@@ -186,11 +186,12 @@ func (e *XSelectTableExec) doRequest() error {
 	selReq.Aggregates = e.aggFuncs
 	selReq.GroupBy = e.byItems
 	e.result, err = xapi.Select(txn.GetClient(), selReq, defaultConcurrency)
-	if len(selReq.Aggregates) > 0 {
-		e.result.SetFields(e.aggFields)
-	}
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(selReq.Aggregates) > 0 {
+		// The returned rows should be aggregate partial result.
+		e.result.SetFields(e.aggFields)
 	}
 	return nil
 }
@@ -203,8 +204,12 @@ type XSelectIndexExec struct {
 	ctx         context.Context
 	where       *tipb.Expr
 	supportDesc bool
-	aggFuncs    []*tipb.Expr
-	byItems     []*tipb.ByItem
+
+	byItems []*tipb.ByItem
+	// Aggregate functions.
+	aggFuncs []*tipb.Expr
+	// Aggregate function result fields.
+	aggFields []*types.FieldType
 
 	tasks      []*lookupTableTask
 	taskCursor int
@@ -238,6 +243,7 @@ type lookupTableTask struct {
 func (e *XSelectIndexExec) AddAggregate(funcs []*tipb.Expr, byItems []*tipb.ByItem, fields []*types.FieldType) {
 	e.aggFuncs = funcs
 	e.byItems = byItems
+	e.aggFields = fields
 }
 
 // GetTableName implements XExecutor interface.
@@ -500,7 +506,18 @@ func (e *XSelectIndexExec) doTableRequest(handles []int64) (*xapi.SelectResult, 
 		selTableReq.Ranges = append(selTableReq.Ranges, pbRange)
 	}
 	selTableReq.Where = e.where
-	return xapi.Select(txn.GetClient(), selTableReq, 10)
+	// Aggregate Info
+	selTableReq.Aggregates = e.aggFuncs
+	selTableReq.GroupBy = e.byItems
+	resp, err := xapi.Select(txn.GetClient(), selTableReq, 10)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(selTableReq.Aggregates) > 0 {
+		// The returned rows should be aggregate partial result.
+		resp.SetFields(e.aggFields)
+	}
+	return resp, nil
 }
 
 // conditionsToPBExpr tries to convert filter conditions to a tipb.Expr.

@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/juju/errors"
@@ -446,6 +445,7 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 	if len(v.GroupByItems) > 0 && !client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeGroupBy) {
 		return e
 	}
+	log.Debugf("Use XAggregateExec with %d aggs", len(v.AggFuncs))
 	// Convert aggregate function exprs to pb.
 	pbAggFuncs := make([]*tipb.Expr, 0, len(v.AggFuncs))
 	for _, af := range v.AggFuncs {
@@ -468,7 +468,6 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		}
 		pbByItems = append(pbByItems, pbByItem)
 	}
-	log.Debug("Use dist aggregate.")
 	// compose aggregate info
 	// We should infer fields type.
 	// Each agg item will be splited into two datum: count and value
@@ -478,6 +477,7 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 	gk.Charset = charset.CharsetBin
 	gk.Collate = charset.CollationBin
 	fields[0] = gk
+	// There will be two fields in the result row for each AggregateFuncExpr.
 	for i, agg := range v.AggFuncs {
 		ft := types.NewFieldType(mysql.TypeLonglong)
 		ft.Flen = 21
@@ -486,7 +486,6 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 		fields[2*i+1] = ft
 		fields[2*i+2] = agg.GetType()
 	}
-	fmt.Println("AggFields", len(fields))
 	xSrc.AddAggregate(pbAggFuncs, pbByItems, fields)
 	xe := &XAggregateExec{
 		Src:          src,
