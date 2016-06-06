@@ -111,7 +111,7 @@ func (n *aggregateFuncExpr) toDatums() []types.Datum {
 	return nil
 }
 
-// Convert count and value to datum list
+// Convert count and value to datum list.
 func (n *aggregateFuncExpr) getCountValue() []types.Datum {
 	item := n.getAggItem()
 	if item == nil {
@@ -126,7 +126,7 @@ func (n *aggregateFuncExpr) getCountValue() []types.Datum {
 
 var singleGroupKey = []byte("SingleGroup")
 
-// getContext gets aggregate evaluation context for the current group.
+// getAggItem gets aggregate evaluation context for the current group.
 // If it is nil, add a new context into contextPerGroupMap.
 func (n *aggregateFuncExpr) getAggItem() *aggItem {
 	if n.currentGroup == nil {
