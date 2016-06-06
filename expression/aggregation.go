@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
@@ -44,9 +43,8 @@ type AggregationFunction interface {
 	Clear()
 }
 
-// NewAggrFunction creates a new AggregationFunction.
-func NewAggrFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
-	log.Warningf(fmt.Sprintf("aggrFunc!! %s", funcType))
+// NewAggFunction creates a new AggregationFunction.
+func NewAggFunction(funcType string, funcArgs []Expression, distinct bool) AggregationFunction {
 	switch strings.ToLower(funcType) {
 	case ast.AggFuncSum:
 		return &sumFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
@@ -63,7 +61,6 @@ func NewAggrFunction(funcType string, funcArgs []Expression, distinct bool) Aggr
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggrFunction: aggrFunction{Args: funcArgs, resultMapper: make(aggrCtxMapper, 0), Distinct: distinct}}
 	}
-	log.Warningf(fmt.Sprintf("unknown aggrFunc!! %s", funcType))
 	return nil
 }
 

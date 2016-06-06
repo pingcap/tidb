@@ -16,7 +16,6 @@ package executor
 import (
 	"math"
 
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/ast"
@@ -151,7 +150,6 @@ func (b *executorBuilder) buildTableScan(v *plan.TableScan) Executor {
 	case "information_schema", "performance_schema":
 		memDB = true
 	}
-	log.Warningf(fmt.Sprintf("old table id %d %s, col id %d %s", table.Meta().ID, table.Meta().Name.L, table.Cols()[0].ID, table.Cols()[0].Name.L))
 	supportDesc := client.SupportRequestType(kv.ReqTypeSelect, kv.ReqSubTypeDesc)
 	if !memDB && client.SupportRequestType(kv.ReqTypeSelect, 0) {
 		log.Debug("xapi select table")

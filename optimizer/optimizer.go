@@ -34,6 +34,7 @@ func Optimize(ctx context.Context, node ast.Node, sb plan.SubQueryBuilder) (plan
 	if err := logicOptimize(ctx, node); err != nil {
 		return nil, errors.Trace(err)
 	}
+	plan.GlobalID = 0
 	p, err := plan.BuildPlan(node, sb)
 	if err != nil {
 		return nil, errors.Trace(err)

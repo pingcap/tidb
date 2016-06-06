@@ -56,7 +56,6 @@ type planBuilder struct {
 	hasAgg bool
 	sb     SubQueryBuilder
 	obj    interface{}
-	id     int32
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {

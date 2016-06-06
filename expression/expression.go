@@ -25,7 +25,7 @@ import (
 )
 
 // Rewrite rewrites ast to Expression.
-func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[ast.ExprNode]int) (newExpr Expression, err error) {
+func Rewrite(expr ast.ExprNode, schema Schema, AggrMapper map[*ast.AggregateFuncExpr]int) (newExpr Expression, err error) {
 	er := &expressionRewriter{schema: schema, aggrMap: AggrMapper}
 	expr.Accept(er)
 	if er.err != nil {
@@ -41,7 +41,7 @@ type expressionRewriter struct {
 	ctxStack []Expression
 	schema   Schema
 	err      error
-	aggrMap  map[ast.ExprNode]int
+	aggrMap  map[*ast.AggregateFuncExpr]int
 }
 
 // Expression represents all scalar expression in SQL.
@@ -154,7 +154,7 @@ func (s Schema) InitIndices() {
 	}
 }
 
-// RetrieveColumn replace column in expression with column in schema.
+// RetrieveColumn replaces column in expression with column in schema.
 func (s Schema) RetrieveColumn(col *Column) *Column {
 	for _, c := range s {
 		if c.FromID == col.FromID && c.ColName.L == col.ColName.L {
@@ -286,15 +286,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (retNode ast.Node, skipChil
 		}
 		er.ctxStack = append(er.ctxStack, er.schema[index])
 		return inNode, true
-	case *ast.ColumnNameExpr:
-		index, ok := -1, false
-		if er.aggrMap != nil {
-			index, ok = er.aggrMap[v]
-		}
-		if ok {
-			er.ctxStack = append(er.ctxStack, er.schema[index])
-			return inNode, true
-		}
 	}
 	return inNode, false
 }

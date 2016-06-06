@@ -1403,6 +1403,21 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("1", "3", "4"))
 	result = tk.MustQuery("select avg(c) from t group by d")
 	result.Check(testkit.Rows("1.0000", "2.0000", "2.5000"))
+	result = tk.MustQuery("select d, d + 1 from t group by d")
+	result.Check(testkit.Rows("1 2", "2 3", "3 4"))
+	result = tk.MustQuery("select count(*) from t")
+	result.Check(testkit.Rows("7"))
+	result = tk.MustQuery("select count(distinct d) from t")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select count(*) from t group by d having sum(c) > 3")
+	result.Check(testkit.Rows("2", "2"))
+	result = tk.MustQuery("select max(c) from t group by d having sum(c) > 3 order by avg(c) desc")
+	result.Check(testkit.Rows("4", "3"))
+	result = tk.MustQuery("select count(*) from t a , t b")
+	result.Check(testkit.Rows("49"))
+	result = tk.MustQuery("select count(*) from t a join t b having sum(a.c) < 0")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select count(*) from t a join t b where a.c < 0")
+	result.Check(testkit.Rows("0"))
 	plan.UseNewPlanner = false
-
 }

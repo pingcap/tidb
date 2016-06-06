@@ -207,9 +207,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 				rightCols = append(rightCols, col)
 			}
 		}
-		var usedLeft, usedRight []bool
-		var err error
-		usedLeft, err = PruneColumnsAndResolveIndices(p.GetChildByIndex(0), leftCols)
+		usedLeft, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(0), leftCols)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -219,7 +217,7 @@ func PruneColumnsAndResolveIndices(p Plan, usedCols []*expression.Column) ([]boo
 				return nil, errors.Trace(err)
 			}
 		}
-		usedRight, err = PruneColumnsAndResolveIndices(p.GetChildByIndex(1), rightCols)
+		usedRight, err := PruneColumnsAndResolveIndices(p.GetChildByIndex(1), rightCols)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
