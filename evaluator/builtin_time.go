@@ -236,8 +236,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 	case 'X':
 		d, err = builtinYearWeek([]types.Datum{arg, types.NewIntDatum(2)}, nil)
 		if err == nil && d.Kind() != types.KindNull {
-			if d.GetInt64() < 0 {
-				d.SetInt64(math.MaxUint32)
+			if d.GetInt64() == math.MaxUint32 {
 				break
 			}
 			str := fmt.Sprintf("%04d", d.GetInt64())
@@ -246,8 +245,7 @@ func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
 	case 'x':
 		d, err = builtinYearWeek([]types.Datum{arg, types.NewIntDatum(3)}, nil)
 		if err == nil && d.Kind() != types.KindNull {
-			if d.GetInt64() < 0 {
-				d.SetInt64(math.MaxUint32)
+			if d.GetInt64() == math.MaxUint32 {
 				break
 			}
 			str := fmt.Sprintf("%04d", d.GetInt64())
@@ -595,6 +593,9 @@ func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error)
 	// TODO: support multi mode for week
 	year, week := t.ISOWeek()
 	d.SetInt64(int64(year*100 + week))
+	if d.GetInt64() < 0 {
+		d.SetInt64(math.MaxUint32)
+	}
 	return d, nil
 }
 

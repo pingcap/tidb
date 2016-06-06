@@ -14,6 +14,7 @@
 package evaluator
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 	}{
 		{"2000-01-01", 2000, 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, 199952},
 		{"2011-11-11", 2011, 11, "November", 11, 6, 315, 4, "Friday", 45, 45, 201145},
+		{"0000-01-01", int64(0), 1, "January", 1, 7, 1, 5, "Saturday", 52, 52, math.MaxUint32},
 	}
 
 	dtbl := tblToDtbl(tbl)
