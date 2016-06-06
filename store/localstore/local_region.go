@@ -161,7 +161,14 @@ func (rs *localRegion) getRowsFromSelectReq(ctx *selectContext) ([]*tipb.Row, er
 	return rows, nil
 }
 
-// Convert aggregate partial result to rows.
+/*
+ * Convert aggregate partial result to rows.
+ * Data layout example:
+ *	SQL:	select count(c1), sum(c2) from t;
+ *	Aggs:	count(c1), sum(c2)
+ *	Rows:	groupKey1, count1, value1, count2, value2
+ *		groupKey2, count1, value1, count2, value2
+ */
 func (rs *localRegion) getRowsFromAgg(ctx *selectContext) ([]*tipb.Row, error) {
 	if len(ctx.groupKeys) == 0 {
 		ctx.groupKeys = append(ctx.groupKeys, singleGroup)
@@ -385,11 +392,13 @@ func (rs *localRegion) getRowByHandle(ctx *selectContext, handle int64) (*tipb.R
 		rowData = append(rowData, colVal)
 	}
 	if len(ctx.aggregates) > 0 {
+		// Update aggregate functions.
 		err = rs.aggregate(ctx, rowData)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
+		// If without aggregate functions, just return raw row data.
 		for _, d := range rowData {
 			row.Data = append(row.Data, d...)
 		}

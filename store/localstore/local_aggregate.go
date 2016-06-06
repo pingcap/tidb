@@ -33,6 +33,7 @@ func (rs *localRegion) getGroupKey(ctx *selectContext) ([]byte, error) {
 
 // Update aggregate functions with rows.
 func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
+	// Put row data into evaluate context for later evaluation.
 	cols := ctx.sel.TableInfo.Columns
 	for i, col := range cols {
 		_, datum, err := codec.DecodeOne(row[i])
@@ -53,8 +54,8 @@ func (rs *localRegion) aggregate(ctx *selectContext, row [][]byte) error {
 	// Update aggregate funcs.
 	for _, agg := range ctx.aggregates {
 		agg.currentGroup = gk
-		args := make([]types.Datum, len(agg.expr.Children))
-		// Evaluate args
+		args := make([]types.Datum, 0, len(agg.expr.Children))
+		// Evaluate arguments.
 		for _, x := range agg.expr.Children {
 			cv, err := ctx.eval.Eval(x)
 			if err != nil {
@@ -141,6 +142,11 @@ func (n *aggregateFuncExpr) getAggItem() *aggItem {
 }
 
 func (n *aggregateFuncExpr) updateCount(ctx *selectContext, args []types.Datum) error {
+	for _, a := range args {
+		if a.Kind() == types.KindNull {
+			return nil
+		}
+	}
 	aggItem := n.getAggItem()
 	aggItem.count++
 	return nil

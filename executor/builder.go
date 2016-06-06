@@ -470,7 +470,7 @@ func (b *executorBuilder) buildAggregate(v *plan.Aggregate) Executor {
 	}
 	// compose aggregate info
 	// We should infer fields type.
-	// Each agg item will be splited into two datum: count and value
+	// Each agg item will be splitted into two datums: count and value
 	// The first field should be group key.
 	fields := make([]*types.FieldType, 1+2*len(v.AggFuncs))
 	gk := types.NewFieldType(mysql.TypeBlob)

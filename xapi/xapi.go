@@ -19,7 +19,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
@@ -98,9 +97,6 @@ func (r *SubResult) Next() (handle int64, data []types.Datum, err error) {
 		}
 		if r.resp.Error != nil {
 			return 0, nil, errInvalidResp.Gen("[%d %s]", r.resp.Error.GetCode(), r.resp.Error.GetMsg())
-		}
-		if r.resp.Aggs != nil {
-			log.Debugf("Find aggregate result: %v", r.resp.Aggs)
 		}
 	}
 	if r.cursor >= len(r.resp.Rows) {

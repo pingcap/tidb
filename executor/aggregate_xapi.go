@@ -26,7 +26,7 @@ var (
 	_ Executor = &XAggregateExec{}
 )
 
-// finalAggregater is used to merge all partial aggregate results from multiple regions.
+// finalAggregater is used to merge all partial aggregate results from multiple regions and get final result.
 type finalAggregater struct {
 	name         string
 	currentGroup []byte
@@ -71,7 +71,6 @@ type XAggregateExec struct {
 	AggFields         []*types.FieldType
 	executed          bool
 	ctx               context.Context
-	finish            bool
 	AggFuncs          []*ast.AggregateFuncExpr
 	aggregaters       []*finalAggregater
 	groupMap          map[string]bool
@@ -114,6 +113,7 @@ func (e *XAggregateExec) Next() (*Row, error) {
 			// "select count(c) from t group by c1;" should return empty result set.
 			e.groups = append(e.groups, singleGroup)
 		}
+		// Set AggregateFuncExprs' context.
 		for i, agg := range e.aggregaters {
 			e.AggFuncs[i].SetContext(agg.contextPerGroupMap)
 		}
