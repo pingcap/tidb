@@ -334,6 +334,7 @@ current_user	{c}{u}{r}{r}{e}{n}{t}_{u}{s}{e}{r}
 database	{d}{a}{t}{a}{b}{a}{s}{e}
 databases	{d}{a}{t}{a}{b}{a}{s}{e}{s}
 date_add	{d}{a}{t}{e}_{a}{d}{d}
+date_format	{d}{a}{t}{e}_{f}{o}{r}{m}{a}{t}
 date_sub	{d}{a}{t}{e}_{s}{u}{b}
 day		{d}{a}{y}
 dayname	{d}{a}{y}{n}{a}{m}{e}
@@ -757,6 +758,8 @@ action		{a}{c}{t}{i}{o}{n}
 {databases}		return databases
 {date_add}		lval.item = string(l.val)
 			return dateAdd
+{date_format}		lval.item = string(l.val)
+			return dateFormat
 {date_sub}		lval.item = string(l.val)
 			return dateSub
 {day}			lval.item = string(l.val)

@@ -19,6 +19,7 @@ package evaluator
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -76,8 +77,240 @@ func builtinDate(args []types.Datum, _ context.Context) (types.Datum, error) {
 	return convertToTime(args[0], mysql.TypeDate)
 }
 
+func abbrDayOfMonth(arg types.Datum) (types.Datum, error) {
+	day, err := builtinDayOfMonth([]types.Datum{arg}, nil)
+	if err != nil || arg.Kind() == types.KindNull {
+		return types.Datum{}, errors.Trace(err)
+	}
+	var str string
+	switch day.GetInt64() {
+	case 1, 21, 31:
+		str = "st"
+	case 2, 22:
+		str = "nd"
+	case 3, 23:
+		str = "rd"
+	default:
+		str = "th"
+	}
+
+	d := types.NewStringDatum(fmt.Sprintf("%d%s", day.GetInt64(), str))
+	return d, nil
+}
+
+func to12Hour(arg types.Datum) (types.Datum, error) {
+	d, err := builtinTime([]types.Datum{arg}, nil)
+	if err != nil || d.Kind() == types.KindNull {
+		return d, errors.Trace(err)
+	}
+
+	var str string
+	var hour int
+	if d.GetMysqlDuration().Hour() > 12 {
+		hour = 12
+		str = "PM"
+	} else {
+		// If the hour value is 0 in 24-hour time system,
+		// then the hour value is 23 in 12-hour time system.
+		if d.GetMysqlDuration().Hour() == 0 {
+			hour = -12
+		}
+		str = "AM"
+	}
+	duration := mysql.Duration{
+		Duration: d.GetMysqlDuration().Duration - time.Duration(hour)*time.Hour,
+		Fsp:      0}
+	str = fmt.Sprintf("%v %s", duration, str)
+	d.SetString(str)
+	return d, nil
+}
+
+func convertDateFormat(arg types.Datum, b byte) (types.Datum, error) {
+	var d types.Datum
+	var err error
+
+	switch b {
+	case 'b':
+		d, err = builtinMonthName([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(d.GetString()[:3])
+		}
+	case 'M':
+		d, err = builtinMonthName([]types.Datum{arg}, nil)
+	case 'm':
+		d, err = builtinMonth([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'c':
+		d, err = builtinMonth([]types.Datum{arg}, nil)
+	case 'D':
+		d, err = abbrDayOfMonth(arg)
+	case 'd':
+		d, err = builtinDayOfMonth([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'e':
+		d, err = builtinDayOfMonth([]types.Datum{arg}, nil)
+	case 'j':
+		d, err = builtinDayOfYear([]types.Datum{arg}, nil)
+		if err == nil {
+			d.SetString(fmt.Sprintf("%03d", d.GetInt64()))
+		}
+	case 'H', 'k':
+		d, err = builtinHour([]types.Datum{arg}, nil)
+	case 'h', 'I', 'l':
+		d, err = builtinHour([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			if d.GetInt64() > 12 {
+				d.SetInt64(d.GetInt64() - 12)
+			} else if d.GetInt64() == 0 {
+				d.SetInt64(12)
+			}
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'i':
+		d, err = builtinMinute([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'p':
+		d, err = builtinHour([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			if d.GetInt64() < 12 {
+				d.SetString("AM")
+				break
+			}
+			d.SetString("PM")
+		}
+	case 'r':
+		d, err = to12Hour(arg)
+	case 'T':
+		d, err = builtinTime([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			duration := mysql.Duration{
+				Duration: d.GetMysqlDuration().Duration,
+				Fsp:      0}
+			d.SetMysqlDuration(duration)
+		}
+	case 'S', 's':
+		d, err = builtinSecond([]types.Datum{arg}, nil)
+		if err == nil {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'f':
+		d, err = builtinMicroSecond([]types.Datum{arg}, nil)
+	case 'U':
+		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(0)}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'u':
+		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(1)}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'V':
+		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(2)}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'v':
+		d, err = builtinWeek([]types.Datum{arg, types.NewIntDatum(3)}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%02d", d.GetInt64()))
+		}
+	case 'a':
+		d, err = builtinDayName([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(d.GetString()[:3])
+		}
+	case 'W':
+		d, err = builtinDayName([]types.Datum{arg}, nil)
+	case 'w':
+		d, err = builtinDayOfWeek([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetInt64(d.GetInt64() - 1)
+		}
+	case 'X':
+		d, err = builtinYearWeek([]types.Datum{arg, types.NewIntDatum(2)}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			if d.GetInt64() == math.MaxUint32 {
+				break
+			}
+			str := fmt.Sprintf("%04d", d.GetInt64())
+			d.SetString(fmt.Sprintf("%04s", str[:4]))
+		}
+	case 'x':
+		d, err = builtinYearWeek([]types.Datum{arg, types.NewIntDatum(3)}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			if d.GetInt64() == math.MaxUint32 {
+				break
+			}
+			str := fmt.Sprintf("%04d", d.GetInt64())
+			d.SetString(fmt.Sprintf("%04s", str[:4]))
+		}
+	case 'Y':
+		d, err = builtinYear([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			d.SetString(fmt.Sprintf("%04d", d.GetInt64()))
+		}
+	case 'y':
+		d, err = builtinYear([]types.Datum{arg}, nil)
+		if err == nil && d.Kind() != types.KindNull {
+			str := fmt.Sprintf("%04d", d.GetInt64())
+			d.SetString(fmt.Sprintf("%02s", str[2:]))
+		}
+	default:
+		d.SetString(string(b))
+	}
+
+	if err == nil && d.Kind() != types.KindNull {
+		d.SetString(fmt.Sprintf("%v", d.GetValue()))
+	}
+	return d, errors.Trace(err)
+}
+
+// See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
+func builtinDateFormat(args []types.Datum, _ context.Context) (types.Datum, error) {
+	var (
+		isPercent bool
+		ret       []byte
+		d         types.Datum
+	)
+
+	// TODO: Some invalid format like 2000-00-01(the month is 0) will return null.
+	for _, b := range []byte(args[1].GetString()) {
+		if isPercent {
+			if b == '%' {
+				ret = append(ret, b)
+			} else {
+				str, err := convertDateFormat(args[0], b)
+				if err != nil {
+					return types.Datum{}, errors.Trace(err)
+				}
+				if str.Kind() == types.KindNull {
+					return types.Datum{}, nil
+				}
+				ret = append(ret, str.GetString()...)
+			}
+			isPercent = false
+			continue
+		}
+		if b == '%' {
+			isPercent = true
+		} else {
+			ret = append(ret, b)
+		}
+	}
+
+	d.SetString(string(ret))
+	return d, nil
+}
+
 // See http://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_day
-// day is a synonym for DayOfMonth
+// Day is a synonym for DayOfMonth.
 func builtinDay(args []types.Datum, ctx context.Context) (types.Datum, error) {
 	return builtinDayOfMonth(args, ctx)
 }
@@ -362,6 +595,9 @@ func builtinYearWeek(args []types.Datum, _ context.Context) (types.Datum, error)
 	// TODO: support multi mode for week
 	year, week := t.ISOWeek()
 	d.SetInt64(int64(year*100 + week))
+	if d.GetInt64() < 0 {
+		d.SetInt64(math.MaxUint32)
+	}
 	return d, nil
 }
 
