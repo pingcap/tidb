@@ -17,138 +17,194 @@ import (
 	"bytes"
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/petar/GoLLRB/llrb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/mvccpb"
 )
 
-type mvccValue struct {
-	startTS  uint64
-	commitTS uint64
-	value    []byte
-}
+var defaultColumn = [][]byte{nil}
 
-type mvccLock struct {
-	startTS uint64
-	primary []byte
-	value   []byte
-	op      kvrpcpb.Op
+type colKey struct {
+	col string
+	ts  uint64
 }
 
 type mvccEntry struct {
-	key    []byte
-	values []mvccValue
-	lock   *mvccLock
+	rowKey []byte
+	meta   *mvccpb.Meta
+	values map[colKey][]byte
 }
 
 func newEntry(key []byte) *mvccEntry {
 	return &mvccEntry{
-		key: key,
+		rowKey: key,
+		meta:   &mvccpb.Meta{},
+		values: make(map[colKey][]byte),
 	}
-}
-
-func (e *mvccEntry) Clone() *mvccEntry {
-	var entry mvccEntry
-	entry.key = append([]byte(nil), e.key...)
-	for _, v := range e.values {
-		entry.values = append(entry.values, mvccValue{
-			startTS:  v.startTS,
-			commitTS: v.commitTS,
-			value:    append([]byte(nil), v.value...),
-		})
-	}
-	if e.lock != nil {
-		entry.lock = &mvccLock{
-			startTS: e.lock.startTS,
-			primary: append([]byte(nil), e.lock.primary...),
-			value:   append([]byte(nil), e.lock.value...),
-			op:      e.lock.op,
-		}
-	}
-	return &entry
 }
 
 func (e *mvccEntry) Less(than llrb.Item) bool {
-	return bytes.Compare(e.key, than.(*mvccEntry).key) < 0
+	return bytes.Compare(e.rowKey, than.(*mvccEntry).rowKey) < 0
+}
+
+func (e *mvccEntry) putValue(col []byte, ts uint64, val []byte) {
+	e.values[colKey{string(col), ts}] = val
+}
+
+func (e *mvccEntry) getValue(col []byte, ts uint64) []byte {
+	return e.values[colKey{string(col), ts}]
+}
+
+func (e *mvccEntry) delValue(col []byte, ts uint64) {
+	delete(e.values, colKey{string(col), ts})
 }
 
 func (e *mvccEntry) lockErr() error {
 	return &ErrLocked{
-		Key:     e.key,
-		Primary: e.lock.primary,
-		StartTS: e.lock.startTS,
+		Key:     e.rowKey,
+		Primary: e.meta.GetLock().GetPrimaryKey(),
+		StartTS: e.meta.GetLock().GetStartTs(),
 	}
 }
 
-func (e *mvccEntry) Get(ts uint64) ([]byte, error) {
-	if e.lock != nil {
-		if e.lock.startTS <= ts {
-			return nil, e.lockErr()
+func (e *mvccEntry) Get(col []byte, ts uint64) ([]byte, error) {
+	if lock := e.meta.GetLock(); lock != nil {
+		if lock.GetStartTs() <= ts {
+			for _, c := range lock.GetColumns() {
+				if bytes.Equal(c.Name, col) {
+					return nil, e.lockErr()
+				}
+			}
 		}
 	}
-	for _, v := range e.values {
-		if v.commitTS <= ts {
-			return v.value, nil
+	for i := len(e.meta.Items) - 1; i >= 0; i-- {
+		item := e.meta.Items[i]
+		if item.GetCommitTs() <= ts {
+			for _, c := range item.GetColumns() {
+				if bytes.Equal(c.Name, col) {
+					switch c.GetOpType() {
+					case mvccpb.MetaOpType_Put:
+						return e.getValue(col, item.GetStartTs()), nil
+					case mvccpb.MetaOpType_Delete:
+						return nil, nil
+					}
+				}
+			}
 		}
 	}
 	return nil, nil
 }
 
-func (e *mvccEntry) Prewrite(mutation *kvrpcpb.Mutation, startTS uint64, primary []byte) error {
-	if len(e.values) > 0 {
-		if e.values[0].commitTS >= startTS {
+func (e *mvccEntry) GetColumns(cols [][]byte, ts uint64) ([][]byte, error) {
+	// TODO: It can be faster without calling `Get`.
+	vals := make([][]byte, len(cols))
+	for i, col := range cols {
+		val, err := e.Get(col, ts)
+		if err != nil {
+			return nil, err
+		}
+		vals[i] = val
+	}
+	return vals, nil
+}
+
+func (e *mvccEntry) Prewrite(mut *kvrpcpb.Mutation, startTS uint64, primary []byte) error {
+	if len(mut.Ops) != len(mut.Columns) || len(mut.Ops) != len(mut.Values) {
+		panic("invalid rowMutation: fields len not match")
+	}
+	if l := len(e.meta.Items); l > 0 {
+		if e.meta.Items[l-1].GetCommitTs() >= startTS {
 			return ErrRetryable("write conflict")
 		}
 	}
-	if e.lock != nil {
-		if e.lock.startTS != startTS {
+	if lock := e.meta.GetLock(); lock != nil {
+		if lock.GetStartTs() != startTS {
 			return e.lockErr()
 		}
+		// If we have processed a RowMutation with the same ts before,
+		// simply believe they are the same.
+		// TODO: Be serious, check if they are equal or try to merge them.
 		return nil
 	}
-	e.lock = &mvccLock{
-		startTS: startTS,
-		primary: primary,
-		value:   mutation.Value,
-		op:      mutation.GetOp(),
+	if e.meta.GetLock() == nil {
+		e.meta.Lock = &mvccpb.MetaLock{
+			StartTs:    proto.Uint64(startTS),
+			PrimaryKey: primary,
+		}
+	}
+	e.meta.Lock = &mvccpb.MetaLock{
+		StartTs:    proto.Uint64(startTS),
+		PrimaryKey: primary,
+	}
+	for i, op := range mut.GetOps() {
+		col, val := mut.GetColumns()[i], mut.GetValues()[i]
+		if op == kvrpcpb.Op_Put {
+			e.putValue(col, startTS, val)
+		}
+		e.meta.Lock.Columns = append(e.meta.Lock.Columns, &mvccpb.MetaColumn{
+			Name:   col,
+			OpType: opMap[op].Enum(),
+		})
 	}
 	return nil
 }
 
+var opMap map[kvrpcpb.Op]mvccpb.MetaOpType = map[kvrpcpb.Op]mvccpb.MetaOpType{
+	kvrpcpb.Op_Put:  mvccpb.MetaOpType_Put,
+	kvrpcpb.Op_Del:  mvccpb.MetaOpType_Delete,
+	kvrpcpb.Op_Lock: mvccpb.MetaOpType_Lock,
+}
+
 func (e *mvccEntry) checkTxnCommitted(startTS uint64) (uint64, bool) {
-	for _, v := range e.values {
-		if v.startTS == startTS {
-			return v.commitTS, true
+	for i := len(e.meta.Items) - 1; i >= 0; i-- {
+		item := e.meta.Items[i]
+		if item.GetStartTs() == startTS {
+			return item.GetCommitTs(), true
+		}
+		if item.GetStartTs() < startTS {
+			break
 		}
 	}
 	return 0, false
 }
 
 func (e *mvccEntry) Commit(startTS, commitTS uint64) error {
-	if e.lock == nil || e.lock.startTS != startTS {
+	if e.meta.Lock == nil || e.meta.GetLock().GetStartTs() != startTS {
 		if _, ok := e.checkTxnCommitted(startTS); ok {
 			return nil
 		}
 		return ErrRetryable("txn not found")
 	}
-	if e.lock.op != kvrpcpb.Op_Lock {
-		e.values = append([]mvccValue{{
-			startTS:  startTS,
-			commitTS: commitTS,
-			value:    e.lock.value,
-		}}, e.values...)
+	newItem := &mvccpb.MetaItem{
+		StartTs:  proto.Uint64(startTS),
+		CommitTs: proto.Uint64(commitTS),
 	}
-	e.lock = nil
+	for _, col := range e.meta.GetLock().GetColumns() {
+		if col.GetOpType() != mvccpb.MetaOpType_Lock {
+			newItem.Columns = append(newItem.Columns, col)
+		}
+	}
+	e.meta.Items = append(e.meta.Items, newItem)
+	e.meta.Lock = nil
 	return nil
 }
 
 func (e *mvccEntry) Rollback(startTS uint64) error {
-	if e.lock == nil || e.lock.startTS != startTS {
+	if e.meta.GetLock() == nil || e.meta.GetLock().GetStartTs() != startTS {
 		if commitTS, ok := e.checkTxnCommitted(startTS); ok {
 			return ErrAlreadyCommitted(commitTS)
 		}
 		return nil
 	}
-	e.lock = nil
+	if lock := e.meta.GetLock(); lock != nil {
+		for _, col := range lock.GetColumns() {
+			if col.GetOpType() == mvccpb.MetaOpType_Put {
+				e.delValue(col.GetName(), startTS)
+			}
+		}
+		e.meta.Lock = nil
+	}
 	return nil
 }
 
@@ -165,117 +221,134 @@ func NewMvccStore() *MvccStore {
 	}
 }
 
-// Get reads a key by ts.
-func (s *MvccStore) Get(key []byte, startTS uint64) ([]byte, error) {
+// Get reads a row by ts.
+func (s *MvccStore) Get(rowKey []byte, cols [][]byte, startTS uint64) ([][]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.get(key, startTS)
+	return s.get(rowKey, cols, startTS)
 }
 
-func (s *MvccStore) get(key []byte, startTS uint64) ([]byte, error) {
-	entry := s.tree.Get(newEntry(key))
+func (s *MvccStore) get(rowKey []byte, cols [][]byte, startTS uint64) ([][]byte, error) {
+	entry := s.tree.Get(newEntry(rowKey))
 	if entry == nil {
 		return nil, nil
 	}
-	return entry.(*mvccEntry).Get(startTS)
+	return entry.(*mvccEntry).GetColumns(cols, startTS)
 }
 
-// A Pair is a KV pair read from MvccStore or an error if any occurs.
-type Pair struct {
-	Key   []byte
-	Value []byte
-	Err   error
+func rowValsEmpty(vals [][]byte) bool {
+	for _, b := range vals {
+		if len(b) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// A Row is a row read from MvccStore or an error if any occurs.
+type Row struct {
+	RowKey  []byte
+	Columns [][]byte
+	Values  [][]byte
+	Err     error
 }
 
 // BatchGet gets values with keys and ts.
-func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64) []Pair {
+func (s *MvccStore) BatchGet(rowKeys [][]byte, cols [][][]byte, startTS uint64) []Row {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var pairs []Pair
-	for _, k := range ks {
-		val, err := s.get(k, startTS)
-		if val == nil && err == nil {
+	if len(rowKeys) != len(cols) {
+		panic("invalid batchGet: row/cols len not match")
+	}
+
+	rows := make([]Row, len(rowKeys))
+	for i, k := range rowKeys {
+		vals, err := s.get(k, cols[i], startTS)
+		if rowValsEmpty(vals) && err == nil {
 			continue
 		}
-		pairs = append(pairs, Pair{
-			Key:   k,
-			Value: val,
-			Err:   err,
-		})
+		rows[i] = Row{
+			RowKey:  k,
+			Columns: cols[i],
+			Values:  vals,
+			Err:     err,
+		}
 	}
-	return pairs
+	return rows
 }
 
-func regionContains(startKey []byte, endKey []byte, key []byte) bool {
-	return bytes.Compare(startKey, key) <= 0 &&
-		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
+func regionContains(startRow []byte, endRow []byte, rowKey []byte) bool {
+	return bytes.Compare(startRow, rowKey) <= 0 &&
+		(bytes.Compare(rowKey, endRow) < 0 || len(endRow) == 0)
 }
 
 // Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
-func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+func (s *MvccStore) Scan(startRow, endRow []byte, cols [][]byte, limit int, startTS uint64) []Row {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var pairs []Pair
+	var rows []Row
 	iterator := func(item llrb.Item) bool {
-		if len(pairs) >= limit {
+		if len(rows) >= limit {
 			return false
 		}
-		k := item.(*mvccEntry).key
-		if !regionContains(startKey, endKey, k) {
+		k := item.(*mvccEntry).rowKey
+		if !regionContains(startRow, endRow, k) {
 			return false
 		}
-		val, err := s.get(k, startTS)
-		if val != nil || err != nil {
-			pairs = append(pairs, Pair{
-				Key:   k,
-				Value: val,
-				Err:   err,
+		vals, err := s.get(k, cols, startTS)
+		if !rowValsEmpty(vals) || err != nil {
+			rows = append(rows, Row{
+				RowKey:  k,
+				Columns: cols,
+				Values:  vals,
+				Err:     err,
 			})
 		}
 		return true
 	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	return pairs
+	s.tree.AscendGreaterOrEqual(newEntry(startRow), iterator)
+	return rows
 }
 
-// ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
+// ReverseScan reads up to a limited number of Rows that greater than or equal to startRow and less than endRow
 // in descending order.
-func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64) []Pair {
+func (s *MvccStore) ReverseScan(startRow, endRow []byte, cols [][]byte, limit int, startTS uint64) []Row {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var pairs []Pair
+	var rows []Row
 	iterator := func(item llrb.Item) bool {
-		if len(pairs) >= limit {
+		if len(rows) >= limit {
 			return false
 		}
-		k := item.(*mvccEntry).key
-		if bytes.Equal(k, endKey) {
+		k := item.(*mvccEntry).rowKey
+		if bytes.Equal(k, endRow) {
 			return true
 		}
-		if bytes.Compare(k, startKey) < 0 {
+		if bytes.Compare(k, startRow) < 0 {
 			return false
 		}
-		val, err := s.get(k, startTS)
-		if val != nil || err != nil {
-			pairs = append(pairs, Pair{
-				Key:   k,
-				Value: val,
-				Err:   err,
+		vals, err := s.get(k, cols, startTS)
+		if !rowValsEmpty(vals) || err != nil {
+			rows = append(rows, Row{
+				RowKey:  k,
+				Columns: cols,
+				Values:  vals,
+				Err:     err,
 			})
 		}
 		return true
 	}
-	s.tree.DescendLessOrEqual(newEntry(endKey), iterator)
-	return pairs
+	s.tree.DescendLessOrEqual(newEntry(endRow), iterator)
+	return rows
 }
 
 func (s *MvccStore) getOrNewEntry(key []byte) *mvccEntry {
 	if item := s.tree.Get(newEntry(key)); item != nil {
-		return item.(*mvccEntry).Clone()
+		return item.(*mvccEntry)
 	}
 	return newEntry(key)
 }
@@ -294,7 +367,7 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 
 	var errs []error
 	for _, m := range mutations {
-		entry := s.getOrNewEntry(m.Key)
+		entry := s.getOrNewEntry(m.GetRowKey())
 		err := entry.Prewrite(m, startTS, primary)
 		s.submit(entry)
 		errs = append(errs, err)
@@ -302,13 +375,13 @@ func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, star
 	return errs
 }
 
-// Commit commits the lock on a key. (2nd phase of 2PC).
-func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
+// Commit commits the lock on a row. (2nd phase of 2PC).
+func (s *MvccStore) Commit(rows [][]byte, startTS, commitTS uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var ents []*mvccEntry
-	for _, k := range keys {
+	for _, k := range rows {
 		entry := s.getOrNewEntry(k)
 		err := entry.Commit(startTS, commitTS)
 		if err != nil {
@@ -321,7 +394,7 @@ func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
 }
 
 // CommitThenGet is a shortcut for Commit+Get, often used when resolving lock.
-func (s *MvccStore) CommitThenGet(key []byte, lockTS, commitTS, getTS uint64) ([]byte, error) {
+func (s *MvccStore) CommitThenGet(key []byte, cols [][]byte, lockTS, commitTS, getTS uint64) ([][]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -331,15 +404,15 @@ func (s *MvccStore) CommitThenGet(key []byte, lockTS, commitTS, getTS uint64) ([
 		return nil, err
 	}
 	s.submit(entry)
-	return entry.Get(getTS)
+	return entry.GetColumns(cols, getTS)
 }
 
 // Cleanup cleanups a lock, often used when resolving a expired lock.
-func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
+func (s *MvccStore) Cleanup(rowKey []byte, startTS uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entry := s.getOrNewEntry(key)
+	entry := s.getOrNewEntry(rowKey)
 	err := entry.Rollback(startTS)
 	if err != nil {
 		return err
@@ -349,12 +422,12 @@ func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
 }
 
 // Rollback cleanups multiple locks, often used when rolling back a conflict txn.
-func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
+func (s *MvccStore) Rollback(rows [][]byte, startTS uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	var ents []*mvccEntry
-	for _, k := range keys {
+	for _, k := range rows {
 		entry := s.getOrNewEntry(k)
 		err := entry.Rollback(startTS)
 		if err != nil {
@@ -367,15 +440,15 @@ func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
 }
 
 // RollbackThenGet is a shortcut for Rollback+Get, often used when resolving lock.
-func (s *MvccStore) RollbackThenGet(key []byte, lockTS uint64) ([]byte, error) {
+func (s *MvccStore) RollbackThenGet(rowKey []byte, cols [][]byte, lockTS uint64) ([][]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	entry := s.getOrNewEntry(key)
+	entry := s.getOrNewEntry(rowKey)
 	err := entry.Rollback(lockTS)
 	if err != nil {
 		return nil, err
 	}
 	s.submit(entry)
-	return entry.Get(lockTS)
+	return entry.GetColumns(cols, lockTS)
 }

@@ -204,7 +204,7 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 	}
 	var rows []*tipb.Row
 	if ran.IsPoint() {
-		val, err := h.mvccStore.Get(startKey, ctx.sel.GetStartTs())
+		val, err := h.mvccStore.Get(startKey, defaultColumn, ctx.sel.GetStartTs())
 		if len(val) == 0 {
 			return nil, nil
 		} else if err != nil {
@@ -241,37 +241,37 @@ func (h *rpcHandler) getRowsFromRange(ctx *selectContext, ran kv.KeyRange, limit
 			break
 		}
 		var (
-			pairs []Pair
-			pair  Pair
-			err   error
+			kvRows []Row
+			kvRow  Row
+			err    error
 		)
 		if desc {
-			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, ctx.sel.GetStartTs())
+			kvRows = h.mvccStore.ReverseScan(startKey, seekKey, defaultColumn, 1, ctx.sel.GetStartTs())
 		} else {
-			pairs = h.mvccStore.Scan(seekKey, endKey, 1, ctx.sel.GetStartTs())
+			kvRows = h.mvccStore.Scan(seekKey, endKey, defaultColumn, 1, ctx.sel.GetStartTs())
 		}
-		if len(pairs) > 0 {
-			pair = pairs[0]
+		if len(kvRows) > 0 {
+			kvRow = kvRows[0]
 		}
-		if pair.Err != nil {
+		if kvRow.Err != nil {
 			// TODO: handle lock error.
-			return nil, errors.Trace(pair.Err)
+			return nil, errors.Trace(kvRow.Err)
 		}
-		if pair.Key == nil {
+		if kvRow.RowKey == nil {
 			break
 		}
 		if desc {
-			if bytes.Compare(pair.Key, startKey) < 0 {
+			if bytes.Compare(kvRow.RowKey, startKey) < 0 {
 				break
 			}
-			seekKey = []byte(tablecodec.TruncateToRowKeyLen(kv.Key(pair.Key)))
+			seekKey = []byte(tablecodec.TruncateToRowKeyLen(kv.Key(kvRow.RowKey)))
 		} else {
-			if bytes.Compare(pair.Key, endKey) >= 0 {
+			if bytes.Compare(kvRow.RowKey, endKey) >= 0 {
 				break
 			}
-			seekKey = []byte(kv.Key(pair.Key).PrefixNext())
+			seekKey = []byte(kv.Key(kvRow.RowKey).PrefixNext())
 		}
-		handle, err := tablecodec.DecodeRowKey(pair.Key)
+		handle, err := tablecodec.DecodeRowKey(kvRow.RowKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -326,17 +326,17 @@ func (h *rpcHandler) getRowByHandle(ctx *selectContext, handle int64) (*tipb.Row
 				}
 			} else {
 				key := tablecodec.EncodeColumnKey(tid, handle, colID)
-				data, err1 := h.mvccStore.Get(key, ctx.sel.GetStartTs())
+				data, err1 := h.mvccStore.Get(key, defaultColumn, ctx.sel.GetStartTs())
 				if err1 != nil {
 					return nil, errors.Trace(err1)
 				}
-				if data == nil {
+				if data[0] == nil {
 					if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 						return nil, errors.Trace(kv.ErrNotExist)
 					}
 					row.Data = append(row.Data, codec.NilFlag)
 				} else {
-					row.Data = append(row.Data, data...)
+					row.Data = append(row.Data, data[0]...)
 				}
 			}
 		}
@@ -358,18 +358,18 @@ func (h *rpcHandler) evalWhereForRow(ctx *selectContext, handle int64) (bool, er
 			}
 		} else {
 			key := tablecodec.EncodeColumnKey(tid, handle, colID)
-			data, err := h.mvccStore.Get(key, ctx.sel.GetStartTs())
+			data, err := h.mvccStore.Get(key, defaultColumn, ctx.sel.GetStartTs())
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			if data == nil {
+			if data[0] == nil {
 				if mysql.HasNotNullFlag(uint(col.GetFlag())) {
 					return false, errors.Trace(kv.ErrNotExist)
 				}
 				ctx.eval.Row[colID] = types.Datum{}
 			} else {
 				var d types.Datum
-				d, err = tablecodec.DecodeColumnValue(data, col)
+				d, err = tablecodec.DecodeColumnValue(data[0], col)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
@@ -430,38 +430,38 @@ func (h *rpcHandler) getIndexRowFromRange(sel *tipb.SelectRequest, ran kv.KeyRan
 			break
 		}
 		var (
-			pairs []Pair
-			pair  Pair
-			err   error
+			kvRows []Row
+			kvRow  Row
+			err    error
 		)
 		if desc {
-			pairs = h.mvccStore.ReverseScan(startKey, seekKey, 1, sel.GetStartTs())
+			kvRows = h.mvccStore.ReverseScan(startKey, seekKey, defaultColumn, 1, sel.GetStartTs())
 		} else {
-			pairs = h.mvccStore.Scan(seekKey, endKey, 1, sel.GetStartTs())
+			kvRows = h.mvccStore.Scan(seekKey, endKey, defaultColumn, 1, sel.GetStartTs())
 		}
-		if len(pairs) > 0 {
-			pair = pairs[0]
+		if len(kvRows) > 0 {
+			kvRow = kvRows[0]
 		}
-		if pair.Err != nil {
+		if kvRow.Err != nil {
 			// TODO: handle lock error.
-			return nil, errors.Trace(pair.Err)
+			return nil, errors.Trace(kvRow.Err)
 		}
-		if pair.Key == nil {
+		if kvRow.RowKey == nil {
 			break
 		}
 		if desc {
-			if bytes.Compare(pair.Key, startKey) < 0 {
+			if bytes.Compare(kvRow.RowKey, startKey) < 0 {
 				break
 			}
-			seekKey = pair.Key
+			seekKey = kvRow.RowKey
 		} else {
-			if bytes.Compare(pair.Key, endKey) >= 0 {
+			if bytes.Compare(kvRow.RowKey, endKey) >= 0 {
 				break
 			}
-			seekKey = []byte(kv.Key(pair.Key).PrefixNext())
+			seekKey = []byte(kv.Key(kvRow.RowKey).PrefixNext())
 		}
 
-		datums, err := tablecodec.DecodeIndexKey(pair.Key)
+		datums, err := tablecodec.DecodeIndexKey(kvRow.RowKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -472,7 +472,7 @@ func (h *rpcHandler) getIndexRowFromRange(sel *tipb.SelectRequest, ran kv.KeyRan
 			datums = datums[:len(columns)]
 		} else {
 			var intHandle int64
-			intHandle, err = decodeHandle(pair.Value)
+			intHandle, err = decodeHandle(kvRow.Values[0])
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
