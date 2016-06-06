@@ -23,12 +23,14 @@ import (
 	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/inspectkv"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/optimizer/plan"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1368,4 +1370,26 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values (1000)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0", "127"))
+}
+
+func (s *testSuite) TestAdapterStatement(c *C) {
+	defer testleak.AfterTest(c)()
+	se, err := tidb.CreateSession(s.store)
+	c.Check(err, IsNil)
+	compiler := &executor.Compiler{}
+	ctx := se.(context.Context)
+
+	stmtNode, err := parser.ParseOneStmt("select 1", "", "")
+	c.Check(err, IsNil)
+	stmt, err := compiler.Compile(ctx, stmtNode)
+	c.Check(err, IsNil)
+	c.Check(stmt.OriginText(), Equals, "select 1")
+	c.Check(stmt.IsDDL(), IsFalse)
+
+	stmtNode, err = parser.ParseOneStmt("create table t (a int)", "", "")
+	c.Check(err, IsNil)
+	stmt, err = compiler.Compile(ctx, stmtNode)
+	c.Check(err, IsNil)
+	c.Check(stmt.OriginText(), Equals, "create table t (a int)")
+	c.Check(stmt.IsDDL(), IsTrue)
 }
